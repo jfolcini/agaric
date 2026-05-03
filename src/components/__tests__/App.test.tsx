@@ -1135,12 +1135,16 @@ describe('App', () => {
     // glanceable colored dot so the user has a sync signal regardless
     // of whether the StatusPanel view is open.
     describe('sidebar Sync button status dot (UX-266)', () => {
-      it('renders the dot with the muted color when there are no peers', async () => {
+      it('renders the dot with the pending color when online but there are no peers (UX-380)', async () => {
+        // Online + no peers is a pairing-state problem (waiting for action),
+        // distinct from offline (network problem). UX-380 split these two
+        // states off from the shared muted gray to make the difference
+        // glanceable.
         useSyncStore.setState({ state: 'idle', peers: [] })
         render(<App />)
         const dot = await screen.findByTestId('sync-button-status-dot')
         expect(dot).toBeInTheDocument()
-        expect(dot.className).toContain('bg-muted-foreground')
+        expect(dot.className).toContain('bg-status-pending')
         // Decorative — text label carries semantics.
         expect(dot).toHaveAttribute('aria-hidden', 'true')
       })

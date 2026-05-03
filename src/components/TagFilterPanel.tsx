@@ -15,6 +15,7 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { SearchInput } from '@/components/ui/search-input'
+import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
@@ -437,7 +438,7 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Results */}
       {results.length > 0 && (
-        <section className="tag-filter-results space-y-3">
+        <section className="tag-filter-results relative space-y-3">
           <h4 className="text-sm font-medium text-muted-foreground">
             {t('tagFilter.resultsTitle')} ({results.length})
           </h4>
@@ -456,7 +457,11 @@ export function TagFilterPanel(): React.ReactElement {
                 ? `tag-result-${results[resultsFocusedIndex].id}`
                 : undefined
             }
-            className="space-y-3"
+            aria-busy={loading}
+            className={cn(
+              'space-y-3 transition-opacity',
+              loading && 'opacity-50 pointer-events-none',
+            )}
           >
             {results.map((block, index) => {
               const isFocused = index === resultsFocusedIndex
@@ -494,6 +499,17 @@ export function TagFilterPanel(): React.ReactElement {
               )
             })}
           </div>
+          {loading && (
+            <div
+              className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 items-center justify-center"
+              role="status"
+              aria-live="polite"
+              data-testid="tag-filter-results-loading"
+            >
+              <Spinner size="lg" />
+              <span className="sr-only">{t('tagFilter.loadingMessage')}</span>
+            </div>
+          )}
         </section>
       )}
 

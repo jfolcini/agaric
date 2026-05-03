@@ -50,6 +50,10 @@ export const editor: Record<string, string> = {
   'pdfViewer.error': 'Error: {{error}}',
   'pdfViewer.pageIndicator': 'Page {{current}} / {{total}}',
   'suggestion.noResults': 'No results',
+  'suggestion.noResults.atTag': 'No results — press Enter to create a new tag',
+  'suggestion.noResults.blockLink': 'No results — press Enter to create a new page',
+  'suggestion.noResults.blockRef':
+    'No results — block references can only point at existing blocks',
   'suggestion.create': 'Create',
   'link.opensInNewTab': '(opens in new tab)',
   'lightbox.description': 'Fullscreen preview of {{filename}}',

@@ -63,6 +63,7 @@ export function createPickerPlugin(cfg: PickerPluginConfig) {
       }
     },
     command: cfg.command,
-    render: cfg.render ?? (() => createSuggestionRenderer(cfg.displayName, cfg.pluginKey)),
+    render:
+      cfg.render ?? (() => createSuggestionRenderer(cfg.displayName, cfg.pluginKey, cfg.char)),
   })
 }

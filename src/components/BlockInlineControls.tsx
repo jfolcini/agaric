@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Calendar, CalendarDays, Check, Paperclip, Repeat, X } from 'lucide-react'
+import { Calendar, CalendarDays, Check, ChevronRight, Paperclip, Repeat, X } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '../lib/block-events'
@@ -163,6 +163,22 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
 }: BlockInlineControlsProps): React.ReactElement {
   const { t } = useTranslation()
 
+  // UX-308: Play a one-shot bump animation when the attachment count changes
+  // (file dropped/pasted). `animKey` starts as null so the very first render
+  // has no animation classes; subsequent count changes set it to the new
+  // count, which (a) re-keys the badge to force a remount and replay the
+  // CSS animation, and (b) flips the className to include `animate-in
+  // fade-in-0 zoom-in-95 duration-150`. `prefers-reduced-motion` collapses
+  // the duration tokens to 0ms in `index.css`.
+  const prevAttachmentCountRef = React.useRef(attachmentCount)
+  const [animKey, setAnimKey] = React.useState<number | null>(null)
+  React.useEffect(() => {
+    if (prevAttachmentCountRef.current !== attachmentCount) {
+      prevAttachmentCountRef.current = attachmentCount
+      setAnimKey(attachmentCount)
+    }
+  }, [attachmentCount])
+
   return (
     <div
       className={cn(
@@ -302,7 +318,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="property-overflow flex-shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 max-sm:px-2.5 max-sm:py-1"
+                  className="property-overflow inline-flex items-center flex-shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 max-sm:px-2.5 max-sm:py-1"
                   data-testid="property-overflow"
                   aria-label={t('block.showAllProperties', {
                     count: filteredProperties.length,
@@ -313,6 +329,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
                   }}
                 >
                   +{filteredProperties.length - 3}
+                  <ChevronRight className="h-3 w-3 ml-0.5 opacity-60" aria-hidden="true" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}>
@@ -327,8 +344,12 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
+              key={animKey ?? 'initial'}
               type="button"
-              className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target"
+              className={cn(
+                'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target',
+                animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-150',
+              )}
               data-testid="attachment-badge"
               aria-label={t('block.attachments', { count: attachmentCount })}
               aria-expanded={showAttachments}

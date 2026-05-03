@@ -137,6 +137,25 @@ describe('AppSidebar', () => {
     expect(onShowShortcuts).toHaveBeenCalledTimes(1)
   })
 
+  // UX-380 — "offline" (network problem) and "no peers" (pairing
+  // problem) used to share `bg-muted-foreground`, so users couldn't
+  // tell whether to fix the network or pair a device. Pin the
+  // distinction here so the two states keep diverging tokens.
+  it('uses distinct sync dot colors for offline vs no-peers states (UX-380)', () => {
+    const { rerender, props } = renderSidebar({ syncState: 'offline', syncPeers: [] })
+    const offlineClass = screen.getByTestId('sync-button-status-dot').className
+    expect(offlineClass).toContain('bg-muted-foreground')
+
+    rerender(
+      <SidebarProvider>
+        <AppSidebar {...props} syncState="idle" syncPeers={[]} />
+      </SidebarProvider>,
+    )
+    const noPeersClass = screen.getByTestId('sync-button-status-dot').className
+    expect(noPeersClass).toContain('bg-status-pending')
+    expect(noPeersClass).not.toBe(offlineClass)
+  })
+
   it('has no a11y violations', async () => {
     const { container } = renderSidebar()
     const results = await axe(container)
