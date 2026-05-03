@@ -150,7 +150,7 @@ Specta 2.0.0-rc.24 (the pinned version) does not auto-derive bindings *for* `Cha
 ## Cost
 
 | Tier | Effort | Notes |
-|---|---|---|
+| --- | --- | --- |
 | Tier 1 (sync) | M (~6-10h) | Most plumbing, biggest UX win |
 | Tier 2 (files) | M (~4-6h) | Reuses Tier 1 infrastructure |
 | Tier 3 (import) | L | Deferred — needs restructuring first |
@@ -174,8 +174,8 @@ Specta 2.0.0-rc.24 (the pinned version) does not auto-derive bindings *for* `Cha
 
 ## Open questions
 
-1. **Can `Channel<T>` be cloned / wrapped in `Arc`?** — verify via Tauri 2 docs before threading through daemon → orchestrator → sub-tasks. The current `SyncEventSink` shape (Arc<dyn Trait>) is the template if Channel needs to be shared.
+1. **Can `Channel<T>` be cloned / wrapped in `Arc`?** — verify via Tauri 2 docs before threading through daemon → orchestrator → sub-tasks. The current `SyncEventSink` shape (`Arc<dyn Trait>`) is the template if Channel needs to be shared.
 2. **Frontend Channel API shape** — verify `channel.onmessage = fn` vs `channel.on('message', fn)` in `@tauri-apps/api/core`. The wrapper code in this plan assumes `onmessage`; correct on first PR if wrong.
 3. **Single channel for sync+files vs separate channels?** — recommend single with the tagged enum above (one frontend listener, type-narrowed variants).
 4. **Should other long-running flows (snapshot transfer, FTS index rebuild) also adopt Channel?** — yes, but ship sync + files first; treat the rest as additive.
-5. **Specta auto-derive Channel<T>?** — verify on first PR by inspecting generated `bindings.ts`. If the generic parameter doesn't propagate, fall back to manual type annotation in the wrapper layer.
+5. **Specta auto-derive `Channel<T>`?** — verify on first PR by inspecting generated `bindings.ts`. If the generic parameter doesn't propagate, fall back to manual type annotation in the wrapper layer.

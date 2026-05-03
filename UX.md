@@ -992,7 +992,7 @@ File: `src/components/SpaceSwitcher.tsx`, `src/stores/space.ts`, `src/stores/tab
 
 ### Cross-Space Link Policy (Phase 7)
 
-- `[[ULID]]` chips whose target lives in a foreign space render via the existing broken-link UX (`block-link-deleted` style + "Broken link — click to remove" tooltip).
+- `[[ULID]]` chips whose target lives in a foreign space render via the existing broken-link UX (`block-link-deleted` style + "Broken link or in another space — click to remove" tooltip — UX-366).
 - **No auto-switch on click. No "show anyway" toggle.** Single behaviour, period.
 - Same page title in two spaces is fine — they're distinct ULIDs and stay isolated.
 

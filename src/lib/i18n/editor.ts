@@ -45,7 +45,7 @@ export const editor: Record<string, string> = {
   'block.swipe.releaseToDelete': 'Release to delete',
   'editor.unknownNodeType':
     "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
-  'editor.brokenLinkTooltip': 'Broken link — click to remove',
+  'editor.brokenLinkTooltip': 'Broken link or in another space — click to remove',
   'editor.brokenLinkRemoved': 'Broken link removed (undo with Ctrl+Z)',
   'editor.brokenRefTooltip': 'Broken ref — target block deleted',
   'attachments.loadFailed': 'Failed to load attachments',

@@ -73,7 +73,7 @@ files = "^src/lib/(bindings\\.ts|tauri\\.ts)$"
 ## Files touched
 
 | File | Change |
-|---|---|
+| --- | --- |
 | `scripts/check-tauri-bindings-parity.mjs` | New (~150 lines) |
 | `prek.toml` | Add hook block (~12 lines) |
 
@@ -143,7 +143,7 @@ If it fails on first run, that's the discovery — it means current bindings.ts 
 **S (1-2h).**
 
 | Step | Time |
-|---|---|
+| --- | --- |
 | Write the script | 45 min |
 | Add prek.toml entry | 5 min |
 | Run on all files; populate allowlist for current state | 30 min |

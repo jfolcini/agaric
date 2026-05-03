@@ -15,7 +15,7 @@ Per AGENTS.md "Threat Model" section: Agaric is single-user, multi-device, local
 ## Audit table
 
 | Measure | KEEP / REMOVE | Justification | Files |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | TLS 1.2+ (rustls + tokio-rustls) | KEEP | Transport integrity over WiFi; required for the "secure WiFi communication" threat-model floor | `sync_net/tls.rs`, `sync_net/connection.rs` |
 | Self-signed ECDSA P-256 certs (rcgen) | KEEP | Per-device identity for mTLS handshake | `sync_cert.rs` |
 | mTLS (mutual cert verification both ends) | KEEP | Prevents accidental cross-talk between unrelated devices on the same LAN | `sync_net/tls.rs` |
@@ -37,6 +37,7 @@ The reviewer's audit confirmed three additional stale spots beyond the original 
 ### ARCHITECTURE.md — three locations
 
 **§1 crates table (around lines 87-88):**
+
 - `hkdf + sha2` row → keep only `sha2` (still used for cert pinning)
 - `chacha20poly1305` row → delete
 
@@ -56,13 +57,13 @@ Replace `"ChaCha20-Poly1305 pairing"` with `"plaintext JSON pairing over mTLS"` 
 
 Currently lists `chacha20poly1305` and `hkdf` as primitives the sync layer relies on. Replace:
 
-```
+```text
 **Crypto misuse** — incorrect use of the `rustls` / `chacha20poly1305` / `hkdf` / `blake3` / `rcgen` primitives the sync layer relies on (wrong nonce reuse, missing AAD, weak KDF parameters).
 ```
 
 with:
 
-```
+```text
 **Crypto misuse** — incorrect use of the `rustls` / `blake3` / `rcgen` primitives the sync layer relies on.
 ```
 
@@ -85,7 +86,7 @@ Direct dependencies: clean. `hkdf` and `chacha20poly1305` were removed from `[de
 **S (~1 hour total).**
 
 | Step | Time |
-|---|---|
+| --- | --- |
 | ARCHITECTURE.md §20 crates-table edit | 10 min |
 | ARCHITECTURE.md §20 pairing-section rewrite | 20 min |
 | COMPARISON.md line update | 5 min |

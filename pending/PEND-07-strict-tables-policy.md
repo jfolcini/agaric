@@ -31,7 +31,8 @@ Add a hook to `prek.toml` that fails on any new `CREATE TABLE` in a migration th
 3. Skip statements that include `VIRTUAL TABLE` (FTS5, etc.).
 4. For each remaining `CREATE TABLE`, find its terminating `)`. Check whether the post-`)` portion of the statement (until `;`) contains the `STRICT` keyword.
 5. If not, fail with:
-   ```
+
+   ```text
    ERROR: migrations/<file>.sql line <N>: CREATE TABLE <name> must use STRICT mode (see AGENTS.md § Database)
    ```
 
@@ -56,7 +57,7 @@ The existing `migrations/0002_fts5.sql` and `0006_fts5_trigram.sql` use `CREATE 
 ## Files touched
 
 | File | Change |
-|---|---|
+| --- | --- |
 | `AGENTS.md` | One bullet under "Database" |
 | `prek.toml` | One hook entry |
 | `scripts/check-migrations-strict.mjs` | New file (~50 LOC) |
@@ -64,7 +65,7 @@ The existing `migrations/0002_fts5.sql` and `0006_fts5_trigram.sql` use `CREATE 
 ## Cost / Impact / Risk
 
 | | |
-|---|---|
+| --- | --- |
 | Cost | S (~1h: write hook, write AGENTS.md sentence, test on the existing migrations to confirm the hook doesn't false-positive) |
 | Impact | Medium long-term — every future schema bug from type coercion is prevented. Zero immediate user-visible impact. |
 | Risk | Low. Worst case: a contributor gets confused, looks up the AGENTS.md note, fixes the migration. |

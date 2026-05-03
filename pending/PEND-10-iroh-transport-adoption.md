@@ -20,7 +20,7 @@ iroh is a modular P2P stack. Agaric would consume:
 ## Mapping: current → iroh
 
 | Current | iroh | Notes |
-|---|---|---|
+| --- | --- | --- |
 | mDNS service announce (`_agaric._tcp.local.`) | iroh discovery + tickets | Tickets encode `NodeId` + relay addrs; no separate service type needed |
 | mTLS+TOFU+CN verification | `NodeId`-based auth (intrinsic to QUIC) | The `SecretKey` IS the identity; `NodeId` is derived. No cert generation. |
 | WebSocket binary frames | QUIC streams (multiple per session) | Streaming semantics unchanged; framing layer differs |
@@ -67,7 +67,7 @@ Prototype two iroh nodes on two machines, exchange synthetic `OpBatch` payloads 
 
 > **Reviewer note:** the original draft *assumed* iroh is post-1.0. **It is not.** As of writing, iroh is in the 0.x series with no public commitment to wire-protocol stability across minor versions. Treat criterion (a) as the mandatory week-1 spike output, not an assumption.
 
-1. **(a) iroh API + wire-format stability — VERIFY DURING SPIKE, DO NOT ASSUME.** Document the current iroh version, the project's stability commitments (or lack thereof), wire-format stability between minor versions, and the realistic version-pinning strategy this codebase would commit to. **Specific outputs the spike must produce:** (i) cite the latest released iroh version + its release date; (ii) cite an upstream issue or doc that addresses wire-format stability between minor versions; (iii) propose a pin (e.g., `iroh = "=0.x.y"` with a published commit hash) and a maintenance plan ("we re-evaluate every minor"). **If wire-format breaks between minor versions without a documented upgrade path, kill** — this is a data-durability red line for live sync sessions across upgrade boundaries. (Sources: https://github.com/n0-computer/iroh/releases, https://docs.rs/iroh, the iroh CHANGELOG.)
+1. **(a) iroh API + wire-format stability — VERIFY DURING SPIKE, DO NOT ASSUME.** Document the current iroh version, the project's stability commitments (or lack thereof), wire-format stability between minor versions, and the realistic version-pinning strategy this codebase would commit to. **Specific outputs the spike must produce:** (i) cite the latest released iroh version + its release date; (ii) cite an upstream issue or doc that addresses wire-format stability between minor versions; (iii) propose a pin (e.g., `iroh = "=0.x.y"` with a published commit hash) and a maintenance plan ("we re-evaluate every minor"). **If wire-format breaks between minor versions without a documented upgrade path, kill** — this is a data-durability red line for live sync sessions across upgrade boundaries. (Sources: <https://github.com/n0-computer/iroh/releases>, <https://docs.rs/iroh>, the iroh CHANGELOG.)
 2. **(b) Transport handshake works end-to-end.** Two iroh nodes on the same LAN connect and exchange a 1 MB `OpBatch` payload in **<2 seconds**. Across NAT (one node behind home NAT, the other on public internet) connect and exchange same payload via relay in **<5 seconds**.
 3. **(c) Compatible license.** iroh + iroh-blobs are MIT or Apache-2.0 (compatible with Agaric's GPL-3.0-or-later). Any GPL-incompatible deps in the iroh tree → kill.
 4. **(d) Ticket flow is human-acceptable.** A ticket can be shared via QR code (visual length, scannable on a phone screen) and via text paste (length, no whitespace gotchas). **If tickets are 500+ chars or break on paste, kill** (pairing UX gap forces a fallback design).
@@ -119,7 +119,7 @@ Delete the old transport stack.
 **Deliverables:** (LOC counts reviewer-verified by `wc -l`; original draft was off by 87% due to omitted test files and wrong estimate for snapshot_transfer)
 
 | File / module | LOC (verified) |
-|---|---|
+| --- | --- |
 | `src-tauri/src/sync_net/` (mod.rs, connection.rs, tls.rs, websocket.rs, tests.rs) | **3,128** |
 | `src-tauri/src/sync_daemon/server.rs` (WebSocket responder) | **376** |
 | `src-tauri/src/sync_daemon/discovery.rs` (mDNS peer discovery) | **283** |
@@ -140,6 +140,7 @@ Delete the per-file test modules (`#[cfg(test)] mod tests`) inside each deleted 
 **Reversibility:** none. Commit only after Phase 2 stabilizes.
 
 **Total LOC deleted (corrected): ~14,616.** Original draft said ~7,825 — off by 6,791 because of:
+
 - Wrong estimate for `sync_daemon/snapshot_transfer.rs` (1,824 actual vs 400 estimated)
 - `sync_daemon/server.rs` undercounted (376 vs 200)
 - Test files entirely omitted (`sync_daemon/tests.rs` 4,028 LOC + `sync_files/tests.rs` 2,180 LOC)
@@ -162,7 +163,7 @@ One full release after Phase 2, remove WebSocket fallback entirely. Delete `tran
 ## Risks
 
 | Risk | Mitigation |
-|---|---|
+| --- | --- |
 | **iroh pre-1.0 / API churn** ⚠️ headline risk | Phase 0 kill criterion (a) is the gate, not an assumption. Pin a specific minor + watch upstream. The spike must publish a "what is iroh today" report before continuing. |
 | **Relay dependency on n0.computer** | Verify self-host + LAN-only options in spike (kill criterion (f)). LAN sync still works direct if relays go down. |
 | **Relay metadata leak** (NodeId + traffic timing visible to relay operator) | Document explicitly in user-facing settings: "When sync uses relay (cross-WiFi), n0's relay servers can see your device's NodeId, the timing of your sync sessions, and the byte sizes of your messages — not the contents (QUIC encrypts those). Use 'LAN-only' mode in Settings to disable relays." Same threat model floor (single-user, no adversaries), but the user should be informed. |
@@ -198,18 +199,22 @@ iroh (transport) and CRDT (merge) are **independent in design** — iroh swaps t
 ## Files affected by phase
 
 ### Phase 0 (spike)
+
 - New: `src-tauri/src/iroh_spike/` (standalone, feature-gated, deleted after spike).
 
 ### Phase 1 (shadow)
+
 - New: `src-tauri/src/sync_net/iroh.rs` (or `sync_net_iroh/`).
 - Modify: `sync_daemon/mod.rs`, `sync_daemon/orchestrator.rs`, `peer_refs.rs`, `commands/sync_cmds.rs`.
 - New migration: add `node_id` and `transport_preference` columns to `peer_refs`.
 
 ### Phase 2 (cutover)
+
 - Modify: `sync_daemon/orchestrator.rs` (flip default), pairing flow.
 - Modify: `peer_refs.rs` (populate `node_id` or require re-pair per Option A/B).
 
 ### Phase 3 (cleanup)
+
 - Delete: `sync_net/`, `sync_daemon/server.rs`, `sync_daemon/discovery.rs`, `sync_daemon/snapshot_transfer.rs`, `sync_daemon/android_multicast.rs`, `sync_cert.rs`, `pairing.rs`, `sync_files.rs`, `sync_files/`.
 - Delete corresponding test files.
 - Modify: `sync_daemon/mod.rs` (remove submodule declarations).
@@ -217,6 +222,7 @@ iroh (transport) and CRDT (merge) are **independent in design** — iroh swaps t
 - Modify: `commands/sync_cmds.rs` (remove old pairing logic, wire iroh tickets).
 
 ### Phase 4 (optional)
+
 - Modify: `sync_daemon/orchestrator.rs` (remove WebSocket fallback).
 - Modify: `peer_refs.rs` (drop `transport_preference`, `cert_hash`).
 
@@ -271,7 +277,7 @@ This is a meaningful project. Build in a 2-3 week buffer that's invisible inside
 
 ## Appendix: iroh ecosystem status (to be verified in spike)
 
-- Current iroh version (https://github.com/n0-computer/iroh/releases).
+- Current iroh version (<https://github.com/n0-computer/iroh/releases>).
 - API stability story (post-1.0? documented stability commitment?).
 - Wire-protocol-format stability between minor versions.
 - License (MIT? Apache-2.0? GPL-compatible?).
@@ -282,8 +288,9 @@ This is a meaningful project. Build in a 2-3 week buffer that's invisible inside
 - Ticket format (length, QR-scannable, paste-safe).
 
 References for the spike:
-- https://iroh.computer/
-- https://docs.rs/iroh
-- https://github.com/n0-computer/iroh
-- https://docs.rs/iroh-blobs
-- https://www.iroh.computer/docs/concepts/tickets
+
+- <https://iroh.computer/>
+- <https://docs.rs/iroh>
+- <https://github.com/n0-computer/iroh>
+- <https://docs.rs/iroh-blobs>
+- <https://www.iroh.computer/docs/concepts/tickets>

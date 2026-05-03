@@ -15,11 +15,13 @@ The silent drop is visible only via the `bg_dropped` counter; there's no persist
 ## Goals & non-goals
 
 **Goals:**
+
 - Ensure global cache rebuilds are not silently lost on queue saturation or handler failure.
 - Document the staleness window in AGENTS.md "Backend Architecture" section.
 - Add observability to distinguish dropped global tasks from dropped per-block tasks.
 
 **Non-goals:**
+
 - Refactor the materializer's two-tier retry model (in-memory + persistent).
 - Add a manual "rebuild all caches" admin command (orthogonal feature).
 - Change the dedup strategy or queue capacity.
@@ -41,7 +43,7 @@ Document the max ~5-minute window (until next mutation) in AGENTS.md, add a `bg_
 ## Files touched
 
 | File | Change |
-|---|---|
+| --- | --- |
 | `src-tauri/migrations/0042_materializer_retry_queue_global_tasks.sql` | New migration. Allow `block_id NULL`. Add/rename `task_kind`. Recreate primary key. |
 | `src-tauri/src/materializer/retry_queue.rs` | Extend `RetryKind` enum, update `from_task()`/`to_task()`/`record_failure()`/sweeper to handle global tasks. |
 | `src-tauri/src/materializer/consumer.rs` | Replace silent-drop path for global tasks (lines ~535-539) with `record_failure()` call. |
@@ -122,9 +124,11 @@ In `src-tauri/src/materializer/tests.rs`:
 - `test_global_task_re_enqueued_after_backoff` — persist a `RebuildPagesCache` failure, advance time by 1m via tokio test-util, run sweeper, verify task is re-enqueued and processed.
 
 Schema snapshot (insta):
+
 - `materializer_retry_queue_schema` snapshot pinned via `cargo insta` after migration 0042.
 
 Metric tests:
+
 - Verify `bg_dropped` and `bg_dropped_global` increment correctly.
 
 ## Cost
@@ -132,7 +136,7 @@ Metric tests:
 **M (4-7 hours).** Revised after reviewer pointed out 7 enum variants (not 1), explicit sentinel handling, and parity tests for each variant round-trip.
 
 | Step | Time |
-|---|---|
+| --- | --- |
 | Migration design + SQL | 0.5h |
 | `RetryKind` enum extension (7 variants) + `from_task`/`to_task` | 1.5h |
 | `record_failure` + sweeper sentinel handling | 1h |
@@ -154,6 +158,7 @@ Metric tests:
 **Low.** Additive change (new migration, extended enum, new code path). Existing per-block retry logic untouched. Global tasks are idempotent — re-enqueuing is safe. Standard SQLite table recreation pattern. Sentinel `'__GLOBAL__'` is a reserved-prefix literal that cannot collide with a real ULID block id (ULIDs are 26 char Crockford base32 uppercase; the sentinel is lowercase + underscores).
 
 **Edge cases to watch:**
+
 - Sweeper re-enqueuing global tasks while queue still full → tasks re-dropped, re-persisted, re-enqueued on next sweep. This is correct (eventual consistency) but can churn. Sentinel-keyed dedup at the SQL layer (PK uniqueness) mitigates within a single retry cycle; in-memory dedup in `dedup.rs` should also recognize that two RebuildTagsCache tasks coalesce regardless of source.
 - Migration on large databases — table recreation locks DB for the migration duration. Single-user, offline-first, runs at startup; not a user-visible problem.
 - The existing AGENTS.md staleness-window phrasing should say **"until the next block-structure mutation (delete/restore/purge) re-dispatches the rebuild, OR until the persistent retry-queue sweeper picks it up (worst case 1h via backoff)"** — not "5 min." There is no 5-minute floor on re-dispatch; it depends on user activity.

@@ -363,7 +363,7 @@ describe('BlockLink NodeView', () => {
  * space-scoped batch_resolve did not return). The BlockLink NodeView
  * must:
  *   1. Render with the `block-link-deleted` class.
- *   2. Surface the broken-link tooltip ("Broken link — click to remove").
+ *   2. Surface the broken-link tooltip ("Broken link or in another space — click to remove").
  *   3. Delete itself on click (undoable via TipTap's transaction history).
  *   4. NOT call onNavigate — broken chips are removable artifacts, not
  *      teleporters that auto-switch space.
@@ -401,8 +401,8 @@ describe('FEAT-3p7 — foreign-space [[ULID]] chip', () => {
     expect(chip.classList.contains('block-link-deleted')).toBe(true)
     expect(chip.classList.contains('block-link-chip')).toBe(true)
     // (2) tooltip — i18n hook in the extension is the literal English
-    // string "Broken link — click to remove" (mirrors block-link.test.ts:91)
-    expect(chip.getAttribute('title')).toBe('Broken link — click to remove')
+    // string "Broken link or in another space — click to remove" (mirrors block-link.test.ts:92)
+    expect(chip.getAttribute('title')).toBe('Broken link or in another space — click to remove')
 
     // (3) Click removes the chip.
     chip.click()

@@ -89,7 +89,7 @@ describe('BlockLink broken link recovery (UX-25)', () => {
       resolveStatus: () => 'deleted',
     })
 
-    expect(dom.getAttribute('title')).toBe('Broken link — click to remove')
+    expect(dom.getAttribute('title')).toBe('Broken link or in another space — click to remove')
     expect(dom.classList.contains('block-link-deleted')).toBe(true)
   })
 
@@ -161,8 +161,8 @@ describe('BlockLink broken link a11y + toast feedback (UX-313)', () => {
       resolveStatus: () => 'deleted',
     })
 
-    expect(dom.getAttribute('title')).toBe('Broken link — click to remove')
-    expect(dom.getAttribute('aria-label')).toBe('Broken link — click to remove')
+    expect(dom.getAttribute('title')).toBe('Broken link or in another space — click to remove')
+    expect(dom.getAttribute('aria-label')).toBe('Broken link or in another space — click to remove')
   })
 
   it('clicking a broken link chip fires toast.success with the i18n message', () => {

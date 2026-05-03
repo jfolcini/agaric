@@ -11,7 +11,9 @@
  * 8-10 ops in rapid succession) feel like a single action.
  */
 
+import { toast } from 'sonner'
 import { create } from 'zustand'
+import { t } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { OpRef, UndoResult } from '../lib/tauri'
 import { listPageHistory, redoPageOp, undoPageOp } from '../lib/tauri'
@@ -297,6 +299,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         } catch (err) {
           logger.error('UndoStore', 'history fetch failed', { pageId }, err)
           // History fetch failed — graceful fallback, just the single undo
+          toast.warning(t('undo.batchUnavailable'))
         }
 
         // Record group size for redo (always, even for single ops)

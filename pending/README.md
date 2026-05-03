@@ -7,7 +7,7 @@ Origin: a deep architectural review session run with five parallel investigation
 ## Index
 
 | ID | Title | Cost | Status |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | PEND-01 | Rename `MDNS_SERVICE_NAME` `BlockNotes` → `Agaric` | trivial | ✅ done this session |
 | PEND-02 | Rename "CQRS hybrid model" → "event sourcing with materialized views" | S | ready (gated on AGENTS.md edit approval) |
 | PEND-03 | Materializer silent-drop fix for global cache rebuilds | M (4-7h) | ready (revised after reviewer found a SQL constraint bug + 7 enum variants needed, not 1) |
@@ -22,6 +22,7 @@ Origin: a deep architectural review session run with five parallel investigation
 ## Recommended order
 
 **Quick wins first** — schedule when convenient, no dependencies:
+
 1. PEND-01 (already done)
 2. PEND-02 (CQRS rename) — gated on AGENTS.md approval
 3. PEND-04 (stale crypto docs) — pure docs, ~1h
@@ -31,13 +32,13 @@ Origin: a deep architectural review session run with five parallel investigation
 
 **Mid-tier** — useful but more invasive:
 
-7. PEND-03 (silent-drop fix) — schema migration + materializer changes, 4-7h
-8. PEND-06 (Channel<T> adoption) — Tier 1 sync progress first (~6-10h), Tier 2 file transfer later (~6-9h)
+1. PEND-03 (silent-drop fix) — schema migration + materializer changes, 4-7h
+2. PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first (~6-10h), Tier 2 file transfer later (~6-9h)
 
 **Strategic** — each is a separate decision with its own multi-phase timeline:
 
-9. PEND-09 (CRDT migration via Loro) — start with the 2-week time-boxed Phase 0 spike. Do not commit to Phases 1+ before the spike report. Total: 11-15 weeks.
-10. PEND-10 (iroh transport adoption) — start with the 3-week time-boxed Phase 0 spike. The headline kill criterion is iroh's actual current version + wire-format stability stance — answer that before committing to Phases 1+. Total: 14-19 weeks.
+1. PEND-09 (CRDT migration via Loro) — start with the 2-week time-boxed Phase 0 spike. Do not commit to Phases 1+ before the spike report. Total: 11-15 weeks.
+2. PEND-10 (iroh transport adoption) — start with the 3-week time-boxed Phase 0 spike. The headline kill criterion is iroh's actual current version + wire-format stability stance — answer that before committing to Phases 1+. Total: 14-19 weeks.
 
 **Recommended sequencing of the two strategic items:** iroh first, CRDT after. Rationale (also in PEND-10 §"Sequencing with PEND-09"): debugging a new transport while the merge engine is the well-tested diffy is easier than debugging both at once; CRDT migration then runs against a known-stable transport. Combined calendar, sequential: ~28-36 weeks of focused engineering — most of a year for a solo maintainer. **Don't pursue both in parallel.**
 

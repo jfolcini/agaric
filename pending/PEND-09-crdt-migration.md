@@ -14,7 +14,7 @@ The user has approved migrating the merge layer to a CRDT (Loro). Rationale: the
 
 Within each space's Loro doc:
 
-```
+```text
 loro_doc = {
   "blocks": LoroMap<block_id_str, BlockData>
     where BlockData = LoroMap<{
@@ -50,7 +50,7 @@ The materialized `blocks` / `block_properties` / `block_tags` SQL tables become 
 
 Each Loro export-batch becomes one row in `op_log`. The payload is the Loro batch bytes (binary). The schema stays:
 
-```
+```text
 op_log: (device_id, seq, parent_seqs, hash, op_type='loro_batch', payload, created_at)
 ```
 
@@ -61,7 +61,7 @@ The 12 existing typed op variants disappear from the active set; legacy rows in 
 ## Phased plan
 
 | Phase | Duration | Goal | Reversible |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **0 — Spike** | 2 weeks (hard time-box) | Prototype: import existing op log into Loro, run merge/tests.rs corpus through both engines, measure payload sizes, validate tree mapping | YES — kill criteria explicit |
 | **1 — Shadow** | 2-3 weeks | Loro engine runs alongside diffy in production. Both compute merges; only diffy's result is authoritative; parity is logged. No user-visible change | YES — Loro is isolated |
 | **2 — Cutover** | 2-3 weeks | Loro becomes authoritative. Legacy ops in op_log replayed once into Loro. Existing `merge/` deprecated but kept as fallback through the release | YES with effort — old engine still around |
@@ -80,8 +80,8 @@ The spike is **2 weeks, hard time-box**. Reviewer flagged that the original crit
 
 **Additional kill conditions surfaced by reviewer:**
 
-4. **Loro library status check.** Confirm Loro is at a usable pre-1.0 version (>= 0.x with stable LoroMap+LoroText), license is acceptable, and the maintainers have a documented serialization-format-stability stance for the version range we'd consume. **If serialization format can change between minor versions without an upgrade path for old payloads, kill** — that's a data-durability red line.
-5. **`LoroTree` evaluation.** The plan's per-space-doc design uses `LoroMap` + scalar parent_id, but if `LoroTree` is stable and faster, reconsider. If `LoroTree` is "experimental" only, document the decision and stay with the LoroMap approach.
+1. **Loro library status check.** Confirm Loro is at a usable pre-1.0 version (>= 0.x with stable LoroMap+LoroText), license is acceptable, and the maintainers have a documented serialization-format-stability stance for the version range we'd consume. **If serialization format can change between minor versions without an upgrade path for old payloads, kill** — that's a data-durability red line.
+2. **`LoroTree` evaluation.** The plan's per-space-doc design uses `LoroMap` + scalar parent_id, but if `LoroTree` is stable and faster, reconsider. If `LoroTree` is "experimental" only, document the decision and stay with the LoroMap approach.
 
 If any kill criterion fires: archive the prototype crate as `pending/PEND-09-spike-archive.tar.gz`, document the failing criterion in this file, return PEND-09 to "deferred" state in REVIEW-LATER.md, communicate the verdict.
 
@@ -104,7 +104,7 @@ If any kill criterion fires: archive the prototype crate as `pending/PEND-09-spi
 ## Risks
 
 | Risk | Mitigation |
-|---|---|
+| --- | --- |
 | **Loro is pre-1.0** — API breaking changes during the migration window | Spike measures stability. Pin a specific minor version. Watch upstream releases. Budget half a day in each phase for upstream version bumps. |
 | **Loro serialization format changes between versions** ⚠️ data-durability risk | Spike must validate format stability across minor versions. Add `loro_version` field to every op-log payload row. If the format breaks compatibility, the op log is unreadable on upgrade — this is a kill criterion (item 4) for a reason. |
 | **Op-log → Loro import bug causes silent data loss** | Phase 1 shadow mode runs parity checks for weeks; database backups before Phase 2 cutover; the cutover is reversible if shadow-mode parity stays clean |
@@ -124,21 +124,25 @@ If any kill criterion fires: archive the prototype crate as `pending/PEND-09-spi
 ## Files affected (high level, by phase)
 
 **Phase 0 — Spike (new code, no production impact):**
+
 - New crate: `src-tauri/crates/loro-spike/` (Rust workspace member). Self-contained: depends on `loro 0.x`, exposes a CLI that takes a path to `notes.db` and runs the parity tests.
 
 **Phase 1 — Shadow:**
+
 - `src-tauri/Cargo.toml` — add `loro = "0.x"` (post-spike-confirmed version)
 - `src-tauri/src/loro/` — new module: `LoroEngine` struct, `apply_op()`, `export_batch()`, `import_batch()`
 - `src-tauri/src/merge/mod.rs` — wrap diffy result + Loro result; log mismatches; return diffy as authoritative
 - Tests: `src-tauri/src/merge/parity_tests.rs` (continuous parity sampling)
 
 **Phase 2 — Cutover:**
+
 - `src-tauri/migrations/0042_loro_doc_state.sql` — add a `loro_doc_state` table per space (snapshot of latest Loro doc bytes)
 - `src-tauri/src/recovery/` — add Loro import path on first boot post-upgrade (one-time replay)
 - `src-tauri/src/sync_protocol/` — `OpTransfer` payload becomes opaque (no behavior change, just doc cleanup)
 - `src-tauri/src/merge/mod.rs` — Loro becomes authoritative; diffy kept as commented fallback for one release
 
 **Phase 3 — Cleanup:**
+
 - Delete `src-tauri/src/merge/{apply,detect,resolve,types}.rs`
 - New migration `0043_drop_is_conflict.sql` — drop column from `blocks`
 - Sweep: every recursive CTE filter `AND is_conflict = 0` removed (~293 SQL sites)
@@ -146,6 +150,7 @@ If any kill criterion fires: archive the prototype crate as `pending/PEND-09-spi
 - 559 `is_conflict` references cleaned by codemod + manual review
 
 **Phase 4 — UX:**
+
 - `src/components/ConflictList*.tsx` — delete or repurpose into "recent merges" indicator
 - Frontend tests + e2e specs for conflict UX deleted
 

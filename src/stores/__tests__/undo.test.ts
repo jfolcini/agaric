@@ -16,6 +16,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
 import { listPageHistory, redoPageOp, undoPageOp } from '@/lib/tauri'
 
@@ -23,6 +24,7 @@ const mockedUndoPageOp = vi.mocked(undoPageOp)
 const mockedRedoPageOp = vi.mocked(redoPageOp)
 const mockedListPageHistory = vi.mocked(listPageHistory)
 const mockedLogger = vi.mocked(logger)
+const mockedToastWarning = vi.mocked(toast.warning)
 
 /** Helper — build a mock UndoResult. */
 function makeUndoResult(
@@ -601,6 +603,25 @@ describe('batch undo', () => {
       'history fetch failed',
       { pageId: 'page1' },
       err,
+    )
+  })
+
+  it('shows toast warning when history fetch fails mid-batch (single undo still succeeds)', async () => {
+    mockedListPageHistory.mockRejectedValueOnce(new Error('IPC failed'))
+    const firstUndo = makeUndoResult({ seq: 5, newSeq: 6 })
+    mockedUndoPageOp.mockResolvedValueOnce(firstUndo)
+
+    const result = await useUndoStore.getState().undo('page1')
+
+    // Single undo still succeeds — no regression in core behavior
+    expect(result).toEqual(firstUndo)
+    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
+    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+
+    // User gets a warning that batch undo was unavailable
+    expect(mockedToastWarning).toHaveBeenCalledTimes(1)
+    expect(mockedToastWarning).toHaveBeenCalledWith(
+      expect.stringContaining('Batch undo unavailable'),
     )
   })
 
