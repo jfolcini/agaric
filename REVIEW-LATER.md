@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 636 — Batch MIXED-1: closed MAINT-178 (BootGate diagnostics escape hatch), MAINT-183 (markdown-serialize callback refactor), TEST-6 (sync-merge materialized-state asserts), UX-323 (AgendaFilterBuilder dimension grouping), UX-375 (SpaceManageDialog journal-template Examples panel); 5 items via 5 subagents — ninth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 637 — Batch UX-TRIVIAL-13: closed UX-316 (QueryBuilderModal readable preview), UX-337 (SearchablePopover disabled-trigger tooltip), UX-346 (HistoryView touch-nav arrows), UX-365 (WelcomeModal Spaces highlight), UX-370 (SpaceManageDialog Delete inline help); 5 items via 5 subagents — tenth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-37 open items in the summary table; 77 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 67 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -47,13 +47,8 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-309 | UX | Slash command palette is not discoverable to new users | S | — |
 | UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
-| UX-316 | UX | Inline `{{query …}}` expression syntax is cryptic to read | S | — |
-| UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
-| UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
-| UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
-| UX-370 | UX | Space delete-when-empty signalled only via tooltip | S | — |
 | UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
 
 ### Quick wins (S-cost, ready to grab)
@@ -1094,42 +1089,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-316 — Inline `{{query …}}` expression syntax is cryptic to read
-- **Domain:** Frontend / Queries
-- **Location:** `src/components/QueryBuilderModal.tsx:120-148` ; `src/lib/query-utils.ts:30-88`
-- **What:** Generated expression is `type:tag expr:project` etc. The pencil-button visual builder hides this behind a modal, but the raw inline form has no plain-English layer.
-- **Cost:** S — render a "this query reads as: …" preview in the modal; tooltip on the inline expression pills with human-readable phrasing.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-337 — Disabled `SearchablePopover` trigger has no tooltip explaining why
-- **Domain:** Frontend / Search
-- **Location:** `src/components/SearchablePopover.tsx:109`
-- **What:** When disabled (e.g. another filter of the same kind already active), the button greys out silently.
-- **Cost:** Trivial — wrap disabled state in a Tooltip with the reason ("Only one page filter at a time").
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-346 — Vim-style `j`/`k` nav has no touch alternative
-- **Domain:** Frontend / History
-- **Location:** `src/hooks/useHistoryKeyboardNav.ts:57, 74` (vim mode)
-- **What:** Navigation is keyboard-only on touch devices.
-- **Cost:** S — render persistent ↑/↓ arrow buttons in the toolbar on coarse-pointer devices; or rely on existing list selection by tap.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-365 — Spaces onboarding banner only inside `SpaceManageDialog`
-- **Domain:** Frontend / Spaces / Onboarding
-- **Location:** `src/components/SpaceManageDialog.tsx:614-630, 645-648` ; `src/lib/i18n/common.ts:67-71`
-- **What:** Visible only after the user opens Manage Spaces. New users may never reach it.
-- **Cost:** S — surface the same banner in `WelcomeModal` (4th highlight) or as a one-time tooltip on the SpaceSwitcher trigger.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-366 — Cross-space `[[link]]` chips render with literal "Broken link" tooltip
 - **Domain:** Frontend / Spaces
 - **Location:** `src/editor/extensions/block-link.ts:99-110` (deliberate per FEAT-3p7, but UX-confusing)
@@ -1147,15 +1106,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open. (Deliberate design — listed for visibility.)
-
-### UX-370 — Space delete-when-empty signalled only via tooltip
-- **Domain:** Frontend / Spaces
-- **Location:** `src/components/SpaceManageDialog.tsx:176-204, 331-337`
-- **What:** Disabled button reason is in a Tooltip only. No inline page-count or hint about what to do first.
-- **Cost:** Trivial — small "(<N> pages)" badge next to disabled Delete; or inline help line under the row.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
 
 ### UX-371 — Per-space journal template buried in Manage Spaces
 - **Domain:** Frontend / Spaces / Journal
