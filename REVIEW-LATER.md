@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 627 — Batch UX-TRIVIAL-4: closed UX-379 (AppSidebar tooltip last-synced), UX-383 (BugReport redact sibling row), UX-390 (KeyboardSettings format hint); 3 of 5 attempted, UX-332 + UX-344 subagents stuck and cancelled by user — both stay open)
+> **Last updated:** 2026-05-03 (Session 628 — Batch UX-TRIVIAL-5: closed UX-336 (CJK 3-char hint), UX-343 (TrashView batch-restore tooltip), UX-344 (PropertyDefinitions delete-button always-visible — re-attempt), UX-355 (Graph aria-describedby), UX-357 (Graph node `<title>` tooltip), UX-363 (References "Filters" label); 5 of 5 attempted, all clean — pre-resolving file paths in the orchestrator eliminated stuck-subagent failures from sessions 624-627)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-83 open items in the summary table; 123 detail entries (FE-* sub-tables don't appear in the summary).
+77 open items in the summary table; 117 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -64,11 +64,8 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-332 | UX | PageBrowser sort preference persists silently — no UI cue | S | — |
 | UX-333 | UX | "+" button on namespace folders hidden until hover on desktop | S | — |
 | UX-334 | UX | TemplatesView "remove template" × hidden until hover (destructive) | S | — |
-| UX-336 | UX | CJK search notice doesn't explain the 3-char workaround | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-339 | UX | Property definition options editor has no JSON validation feedback | S | — |
-| UX-343 | UX | Trash batch-restore confirmation threshold (5) is undiscoverable | S | — |
-| UX-344 | UX | Property definition delete button hidden until hover (desktop) | S | — |
 | UX-345 | UX | History "Restore to here" vs "Revert selected" terminology overlaps | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
 | UX-347 | UX | Conflict "Keep Incoming" / "Discard Incoming" is ambiguous | S | — |
@@ -76,12 +73,9 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-350 | UX | History op-type filter has no in-UI explanation | S | — |
 | UX-351 | UX | Non-reversible history entries marked only by `opacity-50` + lock icon | S | — |
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
-| UX-355 | UX | Graph node Enter/Space activation is undocumented | S | — |
-| UX-357 | UX | Graph node labels truncated at 20 chars without `<title>` tooltip | S | — |
 | UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
 | UX-359 | UX | Page title in rich-display mode (with chips) lacks edit affordance | S | — |
 | UX-362 | UX | Block zoom has no visible "Exit zoom" affordance (Escape only) | S | — |
-| UX-363 | UX | `LinkedReferences` / `UnlinkedReferences` filter trigger has no visible label | S | — |
 | UX-364 | UX | `SpaceSwitcher` trigger reads as a label, not a switcher | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
@@ -1302,16 +1296,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-
-### UX-336 — CJK search notice doesn't explain the 3-char workaround
-- **Domain:** Frontend / Search
-- **Location:** `src/components/SearchPanel.tsx:415-425`
-- **What:** Banner says "CJK search is limited"; user can't tell what to do.
-- **Cost:** Trivial — extend copy to mention 3+ character minimum.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-337 — Disabled `SearchablePopover` trigger has no tooltip explaining why
 - **Domain:** Frontend / Search
 - **Location:** `src/components/SearchablePopover.tsx:109`
@@ -1328,24 +1312,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** S — try/catch parse on every change; render a small red "Invalid JSON" line + disable Save until valid.
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-### UX-343 — Trash batch-restore confirmation threshold (5) is undiscoverable
-- **Domain:** Frontend / Trash
-- **Location:** `src/components/TrashView.tsx:96-99, 191-197` (`BATCH_RESTORE_CONFIRM_THRESHOLD = 5`)
-- **What:** Restoring 5 items is silent, restoring 6 prompts. Surprising boundary; not documented anywhere visible.
-- **Cost:** Trivial — either confirm always (matches batch-purge), or surface the threshold in a tooltip ("Confirms above 5 items").
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-344 — Property definition delete button hidden until hover (desktop)
-- **Domain:** Frontend / Properties view
-- **Location:** `src/components/PropertyDefinitionsList.tsx:301-309`
-- **What:** Same `opacity-0 group-hover` pattern as PageTreeItem / TemplatesView. Touch is fine; desktop is poor.
-- **Cost:** Trivial — show on focus + always-visible-on-mobile is already done; just drop `opacity-0` from desktop class set, or show on `:focus-within` of the row.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-345 — History: displayed label is already "Restore to this point"; only the i18n key name + the per-entry-vs-point-in-time terminology gap remains
@@ -1412,25 +1378,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-355 — Graph node Enter/Space activation is undocumented
-- **Domain:** Frontend / Graph
-- **Location:** `src/lib/graph-sim-helpers.ts:140-162` ; `src/components/GraphView.tsx:223-228`
-- **What:** Nodes are activatable but the SVG carries only `aria-label="Graph"`. Keyboard users may not realise nodes are interactive.
-- **Cost:** Trivial — `aria-describedby` on the SVG with a one-line keyboard hint.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-
-### UX-357 — Graph node labels truncated at 20 chars without `<title>` tooltip
-- **Domain:** Frontend / Graph
-- **Location:** `src/lib/graph-sim-helpers.ts:120-140`
-- **What:** Long page names render as `prefix…` with no native tooltip; nodes become unidentifiable.
-- **Cost:** Trivial — `<title>{fullLabel}</title>` inside each node `<g>`.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-358 — `PageHeaderMenu` co-locates destructive Delete with benign actions in one popover
 - **Domain:** Frontend / Page editor
 - **Location:** `src/components/PageHeaderMenu.tsx:151-281` (popover entries top-to-bottom: Open in New Tab L162-174 → Add Alias → Add Tag → Add Property → `<hr>` → Toggle Template → Toggle Journal Template → `<hr>` → Export → `<hr>` (when `showMoveEntry`) → Move To submenu → `<hr>` L271 → Delete L272-279)
@@ -1456,15 +1403,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** Trivial — small "Exit zoom" button next to the home crumb on coarse pointer.
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-### UX-363 — `LinkedReferences` / `UnlinkedReferences` filter trigger has no visible label
-- **Domain:** Frontend / Page editor
-- **Location:** `src/components/LinkedReferences.tsx:316-320, 329-335` ; `src/components/UnlinkedReferences.tsx:298-302`
-- **What:** SlidersHorizontal icon button with `aria-label` and an active-count badge — but no text label. (Validator confirmed the count badge IS present; the only gap is a visible "Filters" label.)
-- **Cost:** Trivial — short "Filters" text on desktop, icon-only on mobile.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-364 — `SpaceSwitcher` trigger reads as a label, not a switcher
