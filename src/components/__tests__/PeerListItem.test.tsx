@@ -138,10 +138,13 @@ describe('PeerListItem', () => {
       const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
       await user.click(editBtn)
 
-      // Popover is now open — type an address and submit
+      // Popover is now open — type a syntactically valid address that
+      // the server rejects (UX-378: client validation now blocks
+      // malformed input before it reaches the IPC; this exercises
+      // the defense-in-depth toast path for server-side rejections).
       const input = screen.getByLabelText('Address (host:port)')
       await user.clear(input)
-      await user.type(input, 'bad-address')
+      await user.type(input, '192.168.1.1:5000')
       await user.click(screen.getByRole('button', { name: /Save/i }))
 
       await waitFor(() => {
@@ -281,6 +284,80 @@ describe('PeerListItem', () => {
       // axe audit with popover open.
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── UX-378: real-time inline format validation ──────────────────────
+  describe('address popover inline format validation (UX-378)', () => {
+    it('shows no inline error for empty input and disables Save', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(input).not.toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('button', { name: /Save/i })).toBeDisabled()
+    })
+
+    it('shows no inline error and enables Save for valid host:port', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+      await user.type(input, '192.168.1.100:5000')
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(input).not.toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('button', { name: /Save/i })).toBeEnabled()
+    })
+
+    it('shows format error and disables Save for malformed input', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+      await user.type(input, 'notahost')
+
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent('Format must be host:port (e.g., 192.168.1.100:5000)')
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(input).toHaveAttribute('aria-describedby', 'peer-address-error')
+      expect(alert).toHaveAttribute('id', 'peer-address-error')
+      expect(screen.getByRole('button', { name: /Save/i })).toBeDisabled()
+    })
+
+    it('shows port error and disables Save when port is out of range', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+      await user.type(input, '192.168.1.100:99999')
+
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent('Port must be between 1 and 65535')
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('button', { name: /Save/i })).toBeDisabled()
     })
   })
 

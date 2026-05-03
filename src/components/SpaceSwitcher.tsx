@@ -113,6 +113,16 @@ export function SpaceSwitcher(): React.JSX.Element {
                 )}
               >
                 {/*
+                 * UX-364 — static "Space:" prefix rendered as a sibling
+                 * BEFORE `<SelectValue>` so the trigger reads as a
+                 * switcher ("Space: Personal") rather than a bare label.
+                 * Kept outside `<SelectValue>` because Radix mirrors the
+                 * active option's text content into `SelectValue` and
+                 * wrapping it would trip the auto-mirror warning called
+                 * out in the FEAT-3p11 comment below.
+                 */}
+                <span className="text-muted-foreground mr-1 shrink-0">{t('space.prefix')}</span>
+                {/*
                  * FEAT-3p11 — keep the digit-hint chip scoped to the
                  * dropdown rows so it does not bleed into the trigger
                  * label. Implemented via the `endContent` slot on
@@ -126,7 +136,24 @@ export function SpaceSwitcher(): React.JSX.Element {
               </SelectTrigger>
             </span>
           </TooltipTrigger>
-          <TooltipContent>{t('spaceSwitcher.shortcutHint')}</TooltipContent>
+          {/*
+           * UX-368 — stack the existing shortcut hint above a list of
+           * the first five space → digit mappings so the user can see
+           * what each `Ctrl+1..5` / `⌘1..5` chord switches to without
+           * re-opening the dropdown. The dropdown rows still carry the
+           * digit-hint chip via `SelectItem`'s `endContent` slot — that
+           * is FEAT-3p11's contribution and is kept untouched.
+           */}
+          <TooltipContent>
+            <div className="flex flex-col gap-0.5 text-xs">
+              <span>{t('spaceSwitcher.shortcutHint')}</span>
+              {availableSpaces.slice(0, 5).map((space, idx) => (
+                <span key={space.id} className="text-muted-foreground">
+                  {spaceHotkeyHint(idx)} {space.name}
+                </span>
+              ))}
+            </div>
+          </TooltipContent>
         </Tooltip>
         <SelectContent>
           {availableSpaces.map((space, idx) => (

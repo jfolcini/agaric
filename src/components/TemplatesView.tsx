@@ -223,7 +223,7 @@ export function TemplatesView(): React.ReactElement {
                       size="icon-xs"
                       aria-label={t('templates.removeTemplateLabel', { name: tpl.content })}
                       className={cn(
-                        'shrink-0 opacity-0 group-hover:opacity-100 transition-opacity',
+                        'shrink-0',
                         'text-muted-foreground hover:text-destructive focus-visible:opacity-100',
                         '[@media(pointer:coarse)]:opacity-100',
                         'touch-target [@media(pointer:coarse)]:min-w-[44px]',

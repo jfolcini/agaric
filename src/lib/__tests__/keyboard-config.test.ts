@@ -226,19 +226,19 @@ describe('keyboard-config', () => {
     expect(getCustomOverrides()).toEqual({})
   })
 
-  it('findConflicts returns known Backspace conflict for defaults (different conditions, same keys+category)', () => {
-    // Backspace appears twice in editing (deleteBlock & mergeWithPrevious) with different conditions,
-    // however findConflicts checks by keys+category, so they appear as a conflict.
+  it('findConflicts does NOT flag Backspace defaults with different conditions (UX-394)', () => {
+    // Backspace appears twice in editing (deleteBlock & mergeWithPrevious) with
+    // different conditions (onEmptyBlock vs atStartOfBlock). Per UX-394,
+    // findConflicts now respects the `condition` field, so these are NOT
+    // conflicts — they fire under disjoint editor states.
     const conflicts = findConflicts()
-    expect(conflicts).toHaveLength(1)
-    expect(conflicts[0]?.keys).toBe('Backspace')
-    expect(conflicts[0]?.category).toBe('keyboard.category.editing')
-    expect(conflicts[0]?.ids).toContain('deleteBlock')
-    expect(conflicts[0]?.ids).toContain('mergeWithPrevious')
+    expect(conflicts).toHaveLength(0)
   })
 
-  it('findConflicts detects actual conflict when custom shortcut duplicates another', () => {
-    // Set prevBlock to same keys as nextBlock in the same category
+  it('findConflicts does NOT flag prevBlock/nextBlock when rebound to the same keys (different conditions)', () => {
+    // prevBlock fires only at the start of a block; nextBlock fires only at the
+    // end. They have different defined conditions, so even when bound to the
+    // same key they cannot fire together — UX-394 expects no conflict here.
     const nextDefault = DEFAULT_SHORTCUTS.find((s) => s.id === 'nextBlock')
     setCustomShortcut('prevBlock', nextDefault?.keys ?? '')
 
@@ -246,9 +246,63 @@ describe('keyboard-config', () => {
     const navConflict = conflicts.find(
       (c) => c.ids.includes('prevBlock') && c.ids.includes('nextBlock'),
     )
-    expect(navConflict).toBeDefined()
-    expect(navConflict?.keys).toBe(nextDefault?.keys)
-    expect(navConflict?.category).toBe('keyboard.category.navigation')
+    expect(navConflict).toBeUndefined()
+  })
+
+  it('findConflicts detects actual conflict when custom shortcut duplicates another (both unconditional)', () => {
+    // saveBlock and indentBlock both have NO condition, so they are wildcards
+    // and fire unconditionally on the same (keys, category). Setting saveBlock
+    // to indentBlock's default keys should surface a real conflict.
+    const indentDefault = DEFAULT_SHORTCUTS.find((s) => s.id === 'indentBlock')
+    setCustomShortcut('saveBlock', indentDefault?.keys ?? '')
+
+    const conflicts = findConflicts()
+    const editingConflict = conflicts.find(
+      (c) => c.ids.includes('saveBlock') && c.ids.includes('indentBlock'),
+    )
+    expect(editingConflict).toBeDefined()
+    expect(editingConflict?.keys).toBe(indentDefault?.keys)
+    expect(editingConflict?.category).toBe('keyboard.category.editing')
+  })
+
+  it('findConflicts flags two wildcard shortcuts on same (keys, category) — UX-394 Pass 1', () => {
+    // indentBlock and dedentBlock both have NO condition. Bind them to the
+    // same brand-new key combo: wildcard×wildcard → conflict.
+    setCustomShortcut('indentBlock', 'Ctrl + Alt + W')
+    setCustomShortcut('dedentBlock', 'Ctrl + Alt + W')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find((x) => x.ids.includes('indentBlock') && x.ids.includes('dedentBlock'))
+    expect(c).toBeDefined()
+    expect(c?.keys).toBe('Ctrl + Alt + W')
+    expect(c?.category).toBe('keyboard.category.editing')
+  })
+
+  it('findConflicts flags wildcard×conditioned cross-conflict on same (keys, category) — UX-394 Pass 2', () => {
+    // indentBlock has no condition (wildcard); mergeWithPrevious has condition
+    // `atStartOfBlock`. Rebinding indentBlock to 'Backspace' puts a wildcard
+    // alongside a conditioned binding on the same (keys, category) — wildcard
+    // fires unconditionally, so it collides with the conditioned binding.
+    setCustomShortcut('indentBlock', 'Backspace')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('indentBlock') && x.ids.includes('mergeWithPrevious'),
+    )
+    expect(c).toBeDefined()
+    expect(c?.keys).toBe('Backspace')
+    expect(c?.category).toBe('keyboard.category.editing')
+  })
+
+  it('findConflicts does NOT flag two conditioned shortcuts with different conditions on same (keys, category) — UX-394', () => {
+    // deleteBlock (onEmptyBlock) and mergeWithPrevious (atStartOfBlock) share
+    // keys+category but have disjoint defined conditions. They never fire
+    // together, so they must NOT be reported as a conflict.
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('deleteBlock') && x.ids.includes('mergeWithPrevious'),
+    )
+    expect(c).toBeUndefined()
   })
 
   it('findConflicts detects conflict when two shortcuts are both set to the same custom key', () => {

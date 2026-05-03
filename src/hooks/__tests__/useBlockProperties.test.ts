@@ -553,3 +553,112 @@ describe('useBlockProperties undo notifications', () => {
     expect(onNewActionSpy).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// F-37: dependency warning when cycling to DONE on a blocked task (UX-325)
+// ---------------------------------------------------------------------------
+
+const mockedToastWarning = vi.mocked(toast.warning)
+
+describe('useBlockProperties handleToggleTodo F-37 dependency warning', () => {
+  /**
+   * Route both `set_todo_state` and `get_properties` IPC calls. The
+   * gutter-cycle path fires the dependency check fire-and-forget after
+   * the state-change IPC resolves — tests must let microtasks flush
+   * before asserting on the warning toast.
+   */
+  function mockInvokeWithProperties(props: Array<Partial<{ key: string; value_ref: string }>>) {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') {
+        return props.map((p) => ({
+          key: p.key ?? '',
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: p.value_ref ?? null,
+        }))
+      }
+      return undefined
+    })
+  }
+
+  it('fires toast.warning when cycling DOING → DONE on a block with unresolved blocked_by', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DOING' })] })
+    mockInvokeWithProperties([{ key: 'blocked_by', value_ref: 'BLOCK_DEP' }])
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+      // Flush the fire-and-forget getProperties() promise chain.
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockedToastWarning).toHaveBeenCalledWith(
+      'This task has dependencies that may not be complete',
+    )
+  })
+
+  it('does not fire toast.warning when cycling to DONE on a block without blocked_by', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DOING' })] })
+    mockInvokeWithProperties([])
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockedToastWarning).not.toHaveBeenCalled()
+  })
+
+  it('does not fire toast.warning when cycling to a non-DONE state on a blocked task', async () => {
+    // Cycling none → TODO; even though blocked_by is set, the warning
+    // is only contractually fired on DONE.
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
+    mockInvokeWithProperties([{ key: 'blocked_by', value_ref: 'BLOCK_DEP' }])
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockedToastWarning).not.toHaveBeenCalled()
+  })
+
+  it('does not fire toast.warning when cycling DONE → CANCELLED on a blocked task', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DONE' })] })
+    mockInvokeWithProperties([{ key: 'blocked_by', value_ref: 'BLOCK_DEP' }])
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockedToastWarning).not.toHaveBeenCalled()
+  })
+
+  it('does not fire toast.warning when blocked_by has no value_ref (unresolved-only check)', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DOING' })] })
+    mockInvokeWithProperties([{ key: 'blocked_by' }])
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockedToastWarning).not.toHaveBeenCalled()
+  })
+})
