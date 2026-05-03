@@ -226,7 +226,9 @@ export function useDuePanelData({
             },
           )
         }
-      } catch {
+      } catch (err) {
+        // FE-M-1: log overdue fetch failure to match the main/projected pattern.
+        logger.warn('useDuePanelData', 'overdue fetch failed', { date }, err)
         if (!stale) setOverdueBlocks([])
       }
     }
@@ -290,7 +292,9 @@ export function useDuePanelData({
             },
           )
         }
-      } catch {
+      } catch (err) {
+        // FE-M-1: log upcoming fetch failure to match the main/projected pattern.
+        logger.warn('useDuePanelData', 'upcoming fetch failed', { date, warningDays }, err)
         if (!stale) setUpcomingBlocks([])
       }
     }
@@ -448,6 +452,8 @@ export function useDuePanelData({
               })
             },
           ).catch((err) => {
+            // FE-M-2: skip side effects (logging, toast) if the effect has unmounted.
+            if (stale) return
             logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
             toast.error(t('duePanel.loadAgendaFailed'))
           })

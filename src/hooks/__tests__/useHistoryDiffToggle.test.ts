@@ -218,6 +218,34 @@ describe('useHistoryDiffToggle', () => {
     expect(result.current.loadingDiffs.has(20)).toBe(false)
   })
 
+  it('FE-M-4: handleToggleDiff identity stable across state changes', async () => {
+    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+
+    // Stable keyFn — consumers pass a memoized keyFn so the callback's only
+    // remaining dep is stable. The point of FE-M-4 is that expandedKeys /
+    // diffCache changes alone must not churn the callback identity.
+    const keyFn = (entry: HistoryEntry): number => entry.seq
+    const { result } = renderHook(() => useHistoryDiffToggle<number>(keyFn))
+
+    const initialCallback = result.current.handleToggleDiff
+
+    // Toggle one key — expandedKeys and diffCache both change
+    await act(async () => {
+      await result.current.handleToggleDiff(makeEntry({ seq: 1 }))
+    })
+    expect(result.current.expandedKeys.has(1)).toBe(true)
+    expect(result.current.diffCache.has(1)).toBe(true)
+    expect(result.current.handleToggleDiff).toBe(initialCallback)
+
+    // Toggle another key — state changes again, callback identity must hold
+    await act(async () => {
+      await result.current.handleToggleDiff(makeEntry({ seq: 2 }))
+    })
+    expect(result.current.expandedKeys.has(2)).toBe(true)
+    expect(result.current.diffCache.has(2)).toBe(true)
+    expect(result.current.handleToggleDiff).toBe(initialCallback)
+  })
+
   it('FE-H-9: logs warning when computeEditDiff rejects', async () => {
     const rejection = new Error('compute failed')
     mockedComputeEditDiff.mockRejectedValue(rejection)

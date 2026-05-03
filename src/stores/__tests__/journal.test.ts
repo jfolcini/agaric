@@ -12,7 +12,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useJournalStore } from '../journal'
+import { parseISODate, useJournalStore } from '../journal'
 
 beforeEach(() => {
   useJournalStore.setState({
@@ -128,5 +128,14 @@ describe('journal store', () => {
     const state = useJournalStore.getState()
     expect(state.scrollToDate).toBeNull()
     expect(state.scrollToPanel).toBeNull()
+  })
+
+  // -- parseISODate (FE-L-6: reject wrap-around invalid dates) --
+  it('parseISODate rejects out-of-range components (2026-13-45)', () => {
+    expect(parseISODate('2026-13-45')).toBeNull()
+  })
+
+  it('parseISODate rejects day-overflow wrap (2026-02-30 → Mar 2)', () => {
+    expect(parseISODate('2026-02-30')).toBeNull()
   })
 })

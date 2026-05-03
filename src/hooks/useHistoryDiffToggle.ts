@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
@@ -15,10 +15,19 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
   const [diffCache, setDiffCache] = useState<Map<K, DiffSpan[]>>(new Map())
   const [loadingDiffs, setLoadingDiffs] = useState<Set<K>>(new Set())
 
+  // FE-M-4: mirror state into refs so handleToggleDiff can read latest values
+  // without listing them as deps (which would churn the callback identity on
+  // every toggle). Functional setState forms below remain the source of truth
+  // for writes.
+  const expandedKeysRef = useRef(expandedKeys)
+  expandedKeysRef.current = expandedKeys
+  const diffCacheRef = useRef(diffCache)
+  diffCacheRef.current = diffCache
+
   const handleToggleDiff = useCallback(
     async (entry: HistoryEntry) => {
       const key = keyFn(entry)
-      if (expandedKeys.has(key)) {
+      if (expandedKeysRef.current.has(key)) {
         setExpandedKeys((prev) => {
           const next = new Set(prev)
           next.delete(key)
@@ -27,7 +36,7 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
         return
       }
       setExpandedKeys((prev) => new Set(prev).add(key))
-      if (diffCache.has(key)) return
+      if (diffCacheRef.current.has(key)) return
       setLoadingDiffs((prev) => new Set(prev).add(key))
       try {
         const diff = await computeEditDiff({ deviceId: entry.device_id, seq: entry.seq })
@@ -50,7 +59,7 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
         })
       }
     },
-    [expandedKeys, diffCache, keyFn],
+    [keyFn],
   )
 
   return { expandedKeys, diffCache, loadingDiffs, handleToggleDiff }

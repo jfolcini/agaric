@@ -243,6 +243,8 @@ describe('executeAgendaFilters', () => {
     it('calls invoke with correct arguments', async () => {
       await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
 
+      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
+      // boundary, so the IPC layer always sees a string.
       expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
         key: 'todo_state',
         valueText: 'TODO',
@@ -250,7 +252,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: null,
+        spaceId: '',
       })
     })
   })
@@ -283,6 +285,8 @@ describe('executeAgendaFilters', () => {
     it('calls invoke with correct arguments', async () => {
       await executeAgendaFilters([{ dimension: 'priority', values: ['1'] }], null)
 
+      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
+      // boundary, so the IPC layer always sees a string.
       expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
         key: 'priority',
         valueText: '1',
@@ -290,7 +294,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: null,
+        spaceId: '',
       })
     })
   })
@@ -599,6 +603,8 @@ describe('executeAgendaFilters', () => {
 
       expect(result.blocks).toHaveLength(1)
       expect(result.blocks[0]?.id).toBe('completed-1')
+      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
+      // boundary, so the IPC layer always sees a string.
       expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
         key: 'completed_at',
         valueText: null,
@@ -606,7 +612,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: null,
+        spaceId: '',
       })
     })
 
@@ -642,6 +648,8 @@ describe('executeAgendaFilters', () => {
 
       expect(result.blocks).toHaveLength(1)
       expect(result.blocks[0]?.id).toBe('created-1')
+      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
+      // boundary, so the IPC layer always sees a string.
       expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
         key: 'created_at',
         valueText: null,
@@ -649,7 +657,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: null,
+        spaceId: '',
       })
     })
   })
@@ -857,5 +865,50 @@ describe('executeAgendaFilters', () => {
 
     expect(result.hasMore).toBe(false)
     expect(result.cursor).toBeNull()
+  })
+
+  describe('spaceId normalization at the boundary (FE-L-12)', () => {
+    it('normalizes a null spaceId to "" once, so every dispatched IPC sees a string', async () => {
+      // Use a filter set that exercises both `query_by_property` (status,
+      // priority, dueDate Overdue) and `list_blocks` (dueDate preset, tag),
+      // so we observe that BOTH IPC types receive `''` rather than `null`.
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        if (cmd === 'list_tags_by_prefix') {
+          const a = args as Record<string, unknown>
+          if (a['prefix'] === 'tag-x') {
+            return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
+          }
+          return []
+        }
+        return emptyPage
+      })
+
+      await executeAgendaFilters(
+        [
+          { dimension: 'status', values: ['TODO'] },
+          { dimension: 'dueDate', values: ['Today'] },
+          { dimension: 'tag', values: ['tag-x'] },
+        ],
+        null,
+      )
+
+      // Every dispatched query_by_property / list_blocks / list_undated_tasks
+      // call must carry spaceId === '' (never null / undefined).
+      const dispatchedSpaceIdCmds = new Set([
+        'query_by_property',
+        'list_blocks',
+        'list_undated_tasks',
+      ])
+      const dispatched = mockedInvoke.mock.calls.filter(([cmd]) =>
+        dispatchedSpaceIdCmds.has(cmd as string),
+      )
+      expect(dispatched.length).toBeGreaterThan(0)
+      for (const [, args] of dispatched) {
+        expect((args as Record<string, unknown>)['spaceId']).toBe('')
+      }
+    })
   })
 })

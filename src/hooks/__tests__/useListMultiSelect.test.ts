@@ -286,6 +286,29 @@ describe('useListMultiSelect', () => {
     expect(result.current.lastClickedId).toBe('d')
   })
 
+  it('toggleSelection identity is stable across items changes (FE-M-5)', () => {
+    const getItemId = (item: TestItem) => item.id
+    const { result, rerender } = renderHook(
+      ({ hookItems }: { hookItems: TestItem[] }) =>
+        useListMultiSelect<TestItem>({ items: hookItems, getItemId }),
+      { initialProps: { hookItems: items } },
+    )
+
+    const initialToggle = result.current.toggleSelection
+
+    // Same length, different reference (simulates paginated reload).
+    rerender({
+      hookItems: [
+        { id: 'a', name: 'Alpha' },
+        { id: 'b', name: 'Beta' },
+        { id: 'c', name: 'Charlie' },
+        { id: 'd', name: 'Delta' },
+      ],
+    })
+
+    expect(result.current.toggleSelection).toBe(initialToggle)
+  })
+
   it('rangeSelect defaults to index 0 when lastClickedId is null', () => {
     const { result } = renderHook(() =>
       useListMultiSelect<TestItem>({
