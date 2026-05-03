@@ -710,12 +710,14 @@ async fn list_backlinks_happy_path() {
         "response.next_cursor field present (nullable)",
     );
     assert_eq!(
-        result.get("has_more").and_then(|v| v.as_bool()),
+        result.get("has_more").and_then(serde_json::Value::as_bool),
         Some(false),
         "no results → has_more must be false",
     );
     assert_eq!(
-        result.get("total_count").and_then(|v| v.as_u64()),
+        result
+            .get("total_count")
+            .and_then(serde_json::Value::as_u64),
         Some(0),
         "no results → total_count must be 0",
     );
@@ -833,7 +835,7 @@ async fn list_property_defs_happy_path() {
         .await
         .expect("count property_definitions");
     assert_eq!(
-        arr.len() as i64,
+        i64::try_from(arr.len()).expect("test response length fits i64"),
         live_count,
         "list_property_defs response count must match live property_definitions row count",
     );
@@ -1348,7 +1350,9 @@ async fn concurrent_clients_exact_success_count() {
                         "response.items[] array present, got {v:?}",
                     );
                     assert!(
-                        v.get("has_more").and_then(|x| x.as_bool()).is_some(),
+                        v.get("has_more")
+                            .and_then(serde_json::Value::as_bool)
+                            .is_some(),
                         "response.has_more bool present, got {v:?}",
                     );
                     assert!(

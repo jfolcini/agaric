@@ -5242,7 +5242,7 @@ async fn seed_unlinked_blocks_for_total_count(pool: &SqlitePool) {
     for (idx, (blk_id, content, priority)) in blocks.iter().enumerate() {
         // First two blocks live on PAGE_X, next two on PAGE_Y, last two on PAGE_Z.
         let parent_page = pages[idx / 2].0;
-        let position = ((idx % 2) + 1) as i64;
+        let position = i64::try_from((idx % 2) + 1).expect("test fixture position fits i64");
         insert_block_with_parent(
             pool,
             blk_id,

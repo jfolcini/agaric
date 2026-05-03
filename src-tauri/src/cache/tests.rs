@@ -2983,7 +2983,7 @@ async fn projected_agenda_cache_chunked_rebuild_handles_large_diff() {
     .unwrap();
     assert_eq!(
         total,
-        per_block * (N_BLOCKS as i64),
+        per_block * i64::try_from(N_BLOCKS).expect("test constant N_BLOCKS fits i64"),
         "every block must contribute identical projection counts"
     );
 }
@@ -3038,7 +3038,7 @@ async fn projected_agenda_cache_split_chunked_rebuild_handles_large_input() {
     .unwrap();
     assert_eq!(
         total,
-        per_block * (N_BLOCKS as i64),
+        per_block * i64::try_from(N_BLOCKS).expect("test constant N_BLOCKS fits i64"),
         "every block must contribute identical projection counts"
     );
 
@@ -3227,7 +3227,7 @@ async fn agenda_cache_chunked_rebuild_handles_large_diff() {
     rebuild_agenda_cache(&pool).await.unwrap();
     assert_eq!(
         count_rows(&pool, "agenda_cache").await,
-        N_BLOCKS as i64,
+        i64::try_from(N_BLOCKS).expect("test constant N_BLOCKS fits i64"),
         "all {N_BLOCKS} blocks must be present in agenda_cache after first rebuild"
     );
 
@@ -3250,7 +3250,7 @@ async fn agenda_cache_chunked_rebuild_handles_large_diff() {
 
     assert_eq!(
         count_rows(&pool, "agenda_cache").await,
-        N_BLOCKS as i64,
+        i64::try_from(N_BLOCKS).expect("test constant N_BLOCKS fits i64"),
         "cache size remains {N_BLOCKS} after mutating {N_MUTATED} dates"
     );
 
@@ -3260,7 +3260,8 @@ async fn agenda_cache_chunked_rebuild_handles_large_diff() {
             .await
             .unwrap();
     assert_eq!(
-        on_new_date, N_MUTATED as i64,
+        on_new_date,
+        i64::try_from(N_MUTATED).expect("test constant N_MUTATED fits i64"),
         "exactly {N_MUTATED} blocks must land on the new date after the diff rebuild"
     );
 
@@ -3316,7 +3317,7 @@ async fn tags_cache_split_chunked_rebuild_handles_large_input() {
 
     assert_eq!(
         count_rows(&pool, "tags_cache").await,
-        N_TAGS as i64,
+        i64::try_from(N_TAGS).expect("test constant N_TAGS fits i64"),
         "all {N_TAGS} tags must be present after chunked split rebuild"
     );
 
@@ -3382,7 +3383,7 @@ async fn pages_cache_split_chunked_rebuild_handles_large_input() {
 
     assert_eq!(
         count_rows(&pool, "pages_cache").await,
-        N_PAGES as i64,
+        i64::try_from(N_PAGES).expect("test constant N_PAGES fits i64"),
         "all {N_PAGES} pages must be present after chunked split rebuild"
     );
 
