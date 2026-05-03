@@ -55,6 +55,9 @@ export const editor: Record<string, string> = {
   'suggestion.noResults.blockRef':
     'No results — block references can only point at existing blocks',
   'suggestion.create': 'Create',
+  'suggestion.footer.navigate': '↑↓ navigate',
+  'suggestion.footer.select': 'Enter to select',
+  'suggestion.footer.close': 'Esc to close',
   'link.opensInNewTab': '(opens in new tab)',
   'lightbox.description': 'Fullscreen preview of {{filename}}',
   'lightbox.openExternal': 'Open externally',

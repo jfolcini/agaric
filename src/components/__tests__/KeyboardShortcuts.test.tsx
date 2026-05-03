@@ -390,6 +390,62 @@ describe('KeyboardShortcuts', () => {
     })
   })
 
+  // UX-388: filter input narrows the visible shortcuts by description, key
+  // text, or category so users don't have to eyeball-scan the full list.
+  describe('shortcut filter (UX-388)', () => {
+    it('renders the filter input above the table', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const filterInput = screen.getByTestId('shortcuts-filter')
+      expect(filterInput).toBeInTheDocument()
+      expect(filterInput).toHaveAttribute('placeholder', t('keyboard.filterPlaceholder'))
+      expect(filterInput).toHaveAttribute('aria-label', t('keyboard.filterLabel'))
+    })
+
+    it('typing into the filter narrows the visible shortcuts', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      // Sanity: an unrelated shortcut is visible before filtering.
+      expect(screen.getByText(t('keyboard.focusSearch'))).toBeInTheDocument()
+      expect(screen.getByText(t('keyboard.indentBlock'))).toBeInTheDocument()
+
+      const filterInput = screen.getByTestId('shortcuts-filter')
+      fireEvent.change(filterInput, { target: { value: 'indent' } })
+
+      // The matching shortcut stays visible…
+      expect(screen.getByText(t('keyboard.indentBlock'))).toBeInTheDocument()
+      // …and unrelated ones disappear.
+      expect(screen.queryByText(t('keyboard.focusSearch'))).not.toBeInTheDocument()
+    })
+
+    it('shows the empty-state message when no shortcuts match', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const filterInput = screen.getByTestId('shortcuts-filter')
+      fireEvent.change(filterInput, { target: { value: 'zzznomatchzzz' } })
+
+      expect(screen.getByTestId('shortcuts-filter-empty')).toHaveTextContent(
+        t('keyboard.filterEmpty'),
+      )
+      // The shortcuts table should no longer show any rows.
+      expect(screen.queryByText(t('keyboard.focusSearch'))).not.toBeInTheDocument()
+    })
+
+    it('clearing the filter restores the full list', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const filterInput = screen.getByTestId('shortcuts-filter')
+      fireEvent.change(filterInput, { target: { value: 'indent' } })
+      expect(screen.queryByText(t('keyboard.focusSearch'))).not.toBeInTheDocument()
+
+      fireEvent.change(filterInput, { target: { value: '' } })
+
+      expect(screen.getByText(t('keyboard.focusSearch'))).toBeInTheDocument()
+      expect(screen.getByText(t('keyboard.indentBlock'))).toBeInTheDocument()
+      expect(screen.queryByTestId('shortcuts-filter-empty')).not.toBeInTheDocument()
+    })
+  })
+
   // UX-397: customised shortcuts in the help panel are flagged with a
   // "Customized" badge so users can tell which rows reflect their own
   // bindings vs. defaults.

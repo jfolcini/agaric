@@ -46,14 +46,24 @@ export interface QueryBuilderModalProps {
 
 type QueryType = 'tag' | 'property' | 'backlinks'
 
-/** Map UI operator symbols to backend operator names. */
-const OPERATOR_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'eq', label: '=' },
-  { value: 'neq', label: '\u2260' },
-  { value: 'lt', label: '<' },
-  { value: 'gt', label: '>' },
-  { value: 'lte', label: '\u2264' },
-  { value: 'gte', label: '\u2265' },
+/**
+ * Map UI operator symbols to backend operator names.
+ *
+ * UX-317: Each option carries both the glyph (`symbol`) — shown in the
+ * trigger and as a leading affordance in the dropdown row — and a
+ * translation key (`descKey`) for the human-readable description that
+ * appears beside the glyph in the dropdown only. The description is
+ * rendered via `<SelectItem endContent>` so it stays out of the
+ * Radix auto-mirror surface that fills the trigger (see
+ * `src/components/ui/select.tsx` for the contract).
+ */
+const OPERATOR_OPTIONS: Array<{ value: string; symbol: string; descKey: string }> = [
+  { value: 'eq', symbol: '=', descKey: 'query.operator.eqDesc' },
+  { value: 'neq', symbol: '\u2260', descKey: 'query.operator.neqDesc' },
+  { value: 'lt', symbol: '<', descKey: 'query.operator.ltDesc' },
+  { value: 'gt', symbol: '>', descKey: 'query.operator.gtDesc' },
+  { value: 'lte', symbol: '\u2264', descKey: 'query.operator.lteDesc' },
+  { value: 'gte', symbol: '\u2265', descKey: 'query.operator.gteDesc' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -239,8 +249,12 @@ export function QueryBuilderModal({
               </SelectTrigger>
               <SelectContent>
                 {OPERATOR_OPTIONS.map((op) => (
-                  <SelectItem key={op.value} value={op.value}>
-                    {op.label}
+                  <SelectItem
+                    key={op.value}
+                    value={op.value}
+                    endContent={<span className="ml-2 text-muted-foreground">{t(op.descKey)}</span>}
+                  >
+                    {op.symbol}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -73,6 +73,7 @@ export const common: Record<string, string> = {
   'space.onboardingDismiss': 'Got it',
   'space.onboardingSeenKey': 'agaric:space-onboarding-seen-v1',
   'space.accentBadge': '{{name}} space — click to switch',
+  'space.accentBadgeTitle': '{{name}} — click to switch',
   'space.statusChip': 'Active space: {{name}}. Click to switch space.',
   'action.addBlock': 'Add block',
   'action.save': 'Save',

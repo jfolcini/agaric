@@ -8,6 +8,12 @@
 
 export const properties: Record<string, string> = {
   'query.noResults': 'No results',
+  'query.operator.eqDesc': 'equals',
+  'query.operator.neqDesc': 'not equal',
+  'query.operator.ltDesc': 'less than',
+  'query.operator.gtDesc': 'greater than',
+  'query.operator.lteDesc': 'less than or equal',
+  'query.operator.gteDesc': 'greater than or equal',
   'queryBuilder.title': 'Build Query',
   'queryBuilder.description': 'Create an inline query to embed in your page.',
   'queryBuilder.typeLabel': 'Query type',

@@ -225,6 +225,17 @@ export const SuggestionList = ({
             : items.map((item, index) => renderItem(item, index))}
         </div>
       </ScrollArea>
+      <div
+        className="border-t border-border/50 px-2 py-1 text-[10px] text-muted-foreground select-none hidden sm:flex items-center gap-2"
+        data-testid="suggestion-list-footer"
+        aria-hidden="true"
+      >
+        <span>{t('suggestion.footer.navigate')}</span>
+        <span className="text-border">·</span>
+        <span>{t('suggestion.footer.select')}</span>
+        <span className="text-border">·</span>
+        <span>{t('suggestion.footer.close')}</span>
+      </div>
     </div>
   )
 }

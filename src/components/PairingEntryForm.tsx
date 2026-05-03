@@ -12,6 +12,7 @@ import type React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useId, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -144,16 +145,9 @@ export function PairingEntryForm({
         </span>
       </div>
 
-      {/* Entry mode toggle: manual passphrase vs QR scan */}
+      {/* Entry mode toggle: QR scan (recommended) vs manual passphrase.
+          UX-376: QR is faster and signposted as the recommended path. */}
       <div className="pairing-entry-toggle flex gap-2 mb-4 justify-center">
-        <Button
-          variant={entryMode === 'manual' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => onEntryModeChange('manual')}
-          className="touch-target"
-        >
-          {t('pairing.typePassphraseButton')}
-        </Button>
         <Button
           variant={entryMode === 'scan' ? 'default' : 'outline'}
           size="sm"
@@ -162,6 +156,17 @@ export function PairingEntryForm({
         >
           <Camera className="h-4 w-4 mr-1" />
           {t('pairing.scanQrCodeButton')}
+          <Badge variant="secondary" className="ml-1.5 text-[10px] py-0 px-1.5">
+            {t('pairing.recommendedBadge')}
+          </Badge>
+        </Button>
+        <Button
+          variant={entryMode === 'manual' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onEntryModeChange('manual')}
+          className="touch-target"
+        >
+          {t('pairing.typePassphraseButton')}
         </Button>
       </div>
 
