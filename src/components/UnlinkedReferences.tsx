@@ -87,13 +87,17 @@ export function UnlinkedReferences({
         // `BacklinkGroup[]` invariant.
         const respGroups = Array.isArray(resp.groups) ? resp.groups : []
         if (cursor) {
-          // Append: merge groups with same page_id
+          // Append: merge groups with same page_id.
+          // FE-L-13: copy-and-replace the matching group instead of
+          // reassigning `existing.blocks` on a shared reference — `prev`
+          // and `merged` share the same group objects after `[...prev]`.
           setGroups((prev) => {
             const merged = [...prev]
             for (const newGroup of respGroups) {
-              const existing = merged.find((g) => g.page_id === newGroup.page_id)
+              const idx = merged.findIndex((g) => g.page_id === newGroup.page_id)
+              const existing = idx >= 0 ? merged[idx] : undefined
               if (existing) {
-                existing.blocks = [...existing.blocks, ...newGroup.blocks]
+                merged[idx] = { ...existing, blocks: [...existing.blocks, ...newGroup.blocks] }
               } else {
                 merged.push(newGroup)
               }

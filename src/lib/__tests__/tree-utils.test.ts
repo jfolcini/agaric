@@ -189,6 +189,15 @@ describe('getProjection', () => {
     expect(result.parentId).toBeNull()
   })
 
+  it('returns early-result shape when activeId is missing without splicing at -1 (FE-M-11)', () => {
+    // With a non-trivial drag offset and a valid overId, removing the explicit
+    // activeIndex bounds check would let `splice(-1, 1)` strip the last item
+    // from the cloned array and compute a bogus projection. The early return
+    // must yield the full fallback shape regardless of dragOffset.
+    const result = getProjection(items, 'NONEXISTENT', 'B', INDENT * 5, INDENT)
+    expect(result).toEqual({ depth: 0, parentId: null, maxDepth: 0, minDepth: 0 })
+  })
+
   it('keeps same depth when dragging vertically without horizontal offset', () => {
     // Drag C (depth 0) over B (depth 0), no horizontal offset
     const result = getProjection(items, 'C', 'B', 0, INDENT)

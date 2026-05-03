@@ -3,7 +3,19 @@ import JSZip from 'jszip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { exportGraphAsZip } from '../export-graph'
 
+vi.mock('../logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
+import { logger } from '../logger'
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedLogger = vi.mocked(logger)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -85,5 +97,45 @@ describe('exportGraphAsZip', () => {
 
     const blob = await exportGraphAsZip(null)
     expect(blob).toBeInstanceOf(Blob)
+  })
+
+  it('skips and logs pages whose export fails, returning the rest', async () => {
+    // Pin the partial-export contract (FE-M-12): a single per-page IPC failure
+    // must not reject the whole export. The successful pages still land in the
+    // ZIP and the failure is surfaced through `logger.warn` with the page id.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') {
+        return {
+          items: [
+            { id: 'P1', block_type: 'page', content: 'Good One' },
+            { id: 'P2', block_type: 'page', content: 'Broken' },
+            { id: 'P3', block_type: 'page', content: 'Good Two' },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'export_page_markdown') {
+        const id = (args as { pageId: string }).pageId
+        if (id === 'P2') throw new Error('boom')
+        return `# ${id}`
+      }
+      return null
+    })
+
+    const blob = await exportGraphAsZip(null)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const filenames = Object.keys(unzipped.files)
+
+    expect(filenames).toContain('Good One.md')
+    expect(filenames).toContain('Good Two.md')
+    expect(filenames).not.toContain('Broken.md')
+
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'export-graph',
+      'page export failed',
+      { pageId: 'P2' },
+      expect.any(Error),
+    )
   })
 })

@@ -158,7 +158,14 @@ export function AgendaResults({
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Apply sorting to blocks for consistent ordering (used in both flat + grouped modes)
+  // Sort once for the flat (no-group) display path. The grouping helpers
+  // (groupByDate / groupByPriority / groupByState / groupByPage) all re-sort
+  // internally with their own group-specific key chains, so feeding them a
+  // pre-sorted list would just be thrown away. Per FE-M-9 we picked option
+  // (a) — keep the helpers' internal sort and feed every grouping branch
+  // raw `blocks` — because option (b) would require changing helper sort
+  // behaviour, which the task forbids. `sortedBlocks` is therefore consumed
+  // only by the flat fallback below.
   const sortedBlocks = useMemo(
     () => sortAgendaBlocksBy(blocks, sortBy, pageTitles),
     [blocks, sortBy, pageTitles],
@@ -169,9 +176,9 @@ export function AgendaResults({
     if (groupBy === 'date') return groupByDate(blocks)
     if (groupBy === 'priority') return groupByPriority(blocks)
     if (groupBy === 'state') return groupByState(blocks)
-    if (groupBy === 'page') return groupByPage(sortedBlocks, pageTitles)
+    if (groupBy === 'page') return groupByPage(blocks, pageTitles)
     return null
-  }, [blocks, groupBy, sortedBlocks, pageTitles])
+  }, [blocks, groupBy, pageTitles])
 
   const flatItems = useMemo(
     () => (groups ? groups.flatMap((g) => g.blocks) : sortedBlocks),

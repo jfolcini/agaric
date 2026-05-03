@@ -135,6 +135,18 @@ export function getProjection(
 ): Projection {
   const overIndex = items.findIndex((item) => item.id === overId)
   const activeIndex = items.findIndex((item) => item.id === activeId)
+
+  // FE-M-11: explicit bounds check at function entry. The `!activeItem` guard
+  // below also catches a missing active id (via `items[-1] === undefined`),
+  // but the indirection between `findIndex` and the downstream
+  // `splice(activeIndex, 1)` makes future edits risky — `splice(-1, 1)` would
+  // silently remove the last item. We only check `activeIndex` here because
+  // `overIndex === -1` is intentional when `overId === SENTINEL_ID` and is
+  // handled by the sentinel branch below.
+  if (activeIndex < 0) {
+    return { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 }
+  }
+
   const activeItem = items[activeIndex]
 
   if (!activeItem) {
