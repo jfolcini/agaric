@@ -7,10 +7,14 @@ import { axe } from 'vitest-axe'
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
+import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
 import { PropertyValuePicker } from '../PropertyValuePicker'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // MAINT-189: cache is module-level, so flush between tests so each
+  // case observes its own `invoke('list_property_keys')` fetch.
+  _resetPropertyKeysCacheForTest()
 })
 
 describe('PropertyValuePicker', () => {

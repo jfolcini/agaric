@@ -18,10 +18,13 @@
 #   - unpinned-uses: 35
 #
 # Threat-model context (AGENTS.md): Agaric is single-user, no cloud,
-# no adversarial peers. The release-tag.yml `template-injection`
-# findings, for example, fire on `${{ inputs.version }}` interpolation
-# and only `workflow_dispatch` collaborators can trigger them — but
-# the mitigation (pass via `env:`) is cheap, so they're worth fixing.
+# no adversarial peers. The MAINT-114 fold of `release-tag.yml` into
+# `release.yml`'s `bump-version` job (workflow_dispatch entrypoint)
+# defused the 6 original `template-injection` findings on
+# `${{ inputs.version }}` by routing the input through `env:` and
+# referencing it as `$INPUT_VERSION` in the run script — the
+# mitigation is cheap and removes the entries entirely instead of
+# baselining them.
 
 rules:
   artipacked:
@@ -29,10 +32,10 @@ rules:
       - _validate.yml:25
       - ci.yml:181
       - ci.yml:51
-      - release-tag.yml:40
-      - release.yml:28
-      - release.yml:314
-      - release.yml:72
+      - release.yml:37
+      - release.yml:88
+      - release.yml:132
+      - release.yml:374
   cache-poisoning:
     ignore:
       - ci.yml:189
@@ -42,24 +45,17 @@ rules:
       - ci.yml:77
       - ci.yml:82
       - ci.yml:83
-      - release.yml:111
-      - release.yml:112
       - release.yml:3
-      - release.yml:322
-      - release.yml:346
-      - release.yml:347
-      - release.yml:80
+      - release.yml:51
+      - release.yml:140
+      - release.yml:171
+      - release.yml:172
+      - release.yml:382
+      - release.yml:406
+      - release.yml:407
   excessive-permissions:
     ignore:
-      - release.yml:10
-  template-injection:
-    ignore:
-      - release-tag.yml:67
-      - release-tag.yml:72
-      - release-tag.yml:74
-      - release-tag.yml:76
-      - release-tag.yml:77
-      - release-tag.yml:78
+      - release.yml:20
   unpinned-uses:
     ignore:
       - _validate.yml:121
@@ -82,18 +78,18 @@ rules:
       - ci.yml:74
       - ci.yml:77
       - ci.yml:82
-      - release-tag.yml:41
-      - release-tag.yml:49
-      - release-tag.yml:52
-      - release.yml:111
-      - release.yml:120
-      - release.yml:28
-      - release.yml:314
-      - release.yml:317
-      - release.yml:322
-      - release.yml:332
-      - release.yml:338
-      - release.yml:346
-      - release.yml:72
-      - release.yml:75
-      - release.yml:80
+      - release.yml:38
+      - release.yml:49
+      - release.yml:51
+      - release.yml:88
+      - release.yml:132
+      - release.yml:135
+      - release.yml:140
+      - release.yml:171
+      - release.yml:180
+      - release.yml:374
+      - release.yml:377
+      - release.yml:382
+      - release.yml:392
+      - release.yml:398
+      - release.yml:406

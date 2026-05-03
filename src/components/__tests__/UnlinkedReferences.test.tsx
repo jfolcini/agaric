@@ -96,6 +96,7 @@ vi.mock('../PageLink', () => ({
   ),
 }))
 
+import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
 import {
   editBlock,
   listPropertyKeys,
@@ -148,6 +149,9 @@ const emptyResponse = {
 beforeEach(() => {
   vi.clearAllMocks()
   mockNavigateToPage.mockClear()
+  // MAINT-189: shared property-keys cache is module-level — flush it
+  // between tests so each case fetches its own keys.
+  _resetPropertyKeysCacheForTest()
   mockedListUnlinked.mockResolvedValue(emptyResponse)
   mockedEditBlock.mockResolvedValue({
     id: 'BLOCK',

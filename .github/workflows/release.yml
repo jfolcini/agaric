@@ -5,6 +5,16 @@ on:
     tags:
       - 'v*'
       - '[0-9]*'
+  # One-click release entry point: `gh workflow run release.yml -f version=0.1.16`
+  # (or via the GitHub Actions UI) runs the `bump-version` job below, which
+  # bumps every manifest in lockstep, commits, tags, and pushes — then the
+  # rest of this workflow builds + drafts the release in the same run.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New semver version (e.g. 0.1.16, no leading "v")'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,6 +23,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Bump all version manifests in lockstep, commit, tag, and push.
+  # Runs ONLY on `workflow_dispatch`; tag-push runs skip this job (the
+  # `if:` is false). Downstream jobs depend on this via `needs:` —
+  # GitHub Actions treats a skipped `needs:` predecessor as success, so
+  # tag-push runs proceed straight to `verify-version` without waiting.
+  # The heavy lifting lives in `scripts/bump-version.sh` (single source
+  # of truth — same script runs locally).
+  bump-version:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout (with full history so we can push back)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # GITHUB_TOKEN's `contents: write` is enough to push commits +
+          # tags back to main. Note: pushes via GITHUB_TOKEN do not
+          # trigger downstream workflow runs by GH design — which is
+          # why the build matrix in this same run (via `needs:`) is the
+          # path that actually produces the release artifacts, not a
+          # second `release.yml` run kicked off by the tag push.
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Rust toolchain (for `cargo update`)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Node.js (for `npm install --package-lock-only`)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Configure git author for the bump commit
+        # GitHub's bot identity — same convention used by Dependabot,
+        # release-please, and GitHub's own auto-merge commits.
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Run scripts/bump-version.sh with --commit --tag --push
+        # Pass `inputs.version` via env: rather than direct ${{ }}
+        # interpolation in the script body — defuses zizmor's
+        # template-injection rule by construction.
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          chmod +x scripts/bump-version.sh
+          scripts/bump-version.sh "$INPUT_VERSION" --commit --tag --push
+      - name: Summary
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          echo "::notice title=Tagged $INPUT_VERSION::Release pipeline now building $INPUT_VERSION."
+
   # Guard against version drift between the git tag and the in-repo
   # manifests. tauri-action names release bundles + the in-app version
   # from tauri.conf.json, while the GitHub Release uses `github.ref_name`
@@ -23,6 +82,7 @@ jobs:
   # job spins up. Tag may be `0.1.14` or `v0.1.14`; strip a leading `v`
   # before comparing.
   verify-version:
+    needs: bump-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

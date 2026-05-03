@@ -26,6 +26,7 @@ import { t } from '@/lib/i18n'
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
+import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
 import { getTaskStates } from '../../lib/filter-dimension-metadata'
 import type {
   AgendaFilter,
@@ -46,6 +47,10 @@ function renderBuilder(overrides?: Partial<AgendaFilterBuilderProps>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // MAINT-189: PropertyValuePicker reads from a module-level shared
+  // cache. Reset between tests so each case observes its own
+  // `invoke('list_property_keys')` fetch.
+  _resetPropertyKeysCacheForTest()
 })
 
 describe('AgendaFilterBuilder', () => {

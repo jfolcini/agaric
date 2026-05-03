@@ -132,26 +132,54 @@ interface SpaceRowEditorProps {
   isLastSpace: boolean
   /** Refresh callback after a successful mutation. */
   onRefresh: () => Promise<void> | void
+  /**
+   * Emptiness probe result lifted to the parent (MAINT-180). `null` =
+   * still loading or fetch failed → Delete stays disabled. `true` =
+   * no pages, Delete enabled. `false` = ≥1 page, Delete disabled.
+   */
+  emptiness: boolean | null
+  /**
+   * Initial value of the per-space `journal_template` property,
+   * fetched once per `space.id` by the parent (MAINT-180). `undefined`
+   * = parent has not resolved yet; the textarea seeds with `''` and
+   * resyncs on the first defined value.
+   */
+  initialJournalTemplate: string | undefined
+  /**
+   * Notify the parent so its cache reflects the new committed value,
+   * and so a subsequent re-mount (dialog re-open) does not show stale
+   * data from before this edit.
+   */
+  onJournalTemplateCommitted: (spaceId: string, value: string) => void
 }
 
 /**
  * Per-space row: inline-editable name + accent picker + delete button.
- * Emptiness check is fired lazily via `listBlocks({ spaceId, limit: 1 })`
- * once per row mount so the Delete button knows whether to be enabled.
+ * Emptiness + journal-template state is owned by `SpaceManageDialog`
+ * (MAINT-180) so the IPCs fire once per `space.id`, not once per row
+ * mount.
  */
-function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) {
+function SpaceRowEditor({
+  space,
+  isLastSpace,
+  onRefresh,
+  emptiness,
+  initialJournalTemplate,
+  onJournalTemplateCommitted,
+}: SpaceRowEditorProps) {
   const { t } = useTranslation()
   const [name, setName] = useState(space.name)
   const [accent, setAccent] = useState<AccentToken | null>(null)
-  const [isEmpty, setIsEmpty] = useState<boolean | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [savingAccent, setSavingAccent] = useState(false)
   // FEAT-3p5b — per-space `journal_template` (markdown string committed
   // on blur to mirror the accent debounce model). `committedJournalTemplate`
   // is the last successfully-persisted value so a setProperty failure can
   // revert without re-fetching from the backend.
-  const [journalTemplate, setJournalTemplate] = useState<string>('')
-  const [committedJournalTemplate, setCommittedJournalTemplate] = useState<string>('')
+  const [journalTemplate, setJournalTemplate] = useState<string>(initialJournalTemplate ?? '')
+  const [committedJournalTemplate, setCommittedJournalTemplate] = useState<string>(
+    initialJournalTemplate ?? '',
+  )
   const [savingJournalTemplate, setSavingJournalTemplate] = useState(false)
   const renameInputId = useId()
   const journalTemplateInputId = useId()
@@ -170,68 +198,18 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
     setName(space.name)
   }, [space.name])
 
-  // Fire the emptiness probe once per `space.id`. We treat unknown
-  // (`null`) as "still loading" → Delete stays disabled. Once resolved
-  // we either flip to `true` (no pages) or `false` (≥1 page).
+  // Sync the textarea with the parent's cached value once the parent
+  // resolves the IPC. We only sync on the first defined value so a
+  // second prop update (e.g. parent cache invalidation after our own
+  // commit) does not clobber the user's in-flight edit.
+  const journalTemplateInitializedRef = useRef(false)
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const result = await listBlocks({
-          blockType: 'page',
-          spaceId: space.id,
-          limit: 1,
-        })
-        if (cancelled) return
-        // Spaces are themselves page blocks. The current
-        // `listBlocks(blockType:'page', spaceId)` query returns only
-        // pages whose `space` property points at the target — the
-        // space block itself does NOT carry a `space` property (it
-        // *is* the space) and therefore never appears here. So
-        // `items.length === 0` correctly reflects emptiness.
-        setIsEmpty(result.items.length === 0)
-      } catch (err) {
-        if (cancelled) return
-        // On error, leave `isEmpty` as `null` (delete stays disabled).
-        // The user sees the disabled button + tooltip; refreshing the
-        // dialog re-runs the probe.
-        logger.warn(LOG_MODULE, 'failed to probe space emptiness', { spaceId: space.id }, err)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [space.id])
-
-  // FEAT-3p5b — fetch the current `journal_template` text property
-  // once per `space.id`. Cancel-flag pattern matches the emptiness
-  // probe above. On error we leave the textarea empty and let the user
-  // re-enter; the next blur commits the entered value as the new
-  // source of truth.
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const props = await getProperties(space.id)
-        if (cancelled) return
-        const row = props.find((p) => p.key === 'journal_template')
-        const value = row?.value_text ?? ''
-        setJournalTemplate(value)
-        setCommittedJournalTemplate(value)
-      } catch (err) {
-        if (cancelled) return
-        logger.warn(
-          LOG_MODULE,
-          'failed to load journal template property',
-          { spaceId: space.id },
-          err,
-        )
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [space.id])
+    if (journalTemplateInitializedRef.current) return
+    if (initialJournalTemplate === undefined) return
+    journalTemplateInitializedRef.current = true
+    setJournalTemplate(initialJournalTemplate)
+    setCommittedJournalTemplate(initialJournalTemplate)
+  }, [initialJournalTemplate])
 
   const handleRenameCommit = useCallback(async () => {
     const trimmed = name.trim()
@@ -306,6 +284,9 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
       }
       setCommittedJournalTemplate(trimmed)
       setJournalTemplate(trimmed)
+      // Bubble the new committed value up so the parent's per-space.id
+      // cache reflects this edit on a subsequent dialog re-open.
+      onJournalTemplateCommitted(space.id, trimmed)
     } catch (err) {
       logger.error(LOG_MODULE, 'journal template update failed', { spaceId: space.id }, err)
       toast.error(t('space.journalTemplateFailed'))
@@ -315,7 +296,7 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
     } finally {
       setSavingJournalTemplate(false)
     }
-  }, [journalTemplate, committedJournalTemplate, space.id, t])
+  }, [journalTemplate, committedJournalTemplate, space.id, t, onJournalTemplateCommitted])
 
   const handleDeleteConfirm = useCallback(async () => {
     try {
@@ -330,7 +311,7 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
 
   const deleteDisabledReason: string | null = isLastSpace
     ? t('space.deleteLastTooltipDisabled')
-    : isEmpty === true
+    : emptiness === true
       ? null
       : t('space.deleteSpaceTooltipDisabled')
 
@@ -656,8 +637,79 @@ export function SpaceManageDialog({
     await refreshAvailableSpaces()
   }, [refreshAvailableSpaces])
 
-  // Memoise the row list so the per-row `useEffect` (emptiness probe)
-  // doesn't re-fire on every parent re-render.
+  // MAINT-180 — both the per-space emptiness probe and the
+  // journal-template fetch are owned here so each IPC fires once per
+  // unique `space.id` for the whole dialog lifetime, not once per row
+  // mount. Re-opening the dialog (which unmounts and remounts every
+  // `SpaceRowEditor` via Radix) is a cache hit.
+  //
+  // Cache contract:
+  //  - missing key   = not yet fetched (or last fetch errored)
+  //  - present value = resolved successful fetch result
+  //
+  // Errors deliberately do *not* poison the cache: the key is removed
+  // from the in-flight set so the next render (e.g. after a re-open)
+  // retries — same observable behaviour as the pre-MAINT-180 row-local
+  // probes that re-fired on every mount.
+  const [emptinessBySpace, setEmptinessBySpace] = useState<Record<string, boolean>>({})
+  const [journalTemplateBySpace, setJournalTemplateBySpace] = useState<Record<string, string>>({})
+  const emptinessFetchedRef = useRef<Set<string>>(new Set())
+  const journalTemplateFetchedRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    for (const space of availableSpaces) {
+      const id = space.id
+      if (!emptinessFetchedRef.current.has(id)) {
+        emptinessFetchedRef.current.add(id)
+        void (async () => {
+          try {
+            const result = await listBlocks({
+              blockType: 'page',
+              spaceId: id,
+              limit: 1,
+            })
+            // Spaces are themselves page blocks. The current
+            // `listBlocks(blockType:'page', spaceId)` query returns
+            // only pages whose `space` property points at the target —
+            // the space block itself does NOT carry a `space` property
+            // (it *is* the space) and therefore never appears here.
+            // So `items.length === 0` correctly reflects emptiness.
+            setEmptinessBySpace((prev) => ({ ...prev, [id]: result.items.length === 0 }))
+          } catch (err) {
+            // On error, allow a retry on the next render so the user
+            // can recover by reopening the dialog. Delete stays
+            // disabled until a probe succeeds.
+            emptinessFetchedRef.current.delete(id)
+            logger.warn(LOG_MODULE, 'failed to probe space emptiness', { spaceId: id }, err)
+          }
+        })()
+      }
+      if (!journalTemplateFetchedRef.current.has(id)) {
+        journalTemplateFetchedRef.current.add(id)
+        void (async () => {
+          try {
+            const props = await getProperties(id)
+            const row = props.find((p) => p.key === 'journal_template')
+            const value = row?.value_text ?? ''
+            setJournalTemplateBySpace((prev) => ({ ...prev, [id]: value }))
+          } catch (err) {
+            journalTemplateFetchedRef.current.delete(id)
+            logger.warn(
+              LOG_MODULE,
+              'failed to load journal template property',
+              { spaceId: id },
+              err,
+            )
+          }
+        })()
+      }
+    }
+  }, [availableSpaces])
+
+  const handleJournalTemplateCommitted = useCallback((spaceId: string, value: string) => {
+    setJournalTemplateBySpace((prev) => ({ ...prev, [spaceId]: value }))
+  }, [])
+
   const rows = useMemo(
     () =>
       availableSpaces.map((space) => (
@@ -666,9 +718,18 @@ export function SpaceManageDialog({
           space={space}
           isLastSpace={availableSpaces.length === 1}
           onRefresh={handleRefresh}
+          emptiness={emptinessBySpace[space.id] ?? null}
+          initialJournalTemplate={journalTemplateBySpace[space.id]}
+          onJournalTemplateCommitted={handleJournalTemplateCommitted}
         />
       )),
-    [availableSpaces, handleRefresh],
+    [
+      availableSpaces,
+      handleRefresh,
+      emptinessBySpace,
+      journalTemplateBySpace,
+      handleJournalTemplateCommitted,
+    ],
   )
 
   return (

@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 620 — MAINT-113 M2 closed: backlink + tag-query helpers retyped to ActiveBlockRow; dispatcher deferred to M3)
+> **Last updated:** 2026-05-02 (Session 621 — Batch QUICK-WINS-MIX-2: MAINT-114 + MAINT-180 + MAINT-189 closed; MAINT-192 partial (UX.md (a)+(b) landed; AGENTS.md (c)+(d) gated))
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-114 open items in the summary table; 149 detail entries (FE-* sub-tables don't appear in the summary).
+111 open items in the summary table; 146 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -28,15 +28,12 @@ Items flagged during development that need revisiting. Organized by section with
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L | — |
 | MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6 (reference impl behind `mcp_rmcp_spike` feature flag; 3 milestones, 12-14h end-to-end) | L | — |
 | MAINT-113 | MAINT | `ActiveBlockId` newtype to lift invariant #9 into the type system — 275 `is_conflict = 0` SQL occurrences across 52 files. **M1 + M1.5 + M2 LANDED (2026-05-02):** `ActiveBlockId` newtype + `verify_active` gate (M1). `ActiveBlockRow` + `ActiveProjectedAgendaEntry` parallel structs; `fts::search_fts`, `search_blocks_inner` + Tauri wrapper, `list_projected_agenda_inner` + on-the-fly + Tauri wrapper retyped (M1.5). `BacklinkQueryResponse.items` + `BacklinkGroup.blocks`, `eval_backlink_query` + `eval_backlink_query_grouped` + `eval_unlinked_references` (boundary-cast pattern), `eval_tag_query` (sqlx::FromRow over ActiveBlockRow), `pagination::list_backlinks` (sqlx column-cast `id as "id: ActiveBlockId"`), `get_backlinks_inner` + Tauri wrapper, `query_by_tags_inner` + Tauri wrapper retyped (M2). **DEFERRED to M3:** `list_children` retype + the rest of `list_blocks_inner`'s active fan-out — blocked by the polymorphic dispatcher in `commands::blocks::queries::list_blocks_inner` that routes `list_children` / `list_by_type` / `list_by_tag` / `list_agenda*` (active) AND `list_trash` (deleted blocks) into one return type. M3 must decide between (a) split `list_trash` into a dedicated Tauri command (clean, breaks IPC backward-compat slightly) or (b) narrow at the call site via `From<ActiveBlockRow>` downcasts (preserves IPC, defeats type safety at the dispatcher boundary). The `commands/properties.rs` `set_*_inner` helpers (9 functions taking `block_id: String` and returning `BlockRow`) are also M3 candidates — their inputs need `verify_active` at the IPC boundary, their outputs can become `ActiveBlockRow`. | L | M3 dispatcher refactor + decision (split-IPC vs. narrow-at-callsite) |
-| MAINT-114 | MAINT | Consolidation audit of `.github/workflows/` — fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job (4 → 3 files). Spike-then-commit; abandon if merged file isn't shorter than the sum. | S–M | — |
 | MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (550L) — split each typed editor (text/number/date/ref/select) into its own component AND lift the shared state (`localValue`, date hook, select-options, ref-picker, 10+ callbacks) UP into a containing hook. **SCHEDULED** — owner-prioritized; refactor path locked in. Removes the only `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` in the codebase (at L85). | L | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
 | MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
-| MAINT-180 | MAINT | Frontend — `SpaceManageDialog` — each `SpaceRowEditor` mount fires emptiness-probe + journal-template `listBlocks` IPCs with no dedup; reopening the dialog re-fetches the same data per row | S | — |
 | MAINT-183 | MAINT | Frontend — `markdown-serialize.ts` header claims "zero external dependencies" but file imports `sonner`, `logger`, `i18n`. Either rewrite the header or move the toast/i18n side effect to a wrapper at the call site | S | — |
-| MAINT-189 | MAINT | Frontend — `PropertyValuePicker.tsx:42-49` calls `listPropertyKeys()` once per component mount with no shared cache; multiple instances on the same view re-fetch. Add a `usePropertyKeysCache` hook | S | — |
-| MAINT-192 | MAINT | Documentation — UX.md / AGENTS.md additions to reduce false-positive churn on future reviews: (a) UX.md Common-Pitfall "`setState` after unmount in React 18+ is no longer a defect"; (b) UX.md Lesson-Learned "Reading store state inside callbacks via `useStore.getState()` is intentional"; (c) AGENTS.md mandatory-pattern: picker debouncing convention; (d) AGENTS.md reference `INTERNAL_PROPERTY_KEYS` (see MAINT-187) | S | — |
+| MAINT-192 | MAINT | Documentation — AGENTS.md additions to reduce false-positive churn on future reviews: (a) "Frontend Development Guidelines → Mandatory patterns" picker debouncing convention referencing `useDebouncedCallback` + 300 ms (PERF-28 traces directly to this gap); (b) under "Properties system is the primary extension point", a one-line reference to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` (lands together with MAINT-187). | S | User approval for AGENTS.md edits |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
@@ -142,12 +139,11 @@ Items flagged during development that need revisiting. Organized by section with
 
 These can be tackled in a single session with low risk — listed for prioritization convenience (canonical entries remain in the per-section detail blocks below):
 
-- **PERF-19** — backlink pagination keyset for non-Created sorts (2 sites)
-- **PERF-20** — concurrency cap on `try_join_all` in backlink filter resolver
-- **MAINT-114** — workflow consolidation audit (spike-then-commit)
-- **MAINT-192** — UX.md / AGENTS.md additions (4 small doc inserts to reduce review false-positive churn)
+- **MAINT-192** — 2 AGENTS.md additions (picker-debouncing convention; `INTERNAL_PROPERTY_KEYS` reference) — gated on user approval to edit AGENTS.md
 - **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
 - **PUB-8** — Android release keystore + 4 GH Actions secrets (CI wiring already shipped)
+
+> **`PERF-19` and `PERF-20` are NOT quick-grab items** despite their summary-table presence — read their detail entries: both end with `**Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix`. They are listed only so the loops aren't reinvented as "fixes" later. Skip them in batch-picking.
 
 > **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
 > PUB-5 / PUB-8 are ACTIONABLE; PUB-2 / PUB-3 remain DEFERRED on the identity / employer-IP decisions. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
@@ -431,31 +427,6 @@ the trust transition.
 
 **Decision:** **Scheduled** — M1 + M1.5 + M2 closed 2026-05-02. M3 next, with the dispatcher architectural decision required up-front.
 
-### MAINT-114 — Consolidation audit of `.github/workflows/`
-
-**What:** Four workflow files today:
-
-| File | Trigger | Jobs |
-|---|---|---|
-| `.github/workflows/_validate.yml` (143 LOC) | `workflow_call` | prek-equivalent (lint + fmt + clippy + nextest + vitest + playwright + sqlx offline check + MCP smoke) |
-| `.github/workflows/ci.yml` (288 LOC) | push (non-tag) + PR | calls `_validate.yml` → desktop build matrix (ubuntu / windows / macos) + android aarch64/x86_64 build |
-| `.github/workflows/release.yml` (~464 LOC) | push `v*` tag | calls `_validate.yml` → verify-version → desktop build matrix + sign + android APK + draft GitHub Release |
-| `.github/workflows/release-tag.yml` (78 LOC) | `workflow_dispatch` only (`-f version=…`) | runs `scripts/bump-version.sh --commit --tag --push`; the tag push then re-triggers `release.yml` |
-
-The initial one-line recommendation was "4 → 2 (validate + release)". On inspection that is too aggressive. `ci.yml` and `release.yml` have genuinely different reasons to exist (per-push non-tag build vs. per-tag signed-release pipeline), and `release-tag.yml` is a thin entry-point wrapper around `bump-version.sh` that exists so the maintainer does not have to type the bump + tag + push dance manually.
-
-**Realistic consolidation wins (ranked by ROI):**
-
-1. **Fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job** — 4 → 3. The bump-version step would sit above the build matrix, gated by `if: github.event_name == 'workflow_dispatch'`; the build matrix remains tag-triggered. Saves one file, removes the "tag push re-triggers a different workflow" indirection. Mild downside: `release.yml` grows by 78 LOC, and a dispatched version bump run that fails before the tag push no longer leaves a small, focused log (failure appears inside the big Release file). Probably worth it, but not huge.
-2. **Keep `_validate.yml` as reusable** — already optimal. Called by both ci.yml and release.yml, avoids duplicating 135 LOC of setup. Leave alone.
-3. **Do NOT merge `ci.yml` into `release.yml`** — the build matrix would have to be double-gated (`if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')` etc.), artifact upload names would conflict between "per-push smoke bundle" and "signed release bundle", and the signed-release path needs secrets that per-push builds must not have access to. The current split is a principled least-privilege boundary; collapsing it would require narrower secret scoping per step, which is more complex than the current file split.
-
-**Proposed outcome:** Attempt 4 → 3. Only commit if the merged `release.yml` is not longer than `ci.yml` + `release.yml` + `release-tag.yml` combined, AND the `workflow_dispatch` path is at least as discoverable in the GitHub Actions UI as the standalone "Release Tag" entry. Otherwise abandon — a tidy file split is worth more than a tidy file count.
-
-**Cost:** S–M (spike ~2h; full migration including docs-drift checks ~4h).
-**Risk:** Low-to-medium — release pipeline is load-bearing. Test the merged workflow by dispatching against a throwaway tag (`0.0.0-test-consolidation`) on a fork or a draft release.
-**Impact:** S — one fewer file to navigate, slight simplification of the "how do I cut a release?" mental model. Not pressure relief.
-
 ### MAINT-128 — God-component decomposition: `PropertyRowEditor.tsx`
 
 **What:** `PropertyRowEditor.tsx` is 550L and carries an explicit `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L92. The file dispatches on `def.value_type` (text/number/date/ref/select → 5 parallel JSX subtrees) but the 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), and 10+ callbacks — splitting naïvely re-creates the prop-chain problem that the `biome-ignore` acknowledges.
@@ -529,15 +500,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Medium — turns an unrecoverable error from "please reinstall" into "here is enough information to file a bug".
 - **Status:** Open.
 
-### MAINT-180 — `SpaceManageDialog` rows fire IPCs without dedup or cancellation
-- **Domain:** Frontend (spaces management)
-- **Location:** `src/components/SpaceManageDialog.tsx:178-200, 213-234`
-- **What:** Each `SpaceRowEditor` mount fires an emptiness probe (`listBlocks { spaceId, limit: 1 }`) and a journal-template fetch. Re-opening the dialog re-fetches the same data; the IPCs have no shared cache. The `cancelled` flag prevents stale state writes but doesn't stop the IPCs from crossing the bridge.
-- **Cost:** S — lift both probes to the parent dialog, fetch once per `space.id` set, pass results down as props. Optionally add a `useIpcCache` keyed on the IPC name + params.
-- **Risk:** Low.
-- **Impact:** Low–medium — no user-visible bug today, but the IPC volume scales O(N spaces × M opens).
-- **Status:** Open.
-
 ### MAINT-183 — `markdown-serialize.ts` header claims zero-dep but file imports `sonner` / `logger` / `i18n`
 - **Domain:** Frontend (editor / serializer)
 - **Location:** `src/editor/markdown-serialize.ts:1-15`
@@ -547,27 +509,16 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Low — maintainability + testability.
 - **Status:** Open.
 
-### MAINT-189 — `listPropertyKeys()` fetched per-mount in 3 components with no shared cache
-- **Domain:** Frontend (filter pickers + backlink panels)
-- **Location:** `src/components/PropertyValuePicker.tsx:42-49` ; `src/components/UnlinkedReferences.tsx:147-148` ; `src/components/LinkedReferences.tsx:155-156`
-- **What:** All three components call `listPropertyKeys()` from a `useEffect` with empty deps. Multiple instances on the same view (e.g. multiple filter rows + linked + unlinked panels open at once) each call the IPC. The data is small and rarely changes — perfect candidate for a shared cache.
-- **Cost:** S — extract `usePropertyKeysCache` (Zustand or context) keyed on `currentSpaceId`; replace 3 per-mount `useEffect` fetches with a single shared cache; invalidate on relevant materializer events.
-- **Risk:** Low.
-- **Impact:** Low — minor IPC reduction; not user-visible.
-- **Status:** Open.
-
-### MAINT-192 — UX.md / AGENTS.md additions to reduce false-positive churn on future frontend reviews
+### MAINT-192 — AGENTS.md additions to reduce false-positive churn on future frontend reviews
 - **Domain:** Documentation
-- **Location:** `UX.md`, `AGENTS.md`
-- **What:** Frontend-wide UX review (the one that filed MAINT-173..MAINT-191 and PERF-28) had a 74% false-positive rate. The bulk of rejected findings pattern-matched against React-class anti-patterns that don't apply to this codebase. Four small doc additions would pre-empt most of that churn:
-  - **(a) UX.md "Common Pitfalls"** — add an entry **"`setState` after unmount in React 18+ is no longer a defect"**: React 18 removed the warning and the call is silently dropped; only flag when the late update would leave incorrect *visible* state.
-  - **(b) UX.md "Lessons Learned → Data & State"** — add **"Reading store state inside callbacks via `useStore.getState()` is intentional"**: it reads the latest state from the Zustand store, not from the closure, so it is *not* a stale-closure bug.
-  - **(c) AGENTS.md "Frontend Development Guidelines → Mandatory patterns"** — add **"Picker debouncing"** entry referencing `useDebouncedCallback` + the 300 ms convention used by `TagFilterPanel`. PERF-28 traces directly to this gap.
-  - **(d) AGENTS.md** — under "Properties system is the primary extension point", add a one-line reference to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` (lands together with MAINT-187).
-- **Cost:** Trivial — four small doc inserts.
+- **Location:** `AGENTS.md`
+- **What:** The frontend-wide UX review that filed MAINT-173..MAINT-191 + PERF-28 had a 74% false-positive rate. Two small AGENTS.md additions would pre-empt the recurring pattern-matches:
+  - **(a) "Frontend Development Guidelines → Mandatory patterns"** — add **"Picker debouncing"** entry referencing `useDebouncedCallback` + the 300 ms convention used by `TagFilterPanel`. PERF-28 traces directly to this gap.
+  - **(b)** Under "Properties system is the primary extension point", add a one-line reference to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` (lands together with MAINT-187).
+- **Cost:** Trivial — two doc inserts.
 - **Risk:** Low.
 - **Impact:** Medium — every future frontend review (human or automated) avoids re-discovering the same false positives.
-- **Status:** Open.
+- **Status:** Open. Gated on AGENTS.md self-rule "No changes to this file (AGENTS.md) without explicit user approval. Ever." Awaiting user approval.
 
 ### MAINT-193 — `zizmor` baseline triage (53 GitHub Actions findings suppressed at hook-introduction time)
 

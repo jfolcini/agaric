@@ -20,9 +20,10 @@ import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useFocusedRowEffect } from '../hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { usePropertyKeysCache } from '../hooks/usePropertyKeysCache'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
-import { editBlock, listPropertyKeys, listTagsByPrefix, listUnlinkedReferences } from '../lib/tauri'
+import { editBlock, listTagsByPrefix, listUnlinkedReferences } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
@@ -63,7 +64,8 @@ export function UnlinkedReferences({
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
-  const [propertyKeys, setPropertyKeys] = useState<string[]>([])
+  // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
+  const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
   const fetchGroups = useCallback(
@@ -139,15 +141,6 @@ export function UnlinkedReferences({
       .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
       .catch((e) => {
         logger.error('UnlinkedReferences', 'Failed to load tags', undefined, e)
-      })
-  }, [])
-
-  // Load property keys on mount
-  useEffect(() => {
-    listPropertyKeys()
-      .then((keys) => setPropertyKeys(keys))
-      .catch((e) => {
-        logger.error('UnlinkedReferences', 'Failed to load property keys', undefined, e)
       })
   }, [])
 
