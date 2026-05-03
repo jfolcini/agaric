@@ -313,6 +313,63 @@ describe('QueryResultTable', () => {
     expect(screen.getByText('2025-06-01')).toBeInTheDocument()
   })
 
+  // UX-318 — missing values must render as an em-dash placeholder, not blank.
+  it('renders em-dash placeholder for null property values', () => {
+    const columns: TableColumn[] = [
+      { key: 'content', label: 'Content' },
+      { key: 'priority', label: 'Priority' },
+      { key: 'due_date', label: 'Due Date' },
+    ]
+
+    render(
+      <QueryResultTable
+        results={[
+          makeBlock({
+            id: 'B1',
+            content: 'Sparse task',
+            priority: null,
+            due_date: null,
+          }),
+        ]}
+        columns={columns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+      />,
+    )
+
+    // Two missing cells (priority + due_date) should render the em-dash.
+    const placeholders = screen.getAllByText('\u2014')
+    expect(placeholders).toHaveLength(2)
+  })
+
+  it('renders em-dash placeholder for empty-string property values', () => {
+    const columns: TableColumn[] = [
+      { key: 'content', label: 'Content' },
+      { key: 'priority', label: 'Priority' },
+    ]
+
+    render(
+      <QueryResultTable
+        results={[
+          makeBlock({
+            id: 'B1',
+            content: 'Empty-string task',
+            priority: '',
+          }),
+        ]}
+        columns={columns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('\u2014')).toBeInTheDocument()
+  })
+
   // UX-2: the content cell must carry the same coarse-pointer padding as
   // the adjacent page cell so the row is consistently 44 px tall on touch.
   it('UX-2: content cell has [@media(pointer:coarse)]:py-3 to match the page cell', () => {

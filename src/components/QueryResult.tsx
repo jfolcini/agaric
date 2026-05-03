@@ -33,14 +33,13 @@ const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; label: string }[] = [
 ]
 
 /** Auto-detect which columns to show based on result data. */
-export function detectColumns(results: BlockRow[]): TableColumn[] {
-  const cols: TableColumn[] = [{ key: 'content', label: 'Content' }]
-  for (const { key, label } of KNOWN_PROPERTY_KEYS) {
-    if (results.some((b) => b[key] != null && b[key] !== '')) {
-      cols.push({ key, label })
-    }
-  }
-  return cols
+export function detectColumns(_results: BlockRow[]): TableColumn[] {
+  // UX-318 — always include known columns even when sparse so users
+  // see the schema, not the data. Missing values render as `—` in
+  // QueryResultTable. The `_results` parameter is preserved for API
+  // stability; future heuristics may reintroduce data-driven
+  // detection for non-known columns.
+  return [{ key: 'content', label: 'Content' }, ...KNOWN_PROPERTY_KEYS]
 }
 
 /** Render query expression as styled filter pills. */

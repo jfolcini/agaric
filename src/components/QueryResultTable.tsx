@@ -101,7 +101,9 @@ export function QueryResultTable({
                         {title}
                       </button>
                     ) : (
-                      <span>{(block[col.key as keyof BlockRow] as string) ?? ''}</span>
+                      <span className="text-muted-foreground">
+                        {(block[col.key as keyof BlockRow] as string) || '\u2014'}
+                      </span>
                     )}
                   </td>
                 ))}

@@ -528,7 +528,10 @@ describe('QueryResult', () => {
 /* ------------------------------------------------------------------ */
 
 describe('detectColumns', () => {
-  it('returns only Content when no properties set', () => {
+  // UX-318 — detectColumns now always returns Content + every known
+  // property column regardless of whether the data populates them.
+  // Missing values are rendered as `—` placeholders in QueryResultTable.
+  it('returns all known columns even when no properties are set', () => {
     const blocks = [
       {
         id: 'B1',
@@ -547,10 +550,16 @@ describe('detectColumns', () => {
       },
     ]
     const cols = detectColumns(blocks)
-    expect(cols).toEqual([{ key: 'content', label: 'Content' }])
+    expect(cols.map((c) => c.key)).toEqual([
+      'content',
+      'todo_state',
+      'priority',
+      'due_date',
+      'scheduled_date',
+    ])
   })
 
-  it('includes columns for populated properties', () => {
+  it('returns the same columns when properties are populated', () => {
     const blocks = [
       {
         id: 'B1',
@@ -569,7 +578,24 @@ describe('detectColumns', () => {
       },
     ]
     const cols = detectColumns(blocks)
-    expect(cols.map((c) => c.key)).toEqual(['content', 'todo_state', 'priority', 'due_date'])
+    expect(cols.map((c) => c.key)).toEqual([
+      'content',
+      'todo_state',
+      'priority',
+      'due_date',
+      'scheduled_date',
+    ])
+  })
+
+  it('returns all known columns for an empty result set', () => {
+    const cols = detectColumns([])
+    expect(cols.map((c) => c.key)).toEqual([
+      'content',
+      'todo_state',
+      'priority',
+      'due_date',
+      'scheduled_date',
+    ])
   })
 })
 

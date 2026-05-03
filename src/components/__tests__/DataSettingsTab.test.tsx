@@ -234,6 +234,97 @@ describe('DataSettingsTab', () => {
     })
   })
 
+  it('shows cumulative blocks + bytes secondary line after first file completes (UX-384)', async () => {
+    let resolveFirst: (v: unknown) => void = () => {}
+    let resolveSecond: (v: unknown) => void = () => {}
+    mockImportMarkdown
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveSecond = r
+          }),
+      )
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    // 2048-byte payload so formatBytes promotes to "2.0 KB" and the
+    // assertion below isn't sensitive to platform-specific quirks of
+    // a sub-1KB byte count rendering.
+    const file1 = new File(['x'.repeat(2048)], 'one.md', { type: 'text/markdown' })
+    const file2 = new File(['# B'], 'two.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // Before any file has finished, the secondary line is hidden — we
+    // don't want to show "0 blocks · 0 B" while the first IPC is in
+    // flight.
+    expect(screen.queryByTestId('import-progress-detail')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveFirst({ page_title: 'one', blocks_created: 7, properties_set: 0, warnings: [] })
+    })
+
+    // After file 1 resolves, the secondary line appears with
+    // cumulative blocks (7) and bytes (2048 = 2.0 KB).
+    await waitFor(() => {
+      const detail = screen.getByTestId('import-progress-detail')
+      expect(detail).toHaveTextContent('7 blocks')
+      expect(detail).toHaveTextContent('2.0 KB')
+    })
+
+    await act(async () => {
+      resolveSecond({ page_title: 'two', blocks_created: 3, properties_set: 0, warnings: [] })
+    })
+
+    // Once the import finishes, the secondary line disappears along
+    // with the rest of the progress UI.
+    await waitFor(() => {
+      expect(screen.queryByTestId('import-progress-detail')).not.toBeInTheDocument()
+    })
+  })
+
+  it('hides secondary progress line when no blocks/bytes are reported yet (UX-384)', async () => {
+    let resolveFirst: (v: unknown) => void = () => {}
+    mockImportMarkdown.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolveFirst = r
+        }),
+    )
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // Primary "Importing file 1 of 1" line is visible while the IPC is
+    // pending, but the secondary detail line stays hidden until at
+    // least one file has resolved.
+    await waitFor(() => {
+      expect(screen.getByTestId('import-progress')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('import-progress-detail')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
+  })
+
   it('renders a <progress> bar alongside the text during multi-file import (UX-12)', async () => {
     let resolveFirst: (v: unknown) => void = () => {}
     let resolveSecond: (v: unknown) => void = () => {}

@@ -328,6 +328,61 @@ describe('SpaceSwitcher', () => {
     expect(triggerChildren).toHaveTextContent('Space:')
   })
 
+  // ── UX-373: single-space "Create another space…" hint ──
+  // When the user has only one space, the SpaceSwitcher dropdown is a
+  // no-op (nothing else to switch to). A "Create another space…" hint
+  // is rendered inside the dropdown — under the lone space row — so
+  // the manage flow is discoverable without scanning past the row to
+  // the "Manage spaces…" sentinel. Clicking the hint opens the same
+  // `SpaceManageDialog` the MANAGE_SENTINEL route opens.
+  it('renders the create-another-space hint when there is only one space (UX-373)', async () => {
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+    expect(useSpaceStore.getState().availableSpaces).toHaveLength(1)
+
+    const hint = screen.getByTestId('single-space-create-hint')
+    expect(hint).toBeInTheDocument()
+    expect(hint).toHaveTextContent('Create another space')
+  })
+
+  it('does NOT render the create-another-space hint when there is more than one space (UX-373)', async () => {
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+    expect(useSpaceStore.getState().availableSpaces).toHaveLength(2)
+
+    expect(screen.queryByTestId('single-space-create-hint')).not.toBeInTheDocument()
+  })
+
+  it('opens the SpaceManageDialog when the create-another-space hint is clicked (UX-373)', async () => {
+    const user = userEvent.setup()
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    // The dialog stub renders nothing when `open === false`.
+    expect(screen.queryByTestId('space-manage-dialog-stub')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('single-space-create-hint'))
+
+    // Clicking the hint must NOT switch space (it is not a SelectItem,
+    // so currentSpaceId stays at the alphabetical fallback) — it must
+    // flip the manage dialog open via the same `setManageOpen(true)`
+    // path the MANAGE_SENTINEL short-circuit uses.
+    expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+    expect(screen.getByTestId('space-manage-dialog-stub')).toBeInTheDocument()
+  })
+
   // ── UX-368: tooltip lists the first 5 space digit mappings ──
   // The trigger tooltip used to surface only the generic
   // "Tip: Ctrl+1..9" hint. Once the dropdown closed, the user had to

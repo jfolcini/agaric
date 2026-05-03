@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
+import { formatBytes } from '../lib/format'
 import { logger } from '../lib/logger'
 import type { ImportResult } from '../lib/tauri'
 import { importMarkdown } from '../lib/tauri'
@@ -49,6 +50,12 @@ export function DataSettingsTab(): React.ReactElement {
   const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null)
   const [currentFileName, setCurrentFileName] = useState('')
   const [totalFiles, setTotalFiles] = useState(0)
+  // UX-384: cumulative blocks created and bytes processed across files
+  // already imported in the current run. Surfaced as a secondary line so
+  // a multi-file run with one large file still shows forward motion
+  // between file-index ticks.
+  const [blocksProcessed, setBlocksProcessed] = useState(0)
+  const [bytesProcessed, setBytesProcessed] = useState(0)
   const [exporting, setExporting] = useState(false)
 
   const handleFileImport = useCallback(
@@ -58,11 +65,14 @@ export function DataSettingsTab(): React.ReactElement {
 
       setImporting(true)
       setImportResult(null)
+      setBlocksProcessed(0)
+      setBytesProcessed(0)
       const fileArray = Array.from(files)
       setTotalFiles(fileArray.length)
 
       let totalBlocks = 0
       let totalProps = 0
+      let totalBytes = 0
       const allWarnings: string[] = []
       let lastTitle = ''
 
@@ -80,6 +90,12 @@ export function DataSettingsTab(): React.ReactElement {
           logger.warn('DataSettingsTab', 'file import failed', { fileName: file.name }, err)
           allWarnings.push(`Failed to import ${file.name}`)
         }
+        // Count bytes regardless of success — the user has waited on
+        // this file either way, so the secondary line should reflect
+        // forward progress through the selection.
+        totalBytes += file.size
+        setBlocksProcessed(totalBlocks)
+        setBytesProcessed(totalBytes)
       }
 
       setImportResult({
@@ -172,6 +188,23 @@ export function DataSettingsTab(): React.ReactElement {
                   name: currentFileName,
                 })}
               </p>
+              {/* UX-384: secondary line showing cumulative blocks and
+                  bytes processed so far. Hidden on the very first file
+                  (before any IPC has returned) to avoid showing
+                  "0 blocks · 0 B" — once at least one file completes,
+                  this gives a visible forward motion even if the next
+                  file is large and slow. */}
+              {(blocksProcessed > 0 || bytesProcessed > 0) && (
+                <p
+                  className="text-xs text-muted-foreground mt-1"
+                  data-testid="import-progress-detail"
+                >
+                  {t('data.importingProgressDetail', {
+                    blocks: blocksProcessed,
+                    bytes: formatBytes(bytesProcessed),
+                  })}
+                </p>
+              )}
               {/* UX-12: paired progress bar so users get a visual signal
                   alongside the textual "Importing N of M" message. No
                   design-system Progress primitive yet — use the native
