@@ -16,6 +16,7 @@ use crate::import;
 use crate::import::ImportResult;
 use crate::materializer::Materializer;
 use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL};
+use crate::ulid::BlockId;
 
 use super::*;
 
@@ -199,6 +200,11 @@ pub async fn export_page_markdown_inner(
 ) -> Result<String, AppError> {
     use crate::fts::{PAGE_LINK_RE, TAG_REF_RE};
     use std::collections::HashSet;
+
+    // L-136: validate ULID format upfront so malformed inputs surface
+    // `AppError::Ulid` rather than the imprecise `AppError::NotFound`
+    // that the SQL `WHERE id = ?` lookup would otherwise produce.
+    BlockId::from_string(page_id)?;
 
     // 1. Get the page
     let page = get_block_inner(pool, page_id.to_string()).await?;
@@ -645,6 +651,11 @@ pub async fn get_page_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageSubtreeResponse, AppError> {
+    // L-136: validate ULID format upfront so malformed inputs surface
+    // `AppError::Ulid` rather than the imprecise `AppError::NotFound`
+    // that the SQL `WHERE id = ?` lookup would otherwise produce.
+    BlockId::from_string(page_id)?;
+
     let page = get_block_inner(pool, page_id.to_string()).await?;
     if page.block_type != "page" {
         return Err(AppError::Validation(format!(

@@ -502,7 +502,7 @@ async fn export_page_markdown_walks_full_subtree_with_pagination() {
 
     // Page + 125 direct children + 125 grandchildren = 250 descendants,
     // forcing two cursor fetches at page size 200.
-    let page_id = "01EXPORTPAGE0000000000PAGE";
+    let page_id = "01EXP0RTPAGE0000000000PAGE";
     insert_block(&pool, page_id, "page", "Big Page", None, Some(1)).await;
 
     for i in 0..125 {
@@ -595,7 +595,7 @@ async fn export_page_markdown_batch_resolves_mixed_references() {
     )
     .await;
 
-    let page_id = "01EXPORTPAGEMIXED000000PAG";
+    let page_id = "01EXP0RTPAGEM1XED000000PAG";
     insert_block(&pool, page_id, "page", "Mixed Refs", None, Some(1)).await;
     insert_block(
         &pool,
@@ -688,7 +688,7 @@ async fn export_page_markdown_handles_many_unrelated_tags() {
     )
     .await;
 
-    let page_id = "01EXPORTSPARSE000000000PAG";
+    let page_id = "01EXP0RTSPARSE000000000PAG";
     insert_block(&pool, page_id, "page", "Sparse Page", None, Some(1)).await;
     insert_block(
         &pool,
@@ -777,7 +777,7 @@ async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
     // function's `block_type != "page"` branch must reject it.
     insert_block(
         &pool,
-        "01CONTENTBLK00000000000001",
+        "01C0NTENTBKK00000000000001",
         "content",
         "not a page",
         None,
@@ -785,7 +785,7 @@ async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
     )
     .await;
 
-    let result = export_page_markdown_inner(&pool, "01CONTENTBLK00000000000001").await;
+    let result = export_page_markdown_inner(&pool, "01C0NTENTBKK00000000000001").await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -860,28 +860,23 @@ async fn export_page_markdown_inner_with_soft_deleted_page_pins_current_behavior
     );
 }
 
-/// TEST-11 — Pin the variant returned for a malformed page id.
-/// The task spec requested `Err(Validation)` (an upfront
-/// `BlockId::from_string` reject), but production never invokes
-/// `BlockId::from_string` on `page_id`: the string is bound directly
-/// to `WHERE id = ?` in `get_block_inner`, so a malformed input
-/// simply misses every row and falls through the existing NotFound
-/// path.  Pinning the actual variant here guards against a future
-/// refactor that swaps NotFound for, say, an `Internal` from a
-/// downstream parse — and surfaces the missing upfront validation as
-/// a TEST-11 follow-up for the parent agent to triage.
+/// L-136 — Pin the variant returned for a malformed page id.
+/// `export_page_markdown_inner` now validates ULID format upfront via
+/// `BlockId::from_string(page_id)?`, so malformed inputs surface as
+/// `AppError::Ulid` (precise) rather than `AppError::NotFound` (imprecise,
+/// which used to come from the SQL `WHERE id = ?` lookup missing every
+/// row). Same fix applied to `get_page_inner`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn export_page_markdown_inner_with_malformed_id_returns_not_found() {
+async fn export_page_markdown_inner_with_malformed_id_returns_ulid_error() {
     let (pool, _dir) = test_pool().await;
 
-    // Not a ULID — `BlockId::from_string("not-a-ulid")` would fail
-    // with `AppError::Ulid`, but the export function never calls it.
+    // Not a ULID — `BlockId::from_string("not-a-ulid")` rejects with
+    // `AppError::Ulid` upfront, before any SQL query runs.
     let result = export_page_markdown_inner(&pool, "not-a-ulid").await;
 
     assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "malformed page id currently maps to NotFound (no upfront ULID validation in \
-         export_page_markdown_inner) — got: {result:?}"
+        matches!(result, Err(AppError::Ulid(_))),
+        "malformed page id must surface as Ulid (L-136 upfront validation) — got: {result:?}"
     );
 }
 

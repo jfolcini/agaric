@@ -42,6 +42,11 @@ export interface Tab {
   label: string
 }
 
+// FE-L-4: module-scoped counter is safe because the renderer is
+// single-threaded — JS event-loop semantics guarantee no two
+// `nextTabId++` reads can interleave. Moving this into Zustand state
+// would require persistence wiring + bump-on-rehydrate handling for
+// no behavioural gain.
 let nextTabId = 1
 
 interface TabsStore {
