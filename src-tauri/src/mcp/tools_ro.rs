@@ -2,7 +2,7 @@
 //!
 //! FEAT-4c wires nine read-only tools into the MCP dispatcher established by
 //! FEAT-4a/4b. Each tool is a **thin wrapper** around an existing
-//! `*_inner` command handler so the op-log / CQRS / sqlx-compile-time-query
+//! `*_inner` command handler so the op-log / event-sourcing / sqlx-compile-time-query
 //! invariants of the frontend path apply verbatim to agent calls
 //! (AGENTS.md §Key Architectural Invariants).
 //!

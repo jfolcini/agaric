@@ -3,7 +3,7 @@
 //! Where `tools_ro.rs` exposes read paths, this module exposes the narrow
 //! set of **reversible** mutations that external agents may perform. Every
 //! tool is a thin wrapper around an existing `*_inner` command handler so
-//! the op-log / CQRS / sqlx-compile-time-query invariants of the frontend
+//! the op-log / event-sourcing / sqlx-compile-time-query invariants of the frontend
 //! path apply verbatim to agent calls (AGENTS.md §Key Architectural
 //! Invariants).
 //!
