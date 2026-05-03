@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::init_pool;
+use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
 use crate::sync_events::RecordingEventSink;
@@ -875,23 +876,18 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
         other => panic!("expected Progress event, got {:?}", other),
     }
 
-    // Second event: Error
-    match &events[1] {
-        SyncEvent::Error {
-            message,
-            remote_device_id,
-        } => {
-            assert!(
-                message.contains("Connection failed"),
-                "error message should mention connection failure, got: {message}"
-            );
-            assert_eq!(
-                remote_device_id, "PEER_UNREACHABLE",
-                "remote_device_id must match peer"
-            );
-        }
-        other => panic!("expected Error event, got {:?}", other),
-    }
+    // Second event: Error — `SyncEvent::Error.message` is unstructured `String`,
+    // so combine the variant pin (matches!) with a substring check for the failure category.
+    assert!(
+        matches!(
+            &events[1],
+            SyncEvent::Error { message, remote_device_id }
+                if message.contains("Connection failed")
+                    && remote_device_id.as_str() == "PEER_UNREACHABLE"
+        ),
+        "expected SyncEvent::Error mentioning 'Connection failed' for PEER_UNREACHABLE, got: {:?}",
+        &events[1]
+    );
 
     // Scheduler records the failure
     assert_eq!(
@@ -971,17 +967,17 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
         .await
         .unwrap();
 
-    // Receive the rejection response
+    // Receive the rejection response — `SyncMessage::Error.message` is
+    // unstructured `String`, so combine the variant pin (matches!) with a
+    // substring check for the rejection reason.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    match response {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains("cannot sync with self"),
-                "error should mention self-sync, got: {message}"
-            );
-        }
-        other => panic!("expected SyncMessage::Error, got {:?}", other),
-    }
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("cannot sync with self")
+        ),
+        "expected SyncMessage::Error mentioning 'cannot sync with self', got: {response:?}"
+    );
 
     // Handler should complete without error
     let result = handle.await.unwrap();
@@ -1058,10 +1054,12 @@ async fn run_sync_session_respects_cancel_flag() {
         result.is_err(),
         "run_sync_session should return error when cancelled"
     );
+    // `AppError::InvalidOperation` carries an unstructured `String`, so combine
+    // the variant pin (matches!) with a substring check for the cancellation reason.
     let err = result.unwrap_err();
     assert!(
-        err.to_string().contains("sync cancelled by user"),
-        "error should mention cancellation, got: {err}"
+        matches!(&err, AppError::InvalidOperation(msg) if msg.contains("sync cancelled by user")),
+        "expected AppError::InvalidOperation mentioning 'sync cancelled by user', got: {err:?}"
     );
 
     server.shutdown().await;
@@ -1223,20 +1221,16 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
         .await
         .unwrap();
 
-    // Receive rejection response
+    // Receive rejection response — `SyncMessage::Error.message` is unstructured
+    // `String`, so combine the variant pin (matches!) with a substring check.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    match response {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains("not paired"),
-                "error should mention unpaired device, got: {message}"
-            );
-        }
-        other => panic!(
-            "expected SyncMessage::Error for unpaired device, got {:?}",
-            other
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("not paired")
         ),
-    }
+        "expected SyncMessage::Error mentioning 'not paired' for unpaired device, got: {response:?}"
+    );
 
     let result = handle.await.unwrap();
     assert!(
@@ -1556,16 +1550,16 @@ async fn inmem_handle_incoming_sync_rejects_self() {
         .await
         .unwrap();
 
+    // `SyncMessage::Error.message` is unstructured `String`, so combine the
+    // variant pin (matches!) with a substring check for the rejection reason.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    match response {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains("self"),
-                "error should mention self-sync, got: {message}"
-            );
-        }
-        other => panic!("expected SyncMessage::Error, got {:?}", other),
-    }
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("self")
+        ),
+        "expected SyncMessage::Error mentioning self-sync, got: {response:?}"
+    );
 
     let result = handle.await.unwrap();
     assert!(
@@ -1615,19 +1609,16 @@ async fn inmem_handle_incoming_sync_rejects_unpaired() {
         .await
         .unwrap();
 
+    // `SyncMessage::Error.message` is unstructured `String`, so combine the
+    // variant pin (matches!) with a substring check for the rejection reason.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    match response {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains("not paired"),
-                "error should mention unpaired, got: {message}"
-            );
-        }
-        other => panic!(
-            "expected SyncMessage::Error for unpaired device, got {:?}",
-            other
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("not paired")
         ),
-    }
+        "expected SyncMessage::Error mentioning 'not paired' for unpaired device, got: {response:?}"
+    );
 
     let result = handle.await.unwrap();
     assert!(
@@ -1684,16 +1675,16 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
         .await
         .unwrap();
 
+    // `SyncMessage::Error.message` is unstructured `String`, so combine the
+    // variant pin (matches!) with a substring check for the rejection reason.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    match response {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains("busy"),
-                "error should mention busy, got: {message}"
-            );
-        }
-        other => panic!("expected SyncMessage::Error for busy peer, got {:?}", other),
-    }
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("busy")
+        ),
+        "expected SyncMessage::Error mentioning 'busy' for already-locked peer, got: {response:?}"
+    );
 
     let result = handle.await.unwrap();
     assert!(
@@ -1812,20 +1803,16 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
         .await
         .unwrap();
 
-    // Receive rejection response
+    // Receive rejection response — `SyncMessage::Error.message` is unstructured
+    // `String`, so combine the variant pin (matches!) with a substring check.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    match response {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains("certificate"),
-                "error should mention certificate, got: {message}"
-            );
-        }
-        other => panic!(
-            "expected SyncMessage::Error for CN mismatch, got {:?}",
-            other
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("certificate")
         ),
-    }
+        "expected SyncMessage::Error mentioning 'certificate' for CN mismatch, got: {response:?}"
+    );
 
     let result = handle.await.unwrap();
     assert!(
@@ -1894,20 +1881,16 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
         .await
         .unwrap();
 
-    // Receive rejection response
+    // Receive rejection response — `SyncMessage::Error.message` is unstructured
+    // `String`, so combine the variant pin (matches!) with a substring check.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    match response {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains("hash mismatch"),
-                "error should mention hash mismatch, got: {message}"
-            );
-        }
-        other => panic!(
-            "expected SyncMessage::Error for hash mismatch, got {:?}",
-            other
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("hash mismatch")
         ),
-    }
+        "expected SyncMessage::Error mentioning 'hash mismatch', got: {response:?}"
+    );
 
     let result = handle.await.unwrap();
     assert!(
@@ -2043,6 +2026,89 @@ async fn inmem_handle_incoming_sync_tofu_stores_cert_hash() {
         peer_after.cert_hash.as_deref(),
         Some("new_hash_123"),
         "TOFU: cert_hash must be stored after first authenticated connection"
+    );
+
+    // ── TEST-8: second connection with a *mismatched* cert hash must be ──
+    // rejected through `handle_incoming_sync` (application-level rejection,
+    // distinct from the TLS-layer rejection covered in
+    // `sync_net/tests.rs::mtls_reconnection_with_wrong_cert_hash_fails`).
+    // After TOFU stored "new_hash_123" above, a peer presenting any other
+    // hash for the same device id must hit `CertVerifyResult::HashMismatch`
+    // → `SyncMessage::Error { message: "...hash mismatch..." }` → connection
+    // closed → handler returns Ok, and the stored hash must NOT be
+    // overwritten.
+    let (mut server_conn2, mut client_conn2) = sync_net::test_connection_pair().await;
+    server_conn2.set_test_cert(
+        Some("REMOTE_PAIRED".to_string()),
+        Some("WRONG_HASH_xyz".to_string()),
+    );
+
+    let pool_clone2 = pool.clone();
+    let mat_clone2 = materializer.clone();
+    let sched_clone2 = scheduler.clone();
+    let sink_clone2 = event_sink.clone();
+    let handle2 = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn2,
+            pool_clone2,
+            "LOCAL_DEV".to_string(),
+            mat_clone2,
+            sched_clone2,
+            sink_clone2,
+        )
+        .await
+    });
+
+    // Send HeadExchange (both heads so the responder can identify the remote
+    // as REMOTE_PAIRED rather than rejecting as self-sync).
+    client_conn2
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![
+                DeviceHead {
+                    device_id: "REMOTE_PAIRED".to_string(),
+                    seq: 0,
+                    hash: "fakehash".to_string(),
+                },
+                DeviceHead {
+                    device_id: "LOCAL_DEV".to_string(),
+                    seq: 0,
+                    hash: "fakehash".to_string(),
+                },
+            ],
+        })
+        .await
+        .unwrap();
+
+    // The daemon must reply with a hash-mismatch rejection.
+    let response2: SyncMessage = client_conn2.recv_json().await.unwrap();
+    assert!(
+        matches!(
+            &response2,
+            SyncMessage::Error { message } if message.contains("hash mismatch")
+        ),
+        "expected SyncMessage::Error mentioning 'hash mismatch' on TOFU reconnect with wrong cert hash, got: {response2:?}"
+    );
+
+    // The handler returns Ok after rejecting (rejected sessions are not errors).
+    let result2 = handle2.await.unwrap();
+    assert!(
+        result2.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting hash mismatch on TOFU reconnect, got: {result2:?}"
+    );
+
+    // Critical regression guard: the stored cert hash must STILL be the
+    // one captured during TOFU — a mismatched-hash connection must not
+    // overwrite it (otherwise an attacker could simply reconnect with a
+    // new hash and have it silently re-trusted).
+    let peer_after_reject = peer_refs::get_peer_ref(&pool, "REMOTE_PAIRED")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        peer_after_reject.cert_hash.as_deref(),
+        Some("new_hash_123"),
+        "stored cert_hash must remain the TOFU-captured value after a rejected mismatched-hash reconnect, got: {:?}",
+        peer_after_reject.cert_hash
     );
 
     materializer.shutdown();

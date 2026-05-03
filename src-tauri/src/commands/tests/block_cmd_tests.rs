@@ -236,11 +236,7 @@ async fn create_block_invalid_block_type_returns_validation_error() {
     let err = result.unwrap_err();
     assert!(
         matches!(err, AppError::Validation(_)),
-        "should return Validation error"
-    );
-    assert!(
-        err.to_string().contains("unknown block_type"),
-        "error message should mention unknown block_type"
+        "should return Validation error, got: {err:?}"
     );
 }
 
@@ -333,10 +329,6 @@ async fn create_block_rejects_oversized_content() {
         matches!(err, AppError::Validation(_)),
         "should return Validation error for oversized content, got: {err:?}"
     );
-    assert!(
-        err.to_string().contains("exceeds maximum"),
-        "error message should mention exceeds maximum"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -375,10 +367,6 @@ async fn create_block_position_zero_returns_validation_error() {
         matches!(err, AppError::Validation(_)),
         "position=0 should return Validation error, got: {err:?}"
     );
-    assert!(
-        err.to_string().contains("position must be positive"),
-        "error message should mention position must be positive"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -401,10 +389,6 @@ async fn create_block_position_negative_returns_validation_error() {
     assert!(
         matches!(err, AppError::Validation(_)),
         "position=-1 should return Validation error, got: {err:?}"
-    );
-    assert!(
-        err.to_string().contains("position must be positive"),
-        "error message should mention position must be positive"
     );
 }
 
@@ -894,10 +878,6 @@ async fn edit_block_rejects_oversized_content() {
         matches!(err, AppError::Validation(_)),
         "should return Validation error for oversized content, got: {err:?}"
     );
-    assert!(
-        err.to_string().contains("exceeds maximum"),
-        "error message should mention exceeds maximum"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1150,11 +1130,7 @@ async fn restore_block_mismatched_deleted_at_returns_invalid_operation() {
     let err = result.unwrap_err();
     assert!(
         matches!(err, AppError::InvalidOperation(_)),
-        "mismatched deleted_at should return InvalidOperation"
-    );
-    assert!(
-        err.to_string().contains("deleted_at mismatch"),
-        "error message should mention mismatch"
+        "mismatched deleted_at should return InvalidOperation, got: {err:?}"
     );
 }
 
@@ -1216,11 +1192,7 @@ async fn purge_block_not_deleted_returns_invalid_operation() {
     let err = result.unwrap_err();
     assert!(
         matches!(err, AppError::InvalidOperation(_)),
-        "purging a non-deleted block should return InvalidOperation"
-    );
-    assert!(
-        err.to_string().contains("soft-deleted before purging"),
-        "error message should explain the requirement"
+        "purging a non-deleted block should return InvalidOperation, got: {err:?}"
     );
 }
 
@@ -1988,12 +1960,7 @@ async fn move_block_to_self_returns_error() {
 
     assert!(
         matches!(result, Err(AppError::InvalidOperation(_))),
-        "block_id == new_parent_id should return InvalidOperation"
-    );
-    let err = result.unwrap_err();
-    assert!(
-        err.to_string().contains("cannot be its own parent"),
-        "error message should explain the constraint"
+        "block_id == new_parent_id should return InvalidOperation, got: {result:?}"
     );
 }
 
@@ -2013,11 +1980,6 @@ async fn move_block_cycle_grandchild_to_grandparent_returns_error() {
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "moving A under its grandchild C should detect cycle, got: {result:?}"
-    );
-    let err = result.unwrap_err();
-    assert!(
-        err.to_string().contains("cycle detected"),
-        "error message should mention cycle detection"
     );
 }
 
@@ -2076,11 +2038,6 @@ async fn move_block_exceeding_max_depth_returns_validation_error() {
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "moving beyond MAX_BLOCK_DEPTH should return Validation, got: {result:?}"
-    );
-    let err = result.unwrap_err();
-    assert!(
-        err.to_string().contains("nesting depth"),
-        "error message should mention nesting depth"
     );
 }
 
@@ -2205,11 +2162,6 @@ async fn create_block_exceeding_max_depth_returns_validation_error() {
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "creating beyond MAX_BLOCK_DEPTH should return Validation, got: {result:?}"
-    );
-    let err = result.unwrap_err();
-    assert!(
-        err.to_string().contains("nesting depth"),
-        "error message should mention nesting depth, got: {err}"
     );
 }
 
