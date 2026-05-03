@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 621 — Batch QUICK-WINS-MIX-2: MAINT-114 + MAINT-180 + MAINT-189 closed; MAINT-192 partial (UX.md (a)+(b) landed; AGENTS.md (c)+(d) gated))
+> **Last updated:** 2026-05-02 (Session 622 — Batch BACKEND-TEST-3: TEST-3 + TEST-8 + TEST-18 + TEST-23 + TEST-25 closed)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-111 open items in the summary table; 146 detail entries (FE-* sub-tables don't appear in the summary).
+106 open items in the summary table; 141 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -40,13 +40,8 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
-| TEST-3 | TEST | Brittle `err.to_string().contains(...)` / event-message `.contains(...)` assertions instead of `matches!(AppError::Variant(_))` (11 in `block_cmd_tests.rs`, 9 in `sync_daemon/tests.rs`) | S | — |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
-| TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
-| TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
-| TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
-| TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
 | TEST-FE-3 | TEST | `makeHistoryEntry` helper duplicated across `HistoryPanel.test.tsx` and `HistoryView.test.tsx` — move to `src/__tests__/fixtures/index.ts` | S | — |
@@ -541,17 +536,6 @@ Items in this section are test-quality improvements identified during a thorough
 
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
-### TEST-3 — Brittle `err.to_string().contains(...)` and `.contains(...)` on event messages
-- **Domain:** Test infrastructure
-- **Location:**
-  - `src-tauri/src/commands/tests/block_cmd_tests.rs` lines 241-244, 336-338, 378-380, 405-407, 897-899, 1143-1145, 1209-1211, 1982-1984, 2006-2008, 2069-2071, 2198-2200 (11 sites)
-  - `src-tauri/src/sync_daemon/tests.rs` lines 885, 979, 1231, 1563, 1622, 1691, 1820, 1902 (8 sites on `SyncEvent::Error.message`) plus line 1063 (`err.to_string().contains("sync cancelled by user")` — error string, not event message)
-- **What:** Tests use `.contains("substring")` on error/event message strings instead of `matches!(AppError::Variant(_))` or pinned message equality. If the message text is refactored or i18n-localized, the test silently passes against a different error.
-- **Cost:** S — mechanical replace per AGENTS.md convention.
-- **Risk:** Low — if a substring check still adds value, keep it but combine with `matches!()` on the error variant (sync_daemon path requires keeping `.contains()` because the event carries an unstructured `message: String`; the block_cmd path can fully migrate to `matches!`).
-- **Impact:** Medium — turns silent-pass regressions into hard failures.
-- **Status:** Open.
-
 ### TEST-4 — Sync daemon tests use 21 fixed sleeps as race-prone "barriers"
 - **Domain:** Sync / Test infrastructure
 - **Location:** `src-tauri/src/sync_daemon/tests.rs` lines 2601, 2607, 2639, 2643, 2702, 2706, 2755, 2770, 2781, 2828, 2847, 2862, 2909, 2919, 3151, 3208, 3281, 3345, 3388, 3395, 3398
@@ -573,50 +557,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Risk:** Low.
 - **Impact:** Medium — these tests are the only coverage for LWW + conflict-copy semantics.
 - **Status:** Open.
-
-### TEST-8 — TOFU rejection at the daemon entrypoint is uncovered (TLS-layer rejection IS covered)
-- **Domain:** Sync (TLS / pairing)
-- **Location:** `src-tauri/src/sync_daemon/tests.rs:1930-2049` (`inmem_handle_incoming_sync_tofu_stores_cert_hash`)
-- **What:** The daemon-entrypoint TOFU test only stores the cert hash on first connection; it never reconnects with a *different* cert hash to verify rejection through `handle_incoming_sync`. TLS-layer rejection IS exercised in `src-tauri/src/sync_net/tests.rs:1250` (`mtls_reconnection_with_wrong_cert_hash_fails`) and `:1281` (`mtls_tofu_store_and_verify_round_trip` — `assert!(result.is_err())` at L1336-1338). The application-level rejection path through `handle_incoming_sync` is the actual gap.
-- **Cost:** S — extend the test with a second connection attempt using a mismatched hash; assert connection is rejected.
-- **Risk:** Low.
-- **Impact:** Medium — TOFU behavior is asymmetric (acceptance is trivial; rejection is the property worth verifying).
-- **Status:** Open.
-
-### TEST-18 — Backlink non-grouped tests don't exercise self-reference filtering or count fields
-- **Domain:** Backlink tests
-- **Location:** `src-tauri/src/backlink/tests.rs`
-  - Self-reference filtering: `setup_backlinks()` (lines 109-117) creates orphan source blocks (no `parent_id`), so the non-grouped sort/pagination tests (lines 1130-1322) never exercise the self-reference-exclusion branch. Grouped tests cover this at line 3470+; non-grouped does not.
-  - `total_count` / `filtered_count` not asserted in `sort_created_desc`, `sort_property_text`, `sort_property_num`, `sort_property_date` (lines 1158-1263).
-- **What:** Per AGENTS.md pitfall #22, `total_count` must use post-filter count. The non-grouped sort tests only assert item ordering, leaving these fields unverified.
-- **Cost:** S — add a non-grouped test that creates sources with `parent_id` on the target page; extend sort tests with `total_count` / `filtered_count` assertions.
-- **Risk:** Low.
-- **Impact:** Low-medium.
-- **Status:** Open.
-
-### TEST-23 — 6 copy-pasted `*_paginates_with_cursor` tests
-- **Domain:** Pagination tests
-- **Location:** `src-tauri/src/pagination/tests.rs` lines 720, 877, 1550, 1702, 1911, 2032
-- **What:** Six tests follow an identical 3-page-loop pattern (create N items → page through → assert ordering and `has_more`). Only the calling function and variable names differ. A bug fix in one currently requires touching all six.
-- **Cost:** S — extract a generic helper `async fn assert_paginates_with_cursor<F, Fut>(list_fn: F, n: usize, page_size: usize)` or use a parameterized macro.
-- **Risk:** Low — pure refactor.
-- **Impact:** Low-medium — meaningful surface-area reduction.
-- **Status:** Open.
-
-### TEST-25 — 16 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs`
-- **Domain:** Test infrastructure
-- **Location:** `src-tauri/src/commands/tests/agenda_cmd_tests.rs:2268-2812` — 4 `list_undated_tasks_*_feat3p4` (L2268, 2302, 2338, 2361) + 4 `list_projected_agenda_*_feat3p4` (L2439, 2473, 2501, 2526) + 4 `count_agenda_batch_*_feat3p4` (L2593, 2619, 2643, 2665) + 4 `count_agenda_batch_by_source_*_feat3p4` (L2716, 2743, 2764, 2783) = 16 tests total.
-- **What:** Sixteen `*_feat3p4` tests follow the same fixture-and-assert pattern (seed two spaces, insert blocks, assign to spaces, call command, assert space filtering). The setup is copy-pasted across all 16 tests.
-- **Cost:** S — extract `async fn seed_two_space_blocks(...)` helper.
-- **Risk:** Low.
-- **Impact:** Low — reduces a copy-paste surface that grows with each new space-aware list query.
-- **Status:** Open.
-
-## TEST-FE — Frontend test improvements
-
-Items in this section are test-quality improvements identified during a thorough frontend test review (8 parallel review subagents covering 366 test files under `src/**/__tests__/`, 3 verification subagents to filter hallucinations, plus direct grep + spot-reads on cross-cutting patterns). All items below are verified — known false positives (e.g., axe audits the reviewer thought were missing because they only read the first 471 lines of a longer file) are not listed.
-
-> **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
 ### TEST-FE-1 — Bare `setTimeout` waits in tests as the only "wait" before negative assertions
 - **Domain:** Frontend test infrastructure

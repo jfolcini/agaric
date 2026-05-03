@@ -1222,6 +1222,8 @@ async fn sort_created_desc() {
     .unwrap();
 
     assert_eq!(resp.items.len(), 3, "should return all 3 backlinks");
+    assert_eq!(resp.total_count, 3, "total count should be 3");
+    assert_eq!(resp.filtered_count, 3, "filtered count should be 3");
     assert_eq!(resp.items[0].id, "SRC_C", "first item in desc order");
     assert_eq!(resp.items[1].id, "SRC_B", "second item in desc order");
     assert_eq!(resp.items[2].id, "SRC_A", "third item in desc order");
@@ -1250,6 +1252,9 @@ async fn sort_property_text() {
     .await
     .unwrap();
 
+    assert_eq!(resp.items.len(), 3, "should return all 3 backlinks");
+    assert_eq!(resp.total_count, 3, "total count should be 3");
+    assert_eq!(resp.filtered_count, 3, "filtered count should be 3");
     assert_eq!(resp.items[0].id, "SRC_B", "alice sorts first"); // alice
     assert_eq!(resp.items[1].id, "SRC_C", "bob sorts second"); // bob
     assert_eq!(resp.items[2].id, "SRC_A", "charlie sorts third"); // charlie
@@ -1278,6 +1283,9 @@ async fn sort_property_num() {
     .await
     .unwrap();
 
+    assert_eq!(resp.items.len(), 3, "should return all 3 backlinks");
+    assert_eq!(resp.total_count, 3, "total count should be 3");
+    assert_eq!(resp.filtered_count, 3, "filtered count should be 3");
     assert_eq!(resp.items[0].id, "SRC_B", "priority=1 sorts first"); // 1.0
     assert_eq!(resp.items[1].id, "SRC_C", "priority=2 sorts second"); // 2.0
     assert_eq!(resp.items[2].id, "SRC_A", "priority=3 sorts third"); // 3.0
@@ -1306,6 +1314,9 @@ async fn sort_property_date() {
     .await
     .unwrap();
 
+    assert_eq!(resp.items.len(), 3, "should return all 3 backlinks");
+    assert_eq!(resp.total_count, 3, "total count should be 3");
+    assert_eq!(resp.filtered_count, 3, "filtered count should be 3");
     assert_eq!(resp.items[0].id, "SRC_B", "2025-01-01 sorts first"); // 2025-01-01
     assert_eq!(resp.items[1].id, "SRC_C", "2025-02-01 sorts second"); // 2025-02-01
     assert_eq!(resp.items[2].id, "SRC_A", "2025-03-01 sorts third"); // 2025-03-01
@@ -2949,6 +2960,83 @@ async fn total_and_filtered_count_with_filter() {
         .unwrap();
     assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
     assert_eq!(resp.filtered_count, 2, "only 2 match the filter");
+}
+
+// ======================================================================
+// TEST-18 — eval_backlink_query: self-reference filtering coverage.
+//
+// `setup_backlinks()` creates orphan source blocks whose IDs differ from
+// TARGET, so every other non-grouped test trivially satisfies the
+// `bl.source_id != ?1` clause in `eval_backlink_query` without ever
+// exercising it. This test inserts a TARGET → TARGET block_link (the
+// shape that clause was written to exclude) and asserts that:
+//
+//   1. The self-link is dropped from `items`.
+//   2. `total_count` is the post-self-reference-filter count, per
+//      AGENTS.md "Backend Patterns" #4 (`total_count` uses post-filter
+//      count). The grouped path covers this at line 3530+; this is the
+//      non-grouped equivalent.
+//   3. `filtered_count` matches `total_count` when no user filter is
+//      applied.
+//
+// Uses page-rooted sources (not `setup_backlinks()` orphans) so the
+// fixture mirrors production data shape.
+// ======================================================================
+#[tokio::test]
+async fn eval_backlink_query_excludes_self_reference() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target Page", None, None).await;
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A1",
+        "content",
+        "block a1",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A2",
+        "content",
+        "block a2",
+        Some("PAGE_A"),
+        Some(2),
+    )
+    .await;
+    insert_block_link(&pool, "BLK_A1", "TARGET").await;
+    insert_block_link(&pool, "BLK_A2", "TARGET").await;
+    // Self-reference: TARGET links to itself. The `bl.source_id != ?1`
+    // clause must drop this row from `base_ids`, otherwise TARGET would
+    // surface as its own backlink and inflate `total_count` to 3.
+    insert_block_link(&pool, "TARGET", "TARGET").await;
+
+    let page = default_page();
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+
+    let ids: std::collections::HashSet<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(
+        resp.items.len(),
+        2,
+        "self-link must be filtered; only the 2 legitimate sources remain"
+    );
+    assert!(
+        !ids.contains("TARGET"),
+        "TARGET must not surface as its own backlink"
+    );
+    assert!(ids.contains("BLK_A1"));
+    assert!(ids.contains("BLK_A2"));
+    assert_eq!(
+        resp.total_count, 2,
+        "total_count is post-self-reference-filter (AGENTS.md Backend Patterns #4)"
+    );
+    assert_eq!(
+        resp.filtered_count, 2,
+        "filtered_count tracks total_count when no user filter is applied"
+    );
 }
 
 // ======================================================================
