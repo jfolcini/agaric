@@ -537,7 +537,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
  * B's entry. In practice this is prevented by React's batched state updates:
  * unmount effects for the old tree run before mount effects for the new tree
  * within the same commit phase. The monthly view mounts up to 30 concurrent
- * PageBlockStoreProviders (one per DaySection) without issues.
+ * PageBlockStoreProviders (one per DaySection) without issues. As cheap
+ * insurance (FE-L-3), the cleanup below only deletes when the registry slot
+ * still points to *this* store, so a stale unmount cannot clobber a newer
+ * registration.
  */
 export const pageBlockRegistry = new Map<string, StoreApi<PageBlockState>>()
 
@@ -571,7 +574,9 @@ export function PageBlockStoreProvider({
   useEffect(() => {
     pageBlockRegistry.set(pageId, store)
     return () => {
-      pageBlockRegistry.delete(pageId)
+      // Guard (FE-L-3): only delete if the slot still points to OUR store, so a
+      // stale unmount cannot clobber a newer registration for the same pageId.
+      if (pageBlockRegistry.get(pageId) === store) pageBlockRegistry.delete(pageId)
     }
   }, [pageId])
 

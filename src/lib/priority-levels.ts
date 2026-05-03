@@ -71,6 +71,18 @@ export function setPriorityLevels(levels: readonly string[]): void {
     return
   }
   currentLevels = normalised
+  // FE-M-14: best-effort listener notification.
+  //   (a) Listeners are notified AFTER `currentLevels` has already been
+  //       mutated above — they observe the new value via `getPriorityLevels()`.
+  //   (b) A thrown listener is caught and logged, but the mutation is NOT
+  //       rolled back: subsequent listeners still fire and module state
+  //       still reflects the new levels. This is intentional — a buggy
+  //       subscriber must not prevent every other subscriber from updating.
+  //   (c) If strict-rollback semantics are ever required, snapshot
+  //       `currentLevels` before the assignment, wrap the loop in
+  //       try/catch, and on the first throw restore the snapshot and
+  //       re-notify with the old value. Do not change this behaviour
+  //       without auditing every `subscribePriorityLevels` caller.
   for (const listener of listeners) {
     try {
       listener()

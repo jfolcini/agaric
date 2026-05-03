@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../__tests__/fixtures'
+import { logger } from '../../lib/logger'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -19,6 +20,14 @@ import {
 } from '../useBlockSlashCommands'
 
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('../../lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 vi.mock('../../editor/markdown-serializer', () => ({
   serialize: vi.fn(() => 'content'),
 }))
@@ -386,6 +395,46 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
       blockId: 'BLOCK_1',
       key: 'repeat-count',
     })
+  })
+
+  // FE-M-6: handleAttach wraps `input.click()` in try/catch so that platforms
+  // where the synthetic click is rejected (lost user gesture, blocked
+  // programmatic file dialog, etc.) surface a toast + logger.warn instead of
+  // letting the exception bubble out as an unhandled rejection.
+  it('FE-M-6: surfaces toast + logger.warn when input.click() throws', async () => {
+    const originalClick = HTMLInputElement.prototype.click
+    const clickMock = vi.fn(() => {
+      throw new Error('mock click')
+    })
+    Object.defineProperty(HTMLInputElement.prototype, 'click', {
+      value: clickMock,
+      configurable: true,
+      writable: true,
+    })
+
+    try {
+      const params = makeDefaultParams()
+      const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+      await act(async () => {
+        await result.current.handleSlashCommand({ id: 'attach', label: 'ATTACH' })
+      })
+
+      expect(clickMock).toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('attachments.openFileDialogFailed')
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'useBlockSlashCommands',
+        'input.click failed',
+        undefined,
+        expect.any(Error),
+      )
+    } finally {
+      Object.defineProperty(HTMLInputElement.prototype, 'click', {
+        value: originalClick,
+        configurable: true,
+        writable: true,
+      })
+    }
   })
 })
 

@@ -159,6 +159,37 @@ describe('priority-levels: subscribe / unsubscribe', () => {
       expect.any(Error),
     )
   })
+
+  // FE-M-14: pin the documented best-effort contract.
+  // A throwing listener is logged but does NOT roll back the state mutation;
+  // the new levels remain observable via getPriorityLevels(), and the listener
+  // itself sees the post-mutation value when it runs.
+  it('best-effort: state mutation persists despite a throwing listener', () => {
+    const observedDuringGood: (readonly string[])[] = []
+    const bad = vi.fn(() => {
+      throw new Error('boom')
+    })
+    const good = vi.fn(() => {
+      observedDuringGood.push(getPriorityLevels())
+    })
+    subscribePriorityLevels(bad)
+    subscribePriorityLevels(good)
+    setPriorityLevels(['P0', 'P1'])
+    // (a) both listeners fired
+    expect(bad).toHaveBeenCalledTimes(1)
+    expect(good).toHaveBeenCalledTimes(1)
+    // (b) the throw was logged
+    expect(logger.warn).toHaveBeenCalledWith(
+      'priority-levels',
+      'listener threw',
+      undefined,
+      expect.any(Error),
+    )
+    // (c) module state reflects the mutation, both after the call and from
+    //     within the surviving listener — i.e. no rollback happened.
+    expect(getPriorityLevels()).toEqual(['P0', 'P1'])
+    expect(observedDuringGood).toEqual([['P0', 'P1']])
+  })
 })
 
 describe('priority-levels: priorityRank', () => {
