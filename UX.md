@@ -1589,6 +1589,8 @@ Before shipping any UI change, verify:
 
 38. **Hardcoded English in test assertions** — Tests that assert on hardcoded English strings break when those strings are replaced with `t()` i18n calls. Use `t('key')` in assertions, or query by role/aria-label.
 
+39. **`setState` after unmount in React 18+ is no longer a defect** — React 18 removed the "Can't perform a state update on an unmounted component" warning; the late update is silently dropped. Don't add `isMountedRef` or `AbortController` guards just to suppress something that no longer happens. Only flag a late `setState` when the dropped update would leave incorrect *visible* state (e.g., a stale optimistic write the user can actually see, or a toast that never fires) — not because the update happens after unmount.
+
 ## Lessons Learned
 
 Non-obvious patterns discovered across many sessions. Items already covered by earlier sections of this doc are omitted — this section is only for the subtle gotchas.
@@ -1632,6 +1634,7 @@ Non-obvious patterns discovered across many sessions. Items already covered by e
 - **Individual Zustand selectors** over destructuring — `useBlockStore(s => s.focusedBlockId)` re-renders only on that slice. `const { focusedBlockId } = useBlockStore()` re-renders on every state change (bad for per-block components).
 - **Property type initialization must be type-aware.** Use `buildInitParams()` in `property-save-utils.ts` to get type-appropriate defaults (number→0, date→today, text/select→'', ref→null). Sending `valueText: ''` for non-text types silently fails.
 - **User-facing filters use names, not ULIDs.** Resolve to IDs via `TagValuePicker` / `queryTag()`.
+- **`useStore.getState()` inside callbacks is intentional — not a stale-closure bug.** It reads the latest state directly from the Zustand store, bypassing the closure that the callback was defined in. Use it when an event handler, timer, or async continuation must see fresh state rather than the snapshot at effect-setup time. Examples: `src/hooks/useSyncTrigger.ts:189` (`online` event handler reading the current sync state) and `src/hooks/useAppKeyboardShortcuts.ts:135` (tab shortcuts reading the current space). Reviewers sometimes flag these as missing-dep / stale-closure issues; they are deliberate.
 
 ### Code Quality
 

@@ -21,9 +21,10 @@ import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
 import { useFocusedRowEffect } from '../hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { usePropertyKeysCache } from '../hooks/usePropertyKeysCache'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
-import { listBacklinksGrouped, listPropertyKeys, listTagsByPrefix } from '../lib/tauri'
+import { listBacklinksGrouped, listTagsByPrefix } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { BacklinkGroupRenderer } from './BacklinkGroupRenderer'
@@ -58,7 +59,8 @@ export function LinkedReferences({
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [sourcePageIncluded, setSourcePageIncluded] = useState<string[]>([])
   const [sourcePageExcluded, setSourcePageExcluded] = useState<string[]>([])
-  const [propertyKeys, setPropertyKeys] = useState<string[]>([])
+  // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
+  const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
   // Resolve [[ULID]] and #[ULID] tokens in block content
@@ -149,16 +151,6 @@ export function LinkedReferences({
       currentSpaceId,
     ],
   )
-
-  // Load property keys on mount
-  useEffect(() => {
-    listPropertyKeys()
-      .then(setPropertyKeys)
-      .catch((e) => {
-        logger.error('LinkedReferences', 'Failed to load property keys', undefined, e)
-        toast.error(t('references.loadPropertiesFailed'))
-      })
-  }, [t])
 
   // Load tags on mount
   useEffect(() => {

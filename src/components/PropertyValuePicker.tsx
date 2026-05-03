@@ -10,8 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { logger } from '../lib/logger'
-import { listPropertyKeys } from '../lib/tauri'
+import { usePropertyKeysCache } from '../hooks/usePropertyKeysCache'
+import { useSpaceStore } from '../stores/space'
 
 export function PropertyValuePicker({
   selected,
@@ -21,7 +21,9 @@ export function PropertyValuePicker({
   onChange: (values: string[]) => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  const [propertyKeys, setPropertyKeys] = useState<string[]>([])
+  // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [propertyKey, setPropertyKey] = useState(() => {
     if (selected.length > 0) {
       const first = selected[0] as string
@@ -38,15 +40,6 @@ export function PropertyValuePicker({
     }
     return ''
   })
-
-  useEffect(() => {
-    listPropertyKeys()
-      .then(setPropertyKeys)
-      .catch((err) => {
-        logger.warn('PropertyValuePicker', 'failed to load property keys', undefined, err)
-        setPropertyKeys([])
-      })
-  }, [])
 
   useEffect(() => {
     if (propertyKey) {

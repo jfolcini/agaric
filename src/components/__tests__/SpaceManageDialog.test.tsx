@@ -560,6 +560,99 @@ describe('SpaceManageDialog', () => {
     })
   })
 
+  // ── MAINT-180 — IPC dedup contract ──────────────────────────────────
+  //
+  // The emptiness probe (`list_blocks { spaceId, blockType:'page',
+  // limit:1 }`) and the journal-template fetch (`get_properties`) are
+  // owned by `SpaceManageDialog` and keyed by `space.id`, so each IPC
+  // fires exactly once per unique `space.id` for the whole lifetime of
+  // the dialog — not once per `SpaceRowEditor` mount.
+
+  it('fires the emptiness probe and journal-template fetch exactly once per space.id (MAINT-180)', async () => {
+    useSpaceStore.setState({
+      currentSpaceId: PERSONAL.id,
+      availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side', accent_color: null }],
+      isReady: true,
+    })
+
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // Wait for both IPC chains to settle: the textareas mount empty
+    // and only resolve once `get_properties` resolves; the Delete
+    // buttons start disabled and only enable once `list_blocks`
+    // resolves with an empty page.
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', {
+        name: t('space.deleteSpaceLabel'),
+      })
+      expect(buttons).toHaveLength(3)
+      for (const btn of buttons) expect(btn).not.toBeDisabled()
+    })
+
+    // Each IPC fires exactly N times where N = number of unique
+    // space.ids — not 2N, not "once per row mount across re-renders".
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    const getPropertiesCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_properties')
+    expect(listBlocksCalls).toHaveLength(3)
+    expect(getPropertiesCalls).toHaveLength(3)
+
+    // Each space.id appears exactly once in the call args for each
+    // IPC — proves dedup is keyed on space.id, not just call count.
+    const listBlocksSpaceIds = listBlocksCalls.map(
+      ([, args]) => (args as { spaceId: string }).spaceId,
+    )
+    expect(new Set(listBlocksSpaceIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
+    const getPropertiesBlockIds = getPropertiesCalls.map(
+      ([, args]) => (args as { blockId: string }).blockId,
+    )
+    expect(new Set(getPropertiesBlockIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
+  })
+
+  it('does not re-fetch on close + reopen with the same space.id set (MAINT-180)', async () => {
+    const { rerender } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // Settle the initial probes so the cache is populated.
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', {
+        name: t('space.deleteSpaceLabel'),
+      })
+      for (const btn of buttons) expect(btn).not.toBeDisabled()
+    })
+    const initialListBlocks = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'list_blocks',
+    ).length
+    const initialGetProperties = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_properties',
+    ).length
+    expect(initialListBlocks).toBe(2)
+    expect(initialGetProperties).toBe(2)
+
+    // Close the dialog — this unmounts every `SpaceRowEditor` via
+    // Radix (no `forceMount`), but the `SpaceManageDialog` parent
+    // (which owns the cache) stays mounted across the rerender.
+    rerender(<SpaceManageDialog open={false} onOpenChange={() => {}} />)
+    await waitFor(() => {
+      expect(screen.queryByText(t('space.manageDialogTitle'))).not.toBeInTheDocument()
+    })
+
+    // Reopen the dialog. Rows remount; without dedup they would
+    // re-fire both IPCs once per row.
+    rerender(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    await screen.findByText(t('space.manageDialogTitle'))
+    // Flush any (incorrect) re-fetch microtasks before asserting.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // No additional IPC calls were made.
+    const finalListBlocks = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks').length
+    const finalGetProperties = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_properties',
+    ).length
+    expect(finalListBlocks).toBe(initialListBlocks)
+    expect(finalGetProperties).toBe(initialGetProperties)
+  })
+
   // Accessibility audits — four states matter visually:
   //  1. default open
   //  2. onboarding banner visible

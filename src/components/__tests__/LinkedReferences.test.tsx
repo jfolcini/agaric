@@ -27,6 +27,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
 import { useNavigationStore } from '../../stores/navigation'
 import { useTabsStore } from '../../stores/tabs'
 import type { LinkedReferencesProps } from '../LinkedReferences'
@@ -154,6 +155,9 @@ function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknow
 beforeEach(() => {
   vi.clearAllMocks()
   mockNavigateToPage.mockClear()
+  // MAINT-189: shared property-keys cache is module-level — flush it
+  // between tests so each case fetches its own keys.
+  _resetPropertyKeysCacheForTest()
   useNavigationStore.setState({
     currentView: 'journal',
     selectedBlockId: null,
@@ -1331,8 +1335,12 @@ describe('LinkedReferences', () => {
     expect(screen.getByText('Page One (1)')).toBeInTheDocument()
   })
 
-  // 37. property keys load failure: shows toast
-  it('error: property keys load failure shows toast', async () => {
+  // 37. property keys load failure: cache hook falls back to empty list
+  // (MAINT-189: shared `usePropertyKeysCache` replaced the per-mount fetch
+  // and the `LinkedReferences`-only toast — the cache logs `logger.warn`
+  // and surfaces an empty `string[]`, matching the other two consumers
+  // (`PropertyValuePicker`, `UnlinkedReferences`) that never toasted.)
+  it('error: property keys load failure renders without crashing (no toast in shared-cache path)', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_property_keys')
@@ -1345,9 +1353,14 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ pageId: 'PAGE1' })
 
+    // Wait for the IPC to be issued so the catch path runs.
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load property keys')
+      expect(mockedInvoke).toHaveBeenCalledWith('list_property_keys')
     })
+
+    // The cache swallows the error to logger.warn — no `references.loadPropertiesFailed`
+    // toast fires.
+    expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
   })
 
   // 38. tags load failure: shows toast
@@ -1368,8 +1381,9 @@ describe('LinkedReferences', () => {
     })
   })
 
-  // 39. all three invoke calls fail simultaneously: shows all toasts
-  it('error: simultaneous failures show all error toasts', async () => {
+  // 39. simultaneous failures: backlinks + tags toast; property-keys
+  // failure is now handled silently by the shared cache (MAINT-189).
+  it('error: simultaneous failures show backlinks + tags toasts (property keys handled by shared cache)', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backlinks failed'))
@@ -1383,12 +1397,13 @@ describe('LinkedReferences', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load references')
-      expect(toast.error).toHaveBeenCalledWith('Failed to load property keys')
       expect(toast.error).toHaveBeenCalledWith('Failed to load tags')
     })
 
-    // Verify all three distinct toasts fired
-    expect(toast.error).toHaveBeenCalledTimes(3)
+    // Two distinct toasts fired; the property-keys failure is logged
+    // (logger.warn) by `usePropertyKeysCache` instead of toasted.
+    expect(toast.error).toHaveBeenCalledTimes(2)
+    expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
   })
 
   // ---------------------------------------------------------------------------
