@@ -833,6 +833,30 @@ describe('UnlinkedReferences', () => {
     expect(screen.getByRole('button', { name: /show filters/i })).toBeInTheDocument()
   })
 
+  // UX-363: filter button shows visible "Filters" text label
+  it('filter button shows visible "Filters" text label (UX-363)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    // Visible "Filters" text inside the icon button (sibling of the icon).
+    const filterBtn = screen.getByRole('button', { name: /show filters/i })
+    expect(filterBtn).toContainElement(screen.getByText('Filters'))
+  })
+
   // Filter button hidden when collapsed
   it('filter button hidden when collapsed (UX-168)', async () => {
     const resp = {

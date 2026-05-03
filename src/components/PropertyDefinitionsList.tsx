@@ -302,7 +302,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                             variant="ghost"
                             size="icon-xs"
                             aria-label={t('properties.deleteDefinition', { key: def.key })}
-                            className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                            className="shrink-0 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
                             onClick={() => setDeleteTarget(def.key)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

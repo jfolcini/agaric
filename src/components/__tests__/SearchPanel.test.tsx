@@ -383,6 +383,10 @@ describe('SearchPanel', () => {
     fireEvent.change(input, { target: { value: '你好' } })
 
     expect(screen.getByText(t('search.cjkLimitationNote'))).toBeInTheDocument()
+    // UX-336 — notice surfaces the 3-character minimum workaround so CJK
+    // users know how to widen matches.
+    const notice = screen.getByTestId('cjk-notice')
+    expect(notice.textContent).toMatch(/3/)
   })
 
   it('does not show CJK notice for Latin input', () => {

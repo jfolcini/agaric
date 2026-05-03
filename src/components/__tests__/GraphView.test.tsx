@@ -644,6 +644,40 @@ describe('GraphView', () => {
     expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
   })
 
+  // UX-355: keyboard users must discover that graph nodes are activatable.
+  // The SVG's `aria-describedby` pairs with a visually-hidden hint paragraph
+  // so ATs surface "Tab → Enter/Space" alongside the accessible name.
+  it('SVG is described by the visually-hidden keyboard hint (UX-355)', async () => {
+    const pagesResponse = {
+      items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+      next_cursor: null,
+      has_more: false,
+    }
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+    })
+
+    const svg = screen.getByTestId('graph-svg')
+    expect(svg).toHaveAttribute('aria-describedby', 'graph-keyboard-hint')
+
+    const hint = document.getElementById('graph-keyboard-hint')
+    expect(hint).not.toBeNull()
+    expect(hint?.tagName).toBe('P')
+    expect(hint).toHaveClass('sr-only')
+    expect(hint).toHaveTextContent(t('graph.keyboardHint'))
+  })
+
   it('SVG is absolutely positioned to fill the relative parent (UX-244)', async () => {
     const pagesResponse = {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],

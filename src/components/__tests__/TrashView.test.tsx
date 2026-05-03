@@ -1994,3 +1994,25 @@ describe('TrashView UX-342 purge button tooltip', () => {
     expect(tooltip).toHaveTextContent('Restore this block from trash')
   })
 })
+
+describe('TrashView UX-343 batch restore threshold tooltip', () => {
+  it('batch-restore button tooltip surfaces the >5 confirmation threshold', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'deleted item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
+
+    render(<TrashView />)
+    await screen.findByText('deleted item')
+
+    // Selection toolbar (and the batch-restore button) only mounts when at
+    // least one row is selected.
+    await user.click(screen.getByTestId('trash-item-checkbox'))
+
+    const batchRestoreBtn = await screen.findByTestId('trash-batch-restore-btn')
+    await user.hover(batchRestoreBtn)
+
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent('Confirms restore for more than 5 items')
+  })
+})
