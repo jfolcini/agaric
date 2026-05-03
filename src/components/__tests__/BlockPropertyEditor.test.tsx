@@ -172,7 +172,7 @@ describe('BlockPropertyEditor', () => {
     fireEvent.blur(input)
 
     await waitFor(() => {
-      expect(mockToastError).toHaveBeenCalled()
+      expect(mockToastError).toHaveBeenCalledWith('Failed to save property')
     })
   })
 
@@ -207,8 +207,16 @@ describe('BlockPropertyEditor', () => {
         <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
       )
       await waitFor(() => {
-        expect(autoUpdate).toHaveBeenCalled()
-        expect(computePosition).toHaveBeenCalled()
+        expect(autoUpdate).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          expect.any(HTMLElement),
+          expect.any(Function),
+        )
+        expect(computePosition).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          expect.any(HTMLElement),
+          expect.objectContaining({ placement: 'bottom-start' }),
+        )
       })
     })
 
@@ -217,12 +225,20 @@ describe('BlockPropertyEditor', () => {
         <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
       )
       await waitFor(() => {
-        expect(computePosition).toHaveBeenCalled()
+        expect(computePosition).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          expect.any(HTMLElement),
+          expect.objectContaining({ placement: 'bottom-start' }),
+        )
       })
       vi.mocked(computePosition).mockClear()
       fireEvent(window, new Event('resize'))
       await waitFor(() => {
-        expect(computePosition).toHaveBeenCalled()
+        expect(computePosition).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          expect.any(HTMLElement),
+          expect.objectContaining({ placement: 'bottom-start' }),
+        )
       })
     })
 
@@ -262,7 +278,11 @@ describe('BlockPropertyEditor', () => {
         <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
       )
       await waitFor(() => {
-        expect(autoUpdate).toHaveBeenCalled()
+        expect(autoUpdate).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          expect.any(HTMLElement),
+          expect.any(Function),
+        )
       })
 
       // Pull the update callback handed to autoUpdate, simulate the anchor
@@ -535,7 +555,7 @@ describe('BlockPropertyEditor', () => {
         />,
       )
       await user.type(screen.getByTestId('ref-search-input'), 'a')
-      expect(setRefSearch).toHaveBeenCalled()
+      expect(setRefSearch).toHaveBeenCalledWith('a')
     })
 
     it('calls setProperty with valueRef on page selection', async () => {

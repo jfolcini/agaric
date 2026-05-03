@@ -68,10 +68,10 @@ describe('HeadingLevelSelector', () => {
       const btn = screen.getByRole('button', { name: `H${level}` })
       fireEvent.pointerDown(btn)
 
-      expect(mockChain).toHaveBeenCalled()
-      expect(mockFocus).toHaveBeenCalled()
+      expect(mockChain).toHaveBeenCalled() // no-args by contract
+      expect(mockFocus).toHaveBeenCalled() // no-args by contract
       expect(mockToggleHeading).toHaveBeenCalledWith({ level })
-      expect(mockRun).toHaveBeenCalled()
+      expect(mockRun).toHaveBeenCalled() // no-args by contract
     })
 
     it('calls onClose after toggling heading', () => {
@@ -94,7 +94,7 @@ describe('HeadingLevelSelector', () => {
 
       btn.dispatchEvent(event)
 
-      expect(preventDefaultSpy).toHaveBeenCalled()
+      expect(preventDefaultSpy).toHaveBeenCalled() // no-args by contract
     })
   })
 
@@ -106,10 +106,10 @@ describe('HeadingLevelSelector', () => {
 
       fireEvent.pointerDown(screen.getByRole('button', { name: 'Paragraph' }))
 
-      expect(mockChain).toHaveBeenCalled()
-      expect(mockFocus).toHaveBeenCalled()
+      expect(mockChain).toHaveBeenCalled() // no-args by contract
+      expect(mockFocus).toHaveBeenCalled() // no-args by contract
       expect(mockToggleHeading).toHaveBeenCalledWith({ level: 3 })
-      expect(mockRun).toHaveBeenCalled()
+      expect(mockRun).toHaveBeenCalled() // no-args by contract
     })
 
     it('does NOT call toggleHeading when no heading is active', () => {
