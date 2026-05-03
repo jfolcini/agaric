@@ -170,9 +170,27 @@ beforeEach(() => {
   // FEAT-3 Phase 2 — return the same seeded "Personal" space so the
   // boot-time `refreshAvailableSpaces()` call reconciles against a
   // non-empty list and leaves `currentSpaceId` intact.
+  //
+  // `get_status` returns a complete `StatusInfo` shape so the `<StatusPanel>`
+  // (mounted at shell level when the FEAT-7 `currentView === 'status'`
+  // branch fires) doesn't render `undefined + undefined` (NaN) for the
+  // `total_ops_dispatched + total_background_dispatched` sum at L231.
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_spaces')
       return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
+    if (cmd === 'get_status')
+      return {
+        foreground_queue_depth: 0,
+        background_queue_depth: 0,
+        total_ops_dispatched: 0,
+        total_background_dispatched: 0,
+        fg_high_water: 0,
+        bg_high_water: 0,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+      }
     return emptyPage
   })
 })

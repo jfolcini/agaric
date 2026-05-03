@@ -89,6 +89,78 @@ type SelectContentProps = {
   children?: React.ReactNode
 }
 
+/**
+ * Element types valid as direct children of a native `<select>` (mirroring
+ * the HTML rule). Children whose React `type` is on this allowlist render
+ * inline; anything else (e.g. a `<button>` "create another space" hint
+ * passed inside `<SelectContent>` in production) is portaled to
+ * `document.body` so the test DOM keeps it queryable without producing a
+ * "<select> cannot contain a nested <button>" hydration warning.
+ */
+const SELECT_VALID_CHILD_TYPES = new Set<unknown>([
+  SelectItem,
+  SelectGroup,
+  SelectLabel,
+  // `SelectSeparator` and the scroll buttons render `null` in the mock, so
+  // they are technically harmless inside `<select>`, but we list them here
+  // to make the allowlist exhaustive against the public mock surface.
+])
+
+function flattenChildren(children: React.ReactNode): React.ReactNode[] {
+  // Walk the children tree (arrays and Fragment-likes) and emit a flat list
+  // of leaf nodes, dropping `null` / `undefined` / `false`. SpaceSwitcher
+  // produces `[<SelectItem>...].map(...)` AS A SINGLE CHILD (nested array)
+  // alongside scalar `<SelectSeparator />` siblings; the recursion lets the
+  // partition function see each leaf independently.
+  const out: React.ReactNode[] = []
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic React element traversal
+  const walk = (node: any) => {
+    if (node == null || node === false || node === '') return
+    if (Array.isArray(node)) {
+      for (const n of node) walk(n)
+      return
+    }
+    out.push(node)
+  }
+  walk(children)
+  return out
+}
+
+function partitionSelectChildren(children: React.ReactNode): {
+  inside: React.ReactNode[]
+  portaled: React.ReactNode[]
+} {
+  const inside: React.ReactNode[] = []
+  const portaled: React.ReactNode[] = []
+  for (const child of flattenChildren(children)) {
+    // biome-ignore lint/suspicious/noExplicitAny: dynamic React element introspection
+    const type = (child as any)?.type
+    if (
+      type === undefined ||
+      // Plain text / number nodes (no `type` property in React's view).
+      // Intrinsic HTML element strings: only the few that HTML's <select>
+      // model accepts as direct children. Crucially, 'button' / 'div' /
+      // arbitrary other intrinsic strings are NOT on this list — they
+      // match the production "<button> hint inside <SelectContent>"
+      // pattern (UX-373) that triggers the very warning this mock exists
+      // to avoid.
+      type === 'option' ||
+      type === 'optgroup' ||
+      type === 'hr' ||
+      SELECT_VALID_CHILD_TYPES.has(type) ||
+      // SelectSeparator + scroll buttons render `null`; let them through to keep the partition exhaustive.
+      type === SelectSeparator ||
+      type === SelectScrollUpButton ||
+      type === SelectScrollDownButton
+    ) {
+      inside.push(child)
+    } else {
+      portaled.push(child)
+    }
+  }
+  return { inside, portaled }
+}
+
 export function SelectContent({ children }: SelectContentProps) {
   const ctx = useContext(Ctx)
   const { size, ...rest } = ctx.triggerPropsRef.current as {
@@ -102,7 +174,15 @@ export function SelectContent({ children }: SelectContentProps) {
   }
   if (ctx.disabled !== undefined) attrs['disabled'] = ctx.disabled
   if (size !== undefined) attrs['data-size'] = size
-  return createElement('select', attrs, children)
+  const { inside, portaled } = partitionSelectChildren(children)
+  const selectEl = createElement('select', attrs, inside)
+  if (portaled.length === 0) return selectEl
+  return createElement(
+    Fragment,
+    null,
+    selectEl,
+    createPortal(createElement(Fragment, null, portaled), document.body),
+  )
 }
 
 type SelectItemProps = {
