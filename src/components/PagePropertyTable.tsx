@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { logger } from '@/lib/logger'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { usePropertySave } from '../hooks/usePropertySave'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { createPropertyDef, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
@@ -43,18 +44,37 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // M-85: `listPropertyDefs` is paginated; this surface is
   // single-page-by-design — the seeded property vocabulary fits
   // well under one page, so we destructure `.items` and ignore the cursor.
+  // FE-H-17: use `Promise.allSettled` so a single rejection no longer fails
+  // the whole load. Each fetch reports its own failure via `reportIpcError`,
+  // and the failed slice falls back to an empty array so the user still sees
+  // the half that loaded.
   useEffect(() => {
     setLoading(true)
-    Promise.all([getProperties(pageId), listPropertyDefs()])
-      .then(([props, defsPage]) => {
-        setProperties(Array.isArray(props) ? props : [])
-        setDefinitions(Array.isArray(defsPage.items) ? defsPage.items : [])
-      })
-      .catch((err) => {
-        logger.warn('PagePropertyTable', 'load properties/defs failed', { pageId }, err)
-        toast.error(t('pageProperty.loadFailed'))
-      })
-      .finally(() => setLoading(false))
+    Promise.allSettled([getProperties(pageId), listPropertyDefs()]).then(
+      ([propsResult, defsResult]) => {
+        if (propsResult.status === 'fulfilled') {
+          const props = propsResult.value
+          setProperties(Array.isArray(props) ? props : [])
+        } else {
+          reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', propsResult.reason, t, {
+            pageId,
+            fetch: 'getProperties',
+          })
+          setProperties([])
+        }
+        if (defsResult.status === 'fulfilled') {
+          const defsPage = defsResult.value
+          setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
+        } else {
+          reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', defsResult.reason, t, {
+            pageId,
+            fetch: 'listPropertyDefs',
+          })
+          setDefinitions([])
+        }
+        setLoading(false)
+      },
+    )
   }, [pageId, t])
 
   // Auto-expand and open add-popover when forceExpanded transitions to true

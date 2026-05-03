@@ -220,12 +220,14 @@ describe('PropertyDefinitionsList', () => {
 
     render(<PropertyDefinitionsList />)
 
+    // FE-M-8: error reporting now goes through reportIpcError —
+    // toast carries only the localized message; the Error detail
+    // is logged separately, not surfaced in the toast string.
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to load property definitions'),
       )
     })
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('DB error'))
   })
 
   it('shows toast error when creating a definition fails', async () => {
@@ -246,12 +248,12 @@ describe('PropertyDefinitionsList', () => {
     const createBtn = screen.getByRole('button', { name: /Create/i })
     await user.click(createBtn)
 
+    // FE-M-8: see loading test above.
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to create property definition'),
       )
     })
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('Duplicate key'))
     // The definition should NOT appear in the list
     expect(screen.queryByText('My Prop')).not.toBeInTheDocument()
   })
@@ -272,12 +274,12 @@ describe('PropertyDefinitionsList', () => {
     const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
     await user.click(confirmBtn)
 
+    // FE-M-8: see loading test above.
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to delete property definition'),
       )
     })
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('Not found'))
     // The definition should still be in the list
     expect(screen.getByText('To Delete')).toBeInTheDocument()
   })
@@ -307,12 +309,12 @@ describe('PropertyDefinitionsList', () => {
     const saveBtn = screen.getByRole('button', { name: /Save/i })
     await user.click(saveBtn)
 
+    // FE-M-8: see loading test above.
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to update options'),
       )
     })
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('Invalid JSON'))
   })
 
   it('has no a11y violations', async () => {

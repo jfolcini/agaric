@@ -338,10 +338,11 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
+    // FE-M-8: error reporting now goes through reportIpcError —
+    // toast carries only the localized message; the Error detail
+    // is logged separately (not user-facing).
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        t('property.errorLoad', { error: String(new Error('DB read error')) }),
-      )
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.errorLoad'))
     })
 
     // Loading should finish (no lingering skeletons)
@@ -371,10 +372,9 @@ describe('PropertiesView', () => {
     const createBtn = screen.getByRole('button', { name: /Create/i })
     await user.click(createBtn)
 
+    // FE-M-8: see errorLoad above.
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        t('property.errorCreate', { error: String(new Error('Duplicate key')) }),
-      )
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.errorCreate'))
     })
 
     // Definition should NOT appear in the list
@@ -406,10 +406,9 @@ describe('PropertiesView', () => {
     const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
     await user.click(confirmBtn)
 
+    // FE-M-8: see errorLoad above.
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        t('property.errorDelete', { error: String(new Error('Backend error')) }),
-      )
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.errorDelete'))
     })
 
     // Definition should still be visible (not removed)
@@ -446,10 +445,9 @@ describe('PropertiesView', () => {
     const saveBtn = screen.getByRole('button', { name: /Save/i })
     await user.click(saveBtn)
 
+    // FE-M-8: see errorLoad above.
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        t('property.errorUpdate', { error: String(new Error('Invalid JSON')) }),
-      )
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.errorUpdate'))
     })
 
     // No success toast

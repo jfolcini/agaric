@@ -31,6 +31,7 @@ import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { useBlockPropertyIpc } from '../hooks/useBlockPropertyIpc'
 import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useDateInput } from '../hooks/useDateInput'
@@ -77,23 +78,35 @@ export function BlockPropertyDrawer({
     setLoading(true)
     // M-85: `listPropertyDefs` is paginated. The drawer is single-page-by-design —
     // it shows the property-defs vocabulary picker, which fits well under one page.
-    Promise.all([getProperties(blockId), listPropertyDefs()])
-      .then(([props, defsPage]) => {
-        setProperties(Array.isArray(props) ? props : [])
-        setDefinitions(Array.isArray(defsPage.items) ? defsPage.items : [])
-      })
-      .catch((err: unknown) => {
-        logger.error(
-          'BlockPropertyDrawer',
-          'Failed to load properties',
-          {
+    // FE-H-17: use `Promise.allSettled` so a single rejection no longer fails the
+    // whole load. Each fetch reports its own failure via `reportIpcError`, and
+    // the failed slice falls back to an empty array so the user still sees the
+    // half that loaded.
+    Promise.allSettled([getProperties(blockId), listPropertyDefs()]).then(
+      ([propsResult, defsResult]) => {
+        if (propsResult.status === 'fulfilled') {
+          const props = propsResult.value
+          setProperties(Array.isArray(props) ? props : [])
+        } else {
+          reportIpcError('BlockPropertyDrawer', 'property.loadFailed', propsResult.reason, t, {
             blockId: blockId ?? '',
-          },
-          err,
-        )
-        toast.error(t('property.loadFailed'))
-      })
-      .finally(() => setLoading(false))
+            fetch: 'getProperties',
+          })
+          setProperties([])
+        }
+        if (defsResult.status === 'fulfilled') {
+          const defsPage = defsResult.value
+          setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
+        } else {
+          reportIpcError('BlockPropertyDrawer', 'property.loadFailed', defsResult.reason, t, {
+            blockId: blockId ?? '',
+            fetch: 'listPropertyDefs',
+          })
+          setDefinitions([])
+        }
+        setLoading(false)
+      },
+    )
   }, [blockId, open, t, getProperties, listPropertyDefs])
 
   // Save / delete via shared hook (M-28)

@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
+import { reportIpcError } from '../../lib/report-ipc-error'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../../lib/tauri'
 import { useBlockStore } from '../../stores/blocks'
 import {
@@ -25,7 +26,21 @@ import {
   type PageBlockState,
 } from '../../stores/page-blocks'
 
+// Wrap `reportIpcError` in a spy that delegates to the real implementation.
+// Lets FE-H-17 partial-failure assertions inspect call arguments while
+// existing tests that rely on the real toast/logger side-effects keep passing.
+vi.mock('../../lib/report-ipc-error', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/report-ipc-error')>(
+    '../../lib/report-ipc-error',
+  )
+  return {
+    ...actual,
+    reportIpcError: vi.fn(actual.reportIpcError),
+  }
+})
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedReportIpcError = vi.mocked(reportIpcError)
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -636,6 +651,43 @@ describe('BlockPropertyDrawer', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
     })
+  })
+
+  it('FE-H-17: partial failure (listPropertyDefs rejects) renders properties and reports failure', async () => {
+    // get_properties succeeds, list_property_defs rejects — the drawer should
+    // still render the property row from the successful side and surface the
+    // defs failure via reportIpcError instead of failing the whole load.
+    const props = [makeProp('status', { value_text: 'active' })]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return props
+      if (cmd === 'list_property_defs') throw new Error('defs IPC failed')
+      return null
+    })
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    // (a) The successful side still renders.
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    // (b) reportIpcError was called for the listPropertyDefs failure with the
+    // module/messageKey/context expected by FE-H-17.
+    expect(mockedReportIpcError).toHaveBeenCalledWith(
+      'BlockPropertyDrawer',
+      'property.loadFailed',
+      expect.any(Error),
+      expect.any(Function),
+      expect.objectContaining({ blockId: 'BLOCK_1', fetch: 'listPropertyDefs' }),
+    )
+    // The successful fetch must NOT trigger a report.
+    expect(mockedReportIpcError).not.toHaveBeenCalledWith(
+      'BlockPropertyDrawer',
+      'property.loadFailed',
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ fetch: 'getProperties' }),
+    )
   })
 
   it('shows error toast when saving a property fails', async () => {

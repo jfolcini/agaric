@@ -30,6 +30,7 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { setPriorityLevels } from '../lib/priority-levels'
 import type { PropertyDefinition } from '../lib/tauri'
 import {
@@ -84,7 +85,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
       const { items: defs } = await listPropertyDefs()
       setDefinitions(defs)
     } catch (error) {
-      toast.error(t('property.errorLoad', { error: String(error) }))
+      // FE-M-8: replace bespoke `String(error)` toast with the unified
+      // helper — error detail goes to the structured log; the user sees
+      // the localized message.
+      reportIpcError('PropertyDefinitionsList', 'property.errorLoad', error, t)
     }
     setLoading(false)
   }, [t])
@@ -104,7 +108,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setNewType('text')
       toast.success(t('propertiesView.created'))
     } catch (error) {
-      toast.error(t('property.errorCreate', { error: String(error) }))
+      // FE-M-8: see loadDefinitions above — unified error reporting.
+      reportIpcError('PropertyDefinitionsList', 'property.errorCreate', error, t)
     }
     setIsCreating(false)
   }, [newKey, newType, t])
@@ -117,7 +122,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
         setDeleteTarget(null)
         toast.success(t('propertiesView.deleted'))
       } catch (error) {
-        toast.error(t('property.errorDelete', { error: String(error) }))
+        // FE-M-8: see loadDefinitions above — unified error reporting.
+        reportIpcError('PropertyDefinitionsList', 'property.errorDelete', error, t, { key })
       }
     },
     [t],
@@ -156,7 +162,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
           }
         }
       } catch (err) {
-        toast.error(t('property.errorUpdate', { error: String(err) }))
+        // FE-M-8: see loadDefinitions above — unified error reporting.
+        reportIpcError('PropertyDefinitionsList', 'property.errorUpdate', err, t, { key })
       }
     },
     [editOptionsValue, t],

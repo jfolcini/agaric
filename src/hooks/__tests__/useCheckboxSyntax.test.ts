@@ -4,13 +4,16 @@
  * Validates:
  *  - When setTodoState rejects, the .catch arm logs via `logger.error` AND
  *    surfaces a toast (no silent catch — see REVIEW-LATER FE-H-8).
+ *  - When setTodoState rejects, the optimistic `todo_state` mutation is
+ *    reverted to the prior value (FE-H-7).
  */
 
-import { renderHook } from '@testing-library/react'
+import { renderHook, waitFor } from '@testing-library/react'
 import { act } from 'react'
 import { toast } from 'sonner'
 import { describe, expect, it, vi } from 'vitest'
-import type { StoreApi } from 'zustand'
+import { createStore, type StoreApi } from 'zustand'
+import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
 import { setTodoState } from '../../lib/tauri'
 import type { PageBlockState } from '../../stores/page-blocks'
@@ -53,6 +56,7 @@ describe('useCheckboxSyntax', () => {
     mockedSetTodoState.mockRejectedValue(failure)
 
     const pageStore = {
+      getState: () => ({ blocks: [] }),
       setState: vi.fn(),
     } as unknown as StoreApi<PageBlockState>
 
@@ -79,5 +83,44 @@ describe('useCheckboxSyntax', () => {
       failure,
     )
     expect(mockedToastError).toHaveBeenCalledWith('blockTree.setTaskStateFailed')
+  })
+
+  it('reverts the optimistic todo_state mutation when setTodoState rejects (FE-H-7)', async () => {
+    mockedSetTodoState.mockRejectedValue(new Error('ipc failed'))
+
+    const pageStore = createStore<PageBlockState>()(() => ({
+      blocks: [makeBlock({ id: 'B1', todo_state: 'TODO' })],
+      rootParentId: 'R1',
+      loading: false,
+      load: vi.fn(),
+      createBelow: vi.fn(),
+      edit: vi.fn(),
+      remove: vi.fn(),
+      splitBlock: vi.fn(),
+      reorder: vi.fn(),
+      moveToParent: vi.fn(),
+      indent: vi.fn(),
+      dedent: vi.fn(),
+      moveUp: vi.fn(),
+      moveDown: vi.fn(),
+    })) as StoreApi<PageBlockState>
+
+    const { result } = renderHook(() =>
+      useCheckboxSyntax({
+        focusedBlockId: 'B1',
+        rootParentId: 'R1',
+        pageStore,
+        t: (k: string) => k,
+      }),
+    )
+
+    await act(async () => {
+      result.current('DONE')
+    })
+
+    await waitFor(() => {
+      const block = pageStore.getState().blocks.find((b) => b.id === 'B1')
+      expect(block?.todo_state).toBe('TODO')
+    })
   })
 })
