@@ -1,5 +1,5 @@
 import { AlertCircle, RefreshCw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,29 @@ export function BootGate({ children }: { children: React.ReactNode }) {
     useShallow((s) => ({ state: s.state, error: s.error, boot: s.boot })),
   )
   const [retrying, setRetrying] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const diagnostics = useMemo(() => {
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a'
+    const platform = typeof navigator !== 'undefined' ? navigator.platform : 'n/a'
+    return [
+      `Error: ${error}`,
+      `User-Agent: ${ua}`,
+      `Platform: ${platform}`,
+      `Time: ${new Date().toISOString()}`,
+    ].join('\n')
+  }, [error])
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(diagnostics)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard write may fail in some browsers; ignore.
+    }
+  }
 
   useEffect(() => {
     boot()
@@ -74,6 +97,32 @@ export function BootGate({ children }: { children: React.ReactNode }) {
               </>
             )}
           </Button>
+          <button
+            type="button"
+            onClick={() => setShowDetails((v) => !v)}
+            className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+            data-testid="boot-show-details"
+          >
+            {showDetails ? t('boot.hideDetailsButton') : t('boot.showDetailsButton')}
+          </button>
+          {showDetails && (
+            <div
+              className="mt-2 w-full max-w-md flex flex-col gap-2"
+              data-testid="boot-diagnostics"
+            >
+              <pre className="text-xs bg-background border rounded-md p-3 overflow-x-auto whitespace-pre-wrap font-mono text-foreground/80">
+                {diagnostics}
+              </pre>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopy}
+                data-testid="boot-copy-diagnostics"
+              >
+                {copied ? t('boot.copiedLabel') : t('boot.copyDiagnosticsLabel')}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     )

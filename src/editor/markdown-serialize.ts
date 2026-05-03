@@ -8,11 +8,15 @@
  * resolve unchanged.
  *
  * Zero external dependencies. O(n) in the document size.
+ *
+ * Unknown node types (anything outside the locked block/inline grammar)
+ * are dropped from the output. Callers who want a user-facing notification
+ * pass an `onUnknownNode` callback to `serialize`; see the
+ * `markdown-serialize-toast` helper for the production wiring (toast +
+ * structured log + per-session dedup) that MAINT-183 extracted out of
+ * this file.
  */
 
-import { toast } from 'sonner'
-import { t } from '../lib/i18n'
-import { logger } from '../lib/logger'
 import type {
   BlockquoteNode,
   CodeBlockNode,
@@ -31,39 +35,19 @@ import type {
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
 /**
- * Module-scoped set of node types we've already toasted about this session.
+ * Module-scoped reference to the current `serialize()` call's
+ * `onUnknownNode` callback. Set at the top of `serialize` and read by
+ * `notifyUnknownNodeType`. Avoids threading the callback through every
+ * inline helper purely for one rare branch.
  *
- * The serializer can be called many times per second on a typical doc; if 100
- * unknown nodes appear we don't want to spam 100 toasts. This Set rate-limits
- * to one toast per `type` per session (process lifetime).
- *
- * `logger.warn` is still emitted on every occurrence — only the user-facing
- * toast is rate-limited.
- *
- * Exported as `__resetUnknownNodeToastsForTests` so tests can reset between
- * cases. Not part of the public API.
+ * Read by exactly one helper (`notifyUnknownNodeType`); a `serialize` call
+ * is synchronous and single-threaded in JS, so re-entrance is not a
+ * concern.
  */
-const toastedUnknownTypes = new Set<string>()
-
-/** @internal — for tests only */
-export function __resetUnknownNodeToastsForTests(): void {
-  toastedUnknownTypes.clear()
-}
+let currentOnUnknownNode: ((type: string) => void) | undefined
 
 function notifyUnknownNodeType(type: string): void {
-  if (toastedUnknownTypes.has(type)) return
-  toastedUnknownTypes.add(type)
-  // The serializer is browser-only; sonner is mocked under vitest via the
-  // global `vi.mock('sonner')` in `src/test-setup.ts`. A direct import is
-  // safe and matches the rest of the codebase.
-  try {
-    toast.warning(t('editor.unknownNodeType', { type }))
-  } catch (err) {
-    // Defensive: if the toast layer is unavailable for any reason we still
-    // want the serializer to succeed. The `logger.warn` already records the
-    // dropped content for diagnostics.
-    logger.warn('serializer', 'failed to surface unknown-node toast', { type }, err)
-  }
+  currentOnUnknownNode?.(type)
 }
 
 function escapeText(s: string): string {
@@ -267,7 +251,6 @@ function serializeInlineChild(child: InlineNode, activeMarks: Set<string>): stri
   }
   if (child.type === 'hardBreak') return serializeInlineAtom('\n', activeMarks)
   const unknown = child as { type: string }
-  logger.warn('serializer', `unknown inline node type: "${unknown.type}" — stripped`)
   notifyUnknownNodeType(unknown.type)
   return serializeInlineAtom('', activeMarks)
 }
@@ -420,21 +403,25 @@ function serializeHorizontalRule(_node: HorizontalRuleNode): string {
   return '---'
 }
 
-export function serialize(doc: DocNode): string {
-  if (!doc.content || doc.content.length === 0) return ''
-  return doc.content
-    .map((node) => {
-      if (node.type === 'paragraph') return serializeParagraph(node)
-      if (node.type === 'heading') return serializeHeading(node)
-      if (node.type === 'codeBlock') return serializeCodeBlock(node)
-      if (node.type === 'blockquote') return serializeBlockquote(node)
-      if (node.type === 'table') return serializeTable(node)
-      if (node.type === 'orderedList') return serializeOrderedList(node)
-      if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
-      const unknownType = (node as { type: string }).type
-      logger.warn('serializer', `unknown top-level node type: "${unknownType}" — stripped`)
-      notifyUnknownNodeType(unknownType)
-      return ''
-    })
-    .join('\n')
+export function serialize(doc: DocNode, onUnknownNode?: (type: string) => void): string {
+  currentOnUnknownNode = onUnknownNode
+  try {
+    if (!doc.content || doc.content.length === 0) return ''
+    return doc.content
+      .map((node) => {
+        if (node.type === 'paragraph') return serializeParagraph(node)
+        if (node.type === 'heading') return serializeHeading(node)
+        if (node.type === 'codeBlock') return serializeCodeBlock(node)
+        if (node.type === 'blockquote') return serializeBlockquote(node)
+        if (node.type === 'table') return serializeTable(node)
+        if (node.type === 'orderedList') return serializeOrderedList(node)
+        if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
+        const unknownType = (node as { type: string }).type
+        notifyUnknownNodeType(unknownType)
+        return ''
+      })
+      .join('\n')
+  } finally {
+    currentOnUnknownNode = undefined
+  }
 }

@@ -24,6 +24,7 @@ import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
+import { notifyUnknownNodeTypeToast } from '../editor/markdown-serialize-toast'
 import { serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import type { DocNode } from '../editor/types'
@@ -122,7 +123,7 @@ function notifyUndo(rootParentId: string | null): void {
 function readCurrentContent(ctx: SlashCommandContext): string {
   if (ctx.rovingEditor.editor) {
     const json = ctx.rovingEditor.editor.getJSON() as DocNode
-    return serialize(json)
+    return serialize(json, notifyUnknownNodeTypeToast)
   }
   const block = ctx.pageStore.getState().blocks.find((b) => b.id === ctx.blockId)
   return block?.content ?? ''

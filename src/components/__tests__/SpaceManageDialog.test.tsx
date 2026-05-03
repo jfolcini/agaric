@@ -560,6 +560,40 @@ describe('SpaceManageDialog', () => {
     })
   })
 
+  // UX-375 — The journal-template textarea placeholder mentions
+  // `<% today %>` etc., but users had no concrete examples. A
+  // collapsible <details> panel below the hint surfaces 1-2 sample
+  // templates. Closed by default; native disclosure widget so it is
+  // keyboard accessible without extra ARIA.
+  it('renders a collapsible Examples panel that expands to show templates with variables (UX-375)', async () => {
+    const user = userEvent.setup()
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // Disclosure widgets render once per row. Pick the first
+    // (Personal). Closed by default → `open` attribute absent.
+    const panels = await screen.findAllByTestId('journal-template-examples')
+    expect(panels.length).toBeGreaterThanOrEqual(1)
+    const panel = panels[0] as HTMLDetailsElement
+    expect(panel.open).toBe(false)
+
+    // The summary (toggle) is rendered with the i18n label even while
+    // the panel is collapsed. Both example titles live inside the
+    // `<details>` body — they exist in the DOM regardless of open
+    // state, so we click the summary first and then assert content to
+    // mirror what an end user actually sees.
+    const summary = within(panel).getByText(t('space.journalTemplateExamplesLabel'))
+    await user.click(summary)
+    await waitFor(() => {
+      expect(panel.open).toBe(true)
+    })
+
+    expect(within(panel).getByText(t('space.journalTemplateExample1Title'))).toBeInTheDocument()
+    expect(within(panel).getByText(t('space.journalTemplateExample2Title'))).toBeInTheDocument()
+    // At least one of the example bodies must reference the
+    // `<% today %>` variable so users see a working interpolation.
+    expect(panel.textContent ?? '').toContain('<% today %>')
+  })
+
   // ── MAINT-180 — IPC dedup contract ──────────────────────────────────
   //
   // The emptiness probe (`list_blocks { spaceId, blockType:'page',

@@ -17,7 +17,7 @@ import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   type AgendaFilterDimension,
-  ALL_DIMENSIONS,
+  DIMENSION_GROUPS,
   DIMENSION_OPTIONS,
   dimensionLabel,
 } from '../lib/filter-dimension-metadata'
@@ -157,37 +157,56 @@ function AddFilterPopover({
           // distinction between visually-similar dimensions (dueDate vs
           // scheduledDate, completedDate vs createdDate) is discoverable
           // without opening the dimension and trying its values.
+          //
+          // UX-323 — visually group the 8 dimensions under "Task metadata" /
+          // "Dates" / "Organisation" headings so users can scan by family
+          // before reading individual labels. Group definitions live in
+          // DIMENSION_GROUPS (filter-dimension-metadata.ts).
           <TooltipProvider>
-            <ul
-              className="flex flex-col gap-1 list-none m-0 p-0"
+            {/* biome-ignore lint/a11y/useSemanticElements: role="group" carries
+                the picker's accessible name (preserving the pre-UX-323 single-<ul>
+                semantics); a nested <fieldset> inside the AgendaFilterBuilder's
+                outer fieldset would be the wrong form-grouping primitive here. */}
+            <div
+              role="group"
+              className="flex flex-col gap-2"
               aria-label={t('agendaFilter.filterDimensions')}
             >
-              {ALL_DIMENSIONS.map((dim) => {
-                const alreadyUsed = dim !== 'property' && existingDimensions.has(dim)
-                return (
-                  <li key={dim}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        {/* Span wrapper so the tooltip surfaces over disabled
-                            menu items too — disabled buttons swallow pointer
-                            events otherwise. */}
-                        <span className="block">
-                          <PopoverMenuItem
-                            disabled={alreadyUsed}
-                            onClick={() => handleSelectDimension(dim)}
-                          >
-                            {dimensionLabel(dim)}
-                          </PopoverMenuItem>
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="right" className="max-w-xs">
-                        {t(`filter.dimension.${dim}.description`)}
-                      </TooltipContent>
-                    </Tooltip>
-                  </li>
-                )
-              })}
-            </ul>
+              {DIMENSION_GROUPS.map((group) => (
+                <div key={group.labelKey}>
+                  <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {t(group.labelKey)}
+                  </p>
+                  <ul className="flex flex-col gap-0.5 list-none m-0 p-0">
+                    {group.dimensions.map((dim) => {
+                      const alreadyUsed = dim !== 'property' && existingDimensions.has(dim)
+                      return (
+                        <li key={dim}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              {/* Span wrapper so the tooltip surfaces over disabled
+                                  menu items too — disabled buttons swallow pointer
+                                  events otherwise. */}
+                              <span className="block">
+                                <PopoverMenuItem
+                                  disabled={alreadyUsed}
+                                  onClick={() => handleSelectDimension(dim)}
+                                >
+                                  {dimensionLabel(dim)}
+                                </PopoverMenuItem>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="right" className="max-w-xs">
+                              {t(`filter.dimension.${dim}.description`)}
+                            </TooltipContent>
+                          </Tooltip>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
           </TooltipProvider>
         )}
 
