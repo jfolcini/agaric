@@ -18,6 +18,7 @@ WHERE key = 'is_space';
 Funky but functional. The select dropdown with one option is a poor UX surface for a binary toggle, and the "absence = false" convention is unwritten.
 
 Other boolean-shaped properties found in the codebase (used in agenda / projected-agenda cache logic but not yet defined as property_definitions rows):
+
 - `template` (filters template blocks from agenda views)
 - `archived` (filters archived blocks)
 - `pinned` (not yet implemented; natural future candidate)
@@ -89,7 +90,7 @@ The `PropertyValue` enum (live in `commands/blocks/crud.rs` or shared module) ge
 Specta auto-derives. The TS `PropertyValue` becomes:
 
 ```typescript
-type PropertyValue = 
+type PropertyValue =
   | { Text: string }
   | { Number: number }
   | { Date: string }
@@ -98,6 +99,7 @@ type PropertyValue =
 ```
 
 Frontend changes:
+
 - `src/components/PropertyRowEditor.tsx` — checkbox/switch when `value_type === 'boolean'`.
 - `src/components/AddPropertyPopover.tsx` — add `'boolean'` to the type-picker options.
 - `src/components/PropertyValuePicker.tsx` — N/A unless agenda filters extend to booleans (defer).
@@ -111,7 +113,7 @@ Phase 2 (separate, deferred) retypes `is_space` to boolean. Touches every `is_sp
 ## Files touched
 
 | File | Change |
-|---|---|
+| --- | --- |
 | `migrations/0042_add_value_bool_column.sql` | New — column + index |
 | `migrations/0043_property_definitions_allow_boolean.sql` | New — CHECK constraint update |
 | `commands/properties.rs` | Add `value_bool` param + dispatch |
@@ -136,7 +138,7 @@ Phase 2 (separate, deferred) retypes `is_space` to boolean. Touches every `is_sp
 **M (6.5-8h).**
 
 | Step | Time |
-|---|---|
+| --- | --- |
 | Migrations 0042 + 0043 | 0.5h |
 | Rust dispatch (6 sites including the missing `create_property_def_inner` match arm) | 2.5h |
 | sqlx regen + sqlx-prepare verification | 0.5h |

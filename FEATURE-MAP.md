@@ -735,4 +735,4 @@ What's not yet shipped, in roughly priority order.
 - **Android OAuth + GCal connector (FEAT-5g)** — design sketch only. Blocked on loopback HTTP listener investigation + keyring Android backend.
 - **MCP rmcp migration (MAINT-111)** — spike complete; 3 milestones remaining.
 
-See [REVIEW-LATER.md](REVIEW-LATER.md) for the full backlog with cost / risk / impact estimates per item.
+See [pending/REVIEW-LATER.md](pending/REVIEW-LATER.md) for the full backlog with cost / risk / impact estimates per item.

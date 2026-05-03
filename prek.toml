@@ -118,6 +118,21 @@ language = "system"
 pass_filenames = false
 files = "^src/lib/(bindings\\.ts|tauri-mock/handlers\\.ts)$"
 
+# Tauri bindings ↔ wrapper parity: ensures every `commands.*` export from
+# `src/lib/bindings.ts` (auto-generated tauri-specta surface) has either a
+# matching ergonomics wrapper in `src/lib/tauri.ts` or sits on an explicit
+# allowlist. Catches the drift class where a Rust command signature changes,
+# `bindings.ts` regenerates, but the hand-written wrapper is missed.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "tauri-bindings-parity"
+name = "tauri bindings ↔ wrapper parity"
+entry = "node scripts/check-tauri-bindings-parity.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/lib/(bindings\\.ts|tauri\\.ts)$"
+
 # Tracked-file Markdown link integrity. Verifies that every relative
 # `](path.md)` link in tracked Markdown files points to a file that's
 # also tracked by git. Lychee can't catch this locally because an

@@ -11,11 +11,11 @@ Origin: a deep architectural review session run with five parallel investigation
 | PEND-01 | Rename `MDNS_SERVICE_NAME` `BlockNotes` → `Agaric` | trivial | ✅ done this session |
 | PEND-02 | Rename "CQRS hybrid model" → "event sourcing with materialized views" | S | ready (gated on AGENTS.md edit approval) |
 | PEND-03 | Materializer silent-drop fix for global cache rebuilds | M (4-7h) | ready (revised after reviewer found a SQL constraint bug + 7 enum variants needed, not 1) |
-| PEND-04 | Threat-model audit — prune stale crypto docs | S (~1h) | ready (reviewer confirmed: HKDF/ChaCha already removed in MAINT-110, only docs are stale; identified 5 specific stale locations) |
-| PEND-05 | Projected-agenda parity test (cached vs on-the-fly) | S (1-2h) | ready (revised: range extended to >365d to expose the horizon drift the reviewer caught) |
+| PEND-04 | Threat-model audit — prune stale crypto docs | S (~1h) | ✅ done (bulk session 652; residue purged session 654 — `ARCHITECTURE.md` historical-note rephrase) |
+| PEND-05 | Projected-agenda parity test (cached vs on-the-fly) | S (1-2h) | ✅ done session 654 — test landed in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`. `#[ignore]`d on first run because it correctly detected real `.+1w` drift between cached + on-the-fly paths; filed as MAINT-196 in REVIEW-LATER. Re-enable once MAINT-196 ships the projection-path refactor. |
 | PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | ready (revised: reviewer caught the `TransferringFiles` state hallucination, Tier 2 cost +2-4h) |
 | PEND-07 | `STRICT` tables policy for new migrations | S (~1h) | ready |
-| PEND-08 | `tauri.ts` ↔ `bindings.ts` parity pre-commit hook | S (1-2h) | ✅ implemented (script `scripts/check-tauri-bindings-parity.mjs` + `prek.toml` hook entry; verified counts 101/96/5) |
+| PEND-08 | `tauri.ts` ↔ `bindings.ts` parity pre-commit hook | S (1-2h) | ✅ done session 654 — script `scripts/check-tauri-bindings-parity.mjs` (~171 LOC) + `prek.toml` hook entry. First-run calibration found 101 bindings / 96 wrappers / **15 unwrapped** (not 5 as the plan estimated): 13 MCP+GCal direct-consumer commands + 2 renamed-wrapper twins (`compactOpLogCmd` → `compactOpLog`, `listAttachmentsBatch` → `getBatchAttachments`). Allowlist pinned. Sanity-tested both `missingNew` (rename detection) and `allowlistStale` paths. |
 | PEND-09 | CRDT migration (Loro), merge-layer only | L (3-4 months) | ready as a **planned spike + multi-phase migration** (revised after reviewer caught a 612-vs-559 reference count, optimistic timeline, missing risks; timeline now 11-15 weeks) |
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (3.5-5 months) | ready as a **planned spike + multi-phase migration** (revised after reviewer caught LOC undercount of ~87% — actual delete is ~14.6k LOC including test files, not ~7.8k; timeline 14-19 weeks; 13 risks + 13 open questions; iroh post-1.0 status is the headline kill criterion) |
 | PEND-11 | Space indicator redesign (thin top stripe + sidebar picker only) | — | (out-of-band plan, separate UX track) |
@@ -31,12 +31,12 @@ Origin: a deep architectural review session run with five parallel investigation
 
 **Quick wins first** — schedule when convenient, low/no dependencies:
 
-- PEND-01 (mDNS BlockNotes→Agaric rename) — ✅ already shipped (commit 5db55af, session 652)
-- PEND-02 (CQRS naming rename) — ✅ already shipped (commit 27ca079, session 652)
-- PEND-04 (stale crypto docs) — ✅ already shipped (commit 5db55af, session 652)
-- PEND-08 (parity hook) — ✅ already shipped (script + prek entry exist on disk)
+- PEND-01 (mDNS BlockNotes→Agaric rename) — ✅ shipped (commit 5db55af, session 652)
+- PEND-02 (CQRS naming rename) — ✅ shipped (commit 27ca079, session 652)
+- PEND-04 (stale crypto docs) — ✅ shipped (bulk: session 652; residue: session 654)
+- PEND-05 (agenda parity test) — ✅ shipped session 654 (test `#[ignore]`d, drift filed as MAINT-196)
+- PEND-08 (parity hook) — ✅ shipped session 654
 - PEND-07 (STRICT tables policy) — pure policy + small hook, ~1h
-- PEND-05 (agenda parity test) — single test addition, 1-2h
 - PEND-13 (`page_id` ↔ space drift test) — single test addition, 1.5-2.5h
 - PEND-14 (boolean property type) — schema + dispatch + frontend, 6.5-8h
 

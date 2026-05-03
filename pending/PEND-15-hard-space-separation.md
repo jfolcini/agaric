@@ -7,6 +7,7 @@ User intent: *"I want spaces separate, no links between them."* Each space is a 
 This goes further than the current Phase-7 enforcement (rejects new cross-space `[[link]]` and `#tag` insertions at op boundary, but tolerates legacy / migrated cross-space references rendering them as "Broken link" — UX-366 in REVIEW-LATER).
 
 ### Current Phase-7 enforcement
+
 - **File:** `commands/spaces.rs` (`create_page_in_space_inner` validates `parent_id`'s space matches target)
 - **Mechanism:** Pre-emit cross-space check; reject with `AppError::Validation` before op reaches log
 - **Gap:** Write-time guard only, only for two op types; legacy stored data is tolerated
@@ -14,7 +15,7 @@ This goes further than the current Phase-7 enforcement (rejects new cross-space 
 ## Scope: what becomes scoped
 
 | Entity | Scoped? | Notes |
-|---|---|---|
+| --- | --- | --- |
 | Pages | YES (already) | `space` ref property |
 | Content blocks | YES (already) | Inherit space via `page_id` |
 | Block links (`[[ULID]]`) | NO cross-space | Both inline tokens AND maintained `block_links` rows |
@@ -48,9 +49,9 @@ One-shot SQL audit script that enumerates current cross-space references in stor
 ```sql
 -- A1: cross-space block_links rows
 SELECT bl.source_id, bl.target_id,
-  (SELECT bp.value_ref FROM block_properties bp 
+  (SELECT bp.value_ref FROM block_properties bp
    WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key='space') AS source_space,
-  (SELECT bp.value_ref FROM block_properties bp 
+  (SELECT bp.value_ref FROM block_properties bp
    WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key='space') AS target_space
 FROM block_links bl
 JOIN blocks bs ON bs.id = bl.source_id AND bs.is_conflict = 0 AND bs.deleted_at IS NULL
@@ -94,6 +95,7 @@ DELETE FROM block_links WHERE EXISTS (
 **1b. Inline-content-token rewrite — emit `EditBlock` ops** (Rust boot-time helper, runs once, similar to `migrate_pages_to_personal_space_batched`).
 
 For every `blocks.content` whose source block is `is_conflict=0` and `deleted_at IS NULL`:
+
 1. Scan via the canonical Rust-side regexes in `cache/mod.rs:64-85`:
    - `ULID_LINK_RE` for `[[ULID]]` and `((ULID))`
    - `TAG_REF_RE` for `#[ULID]`
@@ -113,7 +115,7 @@ For every `blocks.content` whose source block is `is_conflict=0` and `deleted_at
 Extend Phase-7 enforcement to **every** code path that produces a cross-space reference:
 
 | Path | Validation |
-|---|---|
+| --- | --- |
 | `create_block` with content containing `[[ULID]]` / `((ULID))` / `#[ULID]` | Parse content for tokens; resolve each target's space; reject if mismatch |
 | `edit_block` (content edit) | Same content scan |
 | `set_property` with ref-type values | If `value_ref` resolves to a different space, reject |
@@ -187,6 +189,7 @@ Backlinks + LinkedReferences UI already scope to active space (Phase 4 of FEAT-3
 ## Files touched
 
 **Backend:**
+
 - New: `src-tauri/migrations/0042_purge_cross_space_refs.sql`
 - New: `src-tauri/src/spaces/cross_space_severance.rs` (Rust pre-migration helper)
 - Modified: `commands/blocks/crud.rs` (edit_block content scan), `commands/properties.rs` (ref-type validation), `commands/blocks/tags.rs` (add_tag validation), `commands/import.rs` if exists (bulk-import scan)
@@ -195,9 +198,11 @@ Backlinks + LinkedReferences UI already scope to active space (Phase 4 of FEAT-3
 - Modified: `sync_protocol/orchestrator.rs` if needed (sync-ingress rejection metric)
 
 **Frontend:**
+
 - Modified: `src/editor/extensions/block-link.ts`, `block-ref.ts`, `tag-ref.ts` (delete broken-link rendering)
 
 **Docs:**
+
 - ARCHITECTURE.md §9 (Spaces) — update to describe hard separation
 - AGENTS.md — update the "Cross-space link enforcement" line if present
 
@@ -206,7 +211,7 @@ Backlinks + LinkedReferences UI already scope to active space (Phase 4 of FEAT-3
 **L (7-12 weeks calendar, 5.5-9 person-weeks for a solo maintainer).** Reviewer corrected upward from the planner's 4-8 weeks after surfacing: the tag-scoping sub-phase, the op-emission complexity in 1b, the materializer-filter dependency on PEND-12, and the test-coverage breadth.
 
 | Phase | Time |
-|---|---|
+| --- | --- |
 | 0 — Audit script | 1 day |
 | Tag-scoping decision (gating) | S — discussion only |
 | 1 — Migration of legacy data | 1-2 weeks |
@@ -224,7 +229,7 @@ Backlinks + LinkedReferences UI already scope to active space (Phase 4 of FEAT-3
 ## Risk
 
 | Risk | Mitigation |
-|---|---|
+| --- | --- |
 | **Legacy data destruction (severance)** | Migration runs on a backed-up DB; explicit user confirmation prompt at first run; commit log preserves the inputs the migration saw. |
 | **Tags-scoping decision is wire-protocol-affecting** | User has zero paired peers today (per session 651/652 context). If sync resumes, peers must run migration before re-pairing. Document. |
 | **Op-log immutability** | The migration must NOT delete op_log rows (invariant #1). Cache-row deletion is OK. Inline-token rewrite emits new `EditBlock` ops via the normal pipeline (preserves the chain). |

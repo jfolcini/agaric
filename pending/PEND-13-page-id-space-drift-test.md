@@ -29,6 +29,7 @@ Three independent assertions per block (or one composed assertion as a faster sc
 Recursive CTE: walk `b.parent_id` chain to the nearest ancestor with `block_type='page'`. Assert the ancestor's id equals `b.page_id`.
 
 Exceptions:
+
 - `b.block_type='page'` → `b.page_id` should be NULL OR `b.id` (verify the convention from `cache/page_id.rs` — pages may not denormalize self-reference).
 - Top-level non-page orphans → both computed and stored `page_id` should be NULL.
 
@@ -50,12 +51,14 @@ FROM ancestors WHERE cur_type = 'page'
 ### Assertion B — space property existence
 
 For each page `p`:
+
 - If `is_space='true'` (or 1, post-PEND-14): zero `block_properties` rows with `key='space'`.
 - Otherwise: exactly one row with `key='space'`.
 
 ### Assertion C — transitive consistency
 
 For each non-page block `b`:
+
 - `space_via_page_id` = `block_properties.value_ref WHERE block_id = b.page_id AND key='space'`
 - `space_via_ancestor_chain` = walk `b.parent_id` chain, return the nearest space property OR space block id
 - Assert these are equal.
@@ -166,7 +169,7 @@ Test catches drift at test time. Does NOT enforce the invariant via schema CHECK
 **S (1.5-2.5h).**
 
 | Step | Time |
-|---|---|
+| --- | --- |
 | Helpers (compute_page_id_via_cte, resolve_space_*) | 30 min |
 | Fixture setup (bootstrap + create + move) — accounting for 7-arg `create_block_inner` and `BlockId` return | 45 min |
 | Three assertions + iteration | 30 min |
