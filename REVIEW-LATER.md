@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 639 — Batch FE-TRIVIAL-2: closed FE-M-9 (AgendaResults sort dedup), FE-M-11 (tree-utils bounds-check), FE-M-12 (export-graph partial), FE-L-2 (Resolve evictOldest helper), FE-L-13 (UnlinkedReferences immutable merge); 5 items via 5 subagents — twelfth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 640 — Batch FE-TRIVIAL-3: closed FE-M-1 + FE-M-2 (useDuePanelData logger + stale guard, paired), FE-M-4 (useHistoryDiffToggle ref pattern), FE-M-5 (useListMultiSelect items via ref), FE-L-6 (parseISODate strict validation), FE-L-12 (agenda-filters spaceId centralization); 6 items via 5 subagents — thirteenth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 57 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 51 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -750,47 +750,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F002
 - **Status:** Open
 
-### FE-M-1 — `useDuePanelData`: bare catch blocks in overdue/upcoming fetches drop logger
-- **Domain:** Frontend / Due panel
-- **Location:** `src/hooks/useDuePanelData.ts:200-302` (sites at lines 229, 293)
-- **What:** Two of four catch blocks in this hook don't log; main + projected do. Inconsistent.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Add `logger.warn` to both, matching the surrounding pattern.
-- **Source:** FE review 2026-05-02 / F038
-- **Status:** Open
-
-### FE-M-2 — `useDuePanelData`: nested `resolveAndMergeTitles().catch` runs after unmount
-- **Domain:** Frontend / Due panel
-- **Location:** `src/hooks/useDuePanelData.ts:437-453`
-- **What:** Inner `.catch` should `if (stale) return` before logging/toasting.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F039
-- **Status:** Open
-
-### FE-M-4 — `useHistoryDiffToggle`: `expandedKeys` and `diffCache` in deps cause callback churn
-- **Domain:** Frontend / History
-- **Location:** `src/hooks/useHistoryDiffToggle.ts:51` (deps: `[expandedKeys, diffCache, keyFn]`); reads at `:20` (`expandedKeys.has(key)`) and `:29` (`diffCache.has(key)`)
-- **What:** Both `expandedKeys` and `diffCache` are read inside the callback. Naively dropping them from the deps array (the obvious-looking fix) creates a stale-closure bug — the `.has(...)` reads at L20, L29 would freeze on the values at the time the callback was last created, so the L29 short-circuit (`if (diffCache.has(key)) return`) would no longer prevent re-fetching. The functional-setState forms (`setExpandedKeys((prev) => ...)`) on L21, L28, L38 already avoid the *write-after-stale-read* hazard, but the *reads* still need fresh state.
-- **Cost:** Trivial — mirror `expandedKeys` and `diffCache` into refs (`expandedKeysRef`, `diffCacheRef`), read `.has(...)` from `*Ref.current`, and drop both from the deps array. Pattern already used in `useListMultiSelect.ts:51-52`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F041
-- **Status:** Open
-
-### FE-M-5 — `useListMultiSelect.toggleSelection`: `items` in deps causes hot churn
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useListMultiSelect.ts:59-74`
-- **What:** Memoized children that consume `toggleSelection` re-render whenever `items` changes (which can be every paginated load).
-- **Cost:** Trivial — read `items` via a ref like the hook already does for `selected` (lines 51–52).
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Source:** FE review 2026-05-02 / F045
-- **Status:** Open
-
 ### FE-M-6 — `useBlockSlashCommands` attach handler: `input.click()` not wrapped in try/catch
 - **Domain:** Frontend / Editor
 - **Location:** `src/hooks/useBlockSlashCommands.ts:368-396`
@@ -875,16 +834,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F009
 - **Status:** Open
 
-### FE-L-6 — `Journal` store `parseISODate` accepts wrap-around invalid dates
-- **Domain:** Frontend / Journal store
-- **Location:** `src/stores/journal.ts:80-88`
-- **What:** `new Date(year, month-1, day)` wraps `2026-13-45` to `2027-02-14`; `Number.isNaN(date.getTime())` doesn't catch this. The journal page is never the user's typed input today, so the wrap is harmless in practice.
-- **Cost:** Trivial — validate components before constructing the Date.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F008
-- **Status:** Open
-
 ### FE-L-7 — `markdown-parse.ts`: silent depth-limit truncation
 - **Domain:** Frontend / Editor
 - **Location:** `src/editor/markdown-parse.ts:465-480`
@@ -904,16 +853,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** Low.
 - **Source:** FE review 2026-05-02 / F033
-- **Status:** Open
-
-### FE-L-12 — `agenda-filters.ts`: `spaceId ?? ''` applied inconsistently
-- **Domain:** Frontend / Agenda
-- **Location:** `src/lib/agenda-filters.ts:180-340`
-- **What:** Some functions normalize at call site, some don't. Centralize at the `executeAgendaFilters` boundary.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F021
 - **Status:** Open
 
 ### FE-L-14 — `FilterPillRow`: `key={index}` on filter list
