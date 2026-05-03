@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 638 — Batch FE-TRIVIAL-1: closed L-137 (AddFilterRow double-fire), FE-M-3 (useBlockTreeEventListeners ref-thrash), FE-M-13 (block-ref hardcoded English), FE-L-1 (Undo store setPageState helper), FE-L-15 (useDebouncedCallback stable identity); 5 items via 5 subagents — eleventh consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 639 — Batch FE-TRIVIAL-2: closed FE-M-9 (AgendaResults sort dedup), FE-M-11 (tree-utils bounds-check), FE-M-12 (export-graph partial), FE-L-2 (Resolve evictOldest helper), FE-L-13 (UnlinkedReferences immutable merge); 5 items via 5 subagents — twelfth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 62 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 57 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -822,37 +822,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F054 + F058
 - **Status:** Open
 
-### FE-M-9 — `AgendaResults`: groups built from `sortedBlocks` only when `groupBy === 'page'`
-- **Domain:** Frontend / Agenda
-- **Location:** `src/components/AgendaResults.tsx:168-174`
-- **What:** Other `groupBy` values use unsorted `blocks`. The internal `groupByDate`/`groupByPriority`/`groupByState` helpers re-sort, making the work duplicate.
-- **Cost:** Trivial — sort once at the top, pass `sortedBlocks` to all branches.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F063
-- **Status:** Open
-
-
-### FE-M-11 — `tree-utils.getProjection`: `splice(activeIndex, ...)` not bounds-checked
-- **Domain:** Frontend / Tree utilities
-- **Location:** `src/lib/tree-utils.ts:135-175`
-- **What:** Early-return guard at line 140-142 protects the splice today, but the indirection between guard and use makes future edits risky. `findIndex` returning `-1` and reaching `splice(-1, 1)` would silently remove the last item.
-- **Cost:** Trivial — add `if (activeIndex < 0 || overIndex < 0) return earlyResult` at function entry.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F017
-- **Status:** Open
-
-### FE-M-12 — `export-graph.ts`: per-page failure rejects the whole export
-- **Domain:** Frontend / Export
-- **Location:** `src/lib/export-graph.ts:18-31`
-- **What:** Loop calls `exportPageMarkdown(page.id)` without try/catch. One failure rejects the whole export.
-- **Cost:** Trivial — wrap in try/catch, log per-page failures, continue.
-- **Risk:** Low.
-- **Impact:** Medium — partial export is much more useful than no export.
-- **Source:** FE review 2026-05-02 / F018
-- **Status:** Open
-
 ### FE-M-14 — `priority-levels.ts`: listener notification non-transactional, partial failures swallowed
 - **Domain:** Frontend / Priority levels
 - **Location:** `src/lib/priority-levels.ts:63-81`
@@ -873,16 +842,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low — race window is narrow.
 - **Recommendation:** Before calling `insertContentAt(insertPos, ...)`, validate `insertPos <= editor.state.doc.content.size` and skip the inline insert (fall back to plain text at the current cursor) if the doc has shrunk past it. Verify `at-tag-picker.ts:49-87` follows the same try/catch pattern as the other two before generalising the fix.
 - **Source:** FE review 2026-05-02 / F011
-- **Status:** Open
-
-### FE-L-2 — `Resolve` store: dedupe the two eviction loops into a helper
-- **Domain:** Frontend / Resolve store
-- **Location:** `src/stores/resolve.ts:204-211` (eviction in `set`), `:246-253` (eviction in `batchSet`)
-- **What:** The "Delete oldest entries (first N entries in Map iteration order)" comment is **already present** at L205 and L247 — the original framing of "no comment" is stale. The remaining cleanup is the duplication of the 6-line eviction loop across `set` and `batchSet`.
-- **Cost:** Trivial — extract `evictOldest(cache, MAX_CACHE_SIZE)` and call from both writers.
-- **Risk:** Low.
-- **Impact:** Low — pure refactor.
-- **Source:** FE review 2026-05-02 / F004
 - **Status:** Open
 
 ### FE-L-3 — `page-blocks` registry race comment could be defensive
@@ -955,17 +914,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** Low.
 - **Source:** FE review 2026-05-02 / F021
-- **Status:** Open
-
-### FE-L-13 — `UnlinkedReferences` mutates a shared `BacklinkGroup` object inside `setGroups` updater
-- **Domain:** Frontend / References
-- **Location:** `src/components/UnlinkedReferences.tsx:89-100` (inside `setGroups((prev) => { ... })`)
-- **What:** Inside the `cursor`-append branch, `merged = [...prev]` (L90) is a shallow array copy — the `BacklinkGroup` objects inside `merged` are still shared with `prev`. `existing = merged.find((g) => g.page_id === newGroup.page_id)` (L92) gets a reference to a shared object, and `existing.blocks = [...existing.blocks, ...newGroup.blocks]` (L94) reassigns a property on that shared object — `prev`'s view of the same group now also has the new `blocks` array. (The previous "in-place push" framing of this item was incorrect — no `Array.prototype.push` is called on `existing.blocks`; L94 reassigns with a fresh array. The bug is property reassignment on a shared reference, not an in-place push.)
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low — visible only if anything else still holds a reference to `prev`.
-- **Recommendation:** Replace `existing.blocks = ...` with a copy: `const idx = merged.findIndex(g => g.page_id === newGroup.page_id); if (idx >= 0) merged[idx] = { ...merged[idx], blocks: [...merged[idx].blocks, ...newGroup.blocks] }; else merged.push(newGroup);`.
-- **Source:** FE review 2026-05-02 / F065
 - **Status:** Open
 
 ### FE-L-14 — `FilterPillRow`: `key={index}` on filter list
