@@ -165,16 +165,21 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     loading: true,
 
     load: async () => {
+      // FE-H-22 — fail closed during pre-bootstrap. Earlier we forwarded
+      // `useSpaceStore.getState().currentSpaceId ?? ''` to `listBlocks`
+      // and relied on the backend treating `''` as a no-match SQL
+      // filter. That contract is unwritten; a backend change to
+      // interpret `''` as wildcard would silently leak cross-space
+      // blocks into the page tree. Skip the fetch and leave state
+      // (including the initial `loading: true`) untouched — the boot
+      // sequence hydrates the space store before any BlockTree mounts,
+      // so this branch is a defensive no-op rather than a hot path.
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId == null) return
       const rootParentId = get().rootParentId
       set({ loading: true })
       try {
         const start = performance.now()
-        // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Subtrees
-        // belong to a single space; pull `currentSpaceId` from the
-        // singleton store. The `?? ''` fallback is intentional
-        // pre-bootstrap behaviour: empty string forces a no-match SQL
-        // filter rather than a runtime null deref.
-        const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
         const allBlocks = await loadSubtree(rootParentId ?? undefined, spaceId)
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return

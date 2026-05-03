@@ -11,8 +11,11 @@ import {
   PageBlockStoreProvider,
   pageBlockRegistry,
 } from '../page-blocks'
+import { useSpaceStore } from '../space'
 
 const mockedInvoke = vi.mocked(invoke)
+
+const TEST_SPACE_ID = 'SPACE_TEST'
 
 // --- Mock for undo store (used by notifyUndoNewAction in page-blocks.ts) ---
 const mockOnNewAction = vi.fn()
@@ -45,6 +48,11 @@ describe('PageBlockStore', () => {
   beforeEach(() => {
     store = createPageBlockStore('PAGE_1')
     mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: [] }
+    // FE-H-22 — `load()` now early-returns when `currentSpaceId` is
+    // null/undefined (pre-bootstrap). Seed the space store so the
+    // existing post-bootstrap load tests still drive the IPC path.
+    // The pre-bootstrap no-op contract is exercised in its own test.
+    useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
     vi.clearAllMocks()
   })
 
@@ -211,6 +219,24 @@ describe('PageBlockStore', () => {
       // All blocks should be updated from backend
       expect(result.find((b) => b.id === 'A')?.content).toBe('new A from backend')
       expect(result.find((b) => b.id === 'B')?.content).toBe('new B from backend')
+    })
+
+    it('FE-H-22 — skips IPC entirely when currentSpaceId is null (pre-bootstrap)', async () => {
+      // Pre-bootstrap state: the space store has not hydrated yet.
+      // Earlier code would forward `?? ''` to `list_blocks` and rely on
+      // the backend treating `''` as a no-match SQL filter. We now fail
+      // closed: no IPC, no state change. The page stays in its initial
+      // `loading: true` slot until the space hydrates and load() is
+      // re-invoked.
+      useSpaceStore.setState({ currentSpaceId: null })
+      const blocksBefore = store.getState().blocks
+      const loadingBefore = store.getState().loading
+
+      await store.getState().load()
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+      expect(store.getState().blocks).toBe(blocksBefore)
+      expect(store.getState().loading).toBe(loadingBefore)
     })
   })
 

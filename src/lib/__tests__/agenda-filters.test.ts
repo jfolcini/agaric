@@ -181,17 +181,36 @@ describe('executeAgendaFilters', () => {
       expect(result.blocks[0]?.id).toBe('shared-1')
     })
 
-    it('sets hasMore when undated response has more', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_undated_tasks') {
-          return { items: [], next_cursor: 'cursor-1', has_more: true }
+    // FE-H-1 — pin the post-fix invariant: the default branch threads
+    // `next_cursor` through each of due_date / scheduled_date /
+    // list_undated_tasks until exhausted (AGENTS invariant #3), so a
+    // multi-page response must surface every page's items in `blocks`,
+    // not just the first 500.
+    it('paginates undated_tasks across multiple pages and merges all items', async () => {
+      const page1Block = makeBlock({ id: 'undated-page-1', todo_state: 'TODO' })
+      const page2Block = makeBlock({ id: 'undated-page-2', todo_state: 'TODO' })
+
+      let undatedCallCount = 0
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        if (cmd !== 'list_undated_tasks') return emptyPage
+        undatedCallCount++
+        if (undatedCallCount === 1) {
+          // First call: caller must not have a cursor yet.
+          expect((args as Record<string, unknown>)['cursor']).toBeNull()
+          return { items: [page1Block], next_cursor: 'CURSOR_PAGE_2', has_more: true }
         }
-        return emptyPage
+        // Second call: caller must thread the previous next_cursor back in.
+        expect((args as Record<string, unknown>)['cursor']).toBe('CURSOR_PAGE_2')
+        return { items: [page2Block], next_cursor: null, has_more: false }
       })
 
       const result = await executeAgendaFilters([], null)
 
-      expect(result.hasMore).toBe(true)
+      expect(undatedCallCount).toBe(2)
+      expect(result.blocks.map((b) => b.id).sort()).toEqual(['undated-page-1', 'undated-page-2'])
+      // Every page drained internally — caller sees the post-pagination invariant.
+      expect(result.hasMore).toBe(false)
+      expect(result.cursor).toBeNull()
     })
   })
 

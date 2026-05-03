@@ -55,6 +55,16 @@ async function resolveAndInsertBlockLink(
   options: BlockLinkPickerOptions,
   errorMessage: string,
 ): Promise<void> {
+  // FE-M-15: insertContentAt clamps silently when insertPos is past the
+  // doc's end (e.g. user cleared/shrank the doc while the async resolve
+  // was in flight), so the existing try/catch never fires on that path.
+  // Validate before each insertContentAt(insertPos, ...) call; on a stale
+  // offset, fall back to plain text at the current cursor.
+  const isStale = () => insertPos > editor.state.doc.content.size
+  const insertPlainAtCursor = () => {
+    editor.chain().focus().insertContent(text).run()
+  }
+
   try {
     const items = await options.items(text)
     // Look for an exact match (case-insensitive) or an alias match
@@ -62,6 +72,15 @@ async function resolveAndInsertBlockLink(
       (item) => !item.isCreate && (item.label.toLowerCase() === text.toLowerCase() || item.isAlias),
     )
     if (exactMatch) {
+      if (isStale()) {
+        logger.warn(
+          'BlockLinkPicker',
+          'insertPos stale after items resolved; falling back to plain text at cursor',
+          { text, insertPos, docSize: editor.state.doc.content.size },
+        )
+        insertPlainAtCursor()
+        return
+      }
       editor
         .chain()
         .focus()
@@ -69,6 +88,15 @@ async function resolveAndInsertBlockLink(
         .run()
     } else if (options.onCreate) {
       const newId = await options.onCreate(text)
+      if (isStale()) {
+        logger.warn(
+          'BlockLinkPicker',
+          'insertPos stale after onCreate resolved; falling back to plain text at cursor',
+          { text, insertPos, docSize: editor.state.doc.content.size },
+        )
+        insertPlainAtCursor()
+        return
+      }
       editor
         .chain()
         .focus()
@@ -76,11 +104,19 @@ async function resolveAndInsertBlockLink(
         .run()
     } else {
       // No match and no onCreate — re-insert as plain text
+      if (isStale()) {
+        insertPlainAtCursor()
+        return
+      }
       editor.chain().focus().insertContentAt(insertPos, text).run()
     }
   } catch (err) {
     logger.warn('BlockLinkPicker', errorMessage, { text }, err)
     // On error, re-insert as plain text so the user doesn't lose content
+    if (isStale()) {
+      insertPlainAtCursor()
+      return
+    }
     editor.chain().focus().insertContentAt(insertPos, text).run()
   }
 }
