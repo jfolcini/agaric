@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 630 — Batch UX-TRIVIAL-7: closed UX-325 (F-37 gutter-cycle warning), UX-334 (TemplatesView × always-visible), UX-364 + UX-368 (SpaceSwitcher prefix + tooltip mappings), UX-378 (PeerListItem inline address validation), UX-394 (findConflicts respects condition field); 6 items via 5 subagents — third consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 631 — Batch UX-TRIVIAL-8: closed UX-327 (JournalCalendar aria-busy + dim), UX-347 + UX-349 (Conflict labels + per-type icons), UX-350 (HistoryFilterBar legend popover), UX-359 (PageTitleEditor edit affordance), UX-395 + UX-397 (Help panel footer + Customized badge); 7 items via 5 subagents — fourth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-66 open items in the summary table; 106 detail entries (FE-* sub-tables don't appear in the summary).
+59 open items in the summary table; 99 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -59,16 +59,11 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
 | UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
-| UX-327 | UX | Calendar dot fetch is silent (no skeleton / no busy state) | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
-| UX-347 | UX | Conflict "Keep Incoming" / "Discard Incoming" is ambiguous | S | — |
-| UX-349 | UX | Conflict type badges differ only by colour | S | — |
-| UX-350 | UX | History op-type filter has no in-UI explanation | S | — |
 | UX-351 | UX | Non-reversible history entries marked only by `opacity-50` + lock icon | S | — |
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
 | UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
-| UX-359 | UX | Page title in rich-display mode (with chips) lacks edit affordance | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
@@ -87,8 +82,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
 | UX-391 | UX | Custom shortcut input accepts any non-empty string with no validation | S | — |
 | UX-392 | UX | Conflict warning rendered below row, not inline with keys | S | — |
-| UX-395 | UX | Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel | S | — |
-| UX-397 | UX | Help panel doesn't badge customized shortcuts | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -1239,15 +1232,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-327 — Calendar dot fetch is silent (no skeleton / no busy state)
-- **Domain:** Frontend / Journal
-- **Location:** `src/components/journal/JournalCalendarDropdown.tsx:127-145`
-- **What:** `countAgendaBatchBySource` fires async on open and on month-nav with no `aria-busy` or skeleton; the calendar renders empty until dots arrive — looks like a glitch on cold disks.
-- **Cost:** Trivial — `aria-busy="true"` on the grid + 4 placeholder dots while loading.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-337 — Disabled `SearchablePopover` trigger has no tooltip explaining why
 - **Domain:** Frontend / Search
 - **Location:** `src/components/SearchablePopover.tsx:109`
@@ -1262,34 +1246,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/hooks/useHistoryKeyboardNav.ts:57, 74` (vim mode)
 - **What:** Navigation is keyboard-only on touch devices.
 - **Cost:** S — render persistent ↑/↓ arrow buttons in the toolbar on coarse-pointer devices; or rely on existing list selection by tap.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-347 — Conflict "Keep Incoming" / "Discard Incoming" is ambiguous
-- **Domain:** Frontend / Conflicts
-- **Location:** `src/components/ConflictListItem.tsx:25-26, 99-100, 218-222` ; `src/lib/i18n/conflicts.ts:25-26, 48-51`
-- **What:** "Incoming" doesn't make clear which version overwrites the other. Help text exists but only on hover.
-- **Cost:** Trivial — relabel to "Use incoming" / "Reject incoming"; one-line subtitle under each button.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-
-### UX-349 — Conflict type badges differ only by colour
-- **Domain:** Frontend / Conflicts
-- **Location:** `src/components/ConflictListItem.tsx:40-49, 145-152`
-- **What:** Three colour-coded badges (text / property / move). Color-blind users distinguish by text label only; tooltip is hover-only.
-- **Cost:** Trivial — add per-type icon (Pencil / Settings / ArrowRight).
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-350 — History op-type filter has no in-UI explanation
-- **Domain:** Frontend / History
-- **Location:** `src/components/HistoryFilterBar.tsx:77-100`
-- **What:** 12 op types in a Select; new users have no idea what `restore_block` vs `delete_block` vs `purge_block` means.
-- **Cost:** Trivial — `?` icon next to the Select with a popover legend.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
@@ -1317,15 +1273,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/components/PageHeaderMenu.tsx:151-281` (popover entries top-to-bottom: Open in New Tab L162-174 → Add Alias → Add Tag → Add Property → `<hr>` → Toggle Template → Toggle Journal Template → `<hr>` → Export → `<hr>` (when `showMoveEntry`) → Move To submenu → `<hr>` L271 → Delete L272-279)
 - **What:** The Delete button sits at the **end** of the popover, after the Move-To submenu and a separator at L271 — Open in New Tab is at the **top** at L164, with multiple entries and `<hr>` separators between them. (Earlier framing — "one `<hr>` away from Open in New Tab" — was geographically wrong; they bookend the menu.) The structural concern (destructive + benign in one popover, easy to misclick on mobile) is still real.
 - **Cost:** S — visually separate the destructive Delete (background tint or separate sub-section); enforce a confirmation dialog with type-to-confirm for Delete.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-359 — Page title in rich-display mode (with chips) lacks edit affordance
-- **Domain:** Frontend / Page editor
-- **Location:** `src/components/PageTitleEditor.tsx:66-100`
-- **What:** Read-only-looking chip rendering with no hover hint, no pencil icon, no `cursor-text`. Only signal is that clicking happens to switch modes.
-- **Cost:** Trivial — `cursor-text` on hover + faint border / pencil icon on hover/focus.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -1491,25 +1438,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** Trivial — colocate next to the keys column; recompute on every keystroke during edit.
 - **Risk:** Low.
 - **Impact:** Low.
-- **Status:** Open.
-
-### UX-395 — Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardShortcuts.tsx:216-232` ; `src/lib/i18n/shortcuts.ts:10`
-- **What:** Generic label; users don't know it navigates to Settings.
-- **Cost:** Trivial — relabel to "Customize in Settings" with a ChevronRight / external icon.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-
-### UX-397 — Help panel doesn't badge customized shortcuts
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardShortcuts.tsx:32-45` ; `src/lib/keyboard-config/storage.ts:30-37`
-- **What:** `getCurrentShortcuts()` already exposes `isCustom`; the panel shows current bindings but doesn't differentiate customized ones.
-- **Cost:** Trivial — render the same "Customized" badge that the settings tab uses (after UX-393).
-- **Risk:** Low.
-- **Impact:** Medium.
 - **Status:** Open.
 
 
