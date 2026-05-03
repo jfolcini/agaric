@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 632 — Batch UX-TRIVIAL-9: closed UX-302 (EditableBlock focused selection ring), UX-351 (HistoryListItem visible non-reversible label), UX-358 (PageHeaderMenu Delete danger-zone), UX-381 (SettingsView breadcrumb), UX-386 + UX-391 + UX-392 (KeyboardSettings inline conflict + modifier-only validation); 7 items via 5 subagents — fifth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 633 — Batch UX-TRIVIAL-10: closed UX-314 (slash-command auto-execute threshold 3→4), UX-354 (GraphFilterBar visible "Filters" label), UX-374 (Settings → General reset-onboarding button), UX-382 (WelcomeModal 4th Sync highlight), UX-387 (theme button current-theme tooltip); 5 items via 5 subagents — sixth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-52 open items in the summary table; 92 detail entries (FE-* sub-tables don't appear in the summary).
+47 open items in the summary table; 87 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -50,7 +50,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-309 | UX | Slash command palette is not discoverable to new users | S | — |
 | UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
-| UX-314 | UX | Slash auto-execute (200 ms after 3 chars + unique match) can fire unintentionally | S | — |
 | UX-315 | UX | Picker keyboard navigation not documented inline | S | — |
 | UX-316 | UX | Inline `{{query …}}` expression syntax is cryptic to read | S | — |
 | UX-317 | UX | Query operator symbols (≤, ≥, ≠) presented without text labels | S | — |
@@ -60,7 +59,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
-| UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
@@ -68,12 +66,9 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
 | UX-372 | UX | `SpaceAccentBadge` click cycles silently with no hover affordance | S | — |
 | UX-373 | UX | Single-space state confusing | S | — |
-| UX-374 | UX | Onboarding banner not re-showable after dismiss | S | — |
 | UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
 | UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
-| UX-382 | UX | Welcome modal omits Sync / multi-device story | S | — |
 | UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
-| UX-387 | UX | Sidebar theme button cycles 7 themes silently | S | — |
 | UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
 
 ### Quick wins (S-cost, ready to grab)
@@ -1143,15 +1138,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-314 — Slash auto-execute (200 ms after 3 chars + unique match) can fire unintentionally
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/extensions/slash-command.ts:86-102`
-- **What:** When exactly one match remains, the command fires automatically after 200 ms with no visible cue. Surprise factor on fast typists.
-- **Cost:** S — visible "auto-runs in 0.2 s — Esc to cancel" indicator, or bump the threshold to 4+ chars.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-315 — Picker keyboard navigation not documented inline
 - **Domain:** Frontend / Editor
 - **Location:** `src/editor/SuggestionList.tsx:56-66` ; `src/editor/suggestion-renderer.ts:233-264`
@@ -1233,15 +1219,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-354 — Graph filter bar has no leading "Filters" label / on-touch affordance
-- **Domain:** Frontend / Graph
-- **Location:** `src/components/GraphView.tsx:179-191` (wrapper className `'absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]'` — full-width, right-edge anchored, NOT just `top-2 left-2` as earlier framing said) ; `GraphFilterBar.tsx` (component body — too broad to cite the whole file)
-- **What:** The bar spans the full width of the graph view but has no leading "Filters" label or first-touch hint. Earlier framing described position as "absolute top-2 left-2 (single-line, easy to miss)" — incomplete; the bar IS full-width.
-- **Cost:** Trivial — small "Filters" label or info banner on first touch render.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-365 — Spaces onboarding banner only inside `SpaceManageDialog`
 - **Domain:** Frontend / Spaces / Onboarding
 - **Location:** `src/components/SpaceManageDialog.tsx:614-630, 645-648` ; `src/lib/i18n/common.ts:67-71`
@@ -1305,15 +1282,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-374 — Onboarding banner not re-showable after dismiss
-- **Domain:** Frontend / Spaces / Onboarding
-- **Location:** `src/components/SpaceManageDialog.tsx:113-127, 650-653` (`agaric:space-onboarding-seen-v1` localStorage flag)
-- **What:** Once dismissed, no in-app way to re-show. Users who clicked through too fast lose the explanation forever.
-- **Cost:** Trivial — "Reset onboarding" button somewhere in Settings → General.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-375 — Per-space journal template variables undocumented in-app
 - **Domain:** Frontend / Spaces / Journal
 - **Location:** `src/components/SpaceManageDialog.tsx:425-444`
@@ -1332,30 +1300,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-
-### UX-382 — Welcome modal omits Sync / multi-device story
-- **Domain:** Frontend / Onboarding
-- **Location:** `src/components/WelcomeModal.tsx:39-55`
-- **What:** Three highlights (Blocks, Shortcuts, Tags) skip what is arguably Agaric's biggest differentiator.
-- **Cost:** Trivial — add a 4th "Sync across devices" highlight or replace one of the existing.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-384 — Import progress shows file count, not bytes / blocks
 - **Domain:** Frontend / Import-Export
 - **Location:** `src/components/DataSettingsTab.tsx:136-159`
 - **What:** "Importing file 2 of 5" is the only feedback; large markdown imports look stalled.
 - **Cost:** S — secondary line "(N blocks created · M bytes)" updated as the import worker reports.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-387 — Sidebar theme button cycles 3 themes (auto/dark/light) silently — Settings exposes the full 7
-- **Domain:** Frontend / Settings / Theme
-- **Location:** `src/hooks/useTheme.ts:54-55` (`/** Theme cycle for the sidebar toggle button (classic light/dark/auto only). */ const CYCLE: ThemePreference[] = ['auto', 'dark', 'light']`) ; `src/components/AppSidebar.tsx:254-263` (sidebar button calls `onToggleTheme`, tooltip is the generic `t('sidebar.toggleTheme')`) ; `src/components/settings/AppearanceTab.tsx:114-135` (full 7-theme Select: light, dark, auto, solarized-light, solarized-dark, dracula, one-dark-pro)
-- **What:** The sidebar cycles only 3 themes (auto/dark/light) — earlier framing claimed all 7. The full picker lives in Settings → Appearance. The remaining gap is that the sidebar tooltip says "Toggle theme" generically rather than announcing the current theme.
-- **Cost:** Trivial — change the sidebar tooltip to show the current theme name + "click to cycle". Optionally, replace the cycle with "open Appearance settings" given the user-discoverable choice space is 7, not 3.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
