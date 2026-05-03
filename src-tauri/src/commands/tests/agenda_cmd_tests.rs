@@ -2256,6 +2256,39 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
 }
 
 // ======================================================================
+// FEAT-3p4 — shared fixture helper for the cross-space scoping tests
+// ======================================================================
+
+/// Fixture for the FEAT-3p4 cross-space scoping tests below. Seeds the
+/// two test space blocks (skipping space B when `b_ids` is empty so
+/// the "nonexistent space" tests can reuse the helper without seeding
+/// space B), then for each id in `a_ids` / `b_ids` invokes `seed` and
+/// assigns the resulting block to `TEST_SPACE_ID` / `TEST_SPACE_B_ID`
+/// respectively.
+///
+/// `seed` is responsible for the per-block setup the test needs
+/// (insert_block + todo_state, seed_repeating_task, agenda_cache row,
+/// etc.). The helper deliberately stays agnostic about block content
+/// so all four FEAT-3p4 sections can share it.
+async fn seed_two_space_blocks<F>(pool: &sqlx::SqlitePool, a_ids: &[&str], b_ids: &[&str], seed: F)
+where
+    F: AsyncFn(&sqlx::SqlitePool, &str),
+{
+    ensure_test_space(pool).await;
+    if !b_ids.is_empty() {
+        ensure_test_space_b(pool).await;
+    }
+    for id in a_ids {
+        seed(pool, id).await;
+        assign_to_space(pool, id, TEST_SPACE_ID).await;
+    }
+    for id in b_ids {
+        seed(pool, id).await;
+        assign_to_space(pool, id, TEST_SPACE_B_ID).await;
+    }
+}
+
+// ======================================================================
 // FEAT-3p4 — space scoping for list_undated_tasks_inner
 // ======================================================================
 //
@@ -2271,25 +2304,16 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_undated_tasks_returns_only_current_space_blocks_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
     // Two undated tasks: one in space A, one in space B.
-    insert_block(&pool, "U_A1", "content", "task A1", None, None).await;
-    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-        .bind("U_A1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    assign_to_space(&pool, "U_A1", TEST_SPACE_ID).await;
-
-    insert_block(&pool, "U_B1", "content", "task B1", None, None).await;
-    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-        .bind("U_B1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    assign_to_space(&pool, "U_B1", TEST_SPACE_B_ID).await;
+    seed_two_space_blocks(&pool, &["U_A1"], &["U_B1"], async |pool, id| {
+        insert_block(pool, id, "content", "task", None, None).await;
+        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    })
+    .await;
 
     let resp = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_ID.into()))
         .await
@@ -2305,24 +2329,15 @@ async fn list_undated_tasks_returns_only_current_space_blocks_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_undated_tasks_with_none_space_id_returns_all_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    insert_block(&pool, "U_A1", "content", "task A1", None, None).await;
-    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-        .bind("U_A1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    assign_to_space(&pool, "U_A1", TEST_SPACE_ID).await;
-
-    insert_block(&pool, "U_B1", "content", "task B1", None, None).await;
-    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-        .bind("U_B1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    assign_to_space(&pool, "U_B1", TEST_SPACE_B_ID).await;
+    seed_two_space_blocks(&pool, &["U_A1"], &["U_B1"], async |pool, id| {
+        insert_block(pool, id, "content", "task", None, None).await;
+        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    })
+    .await;
 
     let resp = list_undated_tasks_inner(&pool, None, None, None)
         .await
@@ -2341,15 +2356,15 @@ async fn list_undated_tasks_with_none_space_id_returns_all_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_undated_tasks_with_nonexistent_space_id_returns_empty_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-
-    insert_block(&pool, "U_A1", "content", "task A1", None, None).await;
-    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-        .bind("U_A1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    assign_to_space(&pool, "U_A1", TEST_SPACE_ID).await;
+    seed_two_space_blocks(&pool, &["U_A1"], &[], async |pool, id| {
+        insert_block(pool, id, "content", "task", None, None).await;
+        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    })
+    .await;
 
     let resp = list_undated_tasks_inner(&pool, None, None, Some("DOES_NOT_EXIST".into()))
         .await
@@ -2364,28 +2379,21 @@ async fn list_undated_tasks_with_nonexistent_space_id_returns_empty_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_undated_tasks_disjointness_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
     // Multiple tasks per space to make the disjointness assertion meaningful.
-    for id in &["U_A1", "U_A2", "U_A3"] {
-        insert_block(&pool, id, "content", "a task", None, None).await;
-        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        assign_to_space(&pool, id, TEST_SPACE_ID).await;
-    }
-    for id in &["U_B1", "U_B2"] {
-        insert_block(&pool, id, "content", "b task", None, None).await;
-        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
-    }
+    seed_two_space_blocks(
+        &pool,
+        &["U_A1", "U_A2", "U_A3"],
+        &["U_B1", "U_B2"],
+        async |pool, id| {
+            insert_block(pool, id, "content", "task", None, None).await;
+            sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+        },
+    )
+    .await;
 
     let a = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_ID.into()))
         .await
@@ -2442,14 +2450,10 @@ async fn seed_repeating_task(pool: &sqlx::SqlitePool, id: &str, due_date: &str) 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_projected_agenda_returns_only_current_space_blocks_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    seed_repeating_task(&pool, "P_A1", "2026-04-07").await;
-    assign_to_space(&pool, "P_A1", TEST_SPACE_ID).await;
-
-    seed_repeating_task(&pool, "P_B1", "2026-04-07").await;
-    assign_to_space(&pool, "P_B1", TEST_SPACE_B_ID).await;
+    seed_two_space_blocks(&pool, &["P_A1"], &["P_B1"], async |pool, id| {
+        seed_repeating_task(pool, id, "2026-04-07").await;
+    })
+    .await;
 
     let resp = list_projected_agenda_inner(
         &pool,
@@ -2476,14 +2480,10 @@ async fn list_projected_agenda_returns_only_current_space_blocks_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_projected_agenda_with_none_space_id_returns_all_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    seed_repeating_task(&pool, "P_A1", "2026-04-07").await;
-    assign_to_space(&pool, "P_A1", TEST_SPACE_ID).await;
-
-    seed_repeating_task(&pool, "P_B1", "2026-04-07").await;
-    assign_to_space(&pool, "P_B1", TEST_SPACE_B_ID).await;
+    seed_two_space_blocks(&pool, &["P_A1"], &["P_B1"], async |pool, id| {
+        seed_repeating_task(pool, id, "2026-04-07").await;
+    })
+    .await;
 
     let resp = list_projected_agenda_inner(
         &pool,
@@ -2504,10 +2504,10 @@ async fn list_projected_agenda_with_none_space_id_returns_all_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_projected_agenda_with_nonexistent_space_id_returns_empty_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-
-    seed_repeating_task(&pool, "P_A1", "2026-04-07").await;
-    assign_to_space(&pool, "P_A1", TEST_SPACE_ID).await;
+    seed_two_space_blocks(&pool, &["P_A1"], &[], async |pool, id| {
+        seed_repeating_task(pool, id, "2026-04-07").await;
+    })
+    .await;
 
     let resp = list_projected_agenda_inner(
         &pool,
@@ -2529,15 +2529,10 @@ async fn list_projected_agenda_with_nonexistent_space_id_returns_empty_feat3p4()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_projected_agenda_disjointness_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    for id in &["P_A1", "P_A2"] {
-        seed_repeating_task(&pool, id, "2026-04-07").await;
-        assign_to_space(&pool, id, TEST_SPACE_ID).await;
-    }
-    seed_repeating_task(&pool, "P_B1", "2026-04-07").await;
-    assign_to_space(&pool, "P_B1", TEST_SPACE_B_ID).await;
+    seed_two_space_blocks(&pool, &["P_A1", "P_A2"], &["P_B1"], async |pool, id| {
+        seed_repeating_task(pool, id, "2026-04-07").await;
+    })
+    .await;
 
     let a = list_projected_agenda_inner(
         &pool,
@@ -2596,17 +2591,12 @@ async fn insert_agenda_cache_row(pool: &sqlx::SqlitePool, date: &str, block_id: 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_returns_only_current_space_blocks_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
     // Two blocks on the same date, one per space.
-    insert_block(&pool, "CAB_A1", "content", "a", None, None).await;
-    assign_to_space(&pool, "CAB_A1", TEST_SPACE_ID).await;
-    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_A1").await;
-
-    insert_block(&pool, "CAB_B1", "content", "b", None, None).await;
-    assign_to_space(&pool, "CAB_B1", TEST_SPACE_B_ID).await;
-    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_B1").await;
+    seed_two_space_blocks(&pool, &["CAB_A1"], &["CAB_B1"], async |pool, id| {
+        insert_block(pool, id, "content", "x", None, None).await;
+        insert_agenda_cache_row(pool, "2025-08-01", id).await;
+    })
+    .await;
 
     let result =
         count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], Some(TEST_SPACE_ID.into()))
@@ -2622,16 +2612,11 @@ async fn count_agenda_batch_returns_only_current_space_blocks_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_with_none_space_id_returns_all_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    insert_block(&pool, "CAB_A1", "content", "a", None, None).await;
-    assign_to_space(&pool, "CAB_A1", TEST_SPACE_ID).await;
-    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_A1").await;
-
-    insert_block(&pool, "CAB_B1", "content", "b", None, None).await;
-    assign_to_space(&pool, "CAB_B1", TEST_SPACE_B_ID).await;
-    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_B1").await;
+    seed_two_space_blocks(&pool, &["CAB_A1"], &["CAB_B1"], async |pool, id| {
+        insert_block(pool, id, "content", "x", None, None).await;
+        insert_agenda_cache_row(pool, "2025-08-01", id).await;
+    })
+    .await;
 
     let result = count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], None)
         .await
@@ -2646,11 +2631,11 @@ async fn count_agenda_batch_with_none_space_id_returns_all_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_with_nonexistent_space_id_returns_empty_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-
-    insert_block(&pool, "CAB_A1", "content", "a", None, None).await;
-    assign_to_space(&pool, "CAB_A1", TEST_SPACE_ID).await;
-    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_A1").await;
+    seed_two_space_blocks(&pool, &["CAB_A1"], &[], async |pool, id| {
+        insert_block(pool, id, "content", "x", None, None).await;
+        insert_agenda_cache_row(pool, "2025-08-01", id).await;
+    })
+    .await;
 
     let result = count_agenda_batch_inner(
         &pool,
@@ -2668,19 +2653,16 @@ async fn count_agenda_batch_with_nonexistent_space_id_returns_empty_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_disjointness_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    for id in &["CAB_A1", "CAB_A2", "CAB_A3"] {
-        insert_block(&pool, id, "content", "a", None, None).await;
-        assign_to_space(&pool, id, TEST_SPACE_ID).await;
-        insert_agenda_cache_row(&pool, "2025-08-02", id).await;
-    }
-    for id in &["CAB_B1", "CAB_B2"] {
-        insert_block(&pool, id, "content", "b", None, None).await;
-        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
-        insert_agenda_cache_row(&pool, "2025-08-02", id).await;
-    }
+    seed_two_space_blocks(
+        &pool,
+        &["CAB_A1", "CAB_A2", "CAB_A3"],
+        &["CAB_B1", "CAB_B2"],
+        async |pool, id| {
+            insert_block(pool, id, "content", "x", None, None).await;
+            insert_agenda_cache_row(pool, "2025-08-02", id).await;
+        },
+    )
+    .await;
 
     let dates = vec!["2025-08-02".into()];
     let a = count_agenda_batch_inner(&pool, dates.clone(), Some(TEST_SPACE_ID.into()))
@@ -2719,16 +2701,11 @@ async fn insert_agenda_cache_row_with_source(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_returns_only_current_space_blocks_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    insert_block(&pool, "CAS_A1", "content", "a", None, None).await;
-    assign_to_space(&pool, "CAS_A1", TEST_SPACE_ID).await;
-    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_A1", "property:due_date").await;
-
-    insert_block(&pool, "CAS_B1", "content", "b", None, None).await;
-    assign_to_space(&pool, "CAS_B1", TEST_SPACE_B_ID).await;
-    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_B1", "property:due_date").await;
+    seed_two_space_blocks(&pool, &["CAS_A1"], &["CAS_B1"], async |pool, id| {
+        insert_block(pool, id, "content", "x", None, None).await;
+        insert_agenda_cache_row_with_source(pool, "2025-09-15", id, "property:due_date").await;
+    })
+    .await;
 
     let result = count_agenda_batch_by_source_inner(
         &pool,
@@ -2746,16 +2723,11 @@ async fn count_agenda_batch_by_source_returns_only_current_space_blocks_feat3p4(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_with_none_space_id_returns_all_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    insert_block(&pool, "CAS_A1", "content", "a", None, None).await;
-    assign_to_space(&pool, "CAS_A1", TEST_SPACE_ID).await;
-    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_A1", "property:due_date").await;
-
-    insert_block(&pool, "CAS_B1", "content", "b", None, None).await;
-    assign_to_space(&pool, "CAS_B1", TEST_SPACE_B_ID).await;
-    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_B1", "property:due_date").await;
+    seed_two_space_blocks(&pool, &["CAS_A1"], &["CAS_B1"], async |pool, id| {
+        insert_block(pool, id, "content", "x", None, None).await;
+        insert_agenda_cache_row_with_source(pool, "2025-09-15", id, "property:due_date").await;
+    })
+    .await;
 
     let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-15".into()], None)
         .await
@@ -2767,11 +2739,11 @@ async fn count_agenda_batch_by_source_with_none_space_id_returns_all_feat3p4() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_with_nonexistent_space_id_returns_empty_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-
-    insert_block(&pool, "CAS_A1", "content", "a", None, None).await;
-    assign_to_space(&pool, "CAS_A1", TEST_SPACE_ID).await;
-    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_A1", "property:due_date").await;
+    seed_two_space_blocks(&pool, &["CAS_A1"], &[], async |pool, id| {
+        insert_block(pool, id, "content", "x", None, None).await;
+        insert_agenda_cache_row_with_source(pool, "2025-09-15", id, "property:due_date").await;
+    })
+    .await;
 
     let result = count_agenda_batch_by_source_inner(
         &pool,
@@ -2786,19 +2758,16 @@ async fn count_agenda_batch_by_source_with_nonexistent_space_id_returns_empty_fe
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_disjointness_feat3p4() {
     let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    for id in &["CAS_A1", "CAS_A2", "CAS_A3"] {
-        insert_block(&pool, id, "content", "a", None, None).await;
-        assign_to_space(&pool, id, TEST_SPACE_ID).await;
-        insert_agenda_cache_row_with_source(&pool, "2025-09-16", id, "property:due_date").await;
-    }
-    for id in &["CAS_B1", "CAS_B2"] {
-        insert_block(&pool, id, "content", "b", None, None).await;
-        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
-        insert_agenda_cache_row_with_source(&pool, "2025-09-16", id, "property:due_date").await;
-    }
+    seed_two_space_blocks(
+        &pool,
+        &["CAS_A1", "CAS_A2", "CAS_A3"],
+        &["CAS_B1", "CAS_B2"],
+        async |pool, id| {
+            insert_block(pool, id, "content", "x", None, None).await;
+            insert_agenda_cache_row_with_source(pool, "2025-09-16", id, "property:due_date").await;
+        },
+    )
+    .await;
 
     let dates = vec!["2025-09-16".into()];
     let a = count_agenda_batch_by_source_inner(&pool, dates.clone(), Some(TEST_SPACE_ID.into()))

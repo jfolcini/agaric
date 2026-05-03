@@ -79,6 +79,42 @@ async fn soft_delete_block(pool: &SqlitePool, id: &str, deleted_at: &str) {
         .unwrap();
 }
 
+/// Drives the shared 5-items / 3-pages-of-2 cursor walk used by every
+/// `*_paginates_with_cursor` test in this module.
+///
+/// Calls `list_fn` three times — with `None`, then `r1.next_cursor`, then
+/// `r2.next_cursor` — at `limit = 2`, and asserts the page sizes (2, 2, 1),
+/// `has_more` flags (true, true, false), absence of a trailing cursor, and
+/// that the items appear in `expected_ids` order across pages.
+async fn assert_paginates_with_cursor<F>(pool: &SqlitePool, expected_ids: [&str; 5], list_fn: F)
+where
+    F: AsyncFn(&SqlitePool, PageRequest) -> Result<PageResponse<BlockRow>, AppError>,
+{
+    let r1 = list_fn(pool, PageRequest::new(None, Some(2)).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
+    assert!(r1.has_more, "page 1 should indicate more pages");
+    assert_eq!(r1.items[0].id, expected_ids[0], "page 1 first item");
+    assert_eq!(r1.items[1].id, expected_ids[1], "page 1 second item");
+
+    let r2 = list_fn(pool, PageRequest::new(r1.next_cursor, Some(2)).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(r2.items.len(), 2, "page 2 should return 2 items");
+    assert!(r2.has_more, "page 2 should indicate more pages");
+    assert_eq!(r2.items[0].id, expected_ids[2], "page 2 first item");
+    assert_eq!(r2.items[1].id, expected_ids[3], "page 2 second item");
+
+    let r3 = list_fn(pool, PageRequest::new(r2.next_cursor, Some(2)).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(r3.items.len(), 1, "last page should return 1 item");
+    assert!(!r3.has_more, "last page should not indicate more");
+    assert!(r3.next_cursor.is_none(), "last page should have no cursor");
+    assert_eq!(r3.items[0].id, expected_ids[4], "last page item");
+}
+
 // ====================================================================
 // Cursor codec
 // ====================================================================
@@ -725,44 +761,12 @@ async fn list_by_type_paginates_with_cursor() {
         insert_block(&pool, &id, "page", &format!("Page {i}"), None, None).await;
     }
 
-    let r1 = list_by_type(
+    assert_paginates_with_cursor(
         &pool,
-        "page",
-        &PageRequest::new(None, Some(2)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        ["PAGE0001", "PAGE0002", "PAGE0003", "PAGE0004", "PAGE0005"],
+        async |pool, page| list_by_type(pool, "page", &page, None).await,
     )
-    .await
-    .unwrap();
-    assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
-    assert!(r1.has_more, "page 1 should indicate more pages");
-    assert_eq!(r1.items[0].id, "PAGE0001", "page 1 first item");
-    assert_eq!(r1.items[1].id, "PAGE0002", "page 1 second item");
-
-    let r2 = list_by_type(
-        &pool,
-        "page",
-        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
-    assert_eq!(r2.items.len(), 2, "page 2 should return 2 items");
-    assert!(r2.has_more, "page 2 should indicate more pages");
-    assert_eq!(r2.items[0].id, "PAGE0003", "page 2 first item");
-    assert_eq!(r2.items[1].id, "PAGE0004", "page 2 second item");
-
-    let r3 = list_by_type(
-        &pool,
-        "page",
-        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
-    assert_eq!(r3.items.len(), 1, "last page should return 1 item");
-    assert!(!r3.has_more, "last page should not indicate more");
-    assert!(r3.next_cursor.is_none(), "last page should have no cursor");
-    assert_eq!(r3.items[0].id, "PAGE0005", "last page item");
+    .await;
 }
 
 #[tokio::test]
@@ -884,43 +888,13 @@ async fn list_trash_paginates_with_cursor() {
         soft_delete_block(&pool, &id, &ts).await;
     }
 
-    // Page 1: most recent → TRASH005, TRASH004
-    let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap(), None)
-        .await
-        .unwrap();
-    assert_eq!(r1.items.len(), 2, "trash page 1 should return 2 items");
-    assert!(r1.has_more, "trash page 1 should indicate more");
-    assert_eq!(r1.items[0].id, "TRASH005", "most recent trash item first");
-    assert_eq!(r1.items[1].id, "TRASH004", "second most recent trash item");
-
-    // Page 2: TRASH003, TRASH002
-    let r2 = list_trash(
+    // Trash sorts most-recently-deleted first, so order is reversed.
+    assert_paginates_with_cursor(
         &pool,
-        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None,
+        ["TRASH005", "TRASH004", "TRASH003", "TRASH002", "TRASH001"],
+        async |pool, page| list_trash(pool, &page, None).await,
     )
-    .await
-    .unwrap();
-    assert_eq!(r2.items.len(), 2, "trash page 2 should return 2 items");
-    assert!(r2.has_more, "trash page 2 should indicate more");
-    assert_eq!(r2.items[0].id, "TRASH003", "trash page 2 first item");
-    assert_eq!(r2.items[1].id, "TRASH002", "trash page 2 second item");
-
-    // Page 3 (last): TRASH001
-    let r3 = list_trash(
-        &pool,
-        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r3.items.len(), 1, "trash last page should return 1 item");
-    assert!(!r3.has_more, "trash last page should not indicate more");
-    assert!(
-        r3.next_cursor.is_none(),
-        "trash last page should have no cursor"
-    );
-    assert_eq!(r3.items[0].id, "TRASH001", "oldest trash item last");
+    .await;
 }
 
 #[tokio::test]
@@ -1557,47 +1531,12 @@ async fn list_by_tag_paginates_with_cursor() {
         insert_tag_association(&pool, &id, "TAG00001").await;
     }
 
-    let r1 = list_by_tag(
+    assert_paginates_with_cursor(
         &pool,
-        "TAG00001",
-        &PageRequest::new(None, Some(2)).unwrap(),
-        None,
+        ["BLOCK001", "BLOCK002", "BLOCK003", "BLOCK004", "BLOCK005"],
+        async |pool, page| list_by_tag(pool, "TAG00001", &page, None).await,
     )
-    .await
-    .unwrap();
-    assert_eq!(r1.items.len(), 2, "tag page 1 should return 2 items");
-    assert!(r1.has_more, "tag page 1 should indicate more");
-    assert_eq!(r1.items[0].id, "BLOCK001", "tag page 1 first item");
-    assert_eq!(r1.items[1].id, "BLOCK002", "tag page 1 second item");
-
-    let r2 = list_by_tag(
-        &pool,
-        "TAG00001",
-        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r2.items.len(), 2, "tag page 2 should return 2 items");
-    assert!(r2.has_more, "tag page 2 should indicate more");
-    assert_eq!(r2.items[0].id, "BLOCK003", "tag page 2 first item");
-    assert_eq!(r2.items[1].id, "BLOCK004", "tag page 2 second item");
-
-    let r3 = list_by_tag(
-        &pool,
-        "TAG00001",
-        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r3.items.len(), 1, "tag last page should return 1 item");
-    assert!(!r3.has_more, "tag last page should not indicate more");
-    assert!(
-        r3.next_cursor.is_none(),
-        "tag last page should have no cursor"
-    );
-    assert_eq!(r3.items[0].id, "BLOCK005", "tag last page item");
+    .await;
 }
 
 #[tokio::test]
@@ -1708,56 +1647,12 @@ async fn query_by_property_paginates_with_cursor() {
         insert_property(&pool, &id, "status", "active").await;
     }
 
-    let r1 = query_by_property(
+    assert_paginates_with_cursor(
         &pool,
-        "status",
-        None,
-        None,
-        "eq",
-        &PageRequest::new(None, Some(2)).unwrap(),
-        None,
+        ["BLOCK001", "BLOCK002", "BLOCK003", "BLOCK004", "BLOCK005"],
+        async |pool, page| query_by_property(pool, "status", None, None, "eq", &page, None).await,
     )
-    .await
-    .unwrap();
-    assert_eq!(r1.items.len(), 2, "property page 1 should return 2 items");
-    assert!(r1.has_more, "property page 1 should indicate more");
-    assert_eq!(r1.items[0].id, "BLOCK001", "property page 1 first item");
-    assert_eq!(r1.items[1].id, "BLOCK002", "property page 1 second item");
-
-    let r2 = query_by_property(
-        &pool,
-        "status",
-        None,
-        None,
-        "eq",
-        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r2.items.len(), 2, "property page 2 should return 2 items");
-    assert!(r2.has_more, "property page 2 should indicate more");
-    assert_eq!(r2.items[0].id, "BLOCK003", "property page 2 first item");
-    assert_eq!(r2.items[1].id, "BLOCK004", "property page 2 second item");
-
-    let r3 = query_by_property(
-        &pool,
-        "status",
-        None,
-        None,
-        "eq",
-        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r3.items.len(), 1, "property last page should return 1 item");
-    assert!(!r3.has_more, "property last page should not indicate more");
-    assert!(
-        r3.next_cursor.is_none(),
-        "property last page should have no cursor"
-    );
-    assert_eq!(r3.items[0].id, "BLOCK005", "property last page item");
+    .await;
 }
 
 #[tokio::test]
@@ -1917,50 +1812,12 @@ async fn list_agenda_paginates_with_cursor() {
         insert_agenda_entry(&pool, "2025-01-15", &id, "property:due").await;
     }
 
-    let r1 = list_agenda(
+    assert_paginates_with_cursor(
         &pool,
-        "2025-01-15",
-        None,
-        &PageRequest::new(None, Some(2)).unwrap(),
-        None,
+        ["BLOCK001", "BLOCK002", "BLOCK003", "BLOCK004", "BLOCK005"],
+        async |pool, page| list_agenda(pool, "2025-01-15", None, &page, None).await,
     )
-    .await
-    .unwrap();
-    assert_eq!(r1.items.len(), 2, "agenda page 1 should return 2 items");
-    assert!(r1.has_more, "agenda page 1 should indicate more");
-    assert_eq!(r1.items[0].id, "BLOCK001", "agenda page 1 first item");
-    assert_eq!(r1.items[1].id, "BLOCK002", "agenda page 1 second item");
-
-    let r2 = list_agenda(
-        &pool,
-        "2025-01-15",
-        None,
-        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r2.items.len(), 2, "agenda page 2 should return 2 items");
-    assert!(r2.has_more, "agenda page 2 should indicate more");
-    assert_eq!(r2.items[0].id, "BLOCK003", "agenda page 2 first item");
-    assert_eq!(r2.items[1].id, "BLOCK004", "agenda page 2 second item");
-
-    let r3 = list_agenda(
-        &pool,
-        "2025-01-15",
-        None,
-        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r3.items.len(), 1, "agenda last page should return 1 item");
-    assert!(!r3.has_more, "agenda last page should not indicate more");
-    assert!(
-        r3.next_cursor.is_none(),
-        "agenda last page should have no cursor"
-    );
-    assert_eq!(r3.items[0].id, "BLOCK005", "agenda last page item");
+    .await;
 }
 
 #[tokio::test]
@@ -2051,38 +1908,14 @@ async fn list_agenda_range_paginates_with_cursor() {
             .unwrap();
     }
 
-    let r1 = list_agenda_range(
+    assert_paginates_with_cursor(
         &pool,
-        "2025-02-01",
-        "2025-02-03",
-        None,
-        &PageRequest::new(None, Some(2)).unwrap(),
-        None,
+        ["AGBLK001", "AGBLK002", "AGBLK003", "AGBLK004", "AGBLK005"],
+        async |pool, page| {
+            list_agenda_range(pool, "2025-02-01", "2025-02-03", None, &page, None).await
+        },
     )
-    .await
-    .unwrap();
-    assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
-    assert!(r1.has_more, "page 1 should indicate more");
-    assert_eq!(r1.items[0].id, "AGBLK001", "page 1 first item");
-    assert_eq!(r1.items[1].id, "AGBLK002", "page 1 second item");
-
-    let r2 = list_agenda_range(
-        &pool,
-        "2025-02-01",
-        "2025-02-03",
-        None,
-        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r2.items.len(), 2, "page 2 should return 2 items");
-    assert!(r2.has_more, "page 2 should indicate more");
-    assert_eq!(
-        r2.items[0].id, "AGBLK003",
-        "page 2 first item (cursor skips past page 1)"
-    );
-    assert_eq!(r2.items[1].id, "AGBLK004", "page 2 second item");
+    .await;
 }
 
 #[tokio::test]
