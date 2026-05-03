@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 651 — Batch UX-WIP-RECLAIM: salvaged 4 sessions of pre-existing UX-313/UX-305/UX-306 WIP from the working tree; closed UX-305 (touch drag handle long-press hint via aria-label), UX-306 (overflow button enumerated aria-label), UX-313 (broken-link aria-label + toast.success on click-to-remove), plus a bonus `((block))` cheat-sheet entry in KeyboardShortcuts. Discarded UX-371-duplicate JournalControls files — UX-371 was already shipped in s645 via JournalPage.tsx with a different i18n namespace.)
+> **Last updated:** 2026-05-03 (Session 651-followup — full-suite verification pass: cleaned 20 clippy --all-targets warnings in test code (commit fc0fad1); reverted MAINT-185 (commit e8b0ac2) after pre-push playwright caught 57 e2e regressions traced via bisect to e76cf68's `useBlockKeyboard` ref-bag refactor + fixed 2 stale i18n e2e assertions; filed MAINT-194 (re-do MAINT-185 correctly) + MAINT-195 (mDNS BlockNotes→Agaric rename, patch drafted in stash). All 305/305 e2e + 9284/9284 vitest + 3437/3437 nextest + 44 prek hooks pass.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-18 open items in the summary table; 21 detail entries (FE-* sub-tables don't appear in the summary).
+20 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -32,6 +32,8 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
 | MAINT-192 | MAINT | Documentation — AGENTS.md additions to reduce false-positive churn on future reviews: (a) "Frontend Development Guidelines → Mandatory patterns" picker debouncing convention referencing `useDebouncedCallback` + 300 ms (PERF-28 traces directly to this gap); (b) under "Properties system is the primary extension point", a one-line reference to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` (lands together with MAINT-187). | S | User approval for AGENTS.md edits |
+| MAINT-194 | MAINT | `useBlockKeyboard` listener-attach perf — re-do MAINT-185 correctly (post-revert). Original ref-bag pattern broke listener stale-element invariant; need to memoize callbacks at call site OR add explicit `editor.view.dom.parentElement` watcher. | M | — |
+| MAINT-195 | MAINT | mDNS service name constant `BlockNotes` is stale (project rename leftover). 4-line patch drafted in `wip-mdns-blocknotes-to-agaric-rename` stash. Cosmetic only — announce TYPE is `_agaric._tcp.local.`, only the NAME prefix is wrong. | S | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
@@ -422,6 +424,34 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low — these are workflow-only changes; existing tests cover them via `_validate.yml`.
 - **Impact:** Medium — closes real (if low-likelihood) supply-chain vectors, and shrinks the baseline file so the hook gives more genuine signal.
 - **Status:** Open. Triage off the baseline as fixes land — when a finding is fixed, drop the matching `file:line` entry from `.github/zizmor.yml`.
+
+### MAINT-194 — `useBlockKeyboard` listener-attach perf (re-do MAINT-185 correctly)
+
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/use-block-keyboard.ts:256-334`
+- **What:** MAINT-185 attempted to reduce the `useCallback` deps for `handleKeyDown` from 16 (editor + 15 callbacks) to 1 (just `editor`) by stashing callbacks in a ref-bag (mirroring the `use-roving-editor.ts` pattern). The intent was to stop the keydown listener detaching/reattaching on every parent render. **The change broke 57 playwright e2e tests** because the listener attaches to `editor.view.dom.parentElement`, which can change identity between renders (e.g., when `EditorContent` unmounts / remounts on focus change). Under the old dep-heavy pattern, every callback identity change re-fired the `useEffect`, which re-grabbed a fresh `parentElement` and re-attached. Under MAINT-185's pattern, only an editor-instance change re-fires — so the listener stayed bound to a stale parent. Reverted in commit e8b0ac2 (session 651).
+- **Why it matters:** The original perf concern is real (16-dep useCallback × every parent render → listener detach/re-attach). But the fix has to preserve the "follow the parent element" invariant.
+- **Cost:** M — design + test the correct fix pattern.
+- **Risk:** Medium — the e2e regression demonstrates how subtle the listener-stale-element bug is.
+- **Impact:** Low — the perf problem is real but currently masked (re-attach overhead is O(microseconds) per render).
+- **Recommendation:** Two paths:
+  - (a) Keep the old useCallback-with-many-deps pattern but memoize the callbacks at the call site (in `BlockTree.tsx`) so each callback's identity is stable across renders — converts 16 deps to 16 stable references.
+  - (b) Adopt the ref-bag pattern from MAINT-185 BUT add an explicit `useEffect` that watches `editor.view.dom.parentElement` (via a ref-callback re-attach trigger) and re-binds the listener when the parent element changes.
+  - (c) Use a tree-level event listener on `document` and dispatch by `editor.isFocused` instead of binding to the editor's parent. (Cleanest, but requires careful focus-state tracking.)
+- **Status:** Open. Filed by the e8b0ac2 revert.
+
+### MAINT-195 — mDNS service name constant `BlockNotes` is stale (project rename leftover)
+
+- **Domain:** Sync / Networking
+- **Location:** `src-tauri/src/sync_net/websocket.rs:24` (`MDNS_SERVICE_NAME`), `src-tauri/src/sync_net/tests.rs:1356` (assertion + message), `src-tauri/src/sync_net/websocket.rs:141, 238` (doc comments + comment example)
+- **What:** The mDNS service announce prefix is hardcoded to `"BlockNotes"` — a leftover from the pre-rename project name. The companion `MDNS_SERVICE_TYPE` is already `"_agaric._tcp.local."`, so there is a name vs. type mismatch in announces. Doc comments and a test message also reference `"BlockNotes"`. A 4-line patch (constant + 3 doc/test occurrences) renames everything to `"Agaric"`.
+- **Why it matters:** Cosmetic at the announcement-name level (peer discovery groups by service TYPE first), but creates surprise during diagnostics — `tcpdump` / `mdns-scan` output shows announces named `BlockNotes_<deviceId>._agaric._tcp.local.` which is confusing.
+- **Why it has not landed yet:** The patch is sitting in a git stash (`wip-mdns-blocknotes-to-agaric-rename` from session 651) because the orchestrator was unsure whether changing a runtime mDNS protocol identifier needed coordination with a sync version bump. **Verdict on review: it does NOT.** The service TYPE (`_agaric._tcp.local.`) is the discovery group key; the NAME prefix is just a within-type label. Two devices, one running the old binary (announces `BlockNotes_<id>`) and one running the new binary (announces `Agaric_<id>`), still discover each other through the shared TYPE. Once both upgrade, the cosmetic mismatch resolves.
+- **Cost:** Trivial (4-line patch already drafted in stash).
+- **Risk:** Low (no protocol break; no peer compatibility concern).
+- **Impact:** Low (diagnostic clarity only).
+- **Recommendation:** Pop the `wip-mdns-blocknotes-to-agaric-rename` stash, run `cargo nextest run -E 'test(mdns_service_name_constant_value)'`, commit as a small chore. The stash content matches what the project rename should have done at MAINT-114-era.
+- **Status:** Open. Patch drafted in session 651's git stash.
 
 ## TEST — Backend test improvements
 
