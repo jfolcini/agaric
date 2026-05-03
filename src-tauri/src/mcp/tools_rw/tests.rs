@@ -861,7 +861,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
                     "content".into(),
                     format!("frontend block {iter}"),
                     Some(parent_id.clone()),
-                    Some((iter + 100) as i64),
+                    Some(i64::try_from(iter + 100).expect("test iteration index fits i64")),
                 )
                 .await
                 .unwrap_or_else(|e| panic!("frontend create failed (iter {iter}): {e:?}"));
@@ -883,7 +883,8 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         .unwrap();
     let expected = 2 + AGENTS * ITERS_PER_AGENT + FRONTEND_ITERS;
     assert_eq!(
-        total_blocks as usize, expected,
+        usize::try_from(total_blocks).expect("test row count is non-negative and fits usize"),
+        expected,
         "concurrent agent + frontend writes must produce exact block count \
          (1 page + 1 tag + {AGENTS}×{ITERS_PER_AGENT} agent + {FRONTEND_ITERS} frontend = {expected})",
     );
@@ -902,7 +903,8 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
     .await
     .unwrap();
     assert_eq!(
-        agent_blocks_with_tag as usize,
+        usize::try_from(agent_blocks_with_tag)
+            .expect("test row count is non-negative and fits usize"),
         AGENTS * ITERS_PER_AGENT,
         "every agent block must carry the seeded tag — add_tag must not be lost under contention",
     );

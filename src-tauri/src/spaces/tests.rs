@@ -691,7 +691,8 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
     // Op-log invariant — one SetProperty(space=…) op per migrated page.
     let space_ops = count_set_property_ops_for_key(&pool, "space").await;
     assert_eq!(
-        space_ops, N as i64,
+        space_ops,
+        i64::try_from(N).expect("test constant N fits i64"),
         "exactly {N} SetProperty(key='space') ops in op_log; got {space_ops}"
     );
 

@@ -1718,7 +1718,7 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(seeded, N as i64);
+    assert_eq!(seeded, i64::try_from(N).expect("test constant N fits i64"));
 
     let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
 

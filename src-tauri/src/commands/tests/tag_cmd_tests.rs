@@ -378,7 +378,7 @@ async fn seed_m85_tags(pool: &SqlitePool, count: usize) -> Vec<String> {
         let suffix = format!("{:03}", i);
         let id = format!("TAG_M85_{suffix}");
         let name = format!("tag-m85-{suffix}");
-        insert_block(&pool, &id, "tag", &name, None, None).await;
+        insert_block(pool, &id, "tag", &name, None, None).await;
         insert_tag_cache(pool, &id, &name, 0).await;
         ids.push(id);
     }
