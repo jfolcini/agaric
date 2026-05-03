@@ -211,6 +211,23 @@ describe('EditableBlock', () => {
       expect(wrapper).not.toBeNull()
       expect(wrapper?.classList.contains('block-editor')).toBe(true)
     })
+
+    it('applies selection ring and primary tint on focused branch when isSelected (UX-302)', () => {
+      render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          isSelected={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const wrapper = screen.getByTestId('block-editor')
+      expect(wrapper.className).toContain('ring-2')
+      expect(wrapper.className).toContain('ring-primary/50')
+      expect(wrapper.className).toContain('bg-primary/5')
+    })
   })
 
   // ── Focus (click → mount) ────────────────────────────────────────────

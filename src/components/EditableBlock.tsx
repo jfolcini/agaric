@@ -267,6 +267,7 @@ function EditableBlockInner({
       id={`editor-${blockId}`}
       className={cn(
         'block-editor rounded-md ring-1 ring-ring/30 bg-accent/[0.06] shadow-sm',
+        isSelected && 'ring-2 ring-primary/50 bg-primary/5',
         isDragOver && 'ring-2 ring-primary bg-primary/5',
       )}
       data-testid="block-editor"

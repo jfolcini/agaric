@@ -258,7 +258,9 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.getByLabelText(/Non-reversible/)).toBeInTheDocument()
+    // UX-351: the visible text label is the accessible name; the Lock svg
+    // is decorative (aria-hidden) but still present alongside the text.
+    expect(screen.getByText(/Non-reversible/)).toBeInTheDocument()
   })
 
   it('does not show lock icon for reversible ops', () => {
@@ -269,7 +271,52 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.queryByLabelText(/Non-reversible/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Non-reversible/)).not.toBeInTheDocument()
+  })
+
+  // -- UX-351: visible "Non-reversible" text label + opacity-50 multi-cue ----
+  // Pins the WCAG-compliant multi-cue contract: visible text label is the
+  // primary accessible signal and opacity-50 is retained as a secondary
+  // visual cue. Both must coexist for non-reversible rows.
+  describe('UX-351 non-reversible visible label', () => {
+    it('renders the visible "Non-reversible" text label when isNonReversible=true', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'purge_block', { block_id: 'B1' }),
+          isNonReversible: true,
+        }),
+      )
+
+      // Visible text — not just an aria-label — so sighted users get the
+      // textual cue alongside the (decorative) Lock icon.
+      expect(screen.getByText('Non-reversible action')).toBeInTheDocument()
+    })
+
+    it('does not render the "Non-reversible" text label when isNonReversible=false', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'edit_block', { to_text: 'content' }),
+          isNonReversible: false,
+        }),
+      )
+
+      expect(screen.queryByText('Non-reversible action')).not.toBeInTheDocument()
+    })
+
+    it('retains opacity-50 on non-reversible rows alongside the visible label (multi-cue)', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'purge_block', { block_id: 'B1' }),
+          isNonReversible: true,
+        }),
+      )
+
+      // Regression guard: the visible text label is additive, not a
+      // replacement for the opacity cue. Both signals must coexist.
+      const item = screen.getByTestId('history-item-0')
+      expect(item).toHaveClass('opacity-50')
+      expect(screen.getByText('Non-reversible action')).toBeInTheDocument()
+    })
   })
 
   // -- Diff display ----------------------------------------------------------

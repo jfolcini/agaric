@@ -148,6 +148,44 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
+  // ── UX-381: breadcrumb naming the active tab ──────────────────────
+  describe('breadcrumb (UX-381)', () => {
+    it('renders a <nav> landmark labelled with the Settings section name', () => {
+      render(<SettingsView />)
+
+      const breadcrumb = screen.getByRole('navigation', { name: t('sidebar.settings') })
+      expect(breadcrumb).toBeInTheDocument()
+      expect(breadcrumb.tagName).toBe('NAV')
+    })
+
+    it('shows the current active tab name in the breadcrumb', () => {
+      render(<SettingsView />)
+
+      const breadcrumb = screen.getByRole('navigation', { name: t('sidebar.settings') })
+      // The breadcrumb shows both the section ("Settings") and the active
+      // tab label ("General" by default).
+      expect(breadcrumb).toHaveTextContent(t('sidebar.settings'))
+      expect(breadcrumb).toHaveTextContent(t('settings.tabGeneral'))
+    })
+
+    it('updates the breadcrumb active tab name when the user switches tabs', async () => {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      const breadcrumb = screen.getByRole('navigation', { name: t('sidebar.settings') })
+      expect(breadcrumb).toHaveTextContent(t('settings.tabGeneral'))
+
+      await user.click(screen.getByRole('tab', { name: t('settings.tabKeyboard') }))
+      expect(breadcrumb).toHaveTextContent(t('settings.tabKeyboard'))
+      // The previously-active tab name is no longer in the breadcrumb.
+      expect(breadcrumb).not.toHaveTextContent(t('settings.tabGeneral'))
+
+      await user.click(screen.getByRole('tab', { name: t('settings.tabSync') }))
+      expect(breadcrumb).toHaveTextContent(t('settings.tabSync'))
+      expect(breadcrumb).not.toHaveTextContent(t('settings.tabKeyboard'))
+    })
+  })
+
   it('renders with 9 tabs', () => {
     render(<SettingsView />)
 

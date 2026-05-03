@@ -343,3 +343,31 @@ describe('PageHeaderMenu export shortcut hint (UX-158)', () => {
     expect(screen.getByText('Ctrl + Shift + E')).toBeInTheDocument()
   })
 })
+
+describe('PageHeaderMenu delete button danger zone (UX-358)', () => {
+  it('wraps the delete button in a destructive-tinted container', () => {
+    renderMenu({ kebabOpen: true })
+
+    const deleteButton = screen.getByText(/Delete page/i).closest('button')
+    expect(deleteButton).toBeTruthy()
+
+    const wrapper = deleteButton?.parentElement
+    expect(wrapper?.className).toContain('bg-destructive/5')
+  })
+
+  it('uses destructive hover background (not bg-accent)', () => {
+    renderMenu({ kebabOpen: true })
+
+    const deleteButton = screen.getByText(/Delete page/i).closest('button')
+    expect(deleteButton?.className).toContain('hover:bg-destructive/10')
+    expect(deleteButton?.className).not.toContain('hover:bg-accent')
+  })
+
+  it('uses destructive focus ring color', () => {
+    renderMenu({ kebabOpen: true })
+
+    const deleteButton = screen.getByText(/Delete page/i).closest('button')
+    expect(deleteButton?.className).toContain('focus-visible:ring-destructive/50')
+    expect(deleteButton?.className).not.toContain('focus-visible:ring-ring/50')
+  })
+})

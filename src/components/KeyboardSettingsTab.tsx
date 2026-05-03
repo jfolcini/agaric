@@ -22,6 +22,36 @@ import {
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
 import { ConfirmDialog } from './ConfirmDialog'
 
+/**
+ * UX-391 — Lightweight syntactic validation for custom shortcut bindings.
+ * Rejects empty input and modifier-only patterns (e.g. `Ctrl + Shift`).
+ * Accepted format: optional modifiers (Ctrl/Cmd/Meta/Alt/Option/Shift)
+ * separated by `+` or `-` or whitespace, followed by at least one
+ * non-modifier key token.
+ */
+const MODIFIER_TOKENS = new Set([
+  'Ctrl',
+  'Control',
+  'Cmd',
+  'Command',
+  'Meta',
+  'Alt',
+  'Option',
+  'Shift',
+  'Mod',
+])
+
+function validateShortcutBinding(input: string): 'empty' | 'modifierOnly' | null {
+  const trimmed = input.trim()
+  if (!trimmed) return 'empty'
+  // Tokenize on `+`, `-`, or runs of whitespace (handles "Ctrl+E", "Ctrl-E", "Ctrl + E", "Ctrl Shift E")
+  const tokens = trimmed.split(/[+\-\s]+/).filter(Boolean)
+  if (tokens.length === 0) return 'empty'
+  const nonModifiers = tokens.filter((t) => !MODIFIER_TOKENS.has(t))
+  if (nonModifiers.length === 0) return 'modifierOnly'
+  return null
+}
+
 export function KeyboardSettingsTab(): React.ReactElement {
   const { t } = useTranslation()
   const [version, setVersion] = useState(0)
@@ -44,6 +74,12 @@ export function KeyboardSettingsTab(): React.ReactElement {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: version counter triggers re-read from localStorage
   const conflicts = useMemo(() => findConflicts(), [version])
+
+  // UX-391 — validate the in-progress edit value (only meaningful while editing).
+  const validationError = useMemo<'empty' | 'modifierOnly' | null>(() => {
+    if (!editingId) return null
+    return validateShortcutBinding(editValue)
+  }, [editingId, editValue])
 
   const startEdit = useCallback((id: string, currentKeys: string) => {
     setEditingId(id)
@@ -121,7 +157,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                     className="flex flex-col sm:flex-row sm:items-center gap-2 py-2 px-2 rounded hover:bg-accent/50"
                   >
                     {/* Keys column */}
-                    <div className="w-full sm:w-56 sm:shrink-0">
+                    <div className="w-full sm:w-56 sm:shrink-0" data-testid="kbd-keys-column">
                       {isEditing ? (
                         <>
                           <div className="flex items-center gap-1">
@@ -131,9 +167,13 @@ export function KeyboardSettingsTab(): React.ReactElement {
                               placeholder={t('keyboard.settings.typeNewBinding')}
                               className="text-xs"
                               autoFocus
-                              aria-invalid={!editValue.trim() ? true : undefined}
+                              aria-invalid={validationError ? true : undefined}
                               aria-describedby={
-                                !editValue.trim() ? 'kbd-empty-binding-error' : undefined
+                                validationError === 'empty'
+                                  ? 'kbd-empty-binding-error'
+                                  : validationError === 'modifierOnly'
+                                    ? `kbd-validation-error-${shortcut.id}`
+                                    : undefined
                               }
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
@@ -149,7 +189,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                               variant="ghost"
                               size="icon-xs"
                               onClick={saveEdit}
-                              disabled={!editValue.trim()}
+                              disabled={!editValue.trim() || validationError === 'modifierOnly'}
                               aria-label={t('keyboard.settings.saveButton')}
                             >
                               <Check className="h-3 w-3" />
@@ -163,6 +203,15 @@ export function KeyboardSettingsTab(): React.ReactElement {
                               <X className="h-3 w-3" />
                             </Button>
                           </div>
+                          {validationError === 'modifierOnly' && (
+                            <p
+                              className="text-xs text-destructive mt-1"
+                              role="alert"
+                              id={`kbd-validation-error-${shortcut.id}`}
+                            >
+                              {t('keyboard.settings.validationModifierOnly')}
+                            </p>
+                          )}
                           <p className="text-xs text-muted-foreground mt-1">
                             {t('keyboard.settings.formatHint')}
                           </p>
@@ -176,6 +225,15 @@ export function KeyboardSettingsTab(): React.ReactElement {
                             </Badge>
                           )}
                         </span>
+                      )}
+
+                      {/* Conflict warning (UX-386/UX-392): inline inside the keys column */}
+                      {conflictNames && conflictNames.length > 0 && !isEditing && (
+                        <div className="text-xs text-alert-warning-foreground mt-1">
+                          {t('keyboard.settings.conflictWarning', {
+                            shortcuts: conflictNames.join(', '),
+                          })}
+                        </div>
                       )}
                     </div>
 
@@ -216,15 +274,6 @@ export function KeyboardSettingsTab(): React.ReactElement {
                         </button>
                       )}
                     </div>
-
-                    {/* Conflict warning */}
-                    {conflictNames && conflictNames.length > 0 && !isEditing && (
-                      <div className="text-xs text-alert-warning-foreground">
-                        {t('keyboard.settings.conflictWarning', {
-                          shortcuts: conflictNames.join(', '),
-                        })}
-                      </div>
-                    )}
                   </div>
                 )
               })}
