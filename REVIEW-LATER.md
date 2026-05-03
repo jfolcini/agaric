@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 628 — Batch UX-TRIVIAL-5: closed UX-336 (CJK 3-char hint), UX-343 (TrashView batch-restore tooltip), UX-344 (PropertyDefinitions delete-button always-visible — re-attempt), UX-355 (Graph aria-describedby), UX-357 (Graph node `<title>` tooltip), UX-363 (References "Filters" label); 5 of 5 attempted, all clean — pre-resolving file paths in the orchestrator eliminated stuck-subagent failures from sessions 624-627)
+> **Last updated:** 2026-05-03 (Session 629 — Batch UX-TRIVIAL-6: closed UX-332 (PageBrowser sort tooltip), UX-333 (PageTreeItem `+` always-visible), UX-339 (PropertyDefinitions JSON validation), UX-345 (History Reset/Revert disambiguation), UX-362 (BlockZoomBar Exit-zoom button); 5 of 5 attempted, all clean — second consecutive 5/5 with the pre-resolved-paths approach)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-77 open items in the summary table; 117 detail entries (FE-* sub-tables don't appear in the summary).
+72 open items in the summary table; 112 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -61,12 +61,8 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
 | UX-327 | UX | Calendar dot fetch is silent (no skeleton / no busy state) | S | — |
-| UX-332 | UX | PageBrowser sort preference persists silently — no UI cue | S | — |
-| UX-333 | UX | "+" button on namespace folders hidden until hover on desktop | S | — |
 | UX-334 | UX | TemplatesView "remove template" × hidden until hover (destructive) | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
-| UX-339 | UX | Property definition options editor has no JSON validation feedback | S | — |
-| UX-345 | UX | History "Restore to here" vs "Revert selected" terminology overlaps | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
 | UX-347 | UX | Conflict "Keep Incoming" / "Discard Incoming" is ambiguous | S | — |
 | UX-349 | UX | Conflict type badges differ only by colour | S | — |
@@ -75,7 +71,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
 | UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
 | UX-359 | UX | Page title in rich-display mode (with chips) lacks edit affordance | S | — |
-| UX-362 | UX | Block zoom has no visible "Exit zoom" affordance (Escape only) | S | — |
 | UX-364 | UX | `SpaceSwitcher` trigger reads as a label, not a switcher | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
@@ -1269,24 +1264,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-332 — PageBrowser sort preference persists silently — no UI cue
-- **Domain:** Frontend / Pages
-- **Location:** `src/hooks/usePageBrowserSort.ts:18-19, 43-52`
-- **What:** Saved to localStorage on change but nothing in the dropdown signals "this will persist next session".
-- **Cost:** Trivial — small "saved" tick on the active option; or one-time toast on first change.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-333 — "+" button on namespace folders hidden until hover on desktop
-- **Domain:** Frontend / Pages
-- **Location:** `src/components/PageTreeItem.tsx:92-102, 142-152`
-- **What:** Desktop: `opacity-0 group-hover:opacity-100`, icon `h-3 w-3`. Touch correctly forced visible. Desktop users can browse for ages without learning the "create sub-page" affordance exists.
-- **Cost:** Trivial — show always (slightly larger icon) or add a tooltip on focus / first hover.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-334 — TemplatesView "remove template" × hidden until hover (destructive)
 - **Domain:** Frontend / Pages / Templates
 - **Location:** `src/components/TemplatesView.tsx:221-234`
@@ -1303,24 +1280,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** Trivial — wrap disabled state in a Tooltip with the reason ("Only one page filter at a time").
 - **Risk:** Low.
 - **Impact:** Low.
-- **Status:** Open.
-
-### UX-339 — Property definition options editor: single-line `<Input>` accepts JSON without inline validation
-- **Domain:** Frontend / Properties view
-- **Location:** `src/components/PropertyDefinitionsList.tsx:279-284` (single-line `<Input value={editOptionsValue} onChange={…} placeholder=… aria-label=…/>` — not a multi-line `<textarea>` or JSON editor)
-- **What:** The field is a single-line `<Input>` accepting JSON. There is no inline parse / disabled-Save / inline error UI; validation surfaces only on `handleSaveOptions` as a generic toast. (Original framing called it "raw JSON input" which is loose — it's a single-line Input field, not a JSON-editor pane.)
-- **Cost:** S — try/catch parse on every change; render a small red "Invalid JSON" line + disable Save until valid.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-345 — History: displayed label is already "Restore to this point"; only the i18n key name + the per-entry-vs-point-in-time terminology gap remains
-- **Domain:** Frontend / History
-- **Location:** `src/components/HistoryListItem.tsx:293` ; `HistoryRestoreDialog.tsx:70` ; `HistoryRevertDialog.tsx:61` ; `src/lib/i18n/conflicts.ts:215-230` (key `history.restoreToHereLabel` resolves to displayed string `"Restore to this point"`; tooltip `"Revert all operations after this point"`)
-- **What:** The displayed string is already "Restore to this point" — the original "Restore to here" framing was based on the i18n KEY name, which still says `restoreToHere`. The remaining concern is that "Restore to this point" and "Revert selected" still read as synonyms even though they do different things (point-in-time vs per-entry inverse ops).
-- **Cost:** Trivial — rename to "Reset to this point" (one word change) and add a clarifying subtitle: "Undoes every operation after this point — use 'Revert selected' for individual entries." Optionally rename the i18n key from `restoreToHereLabel` to `resetToPointLabel` to reduce future confusion.
-- **Risk:** Low.
-- **Impact:** Low–medium.
 - **Status:** Open.
 
 ### UX-346 — Vim-style `j`/`k` nav has no touch alternative
@@ -1392,15 +1351,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/components/PageTitleEditor.tsx:66-100`
 - **What:** Read-only-looking chip rendering with no hover hint, no pencil icon, no `cursor-text`. Only signal is that clicking happens to switch modes.
 - **Cost:** Trivial — `cursor-text` on hover + faint border / pencil icon on hover/focus.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-362 — Block zoom has no visible "Exit zoom" affordance (Escape only)
-- **Domain:** Frontend / Page editor
-- **Location:** `src/components/BlockZoomBar.tsx` ; `src/hooks/useBlockTreeKeyboardShortcuts.ts:127-151`
-- **What:** Escape key exits zoom (good) but the breadcrumb has no "Exit zoom" button or label that signals how to leave on touch.
-- **Cost:** Trivial — small "Exit zoom" button next to the home crumb on coarse pointer.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
