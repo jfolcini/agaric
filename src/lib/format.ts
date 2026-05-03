@@ -51,6 +51,25 @@ export function truncateId(id: string, len = 12): string {
   return `${id.slice(0, len)}...`
 }
 
+/**
+ * Format a byte count for human display (UX-384). Uses 1024-based units
+ * because file sizes coming from `File.size` are byte counts of file
+ * content, and the import progress UI is comparing against on-disk
+ * markdown that file managers also display in KB/MB.
+ *
+ *   formatBytes(0)         -> "0 B"
+ *   formatBytes(512)       -> "512 B"
+ *   formatBytes(2048)      -> "2.0 KB"
+ *   formatBytes(5_242_880) -> "5.0 MB"
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  const value = bytes / 1024 ** i
+  return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
 /** Crockford base32 alphabet used by ULIDs. */
 const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 

@@ -537,6 +537,38 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
+  // UX-319: explain WHY the todo_state cycle is fixed via a HelpCircle
+  // tooltip on the todo_state row only.
+  describe('todo_state cycle help (UX-319)', () => {
+    it('renders the HelpCircle on the todo_state row', async () => {
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      await screen.findByText('Todo State')
+      const help = screen.getByTestId('todo-state-cycle-help')
+      expect(help).toBeInTheDocument()
+      expect(help).toHaveAttribute('aria-label', t('propertiesView.taskCycleHelpLabel'))
+    })
+
+    it('does NOT render the HelpCircle on non-todo_state rows', async () => {
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([
+          makePropDef('priority', 'select', '["1","2","3"]'),
+          makePropDef('effort', 'select', '["15m","30m","1h"]'),
+          makePropDef('custom-field', 'text'),
+        ]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      await screen.findByText('Priority')
+      expect(screen.queryByTestId('todo-state-cycle-help')).not.toBeInTheDocument()
+    })
+  })
+
   // UX-201b: saving `priority.options` must refresh the shared priority
   // levels cache so the rest of the app (badge colours, agenda sort,
   // filter choices) reflects the new set without a reload.

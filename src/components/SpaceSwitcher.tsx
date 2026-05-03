@@ -12,6 +12,7 @@
  * open.
  */
 
+import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -183,6 +184,33 @@ export function SpaceSwitcher(): React.JSX.Element {
             </SelectItem>
           ))}
           <SelectSeparator />
+          {/*
+           * UX-373 — when the user has only one space, the switcher is
+           * a visual no-op (nothing else to switch to). Surface a
+           * "Create another space…" hint inside the dropdown so the
+           * single-space user discovers the manage flow without having
+           * to scan past the (lone) space row to the "Manage spaces…"
+           * entry below. Rendered as a native `<button>` rather than a
+           * `<SelectItem>` because `SelectItem` requires a `value` and
+           * would interfere with Radix Select's selection model;
+           * clicking it opens the same `SpaceManageDialog` the
+           * MANAGE_SENTINEL route opens via `handleValueChange`.
+           */}
+          {availableSpaces.length === 1 ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground touch-target"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setManageOpen(true)
+              }}
+              data-testid="single-space-create-hint"
+            >
+              <Plus className="h-3 w-3" aria-hidden="true" />
+              {t('spaceSwitcher.createAnotherHint')}
+            </button>
+          ) : null}
           {/*
            * FEAT-3 Phase 6 — the "Manage spaces…" entry is now a real,
            * enabled action. `handleValueChange` short-circuits the

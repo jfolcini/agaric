@@ -255,6 +255,7 @@ export const common: Record<string, string> = {
   'data.importButton': 'Choose Files',
   'data.importingMessage': 'Importing...',
   'data.importingProgress': 'Importing file {{index}} of {{total}}: {{name}}',
+  'data.importingProgressDetail': '{{blocks}} blocks · {{bytes}} processed',
   'data.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',
   'data.exportTitle': 'Export All Pages',
   'data.exportDesc': 'Download all pages as a ZIP of Markdown files.',
@@ -267,4 +268,5 @@ export const common: Record<string, string> = {
     'Found a problem? Send us what happened and — if you like — the recent logs from your device.',
   'help.reportBugButton': 'Report a bug',
   'spaceSwitcher.shortcutHint': 'Tip: Ctrl+1–9 to switch spaces',
+  'spaceSwitcher.createAnotherHint': 'Create another space\u2026',
 }

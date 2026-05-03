@@ -463,6 +463,56 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByRole('button', { name: 'Delete property' })).not.toBeInTheDocument()
   })
 
+  // ── UX-320: Repeat-syntax help popover ────────────────────────────────
+
+  it('renders the repeat-syntax help popover trigger on the repeat property row', async () => {
+    const props = [makeProp('repeat', { value_text: '++ 1d' })]
+    setupMock(props, [makeDef('repeat')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Repeat')).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: 'Repeat syntax help' })).toBeInTheDocument()
+    expect(screen.getByTestId('repeat-help-trigger')).toBeInTheDocument()
+  })
+
+  it('opens a popover explaining ++ and .+ when the help trigger is clicked', async () => {
+    const user = userEvent.setup()
+    const props = [makeProp('repeat', { value_text: '++ 1d' })]
+    setupMock(props, [makeDef('repeat')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Repeat')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByTestId('repeat-help-trigger'))
+
+    expect(await screen.findByText('Repeat syntax')).toBeInTheDocument()
+    expect(
+      screen.getByText('Reschedule from the original date plus the interval (catch-up).'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Reschedule from the moment of completion.')).toBeInTheDocument()
+  })
+
+  it('does not render the repeat-syntax help popover for non-repeat properties', async () => {
+    const props = [makeProp('my_custom', { value_text: 'hello' })]
+    setupMock(props, [makeDef('my_custom')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('my_custom')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('button', { name: 'Repeat syntax help' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('repeat-help-trigger')).not.toBeInTheDocument()
+  })
+
   // ── UX-H1: Consistent built-in property rendering ────────────────────
 
   it('renders built-in property (created_at) with icon and formatted name', async () => {

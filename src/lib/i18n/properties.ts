@@ -105,6 +105,9 @@ export const properties: Record<string, string> = {
   'propertiesView.optionsLocked': 'Locked',
   'propertiesView.optionsLockedTooltip':
     'The TODO state cycle is fixed at TODO → DOING → DONE → CANCELLED. Options cannot be edited.',
+  'propertiesView.taskCycleHelpLabel': 'Task cycle help',
+  'propertiesView.taskCycleHelpContent':
+    'Task states cycle in a fixed order: TODO → DOING → DONE → CANCELLED → none. The order puts the common terminal (DONE) immediately after work begins (DOING); CANCELLED is the abandon-without-completing escape hatch at the end.',
   'properties.deleteDefinition': 'Delete property {{key}}',
   'properties.refPickerEmptyTitle': 'No pages found',
   'properties.refPickerEmptyDescription': 'Try a different search term.',
@@ -159,6 +162,12 @@ export const properties: Record<string, string> = {
   'property.datePlaceholder': 'today, +3d, Apr 15, 2025-04-15',
   'property.dateParseError': 'Could not parse date',
   'property.dateParsing': 'Parsing…',
+  'property.repeatHelpLabel': 'Repeat syntax help',
+  'property.repeatHelpTitle': 'Repeat syntax',
+  'property.repeatHelpCatchup': 'Reschedule from the original date plus the interval (catch-up).',
+  'property.repeatHelpFromCompletion': 'Reschedule from the moment of completion.',
+  'property.repeatHelpExample':
+    'Example: `++ 1d` repeats daily catching up; `.+ 1w` waits a week from when you marked it done.',
   'filter.operatorContains': 'contains',
   'filter.operatorStartsWith': 'starts with',
   'filter.isSet': 'is set',

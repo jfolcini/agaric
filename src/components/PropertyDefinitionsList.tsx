@@ -5,7 +5,7 @@
  * and edit options for select-type properties.
  */
 
-import { Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
+import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -262,6 +262,25 @@ export function PropertyDefinitionsList(): React.ReactElement {
                           </span>
                         </TooltipTrigger>
                         <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                  {def.key === 'todo_state' && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center text-muted-foreground"
+                            data-testid="todo-state-cycle-help"
+                            aria-label={t('propertiesView.taskCycleHelpLabel')}
+                          >
+                            <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          {t('propertiesView.taskCycleHelpContent')}
+                        </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   )}
