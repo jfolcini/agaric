@@ -212,13 +212,30 @@ export function AppSidebar({
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
-              tooltip={
-                !isOnline
-                  ? t('sidebar.offline')
-                  : syncing
-                    ? t('sidebar.syncing')
-                    : t('sidebar.syncTooltip')
-              }
+              // UX-379 — the visible "last synced" line below is hidden in
+              // icon-collapsed mode, so fold the same text into the tooltip
+              // (which is only rendered when collapsed). Users get the
+              // timestamp in both modes without duplication on screen.
+              tooltip={{
+                children: (
+                  <div className="flex flex-col gap-0.5">
+                    <span>
+                      {!isOnline
+                        ? t('sidebar.offline')
+                        : syncing
+                          ? t('sidebar.syncing')
+                          : t('sidebar.syncTooltip')}
+                    </span>
+                    <span className="opacity-80">
+                      {lastSyncedAt
+                        ? t('sidebar.lastSynced', {
+                            time: formatRelativeTime(lastSyncedAt, t),
+                          })
+                        : t('sidebar.lastSyncedNever')}
+                    </span>
+                  </div>
+                ),
+              }}
               onClick={onSyncClick}
               disabled={syncing || !isOnline}
             >

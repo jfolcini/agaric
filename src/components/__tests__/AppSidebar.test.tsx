@@ -156,6 +156,32 @@ describe('AppSidebar', () => {
     expect(noPeersClass).not.toBe(offlineClass)
   })
 
+  // UX-379 — the visible "last synced" timestamp is hidden in
+  // icon-collapsed mode (`group-data-[collapsible=icon]:hidden`).
+  // Pin that the same text is folded into the sync button tooltip
+  // so the affordance survives the collapse.
+  it('includes the last synced status in the sync button tooltip (UX-379)', async () => {
+    const user = userEvent.setup()
+    render(
+      <SidebarProvider defaultOpen={false}>
+        <AppSidebar {...defaultProps({ lastSyncedAt: null })} />
+      </SidebarProvider>,
+    )
+
+    const syncButton = screen
+      .getByText(t('sidebar.sync'))
+      .closest('[data-sidebar="menu-button"]') as HTMLElement
+    expect(syncButton).not.toBeNull()
+
+    await user.hover(syncButton)
+
+    await waitFor(() => {
+      const tooltip = screen.getByRole('tooltip')
+      expect(tooltip.textContent).toContain(t('sidebar.syncTooltip'))
+      expect(tooltip.textContent).toContain(t('sidebar.lastSyncedNever'))
+    })
+  })
+
   it('has no a11y violations', async () => {
     const { container } = renderSidebar()
     const results = await axe(container)

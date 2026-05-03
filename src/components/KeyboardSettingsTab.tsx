@@ -123,45 +123,50 @@ export function KeyboardSettingsTab(): React.ReactElement {
                     {/* Keys column */}
                     <div className="w-full sm:w-56 sm:shrink-0">
                       {isEditing ? (
-                        <div className="flex items-center gap-1">
-                          <Input
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            placeholder={t('keyboard.settings.typeNewBinding')}
-                            className="text-xs"
-                            autoFocus
-                            aria-invalid={!editValue.trim() ? true : undefined}
-                            aria-describedby={
-                              !editValue.trim() ? 'kbd-empty-binding-error' : undefined
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
-                                saveEdit()
-                              } else if (e.key === 'Escape') {
-                                e.preventDefault()
-                                cancelEdit()
+                        <>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              placeholder={t('keyboard.settings.typeNewBinding')}
+                              className="text-xs"
+                              autoFocus
+                              aria-invalid={!editValue.trim() ? true : undefined}
+                              aria-describedby={
+                                !editValue.trim() ? 'kbd-empty-binding-error' : undefined
                               }
-                            }}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={saveEdit}
-                            disabled={!editValue.trim()}
-                            aria-label={t('keyboard.settings.saveButton')}
-                          >
-                            <Check className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={cancelEdit}
-                            aria-label={t('keyboard.settings.cancelButton')}
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  saveEdit()
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault()
+                                  cancelEdit()
+                                }
+                              }}
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={saveEdit}
+                              disabled={!editValue.trim()}
+                              aria-label={t('keyboard.settings.saveButton')}
+                            >
+                              <Check className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={cancelEdit}
+                              aria-label={t('keyboard.settings.cancelButton')}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {t('keyboard.settings.formatHint')}
+                          </p>
+                        </>
                       ) : (
                         <span className="inline-flex flex-wrap items-center gap-1">
                           {renderKeys(shortcut.keys)}

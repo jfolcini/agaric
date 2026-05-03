@@ -161,6 +161,54 @@ describe('BugReportDialog', () => {
     })
   })
 
+  // ── UX-383: Redact toggle sibling layout ────────────────────────────
+  describe('redact switch sibling layout (UX-383)', () => {
+    it('redact switch is visible regardless of include-logs state', async () => {
+      const user = userEvent.setup()
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      // Wait for metadata so the form is fully rendered.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+      })
+
+      // Visible while Include logs is OFF (default).
+      expect(screen.getByRole('switch', { name: t('bugReport.redactLabel') })).toBeInTheDocument()
+
+      // Still visible after toggling Include logs ON.
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      expect(screen.getByRole('switch', { name: t('bugReport.redactLabel') })).toBeInTheDocument()
+    })
+
+    it('redact switch is disabled when include-logs is off', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+      })
+
+      const redact = screen.getByRole('switch', { name: t('bugReport.redactLabel') })
+      // Radix Switch forwards the React `disabled` prop to the native
+      // disabled attribute on the underlying button. `toBeDisabled`
+      // matches both the native attribute and aria-disabled.
+      expect(redact).toBeDisabled()
+    })
+
+    it('redact switch is enabled when include-logs is on', async () => {
+      const user = userEvent.setup()
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+      })
+
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+
+      const redact = screen.getByRole('switch', { name: t('bugReport.redactLabel') })
+      expect(redact).not.toBeDisabled()
+    })
+  })
+
   it('shows a toast and stays open when collect_bug_report_metadata rejects', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'collect_bug_report_metadata') throw new Error('boom')

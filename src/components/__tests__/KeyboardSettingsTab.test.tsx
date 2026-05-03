@@ -267,6 +267,25 @@ describe('KeyboardSettingsTab', () => {
     expect(screen.queryByText('Key binding cannot be empty')).not.toBeInTheDocument()
   })
 
+  it('UX-390: shows format hint below the input while editing', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardSettingsTab />)
+
+    // Hint is supplementary context — only shown while editing.
+    expect(screen.queryByText('Format: Ctrl + Shift + E')).not.toBeInTheDocument()
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    // Placeholder remains intact (the hint does not replace it).
+    expect(screen.getByPlaceholderText('Type new key binding...')).toBeInTheDocument()
+
+    // Hint is rendered with muted styling so it does not compete with the input.
+    const hint = screen.getByText('Format: Ctrl + Shift + E')
+    expect(hint).toBeInTheDocument()
+    expect(hint).toHaveClass('text-muted-foreground')
+  })
+
   it('shows "Customized" badge for custom shortcuts', () => {
     render(<KeyboardSettingsTab />)
 
