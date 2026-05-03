@@ -125,9 +125,24 @@ impl Materializer {
         Ok(())
     }
 
+    /// Enqueue a foreground `ApplyOp` and the matching background fan-out
+    /// for `record`, ensuring the bg tasks land **after** ApplyOp has
+    /// drained.
+    ///
+    /// L-17: the fg and bg queues have independent consumers, so naively
+    /// enqueueing bg right after fg let the bg consumer pull e.g.
+    /// `RebuildTagsCache` and execute it against pre-`CreateBlock` state.
+    /// Awaiting `flush_foreground` (which appends a Barrier and blocks
+    /// until the consumer signals it) gates the bg enqueue on ApplyOp
+    /// completion, so every bg task runs against fully-committed `blocks`
+    /// rows. The extra round-trip is fine in practice because
+    /// `dispatch_op` is only used by test code and one snapshot-transfer
+    /// helper — production paths use `dispatch_background_or_warn` after
+    /// the command handler has already committed the op itself.
     pub async fn dispatch_op(&self, record: &OpRecord) -> Result<(), AppError> {
         self.enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record.clone())))
             .await?;
+        self.flush_foreground().await?;
         self.enqueue_background_tasks(record, None)
     }
 
