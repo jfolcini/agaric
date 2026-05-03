@@ -13,7 +13,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { drag } from 'd3-drag'
 import { forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
@@ -1058,16 +1058,19 @@ describe('GraphView', () => {
       // Unmount before data resolves (triggers cleanup setting cancelled=true)
       unmount()
 
-      // Resolve pending promises after unmount
-      resolveBlocks({
-        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
-        next_cursor: null,
-        has_more: false,
+      // Resolve pending promises after unmount and let the cancellation
+      // microtask chain settle inside an `act(async)` boundary, instead
+      // of a bare 0 ms `setTimeout` flush which AGENTS.md flags as a
+      // wall-clock wait that "the test cannot tell broken from slow"
+      // (TEST-FE-1).
+      await act(async () => {
+        resolveBlocks({
+          items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+          next_cursor: null,
+          has_more: false,
+        })
+        resolveLinks([])
       })
-      resolveLinks([])
-
-      // Allow microtasks to flush
-      await new Promise((r) => setTimeout(r, 0))
 
       // No errors logged — cancelled flag prevented state updates and error handling
       expect(vi.mocked(logger.error)).not.toHaveBeenCalled()

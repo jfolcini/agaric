@@ -1001,10 +1001,11 @@ describe('TagFilterPanel', () => {
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'work' } })
 
-    // Wait for debounce without fake timers
-    await new Promise((r) => setTimeout(r, 350))
-
-    // Wait for matching tags to render
+    // TEST-FE-1: poll the observable end state (matching tag rendered)
+    // instead of a 350 ms wall-clock wait for the 300 ms debounce. The
+    // surrounding test forces real timers because axe-core interacts
+    // poorly with fake timers; `waitFor` polls long enough to catch the
+    // debounce firing with default settings (1 s timeout, 50 ms poll).
     await waitFor(() => {
       expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
     })
