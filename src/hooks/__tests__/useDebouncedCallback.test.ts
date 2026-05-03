@@ -7,6 +7,7 @@
  *  - cancel() prevents callback
  *  - Cleans up on unmount
  *  - Multiple rapid calls only trigger last one
+ *  - Returns stable object identity across re-renders
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -160,5 +161,21 @@ describe('useDebouncedCallback', () => {
 
     expect(callback).toHaveBeenCalledTimes(1)
     expect(callback).toHaveBeenCalledWith('e')
+  })
+
+  it('returns a stable object identity across re-renders', () => {
+    const { result, rerender } = renderHook(({ cb, delay }) => useDebouncedCallback(cb, delay), {
+      initialProps: { cb: vi.fn(), delay: 300 },
+    })
+
+    const first = result.current
+
+    // Re-render with the same props
+    rerender({ cb: vi.fn(), delay: 300 })
+    expect(result.current).toBe(first)
+
+    // Re-render with a different delay — identity must still be stable
+    rerender({ cb: vi.fn(), delay: 500 })
+    expect(result.current).toBe(first)
   })
 })

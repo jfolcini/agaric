@@ -13,7 +13,7 @@
  *   debounced.cancel()         // cancel pending invocation
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 export function useDebouncedCallback(
   callback: (value: string) => void,
@@ -25,20 +25,8 @@ export function useDebouncedCallback(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const callbackRef = useRef(callback)
   callbackRef.current = callback
-
-  function cancel() {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-  }
-
-  function schedule(value: string) {
-    cancel()
-    timerRef.current = setTimeout(() => {
-      callbackRef.current(value)
-    }, delay)
-  }
+  const delayRef = useRef(delay)
+  delayRef.current = delay
 
   // Cleanup on unmount
   useEffect(() => {
@@ -49,5 +37,21 @@ export function useDebouncedCallback(
     }
   }, [])
 
-  return { schedule, cancel }
+  return useMemo(() => {
+    function cancel() {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+
+    function schedule(value: string) {
+      cancel()
+      timerRef.current = setTimeout(() => {
+        callbackRef.current(value)
+      }, delayRef.current)
+    }
+
+    return { schedule, cancel }
+  }, [])
 }

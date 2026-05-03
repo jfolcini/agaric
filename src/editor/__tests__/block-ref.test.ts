@@ -105,4 +105,14 @@ describe('BlockRef NodeView', () => {
 
     expect(onNavigate).not.toHaveBeenCalled()
   })
+
+  it('broken ref chip exposes the i18n tooltip via both title and aria-label', () => {
+    const { dom } = createNodeView({
+      id: 'DELETED03',
+      resolveStatus: () => 'deleted',
+    })
+
+    expect(dom.getAttribute('title')).toBe('Broken ref — target block deleted')
+    expect(dom.getAttribute('aria-label')).toBe('Broken ref — target block deleted')
+  })
 })

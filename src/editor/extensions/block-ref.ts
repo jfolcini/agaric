@@ -13,6 +13,7 @@
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'
+import { t } from '../../lib/i18n'
 
 export interface BlockRefOptions {
   /** Resolve a block ULID to the first line of its content. Falls back to truncated ULID. */
@@ -97,9 +98,14 @@ export const BlockRef = Node.create<BlockRefOptions>({
         dom.setAttribute('data-testid', 'block-ref-chip')
         dom.setAttribute('contenteditable', 'false')
         if (status === 'deleted') {
-          dom.setAttribute('title', 'Broken ref — target block deleted')
+          const tooltip = t('editor.brokenRefTooltip')
+          dom.setAttribute('title', tooltip)
+          // `title` is hover-only on most touch UAs; `aria-label` ensures
+          // screen-reader (and touch) users get the same announcement.
+          dom.setAttribute('aria-label', tooltip)
         } else {
           dom.removeAttribute('title')
+          dom.removeAttribute('aria-label')
         }
       }
 

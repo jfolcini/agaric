@@ -140,6 +140,29 @@ describe('useBlockTreeEventListeners', () => {
 
       expect(opts.setDatePickerOpen).not.toHaveBeenCalled()
     })
+
+    it('does not re-register the listener when rovingEditor reference changes', () => {
+      const addSpy = vi.spyOn(document, 'addEventListener')
+
+      const baseOpts = makeOptions()
+      const { rerender, unmount } = renderHook(
+        ({ opts }: { opts: UseBlockTreeEventListenersOptions }) => useBlockTreeEventListeners(opts),
+        { initialProps: { opts: baseOpts } },
+      )
+
+      const initialCount = addSpy.mock.calls.filter(([name]) => name === 'open-date-picker').length
+
+      // Re-render with a new rovingEditor object reference; all other props
+      // (callbacks, refs, state) keep their identity so deps are stable.
+      rerender({ opts: { ...baseOpts, rovingEditor: { editor: null } } })
+
+      const finalCount = addSpy.mock.calls.filter(([name]) => name === 'open-date-picker').length
+
+      expect(finalCount).toBe(initialCount)
+
+      unmount()
+      addSpy.mockRestore()
+    })
   })
 
   describe('OPEN_DUE_DATE_PICKER', () => {
