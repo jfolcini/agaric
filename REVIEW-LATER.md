@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 622 — Batch BACKEND-TEST-3: TEST-3 + TEST-8 + TEST-18 + TEST-23 + TEST-25 closed)
+> **Last updated:** 2026-05-02 (Session 623 — Stale-row sweep: TEST-FE-3 + TEST-FE-4 + TEST-FE-5 + TEST-FE-7 already closed in `ac49a47`; row removal + TEST-FE-7 idiomatic-refactor follow-up (date-fns `subDays`))
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-106 open items in the summary table; 141 detail entries (FE-* sub-tables don't appear in the summary).
+102 open items in the summary table; 141 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -44,10 +44,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
-| TEST-FE-3 | TEST | `makeHistoryEntry` helper duplicated across `HistoryPanel.test.tsx` and `HistoryView.test.tsx` — move to `src/__tests__/fixtures/index.ts` | S | — |
-| TEST-FE-4 | TEST | `ViewDispatcher.test.tsx` Suspense-fallback test calls `vi.resetModules()` + `vi.doMock()` then unmocks at end of bare test body — assertion failure mid-test would leak module mocks to subsequent tests in the same worker | S | — |
-| TEST-FE-5 | TEST | `useBatchCounts` test fixture sets `displayDate === dateStr`, so a regression that keys `agendaCounts` by `displayDate` instead of `dateStr` would silently pass | S | — |
-| TEST-FE-7 | TEST | `AgendaResults.test.tsx` hardcodes `'2020-01-01'` as overdue marker (lines 320, 332) when file already imports `subDays` and uses dynamic `new Date()` for "today" | S | — |
 | UX-300 | UX | Code-block language selector lacks search/filter | S | — |
 | UX-302 | UX | Multi-selection has no visible feedback on selected blocks | S | — |
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |

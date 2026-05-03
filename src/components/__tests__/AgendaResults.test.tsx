@@ -14,6 +14,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { format, subDays } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -315,7 +316,7 @@ describe('AgendaResults', () => {
   it('renders date group headers when groupBy=date', () => {
     const now = new Date()
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const overdueDate = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
+    const overdueDate = format(subDays(new Date(), 30), 'yyyy-MM-dd')
     const blocks = [
       makeBlock({ id: 'B1', due_date: todayStr, todo_state: 'TODO' }),
       makeBlock({ id: 'B2', due_date: overdueDate, todo_state: 'TODO' }),
@@ -329,7 +330,7 @@ describe('AgendaResults', () => {
   })
 
   it('renders flat list when groupBy=none', () => {
-    const overdueDate = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
+    const overdueDate = format(subDays(new Date(), 30), 'yyyy-MM-dd')
     const blocks = [
       makeBlock({ id: 'B1', due_date: overdueDate, todo_state: 'TODO', content: 'Task A' }),
       makeBlock({ id: 'B2', due_date: '2025-12-01', todo_state: 'TODO', content: 'Task B' }),
