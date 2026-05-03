@@ -1353,8 +1353,8 @@ fn mdns_service_type_constant_value() {
 #[test]
 fn mdns_service_name_constant_value() {
     assert_eq!(
-        MDNS_SERVICE_NAME, "BlockNotes",
-        "MDNS_SERVICE_NAME must equal 'BlockNotes'"
+        MDNS_SERVICE_NAME, "Agaric",
+        "MDNS_SERVICE_NAME must equal 'Agaric'"
     );
 }
 

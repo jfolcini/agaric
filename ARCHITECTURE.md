@@ -84,8 +84,7 @@ Anytype, faster than Logseq.
 | tokio-tungstenite + rustls | TLS WebSocket transport for sync                          |
 | rcgen                      | Self-signed ECDSA P-256 certificate generation            |
 | x509-parser                | Certificate CN verification for sync peer validation      |
-| hkdf + sha2                | HKDF-SHA256 key derivation for pairing                    |
-| chacha20poly1305           | AEAD encryption for pairing messages                      |
+| sha2                       | Cert-pin hashing (TOFU verification of peer certificates) |
 | qrcode                     | QR code SVG generation for pairing                        |
 
 ---
@@ -1630,8 +1629,7 @@ transport via TLS WebSocket, protocol via op streaming with three-way merge.
 | mdns-sd           | mDNS service announcement and browsing (`_agaric._tcp.local.`) |
 | tokio-tungstenite | Async WebSocket (server + client)                              |
 | rustls + rcgen    | TLS with self-signed ECDSA P-256 certificates                  |
-| hkdf + sha2       | HKDF-SHA256 session key derivation from passphrase             |
-| chacha20poly1305  | ChaCha20-Poly1305 AEAD for pairing message encryption          |
+| sha2              | Cert-pin hashing (TOFU verification of peer certificates)      |
 | qrcode            | QR code SVG generation for pairing                             |
 
 ### Discovery
@@ -1647,13 +1645,20 @@ Per-session passphrase + QR code. Ephemeral — discarded after pairing or 5-min
 
 1. Host generates a 4-word EFF large wordlist passphrase (~51.7 bits entropy, 7,776-word list).
 2. Host displays QR code (JSON: `{"passphrase":"..."}`, schema-versioned with `"v":1`) and 4-word text.
-3. Both sides derive a 32-byte session key via HKDF-SHA256:
-   - Salt: sorted concatenation of local + remote device IDs (order-independent).
-   - Info: `b"agaric-sync-v1"`.
-4. Messages encrypted with ChaCha20-Poly1305: `[12-byte nonce][ciphertext + 16-byte tag]`.
+3. The pairing handshake travels as **plaintext JSON over the same mTLS-secured, TOFU-pinned
+   WebSocket** that the sync session will use. Confidentiality and authenticity come from the
+   rustls + cert-pin layer below; there is no application-layer crypto on top of TLS.
+4. The 4-word passphrase serves as a human-verifiable confirmation that both ends are talking
+   to the right peer (defense against typo-paired or accidentally-cross-talking devices) — not
+   as a cryptographic key.
 
-**`PairingSession`** struct holds passphrase, derived key, and creation instant. `is_expired()`
-checks the 5-minute timeout.
+**`PairingSession`** struct holds the passphrase and creation instant. `is_expired()` checks the
+5-minute timeout.
+
+**History:** earlier revisions derived a session key via HKDF-SHA256 and encrypted pairing
+messages with ChaCha20-Poly1305 over a separate channel. Removed in MAINT-110 — the rustls layer
+already provides confidentiality and authenticity, and doubling up was extra surface for no
+threat-model benefit (single user, no adversaries).
 
 **Rejected:** Persistent shared passphrase (hard to rotate), SPAKE2 (correct but adds crypto
 dependency for marginal gain at this threat model).
@@ -2411,8 +2416,10 @@ empirically validated through bugs found, fixes applied, and alternatives reject
   over the same TLS WebSocket as op streaming, and gate on `SyncState::Complete` — replacement
   requires reworking the protocol message set and orchestrator, not a transport swap.
 - **`magic-wormhole` (PAKE) for pairing.** PAKE shines on low-entropy secrets (4-digit PINs);
-  the EFF 4-word passphrase carries ~51.7 bits — well above PAKE's design point. The current
-  HKDF-SHA256 + ChaCha20-Poly1305 stack is correct and right-sized for the threat model.
+  the EFF 4-word passphrase carries ~51.7 bits — well above PAKE's design point. After MAINT-110
+  the pairing flow no longer carries any application-layer crypto at all: rustls handles
+  confidentiality and authenticity, and the passphrase is a human-verifiable peer-confirmation,
+  not a key. PAKE would be overkill on top of mTLS.
 - **`webpki` / `rustls-platform-verifier` for sync TLS.** Both validate CA-signed chains;
   Agaric uses self-signed ECDSA P-256 certificates with TOFU pinning. The custom
   `PinningCertVerifier` (~100 LOC) is the right tool.
