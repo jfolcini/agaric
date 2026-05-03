@@ -84,8 +84,12 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                 autoExecTimer = null
               }
               const { items, query, command } = props
-              // Auto-execute when exactly 1 match and query is long enough
-              if (items.length === 1 && query.length >= 3) {
+              // Auto-execute when exactly 1 match and query is long enough.
+              // Threshold bumped from 3 → 4 (UX-314): the 200ms auto-fire is
+              // not visibly cued, so 3-char triggers surprised fast typists.
+              // Trade-off: short slash commands (e.g. `/h1`) no longer
+              // auto-fire; the user must press Enter to confirm.
+              if (items.length === 1 && query.length >= 4) {
                 logger.debug('slash-command', 'auto-execute timer scheduled', {
                   delayMs: AUTO_EXEC_DELAY_MS,
                   query,

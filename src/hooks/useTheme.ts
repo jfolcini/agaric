@@ -54,6 +54,24 @@ const ALL_THEMES: readonly ThemePreference[] = [
 /** Theme cycle for the sidebar toggle button (classic light/dark/auto only). */
 const CYCLE: ThemePreference[] = ['auto', 'dark', 'light']
 
+/**
+ * i18n key for the human-readable display name of each theme. Used by the
+ * sidebar theme-toggle tooltip (UX-387) to surface the current theme.
+ *
+ * Hyphenated theme ids are mapped to camelCase i18n key segments because the
+ * project i18n key convention (enforced in `src/lib/__tests__/i18n.test.ts`)
+ * disallows dashes inside segments.
+ */
+export const THEME_NAME_KEY: Record<ThemePreference, string> = {
+  auto: 'sidebar.themeName.auto',
+  dark: 'sidebar.themeName.dark',
+  light: 'sidebar.themeName.light',
+  'solarized-light': 'sidebar.themeName.solarizedLight',
+  'solarized-dark': 'sidebar.themeName.solarizedDark',
+  dracula: 'sidebar.themeName.dracula',
+  'one-dark-pro': 'sidebar.themeName.oneDarkPro',
+}
+
 /** Every CSS class the hook may add — cleared before applying the current one. */
 const THEME_CLASSES = [
   'dark',

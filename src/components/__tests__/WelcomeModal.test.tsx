@@ -29,6 +29,9 @@ vi.mock('lucide-react', () => ({
   Tag: (props: { className?: string }) => (
     <svg data-testid="icon-tag" className={props.className} />
   ),
+  RefreshCw: (props: { className?: string }) => (
+    <svg data-testid="icon-refresh-cw" className={props.className} />
+  ),
   XIcon: (props: { className?: string }) => (
     <svg data-testid="x-icon" className={props.className} />
   ),
@@ -79,12 +82,13 @@ describe('WelcomeModal', () => {
     expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
   })
 
-  it('displays all three feature highlights', () => {
+  it('displays all four feature highlights', () => {
     render(<WelcomeModal />)
 
     expect(screen.getByText('Blocks + pages')).toBeInTheDocument()
     expect(screen.getByText('Keyboard shortcuts')).toBeInTheDocument()
     expect(screen.getByText('Tags + properties')).toBeInTheDocument()
+    expect(screen.getByText('Sync across devices')).toBeInTheDocument()
   })
 
   // UX-278: feature list must use <ul role="list"> + <li> for proper SR semantics.
@@ -95,11 +99,24 @@ describe('WelcomeModal', () => {
     expect(list.tagName).toBe('UL')
 
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(3)
+    expect(items).toHaveLength(4)
     // Each <li> hosts one feature title
     expect(items[0]).toHaveTextContent('Blocks + pages')
     expect(items[1]).toHaveTextContent('Keyboard shortcuts')
     expect(items[2]).toHaveTextContent('Tags + properties')
+    expect(items[3]).toHaveTextContent('Sync across devices')
+  })
+
+  // UX-382: Sync is Agaric's biggest differentiator (local-first,
+  // multi-device sync) and must appear in the welcome highlights so new
+  // users discover it immediately. Pins both the count (was 3, now 4)
+  // and the new title so a regression that drops the entry trips the test.
+  it('highlights "Sync across devices" as the 4th feature (UX-382)', () => {
+    render(<WelcomeModal />)
+
+    const items = screen.getAllByRole('listitem')
+    expect(items).toHaveLength(4)
+    expect(items[3]).toHaveTextContent('Sync across devices')
   })
 
   it('"Get Started" dismisses and sets localStorage', async () => {

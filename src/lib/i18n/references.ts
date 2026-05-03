@@ -56,6 +56,7 @@ export const references: Record<string, string> = {
   'graph.allPages': 'All pages',
   'graph.truncatedFilterHint': 'Showing {{count}} of many pages \u2014 filter by tag to focus',
   'graph.filter.addFilter': 'Add filter',
+  'graph.filter.label': 'Filters',
   'graph.filter.noFilters': 'No filters applied',
   'graph.filter.clearAll': 'Clear all',
   'graph.filter.apply': 'Apply',

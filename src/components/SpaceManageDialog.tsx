@@ -126,6 +126,19 @@ function writeOnboardingSeen(): void {
   }
 }
 
+/**
+ * Clear the onboarding-dismissed flag so the banner shows again on
+ * the next `Manage spaces` open. Surfaced from Settings → General as
+ * the in-app way to undo a `Got it` dismissal (UX-374).
+ */
+export function resetOnboardingSeen(): void {
+  try {
+    localStorage.removeItem(onboardingStorageKey())
+  } catch (err) {
+    logger.warn(LOG_MODULE, 'failed to reset onboarding-dismissed flag', undefined, err)
+  }
+}
+
 interface SpaceRowEditorProps {
   space: SpaceRow
   /** True when this is the only space — delete forbidden. */

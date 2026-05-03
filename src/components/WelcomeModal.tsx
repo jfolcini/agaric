@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { FileText, Keyboard, Tag } from 'lucide-react'
+import { FileText, Keyboard, RefreshCw, Tag } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -51,6 +51,11 @@ const FEATURES = [
     icon: Tag,
     titleKey: 'welcome.featureTags',
     descKey: 'welcome.featureTagsDesc',
+  },
+  {
+    icon: RefreshCw,
+    titleKey: 'welcome.featureSync',
+    descKey: 'welcome.featureSyncDesc',
   },
 ] as const
 

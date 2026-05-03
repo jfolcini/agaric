@@ -64,12 +64,12 @@ describe('slash-command auto-execute', () => {
     vi.useRealTimers()
   })
 
-  it('auto-executes when exactly 1 item and query >= 3 chars after 200ms', () => {
+  it('auto-executes when exactly 1 item and query >= 4 chars after 200ms', () => {
     const lifecycle = getLifecycle()
     const command = vi.fn()
     const item: PickerItem = { id: 'todo', label: 'TODO' }
 
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     expect(command).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(200)
@@ -84,19 +84,29 @@ describe('slash-command auto-execute', () => {
       { id: 'today', label: 'Today' },
     ]
 
-    lifecycle.onUpdate({ items, query: 'tod', command })
+    lifecycle.onUpdate({ items, query: 'todo', command })
     vi.advanceTimersByTime(200)
     expect(command).not.toHaveBeenCalled()
   })
 
-  it('does not auto-execute when query < 3 chars', () => {
-    const lifecycle = getLifecycle()
-    const command = vi.fn()
+  // UX-314: threshold pin. 3-char query stays in the picker; 4-char query
+  // auto-fires after the 200ms delay. Both branches asserted together so
+  // a regression to the old `>= 3` threshold (or a bump past 4) trips here.
+  it('does not auto-execute at 3 chars but does at 4 chars', () => {
+    // 3-char query: must NOT fire.
+    const lifecycle3 = getLifecycle()
+    const command3 = vi.fn()
     const item: PickerItem = { id: 'todo', label: 'TODO' }
-
-    lifecycle.onUpdate({ items: [item], query: 'to', command })
+    lifecycle3.onUpdate({ items: [item], query: 'tod', command: command3 })
     vi.advanceTimersByTime(200)
-    expect(command).not.toHaveBeenCalled()
+    expect(command3).not.toHaveBeenCalled()
+
+    // 4-char query: must fire.
+    const lifecycle4 = getLifecycle()
+    const command4 = vi.fn()
+    lifecycle4.onUpdate({ items: [item], query: 'todo', command: command4 })
+    vi.advanceTimersByTime(200)
+    expect(command4).toHaveBeenCalledWith(item)
   })
 
   it('cancels auto-execute timer on keyDown', () => {
@@ -104,7 +114,7 @@ describe('slash-command auto-execute', () => {
     const command = vi.fn()
     const item: PickerItem = { id: 'todo', label: 'TODO' }
 
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     lifecycle.onKeyDown({ event: new KeyboardEvent('keydown', { key: 'ArrowDown' }) })
     vi.advanceTimersByTime(200)
     expect(command).not.toHaveBeenCalled()
@@ -115,7 +125,7 @@ describe('slash-command auto-execute', () => {
     const command = vi.fn()
     const item: PickerItem = { id: 'todo', label: 'TODO' }
 
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     lifecycle.onExit()
     vi.advanceTimersByTime(200)
     expect(command).not.toHaveBeenCalled()
@@ -129,11 +139,11 @@ describe('slash-command auto-execute', () => {
     const item2: PickerItem = { id: 'done', label: 'DONE' }
 
     // First update starts a timer
-    lifecycle.onUpdate({ items: [item1], query: 'tod', command: command1 })
+    lifecycle.onUpdate({ items: [item1], query: 'todo', command: command1 })
     vi.advanceTimersByTime(100) // halfway through first timer
 
     // Second update resets the timer
-    lifecycle.onUpdate({ items: [item2], query: 'don', command: command2 })
+    lifecycle.onUpdate({ items: [item2], query: 'done', command: command2 })
     vi.advanceTimersByTime(100) // 100ms into second timer — not yet
     expect(command1).not.toHaveBeenCalled()
     expect(command2).not.toHaveBeenCalled()
@@ -149,7 +159,7 @@ describe('slash-command auto-execute', () => {
     const item: PickerItem = { id: 'todo', label: 'TODO' }
 
     // First session: onUpdate arms the auto-exec timer
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     vi.advanceTimersByTime(100) // timer not yet fired
 
     // Re-entry without a prior onExit (defensive scenario): onStart should
@@ -176,18 +186,18 @@ describe('slash-command auto-execute', () => {
     const command = vi.fn()
     const item: PickerItem = { id: 'todo', label: 'TODO' }
 
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     expect(debugSpy).toHaveBeenCalledWith(
       'slash-command',
       'auto-execute timer scheduled',
-      expect.objectContaining({ delayMs: 200, query: 'tod', itemId: 'todo' }),
+      expect.objectContaining({ delayMs: 200, query: 'todo', itemId: 'todo' }),
     )
 
     vi.advanceTimersByTime(200)
     expect(debugSpy).toHaveBeenCalledWith(
       'slash-command',
       'auto-execute timer fired',
-      expect.objectContaining({ query: 'tod', itemId: 'todo' }),
+      expect.objectContaining({ query: 'todo', itemId: 'todo' }),
     )
 
     debugSpy.mockRestore()
@@ -202,7 +212,7 @@ describe('slash-command auto-execute', () => {
     const item: PickerItem = { id: 'todo', label: 'TODO' }
 
     // onKeyDown clears
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     lifecycle.onKeyDown({ event: new KeyboardEvent('keydown', { key: 'ArrowDown' }) })
     expect(debugSpy).toHaveBeenCalledWith(
       'slash-command',
@@ -211,7 +221,7 @@ describe('slash-command auto-execute', () => {
     )
 
     // onExit clears
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     lifecycle.onExit()
     expect(debugSpy).toHaveBeenCalledWith(
       'slash-command',
@@ -220,7 +230,7 @@ describe('slash-command auto-execute', () => {
     )
 
     // onStart clears (defensive, on re-entry)
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
     lifecycle.onStart({ items: [item], query: '', command })
     expect(debugSpy).toHaveBeenCalledWith(
       'slash-command',
@@ -246,7 +256,7 @@ describe('slash-command auto-execute', () => {
     const command = vi.fn()
     const item: PickerItem = { id: 'todo', label: 'TODO' }
 
-    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onUpdate({ items: [item], query: 'todo', command })
 
     // Simulate the editor view being destroyed between schedule and fire.
     editor.view.isDestroyed = true
