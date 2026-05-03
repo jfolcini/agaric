@@ -8,7 +8,7 @@
 
 import { Archive } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
@@ -26,6 +26,10 @@ export function CompactionCard(): React.ReactElement {
   const [loading, setLoading] = useState(true)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [compacting, setCompacting] = useState(false)
+  // UX-352: auto-expand on first transition to eligible_ops > 0, exactly once
+  // per mount. Don't re-expand if the user manually collapses afterwards, even
+  // if eligible_ops grows further.
+  const autoExpandedRef = useRef(false)
 
   const fetchStatus = useCallback(async () => {
     setLoading(true)
@@ -43,6 +47,14 @@ export function CompactionCard(): React.ReactElement {
   useEffect(() => {
     void fetchStatus()
   }, [fetchStatus])
+
+  useEffect(() => {
+    if (autoExpandedRef.current) return
+    if (status != null && status.eligible_ops > 0) {
+      autoExpandedRef.current = true
+      setCollapsed(false)
+    }
+  }, [status])
 
   const handleCompact = useCallback(async () => {
     if (status == null) return

@@ -64,16 +64,12 @@ describe('CompactionCard', () => {
     expect(screen.getByText('Op Log Compaction')).toBeInTheDocument()
   })
 
-  it('shows stats when expanded and loaded', async () => {
-    const user = userEvent.setup()
+  it('shows stats when loaded (auto-expanded with eligible_ops > 0)', async () => {
     mockedInvoke.mockResolvedValueOnce(defaultStatus)
 
     render(<CompactionCard />)
 
-    // Expand the card
-    await user.click(screen.getByText('Op Log Compaction'))
-
-    // Wait for stats to load
+    // Auto-expanded by UX-352 since eligible_ops > 0; wait for stats to load.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-total-ops')).toHaveTextContent('1500')
     })
@@ -85,7 +81,6 @@ describe('CompactionCard', () => {
   })
 
   it('shows N/A when oldest_op_date is null', async () => {
-    const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce({
       ...defaultStatus,
       oldest_op_date: null,
@@ -93,8 +88,7 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    await user.click(screen.getByText('Op Log Compaction'))
-
+    // Auto-expanded since eligible_ops > 0.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-oldest-date')).toHaveTextContent('N/A')
     })
@@ -117,13 +111,11 @@ describe('CompactionCard', () => {
   })
 
   it('"Compact Now" is enabled when eligible_ops > 0', async () => {
-    const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(defaultStatus)
 
     render(<CompactionCard />)
 
-    await user.click(screen.getByText('Op Log Compaction'))
-
+    // Auto-expanded since eligible_ops > 0.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
@@ -137,8 +129,6 @@ describe('CompactionCard', () => {
     mockedInvoke.mockResolvedValueOnce(defaultStatus)
 
     render(<CompactionCard />)
-
-    await user.click(screen.getByText('Op Log Compaction'))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -154,8 +144,6 @@ describe('CompactionCard', () => {
     mockedInvoke.mockResolvedValueOnce(defaultStatus)
 
     render(<CompactionCard />)
-
-    await user.click(screen.getByText('Op Log Compaction'))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -177,8 +165,6 @@ describe('CompactionCard', () => {
       .mockResolvedValueOnce(emptyStatus) // refresh getCompactionStatus
 
     render(<CompactionCard />)
-
-    await user.click(screen.getByText('Op Log Compaction'))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -206,8 +192,6 @@ describe('CompactionCard', () => {
       .mockRejectedValueOnce(new Error('compact failed')) // compactOpLog
 
     render(<CompactionCard />)
-
-    await user.click(screen.getByText('Op Log Compaction'))
 
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
@@ -270,8 +254,6 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    await user.click(screen.getByText('Op Log Compaction'))
-
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
@@ -302,8 +284,6 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    await user.click(screen.getByText('Op Log Compaction'))
-
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
@@ -328,8 +308,6 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    await user.click(screen.getByText('Op Log Compaction'))
-
     await waitFor(() => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
@@ -350,11 +328,11 @@ describe('CompactionCard', () => {
 
   it('toggles collapse state', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    mockedInvoke.mockResolvedValueOnce(emptyStatus)
 
     render(<CompactionCard />)
 
-    // Initially collapsed — stats should not be visible
+    // With eligible_ops=0, no auto-expand — stats should not be visible.
     expect(screen.queryByTestId('compaction-total-ops')).not.toBeInTheDocument()
 
     // Expand
@@ -371,13 +349,11 @@ describe('CompactionCard', () => {
   })
 
   it('has no a11y violations when expanded with stats', async () => {
-    const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(defaultStatus)
 
     const { container } = render(<CompactionCard />)
 
-    await user.click(screen.getByText('Op Log Compaction'))
-
+    // Auto-expanded since eligible_ops > 0.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-total-ops')).toBeInTheDocument()
     })
@@ -387,7 +363,8 @@ describe('CompactionCard', () => {
   })
 
   it('has no a11y violations when collapsed', async () => {
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    // Use emptyStatus so the card stays collapsed (eligible_ops=0).
+    mockedInvoke.mockResolvedValueOnce(emptyStatus)
 
     const { container } = render(<CompactionCard />)
 
@@ -397,5 +374,65 @@ describe('CompactionCard', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // UX-352: auto-expand the card on mount when there are eligible ops to act on,
+  // so users see the action surface instead of a silent collapsed header.
+  describe('UX-352 auto-expand on eligible ops', () => {
+    it('UX-352: starts collapsed when eligible_ops is 0', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyStatus)
+
+      render(<CompactionCard />)
+
+      // Wait for status fetch to settle, then assert still collapsed.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('get_compaction_status')
+      })
+
+      expect(screen.queryByTestId('compaction-total-ops')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('compaction-eligible-ops')).not.toBeInTheDocument()
+    })
+
+    it('UX-352: auto-expands on mount when eligible_ops > 0', async () => {
+      mockedInvoke.mockResolvedValueOnce(defaultStatus)
+
+      render(<CompactionCard />)
+
+      // Stats become visible without any user click — auto-expanded.
+      await waitFor(() => {
+        expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
+      })
+      expect(screen.getByTestId('compaction-total-ops')).toBeInTheDocument()
+    })
+
+    it('UX-352: auto-expand fires only once per mount; user-collapse is sticky even when eligible_ops grows', async () => {
+      const user = userEvent.setup()
+      mockedInvoke
+        .mockResolvedValueOnce(defaultStatus) // initial fetch (eligible=300) — auto-expands
+        .mockResolvedValueOnce({ snapshot_id: 'snap_1', ops_deleted: 0 }) // compactOpLog
+        .mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 999 }) // refresh — must NOT re-trigger auto-expand
+
+      render(<CompactionCard />)
+
+      // Initial auto-expand on mount with eligible_ops=300.
+      await waitFor(() => {
+        expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
+      })
+
+      // Drive a status refresh through the post-compaction path. eligible_ops
+      // jumps 300 → 999. A naive impl that re-derived collapsed from
+      // `eligible > 0` on every render would treat this as another auto-expand
+      // signal; the useRef-once guard ensures it does not.
+      await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+      await user.click(screen.getByRole('button', { name: /^Compact$/i }))
+      await waitFor(() => {
+        expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('999')
+      })
+
+      // User manually collapses. If the auto-expand mechanism were re-firing
+      // on every status change, this click would be undone immediately.
+      await user.click(screen.getByText('Op Log Compaction'))
+      expect(screen.queryByTestId('compaction-eligible-ops')).not.toBeInTheDocument()
+    })
   })
 })

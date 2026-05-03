@@ -10,6 +10,7 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 export interface DuePanelFiltersProps {
@@ -29,15 +30,33 @@ export function DuePanelFilters({
 }: DuePanelFiltersProps): React.ReactElement {
   const { t } = useTranslation()
 
+  // UX-324 — Tooltips clarify the axis of each pill, especially the
+  // Due-vs-Scheduled distinction (hard deadline vs soft planned start).
   const filterOptions = [
-    { label: t('duePanel.filterAll'), value: null, countKey: 'all' as const },
-    { label: t('duePanel.filterDue'), value: 'column:due_date', countKey: 'due' as const },
+    {
+      label: t('duePanel.filterAll'),
+      tooltip: t('duePanel.filterAllTooltip'),
+      value: null,
+      countKey: 'all' as const,
+    },
+    {
+      label: t('duePanel.filterDue'),
+      tooltip: t('duePanel.filterDueTooltip'),
+      value: 'column:due_date',
+      countKey: 'due' as const,
+    },
     {
       label: t('duePanel.filterScheduled'),
+      tooltip: t('duePanel.filterScheduledTooltip'),
       value: 'column:scheduled_date',
       countKey: 'scheduled' as const,
     },
-    { label: t('duePanel.filterProperties'), value: 'property:', countKey: 'property' as const },
+    {
+      label: t('duePanel.filterProperties'),
+      tooltip: t('duePanel.filterPropertiesTooltip'),
+      value: 'property:',
+      countKey: 'property' as const,
+    },
   ]
 
   return (
@@ -45,32 +64,38 @@ export function DuePanelFilters({
       className="due-panel-filters flex items-center gap-1 px-2 py-1"
       data-testid="due-panel-filters"
     >
-      {filterOptions.map((opt) => {
-        const count = sourceCounts
-          ? opt.countKey === 'all'
-            ? sourceCounts.due + sourceCounts.scheduled + sourceCounts.property
-            : sourceCounts[opt.countKey]
-          : 0
-        return (
-          <button
-            key={opt.label}
-            type="button"
-            className={cn(
-              'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
-              sourceFilter === opt.value
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-muted/80',
-            )}
-            onClick={() => {
-              onSourceFilterChange(opt.value)
-            }}
-            aria-pressed={sourceFilter === opt.value}
-          >
-            {opt.label}
-            {sourceCounts && count > 0 ? ` (${count})` : ''}
-          </button>
-        )
-      })}
+      <TooltipProvider>
+        {filterOptions.map((opt) => {
+          const count = sourceCounts
+            ? opt.countKey === 'all'
+              ? sourceCounts.due + sourceCounts.scheduled + sourceCounts.property
+              : sourceCounts[opt.countKey]
+            : 0
+          return (
+            <Tooltip key={opt.label}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
+                    sourceFilter === opt.value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                  )}
+                  onClick={() => {
+                    onSourceFilterChange(opt.value)
+                  }}
+                  aria-pressed={sourceFilter === opt.value}
+                >
+                  {opt.label}
+                  {sourceCounts && count > 0 ? ` (${count})` : ''}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">{opt.tooltip}</TooltipContent>
+            </Tooltip>
+          )
+        })}
+      </TooltipProvider>
       <button
         type="button"
         className={cn(
