@@ -126,6 +126,50 @@ describe('SearchablePopover', () => {
     expect(screen.getByRole('button', { name: '+ Add' })).toBeDisabled()
   })
 
+  // ── UX-337: tooltip on disabled trigger ─────────────────────────────
+  it('UX-337: surfaces the disabled reason in a tooltip on focus', async () => {
+    const user = userEvent.setup()
+    renderPopover({
+      open: false,
+      triggerDisabled: true,
+      triggerDisabledReason: 'Only one page filter at a time',
+    })
+
+    // Tab onto the focusable <span> wrapper that carries the tooltip
+    // listener. The disabled <button> itself isn't focusable, so the
+    // wrapper is what makes this reachable for keyboard users.
+    await user.tab()
+
+    // Radix Tooltip renders content lazily into a portal once the
+    // trigger receives focus. Multiple Radix layers may project the
+    // text (live region + portal), so just assert that at least one
+    // node in the document carries the reason.
+    await waitFor(() => {
+      const matches = screen.getAllByText('Only one page filter at a time')
+      expect(matches.length).toBeGreaterThan(0)
+    })
+  })
+
+  it.each([
+    {
+      name: 'enabled trigger, reason provided',
+      props: { triggerDisabled: false, triggerDisabledReason: 'Only one page filter at a time' },
+    },
+    {
+      name: 'disabled trigger, no reason provided',
+      props: { triggerDisabled: true },
+    },
+  ])('UX-337: does not render a tooltip wrapper ($name)', ({ props }) => {
+    renderPopover({ open: false, ...props })
+
+    // Reason text (if any) must not be in the DOM, and the bare button
+    // must not be wrapped in the focusable <span> the disabled-tooltip
+    // path uses — the enabled-path DOM stays identical to before.
+    expect(screen.queryByText('Only one page filter at a time')).not.toBeInTheDocument()
+    const trigger = screen.getByRole('button', { name: '+ Add' })
+    expect(trigger.parentElement?.tagName).not.toBe('SPAN')
+  })
+
   it('disables individual items when isItemDisabled returns true', () => {
     renderPopover({
       isItemDisabled: (item) => item.id === '2',

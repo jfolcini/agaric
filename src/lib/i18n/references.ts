@@ -183,6 +183,7 @@ export const references: Record<string, string> = {
   'search.statusNoResults': 'No results',
   'search.statusCleared': 'Search cleared',
   'search.addPage': '+ Page',
+  'search.addPageDisabledReason': 'Only one page filter at a time',
   'search.addTag': '+ Tag',
   'search.clearAll': 'Clear all',
   'search.inPage': 'in: {{name}}',

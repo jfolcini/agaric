@@ -268,6 +268,59 @@ describe('QueryBuilderModal', () => {
   })
 
   // -----------------------------------------------------------------------
+  // UX-316: plain-English readable preview line above the raw expression.
+  // Lets users without prior knowledge of the `type:... key:...` syntax
+  // verify intent at a glance.
+  // -----------------------------------------------------------------------
+  it('renders plain-English readable preview for tag query', async () => {
+    const user = userEvent.setup()
+    render(<QueryBuilderModal {...defaultProps} />)
+
+    await user.type(screen.getByLabelText(/tag prefix/i), 'project')
+
+    const readable = screen.getByTestId('readable-preview')
+    expect(readable).toHaveTextContent('Pages tagged with project')
+  })
+
+  it('renders plain-English readable preview for property query with operator', async () => {
+    const user = userEvent.setup()
+    render(<QueryBuilderModal {...defaultProps} />)
+
+    await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+    await user.type(screen.getByLabelText(/property key/i), 'priority')
+    await user.type(screen.getByLabelText(/^value$/i), 'high')
+    await user.selectOptions(screen.getByRole('combobox', { name: /operator/i }), 'lte')
+
+    const readable = screen.getByTestId('readable-preview')
+    expect(readable).toHaveTextContent('Pages where property "priority" is at most "high"')
+  })
+
+  it('renders plain-English readable preview for backlinks query', async () => {
+    const user = userEvent.setup()
+    render(<QueryBuilderModal {...defaultProps} />)
+
+    await user.click(screen.getByRole('radio', { name: /^Backlinks$/i }))
+    await user.type(screen.getByLabelText(/target page id/i), '01ABC123')
+
+    const readable = screen.getByTestId('readable-preview')
+    expect(readable).toHaveTextContent('Pages that link to 01ABC123')
+  })
+
+  it('adds "Display as a table." line when showAsTable is checked', async () => {
+    const user = userEvent.setup()
+    render(<QueryBuilderModal {...defaultProps} />)
+
+    await user.type(screen.getByLabelText(/tag prefix/i), 'work')
+
+    // Not present until the toggle flips on
+    expect(screen.queryByText('Display as a table.')).not.toBeInTheDocument()
+
+    await user.click(screen.getByLabelText(/show results as table/i))
+
+    expect(screen.getByText('Display as a table.')).toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
   // UX-317: operator dropdown rows show text descriptions next to the glyph
   // (the trigger keeps showing only the symbol via Radix auto-mirror).
   // -----------------------------------------------------------------------

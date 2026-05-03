@@ -53,6 +53,7 @@ export const common: Record<string, string> = {
   'space.deleteSpaceLabel': 'Delete space',
   'space.deleteSpaceTooltipDisabled':
     'Delete every page in this space first — spaces can only be deleted when empty.',
+  'space.deleteSpaceInlineHint': 'Move or delete the pages in this space first to enable deletion.',
   'space.deleteLastTooltipDisabled':
     'You must keep at least one space — delete is disabled on the last remaining space.',
   'space.deleteConfirmTitle': "Delete space '{{name}}'?",
@@ -229,6 +230,9 @@ export const common: Record<string, string> = {
   'welcome.featureSync': 'Sync across devices',
   'welcome.featureSyncDesc':
     'Local-first storage with peer-to-peer sync over your local network. No cloud account required.',
+  'welcome.featureSpaces': 'Separate work and personal',
+  'welcome.featureSpacesDesc':
+    'Spaces keep notes private and isolated. Switch contexts without mixing data.',
   'welcome.getStarted': 'Get Started',
   'welcome.createSamplePages': 'Create sample pages',
   'welcome.samplePagesCreated': 'Sample pages created!',

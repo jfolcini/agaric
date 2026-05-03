@@ -8,7 +8,7 @@
  * in their own hook / sibling component (MAINT-128).
  */
 
-import { Clock } from 'lucide-react'
+import { ChevronDown, ChevronUp, Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -254,6 +254,44 @@ export function HistoryView(): React.ReactElement {
         onToggleDiff={handleToggleDiff}
         onRestoreToHere={handleRestoreToHere}
       />
+
+      {/* UX-346 — touch-only ↑/↓ navigation buttons.
+          Vim-mode (`j`/`k`) and arrow keys only fire on physical keyboards;
+          on touch devices the user has no equivalent. These two buttons map
+          to the same `setFocusedIndex` calls a keyboard nav step would make.
+          Hidden on pointer:fine (mouse / trackpad) — those users already
+          have arrow keys. Hidden when there are no entries. */}
+      {entries.length > 0 && (
+        <div
+          className="hidden [@media(pointer:coarse)]:flex sticky bottom-2 z-10 self-end gap-2 rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
+          role="toolbar"
+          aria-label={t('history.touchNavLabel')}
+          data-testid="history-touch-nav"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t('history.touchNavPrev')}
+            disabled={focusedIndex <= 0}
+            onClick={() => setFocusedIndex((idx) => (idx > 0 ? idx - 1 : 0))}
+          >
+            <ChevronUp className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t('history.touchNavNext')}
+            disabled={focusedIndex >= entries.length - 1}
+            onClick={() =>
+              setFocusedIndex((idx) => (idx < entries.length - 1 ? idx + 1 : entries.length - 1))
+            }
+          >
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {/* Revert confirmation dialog */}
       <HistoryRevertDialog

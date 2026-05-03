@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 
 export interface SearchablePopoverProps<T> {
@@ -53,6 +54,12 @@ export interface SearchablePopoverProps<T> {
   triggerLabel: string
   /** Whether the trigger button is disabled. */
   triggerDisabled?: boolean
+  /**
+   * Optional explanation surfaced as a Radix Tooltip on the disabled trigger.
+   * Ignored when `!triggerDisabled` — the tooltip is only mounted when the
+   * trigger is actually disabled.
+   */
+  triggerDisabledReason?: string
   /** Optional predicate to disable individual items. */
   isItemDisabled?: (item: T) => boolean
 }
@@ -71,6 +78,7 @@ export function SearchablePopover<T>({
   emptyMessage,
   triggerLabel,
   triggerDisabled = false,
+  triggerDisabledReason,
   isItemDisabled,
 }: SearchablePopoverProps<T>): React.ReactElement {
   // UX-9: arrow-key list navigation. The hook owns `focusedIndex` and
@@ -103,13 +111,38 @@ export function SearchablePopover<T>({
     if (target != null) target.focus()
   }, [focusedIndex])
 
+  // UX-337: when the trigger is disabled, surface the reason via a Radix
+  // Tooltip so the user understands why the action is unavailable. The
+  // `<span tabIndex={0}>` wrapper is the standard Radix workaround for
+  // disabled-button tooltips — disabled `<button>`s don't emit pointer
+  // events, so the parent `<span>` carries the hover listener; without
+  // `tabIndex={0}` keyboard-only users can't reach the tooltip (the
+  // disabled button itself isn't focusable). When the trigger is not
+  // disabled we render the bare button to keep the enabled-path DOM
+  // identical to before.
+  const triggerButton = (
+    <Button variant="ghost" size="sm" disabled={triggerDisabled}>
+      {triggerLabel}
+    </Button>
+  )
+  const wrappedTrigger =
+    triggerDisabled && triggerDisabledReason ? (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Radix tooltip-on-disabled-button requires a focusable wrapper. */}
+            <span tabIndex={0}>{triggerButton}</span>
+          </TooltipTrigger>
+          <TooltipContent>{triggerDisabledReason}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    ) : (
+      triggerButton
+    )
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" disabled={triggerDisabled}>
-          {triggerLabel}
-        </Button>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{wrappedTrigger}</PopoverTrigger>
       <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2" align="start">
         <Input
           value={searchValue}
