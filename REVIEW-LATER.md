@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 624 — Batch UX-TRIVIAL-1: closed UX-300 (CodeLanguageSelector filter), UX-307 (LinkEditPopover label autoFocus), UX-322 (BlockPropertyDrawer isParsing indicator), UX-338 (SearchPanel 3-char placeholder), UX-385 (Export ZIP filename includes space name); UX-337 still open (subagent timed out))
+> **Last updated:** 2026-05-03 (Session 625 — Batch UX-TRIVIAL-2: closed UX-308 (attachment badge animation), UX-311 (picker create-new contrast), UX-312 (picker context-aware empty state), UX-321 (overflow chip ChevronRight + shortcut), UX-340 (TagFilterPanel loading overlay), UX-380 (sync no-peers vs offline tokens), UX-389 (KeyboardShortcuts sticky headers); 7 items, 5 subagents, no overlaps)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-97 open items in the summary table; 137 detail entries (FE-* sub-tables don't appear in the summary).
+90 open items in the summary table; 130 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -48,11 +48,8 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
-| UX-308 | UX | New attachment count badge isn't animated on drop/paste | S | — |
 | UX-309 | UX | Slash command palette is not discoverable to new users | S | — |
 | UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
-| UX-311 | UX | Picker "Create new" item is faintly tinted, lost on long mobile lists | S | — |
-| UX-312 | UX | Picker "No results" state has no next-step guidance | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
 | UX-314 | UX | Slash auto-execute (200 ms after 3 chars + unique match) can fire unintentionally | S | — |
 | UX-315 | UX | Picker keyboard navigation not documented inline | S | — |
@@ -61,7 +58,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-318 | UX | Query result table column auto-detection silently hides empty columns | S | — |
 | UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
 | UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
-| UX-321 | UX | Property "+N" overflow chip looks like a badge, not a button | S | — |
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-324 | UX | Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled | S | — |
 | UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
@@ -73,7 +69,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-336 | UX | CJK search notice doesn't explain the 3-char workaround | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-339 | UX | Property definition options editor has no JSON validation feedback | S | — |
-| UX-340 | UX | Tag filter loading state hidden when stale results present | S | — |
 | UX-343 | UX | Trash batch-restore confirmation threshold (5) is undiscoverable | S | — |
 | UX-344 | UX | Property definition delete button hidden until hover (desktop) | S | — |
 | UX-345 | UX | History "Restore to here" vs "Revert selected" terminology overlaps | S | — |
@@ -104,7 +99,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
 | UX-378 | UX | Manual peer-address input has no real-time validation | S | — |
 | UX-379 | UX | Sidebar "last synced" timestamp hidden when sidebar collapses | S | — |
-| UX-380 | UX | Sync "no peers" gray indistinguishable from offline gray | S | — |
 | UX-381 | UX | Settings has 9 tabs with no breadcrumb anywhere | S | — |
 | UX-382 | UX | Welcome modal omits Sync / multi-device story | S | — |
 | UX-383 | UX | Bug Report redact toggle nested under "Include logs" with `pl-6` | S | — |
@@ -112,7 +106,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-386 | UX | Keyboard conflict warnings inline below row (mobile-unfriendly) | S | — |
 | UX-387 | UX | Sidebar theme button cycles 7 themes silently | S | — |
 | UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
-| UX-389 | UX | Help-panel category headers don't stick on scroll | S | — |
 | UX-390 | UX | Custom shortcut input has no documented format | S | — |
 | UX-391 | UX | Custom shortcut input accepts any non-empty string with no validation | S | — |
 | UX-392 | UX | Conflict warning rendered below row, not inline with keys | S | — |
@@ -1171,15 +1164,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-308 — New attachment count badge isn't animated on drop/paste
-- **Domain:** Frontend / Editor
-- **Location:** `src/components/BlockInlineControls.tsx:326-345` (the `attachment-badge` button)
-- **What:** Toast confirms but the inline badge update at `BlockInlineControls.tsx:331` (`attachment-badge … bg-muted text-muted-foreground hover:bg-accent …`) has no animation tied to `attachmentCount` change — no flash/pulse to draw the eye to the just-attached file. (Original Locations cited `AttachmentList.tsx:107-109` (file-size span) and `EditableBlock.tsx:224-244` (drop/paste handlers) — neither contains the count badge; the actual badge lives in `BlockInlineControls`.)
-- **Cost:** Trivial — brief CSS animation on count change.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-309 — Slash command palette is not discoverable to new users
 - **Domain:** Frontend / Editor
 - **Location:** `src/lib/slash-commands.ts` (64 commands across 8 categories: SLASH_COMMANDS body 22 + PRIORITY 3 + HEADING 6 + REPEAT 11 + EFFORT 6 + ASSIGNEE 2 + LOCATION 4 + REPEAT_END 5 + CALLOUT 5; plus dynamic `table:RxC` synthesised at L479) ; `src/editor/extensions/slash-command.ts:1-131`
@@ -1194,24 +1178,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/editor/extensions/at-tag-picker.ts` ; `block-link-picker.ts` ; `block-ref-picker.ts` ; `tag-ref.ts`
 - **What:** All four syntactic triggers are documented only in the `?` help panel. Without reading docs, the user has no way to discover them.
 - **Cost:** S — add a "Reference syntax" highlight in `WelcomeModal` or a dismissible cheat-sheet pinned to first journal page.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-311 — Picker "Create new" item is faintly tinted, lost on long mobile lists
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/SuggestionList.tsx:115-122, 159` ; `src/editor/suggestion-renderer.ts:19-27, 64-87`
-- **What:** Plus icon + `bg-accent/5` tint is subtle; on mobile with a tall list the create-new option blends in.
-- **Cost:** Trivial — stronger background, a "NEW" badge, or always pin to top.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-312 — Picker "No results" state has no next-step guidance
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/SuggestionList.tsx:107-113`
-- **What:** Renders a plain "No results" string. For `[[` / `@` the user can press Enter to create-new (not signposted); for `((` (block ref) there is no create-new option at all and the user is stuck.
-- **Cost:** Trivial — context-aware empty state ("Press Enter to create" / "Block references can only point at existing blocks").
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -1286,15 +1252,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** Trivial — `?` popover next to the `repeat` field in `BlockPropertyDrawer` explaining catch-up vs from-completion.
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-### UX-321 — Property "+N" overflow chip: tooltip mentions count, not the keyboard shortcut; no chevron icon
-- **Domain:** Frontend / Properties
-- **Location:** `src/components/BlockInlineControls.tsx:305` (className includes `hover:bg-accent hover:text-foreground transition-colors` + `focus-visible:ring-[3px] focus-visible:ring-ring/50` + `active:scale-95`); `:307` (`aria-label={t('block.showAllProperties', { count })}`)
-- **What:** The hover background, focus ring, and `active:scale-95` are already present (so the original "no hover background" framing was wrong). The remaining gaps: (a) the tooltip / aria-label mentions the count rather than a keyboard shortcut hint; (b) no ChevronRight / disclosure icon to signal click-through; (c) the visual still resembles a badge more than a button.
-- **Cost:** Trivial — extend `aria-label` to include the keyboard shortcut, add a small ChevronRight icon next to the count.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-323 — Agenda filter popover dense (8 dimensions × nested presets)
@@ -1396,15 +1353,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/components/PropertyDefinitionsList.tsx:279-284` (single-line `<Input value={editOptionsValue} onChange={…} placeholder=… aria-label=…/>` — not a multi-line `<textarea>` or JSON editor)
 - **What:** The field is a single-line `<Input>` accepting JSON. There is no inline parse / disabled-Save / inline error UI; validation surfaces only on `handleSaveOptions` as a generic toast. (Original framing called it "raw JSON input" which is loose — it's a single-line Input field, not a JSON-editor pane.)
 - **Cost:** S — try/catch parse on every change; render a small red "Invalid JSON" line + disable Save until valid.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-340 — Tag filter loading state hidden when stale results present
-- **Domain:** Frontend / Tags
-- **Location:** `src/components/TagFilterPanel.tsx:427-429`
-- **What:** `LoadingSkeleton` rendered only when `results.length === 0`. Switching mode (AND/OR/NOT) keeps stale results visible while the new query runs.
-- **Cost:** Trivial — render skeleton (or dim list with spinner) whenever `loading`, not only when empty.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -1684,15 +1632,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-380 — Sync "no peers" gray indistinguishable from offline gray
-- **Domain:** Frontend / Sync
-- **Location:** `src/components/AppSidebar.tsx:44-59`
-- **What:** Both states return `bg-muted-foreground`. A pairing problem looks identical to a network problem.
-- **Cost:** Trivial — distinct token (e.g. `bg-status-pending` for "no peers").
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-381 — Settings has 9 tabs with no breadcrumb anywhere
 - **Domain:** Frontend / Settings
 - **Location:** `src/components/SettingsView.tsx:140-163`
@@ -1754,15 +1693,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** S — filter input wired to description + key text; collapse to matching rows.
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-### UX-389 — Help-panel category headers don't stick on scroll
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardShortcuts.tsx:156-165`
-- **What:** Category context is lost when scrolling mid-list.
-- **Cost:** Trivial — `position: sticky` on the header `<tr>` (or wrap each category in its own scroll-container).
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-390 — Custom shortcut input has no documented format
