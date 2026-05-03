@@ -31,6 +31,7 @@ export const block: Record<string, string> = {
   'block.zoomToRoot': 'Go to root',
   'block.untitled': 'Untitled',
   'blockZoom.breadcrumbs': 'Zoom breadcrumbs',
+  'blockZoom.exitZoom': 'Exit zoom',
   'block.searchPages': 'Search pages...',
   'block.noPagesFound': 'No pages found',
   'block.refPickerLabel': 'Select a page',

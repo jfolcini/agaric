@@ -144,6 +144,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortRecent': 'Recent',
   'pageBrowser.sortAlphabetical': 'Alphabetical',
   'pageBrowser.sortCreated': 'Created',
+  'pageBrowser.sortPersistedTooltip': 'Your sort choice is saved across sessions',
   'pageBrowser.starPage': 'Star page',
   'pageBrowser.unstarPage': 'Unstar page',
   'pageBrowser.pageList': 'Page list',

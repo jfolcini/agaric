@@ -7,7 +7,7 @@
 
 import { Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -60,6 +60,19 @@ export function PropertyDefinitionsList(): React.ReactElement {
   // Edit options state (for select-type properties)
   const [editingOptionsKey, setEditingOptionsKey] = useState<string | null>(null)
   const [editOptionsValue, setEditOptionsValue] = useState('')
+
+  // UX-339: derive inline JSON parse error so the user gets immediate
+  // feedback (and Save is disabled) instead of only seeing a toast on
+  // failed save. Empty input is treated as valid (clears options).
+  const jsonError = useMemo<string | null>(() => {
+    if (editOptionsValue.trim() === '') return null
+    try {
+      JSON.parse(editOptionsValue)
+      return null
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }, [editOptionsValue])
 
   const loadDefinitions = useCallback(async () => {
     setLoading(true)
@@ -281,8 +294,25 @@ export function PropertyDefinitionsList(): React.ReactElement {
                             onChange={(e) => setEditOptionsValue(e.target.value)}
                             placeholder={t('propertiesView.optionsJsonPlaceholder')}
                             aria-label={t('propertiesView.optionsJsonLabel')}
+                            aria-invalid={jsonError != null}
+                            aria-describedby={
+                              jsonError != null ? 'property-options-json-error' : undefined
+                            }
                           />
-                          <Button size="sm" onClick={() => handleSaveOptions(def.key)}>
+                          {jsonError && (
+                            <p
+                              id="property-options-json-error"
+                              className="text-xs text-destructive"
+                              role="alert"
+                            >
+                              {t('propertiesView.invalidJsonHint', { error: jsonError })}
+                            </p>
+                          )}
+                          <Button
+                            size="sm"
+                            disabled={jsonError != null}
+                            onClick={() => handleSaveOptions(def.key)}
+                          >
                             {t('action.save')}
                           </Button>
                         </div>

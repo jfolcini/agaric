@@ -134,7 +134,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
     await user.click(restoreBtn)
 
     // Confirmation dialog opens — click confirm
@@ -160,7 +160,7 @@ describe('HistoryPanel', () => {
     render(<HistoryPanel blockId="BLOCK001" />)
 
     await screen.findByText('create_block')
-    expect(screen.queryByRole('button', { name: /Restore/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Reset to this point/i })).not.toBeInTheDocument()
   })
 
   it('shows Load More button when has_more is true', async () => {
@@ -294,7 +294,7 @@ describe('HistoryPanel', () => {
     // Should still render the entry (op_type badge) without crashing
     expect(await screen.findByText('edit_block')).toBeInTheDocument()
     // No Restore button since payload preview returns null for invalid JSON
-    expect(screen.queryByRole('button', { name: /Restore/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Reset to this point/i })).not.toBeInTheDocument()
   })
 
   it('handles payload without to_text field', async () => {
@@ -309,7 +309,7 @@ describe('HistoryPanel', () => {
 
     // Should render entry but no Restore button (no to_text to restore)
     expect(await screen.findByText('edit_block')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Restore/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Reset to this point/i })).not.toBeInTheDocument()
   })
 
   it('restore with malformed payload does not crash', async () => {
@@ -327,7 +327,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
     await user.click(restoreBtn)
 
     // Confirmation dialog opens — click confirm
@@ -354,7 +354,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
     await user.click(restoreBtn)
 
     // Confirmation dialog opens — click confirm
@@ -383,7 +383,7 @@ describe('HistoryPanel', () => {
     render(<HistoryPanel blockId="BLOCK001" />)
 
     await screen.findByText('create_block')
-    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
   })
 
   // -- Confirmation dialog tests ------------------------------------------------
@@ -399,7 +399,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
     await user.click(restoreBtn)
 
     // Dialog should be visible
@@ -424,7 +424,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
     await user.click(restoreBtn)
 
     // Click confirm in dialog
@@ -457,7 +457,7 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
     await user.click(restoreBtn)
 
     // Dialog should be visible
@@ -641,7 +641,7 @@ describe('HistoryPanel', () => {
 
       render(<HistoryPanel blockId="BLOCK001" />)
 
-      const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+      const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
       await user.click(restoreBtn)
 
       const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
@@ -689,7 +689,7 @@ describe('HistoryPanel', () => {
 
       render(<HistoryPanel blockId="BLOCK001" />)
 
-      const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+      const restoreBtn = await screen.findByRole('button', { name: /Reset to this point/i })
       await user.click(restoreBtn)
 
       const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })

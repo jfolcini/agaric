@@ -1008,7 +1008,7 @@ describe('HistoryView', () => {
       await screen.findByText('item 1')
 
       // Click restore button
-      const restoreBtn = screen.getByRole('button', { name: /Restore to this point/i })
+      const restoreBtn = screen.getByRole('button', { name: /Reset to this point/i })
       await user.click(restoreBtn)
 
       // Confirmation dialog should appear
@@ -1040,7 +1040,7 @@ describe('HistoryView', () => {
       await screen.findByText('item 1')
 
       // Click restore button
-      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
 
       // Click Restore in dialog
       await user.click(screen.getByRole('button', { name: /^Restore$/ }))
@@ -1071,7 +1071,7 @@ describe('HistoryView', () => {
 
       await screen.findByText('item 1')
 
-      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
       await user.click(screen.getByRole('button', { name: /^Restore$/ }))
 
       await waitFor(() => {
@@ -1096,7 +1096,7 @@ describe('HistoryView', () => {
 
       await screen.findByText('item 1')
 
-      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
       await user.click(screen.getByRole('button', { name: /^Restore$/ }))
 
       await waitFor(() => {
@@ -1120,7 +1120,7 @@ describe('HistoryView', () => {
 
       await screen.findByText('item 1')
 
-      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
       await user.click(screen.getByRole('button', { name: /^Restore$/ }))
 
       await waitFor(() => {
@@ -1318,7 +1318,7 @@ describe('HistoryView', () => {
       await screen.findByText('item 1')
 
       // Open the restore confirmation dialog.
-      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
       expect(screen.getByText(/Restore to/)).toBeInTheDocument()
 
       // Cancel is auto-focused (UX-259), NOT the destructive Restore button.

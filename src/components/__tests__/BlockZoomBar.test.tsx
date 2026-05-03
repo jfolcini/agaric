@@ -15,7 +15,7 @@
  * - a11y compliance (axe)
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -29,6 +29,7 @@ vi.mock('react-i18next', () => ({
         'block.untitled': 'Untitled',
         'block.zoomToRoot': 'Go to root',
         'blockZoom.breadcrumbs': 'Zoom breadcrumbs',
+        'blockZoom.exitZoom': 'Exit zoom',
       }
       return map[key] ?? key
     },
@@ -189,6 +190,20 @@ describe('BlockZoomBar', () => {
     expect(results).toHaveNoViolations()
   })
 
+  // UX-362 — touch users need a visible affordance to leave zoom; desktop
+  // continues to rely on the Escape keyboard binding.
+  it('renders an Exit-zoom button that calls onZoomToRoot on click', async () => {
+    const user = userEvent.setup()
+    const onZoomToRoot = vi.fn()
+    render(
+      <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={onZoomToRoot} />,
+    )
+    const exitBtn = screen.getByTestId('exit-zoom-btn')
+    expect(exitBtn).toHaveAccessibleName('Exit zoom')
+    await user.click(exitBtn)
+    expect(onZoomToRoot).toHaveBeenCalledTimes(1)
+  })
+
   describe('UX-215 arrow-key navigation', () => {
     it('marks the last breadcrumb with aria-current="page"', () => {
       render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
@@ -268,7 +283,9 @@ describe('BlockZoomBar', () => {
     it('End jumps focus to the last button', async () => {
       const user = userEvent.setup()
       render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
-      const buttons = screen.getAllByRole('button')
+      // Scope to the breadcrumb nav — the wrapper bar also renders a mobile
+      // Exit-zoom button outside the toolbar, which the End handler ignores.
+      const buttons = within(screen.getByRole('navigation')).getAllByRole('button')
       const lastIdx = buttons.length - 1
       ;(buttons[0] as HTMLButtonElement).focus()
 
