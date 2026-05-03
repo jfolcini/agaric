@@ -127,7 +127,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await selectEditorRange(page, 5, 9)
 
     // Apply inline code
-    await page.getByRole('button', { name: 'Code', exact: true }).click()
+    await page.getByRole('button', { name: 'Inline code', exact: true }).click()
 
     // Verify code element appears in editor with background styling
     const codeEl = editor.locator('code')
