@@ -4,11 +4,11 @@ Before starting work, compact your conversation context (`/compact`) to free up 
 
 # Goal
 
-Work through REVIEW-LATER.md in manageable batches, fixing items that are already listed there.
+Work through markdown files in pending folder in manageable batches, fixing items that are already listed there.
 
 ## 1. PLAN
 
-Read REVIEW-LATER.md. Group 3-6 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
+Read markdown files in pending folder. Group 3-6 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
 
 Use **FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
 
@@ -103,7 +103,7 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 **Keep FEATURE-MAP.md in sync:** If the session added new commands, components, hooks, stores, database tables, or other user-facing features, update the relevant section of FEATURE-MAP.md. Also update the deferred features list (section 22) when REVIEW-LATER items are added or resolved.
 
-**Concurrent edits to REVIEW-LATER.md:** Other agents may be working on REVIEW-LATER.md at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
+**Concurrent edits to markdown files in pending folder:** Other agents may be working on markfown files in pending folder at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
 
 ### Session log entry template
 
