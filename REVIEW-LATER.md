@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 633 — Batch UX-TRIVIAL-10: closed UX-314 (slash-command auto-execute threshold 3→4), UX-354 (GraphFilterBar visible "Filters" label), UX-374 (Settings → General reset-onboarding button), UX-382 (WelcomeModal 4th Sync highlight), UX-387 (theme button current-theme tooltip); 5 items via 5 subagents — sixth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 634 — Batch UX-TRIVIAL-11: closed UX-315 (SuggestionList keyboard footer), UX-317 (QueryBuilder operator descriptions), UX-372 (SpaceAccentBadge title hint), UX-376 (Pairing QR Recommended badge), UX-388 (KeyboardShortcuts filter input); 5 items via 5 subagents — seventh consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-47 open items in the summary table; 87 detail entries (FE-* sub-tables don't appear in the summary).
+42 open items in the summary table; 82 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -50,9 +50,7 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-309 | UX | Slash command palette is not discoverable to new users | S | — |
 | UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
-| UX-315 | UX | Picker keyboard navigation not documented inline | S | — |
 | UX-316 | UX | Inline `{{query …}}` expression syntax is cryptic to read | S | — |
-| UX-317 | UX | Query operator symbols (≤, ≥, ≠) presented without text labels | S | — |
 | UX-318 | UX | Query result table column auto-detection silently hides empty columns | S | — |
 | UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
 | UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
@@ -64,12 +62,9 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
 | UX-370 | UX | Space delete-when-empty signalled only via tooltip | S | — |
 | UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
-| UX-372 | UX | `SpaceAccentBadge` click cycles silently with no hover affordance | S | — |
 | UX-373 | UX | Single-space state confusing | S | — |
 | UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
-| UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
 | UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
-| UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -1138,29 +1133,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-315 — Picker keyboard navigation not documented inline
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/SuggestionList.tsx:56-66` ; `src/editor/suggestion-renderer.ts:233-264`
-- **What:** Pickers support full keyboard nav (Arrow / Home / End / PageUp / PageDown / Enter / Tab / Esc) but it's documented only in the `?` panel.
-- **Cost:** Trivial — small "↑↓ navigate · Enter select · Esc close" footer hint, optionally first-use only.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-316 — Inline `{{query …}}` expression syntax is cryptic to read
 - **Domain:** Frontend / Queries
 - **Location:** `src/components/QueryBuilderModal.tsx:120-148` ; `src/lib/query-utils.ts:30-88`
 - **What:** Generated expression is `type:tag expr:project` etc. The pencil-button visual builder hides this behind a modal, but the raw inline form has no plain-English layer.
 - **Cost:** S — render a "this query reads as: …" preview in the modal; tooltip on the inline expression pills with human-readable phrasing.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-317 — Query operator symbols (≤, ≥, ≠) presented without text labels
-- **Domain:** Frontend / Queries
-- **Location:** `src/components/QueryBuilderModal.tsx:50-57` ; `src/lib/query-utils.ts:20-28`
-- **What:** Select shows only the symbol; users unfamiliar with the glyphs misread or skip them.
-- **Cost:** Trivial — render `"≤  less than or equal to"` etc. as the option text; symbol stays in the trigger.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -1264,15 +1241,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-372 — `SpaceAccentBadge` visible `title` attribute shows only space name (no click-to-cycle hint)
-- **Domain:** Frontend / Spaces
-- **Location:** `src/components/SpaceAccentBadge.tsx:101-128` (className includes `'transition-shadow duration-fast hover:ring-2 hover:ring-ring/30'` at L123 and `'outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'` at L119; `aria-label={t('space.accentBadge', { name: space.name })}` at L105 → resolves via `common.ts:72` to `'{{name}} space — click to switch'`; visible `title={space.name}` at L106) ; `src/components/AppSidebar.tsx:138-142`
-- **What:** Hover ring (`hover:ring-2 hover:ring-ring/30`) is **already present**. Aria-label already says "click to switch". Only the visible `title` attribute is silent on the action — sighted users without screen readers see only the bare space name. (Earlier framing — "no hover affordance" / "cycles silently" — was wrong.)
-- **Cost:** Trivial — extend the visible `title` attribute to include "click to switch" or similar (e.g. `title={t('space.accentBadgeTitle', { name: space.name })}`).
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-373 — Single-space state confusing
 - **Domain:** Frontend / Spaces
 - **Location:** `src/components/SpaceSwitcher.tsx:62-173` ; `src/components/SpaceAccentBadge.tsx:66-78`
@@ -1291,15 +1259,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-376 — Pairing dialog defaults to manual passphrase, no QR recommendation
-- **Domain:** Frontend / Sync
-- **Location:** `src/components/PairingDialog.tsx:62` ; `src/components/PairingEntryForm.tsx:147-166`
-- **What:** Two equally-prominent buttons; QR is faster but not signposted as recommended.
-- **Cost:** Trivial — "Recommended" badge on QR button; reorder so QR is first.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-384 — Import progress shows file count, not bytes / blocks
 - **Domain:** Frontend / Import-Export
 - **Location:** `src/components/DataSettingsTab.tsx:136-159`
@@ -1307,15 +1266,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** S — secondary line "(N blocks created · M bytes)" updated as the import worker reports.
 - **Risk:** Low.
 - **Impact:** Low.
-- **Status:** Open.
-
-### UX-388 — Keyboard help panel has no search / filter for ~77 shortcuts
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardShortcuts.tsx:143-187`
-- **What:** Long flat scrollable table with 8 category headers; users have to eyeball-scan every time.
-- **Cost:** S — filter input wired to description + key text; collapse to matching rows.
-- **Risk:** Low.
-- **Impact:** Medium.
 - **Status:** Open.
 
 
