@@ -51,6 +51,12 @@ export function useListMultiSelect<T>({
   const selectedRef = useRef(selected)
   selectedRef.current = selected
 
+  // FE-M-5: read `items` via a ref inside toggleSelection so its identity stays
+  // stable across paginated loads — memoized children (rows) won't re-render
+  // just because the items array reference changed.
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+
   const isSelectable = useCallback(
     (item: T): boolean => (filterPredicate ? filterPredicate(item) : true),
     [filterPredicate],
@@ -59,7 +65,7 @@ export function useListMultiSelect<T>({
   const toggleSelection = useCallback(
     (id: string) => {
       if (filterPredicate) {
-        const item = items.find((it) => getItemId(it) === id)
+        const item = itemsRef.current.find((it) => getItemId(it) === id)
         if (item && !filterPredicate(item)) return
       }
       setSelected((prev) => {
@@ -70,7 +76,7 @@ export function useListMultiSelect<T>({
       })
       setLastClickedId(id)
     },
-    [items, getItemId, filterPredicate],
+    [getItemId, filterPredicate],
   )
 
   const rangeSelect = useCallback(

@@ -32,6 +32,7 @@ vi.mock('../useBlockPropertyEvents', () => ({
 }))
 
 import { makeBlock } from '../../__tests__/fixtures'
+import { logger } from '../../lib/logger'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
 import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '../useDuePanelData'
@@ -545,5 +546,89 @@ describe('useDuePanelData', () => {
       expect(resolvedIds).toContain('PPROJ')
       expect(resolvedIds).toContain(ULID_REF)
     })
+  })
+
+  it('logs overdue and upcoming fetch failures via logger.warn (FE-M-1)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    localStorage.setItem('agaric:deadlineWarningDays', '7')
+
+    // Both effects run only when date === today, and upcoming additionally
+    // requires warningDays > 0. Both share the same queryByProperty IPC,
+    // so a single rejection drives both bare catch blocks.
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const fetchErr = new Error('queryByProperty boom')
+    mockedQueryByProperty.mockRejectedValue(fetchErr)
+
+    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        'useDuePanelData',
+        'overdue fetch failed',
+        { date: todayStr },
+        fetchErr,
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        'useDuePanelData',
+        'upcoming fetch failed',
+        { date: todayStr, warningDays: 7 },
+        fetchErr,
+      )
+    })
+
+    warnSpy.mockRestore()
+  })
+
+  it('skips inner agenda catch side-effects after unmount (FE-M-2)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    // Outer listProjectedAgenda resolves so we enter the .then branch and
+    // reach the nested resolveAndMergeTitles().catch(...) site.
+    mockedListProjectedAgenda.mockResolvedValue({
+      items: [
+        {
+          block: makeBlock({
+            id: 'PROJ1',
+            parent_id: 'PPROJ',
+            page_id: 'PPROJ',
+            content: 'projected task',
+          }),
+          projected_date: '2025-06-15',
+          source: 'due_date',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // Hold batchResolve pending so we can unmount before the inner
+    // resolveAndMergeTitles promise rejects.
+    let rejectBatch!: (e: unknown) => void
+    mockedBatchResolve.mockReturnValue(
+      new Promise((_, rej) => {
+        rejectBatch = rej
+      }) as ReturnType<typeof batchResolve>,
+    )
+
+    const { unmount } = renderHook(() =>
+      useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
+    )
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalled()
+    })
+
+    // Unmount marks stale = true; reject afterwards to fire the inner .catch.
+    unmount()
+    rejectBatch(new Error('nested fail'))
+
+    // Flush microtasks so the rejection propagates to the .catch handler.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const nestedCalls = warnSpy.mock.calls.filter((c) => c[1] === 'nested agenda fetch failed')
+    expect(nestedCalls).toHaveLength(0)
+
+    warnSpy.mockRestore()
   })
 })

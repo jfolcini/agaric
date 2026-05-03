@@ -77,14 +77,19 @@ function dateToISO(d: Date): string {
  * for shape mismatch / invalid calendar dates so the rehydrate path
  * can fall through to today.
  */
-function parseISODate(s: string): Date | null {
+export function parseISODate(s: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
   if (!m) return null
   const year = Number(m[1])
   const month = Number(m[2])
   const day = Number(m[3])
+  // FE-L-6: validate components BEFORE constructing the Date — `new Date(2026, 12, 45)`
+  // silently wraps to 2027-02-14, and `Number.isNaN(date.getTime())` doesn't catch it.
+  if (year < 1000 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) return null
   const date = new Date(year, month - 1, day)
-  return Number.isNaN(date.getTime()) ? null : date
+  // Catch day-overflow wrap (e.g. Feb 30 → Mar 2).
+  if (date.getMonth() !== month - 1 || date.getDate() !== day) return null
+  return date
 }
 
 export const useJournalStore = create<JournalStore>()(
