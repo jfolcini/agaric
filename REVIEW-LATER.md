@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 634 — Batch UX-TRIVIAL-11: closed UX-315 (SuggestionList keyboard footer), UX-317 (QueryBuilder operator descriptions), UX-372 (SpaceAccentBadge title hint), UX-376 (Pairing QR Recommended badge), UX-388 (KeyboardShortcuts filter input); 5 items via 5 subagents — seventh consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 635 — Batch UX-TRIVIAL-12: closed UX-318 (QueryResult always-show columns), UX-319 (PropertyDefinitions task-cycle help), UX-320 (BlockPropertyDrawer repeat-syntax help), UX-373 (SpaceSwitcher single-space hint), UX-384 (DataSettingsTab import-progress detail); 5 items via 5 subagents — eighth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-42 open items in the summary table; 82 detail entries (FE-* sub-tables don't appear in the summary).
+37 open items in the summary table; 77 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -51,9 +51,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
 | UX-316 | UX | Inline `{{query …}}` expression syntax is cryptic to read | S | — |
-| UX-318 | UX | Query result table column auto-detection silently hides empty columns | S | — |
-| UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
-| UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
@@ -62,9 +59,7 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
 | UX-370 | UX | Space delete-when-empty signalled only via tooltip | S | — |
 | UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
-| UX-373 | UX | Single-space state confusing | S | — |
 | UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
-| UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -1142,33 +1137,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-318 — Query result table column auto-detection silently hides empty columns
-- **Domain:** Frontend / Queries
-- **Location:** `src/components/QueryResult.tsx:36-44` ; `src/components/QueryResultTable.tsx:36-45`
-- **What:** A column is rendered only if at least one row has the value. Sparse result sets hide columns the user might expect.
-- **Cost:** S — show known columns with `—` placeholder for missing values; or add a "show empty columns" toggle.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-319 — Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced
-- **Domain:** Frontend / Tasks
-- **Location:** `src/hooks/useBlockProperties.ts:24-32` (rationale in code comment)
-- **What:** Users who don't want CANCELLED in their cycle have no way to opt out, and the locked-cycle decision (UX-201a) is invisible. A short note in Settings → Properties or Keyboard shortcuts panel would set expectations.
-- **Cost:** Trivial — one-line tooltip / help text in Settings Properties tab next to the `todo_state` definition.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-320 — Repeating-task `++` / `.+` syntax is cryptic in the property drawer
-- **Domain:** Frontend / Tasks
-- **Location:** `src/lib/slash-commands.ts:259-280` (slash labels are descriptive); raw form on `repeat` property has no in-UI documentation
-- **What:** Slash commands surface "REPEAT DAILY (catch-up)" / "(from completion)" but a user inspecting / editing the `repeat` property directly sees only the cryptic prefix.
-- **Cost:** Trivial — `?` popover next to the `repeat` field in `BlockPropertyDrawer` explaining catch-up vs from-completion.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-323 — Agenda filter popover dense (8 dimensions × nested presets)
 - **Domain:** Frontend / Agenda
 - **Location:** `src/components/AgendaFilterBuilder.tsx:155-191`
@@ -1241,29 +1209,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-373 — Single-space state confusing
-- **Domain:** Frontend / Spaces
-- **Location:** `src/components/SpaceSwitcher.tsx:62-173` ; `src/components/SpaceAccentBadge.tsx:66-78`
-- **What:** With one space, the switcher dropdown is essentially a no-op and the cycle-badge does nothing on click. No nudge to create a second space.
-- **Cost:** Trivial — render a "Create another space" inline hint when `availableSpaces.length === 1`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-375 — Per-space journal template variables undocumented in-app
 - **Domain:** Frontend / Spaces / Journal
 - **Location:** `src/components/SpaceManageDialog.tsx:425-444`
 - **What:** Placeholder mentions `<% today %>`, `<% time %>`, etc. but no examples or live preview.
 - **Cost:** Trivial — collapsible "Examples" panel with 1–2 sample templates, optional "preview for today" rendered inline.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-384 — Import progress shows file count, not bytes / blocks
-- **Domain:** Frontend / Import-Export
-- **Location:** `src/components/DataSettingsTab.tsx:136-159`
-- **What:** "Importing file 2 of 5" is the only feedback; large markdown imports look stalled.
-- **Cost:** S — secondary line "(N blocks created · M bytes)" updated as the import worker reports.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
