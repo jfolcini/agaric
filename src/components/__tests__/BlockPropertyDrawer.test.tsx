@@ -914,6 +914,34 @@ describe('PropertyRow', () => {
     expect(input).toHaveValue('2026-06-15')
   })
 
+  it('shows "Parsing…" indicator while NL date is being debounced (UX-322)', async () => {
+    const user = userEvent.setup()
+    render(
+      <PropertyRow label="Due" value="" inputType="date" ariaLabel="Due value" onSave={vi.fn()} />,
+    )
+
+    // Hidden by default — no parse in flight on initial render.
+    expect(screen.queryByText('Parsing…')).not.toBeInTheDocument()
+
+    // Typing a non-ISO value triggers the 300ms NL parse debounce; the
+    // hook flips isParsing=true while the timer is pending.
+    const input = screen.getByLabelText('Due value')
+    await user.click(input)
+    await user.type(input, 'tomorrow')
+
+    // Indicator visible during the debounce window.
+    expect(screen.getByText('Parsing…')).toBeInTheDocument()
+
+    // After the debounce fires, isParsing flips back to false and the
+    // indicator is removed.
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Parsing…')).not.toBeInTheDocument()
+      },
+      { timeout: 2000 },
+    )
+  })
+
   it('renders a text input by default', () => {
     render(<PropertyRow label="Note" value="some text" ariaLabel="Note value" onSave={vi.fn()} />)
 

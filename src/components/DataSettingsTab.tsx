@@ -19,9 +19,28 @@ import type { ImportResult } from '../lib/tauri'
 import { importMarkdown } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 
+/**
+ * UX-385 — sanitize a space's display name for use inside an export
+ * filename. Lowercases, collapses any run of non-alphanumeric characters
+ * (whitespace, punctuation, emoji, …) into a single `-`, and trims
+ * leading/trailing dashes so we never emit `agaric-export--2025-01-01.zip`.
+ *
+ *   "Personal"        -> "personal"
+ *   "My Project"      -> "my-project"
+ *   "🌟 Star Space"   -> "star-space"
+ *   "Work / Home!!!"  -> "work-home"
+ */
+function sanitizeSpaceNameForFilename(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 export function DataSettingsTab(): React.ReactElement {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -89,14 +108,21 @@ export function DataSettingsTab(): React.ReactElement {
     try {
       const blob = await exportGraphAsZip(currentSpaceId)
       const date = new Date().toISOString().slice(0, 10)
-      downloadBlob(blob, `agaric-export-${date}.zip`)
+      // UX-385: include the active space name so a ZIP downloaded weeks
+      // ago can still be matched to the space it came from. Skip the
+      // `<spaceName>-` segment when no space is active or the sanitized
+      // name is empty (e.g. an all-emoji name) to avoid double-dashes.
+      const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId)
+      const sanitizedSpaceName = sanitizeSpaceNameForFilename(activeSpace?.name ?? '')
+      const spacePart = sanitizedSpaceName.length > 0 ? `${sanitizedSpaceName}-` : ''
+      downloadBlob(blob, `agaric-export-${spacePart}${date}.zip`)
       toast.success(t('data.exportSuccess'))
     } catch (err) {
       logger.error('DataSettingsTab', 'export failed', undefined, err)
       toast.error(t('data.exportFailed'))
     }
     setExporting(false)
-  }, [t, currentSpaceId])
+  }, [t, currentSpaceId, availableSpaces])
 
   return (
     <div className="data-settings-tab space-y-4">

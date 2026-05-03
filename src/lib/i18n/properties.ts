@@ -151,6 +151,7 @@ export const properties: Record<string, string> = {
   'tagFilter.inPage': 'in:',
   'property.datePlaceholder': 'today, +3d, Apr 15, 2025-04-15',
   'property.dateParseError': 'Could not parse date',
+  'property.dateParsing': 'Parsing…',
   'filter.operatorContains': 'contains',
   'filter.operatorStartsWith': 'starts with',
   'filter.isSet': 'is set',

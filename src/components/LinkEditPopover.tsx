@@ -2,7 +2,8 @@
  * LinkEditPopover — inline popover for inserting / editing external links.
  *
  * Renders inside a shadcn Popover (managed by FormattingToolbar):
- *  - URL input (auto-focused, placeholder "https://...")
+ *  - URL input (auto-focused unless the popover was opened with a selection,
+ *    placeholder "https://...")
  *  - "Apply" + optional "Remove" button (when editing an existing link)
  *  - Enter applies, Escape cancels
  *  - URLs without a protocol scheme get `https://` prepended automatically
@@ -87,6 +88,11 @@ export function LinkEditPopover({
   const [label, setLabel] = useState(initialLabel)
   const [urlError, setUrlError] = useState<string | null>(null)
   const { fetch: fetchMeta } = useLinkMetadata()
+  // UX-307: when the popover was opened with a selection that pre-fills the
+  // label, focus the label input so the user can refine it without Shift+Tab.
+  // Editing an existing link keeps URL focus (the label is pre-filled from
+  // the link's text, not from a fresh user selection).
+  const hasSelection = !isEditing && !!savedSelection && savedSelection.from !== savedSelection.to
 
   const handleApply = useCallback(() => {
     const trimmedUrl = url.trim()
@@ -176,6 +182,7 @@ export function LinkEditPopover({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           onKeyDown={handleKeyDown}
+          autoFocus={hasSelection}
           className="h-8 [@media(pointer:coarse)]:h-11 text-sm"
           data-testid="link-label-input"
         />
@@ -194,7 +201,7 @@ export function LinkEditPopover({
             setUrlError(null)
           }}
           onKeyDown={handleKeyDown}
-          autoFocus
+          autoFocus={!hasSelection}
           className={cn(
             'h-8 [@media(pointer:coarse)]:h-11 text-sm',
             urlError && 'border-destructive',

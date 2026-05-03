@@ -167,7 +167,7 @@ export const references: Record<string, string> = {
   'search.failed': 'Failed to search',
   'search.loadResultsFailed': 'Failed to load search results',
   'search.noParentPage': 'This block has no parent page',
-  'search.searchPlaceholder': 'Search blocks...',
+  'search.searchPlaceholder': 'Search blocks (3+ chars)...',
   'search.searchLabel': 'Search blocks',
   'search.cjkNoteLabel': 'Note:',
   'search.cjkLimitationNote': 'CJK search is limited in v1. Some results may be incomplete.',

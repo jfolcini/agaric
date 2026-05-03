@@ -213,6 +213,89 @@ describe('CodeLanguageSelector', () => {
     })
   })
 
+  describe('filter input (UX-300)', () => {
+    it('auto-focuses the filter input on open', () => {
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={vi.fn()}
+        />,
+      )
+
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      expect(filter).toHaveFocus()
+    })
+
+    it('narrows the language list as the user types', async () => {
+      const user = userEvent.setup()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={vi.fn()}
+        />,
+      )
+
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      await user.type(filter, 'rust')
+
+      // The filter is exact enough that only `rust` survives.
+      expect(screen.getByRole('button', { name: 'rust' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'python' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'typescript' })).not.toBeInTheDocument()
+      // Plain text always remains, regardless of filter.
+      expect(screen.getByRole('button', { name: t('toolbar.plainText') })).toBeInTheDocument()
+    })
+
+    it('Enter on the filter input selects the focused language from the filtered subset', async () => {
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={onClose}
+        />,
+      )
+
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      // Type a query that narrows to exactly one item, then Enter.
+      // Reset to focusedIndex 0 happens automatically when the filtered
+      // itemCount changes — so index 0 is `rust`.
+      await user.type(filter, 'rust{Enter}')
+
+      expect(mockUpdateAttributes).toHaveBeenCalledTimes(1)
+      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'rust' })
+      expect(mockRun).toHaveBeenCalledTimes(1)
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('ArrowDown moves the highlight, Enter selects the new focused language', async () => {
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={onClose}
+        />,
+      )
+
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      // No filter typed — full list is in play; index 0 is `javascript`,
+      // index 1 is `typescript`. ArrowDown → typescript, Enter selects.
+      await user.type(filter, '{ArrowDown}{Enter}')
+
+      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'typescript' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('accessibility', () => {
     it('has no a11y violations', async () => {
       const { container } = render(
