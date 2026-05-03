@@ -19,7 +19,7 @@ A vulnerability report is welcome if you can demonstrate any of the following:
 - **Supply-chain concerns** — a direct or transitive dependency that ships a known CVE not yet covered by the `.nsprc` exception list, a typosquat in `package.json` / `Cargo.toml`, an install/post-install script that contacts an external network.
 - **Threat-model violations in code** — anything that adds an outbound network call to a server the maintainer doesn't operate, opens a listening port the user didn't ask for, or otherwise widens the attack surface beyond "the user's own paired devices on a local network."
 - **CSP / IPC bypass** — code that escapes Tauri's command allowlist, that lets the WebView reach arbitrary `file://` or `asset:` URLs, or that defeats the `default-src 'self'` policy declared in `tauri.conf.json`.
-- **Crypto misuse** — incorrect use of the `rustls` / `chacha20poly1305` / `hkdf` / `blake3` / `rcgen` primitives the sync layer relies on (wrong nonce reuse, missing AAD, weak KDF parameters).
+- **Crypto misuse** — incorrect use of the `rustls` / `blake3` / `rcgen` primitives the sync and op-log layers rely on.
 
 ## Out of scope
 

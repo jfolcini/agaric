@@ -17,11 +17,11 @@ pub const MDNS_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
 // 2. mDNS Service
 // =========================================================================
 
-/// mDNS service type for BlockNotes sync discovery.
+/// mDNS service type for Agaric sync discovery.
 pub const MDNS_SERVICE_TYPE: &str = "_agaric._tcp.local.";
 
 /// mDNS service name prefix.
-pub const MDNS_SERVICE_NAME: &str = "BlockNotes";
+pub const MDNS_SERVICE_NAME: &str = "Agaric";
 
 /// Handle to the running mDNS daemon.
 pub struct MdnsService {
@@ -138,7 +138,7 @@ impl MdnsService {
         Ok(service_info)
     }
 
-    /// Browse for other BlockNotes devices on the network.
+    /// Browse for other Agaric devices on the network.
     ///
     /// Returns a channel receiver that yields `ServiceEvent` values.
     pub fn browse(&self) -> Result<mdns_sd::Receiver<mdns_sd::ServiceEvent>, AppError> {
@@ -235,7 +235,7 @@ pub fn parse_service_event(event: mdns_sd::ServiceEvent) -> Option<ServiceEventK
         }
         mdns_sd::ServiceEvent::ServiceRemoved(_service_type, fullname) => {
             // Service fullname format is `<MDNS_SERVICE_NAME>_<device_id>.<MDNS_SERVICE_TYPE>`,
-            // e.g. `BlockNotes_01ARZ3NDEKTSV4RRFFQ69G5FAV._agaric._tcp.local.` —
+            // e.g. `Agaric_01ARZ3NDEKTSV4RRFFQ69G5FAV._agaric._tcp.local.` —
             // recover the device_id by stripping the announce prefix.
             let device_id = device_id_from_service_fullname(&fullname)?;
             Some(ServiceEventKind::Removed { device_id })
