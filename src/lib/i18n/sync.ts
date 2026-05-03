@@ -95,6 +95,8 @@ export const sync: Record<string, string> = {
   'device.editAddressTitle': 'Peer address',
   'device.addressInputLabel': 'Address (host:port)',
   'device.addressHint': 'Format: host:port (e.g., 192.168.1.100:5000)',
+  'device.addressFormatInvalid': 'Format must be host:port (e.g., 192.168.1.100:5000)',
+  'device.addressPortInvalid': 'Port must be between 1 and 65535',
   'device.saveAddressButton': 'Save',
   'device.cancelAddressButton': 'Cancel',
 }

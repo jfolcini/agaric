@@ -8,7 +8,7 @@
 
 import { Globe, Pencil, RefreshCw, Smartphone, Unplug } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -45,6 +45,19 @@ export function PeerListItem({
   const { t } = useTranslation()
   const [addrOpen, setAddrOpen] = useState(false)
   const [addrInput, setAddrInput] = useState('')
+
+  // UX-378: real-time format validation for the address popover.
+  // Empty input returns null so the freshly-opened popover stays quiet;
+  // 'format' / 'port' are markers translated at render time.
+  const addressError = useMemo<string | null>(() => {
+    const trimmed = addrInput.trim()
+    if (trimmed === '') return null
+    const match = /^[\w.-]+:\d{1,5}$/.exec(trimmed)
+    if (!match) return 'format'
+    const port = Number.parseInt(trimmed.split(':')[1] ?? '', 10)
+    if (Number.isNaN(port) || port < 1 || port > 65535) return 'port'
+    return null
+  }, [addrInput])
 
   const handleSaveAddress = useCallback(() => {
     const addr = addrInput.trim()
@@ -133,7 +146,21 @@ export function PeerListItem({
                     }
                   }}
                   aria-label={t('device.addressInputLabel')}
+                  aria-invalid={addressError != null}
+                  aria-describedby={addressError != null ? 'peer-address-error' : undefined}
                 />
+                {/* UX-378: inline format validation. Disables Save and
+                    surfaces the format / port error before the user
+                    has to round-trip through the toast path. */}
+                {addressError && (
+                  <p id="peer-address-error" className="text-xs text-destructive" role="alert">
+                    {t(
+                      addressError === 'port'
+                        ? 'device.addressPortInvalid'
+                        : 'device.addressFormatInvalid',
+                    )}
+                  </p>
+                )}
                 {/* UX-12: bumped from text-[10px] to text-xs (12px) so
                     the format example is legible at default zoom. */}
                 <p className="text-xs text-muted-foreground">{t('device.addressHint')}</p>
@@ -150,7 +177,7 @@ export function PeerListItem({
                     size="sm"
                     className="flex-1"
                     onClick={handleSaveAddress}
-                    disabled={!addrInput.trim()}
+                    disabled={!addrInput.trim() || addressError != null}
                   >
                     {t('device.saveAddressButton')}
                   </Button>

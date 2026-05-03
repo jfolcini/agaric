@@ -32,6 +32,7 @@ export const common: Record<string, string> = {
   'sidebar.syncTooltip': 'Sync all devices',
   'sidebar.syncing': 'Syncing...',
   'space.switch': 'Switch space',
+  'space.prefix': 'Space:',
   'space.manage': 'Manage spaces…',
   'space.moveTo': 'Move to space',
   'space.movedToast': 'Page moved to {{space}}',

@@ -15,8 +15,13 @@ import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
 import { i18n } from '../lib/i18n'
+import { logger } from '../lib/logger'
 import { getPriorityCycle } from '../lib/priority-levels'
-import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
+import {
+  getProperties,
+  setPriority as setPriorityCmd,
+  setTodoState as setTodoStateCmd,
+} from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 
@@ -43,6 +48,23 @@ export interface UseBlockPropertiesReturn {
   getTodoState: (blockId: string) => string | null
   handleToggleTodo: (blockId: string) => Promise<void>
   handleTogglePriority: (blockId: string) => Promise<void>
+}
+
+/**
+ * F-37: warn when completing a task that has unresolved `blocked_by`
+ * dependencies. Mirrors the slash-command path in `useBlockSlashCommands.ts`
+ * so the gutter-cycle path stays in sync. Failures are logged, not surfaced —
+ * the dependency check is advisory.
+ */
+function warnIfBlocked(blockId: string): void {
+  getProperties(blockId)
+    .then((props) => {
+      const hasBlockedBy = props.some((p) => p.key === 'blocked_by' && p.value_ref != null)
+      if (hasBlockedBy) toast.warning(i18n.t('dependency.dependencyWarning'))
+    })
+    .catch((err) => {
+      logger.warn('useBlockProperties', 'F-37 dependency check failed', undefined, err)
+    })
 }
 
 export function useBlockProperties(): UseBlockPropertiesReturn {
@@ -81,6 +103,9 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         toast.error(i18n.t('blockTree.setTaskStateFailed'))
         return
       }
+
+      // F-37: warn when completing a task that has unresolved dependencies
+      if (nextState === 'DONE') warnIfBlocked(blockId)
 
       announce(
         i18n.t('announce.taskState', {

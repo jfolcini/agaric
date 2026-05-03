@@ -33,6 +33,36 @@ vi.mock('../../lib/tauri', async (importActual) => {
   }
 })
 
+// Per-file override of `@/components/ui/select`. The shared mock
+// (src/__tests__/mocks/ui-select.tsx) renders `SelectTrigger` as
+// `null`, which is fine for capturing props onto the native `<select>`
+// SelectContent emits, but it also drops the trigger's children — so
+// the UX-364 "Space:" prefix span (rendered as a sibling of
+// `<SelectValue>` inside the trigger) is invisible to test queries.
+//
+// This override delegates everything to the shared mock and only
+// rewraps `SelectTrigger`: it forwards `props` (sans `children`) to
+// the original trigger so the prop-capture chain that backs the native
+// `<select>`'s `aria-label`, `value`, etc. keeps working, while ALSO
+// rendering the trigger's children into a sibling `<div>` so tests can
+// assert on the prefix text.
+vi.mock('@/components/ui/select', async () => {
+  const actual = await import('../../__tests__/mocks/ui-select')
+  const React = await import('react')
+  const OriginalTrigger = actual.SelectTrigger
+  const SelectTrigger = ({
+    children,
+    ...props
+  }: { children?: React.ReactNode } & Record<string, unknown>) =>
+    React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(OriginalTrigger, props),
+      React.createElement('div', { 'data-slot': 'select-trigger-children' }, children),
+    )
+  return { ...actual, SelectTrigger }
+})
+
 // Stub the manage dialog so the switcher tests stay isolated. The stub
 // renders a sentinel element only when `open === true` so tests can
 // assert the dialog flipped open without exercising the real dialog's
@@ -274,5 +304,63 @@ describe('SpaceSwitcher', () => {
     expect(chips[0]?.textContent).toBe('Ctrl+1')
     expect(chips[1]?.getAttribute('data-testid')).toBe('space-hotkey-hint-2')
     expect(chips[1]?.textContent).toBe('Ctrl+2')
+  })
+
+  // ── UX-364: trigger reads as a switcher, not a label ──
+  // The trigger now renders a static "Space:" prefix as a sibling
+  // BEFORE `<SelectValue>` so the active option reads as
+  // "Space: Personal" instead of a bare "Personal" that looks like a
+  // header. The prefix lives outside `<SelectValue>` to avoid tripping
+  // Radix's auto-mirror warning (see FEAT-3p11 comment in the file).
+  it('renders a "Space:" prefix in the trigger (UX-364)', async () => {
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    // The per-file mock override renders SelectTrigger's children into
+    // a sibling `<div data-slot="select-trigger-children">` so we can
+    // assert the prefix text actually lives inside the trigger.
+    const triggerChildren = document.querySelector('[data-slot="select-trigger-children"]')
+    expect(triggerChildren).not.toBeNull()
+    expect(triggerChildren).toHaveTextContent('Space:')
+  })
+
+  // ── UX-368: tooltip lists the first 5 space digit mappings ──
+  // The trigger tooltip used to surface only the generic
+  // "Tip: Ctrl+1..9" hint. Once the dropdown closed, the user had to
+  // re-open it to see what each digit mapped to. UX-368 stacks the hint
+  // above a list of `Ctrl+N name` rows for the first five spaces so the
+  // mappings stay discoverable on hover.
+  it('lists the first 5 space digit mappings in the trigger tooltip (UX-368)', async () => {
+    const user = userEvent.setup()
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    const tooltipTrigger = document.querySelector(
+      '[data-slot="tooltip-trigger"]',
+    ) as HTMLElement | null
+    expect(tooltipTrigger).not.toBeNull()
+    await user.hover(tooltipTrigger as HTMLElement)
+
+    // Both space mappings should surface inside the tooltip — Personal
+    // first (alphabetical), Work second. jsdom's UA is not macOS so
+    // `isMac()` returns false and the chord text is the spelled-out
+    // modifier (`Ctrl+N`).
+    await waitFor(
+      async () => {
+        const personalHint = await screen.findAllByText(/Ctrl\+1\s+Personal/)
+        expect(personalHint.length).toBeGreaterThanOrEqual(1)
+        const workHint = await screen.findAllByText(/Ctrl\+2\s+Work/)
+        expect(workHint.length).toBeGreaterThanOrEqual(1)
+      },
+      { timeout: 3000 },
+    )
   })
 })

@@ -299,6 +299,38 @@ describe('TemplatesView', () => {
     expect(toast.success).toHaveBeenCalledWith('Removed template status from Meeting Notes')
   })
 
+  // UX-334 — remove button must be reachable on desktop without hovering
+  // the row. Pin the visibility so a future "hide-until-hover" regression
+  // is caught at test time.
+  it('remove button is always visible (no opacity-0 / group-hover gating)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'query_by_property') {
+        const params = args as { key: string }
+        if (params.key === 'template') {
+          return {
+            items: [makeTemplate('T1', 'Meeting Notes')],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      }
+      if (cmd === 'list_blocks') return emptyPage
+      return emptyPage
+    })
+
+    render(<TemplatesView />)
+
+    const removeBtn = await screen.findByRole('button', {
+      name: /Remove template status from Meeting Notes/i,
+    })
+    expect(removeBtn).toBeInTheDocument()
+
+    const className = removeBtn.className
+    expect(className).not.toMatch(/(^|\s)opacity-0(\s|$)/)
+    expect(className).not.toMatch(/group-hover:opacity-100/)
+  })
+
   describe('remove template confirmation dialog', () => {
     const setupSingleTemplate = () => {
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
