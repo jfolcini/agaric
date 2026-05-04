@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useState } from 'react'
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
@@ -301,8 +301,17 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
   const [loadingMore, setLoadingMore] = useState(false)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
+  // PEND-22: monotonic request-id counter so a slow in-flight fetch can't
+  // clobber the results of a faster newer fetch when `expression` /
+  // `currentSpaceId` change (or `handleLoadMore` is called) before the
+  // previous IPC settles. Each fetch captures its own `myReqId`; if the
+  // counter has advanced before an await resolves, the stale fetch bails
+  // out without touching state.
+  const reqIdRef = useRef(0)
+
   const fetchResults = useCallback(
     async (pageCursor?: string) => {
+      const myReqId = ++reqIdRef.current
       const isLoadMore = !!pageCursor
       beginFetch(isLoadMore, {
         setLoading,
@@ -313,19 +322,22 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
       })
       try {
         if (!expression.trim()) {
-          setError('Query expression is empty')
+          if (myReqId === reqIdRef.current) setError('Query expression is empty')
           return
         }
         const parsed = parseQueryExpression(expression)
         const result = await dispatchQuery(parsed, pageCursor, currentSpaceId)
+        if (myReqId !== reqIdRef.current) return
         applyQueryResult(result, isLoadMore, { setResults, setCursor, setHasMore })
         const titles = await resolvePageTitles(result.items)
+        if (myReqId !== reqIdRef.current) return
         mergePageTitles(titles, isLoadMore, setPageTitles)
       } catch (e) {
+        if (myReqId !== reqIdRef.current) return
         logger.warn('useQueryExecution', 'query execution failed', { expression }, e)
         handleFetchError(e, isLoadMore, setError)
       } finally {
-        endFetch(isLoadMore, { setLoading, setLoadingMore })
+        if (myReqId === reqIdRef.current) endFetch(isLoadMore, { setLoading, setLoadingMore })
       }
     },
     [expression, currentSpaceId],

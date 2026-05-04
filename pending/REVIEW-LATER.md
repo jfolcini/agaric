@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 658 — closed PEND-03 (materializer silent-drop fix for global cache rebuilds): migration 0044 widens `materializer_retry_queue` to global tasks via `'__GLOBAL__'` sentinel + STRICT mode; `RetryKind` enum extended with 7 global variants; consumer + coordinator persist on drop; new `bg_dropped_global` counter on `QueueMetrics` → `StatusInfo`. AGENTS.md "Backend Architecture" bullet added with user approval. Tech reviewer PASS. Tech reviewer filed MAINT-199 — `scripts/check-migrations-strict.mjs` mis-parses `;` in SQL comments as statement terminator (real bug, surfaced during PEND-03; author worked around by stripping inline semicolons from migration comments). +7 backend tests; 3455/3455 nextest pass.)
+> **Last updated:** 2026-05-03 (Session 659 — closed PEND-22 (frontend robustness review findings): graph-worker dispatcher wrapped in try/catch with re-throw to preserve boundary `error` event; new `WorkerErrorMessage` type routed through `reportFailure('worker-reported', …)` in `graph-sim-helpers.ts`; `useQueryExecution` gained a `reqIdRef` counter (Option A) preventing slow in-flight fetches from clobbering newer fetches' results. +2 frontend tests; 9294/9294 vitest pass; tsc + biome clean. Reviewer PASS — no fixes needed.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 

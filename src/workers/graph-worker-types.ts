@@ -57,4 +57,9 @@ export interface WorkerDoneMessage {
   positions: NodePosition[]
 }
 
-export type WorkerOutboundMessage = WorkerTickMessage | WorkerDoneMessage
+export interface WorkerErrorMessage {
+  type: 'error'
+  message: string
+}
+
+export type WorkerOutboundMessage = WorkerTickMessage | WorkerDoneMessage | WorkerErrorMessage

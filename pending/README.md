@@ -29,6 +29,8 @@ Origin: a deep architectural review session run with five parallel investigation
 | PEND-19 | `RecentPagesStrip` redesign — visible chip chrome + tighter geometry | S (1.5-3h) | ready (UX polish, visual-only, no data path; out-of-band — separate UX track) |
 | PEND-20 | SQL / perf review findings (post-validation) | mostly S, one M (G), one trivial bundle (A) | ready (8 actionable bundles A-H + 10 LOW items mostly accepted; sync-merge `json_extract` excluded — superseded by PEND-09 CRDT migration) |
 | PEND-21 | Structural breadcrumb — icon-button affordance + drop redundant exit-zoom button | S (1-2h) | ready (UX polish on `Breadcrumb` icon triggers + `BlockZoomBar` dedup; out-of-band — separate UX track) |
+| PEND-22 | Frontend robustness review findings | S (~1.5-3h) | ✅ done session 659 — graph-worker dispatcher wrapped in try/catch + global `error`/`unhandledrejection` handlers + new `WorkerErrorMessage` type routed through `reportFailure('worker-reported', …)` in `graph-sim-helpers.ts`; `useQueryExecution` gained a `reqIdRef` counter (Option A) with 4 guards covering all await sites + empty-expression early-return + `endFetch` finally. +2 tests (worker-reported message routing, stale-fetch result discarding). 9294/9294 vitest pass. Reviewer PASS. |
+| PEND-24 | Rust robustness review findings (post-validation) | mostly S, two trivial, one M (H1) | ready (2 CRITICAL + 3 HIGH + 6 MEDIUM; 13 FALSE + ~17 OUT-OF-SCOPE + 4 ALREADY-KNOWN rejected by validation; 4 LOW nits noted but not bundled) |
 
 ## Recommended order
 
@@ -43,6 +45,7 @@ Origin: a deep architectural review session run with five parallel investigation
 - PEND-07 (STRICT tables policy) — ✅ shipped session 656
 - PEND-14 (boolean property type) — ✅ shipped session 657 (followups: MAINT-197 + MAINT-198 in REVIEW-LATER)
 - PEND-03 (materializer silent-drop fix) — ✅ shipped session 658 (followup: MAINT-199 STRICT-hook bug)
+- PEND-22 (frontend robustness — graph-worker error envelope + useQueryExecution stale-fetch guard) — ✅ shipped session 659
 
 **Mid-tier** — useful but more invasive:
 

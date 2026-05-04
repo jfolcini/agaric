@@ -16,6 +16,7 @@ import { drag } from 'd3-drag'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GraphEdge, GraphNode } from '../../components/GraphView.helpers'
 import type { SimulationCtx } from '../../lib/graph-sim-helpers'
+import { logger } from '../../lib/logger'
 import { useGraphWorkerSimulation } from '../useGraphWorkerSimulation'
 
 vi.mock('../../lib/logger', () => ({
@@ -176,6 +177,32 @@ describe('useGraphWorkerSimulation', () => {
 
     expect(result.current.workerFailed).toBe(true)
     expect(w.terminated).toBe(true)
+  })
+
+  // PEND-22: regression test for the structured error envelope. The worker's
+  // dispatcher try/catch (and global error/unhandledrejection handlers) post
+  // an explicit `{ type: 'error', message }` outbound message; the main
+  // thread's `handleMessage` routes that through `reportFailure` with the
+  // event name `'worker-reported'`, mirroring the boundary `error` path.
+  it('flips workerFailed and logs worker-reported when worker posts a structured error message', async () => {
+    const { result } = renderHook(() => useGraphWorkerSimulation())
+    result.current.runWorker(makeCtx())
+    const w = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+
+    w.dispatch('message', { data: { type: 'error', message: 'simulation tick threw' } })
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.workerFailed).toBe(true)
+    expect(w.terminated).toBe(true)
+    expect(logger.warn).toHaveBeenCalledWith(
+      'GraphView',
+      'worker failed',
+      { event: 'worker-reported' },
+      expect.objectContaining({ message: 'simulation tick threw' }),
+    )
   })
 
   it('onResize re-posts start with new dimensions when they change', () => {
