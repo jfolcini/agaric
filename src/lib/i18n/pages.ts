@@ -173,6 +173,7 @@ export const pages: Record<string, string> = {
   'pageProperty.dateType': 'date',
   'pageProperty.selectType': 'select',
   'pageProperty.refType': 'ref',
+  'pageProperty.booleanType': 'boolean',
   'pageProperty.createDefinitionButton': 'Create definition',
   'pageProperty.updateOptionsFailed': 'Failed to update options',
   'pageProperty.valueLabel': '{{key}} value',

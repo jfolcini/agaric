@@ -491,6 +491,7 @@ mod tests {
             value_num: None,
             value_date: value_date.map(str::to_owned),
             value_ref: None,
+            value_bool: None,
         }))
     }
 

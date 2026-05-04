@@ -448,7 +448,7 @@ async fn set_recurrence_property(
     op_records: &mut Vec<op_log::OpRecord>,
 ) -> Result<(), crate::error::AppError> {
     let (_, op) = set_property_in_tx(
-        tx, device_id, block_id, key, value_text, value_num, value_date, value_ref,
+        tx, device_id, block_id, key, value_text, value_num, value_date, value_ref, None,
     )
     .await?;
     op_records.push(op);
@@ -704,6 +704,7 @@ mod tests_h17_m77 {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -913,6 +914,7 @@ mod tests_l99_l100 {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -951,6 +953,7 @@ mod tests_l99_l100 {
             "repeat-seq".into(),
             None,
             Some(3.0),
+            None,
             None,
             None,
             None,

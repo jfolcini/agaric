@@ -83,6 +83,7 @@ function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
     value_num: null,
     value_date: null,
     value_ref: null,
+    value_bool: null,
     ...overrides,
   }
 }
@@ -284,10 +285,13 @@ describe('PagePropertyTable property editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'author',
-        valueText: 'Bob',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'Bob',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -316,10 +320,13 @@ describe('PagePropertyTable property editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'priority',
-        valueNum: 99,
-        valueText: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_num: 99,
+          value_text: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -349,10 +356,13 @@ describe('PagePropertyTable property editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'stage',
-        valueText: 'DONE',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'DONE',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -467,10 +477,13 @@ describe('PagePropertyTable add property flow', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'status',
-        valueText: '',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: '',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -491,10 +504,13 @@ describe('PagePropertyTable add property flow', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'weight',
-        valueNum: 0,
-        valueText: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_num: 0,
+          value_text: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -516,10 +532,13 @@ describe('PagePropertyTable add property flow', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'deadline',
-        valueDate: today,
-        valueText: null,
-        valueNum: null,
-        valueRef: null,
+        value: {
+          value_date: today,
+          value_text: null,
+          value_num: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -580,10 +599,13 @@ describe('PagePropertyTable add property flow', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'newfield',
-        valueText: '',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: '',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -1303,10 +1325,13 @@ describe('PagePropertyTable task-only property filtering', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'linked_page',
-        valueRef: null,
-        valueText: null,
-        valueNum: null,
-        valueDate: null,
+        value: {
+          value_ref: null,
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_bool: null,
+        },
       })
     })
   })

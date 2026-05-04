@@ -84,8 +84,14 @@ export const commands = {
 	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppErrorSchema>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
 	// Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].
 	listTagsForBlock: (blockId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
-	// Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
-	setProperty: (blockId: string, key: string, valueText: string | null, valueNum: number | null, valueDate: string | null, valueRef: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_property", { blockId, key, valueText, valueNum, valueDate, valueRef })),
+	/**
+	 *  Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
+	 *
+	 *  PEND-14: typed value fields are bundled into [`SetPropertyArgs`] so the
+	 *  IPC signature stays at 7 positional args (under specta's 10-arg cap).
+	 *  Adding `value_bool` as a 5th flat field would have exceeded the limit.
+	 */
+	setProperty: (blockId: string, key: string, value: SetPropertyArgs) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_property", { blockId, key, value })),
 	// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
 	setTodoState: (blockId: string, state: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
@@ -888,6 +894,11 @@ export type PropertyRow = {
 	value_num: number | null,
 	value_date: string | null,
 	value_ref: string | null,
+	/**
+	 *  PEND-14: native boolean property storage. SQLite represents booleans
+	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
+	 */
+	value_bool: number | null,
 };
 
 export type PurgeResponse = {
@@ -917,6 +928,24 @@ export type RestoreToOpResult = {
 	non_reversible_skipped: number,
 	// Individual undo results for each reverted op.
 	results: UndoResult[],
+};
+
+/**
+ *  Input bundle for the `set_property` Tauri command — collects all
+ *  possible typed values into a single struct so the IPC handler stays
+ *  under specta's 10-positional-argument limit (PEND-14 added a 5th
+ *  `value_bool` slot which would have made the flat signature exceed
+ *  the cap). Exactly one field should be `Some` for non-reserved keys
+ *  (the inner validator enforces this); reserved-key clears may pass
+ *  all-None.
+ */
+export type SetPropertyArgs = {
+	value_text?: string | null,
+	value_num?: number | null,
+	value_date?: string | null,
+	value_ref?: string | null,
+	// PEND-14: native boolean property value (`true` / `false`).
+	value_bool?: boolean | null,
 };
 
 // Sort direction.

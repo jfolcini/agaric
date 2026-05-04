@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id, key, value_text, value_num, value_date, value_ref\n           FROM block_properties\n           WHERE block_id IN (SELECT value FROM json_each(?1))",
+  "query": "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool\n           FROM block_properties\n           WHERE block_id IN (SELECT value FROM json_each(?1))",
   "describe": {
     "columns": [
       {
@@ -32,6 +32,11 @@
         "name": "value_ref",
         "ordinal": 5,
         "type_info": "Text"
+      },
+      {
+        "name": "value_bool",
+        "ordinal": 6,
+        "type_info": "Integer"
       }
     ],
     "parameters": {
@@ -43,8 +48,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "be425eede63dcea05bc8ef854fea6b56423b75783164b0b16ba4bfcc15f4250c"
+  "hash": "a756b1314e6efcfd6f55669bcc0e5af3de3e1f51b3f191e64af2f41169b2e1e6"
 }

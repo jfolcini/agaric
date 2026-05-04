@@ -313,7 +313,7 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'effort',
-        valueText: '1h',
+        value: expect.objectContaining({ value_text: '1h' }),
       }),
     )
   })
@@ -331,7 +331,7 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'repeat',
-        valueText: 'daily',
+        value: expect.objectContaining({ value_text: 'daily' }),
       }),
     )
   })
@@ -375,7 +375,7 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'repeat-count',
-        valueNum: 5,
+        value: expect.objectContaining({ value_num: 5 }),
       }),
     )
   })

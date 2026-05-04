@@ -90,6 +90,7 @@ async fn set_property_due_date_emits_single_dirty_event() {
         Some(old_str.clone()),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -109,6 +110,7 @@ async fn set_property_due_date_emits_single_dirty_event() {
         None,
         None,
         Some(new_str.clone()),
+        None,
         None,
         None,
     )
@@ -149,6 +151,7 @@ async fn set_property_todo_state_emits_single_dirty_event() {
         None,
         None,
         Some(date_str),
+        None,
         None,
         None,
     )
@@ -200,6 +203,7 @@ async fn set_property_non_agenda_key_emits_zero_events() {
         Some(today_plus(2)),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -214,6 +218,7 @@ async fn set_property_non_agenda_key_emits_zero_events() {
         block.id.clone(),
         "assignee".into(),
         Some("alice".into()),
+        None,
         None,
         None,
         None,
@@ -255,6 +260,7 @@ async fn delete_property_due_date_emits_dirty_event() {
         None,
         None,
         Some(date_str),
+        None,
         None,
         None,
     )
@@ -302,6 +308,7 @@ async fn edit_block_with_date_emits_dirty_event() {
         None,
         None,
         Some(date_str),
+        None,
         None,
         None,
     )
@@ -383,6 +390,7 @@ async fn delete_block_emits_old_only_dirty_event() {
         Some(today_plus(7)),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -395,6 +403,7 @@ async fn delete_block_emits_old_only_dirty_event() {
         None,
         None,
         Some(today_plus(8)),
+        None,
         None,
         None,
     )
@@ -441,6 +450,7 @@ async fn restore_block_emits_new_only_dirty_event() {
         None,
         None,
         Some(today_plus(9)),
+        None,
         None,
         None,
     )
@@ -494,6 +504,7 @@ async fn no_handle_set_property_commits_cleanly() {
         None,
         None,
         Some(due_str.clone()),
+        None,
         None,
         None,
     )

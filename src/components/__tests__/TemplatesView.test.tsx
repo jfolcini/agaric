@@ -713,10 +713,13 @@ describe('TemplatesView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'T_NEW',
         key: 'template',
-        valueText: 'true',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'true',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
 
       // Negative assertion: NO `create_block` IPC fired for the page

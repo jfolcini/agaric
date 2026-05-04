@@ -586,6 +586,14 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
+    // PEND-14: typed values are bundled under `value: SetPropertyArgs` (was 4 flat
+    // args). Navigate the bundle to read each typed value column.
+    const valueArgs = a['value'] as Record<string, unknown> | undefined
+    const valueText = (valueArgs?.['value_text'] as string | null) ?? null
+    const valueNum = (valueArgs?.['value_num'] as number | null) ?? null
+    const valueDate = (valueArgs?.['value_date'] as string | null) ?? null
+    const valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
+    const valueBool = (valueArgs?.['value_bool'] as boolean | null) ?? null
     // Capture the prior typed value (if any) so revert can restore it.
     // `from_value: null` signals "property did not exist" — revert removes it.
     const priorRow = properties.get(blockId)?.get(key)
@@ -595,6 +603,7 @@ export const HANDLERS: Record<string, Handler> = {
           value_num: (priorRow['value_num'] as number | null) ?? null,
           value_date: (priorRow['value_date'] as string | null) ?? null,
           value_ref: (priorRow['value_ref'] as string | null) ?? null,
+          value_bool: (priorRow['value_bool'] as number | null) ?? null,
         }
       : null
     if (!properties.has(blockId)) {
@@ -602,10 +611,11 @@ export const HANDLERS: Record<string, Handler> = {
     }
     properties.get(blockId)?.set(key, {
       key,
-      value_text: (a['valueText'] as string | null) ?? null,
-      value_num: (a['valueNum'] as number | null) ?? null,
-      value_date: (a['valueDate'] as string | null) ?? null,
-      value_ref: (a['valueRef'] as string | null) ?? null,
+      value_text: valueText,
+      value_num: valueNum,
+      value_date: valueDate,
+      value_ref: valueRef,
+      value_bool: valueBool === null ? null : valueBool ? 1 : 0,
     })
     pushOp('set_property', { block_id: blockId, key, from_value: fromValue })
     const b = blocks.get(blockId)
@@ -624,6 +634,7 @@ export const HANDLERS: Record<string, Handler> = {
           value_num: (priorRow['value_num'] as number | null) ?? null,
           value_date: (priorRow['value_date'] as string | null) ?? null,
           value_ref: (priorRow['value_ref'] as string | null) ?? null,
+          value_bool: (priorRow['value_bool'] as number | null) ?? null,
         }
       : null
     const blockProps = properties.get(blockId)

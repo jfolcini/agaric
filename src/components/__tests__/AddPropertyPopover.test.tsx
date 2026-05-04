@@ -242,6 +242,63 @@ describe('AddPropertyPopover', () => {
     })
   })
 
+  // PEND-14: the boolean value-type option must appear alongside text/number/
+  // date/select/ref so users can create native boolean property defs.
+  it('PEND-14: surfaces a "boolean" option in the value-type selector', async () => {
+    const user = userEvent.setup()
+    render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+    await user.type(screen.getByLabelText('Search definitions'), 'myflag')
+    await user.click(screen.getByText(/Create "myflag"/))
+
+    const select = (await screen.findByLabelText('Value type')) as HTMLSelectElement
+    const optionValues = Array.from(select.options).map((o) => o.value)
+    expect(optionValues).toEqual(
+      expect.arrayContaining(['text', 'number', 'date', 'select', 'ref', 'boolean']),
+    )
+  })
+
+  // PEND-14: extra a11y audit covering the create-definition surface (which
+  // includes the boolean option). The default "browse mode" axe pass at the
+  // top of this file does not render the create-definition select, so the
+  // boolean SelectItem stays uncovered without this second pass.
+  it('PEND-14: has no a11y violations with the create-definition select visible', async () => {
+    const user = userEvent.setup()
+    const { container } = render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+    await user.type(screen.getByLabelText('Search definitions'), 'myflag')
+    await user.click(screen.getByText(/Create "myflag"/))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Value type')).toBeInTheDocument()
+    })
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('calls onCreateDef with key and type when definition is created', async () => {
     const user = userEvent.setup()
     const onCreateDef = vi.fn()

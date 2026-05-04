@@ -605,7 +605,16 @@ pub async fn merge_diverged_blocks(
                     Option<String>,
                     Option<String>,
                 );
-                type PropertyRow = (Option<String>, Option<f64>, Option<String>, Option<String>);
+                // PEND-14: include `value_bool` in the materialized
+                // comparison so a winning boolean conflict-resolution payload
+                // is detected as a no-op when the row already matches.
+                type PropertyRow = (
+                    Option<String>,
+                    Option<f64>,
+                    Option<String>,
+                    Option<String>,
+                    Option<i64>,
+                );
 
                 let materialized_matches = if crate::op::is_reserved_property_key(&pk) {
                     let row: Option<ReservedRow> = sqlx::query_as(
@@ -625,7 +634,7 @@ pub async fn merge_diverged_blocks(
                     .unwrap_or(false)
                 } else {
                     let materialized: Option<PropertyRow> = sqlx::query_as(
-                        "SELECT value_text, value_num, value_date, value_ref \
+                        "SELECT value_text, value_num, value_date, value_ref, value_bool \
                          FROM block_properties WHERE block_id = ? AND key = ?",
                     )
                     .bind(&bid)
@@ -633,11 +642,14 @@ pub async fn merge_diverged_blocks(
                     .fetch_optional(pool)
                     .await?;
                     materialized
-                        .map(|(vt, vn, vd, vr)| {
+                        .map(|(vt, vn, vd, vr, vb)| {
+                            let winner_bool_int =
+                                resolution.winner_value.value_bool.map(|b| b as i64);
                             vt == resolution.winner_value.value_text
                                 && vn == resolution.winner_value.value_num
                                 && vd == resolution.winner_value.value_date
                                 && vr == resolution.winner_value.value_ref
+                                && vb == winner_bool_int
                         })
                         .unwrap_or(false)
                 };
@@ -946,6 +958,7 @@ mod tests_m43_m44 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             ts_a.into(),
         )
@@ -961,6 +974,7 @@ mod tests_m43_m44 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             ts_b.into(),
         )
@@ -1034,6 +1048,7 @@ mod tests_m43_m44 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             ts_a.into(),
         )
@@ -1052,6 +1067,7 @@ mod tests_m43_m44 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             ts_b.into(),
         )

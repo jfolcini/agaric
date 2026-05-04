@@ -231,6 +231,7 @@ pub async fn create_page_in_space_inner(
         None,
         None,
         Some(space_id),
+        None,
     )
     .await?;
     tx.enqueue_background(space_op_record);
@@ -342,6 +343,7 @@ pub async fn create_space_inner(
         None,
         None,
         None,
+        None,
     )
     .await?;
     tx.enqueue_background(is_space_op);
@@ -356,6 +358,7 @@ pub async fn create_space_inner(
             block.id.clone(),
             "accent_color",
             Some(color),
+            None,
             None,
             None,
             None,

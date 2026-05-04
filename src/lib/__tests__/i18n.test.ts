@@ -142,6 +142,10 @@ describe('key existence', () => {
     // Property
     'property.drawerTitle',
     'property.addProperty',
+    'property.booleanToggle',
+
+    // Page property
+    'pageProperty.booleanType',
 
     // Properties view
     'propertiesView.title',

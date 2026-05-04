@@ -263,7 +263,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     batch_insert_snapshot_rows!(
         table: "block_properties",
         columns: [
-            "block_id", "key", "value_text", "value_num", "value_date", "value_ref",
+            "block_id", "key", "value_text", "value_num", "value_date", "value_ref", "value_bool",
         ],
         rows: data.tables.block_properties,
         bind: |q, bp| {
@@ -273,6 +273,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(bp.value_num)
                 .bind(&bp.value_date)
                 .bind(&bp.value_ref)
+                .bind(bp.value_bool)
         },
     );
 

@@ -755,6 +755,7 @@ fn make_prop_record(
         value_num: None,
         value_date: None,
         value_ref: None,
+        value_bool: None,
     })
     .unwrap();
     let hash = compute_op_hash(device_id, seq, None, "set_property", &payload);
@@ -1186,6 +1187,7 @@ fn resolve_property_conflict_with_numeric_values() {
         value_num: Some(42.0),
         value_date: None,
         value_ref: None,
+        value_bool: None,
     })
     .unwrap();
 
@@ -1196,6 +1198,7 @@ fn resolve_property_conflict_with_numeric_values() {
         value_num: Some(99.0),
         value_date: None,
         value_ref: None,
+        value_bool: None,
     })
     .unwrap();
 
@@ -1443,6 +1446,7 @@ fn resolve_property_conflict_all_null_values_commutative() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         })
         .unwrap()
     };
@@ -2442,6 +2446,7 @@ async fn merge_property_conflict_one_side_null() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS.into(),
     )
@@ -2460,6 +2465,7 @@ async fn merge_property_conflict_one_side_null() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS.into(),
     )
@@ -2477,6 +2483,7 @@ async fn merge_property_conflict_one_side_null() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS_LATER.into(),
     )

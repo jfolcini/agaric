@@ -174,6 +174,11 @@ pub struct RemoveTagPayload {
 }
 
 /// Payload for the `set_property` op — upserts a typed key-value property on a block (exactly one value field must be set).
+///
+/// `value_bool` (PEND-14) is marked `#[serde(default)]` so op-log entries
+/// written before PEND-14 (which had no `value_bool` column) still
+/// deserialize — they yield `value_bool = None`. Mirrors the pattern used
+/// by [`DeleteAttachmentPayload::fs_path`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetPropertyPayload {
     pub block_id: BlockId,
@@ -182,6 +187,8 @@ pub struct SetPropertyPayload {
     pub value_num: Option<f64>,
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
+    #[serde(default)]
+    pub value_bool: Option<bool>,
 }
 
 /// Payload for the `delete_property` op — removes a property by key from a block.
@@ -418,6 +425,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
         p.value_num.is_some(),
         p.value_date.is_some(),
         p.value_ref.is_some(),
+        p.value_bool.is_some(),
     ]
     .iter()
     .filter(|&&b| b)
@@ -543,6 +551,7 @@ mod tests {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
@@ -643,6 +652,52 @@ mod tests {
         };
         assert!(inner.parent_id.is_none(), "parent_id should be None");
         assert!(inner.position.is_none(), "position should be None");
+    }
+
+    /// PEND-14 backwards-compat: pre-existing op-log rows for `set_property`
+    /// were written without a `value_bool` field. Those entries must continue
+    /// to deserialize, with `value_bool` defaulting to `None`. Mirrors the
+    /// `delete_attachment_payload_legacy_json_deserializes_without_fs_path`
+    /// pattern below.
+    #[test]
+    fn set_property_payload_legacy_json_deserializes_without_value_bool() {
+        let legacy = r#"{
+            "block_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "key": "priority",
+            "value_text": "high",
+            "value_num": null,
+            "value_date": null,
+            "value_ref": null
+        }"#;
+        let parsed: SetPropertyPayload = serde_json::from_str(legacy)
+            .expect("legacy SetPropertyPayload JSON without value_bool must still deserialize");
+        assert!(
+            parsed.value_bool.is_none(),
+            "missing value_bool in legacy JSON must default to None"
+        );
+        assert_eq!(parsed.value_text.as_deref(), Some("high"));
+
+        // Also exercise the OpPayload-tagged form (the on-wire shape used by
+        // the op_log; the inner-struct test above guards serde_json::from_str
+        // on the bare payload).
+        let legacy_tagged = r#"{
+            "op_type": "set_property",
+            "block_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "key": "priority",
+            "value_text": "high",
+            "value_num": null,
+            "value_date": null,
+            "value_ref": null
+        }"#;
+        let parsed: OpPayload = serde_json::from_str(legacy_tagged)
+            .expect("legacy tagged OpPayload JSON without value_bool must still deserialize");
+        match parsed {
+            OpPayload::SetProperty(inner) => {
+                assert!(inner.value_bool.is_none());
+                assert_eq!(inner.value_text.as_deref(), Some("high"));
+            }
+            other => panic!("expected SetProperty, got {other:?}"),
+        }
     }
 
     /// C-3a backwards-compat: pre-existing op-log rows for `delete_attachment`
@@ -945,6 +1000,7 @@ mod tests {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("\"value_text\":null"));
@@ -969,6 +1025,7 @@ mod tests {
             value_num: Some(42.5),
             value_date: None,
             value_ref: None,
+            value_bool: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
@@ -1098,6 +1155,7 @@ mod tests {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         assert!(
             validate_set_property(&p).is_ok(),
@@ -1114,6 +1172,7 @@ mod tests {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1132,6 +1191,7 @@ mod tests {
             value_num: Some(1.0),
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1139,6 +1199,66 @@ mod tests {
             "expected Validation error, got: {err:?}"
         );
         assert!(err.to_string().contains("found 2"));
+    }
+
+    /// PEND-14: validation accepts a payload whose only set value is
+    /// `value_bool` (both `Some(true)` and `Some(false)`).
+    #[test]
+    fn validate_set_property_accepts_value_bool_alone() {
+        for b in [true, false] {
+            let p = SetPropertyPayload {
+                block_id: BlockId::test_id("B1"),
+                key: "flag".into(),
+                value_text: None,
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: Some(b),
+            };
+            assert!(
+                validate_set_property(&p).is_ok(),
+                "value_bool={b} should pass exactly-one-value validation"
+            );
+        }
+    }
+
+    /// PEND-14: mixing `value_bool` with another set value field fails the
+    /// exactly-one-value check just like any other pair.
+    #[test]
+    fn validate_set_property_rejects_value_bool_with_other_fields() {
+        let p = SetPropertyPayload {
+            block_id: BlockId::test_id("B1"),
+            key: "flag".into(),
+            value_text: Some("yes".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: Some(true),
+        };
+        let err = validate_set_property(&p).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "expected Validation error, got: {err:?}"
+        );
+        assert!(err.to_string().contains("found 2"));
+    }
+
+    /// PEND-14: snapshot the JSON serde shape of a `value_bool=Some(true)`
+    /// payload. Locks the wire format so any accidental rename / reorder is
+    /// caught.
+    #[test]
+    fn set_property_payload_boolean_serde_snapshot() {
+        let payload = SetPropertyPayload {
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
+            key: "flag".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: Some(true),
+        };
+        let json: serde_json::Value = serde_json::to_value(&payload).unwrap();
+        insta::assert_yaml_snapshot!("set_property_payload_value_bool_true", json);
     }
 
     // -----------------------------------------------------------------------
@@ -1163,6 +1283,7 @@ mod tests {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             };
             assert!(
                 validate_set_property(&p).is_ok(),
@@ -1180,6 +1301,7 @@ mod tests {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1198,6 +1320,7 @@ mod tests {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1217,6 +1340,7 @@ mod tests {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -1278,6 +1402,7 @@ mod tests {
             value_num: Some(f64::NAN),
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1299,6 +1424,7 @@ mod tests {
             value_num: Some(f64::INFINITY),
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1318,6 +1444,7 @@ mod tests {
             value_num: Some(f64::NEG_INFINITY),
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         let err_neg = validate_set_property(&p_neg).unwrap_err();
         assert!(
@@ -1335,6 +1462,7 @@ mod tests {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         };
         assert!(
             validate_set_property(&p).is_ok(),
@@ -1356,6 +1484,7 @@ mod tests {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -1379,6 +1508,7 @@ mod tests {
                 value_num: None,
                 value_date: Some(empty.into()),
                 value_ref: None,
+                value_bool: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -1402,6 +1532,7 @@ mod tests {
                 value_num: None,
                 value_date: None,
                 value_ref: Some(empty.into()),
+                value_bool: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(

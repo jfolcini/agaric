@@ -431,6 +431,8 @@ export interface PropertyRow {
   value_num: number | null
   value_date: string | null
   value_ref: string | null
+  /** PEND-14: native boolean property storage; SQLite represents it as 0/1/null. */
+  value_bool: number | null
 }
 
 /** Set (upsert) a property on a block. Exactly one value field must be non-null. */
@@ -441,16 +443,16 @@ export async function setProperty(params: {
   valueNum?: number | null | undefined
   valueDate?: string | null | undefined
   valueRef?: string | null | undefined
+  valueBool?: boolean | null | undefined
 }): Promise<BlockRow> {
   return unwrap(
-    await commands.setProperty(
-      params.blockId,
-      params.key,
-      params.valueText ?? null,
-      params.valueNum ?? null,
-      params.valueDate ?? null,
-      params.valueRef ?? null,
-    ),
+    await commands.setProperty(params.blockId, params.key, {
+      value_text: params.valueText ?? null,
+      value_num: params.valueNum ?? null,
+      value_date: params.valueDate ?? null,
+      value_ref: params.valueRef ?? null,
+      value_bool: params.valueBool ?? null,
+    }),
   )
 }
 

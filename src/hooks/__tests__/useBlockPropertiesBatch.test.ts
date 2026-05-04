@@ -35,6 +35,7 @@ function row(overrides: Partial<PropertyRow> & { key: string }): PropertyRow {
     value_num: null,
     value_date: null,
     value_ref: null,
+    value_bool: null,
     ...overrides,
   }
 }

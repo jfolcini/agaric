@@ -390,6 +390,7 @@ async fn handle_set_property(
         args.value_num,
         args.value_date,
         value_ref,
+        None,
         Some(TOOL_SET_PROPERTY),
     )
     .await?;

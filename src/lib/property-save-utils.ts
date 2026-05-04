@@ -67,6 +67,9 @@ export function buildInitParams(
       return { blockId, key: def.key, valueText: '' }
     case 'ref':
       return { blockId, key: def.key, valueRef: null }
+    case 'boolean':
+      // PEND-14: a freshly-added boolean property defaults to false.
+      return { blockId, key: def.key, valueBool: false }
     default:
       return null
   }
@@ -98,6 +101,13 @@ export function buildPropertyParams(
   }
   if (valueType === 'date') {
     return { ok: true, params: { blockId, key, valueDate: value || null } }
+  }
+  if (valueType === 'boolean') {
+    // PEND-14: boolean values are passed in as 'true'/'false' (or '' to clear).
+    if (value === '') {
+      return { ok: true, params: { blockId, key, valueBool: null } }
+    }
+    return { ok: true, params: { blockId, key, valueBool: value === 'true' } }
   }
   // Text and other types
   return { ok: true, params: { blockId, key, valueText: value } }

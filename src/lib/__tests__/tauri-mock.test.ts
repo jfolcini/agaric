@@ -496,10 +496,13 @@ describe('property commands', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: '1',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: '1',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
       string,
@@ -513,18 +516,24 @@ describe('property commands', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: '1',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: '1',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: '2',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: '2',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
       string,
@@ -538,10 +547,13 @@ describe('property commands', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: '1',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: '1',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     invoke('delete_property', { blockId: SEED_IDS.BLOCK_GS_1, key: 'priority' })
     const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
@@ -569,18 +581,24 @@ describe('get_batch_properties', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'todo',
-      valueText: 'TODO',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'TODO',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_2,
       key: 'priority',
-      valueText: '2',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: '2',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     const result = invoke('get_batch_properties', {
       blockIds: [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2, SEED_IDS.BLOCK_GS_3],
@@ -1051,18 +1069,24 @@ describe('list_property_keys', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'status',
-      valueText: 'done',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'done',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_2,
       key: 'category',
-      valueText: 'work',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'work',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     const result = invoke('list_property_keys') as string[]
     // Should be sorted and include 'category', 'status', plus defaults 'priority' and 'todo'
@@ -1367,10 +1391,13 @@ describe('query_by_property', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'todo',
-      valueText: 'TODO',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'TODO',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
 
     const result = invoke('query_by_property', { key: 'todo', valueText: null }) as {
@@ -1384,18 +1411,24 @@ describe('query_by_property', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'todo',
-      valueText: 'TODO',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'TODO',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_2,
       key: 'todo',
-      valueText: 'DONE',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'DONE',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
 
     const result = invoke('query_by_property', { key: 'todo', valueText: 'TODO' }) as {
@@ -1409,10 +1442,13 @@ describe('query_by_property', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'status',
-      valueText: 'active',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'active',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     // Delete the block
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1, cascade: false })

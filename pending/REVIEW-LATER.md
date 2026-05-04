@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 656 — closed PEND-07 (STRICT tables policy): AGENTS.md "Database" bullet added with user approval, new `scripts/check-migrations-strict.mjs` + `prek.toml` hook entry. Migration-number floor 42 so existing 41 pre-policy migrations don't false-positive; FTS5 `CREATE VIRTUAL TABLE` carve-out. PEND-07 file deleted from pending/.)
+> **Last updated:** 2026-05-03 (Session 657 — closed PEND-14 (boolean property type): native `value_bool` column on `block_properties` (migration 0042), `'boolean'` allowed in `property_definitions.value_type` CHECK constraint (migration 0043 STRICT), `SetPropertyPayload.value_bool` with `#[serde(default)]` for op-log back-compat, dispatch through 40+ Rust files, `setProperty` Tauri command refactored to bundle-arg shape (`SetPropertyArgs`) due to specta's 10-arg cap, frontend wrapper insulates 12 production callsites with zero changes, new `<Checkbox>` UI in `PropertyRowEditor`, `'boolean'` option in `AddPropertyPopover`. **Tech reviewer caught a real correctness bug** — `reverse/property_ops.rs` dropped `value_bool` on undo of `set_property`/`delete_property`; fixed + 2 regression tests. **UX reviewer caught 2 BLOCKING issues** — Checkbox 16-20px violated AGENTS.md 44px touch floor, Checkbox cell-height didn't match adjacent 28px Inputs; fixed orchestrator-direct via local hitbox wrapper. Filed MAINT-197 (systematic Checkbox primitive 44px hit-area) + MAINT-198 (indeterminate state for null `value_bool`, reverses plan's open-question #1 — needs user signal).)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-19 open items in the summary table; 21 detail entries (FE-* sub-tables don't appear in the summary).
+21 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -35,6 +35,8 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-194 | MAINT | `useBlockKeyboard` listener-attach perf — re-do MAINT-185 correctly (post-revert). Original ref-bag pattern broke listener stale-element invariant; need to memoize callbacks at call site OR add explicit `editor.view.dom.parentElement` watcher. | M | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | MAINT-196 | MAINT | Projected-agenda projection path drift: `list_projected_agenda_inner` cached path emits 112 entries for a `.+1w` block over a 390-day window vs 110 from `list_projected_agenda_on_the_fly` — a real 2-entry divergence on the dot-plus completion-based mode. Surfaced by the PEND-05 parity test (now `#[ignore]`d in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`); A/B/C/E blocks are in parity. The deeper fix is to refactor the projection logic into a single function called by both paths, eliminating the drift surface entirely. Re-enable the parity test once the refactor lands. | M | — |
+| MAINT-197 | MAINT | `Checkbox` UI primitive at `src/components/ui/checkbox.tsx:17,21` renders at 16/20 px — below the 44 px coarse-pointer floor mandated by AGENTS.md. PEND-14 added a local hitbox-wrapper in `PropertyRowEditor` as a stopgap; the systematic fix is to augment the primitive itself (mirroring how `Select` carries its own touch sizing). After landing, remove the local wrapper. | S | — |
+| MAINT-198 | MAINT | `PropertyRowEditor` boolean cell renders unchecked for both `value_bool === null` ("no value") and `value_bool === 0` ("false"). PEND-14's plan endorsed this conflation, but Radix Checkbox supports `checked="indeterminate"` which would distinguish the two. Reverses the plan's open-question #1 decision; do not land without a fresh user signal. | S | User signal (reverses PEND-14 plan decision) |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
@@ -449,6 +451,28 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Medium — projection logic is hot-path; refactor needs careful nextest coverage on every existing repeat-mode test.
 - **Impact:** Medium — invisible-but-real correctness bug, plus enabling the safety-net test prevents future drift.
 - **Status:** Open. Filed during PEND-05 close (session 654).
+
+### MAINT-197 — `Checkbox` UI primitive lacks 44 px coarse-pointer hit-area
+
+- **Domain:** Frontend / UI primitives
+- **Location:** `src/components/ui/checkbox.tsx:17,21` (`size-4` / `size-5`)
+- **What:** The `Checkbox` primitive renders at 16 px on default pointers and 20 px on coarse pointers — well below the 44 px floor mandated by AGENTS.md "Frontend Development Guidelines / Mandatory patterns / Touch targets". PEND-14 (boolean property type) tripped on this in `PropertyRowEditor`'s new boolean branch and applied a local hitbox-wrapper as a stopgap. Other primitives (Select trigger, FilterPill remove button, sidebar menu button) carry their own coarse-pointer sizing — Checkbox is the outlier. Existing call sites (`BugReportDialog.tsx:465`, `PropertyRowEditor.tsx:401-416` post-PEND-14) sit in larger touch-friendly contexts so the gap was invisible until now.
+- **Why it matters:** Every NEW Checkbox call site has to either remember to add a wrapper (likely-forgotten work) or get its own AGENTS.md violation. The systematic fix scales.
+- **Cost:** S — augment `src/components/ui/checkbox.tsx` itself: wrap the Radix indicator in a hitbox container with `[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11` (mirroring how `Select` carries its own touch sizing). After landing, remove the local wrapper from `PropertyRowEditor.tsx:402-416` (it becomes redundant).
+- **Risk:** Low — visual change is touch-only (default-pointer rendering stays at 16 px). Existing call sites get a free upgrade.
+- **Impact:** Medium — Android usability + AGENTS.md compliance + future-proofing.
+- **Status:** Open. Filed during PEND-14 close (session 657).
+
+### MAINT-198 — `PropertyRowEditor` boolean cell could use `indeterminate` for `value_bool === null`
+
+- **Domain:** Frontend / Properties
+- **Location:** `src/components/PropertyRowEditor.tsx:401-416` (`prop.value_bool === 1`)
+- **What:** Today the boolean checkbox renders unchecked when `prop.value_bool` is `null` (no value set yet) AND when it is `0` (explicitly false). The PEND-14 plan's open-question #1 endorsed this conflation ("absence of the property row = absence of value, distinct from `false`"), but Radix Checkbox supports `checked="indeterminate"` which would visually distinguish "not yet set" from "set to false". The current behavior silently commits the row to `false` on first toggle.
+- **Why it matters:** UX clarity for unset booleans. Low-impact for the current property surface (where boolean props are typically toggled deliberately), but matters more if the boolean type ever ships with import/migration paths that produce null values.
+- **Cost:** S — change `checked={prop.value_bool === 1}` to `checked={prop.value_bool === null ? 'indeterminate' : prop.value_bool === 1}` and add a test for the indeterminate render. May also need a primitive update to ensure the indeterminate visual is well-defined.
+- **Risk:** Low — purely additive UX clarity. Reverses the plan's open-question #1 decision; needs explicit user nod before landing.
+- **Impact:** Low.
+- **Status:** Open. Filed during PEND-14 close (session 657). Reverses the plan's deliberate decision; do not land without a fresh user signal.
 
 ## TEST — Backend test improvements
 

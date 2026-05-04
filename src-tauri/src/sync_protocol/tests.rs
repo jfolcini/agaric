@@ -1149,6 +1149,7 @@ async fn merge_resolves_property_conflict_lww() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_a.into(),
     )
@@ -1166,6 +1167,7 @@ async fn merge_resolves_property_conflict_lww() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_b.into(),
     )
@@ -1377,6 +1379,7 @@ async fn merge_property_idempotent_on_repeated_sync() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_a.into(),
     )
@@ -1393,6 +1396,7 @@ async fn merge_property_idempotent_on_repeated_sync() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_b.into(),
     )
@@ -1560,6 +1564,7 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_a.into(),
     )
@@ -1575,6 +1580,7 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_b.into(),
     )
@@ -1592,6 +1598,7 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_a.into(),
     )
@@ -1607,6 +1614,7 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_b.into(),
     )
@@ -1624,6 +1632,7 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_a.into(),
     )
@@ -1639,6 +1648,7 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_b.into(),
     )
@@ -1956,6 +1966,7 @@ async fn merge_property_conflict_equal_timestamps_uses_device_id_tiebreaker() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         same_ts.into(),
     )
@@ -1974,6 +1985,7 @@ async fn merge_property_conflict_equal_timestamps_uses_device_id_tiebreaker() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         same_ts.into(),
     )
@@ -3075,6 +3087,7 @@ async fn lww_resolves_property_conflict_by_timestamp() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_a.into(),
     )
@@ -3092,6 +3105,7 @@ async fn lww_resolves_property_conflict_by_timestamp() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         ts_b.into(),
     )

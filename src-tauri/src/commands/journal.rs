@@ -227,6 +227,7 @@ async fn resolve_or_create_journal_page(
         None,
         None,
         Some(space_id.to_string()),
+        None,
     )
     .await?;
 

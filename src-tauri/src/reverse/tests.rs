@@ -305,6 +305,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:00:00Z",
     )
@@ -318,6 +319,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:01:00Z",
     )
@@ -342,6 +344,7 @@ async fn reverse_first_set_property_produces_delete_property() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS,
     )
@@ -363,6 +366,7 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:00:00Z",
     )
@@ -682,6 +686,7 @@ async fn reverse_set_property_value_num() {
             value_num: Some(42.0),
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS,
     )
@@ -699,6 +704,7 @@ async fn reverse_set_property_value_num() {
             value_num: Some(99.0),
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:01:00Z",
     )
@@ -720,6 +726,7 @@ async fn reverse_set_property_value_date() {
             value_num: None,
             value_date: Some("2025-06-15".into()),
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS,
     )
@@ -737,12 +744,97 @@ async fn reverse_set_property_value_date() {
             value_num: None,
             value_date: Some("2025-12-31".into()),
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:01:00Z",
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_date, Some("2025-06-15".into())),
+        other => panic!("Expected SetProperty, got {:?}", other),
+    }
+}
+/// PEND-14 regression: reversing a `set_property` whose prior op was a
+/// boolean must restore the prior `value_bool`. Without this, the rebuilt
+/// payload would have all-None typed values, failing
+/// `validate_set_property` with a count == 0 error.
+#[tokio::test]
+async fn reverse_set_property_value_bool() {
+    let (pool, _dir) = test_pool().await;
+    let set1 = append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_PB"),
+            key: "flag".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: Some(true),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    assert!(matches!(
+        compute_reverse(&pool, TEST_DEVICE, set1.seq).await.unwrap(),
+        OpPayload::DeleteProperty(_)
+    ));
+    let set2 = append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_PB"),
+            key: "flag".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: Some(false),
+        }),
+        "2025-01-15T12:01:00Z",
+    )
+    .await;
+    match compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap() {
+        OpPayload::SetProperty(p) => {
+            assert_eq!(p.value_bool, Some(true));
+            assert!(p.value_text.is_none());
+            assert!(p.value_num.is_none());
+            assert!(p.value_date.is_none());
+            assert!(p.value_ref.is_none());
+        }
+        other => panic!("Expected SetProperty, got {:?}", other),
+    }
+}
+/// PEND-14 regression: reversing a `delete_property` whose prior op was a
+/// boolean must restore the prior `value_bool` so the redo path emits a
+/// valid `SetProperty` payload (exactly-one-value).
+#[tokio::test]
+async fn reverse_delete_property_restores_value_bool() {
+    let (pool, _dir) = test_pool().await;
+    append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_PBD"),
+            key: "flag".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: Some(true),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    let del = append_op(
+        &pool,
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::test_id("BLK_PBD"),
+            key: "flag".into(),
+        }),
+        "2025-01-15T12:01:00Z",
+    )
+    .await;
+    match compute_reverse(&pool, TEST_DEVICE, del.seq).await.unwrap() {
+        OpPayload::SetProperty(p) => assert_eq!(p.value_bool, Some(true)),
         other => panic!("Expected SetProperty, got {:?}", other),
     }
 }
@@ -920,6 +1012,7 @@ async fn reverse_set_reserved_property_todo_state() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS,
     )
@@ -940,6 +1033,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:00:00Z",
     )
@@ -953,6 +1047,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:01:00Z",
     )
@@ -974,6 +1069,7 @@ async fn reverse_delete_reserved_property_todo_state() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:00:00Z",
     )
@@ -1004,6 +1100,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:00:00Z",
     )
@@ -1017,6 +1114,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:01:00Z",
     )
@@ -1038,6 +1136,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:00:00Z",
     )
@@ -1051,6 +1150,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:01:00Z",
     )
@@ -1072,6 +1172,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:00:00Z",
     )
@@ -1085,6 +1186,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         "2025-01-15T12:01:00Z",
     )
@@ -1593,6 +1695,7 @@ async fn revert_ops_returns_results_newest_first_by_created_at_desc_seq_desc() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         })
     };
     let rec1 = append_op(&pool, mk("k1"), FIXED_TS).await;
@@ -1676,6 +1779,7 @@ async fn revert_ops_appends_reverse_op_without_mutating_original() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
         FIXED_TS,
     )

@@ -184,7 +184,7 @@ describe('SpaceManageDialog', () => {
         expect.objectContaining({
           blockId: PERSONAL.id,
           key: 'accent_color',
-          valueText: 'accent-violet',
+          value: expect.objectContaining({ value_text: 'accent-violet' }),
         }),
       )
     })
@@ -509,7 +509,7 @@ describe('SpaceManageDialog', () => {
         expect.objectContaining({
           blockId: PERSONAL.id,
           key: 'journal_template',
-          valueText: 'Daily focus',
+          value: expect.objectContaining({ value_text: 'Daily focus' }),
         }),
       )
     })

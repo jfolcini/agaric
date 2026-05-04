@@ -162,7 +162,14 @@ describe('DependencyIndicator', () => {
   it('uses cache to avoid redundant property fetches', async () => {
     const cache = makeCache() as DependencyIndicatorProps['propertiesCache']
     cache.current.set('B1', [
-      { key: 'blocked_by', value_text: null, value_num: null, value_date: null, value_ref: 'REF1' },
+      {
+        key: 'blocked_by',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: 'REF1',
+        value_bool: null,
+      },
     ])
     mockBatchResolve.mockResolvedValue([
       { id: 'REF1', content: 'Cached task', block_type: 'block', deleted: false },

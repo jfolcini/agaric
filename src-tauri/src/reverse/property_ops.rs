@@ -10,6 +10,11 @@ struct PriorPropertyRow {
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
+    /// PEND-14: undoing `set_property` / `delete_property` must restore the
+    /// prior typed value across all five columns. Dropping `value_bool` here
+    /// would silently emit an all-None payload that fails
+    /// `validate_set_property` (count == 0) when the prior op was a boolean.
+    value_bool: Option<bool>,
 }
 
 pub async fn reverse_set_property(
@@ -33,6 +38,7 @@ pub async fn reverse_set_property(
             value_num: p.value_num,
             value_date: p.value_date,
             value_ref: p.value_ref,
+            value_bool: p.value_bool,
         })),
         None => Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: payload.block_id,
@@ -67,6 +73,7 @@ pub async fn reverse_delete_property(
         value_num: prior.value_num,
         value_date: prior.value_date,
         value_ref: prior.value_ref,
+        value_bool: prior.value_bool,
     }))
 }
 
@@ -110,6 +117,7 @@ async fn find_prior_property(
                 value_num: p.value_num,
                 value_date: p.value_date,
                 value_ref: p.value_ref,
+                value_bool: p.value_bool,
             }))
         }
         None => Ok(None),
@@ -177,6 +185,7 @@ mod tests_m64 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             "2025-01-15T12:00:00Z",
         )
@@ -195,6 +204,7 @@ mod tests_m64 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             "2025-01-15T12:00:30Z",
         )
@@ -210,6 +220,7 @@ mod tests_m64 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             "2025-01-15T12:01:00Z",
         )
@@ -245,6 +256,7 @@ mod tests_m64 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             "2025-01-15T12:00:00Z",
         )
@@ -261,6 +273,7 @@ mod tests_m64 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             "2025-01-15T12:00:30Z",
         )
@@ -313,6 +326,7 @@ mod tests_m64 {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             "2025-01-15T12:00:00Z",
         )

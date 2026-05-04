@@ -64,6 +64,7 @@ fn sample_snapshot_data() -> SnapshotData {
                 value_num: None,
                 value_date: Some("2025-01-15".to_string()),
                 value_ref: None,
+                value_bool: None,
             }],
             block_links: vec![BlockLinkSnapshot {
                 source_id: "block-1".to_string(),
@@ -874,6 +875,7 @@ fn cbor_round_trip_option_f64() {
                     value_num: None,
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 },
                 BlockPropertySnapshot {
                     block_id: "b1".to_string(),
@@ -882,6 +884,7 @@ fn cbor_round_trip_option_f64() {
                     value_num: Some(42.5),
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 },
                 BlockPropertySnapshot {
                     block_id: "b1".to_string(),
@@ -890,6 +893,7 @@ fn cbor_round_trip_option_f64() {
                     value_num: Some(0.0),
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 },
                 BlockPropertySnapshot {
                     block_id: "b1".to_string(),
@@ -898,6 +902,7 @@ fn cbor_round_trip_option_f64() {
                     value_num: Some(-1.0e10),
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 },
                 BlockPropertySnapshot {
                     block_id: "b1".to_string(),
@@ -906,6 +911,7 @@ fn cbor_round_trip_option_f64() {
                     value_num: Some(f64::INFINITY),
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 },
                 BlockPropertySnapshot {
                     block_id: "b1".to_string(),
@@ -914,6 +920,7 @@ fn cbor_round_trip_option_f64() {
                     value_num: Some(f64::NEG_INFINITY),
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 },
                 BlockPropertySnapshot {
                     block_id: "b1".to_string(),
@@ -922,6 +929,7 @@ fn cbor_round_trip_option_f64() {
                     value_num: Some(f64::NAN),
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 },
             ],
             block_links: vec![],
@@ -1460,6 +1468,7 @@ async fn apply_snapshot_full_all_5_tables() {
                 value_num: None,
                 value_date: Some("2025-06-01".to_string()),
                 value_ref: None,
+                value_bool: None,
             }],
             block_links: vec![BlockLinkSnapshot {
                 source_id: "blk-child".to_string(),
@@ -1805,6 +1814,7 @@ fn large_text_field_round_trip() {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }],
             block_links: vec![],
             attachments: vec![],
@@ -1882,6 +1892,7 @@ fn all_nullable_fields_null_round_trip() {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }],
             block_links: vec![],
             attachments: vec![],
@@ -2872,6 +2883,7 @@ async fn apply_snapshot_rebuilds_caches() {
                 value_num: None,
                 value_date: Some("2025-06-01".to_string()),
                 value_ref: None,
+                value_bool: None,
             }],
             block_links: vec![],
             attachments: vec![],
@@ -3068,6 +3080,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }],
             block_links: vec![],
             attachments: vec![],
@@ -3581,6 +3594,7 @@ mod proptest_tests {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             })
     }
 
@@ -4080,6 +4094,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         })
         .collect();
 
@@ -4091,6 +4106,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         value_num: None,
         value_date: None,
         value_ref: None,
+        value_bool: None,
     });
     // Chunk-2, row 1: duplicates the (block_id, key) of a chunk-1 row,
     // violating PRIMARY KEY (block_id, key). This is the row that makes
@@ -4103,6 +4119,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         value_num: None,
         value_date: None,
         value_ref: None,
+        value_bool: None,
     });
 
     let data = SnapshotData {

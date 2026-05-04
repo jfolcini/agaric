@@ -470,6 +470,31 @@ pub struct PropertyRow {
     pub value_num: Option<f64>,
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
+    /// PEND-14: native boolean property storage. SQLite represents booleans
+    /// as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
+    pub value_bool: Option<i64>,
+}
+
+/// Input bundle for the `set_property` Tauri command — collects all
+/// possible typed values into a single struct so the IPC handler stays
+/// under specta's 10-positional-argument limit (PEND-14 added a 5th
+/// `value_bool` slot which would have made the flat signature exceed
+/// the cap). Exactly one field should be `Some` for non-reserved keys
+/// (the inner validator enforces this); reserved-key clears may pass
+/// all-None.
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, Type)]
+pub struct SetPropertyArgs {
+    #[serde(default)]
+    pub value_text: Option<String>,
+    #[serde(default)]
+    pub value_num: Option<f64>,
+    #[serde(default)]
+    pub value_date: Option<String>,
+    #[serde(default)]
+    pub value_ref: Option<String>,
+    /// PEND-14: native boolean property value (`true` / `false`).
+    #[serde(default)]
+    pub value_bool: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, sqlx::FromRow, specta::Type)]
@@ -701,6 +726,7 @@ struct BatchPropertyRow {
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
+    value_bool: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------

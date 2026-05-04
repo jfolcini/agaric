@@ -2180,6 +2180,7 @@ async fn revert_set_property_restores_prior_value() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2193,6 +2194,7 @@ async fn revert_set_property_restores_prior_value() {
         block.id.clone(),
         "importance".into(),
         Some("low".into()),
+        None,
         None,
         None,
         None,
@@ -2271,6 +2273,7 @@ async fn revert_set_property_first_produces_delete() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2331,6 +2334,7 @@ async fn revert_delete_property_restores_value() {
         None,
         None,
         Some("2025-06-15".into()),
+        None,
         None,
         None,
     )
@@ -3431,6 +3435,7 @@ async fn undo_page_op_reverses_set_property() {
         child.id.clone(),
         "importance".into(),
         Some("high".into()),
+        None,
         None,
         None,
         None,

@@ -448,6 +448,7 @@ async fn set_repeat_property(pool: &SqlitePool, mat: &Materializer, block_id: &s
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -469,6 +470,7 @@ async fn set_num_property(
         key.to_string(),
         None,
         Some(value),
+        None,
         None,
         None,
         None,
@@ -494,6 +496,7 @@ async fn set_date_property(
         None,
         None,
         Some(date.to_string()),
+        None,
         None,
         None,
     )
