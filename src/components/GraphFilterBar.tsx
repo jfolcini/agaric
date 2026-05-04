@@ -470,7 +470,11 @@ export function GraphFilterBar({
             {t('graph.filter.addFilter')}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72 p-3" align="start">
+        <PopoverContent
+          className="w-72 p-3"
+          align="start"
+          aria-label={t('graph.filter.addFilterPopoverLabel')}
+        >
           <AddFilterForm
             allTags={allTags}
             existingFilters={filters}

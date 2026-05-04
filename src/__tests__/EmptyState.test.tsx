@@ -25,6 +25,15 @@ describe('EmptyState', () => {
     expect(screen.getByText('Nothing here yet')).toBeInTheDocument()
   })
 
+  it('exposes a region landmark with the message as accessible name', () => {
+    render(<EmptyState message="Nothing here yet" />)
+
+    const region = screen.getByRole('region', { name: 'Nothing here yet' })
+    expect(region).toBeInTheDocument()
+    expect(region.tagName).toBe('SECTION')
+    expect(region).toHaveAttribute('aria-label', 'Nothing here yet')
+  })
+
   it('renders with icon, message, and description', () => {
     render(
       <EmptyState

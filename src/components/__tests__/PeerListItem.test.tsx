@@ -374,4 +374,33 @@ describe('PeerListItem', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+  // announce the popover purpose, not a generic "dialog".
+  describe('address popover aria-label (PEND-23 M3)', () => {
+    it('labels the open popover with device.editAddressPopoverLabel', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+
+      expect(await screen.findByRole('dialog', { name: 'Edit peer address' })).toBeInTheDocument()
+    })
+
+    it('axe is clean with the address popover open', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      const { container } = render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+      // Wait for the portalled PopoverContent so axe runs against a settled DOM.
+      await screen.findByRole('dialog', { name: 'Edit peer address' })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

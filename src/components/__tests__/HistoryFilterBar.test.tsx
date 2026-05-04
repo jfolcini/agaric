@@ -282,6 +282,20 @@ describe('HistoryFilterBar', () => {
       expect(screen.getByTestId('popover-content')).toBeInTheDocument()
     })
 
+    // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+    // announce the popover purpose, not a generic "dialog".
+    it('labels the popover with history.opTypeLegendPopoverLabel', () => {
+      const onFilterChange = vi.fn()
+      render(
+        <HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} {...baseProps} />,
+      )
+
+      expect(screen.getByTestId('popover-content')).toHaveAttribute(
+        'aria-label',
+        'Operation type legend',
+      )
+    })
+
     it('the popover content includes op-type descriptions for every op type', () => {
       const onFilterChange = vi.fn()
       render(

@@ -515,6 +515,24 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.getByText('Reschedule from the moment of completion.')).toBeInTheDocument()
   })
 
+  // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+  // announce the popover purpose, not a generic "dialog".
+  it('labels the open repeat-help popover with property.repeatHelpPopoverLabel', async () => {
+    const user = userEvent.setup()
+    const props = [makeProp('repeat', { value_text: '++ 1d' })]
+    setupMock(props, [makeDef('repeat')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Repeat')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByTestId('repeat-help-trigger'))
+
+    expect(await screen.findByRole('dialog', { name: 'Repeat syntax help' })).toBeInTheDocument()
+  })
+
   it('does not render the repeat-syntax help popover for non-repeat properties', async () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])

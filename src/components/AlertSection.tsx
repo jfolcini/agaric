@@ -15,7 +15,7 @@ import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { AlertListItem } from './ui/alert-list-item'
 import { PriorityBadge } from './ui/priority-badge'
-import { SectionTitle } from './ui/section-title'
+import { SectionTitle, type SectionTitleColor } from './ui/section-title'
 import { StatusBadge } from './ui/status-badge'
 
 type AlertVariant = 'destructive' | 'pending'
@@ -24,7 +24,7 @@ const variantConfig: Record<
   AlertVariant,
   {
     sectionClass: string
-    titleColor: string
+    titleColor: SectionTitleColor
     keyPrefix: string
     badgeState: 'overdue' | 'default'
     dateColor: string
@@ -32,14 +32,14 @@ const variantConfig: Record<
 > = {
   destructive: {
     sectionClass: 'overdue-section mb-3',
-    titleColor: 'text-destructive',
+    titleColor: 'overdue',
     keyPrefix: 'overdue',
     badgeState: 'overdue',
     dateColor: 'text-destructive/60',
   },
   pending: {
     sectionClass: 'upcoming-section mb-3',
-    titleColor: 'text-status-pending-foreground',
+    titleColor: 'pending',
     keyPrefix: 'upcoming',
     badgeState: 'default',
     dateColor: 'text-status-pending-foreground/60',

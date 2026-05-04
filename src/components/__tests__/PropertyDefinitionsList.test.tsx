@@ -708,4 +708,41 @@ describe('PropertyDefinitionsList', () => {
       expect(saveBtn).toBeDisabled()
     })
   })
+
+  // ── PEND-23 M3: PopoverContent labelled for screen-reader users ─────
+  describe('Edit options popover aria-label (PEND-23 M3)', () => {
+    it('labels the open popover with propertiesView.editOptionsPopoverLabel', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Status')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: /Edit options/i }))
+
+      expect(
+        screen.getByRole('dialog', { name: t('propertiesView.editOptionsPopoverLabel') }),
+      ).toBeInTheDocument()
+    })
+
+    it('axe is clean with the Edit options popover open', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
+      )
+
+      const { container } = render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Status')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /Edit options/i }))
+      // Wait for the portalled PopoverContent so axe runs against a settled DOM.
+      await screen.findByRole('dialog', { name: t('propertiesView.editOptionsPopoverLabel') })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

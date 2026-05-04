@@ -436,7 +436,11 @@ export function PropertyRow({
                   <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-72 text-xs space-y-2" align="start">
+              <PopoverContent
+                className="w-72 text-xs space-y-2"
+                align="start"
+                aria-label={t('property.repeatHelpPopoverLabel')}
+              >
                 <p className="font-medium">{t('property.repeatHelpTitle')}</p>
                 <dl className="space-y-1">
                   <div>

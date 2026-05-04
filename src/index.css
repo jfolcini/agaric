@@ -341,8 +341,8 @@
   --alert-note-foreground: oklch(0.85 0 0);
   --alert-note-border: oklch(0.45 0 0);
   /* Task checkbox state colors */
-  --task-done: oklch(0.55 0.18 149);
-  --task-doing: oklch(0.62 0.21 260);
+  --task-done: oklch(0.74 0.17 149);
+  --task-doing: oklch(0.7 0.18 260);
   --task-cancelled: oklch(0.55 0.02 260);
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */

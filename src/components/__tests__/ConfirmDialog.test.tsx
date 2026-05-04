@@ -9,16 +9,28 @@
  *  - a11y compliance (axe audit)
  *  - UX-259: destructive variant flips initial focus to Cancel so a reflex
  *    Enter on open dismisses the dialog instead of confirming.
+ *  - PEND-23 H3: when `useIsMobile()` is true the dialog renders as a Sheet
+ *    (`side="bottom"`) and the same controlled API + a11y guarantees still
+ *    hold (see `describe('mobile path …')` block).
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { ConfirmDialog } from '../ConfirmDialog'
+
+vi.mock('../../hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Default to the desktop path so existing test bodies keep their semantics.
+  mockedUseIsMobile.mockReturnValue(false)
 })
 
 describe('ConfirmDialog', () => {
@@ -306,6 +318,200 @@ describe('ConfirmDialog', () => {
     })
 
     it('has no a11y violations in destructive variant', async () => {
+      const { container } = render(<ConfirmDialog {...defaultProps} actionVariant="destructive" />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
+
+  // ─── PEND-23 H3: mobile path renders as a Sheet ────────────────────────────
+
+  describe('mobile path (Sheet, side="bottom")', () => {
+    const defaultProps = {
+      open: true,
+      onOpenChange: vi.fn(),
+      title: 'Confirm action?',
+      description: 'This will do something important.',
+      cancelLabel: 'Cancel',
+      actionLabel: 'Confirm',
+      onAction: vi.fn(),
+    }
+
+    beforeEach(() => {
+      mockedUseIsMobile.mockReturnValue(true)
+    })
+
+    it('renders as a Sheet (data-slot="sheet-content") instead of an alert dialog', () => {
+      const { container } = render(<ConfirmDialog {...defaultProps} />)
+
+      expect(container.ownerDocument.querySelector('[data-slot="sheet-content"]')).toBeTruthy()
+      expect(container.ownerDocument.querySelector('[data-slot="alert-dialog-content"]')).toBeNull()
+    })
+
+    it('Sheet content uses side="bottom" (anchored to viewport bottom)', () => {
+      const { container } = render(<ConfirmDialog {...defaultProps} />)
+
+      const content = container.ownerDocument.querySelector('[data-slot="sheet-content"]')
+      expect(content).toBeTruthy()
+      // Sheet's `side="bottom"` adds a `.bottom-0` anchor class.
+      expect(content?.className).toMatch(/bottom-0/)
+    })
+
+    it('renders title, description, and both buttons', () => {
+      render(<ConfirmDialog {...defaultProps} />)
+
+      expect(screen.getByText('Confirm action?')).toBeInTheDocument()
+      expect(screen.getByText('This will do something important.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cancel/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirm/ })).toBeInTheDocument()
+    })
+
+    it('fires onAction and closes when action button is clicked', async () => {
+      const user = userEvent.setup()
+      const onAction = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(<ConfirmDialog {...defaultProps} onAction={onAction} onOpenChange={onOpenChange} />)
+
+      await user.click(screen.getByRole('button', { name: /Confirm/ }))
+
+      expect(onAction).toHaveBeenCalledTimes(1)
+      // Sheet has no auto-close primitive — ConfirmDialog must close it.
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('fires onOpenChange(false) when cancel button is clicked', async () => {
+      const user = userEvent.setup()
+      const onOpenChange = vi.fn()
+
+      render(<ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />)
+
+      await user.click(screen.getByRole('button', { name: /Cancel/ }))
+
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('disables buttons and shows spinner when loading', () => {
+      render(<ConfirmDialog {...defaultProps} loading />)
+
+      const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
+
+      expect(actionBtn).toBeDisabled()
+      expect(cancelBtn).toBeDisabled()
+      expect(actionBtn.querySelector('.animate-spin')).toBeTruthy()
+    })
+
+    it('renders children slot content', () => {
+      render(
+        <ConfirmDialog {...defaultProps}>
+          <input data-testid="custom-input" placeholder="Extra content" />
+        </ConfirmDialog>,
+      )
+
+      expect(screen.getByTestId('custom-input')).toBeInTheDocument()
+    })
+
+    it('focuses the action button on open (non-destructive)', () => {
+      render(<ConfirmDialog {...defaultProps} />)
+
+      expect(screen.getByRole('button', { name: /Confirm/ })).toHaveFocus()
+    })
+
+    it('Escape key closes the Sheet', async () => {
+      const user = userEvent.setup()
+      const onOpenChange = vi.fn()
+
+      render(<ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />)
+
+      await user.keyboard('{Escape}')
+
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('forwards contentTestId to the Sheet content', () => {
+      const { container } = render(<ConfirmDialog {...defaultProps} contentTestId="my-confirm" />)
+
+      const content = container.ownerDocument.querySelector('[data-testid="my-confirm"]')
+      expect(content).toBeTruthy()
+      expect(content?.getAttribute('data-slot')).toBe('sheet-content')
+    })
+
+    it('forwards cancelTestId and actionTestId to the Sheet buttons', () => {
+      render(<ConfirmDialog {...defaultProps} cancelTestId="my-cancel" actionTestId="my-action" />)
+
+      expect(screen.getByTestId('my-cancel')).toBeInTheDocument()
+      expect(screen.getByTestId('my-action')).toBeInTheDocument()
+    })
+
+    it('action buttons meet the touch-target size on coarse pointers (≥ 44 px)', () => {
+      render(<ConfirmDialog {...defaultProps} />)
+
+      const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
+
+      // Button default size carries `[@media(pointer:coarse)]:h-11` (44 px) —
+      // the class is the contract surfaced to coarse-pointer devices.
+      expect(actionBtn.className).toMatch(/\[@media\(pointer:coarse\)\]:h-11/)
+      expect(cancelBtn.className).toMatch(/\[@media\(pointer:coarse\)\]:h-11/)
+    })
+
+    it('has no a11y violations on the mobile path', async () => {
+      const { container } = render(<ConfirmDialog {...defaultProps} />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+
+    it('destructive variant focuses Cancel and reflex Enter dismisses without firing onAction', async () => {
+      const user = userEvent.setup()
+      const onAction = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(
+        <ConfirmDialog
+          {...defaultProps}
+          actionVariant="destructive"
+          onAction={onAction}
+          onOpenChange={onOpenChange}
+        />,
+      )
+
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
+      expect(cancelBtn).toHaveFocus()
+
+      await user.keyboard('{Enter}')
+
+      expect(onAction).not.toHaveBeenCalled()
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('destructive action click still fires onAction and closes', async () => {
+      const user = userEvent.setup()
+      const onAction = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(
+        <ConfirmDialog
+          {...defaultProps}
+          actionVariant="destructive"
+          onAction={onAction}
+          onOpenChange={onOpenChange}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /Confirm/ }))
+
+      expect(onAction).toHaveBeenCalledTimes(1)
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('has no a11y violations in destructive variant on mobile', async () => {
       const { container } = render(<ConfirmDialog {...defaultProps} actionVariant="destructive" />)
 
       await waitFor(async () => {

@@ -509,7 +509,7 @@ function App() {
         onOpenChange={setShowNoPeersDialog}
         onOpenSettings={handleOpenSyncSettings}
       />
-      <Toaster position="bottom-right" richColors closeButton />
+      <Toaster position={isMobile ? 'top-center' : 'bottom-right'} richColors closeButton />
     </BootGate>
   )
 }

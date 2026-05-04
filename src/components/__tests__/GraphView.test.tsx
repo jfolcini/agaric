@@ -353,14 +353,43 @@ describe('GraphView', () => {
 
     render(<GraphView />)
 
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Failed to load graph data')
+    // PEND-23 M9: error is now rendered via the shared EmptyState primitive
+    // (h2 heading), not a `role="alert"` div. Query by the localized message
+    // to confirm the branch is taken.
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Failed to load graph data' }),
+    ).toBeInTheDocument()
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
       'GraphView',
       'failed to load graph data',
       undefined,
       expect.any(Error),
     )
+  })
+
+  // PEND-23 M9 regression: when the IPC fetch rejects, the EmptyState
+  // primitive should render with the localized error message and the graph
+  // SVG should NOT be in the DOM (the error branch returns early).
+  it('renders the EmptyState fallback (not the SVG) on fetch failure', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.reject(new Error('network failure'))
+      if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
+      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    // EmptyState renders an <h2> with the message — assert it's the
+    // localized `graph.loadFailed` string.
+    expect(
+      await screen.findByRole('heading', { level: 2, name: t('graph.loadFailed') }),
+    ).toBeInTheDocument()
+
+    // The graph chrome (SVG, filter bar, zoom buttons) must NOT render.
+    expect(screen.queryByTestId('graph-svg')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('graph-view')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations with empty state', async () => {
@@ -771,8 +800,11 @@ describe('GraphView', () => {
 
       render(<GraphView />)
 
-      const alert = await screen.findByRole('alert')
-      expect(alert).toHaveTextContent('Failed to load graph data')
+      // PEND-23 M9: error renders via the EmptyState primitive (h2), not
+      // a `role="alert"` div.
+      expect(
+        await screen.findByRole('heading', { level: 2, name: 'Failed to load graph data' }),
+      ).toBeInTheDocument()
     })
 
     it('handles pages with no links', async () => {
@@ -1004,7 +1036,9 @@ describe('GraphView', () => {
 
       render(<GraphView />)
 
-      await screen.findByRole('alert')
+      // PEND-23 M9: wait for the EmptyState heading (h2) so we know the
+      // error branch has been taken before asserting on logger.
+      await screen.findByRole('heading', { level: 2, name: 'Failed to load graph data' })
 
       expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
         'GraphView',

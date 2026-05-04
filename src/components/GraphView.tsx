@@ -12,7 +12,7 @@
  * (MAINT-56). SVG rendering, zoom, and drag are owned by the hook.
  */
 
-import { Maximize2, Minus, Network, Plus } from 'lucide-react'
+import { AlertCircle, Maximize2, Minus, Network, Plus } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
@@ -174,12 +174,10 @@ export function GraphView(): React.ReactElement {
   })
 
   if (loading) return <LoadingSkeleton count={3} height="h-16" />
-  if (error)
-    return (
-      <div role="alert" className="rounded-md bg-destructive/10 p-4 text-sm text-destructive">
-        {error}
-      </div>
-    )
+  // PEND-23 M9: render `error` via the shared EmptyState primitive instead
+  // of an ad-hoc `role="alert"` card so the failure mode reuses the same
+  // visual language as the empty / no-data path.
+  if (error) return <EmptyState icon={AlertCircle} message={error} />
   if (nodes.length === 0) return <EmptyState icon={Network} message={t('graph.noPages')} />
 
   return (

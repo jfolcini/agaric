@@ -164,6 +164,7 @@ export const properties: Record<string, string> = {
   'property.selectValue': '{{key}}: {{value}}',
   'propertiesView.optionsJsonLabel': 'Options JSON',
   'propertiesView.invalidJsonHint': 'Invalid JSON: {{error}}',
+  'propertiesView.editOptionsPopoverLabel': 'Edit property options',
   'tagFilter.notMode': 'NOT',
   'tagFilter.notModeTooltip': 'Show blocks WITHOUT any selected tag',
   'property.saved': 'Property saved',
@@ -180,6 +181,7 @@ export const properties: Record<string, string> = {
   'property.repeatHelpFromCompletion': 'Reschedule from the moment of completion.',
   'property.repeatHelpExample':
     'Example: `++ 1d` repeats daily catching up; `.+ 1w` waits a week from when you marked it done.',
+  'property.repeatHelpPopoverLabel': 'Repeat syntax help',
   'filter.operatorContains': 'contains',
   'filter.operatorStartsWith': 'starts with',
   'filter.isSet': 'is set',

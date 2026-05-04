@@ -112,6 +112,17 @@ describe('GraphFilterBar', () => {
     ).not.toBeInTheDocument()
   })
 
+  // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+  // announce the popover purpose, not a generic "dialog".
+  it('labels the add-filter popover with graph.filter.addFilterPopoverLabel', () => {
+    render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+    expect(screen.getByTestId('popover-content')).toHaveAttribute(
+      'aria-label',
+      t('graph.filter.addFilterPopoverLabel'),
+    )
+  })
+
   // UX-354: visible "Filters" text label adjacent to the icon so sighted touch
   // users recognize the bar as a filter UI. Hidden on mobile (`hidden sm:inline`)
   // to preserve the icon-only treatment on coarse-pointer devices.

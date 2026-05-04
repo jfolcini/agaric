@@ -193,6 +193,16 @@ describe('Input', () => {
     expect(el.className).toContain('[@media(pointer:coarse)]:h-11')
   })
 
+  // PEND-23 M8: bumps font-size to `text-base` on coarse pointers so iOS
+  // doesn't auto-zoom when focusing the field. Default `text-sm` (≈14 px)
+  // triggers Safari's auto-zoom; `text-base` (≈16 px) suppresses it.
+  it('declares coarse-pointer font-size class (text-base)', () => {
+    render(<Input aria-label="Field" />)
+
+    const el = screen.getByRole('textbox', { name: 'Field' })
+    expect(el.className).toContain('[@media(pointer:coarse)]:text-base')
+  })
+
   // -- Focus-visible ring -----------------------------------------------------
 
   it('includes focus-visible ring classes', () => {

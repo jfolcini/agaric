@@ -24,7 +24,7 @@ What remains: **4 HIGH, 10 MEDIUM, 17 LOW** confirmed findings. None are
 critical bugs. Most are small per-site fixes; two (M6 focus-ring extraction,
 H3 Dialog→Sheet on mobile) are slightly more invasive but still narrow.
 
-> **Status (session 665):** H1, H2, H4 done; M1, M2, M4, M5 done. **Remaining: 1 HIGH (H3), 6 MEDIUM (M3, M6, M7, M8, M9, M10), 17 LOW.** Cherry-pick by severity in future sessions.
+> **Status (sessions 665 + 666):** all 4 actionable HIGH closed (H1, H2, H3, H4). MEDIUM done: M1, M2, M3, M4, M5, M7, M8, M9. LOW done: L1, L8, L11. **Remaining: 2 MEDIUM (M6 focus-ring extraction, M10 keyboard-nav hook extraction), 14 LOW.** Cherry-pick by severity in future sessions.
 
 Cost: **S–M** if cherry-picked individually, **L** if all done in one bundle
 (estimated ~30–50 LOC per item × 31 items + ~2 new shared utilities).
@@ -60,7 +60,7 @@ scroll on mobile and consistent scrollbar styling.
 **Fix:** wrap the `<pre>` in `<ScrollArea>` or apply the established
 `ScrollArea` shell pattern used in `App.tsx`. Cost: ~5 LOC. Risk: trivial.
 
-### H3 — Dialogs do not adapt to a Sheet on mobile
+### ~~H3 — Dialogs do not adapt to a Sheet on mobile~~ ✅ done session 666 (ConfirmDialog only; standalone Dialog consumers tracked as MAINT)
 
 `ConfirmDialog`, `BugReportDialog`, `HistoryRestoreDialog` (wraps
 `ConfirmDialog`), `ConflictKeepDialog` (wraps `ConfirmDialog`),
@@ -125,7 +125,7 @@ before clearing results. Cost: ~3 LOC + 1 test (mock `listTagsByPrefix`
 to reject, assert `logger.warn` called, assert results cleared). Risk:
 trivial.
 
-### M3 — `PopoverContent` lacks `aria-label` on most menu/filter popovers
+### ~~M3 — `PopoverContent` lacks `aria-label` on most menu/filter popovers~~ ✅ done session 666
 
 Verified gaps (PopoverContent has no `aria-label` and no inner element
 labelling the popover as a whole):
@@ -207,7 +207,7 @@ This finding also subsumes L12 (a few `outline-none` callsites that lack a
 focus-visible replacement) — the same utility solves both. Cost: M (~50 LOC
 deletion across 50+ files, no behavior change). Risk: low if done with care.
 
-### M7 — `SectionTitle` accepts a raw `color: string` prop
+### ~~M7 — `SectionTitle` accepts a raw `color: string` prop~~ ✅ done session 666 (mapped 'overdue' → text-destructive; 'done'/'active'/'pending' → -foreground tokens)
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/ui/section-title.tsx" lines="1-22" />
 
@@ -223,7 +223,7 @@ internally to `text-status-*` tokens. Update the existing test. Cost:
 component has few callers; any caller passing a non-semantic class will
 surface as a TS error.
 
-### M8 — `Input` font-size is unconditionally `text-sm`
+### ~~M8 — `Input` font-size is unconditionally `text-sm`~~ ✅ done session 666 (Input + Textarea; SearchInput inherits)
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/ui/input.tsx" lines="11-13" />
 
@@ -236,7 +236,7 @@ Safari triggers zoom-on-focus for `<input>` with font-size <16 px.
 string. Cost: ~1 LOC. Risk: trivial. Apply the same to `Textarea` /
 `SearchInput` for consistency if a quick check shows the same issue.
 
-### M9 — `GraphView` error state is set but not consistently rendered
+### ~~M9 — `GraphView` error state is set but not consistently rendered~~ ✅ done session 666
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/GraphView.tsx" lines="78-78" />
 
@@ -269,7 +269,7 @@ Cost: ~80 LOC (new hook + 2 panel call-site shrinks + tests). Risk: low.
 
 ## LOW — polish / consistency
 
-### L1 — `EmptyState` is a plain `<div>` with no landmark
+### ~~L1 — `EmptyState` is a plain `<div>` with no landmark~~ ✅ done session 666 (`<section aria-label>` — implicit region role)
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/EmptyState.tsx" lines="19-31" />
 
@@ -337,7 +337,7 @@ When the preview dialog opens, focus is not explicitly placed on a focusable
 element. Add `autoFocus` to the close button (or pass `initialFocus` ref).
 Cost: ~3 LOC.
 
-### L8 — `Toaster` position hardcoded `bottom-right`
+### ~~L8 — `Toaster` position hardcoded `bottom-right`~~ ✅ done session 666
 
 <ref_snippet file="/home/javier/dev/agaric/src/App.tsx" lines="510-515" />
 
@@ -367,7 +367,7 @@ is filed as "measure first, then act". Run a contrast check (e.g., against
 or give `--ring` per-theme values matching the chroma adjustment used in
 `prefers-contrast: more` (lines 1100–1107). Cost: ~30 min audit + ≤5 LOC.
 
-### L11 — Two task-state tokens are duplicated between light and dark
+### ~~L11 — Two task-state tokens are duplicated between light and dark~~ ✅ done session 666
 
 <ref_snippet file="/home/javier/dev/agaric/src/index.css" lines="200-203" />
 

@@ -126,7 +126,11 @@ export function HistoryFilterBar({
             <HelpCircle className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-80" align="start">
+        <PopoverContent
+          className="w-80"
+          align="start"
+          aria-label={t('history.opTypeLegendPopoverLabel')}
+        >
           <h4 className="text-sm font-semibold mb-2">{t('history.opTypeLegendTitle')}</h4>
           <dl className="text-xs space-y-1.5">
             {OP_TYPES.map((opType) => (
