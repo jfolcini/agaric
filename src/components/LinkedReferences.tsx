@@ -6,15 +6,12 @@
  * Uses cursor-based pagination with "Load more" button.
  */
 
-import { SlidersHorizontal } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -56,7 +53,6 @@ export function LinkedReferences({
   const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [sourcePageIncluded, setSourcePageIncluded] = useState<string[]>([])
   const [sourcePageExcluded, setSourcePageExcluded] = useState<string[]>([])
   // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
@@ -192,7 +188,6 @@ export function LinkedReferences({
     setSort((prev) => (prev !== null ? null : prev))
     setSourcePageIncluded((prev) => (prev.length > 0 ? [] : prev))
     setSourcePageExcluded((prev) => (prev.length > 0 ? [] : prev))
-    setShowAdvancedFilters(false)
   }, [pageId])
 
   const toggleExpanded = useCallback(() => {
@@ -298,7 +293,7 @@ export function LinkedReferences({
       data-testid="linked-references"
       aria-label={t('references.panelLabel')}
     >
-      {/* Main header -- always visible, outside ListViewState, with inline filter toggle */}
+      {/* Main header -- always visible, outside ListViewState, with inline source-page filter */}
       <div className="flex flex-nowrap items-center gap-1 min-w-0">
         <CollapsiblePanelHeader
           isCollapsed={!expanded}
@@ -308,26 +303,15 @@ export function LinkedReferences({
           {headerLabel}
         </CollapsiblePanelHeader>
         {expanded && (totalCount > 0 || hasActiveFilters) && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="shrink-0 h-7 gap-1 text-muted-foreground"
-                onClick={() => setShowAdvancedFilters((prev) => !prev)}
-                aria-expanded={showAdvancedFilters}
-                aria-label={
-                  showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')
-                }
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{t('references.filtersLabel')}</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')}
-            </TooltipContent>
-          </Tooltip>
+          <SourcePageFilter
+            sourcePages={sourcePages}
+            included={sourcePageIncluded}
+            excluded={sourcePageExcluded}
+            onChange={(inc, exc) => {
+              setSourcePageIncluded(inc)
+              setSourcePageExcluded(exc)
+            }}
+          />
         )}
         {expanded && filters.length > 0 && (
           <Badge
@@ -357,34 +341,19 @@ export function LinkedReferences({
         >
           {() => (
             <div className="linked-references-content mt-1 space-y-2">
-              {/* Filter controls */}
-              <div className="linked-references-filters flex flex-col sm:flex-row sm:items-center gap-2 px-2">
-                <SourcePageFilter
-                  sourcePages={sourcePages}
-                  included={sourcePageIncluded}
-                  excluded={sourcePageExcluded}
-                  onChange={(inc, exc) => {
-                    setSourcePageIncluded(inc)
-                    setSourcePageExcluded(exc)
-                  }}
+              <div className="linked-references-advanced-filters px-2">
+                <BacklinkFilterBuilder
+                  filters={filters}
+                  sort={sort}
+                  onFiltersChange={setFilters}
+                  onSortChange={setSort}
+                  totalCount={totalCount}
+                  filteredCount={totalCount}
+                  propertyKeys={propertyKeys}
+                  tags={tags}
+                  tagResolver={resolveTagName}
                 />
               </div>
-
-              {showAdvancedFilters && (
-                <div className="linked-references-advanced-filters px-2">
-                  <BacklinkFilterBuilder
-                    filters={filters}
-                    sort={sort}
-                    onFiltersChange={setFilters}
-                    onSortChange={setSort}
-                    totalCount={totalCount}
-                    filteredCount={totalCount}
-                    propertyKeys={propertyKeys}
-                    tags={tags}
-                    tagResolver={resolveTagName}
-                  />
-                </div>
-              )}
 
               {/* biome-ignore lint/a11y/useSemanticElements: keyboard nav container wrapping BacklinkGroupRenderer */}
               <div

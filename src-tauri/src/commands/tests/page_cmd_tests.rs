@@ -310,6 +310,222 @@ async fn resolve_page_by_alias_case_insensitive() {
 }
 
 // ======================================================================
+// list_page_aliases_by_prefix (PEND-34)
+// ======================================================================
+//
+// Prefix-indexed alias autocomplete used by the `[[` page-link picker.
+// Mirrors the `list_tags_by_prefix_inner_*` test trio: returns matches,
+// case-insensitive, soft-delete excluded, limit honoured, exact-first
+// ordering by length, escape-like correctness for `_` / `%` literals.
+// Plus PEND-34 Q3 — active-space scoping when `space_id` is `Some`.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_returns_matching() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE_W1", "page", "Work One", None, Some(0)).await;
+    insert_block(&pool, "PAGE_W2", "page", "Work Two", None, Some(0)).await;
+    insert_block(&pool, "PAGE_P", "page", "Personal", None, Some(0)).await;
+
+    set_page_aliases_inner(&pool, "PAGE_W1", vec!["work-meeting".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_W2", vec!["work-email".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_P", vec!["personal".into()])
+        .await
+        .unwrap();
+
+    let result = list_page_aliases_by_prefix_inner(&pool, "work-", None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 2, "should match both work- aliases");
+    let aliases: Vec<&str> = result.iter().map(|(_, a, _)| a.as_str()).collect();
+    assert!(aliases.contains(&"work-email"));
+    assert!(aliases.contains(&"work-meeting"));
+    // Titles travel with the row so the picker renders without a second
+    // round trip.
+    let titles: Vec<Option<&str>> = result.iter().map(|(_, _, t)| t.as_deref()).collect();
+    assert!(titles.contains(&Some("Work One")));
+    assert!(titles.contains(&Some("Work Two")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_case_insensitive() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE_CI", "page", "Case Page", None, Some(0)).await;
+    set_page_aliases_inner(&pool, "PAGE_CI", vec!["MyAlias".into()])
+        .await
+        .unwrap();
+
+    let result = list_page_aliases_by_prefix_inner(&pool, "myAL", None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 1, "case-insensitive prefix should match");
+    assert_eq!(result[0].0, "PAGE_CI");
+    assert_eq!(result[0].1, "MyAlias");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_excludes_deleted_pages() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE_LIVE", "page", "Alive", None, Some(0)).await;
+    insert_block(&pool, "PAGE_GONE", "page", "Tombstoned", None, Some(0)).await;
+
+    set_page_aliases_inner(&pool, "PAGE_LIVE", vec!["zoo".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_GONE", vec!["zoom".into()])
+        .await
+        .unwrap();
+
+    // Soft-delete the second page. Its alias must not surface.
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = 'PAGE_GONE'")
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = list_page_aliases_by_prefix_inner(&pool, "zo", None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.len(),
+        1,
+        "soft-deleted page's alias must be excluded"
+    );
+    assert_eq!(result[0].0, "PAGE_LIVE");
+    assert_eq!(result[0].1, "zoo");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_respects_limit() {
+    let (pool, _dir) = test_pool().await;
+
+    for i in 0..5 {
+        let id = format!("PAGE_L{i}");
+        insert_block(&pool, &id, "page", &format!("Limit {i}"), None, Some(0)).await;
+        // Suffix the index so the aliases sort deterministically by
+        // `length, alias` (all length 7 → alphabetical secondary).
+        set_page_aliases_inner(&pool, &id, vec![format!("limit-{i}")])
+            .await
+            .unwrap();
+    }
+
+    let result = list_page_aliases_by_prefix_inner(&pool, "limit-", Some(2), None)
+        .await
+        .unwrap();
+    assert_eq!(result.len(), 2, "limit=2 should return exactly 2 aliases");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_orders_shortest_first() {
+    // ORDER BY length(alias), alias — exact-typed alias (the shortest
+    // one matching the prefix) bubbles to the top, then alphabetical.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE_A", "page", "Page A", None, Some(0)).await;
+    insert_block(&pool, "PAGE_B", "page", "Page B", None, Some(0)).await;
+    insert_block(&pool, "PAGE_C", "page", "Page C", None, Some(0)).await;
+
+    set_page_aliases_inner(&pool, "PAGE_A", vec!["pp".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_B", vec!["ppp".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_C", vec!["pproject".into()])
+        .await
+        .unwrap();
+
+    let result = list_page_aliases_by_prefix_inner(&pool, "pp", None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 3);
+    // Length 2 < 3 < 8 — the shortest must come first so a typed-in-full
+    // exact match isn't buried below partial-prefix neighbours.
+    assert_eq!(result[0].1, "pp");
+    assert_eq!(result[1].1, "ppp");
+    assert_eq!(result[2].1, "pproject");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_escapes_like_metachars() {
+    // Mirrors PERF-27's `filter_property_text_contains_pushed_into_sql`:
+    // a literal `_` in the query must be matched as a literal, not as
+    // SQLite's LIKE single-char wildcard. Without `escape_like` the
+    // query `a_b` would also match `axb`, `a-b`, etc. — the test pins
+    // the escape behaviour so a future refactor can't silently drop it.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE_LIT", "page", "Literal", None, Some(0)).await;
+    insert_block(&pool, "PAGE_OTH", "page", "Other", None, Some(0)).await;
+
+    set_page_aliases_inner(&pool, "PAGE_LIT", vec!["a_b".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_OTH", vec!["axb".into()])
+        .await
+        .unwrap();
+
+    let result = list_page_aliases_by_prefix_inner(&pool, "a_", None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.len(),
+        1,
+        "literal `_` must not behave as a LIKE wildcard"
+    );
+    assert_eq!(result[0].1, "a_b");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_scopes_to_active_space() {
+    // PEND-34 Q3 — when `space_id` is Some, only aliases whose page
+    // carries `space = ?space_id` may surface. Mirrors the FEAT-3p4
+    // `(? IS NULL OR ... IN (...))` short-circuit applied elsewhere in
+    // the picker so cross-space aliases don't leak into the popup.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE_SP_A", "page", "In Space A", None, Some(0)).await;
+    insert_block(&pool, "PAGE_SP_B", "page", "In Space B", None, Some(0)).await;
+
+    set_page_aliases_inner(&pool, "PAGE_SP_A", vec!["alpha-a".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_SP_B", vec!["alpha-b".into()])
+        .await
+        .unwrap();
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    assign_to_space(&pool, "PAGE_SP_A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "PAGE_SP_B", TEST_SPACE_B_ID).await;
+
+    // Scoped to space A: only PAGE_SP_A's alias surfaces.
+    let scoped = list_page_aliases_by_prefix_inner(&pool, "alpha-", None, Some(TEST_SPACE_ID))
+        .await
+        .unwrap();
+    assert_eq!(scoped.len(), 1, "scoped query must filter to space A");
+    assert_eq!(scoped[0].0, "PAGE_SP_A");
+
+    // Unscoped (None): both spaces' aliases surface — proves the filter
+    // is opt-in, not on by default.
+    let unscoped = list_page_aliases_by_prefix_inner(&pool, "alpha-", None, None)
+        .await
+        .unwrap();
+    assert_eq!(unscoped.len(), 2);
+}
+
+// ======================================================================
 // export_page_markdown (#519)
 // ======================================================================
 //

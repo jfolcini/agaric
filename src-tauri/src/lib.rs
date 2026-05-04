@@ -121,6 +121,7 @@ macro_rules! agaric_commands {
             // Page aliases (#598)
             $crate::commands::set_page_aliases,
             $crate::commands::get_page_aliases,
+            $crate::commands::list_page_aliases_by_prefix,
             $crate::commands::resolve_page_by_alias,
             // Markdown export (#519)
             $crate::commands::export_page_markdown,

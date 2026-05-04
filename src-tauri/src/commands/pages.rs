@@ -136,6 +136,76 @@ pub async fn resolve_page_by_alias_inner(
     Ok(result)
 }
 
+/// Soft cap on the number of alias-prefix matches the picker may surface
+/// per keystroke. Mirrors `tag_query::MAX_TAGS_PREFIX` in shape (named
+/// const, single-source-of-truth) and is wide enough that the popup's
+/// own UI cap (20) is the binding limit in practice.
+const MAX_PAGE_ALIASES_PREFIX: i64 = 50;
+
+/// Row shape returned by [`list_page_aliases_by_prefix_inner`]: the page
+/// id, the alias text that matched (so the frontend can render
+/// `Page Title (alias: X)` without a second round trip), and the page's
+/// current title (`blocks.content`).
+struct PageAliasPrefixRow {
+    page_id: String,
+    alias: String,
+    title: Option<String>,
+}
+
+/// List page aliases whose alias starts with `prefix` (case-insensitive,
+/// `COLLATE NOCASE` matches the index on `page_aliases.alias`).
+///
+/// Returns `(page_id, alias, title)` rows so the frontend can render
+/// "Page Title (alias: pp)" without a second round trip per match.
+///
+/// Bounded by [`MAX_PAGE_ALIASES_PREFIX`] to keep the popup responsive
+/// even if a user has hundreds of single-letter-prefixed aliases.
+///
+/// `space_id` (FEAT-3p4 / PEND-34) — when `Some`, restricts the result
+/// set to aliases pointing at pages whose `space` property equals
+/// `space_id`. Mirrors the `(?N IS NULL OR ... IN (...))` short-circuit
+/// pattern used by `pagination::list_by_tag` and friends. `None` keeps
+/// the cross-space behaviour for callers that have not migrated.
+///
+/// Ordering: `length(alias), alias` puts the exact match (typed in
+/// full) at the top, then alphabetical. SQLite cannot satisfy this
+/// ordering directly from `idx_page_aliases_alias` (the index is
+/// keyed on alias only, not its length), so an in-memory sort runs
+/// over the LIKE-prefix candidate set; the `LIMIT` keeps that set
+/// small (≤ 50) so the sort is effectively free.
+#[instrument(skip(pool), err)]
+pub async fn list_page_aliases_by_prefix_inner(
+    pool: &SqlitePool,
+    prefix: &str,
+    limit: Option<i64>,
+    space_id: Option<&str>,
+) -> Result<Vec<(String, String, Option<String>)>, AppError> {
+    let like_pattern = format!("{}%", crate::sql_utils::escape_like(prefix));
+    let effective_limit = limit.unwrap_or(MAX_PAGE_ALIASES_PREFIX);
+    let rows = sqlx::query_as!(
+        PageAliasPrefixRow,
+        r#"SELECT pa.page_id AS "page_id!", pa.alias AS "alias!", b.content AS "title?"
+         FROM page_aliases pa
+         JOIN blocks b ON b.id = pa.page_id
+         WHERE pa.alias LIKE ?1 ESCAPE '\' COLLATE NOCASE
+           AND b.deleted_at IS NULL
+           AND (?3 IS NULL OR b.id IN (
+                SELECT bp.block_id FROM block_properties bp
+                WHERE bp.key = 'space' AND bp.value_ref = ?3))
+         ORDER BY length(pa.alias), pa.alias
+         LIMIT ?2"#,
+        like_pattern,
+        effective_limit,
+        space_id,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.page_id, r.alias, r.title))
+        .collect())
+}
+
 /// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`
 /// in content, preserving all other markdown formatting.
 fn resolve_ulids_for_export(
@@ -883,6 +953,22 @@ pub async fn resolve_page_by_alias(
     alias: String,
 ) -> Result<Option<(String, Option<String>)>, AppError> {
     resolve_page_by_alias_inner(&read_pool.0, &alias)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list page aliases by prefix.
+/// Delegates to [`list_page_aliases_by_prefix_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_page_aliases_by_prefix(
+    read_pool: State<'_, ReadPool>,
+    prefix: String,
+    limit: Option<i64>,
+    space_id: Option<String>,
+) -> Result<Vec<(String, String, Option<String>)>, AppError> {
+    list_page_aliases_by_prefix_inner(&read_pool.0, &prefix, limit, space_id.as_deref())
         .await
         .map_err(sanitize_internal_error)
 }

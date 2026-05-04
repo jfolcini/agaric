@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-04 (Session 662 — finished PEND-20 / PEND-25 / PEND-26: PEND-20 C (materializer descendants temp-table) + G (`blocksById` Map in `PageBlockStore` for O(1) lookups, ~9 consumers converted) + PEND-25 L2+L9 (paired `Arc<OpRecord>` shift through `enqueue_*_background` + `PendingDispatch`) + PEND-26 N3 + PEND-24 H2 (recurrence `++` overflow + cap-exceeded both surface as `Err(AppError::Validation)`). Deleted PEND-20, PEND-25, PEND-26 plan files; remaining PEND-25 conditional/blocked items (M1 Android, L15+L16 speculative, M2 oauth2) re-tracked here as MAINT-91 / MAINT-208 / MAINT-209. ~25 new tests (≈11 Rust + 14 frontend); 3485/3485 nextest + 9343/9343 vitest pass; `prek run --all-files` clean.)
+> **Last updated:** 2026-05-04 (Session 663 — closed PEND-19 + PEND-31 + PEND-32 + PEND-34 in one batch: `RecentPagesStrip` chip + single-line scroll redesign (PEND-19 + PEND-32 bundled per plan), references-panel filter affordance consolidation (PEND-31), `[[` page-link picker progressive alias filtering (PEND-34, new `list_page_aliases_by_prefix` Tauri command + active-space scoping). Deleted 4 plan files. 3 new MAINT items filed (MAINT-210 `references.moreFilters` dead key; MAINT-211 edge-fade affordance; MAINT-212 raise `MAX_RETAINED`). +24 frontend tests (33 RecentPagesStrip / 5 References / 4 picker) + 7 Rust tests. 9351/9351 vitest + 3491/3492 nextest (1 pre-existing perf flake unrelated) + `prek run --all-files` clean.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-30 open items in the summary table; 32 detail entries (FE-* sub-tables don't appear in the summary).
+33 open items in the summary table; 35 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -49,6 +49,9 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-91 | MAINT | `oauth2` v5.0 still pins `reqwest ^0.12` while the repo pins `reqwest 0.13.2` (rustls everywhere). Drop the `reqwest` feature on the `oauth2` dependency and write a custom `AsyncHttpClient` adapter over reqwest 0.13. Adapter requires re-typing `OAuthClient::http_client` and `classify_refresh_error`'s generic error parameter. Revisit when `oauth2` tracks `reqwest 0.13`, or as a standalone refactor. Cited in `src-tauri/Cargo.toml:158-166` (oauth2 declaration) and `:137` (FEAT-5c / MAINT-91 reqwest pin block). Deferred from PEND-25 M2 (Rust perf review, session 661); the deeper duplicate-`reqwest 0.12` pull is the perf concern that justifies the refactor. | M | — |
 | MAINT-208 | MAINT | PEND-25 M1 deferred — three deferrable `block_on` calls in `src-tauri/src/lib.rs:637, 741, 1083` (link cleanup, space migration, gcal migration) at startup. Per the PEND-25 plan body, only act if Android boot profile shows >100 ms cumulative cost; on desktop the headroom is irrelevant. Profile `adb shell am start -W` with `tracing::info!` instrumentation before refactoring; if confirmed, defer to a post-window-show task. Conditional. | M (4-7h) | Android boot profile data |
 | MAINT-209 | MAINT | PEND-25 L15 + L16 deferred — gcal connector channel + agenda fetch hygiene. (L15) `mpsc::UnboundedSender<DirtyEvent>` in `src-tauri/src/gcal_push/connector.rs:255` is unbounded; defensive bounded channel + `try_send` only matters if a fast producer overruns the consumer (no observed instance today). (L16) `connector.rs:486, 589-595` makes per-date agenda fetches in a loop instead of one `list_projected_agenda_inner(min_date, max_date)` call; only matters when the gcal push window grows beyond a handful of days. Both are speculative — only pursue if profiling shows a concrete need. | S-M (~3h together) | Profiling data showing gcal contention |
+| MAINT-210 | MAINT | `references.moreFilters` i18n key in `src/lib/i18n/references.ts:19` is now unused — PEND-31 removed the "Show / Hide filters" toggle that consumed it (along with `showFilters` / `hideFilters` / `filtersLabel`, which were deleted in the same change). Left in place in PEND-31 per AGENTS "Surgical Changes" rule (don't remove pre-existing dead code unless asked). Sweep on next i18n pass. | trivial | — |
+| MAINT-211 | MAINT | `RecentPagesStrip` single-line scroll has no edge-fade affordance — off-screen chips are cued only by Radix's auto-hide horizontal scrollbar + a partially-cut last chip. Plan PEND-32 deferred a `mask-image` right-edge fade because it requires a `ResizeObserver` to toggle on/off based on overflow. Revisit only if real-world feedback says off-screen chips are hard to discover; see `src/components/RecentPagesStrip.tsx`. | S | Real-world discoverability feedback |
+| MAINT-212 | MAINT | `MAX_RETAINED = 10` in `src/stores/recent-pages.ts` was sized for the pre-PEND-32 grid layout (which wrapped to 2 rows beyond ~7 chips). Now that the strip scrolls horizontally on a single fixed-height row, the cap could be raised (15-20) to retain longer history without hurting layout. Independent UX call; pursue when the user wants longer recents. | trivial | UX call on retention depth |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
@@ -627,6 +630,42 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low (defensive changes).
 - **Impact:** Low today; medium if gcal push usage grows.
 - **Status:** Open, speculative. Surface concrete profiling data showing gcal contention before pursuing. Filed from PEND-25 (session 661).
+
+### MAINT-210 — `references.moreFilters` i18n key is dead (PEND-31 leftover)
+
+- **Domain:** Frontend / i18n
+- **Location:** `src/lib/i18n/references.ts:19`
+- **What:** PEND-31 removed the "Show / Hide filters" toggle from `LinkedReferences` and `UnlinkedReferences` and deleted the three keys it consumed (`showFilters`, `hideFilters`, `filtersLabel`). `moreFilters` was already unused at PEND-31 time but was left in place per AGENTS "Surgical Changes" rule (don't remove pre-existing dead code unless asked).
+- **Why it matters:** Dead i18n keys accumulate translator noise once locales are added. Cheap to sweep.
+- **Fix:** Delete the key + grep-confirm no remaining references in `src/`.
+- **Cost:** trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open. Filed from PEND-31 reviewer (this session).
+
+### MAINT-211 — `RecentPagesStrip` edge-fade affordance for off-screen chips (deferred from PEND-32 v1)
+
+- **Domain:** Frontend / UX
+- **Location:** `src/components/RecentPagesStrip.tsx`
+- **What:** PEND-32's single-line scroll layout cues off-screen chips only via Radix's auto-hide horizontal scrollbar + a partially-cut last chip. A right-edge `mask-image` fade was considered and deferred to v2 because the fade should be off when there's no overflow, which requires a `ResizeObserver` on the viewport.
+- **Why it matters:** If real-world feedback shows users miss the off-screen chips, the fade is the standard reinforcement.
+- **Fix:** Add a `ResizeObserver` + `useState` toggle that flips `mask-image: linear-gradient(to right, black 90%, transparent)` on the viewport when `scrollWidth > clientWidth`.
+- **Cost:** S (~1-2 h including a regression test).
+- **Risk:** Low.
+- **Impact:** Low — secondary affordance.
+- **Status:** Open, gated on real-world feedback. Filed from PEND-32 plan + UX reviewer (this session).
+
+### MAINT-212 — `RecentPagesStrip` `MAX_RETAINED` cap can be raised post-PEND-32
+
+- **Domain:** Frontend / UX
+- **Location:** `src/stores/recent-pages.ts` (`MAX_RETAINED = 10`)
+- **What:** The cap was sized for the pre-PEND-32 grid layout, where >7 chips wrapped to a second row. PEND-32 makes the strip a single fixed-height scrollable row, so longer history (15-20 entries) no longer hurts layout. The right number depends on user retention preference, not engineering constraints.
+- **Why it matters:** Retains a longer "places I just was" trail without UI penalty.
+- **Fix:** Bump the constant; one-line change. Verify `RecentPagesStrip` test still passes.
+- **Cost:** trivial.
+- **Risk:** Low.
+- **Impact:** Medium (longer history) — depends on user signal.
+- **Status:** Open, gated on UX call. Filed from PEND-32 plan + UX reviewer (this session).
 
 ## TEST — Backend test improvements
 

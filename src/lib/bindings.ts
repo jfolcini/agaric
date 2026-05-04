@@ -211,6 +211,11 @@ export const commands = {
 	setPageAliases: (pageId: string, aliases: string[]) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
 	// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
 	getPageAliases: (pageId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("get_page_aliases", { pageId })),
+	/**
+	 *  Tauri command: list page aliases by prefix.
+	 *  Delegates to [`list_page_aliases_by_prefix_inner`].
+	 */
+	listPageAliasesByPrefix: (prefix: string, limit: number | null, spaceId: string | null) => typedError<([string, string, string | null])[], AppErrorSchema>(__TAURI_INVOKE("list_page_aliases_by_prefix", { prefix, limit, spaceId })),
 	// Tauri command: resolve a page by alias. Delegates to [`resolve_page_by_alias_inner`].
 	resolvePageByAlias: (alias: string) => typedError<[string, string | null] | null, AppErrorSchema>(__TAURI_INVOKE("resolve_page_by_alias", { alias })),
 	// Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`].

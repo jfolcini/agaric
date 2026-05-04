@@ -22,8 +22,8 @@ import {
   createBlock,
   createPageInSpace,
   listBlocks,
+  listPageAliasesByPrefix,
   listTagsByPrefix,
-  resolvePageByAlias,
   searchBlocks,
 } from '../lib/tauri'
 import { keyFor, useResolveStore } from '../stores/resolve'
@@ -144,25 +144,48 @@ function populatePageResolveCache(matches: PickerItem[]): void {
 }
 
 /**
- * Alias-resolution strategy: looks up the query against the page-alias table
- * and, if a match exists that isn't already in `matches`, prepends it so the
- * alias becomes the top suggestion. Rejection is logged at warn level — an
- * alias-service failure must never abort the picker (see H-10 / H-11).
+ * Alias-prefix strategy (PEND-34): looks up the query against the
+ * page-aliases table by prefix and folds matches into the result list.
+ *
+ * Each alias hit becomes its own picker item carrying both `isAlias`
+ * (visual differentiation) and `aliasText` (for the `[[text]]` input
+ * rule's exact-vs-prefix disambiguation). Same-page dedupe against the
+ * title strategy still applies — an alias hit is dropped when the page
+ * is already in `matches` via title match.
+ *
+ * Failure is logged at warn level — alias-service failure must never
+ * abort the picker (see H-10 / H-11).
+ *
+ * Active-space scoping (PEND-34 Q3): the prefix command is scoped to
+ * `useSpaceStore.getState().currentSpaceId` so the picker mirrors the
+ * other strategies (`searchPagesViaCache` / `searchPagesViaFts`). The
+ * `?? null` fallback is intentional pre-bootstrap behaviour — passing
+ * `null` to the backend leaves the result set unscoped, which is fine
+ * before any space has been hydrated (no aliases to surface anyway).
  */
-async function tryPrependAliasMatch(matches: PickerItem[], q: string): Promise<void> {
+async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promise<void> {
   if (q.length === 0) return
   try {
-    const aliasMatch = await resolvePageByAlias(q)
-    if (!aliasMatch) return
-    const [pageId, title] = aliasMatch
-    if (matches.some((m) => m.id === pageId)) return
-    matches.unshift({
-      id: pageId,
-      label: `${title ?? 'Untitled'} (alias: ${q})`,
-      isAlias: true,
-    })
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const rows = await listPageAliasesByPrefix({ prefix: q, limit: 50, spaceId: spaceId ?? null })
+    if (rows.length === 0) return
+
+    const existingPageIds = new Set(matches.filter((m) => !m.isCreate).map((m) => m.id))
+    const aliasItems: PickerItem[] = []
+    for (const [pageId, alias, title] of rows) {
+      if (existingPageIds.has(pageId)) continue
+      existingPageIds.add(pageId)
+      aliasItems.push({
+        id: pageId,
+        label: `${title ?? 'Untitled'} (alias: ${alias})`,
+        isAlias: true,
+        aliasText: alias,
+      })
+    }
+    // Prepend in returned order (shortest-alias first → exact match first).
+    matches.unshift(...aliasItems)
   } catch (err) {
-    logger.warn('useBlockResolve', 'alias lookup failed', { query: q }, err)
+    logger.warn('useBlockResolve', 'alias prefix lookup failed', { query: q }, err)
   }
 }
 
@@ -321,7 +344,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
           : await searchPagesViaFts(q, pagesListRef)
 
       populatePageResolveCache(matches)
-      await tryPrependAliasMatch(matches, q)
+      await mergeAliasPrefixMatches(matches, q)
       appendCreatePageOptionIfNeeded(matches, query, q, pagesListRef)
 
       logSlowQuery('searchPages', q, t0, matches.length)

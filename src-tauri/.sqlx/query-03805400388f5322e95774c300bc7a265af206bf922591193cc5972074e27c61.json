@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pa.page_id AS \"page_id!\", pa.alias AS \"alias!\", b.content AS \"title?\"\n         FROM page_aliases pa\n         JOIN blocks b ON b.id = pa.page_id\n         WHERE pa.alias LIKE ?1 ESCAPE '\\' COLLATE NOCASE\n           AND b.deleted_at IS NULL\n           AND (?3 IS NULL OR b.id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?3))\n         ORDER BY length(pa.alias), pa.alias\n         LIMIT ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "alias!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "title?",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "03805400388f5322e95774c300bc7a265af206bf922591193cc5972074e27c61"
+}

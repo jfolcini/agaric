@@ -916,6 +916,32 @@ export async function resolvePageByAlias(alias: string): Promise<[string, string
   return unwrap(await commands.resolvePageByAlias(alias))
 }
 
+/**
+ * List page aliases whose alias starts with the given prefix, ordered
+ * shortest-alias first, then alphabetical. Bounded server-side at 50.
+ *
+ * Used by the [[ picker for progressive alias filtering (PEND-34). The
+ * exact-match `resolvePageByAlias` is still used by SearchPanel /
+ * PageBrowser (out of scope here — see PEND-34 follow-ups).
+ *
+ * `spaceId` (PEND-34 Q3) — when set, restricts matches to aliases
+ * pointing at pages whose `space` property equals `spaceId`. Pass
+ * `null`/`undefined` to leave the result set unscoped (cross-space).
+ */
+export async function listPageAliasesByPrefix(params: {
+  prefix: string
+  limit?: number | undefined
+  spaceId?: string | null | undefined
+}): Promise<Array<[string, string, string | null]>> {
+  return unwrap(
+    await commands.listPageAliasesByPrefix(
+      params.prefix,
+      params.limit ?? null,
+      params.spaceId ?? null,
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Markdown export (#519)
 // ---------------------------------------------------------------------------

@@ -1180,6 +1180,41 @@ export const HANDLERS: Record<string, Handler> = {
     return null
   },
 
+  // PEND-34 — prefix-indexed alias autocomplete used by the [[ picker.
+  // Returns `[page_id, alias, title]` rows ordered shortest-alias first
+  // (then alphabetical), capped at `limit` (default 50). When `spaceId`
+  // is set, restricts matches to aliases pointing at pages whose `space`
+  // property equals `spaceId`. Mirrors the backend's
+  // `list_page_aliases_by_prefix_inner` shape.
+  list_page_aliases_by_prefix: (args) => {
+    const a = args as Record<string, unknown>
+    const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
+    const limit = (a['limit'] as number | null) ?? 50
+    const spaceId = (a['spaceId'] as string | null) ?? null
+
+    const rows: Array<[string, string, string | null]> = []
+    for (const [pid, aliases] of pageAliases.entries()) {
+      const page = blocks.get(pid)
+      if (!page) continue
+      if (page['deleted_at']) continue
+      // Active-space scoping (PEND-34 Q3): when `spaceId` is provided,
+      // exclude pages that don't carry `space = ?spaceId` in their
+      // property map.
+      if (spaceId !== null) {
+        const space = properties.get(pid)?.get('space')?.['value_ref'] ?? null
+        if (space !== spaceId) continue
+      }
+      const title = (page['content'] as string | null) ?? null
+      for (const alias of aliases) {
+        if (alias.toLowerCase().startsWith(prefix)) {
+          rows.push([pid, alias, title])
+        }
+      }
+    }
+    rows.sort((x, y) => x[1].length - y[1].length || x[1].localeCompare(y[1]))
+    return rows.slice(0, limit)
+  },
+
   // ---------------------------------------------------------------------------
   // Markdown export
   // ---------------------------------------------------------------------------
