@@ -438,6 +438,23 @@ language = "system"
 pass_filenames = false
 files = "^src-tauri/migrations/.*\\.sql$"
 
+# STRICT tables policy (PEND-07). Every new `CREATE TABLE` in a
+# SQLite migration must use STRICT mode (SQLite 3.37+) so silent
+# type coercion fails at insert time instead of corrupting reads
+# later. Pre-policy migrations 0001..0041 are skipped by a
+# migration-number floor inside the script — they're immutable
+# per `migrations-immutable` and will not be retrofitted. FTS5 /
+# virtual tables are carved out (SQLite forbids STRICT there).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "migrations-strict-tables"
+name = "migrations: STRICT tables required for new schema"
+entry = "node scripts/check-migrations-strict.mjs"
+language = "system"
+pass_filenames = true
+files = "^src-tauri/migrations/.*\\.sql$"
+
 # zizmor: GitHub Actions security audit. Complements actionlint
 # (which is style/correctness only) by catching unpinned `uses:`,
 # missing `persist-credentials: false`, env-injection in

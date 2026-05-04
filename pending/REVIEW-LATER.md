@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 655 — Batch ARCH-FOLLOWUP-2: closed PEND-13 (page_id ↔ space drift audit landed at `integration_tests::page_id_space_drift_audit_per_block` + `_after_lifecycle_ops`; both pass on first run, no drift surfaced — confirms current correctness of `page_id` denormalization + space property invariants; 3 helpers use `sqlx::query_scalar!` for compile-time SQL drift detection). PEND-13 file deleted from pending/.)
+> **Last updated:** 2026-05-03 (Session 656 — closed PEND-07 (STRICT tables policy): AGENTS.md "Database" bullet added with user approval, new `scripts/check-migrations-strict.mjs` + `prek.toml` hook entry. Migration-number floor 42 so existing 41 pre-policy migrations don't false-positive; FTS5 `CREATE VIRTUAL TABLE` carve-out. PEND-07 file deleted from pending/.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 

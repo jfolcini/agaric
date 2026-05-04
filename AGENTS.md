@@ -110,6 +110,7 @@ Agaric is a **single-user, multi-device, local-first** application with **no clo
 - **Pool:** 2 writers + 4 readers (6 total)
 - **Migrations:** `src-tauri/migrations/` — auto-run on pool init (append-only, never modify shipped migrations)
 - **Schema:** 18 application tables + 1 FTS5 virtual table (`fts_blocks`, trigram tokenizer) + ~5 internal/cache tables (`materializer_retry_queue`, `materializer_apply_cursor`, `gcal_settings`, `gcal_agenda_event_map`, `gcal_space_config`, `_op_log_mutation_allowed`); 32 indexes, 4 triggers across 41 migrations
+- **`STRICT` tables for new schema.** Every new `CREATE TABLE` in a migration must use `STRICT`. Existing tables are not retrofitted. FTS5 virtual tables (`CREATE VIRTUAL TABLE … USING fts5`) don't accept `STRICT` — they're carved out from the rule. Rationale: SQLite's silent type coercion is a known correctness footgun; `STRICT` mode (3.37+) catches it at insert time.
 
 ## Frontend Architecture
 
