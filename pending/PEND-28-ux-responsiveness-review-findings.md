@@ -20,6 +20,8 @@ What remains: **6 HIGH, 7 MEDIUM, 1 LOW** confirmed findings across **14 files**
 Cost: **S–M** if cherry-picked individually (most are 1-line className changes); **L** if all done in one sweep + the two primitive-level fixes. Risk: **low** across the board. Impact: **medium** for phone usability and design-system consistency.
 
 > **These are findings, not commitments.** Each item is independently approve-able. The single highest-leverage win is **H1+H2** (add `max-h` to the dialog/popover primitives) — two lines that propagate through every dialog and popover in the app.
+>
+> **Status (session 667):** all 6 HIGH closed (H1, H2, H3, H4, H5, H6) + 5 MEDIUM closed (M2, M3, M4, M5, M7). **Remaining: 8 MEDIUM (M1 BugReportDialog body scroll, M6 narrow-desktop indent breakpoint, M8 DaySection wrap, M9 HistoryFilterBar mobile stack, M10 60vh→60dvh, M11 JournalControls min-w, M12 HistorySheet width, M13 QueryResultTable header-button touch-target), 1 LOW (L1 AlertSection truncate).** Cherry-pick by file/component in future sessions.
 
 ## Methodology
 
@@ -66,7 +68,7 @@ Severity floor for inclusion in this file:
 
 ## HIGH — fix soon
 
-### H1 — `dialog.tsx` and `alert-dialog.tsx` primitives have no `max-height`
+### ~~H1 — `dialog.tsx` and `alert-dialog.tsx` primitives have no `max-height`~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/ui/dialog.tsx" lines="60-60" />
 <ref_snippet file="/home/javier/dev/agaric/src/components/ui/alert-dialog.tsx" lines="55-55" />
@@ -77,7 +79,7 @@ Both base components apply `max-w-[calc(100%-2rem)] sm:max-w-lg` (correct horizo
 
 Cost: trivial (~2 LOC across two files). Risk: low.
 
-### H2 — `popover.tsx` primitive has no `max-height`
+### ~~H2 — `popover.tsx` primitive has no `max-height`~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/ui/popover.tsx" lines="36-36" />
 
@@ -87,7 +89,7 @@ Cost: trivial (~2 LOC across two files). Risk: low.
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### H3 — `BlockPropertyDrawer` overrides the responsive Sheet baseline
+### ~~H3 — `BlockPropertyDrawer` overrides the responsive Sheet baseline~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/BlockPropertyDrawer.tsx" lines="245-245" />
 
@@ -97,7 +99,7 @@ Cost: trivial (~1 LOC). Risk: low.
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### H4 — `BlockPropertyEditor` ref-picker portal lacks viewport constraint
+### ~~H4 — `BlockPropertyEditor` ref-picker portal lacks viewport constraint~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/BlockPropertyEditor.tsx" lines="213-249" />
 
@@ -107,7 +109,7 @@ This is **not** a Radix `PopoverContent` — it's a custom floating-UI portal (`
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### H5 — `FormattingToolbar` editor portals lack viewport constraint (3 sites)
+### ~~H5 — `FormattingToolbar` editor portals lack viewport constraint (3 sites)~~ ✅ done session 667 (subagent verified plan's "not Radix popovers" premise was wrong — they ARE Radix and inherit the baseline; explicit declaration kept as defense-in-depth)
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/FormattingToolbar.tsx" lines="280-365" />
 
@@ -117,7 +119,7 @@ Same root cause as H4. `~L288` (link popover, `w-72`), `~L329` (code-block popov
 
 Cost: trivial (~3 LOC). Risk: low.
 
-### H6 — `BacklinkFilterBuilder`/`AddFilterRow` Apply / Cancel buttons are 28 px on touch
+### ~~H6 — `BacklinkFilterBuilder`/`AddFilterRow` Apply / Cancel buttons are 28 px on touch~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/backlink-filter/AddFilterRow.tsx" lines="265-290" />
 
@@ -145,7 +147,7 @@ Outer dialog (`L328`) and nested log-preview dialog (`~L519`) both use `max-w-2x
 
 Cost: S (~1 h, ~10–15 LOC). Risk: low. Already covered partially by H1.
 
-### M2 — `DuePanelFilters` "Hide before scheduled" toggle missing `min-w` on touch
+### ~~M2 — `DuePanelFilters` "Hide before scheduled" toggle missing `min-w` on touch~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/DuePanelFilters.tsx" lines="75-110" />
 
@@ -155,7 +157,7 @@ The filter pills at `~L80` correctly carry both `[@media(pointer:coarse)]:min-h-
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### M3 — `AgendaResults` priority badge text doesn't scale on touch
+### ~~M3 — `AgendaResults` priority badge text doesn't scale on touch~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/AgendaResults.tsx" lines="90-100" />
 <ref_snippet file="/home/javier/dev/agaric/src/components/AgendaResults.tsx" lines="265-275" />
@@ -166,7 +168,7 @@ The due-date chip (`~L96`) has `[@media(pointer:coarse)]:text-sm`. The priority 
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### M4 — `AgendaSortGroupControls` 44 px buttons keep tiny text
+### ~~M4 — `AgendaSortGroupControls` 44 px buttons keep tiny text~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/AgendaSortGroupControls.tsx" lines="48-58" />
 
@@ -176,7 +178,7 @@ Buttons grow to 44 × 44 px on touch (correct), but the label stays `text-xs`. V
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### M5 — `PageAliasSection` input is 96 px on narrow desktop
+### ~~M5 — `PageAliasSection` input is 96 px on narrow desktop~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/PageAliasSection.tsx" lines="55-65" />
 
@@ -222,7 +224,7 @@ Cost: trivial (~1 LOC). Risk: low.
 
 Cost: trivial (~5 LOC). Risk: low.
 
-### M7 — `DiffDisplay` hunk-nav row doesn't wrap
+### ~~M7 — `DiffDisplay` hunk-nav row doesn't wrap~~ ✅ done session 667
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/DiffDisplay.tsx" lines="145-170" />
 

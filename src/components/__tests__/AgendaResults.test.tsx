@@ -664,4 +664,16 @@ describe('AgendaResults', () => {
     const contentSpan = screen.getByText(longContent)
     expect(contentSpan.className).not.toContain('line-clamp-2')
   })
+
+  // PEND-28b M3: priority badge text scales up on coarse pointer to match the
+  //              sibling due-date chip (text-xs → text-sm) for visual consistency.
+  it('PEND-28b M3: priority badge has text-sm override on coarse pointer', () => {
+    const blocks = [makeBlock({ id: 'B1', priority: '1', content: 'Urgent task' })]
+
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    const badge = document.querySelector('.agenda-results-priority')
+    expect(badge).not.toBeNull()
+    expect(badge?.className).toContain('[@media(pointer:coarse)]:text-sm')
+  })
 })

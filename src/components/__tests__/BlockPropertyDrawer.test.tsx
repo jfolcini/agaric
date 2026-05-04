@@ -194,6 +194,19 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByText('Block Properties')).not.toBeInTheDocument()
   })
 
+  // PEND-28b H3 — the SheetContent must inherit the responsive baseline.
+  // `w-80` alone clips a 360 px phone (320 px drawer leaves 40 px for content);
+  // `w-3/4 sm:w-80` keeps the desktop 320 px while making mobile 75% viewport.
+  it('SheetContent uses responsive width (w-3/4 sm:w-80)', () => {
+    setupMock()
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    const sheetContent = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
+    expect(sheetContent).not.toBeNull()
+    expect(sheetContent.className).toContain('w-3/4')
+    expect(sheetContent.className).toContain('sm:w-80')
+  })
+
   it('drawer body section has horizontal padding for consistent spacing', async () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])

@@ -194,6 +194,17 @@ describe('PageAliasSection UX-2 — touch target on remove button', () => {
     expect(btn.className).toContain('focus-visible:ring-ring/50')
     expect(btn.className).toContain('focus-visible:outline-hidden')
   })
+
+  // PEND-28b M5: 96 px (w-24) is too cramped on narrow desktop viewports
+  //              (~360–500 px wide, mouse pointer) where the coarse-pointer
+  //              `w-full` override does not apply. Add a sm: breakpoint so the
+  //              field grows to 128 px before falling back to the desktop default.
+  it('PEND-28b M5: alias input has sm:w-32 viewport-width breakpoint', () => {
+    render(<PageAliasSection {...defaultProps} editingAliases={true} />)
+
+    const input = screen.getByLabelText('New alias input')
+    expect(input.className).toContain('sm:w-32')
+  })
 })
 
 describe('PageAliasSection accessibility', () => {

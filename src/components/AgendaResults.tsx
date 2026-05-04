@@ -276,7 +276,7 @@ export function AgendaResults({
             {block.priority && (
               <span
                 className={cn(
-                  'agenda-results-priority inline-flex items-center justify-center rounded px-2 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1',
+                  'agenda-results-priority inline-flex items-center justify-center rounded px-2 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:text-sm',
                   priorityColor(block.priority),
                 )}
               >

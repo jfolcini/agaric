@@ -242,7 +242,7 @@ export function BlockPropertyDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-80">
+      <SheetContent side="right" className="w-3/4 sm:w-80">
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
           <SheetDescription>{t('property.drawerDescription')}</SheetDescription>

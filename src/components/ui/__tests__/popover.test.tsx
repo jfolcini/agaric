@@ -60,6 +60,19 @@ describe('PopoverContent', () => {
     expect(content.closest('[data-slot="popover-content"]')).toBeInTheDocument()
   })
 
+  it('caps height to dynamic viewport (PEND-28 H2)', async () => {
+    render(
+      <Popover defaultOpen>
+        <PopoverTrigger>Open</PopoverTrigger>
+        <PopoverContent>Content</PopoverContent>
+      </Popover>,
+    )
+    const content = await screen.findByText('Content')
+    const root = content.closest('[data-slot="popover-content"]')
+    expect(root).not.toBeNull()
+    expect(root?.className).toContain('max-h-[calc(100dvh-4rem)]')
+  })
+
   it('has no a11y violations', async () => {
     const { baseElement } = render(
       <Popover defaultOpen>

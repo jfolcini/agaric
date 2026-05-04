@@ -57,7 +57,7 @@ export function PageAliasSection({
         >
           <Input
             type="text"
-            className="w-24 [@media(pointer:coarse)]:w-full h-7 text-xs"
+            className="w-24 sm:w-32 [@media(pointer:coarse)]:w-full h-7 text-xs"
             placeholder={t('pageHeader.newAliasPlaceholder')}
             value={aliasInput}
             onChange={(e) => onAliasInputChange(e.target.value)}

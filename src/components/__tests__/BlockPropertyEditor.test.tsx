@@ -191,6 +191,20 @@ describe('BlockPropertyEditor', () => {
       expect(popup?.parentElement).toBe(document.body)
     })
 
+    // PEND-28b H4 — this is a custom floating-UI portal, not a Radix
+    // PopoverContent, so the Radix `max-w-[calc(100vw-2rem)]` baseline does
+    // not apply. The inner ref-picker fieldset is hard-coded `w-56` and
+    // would clip on a 360 px phone without an explicit viewport cap on the
+    // outer portal.
+    it('value popup portal carries max-w-[calc(100vw-2rem)] viewport constraint', () => {
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      const popup = document.querySelector('[data-editor-portal]') as HTMLElement
+      expect(popup).toBeInTheDocument()
+      expect(popup.className).toContain('max-w-[calc(100vw-2rem)]')
+    })
+
     it('renders the key-rename popup as a portal with property-key-editor + data-editor-portal', () => {
       const { container } = render(
         <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'effort', value: '2h' } })} />,

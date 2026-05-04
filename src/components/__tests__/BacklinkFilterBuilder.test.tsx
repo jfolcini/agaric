@@ -502,6 +502,25 @@ describe('BacklinkFilterBuilder', () => {
       expect(screen.queryByLabelText('Filter category')).not.toBeInTheDocument()
       expect(onFiltersChange).not.toHaveBeenCalled()
     })
+
+    // PEND-28b H6 — Apply / Cancel rows hard-code `h-7`, which overrides the
+    // `Button size="xs"` coarse-pointer height bump. Without an explicit
+    // `[@media(pointer:coarse)]:h-11` the buttons render at 28 px on touch,
+    // below the 44 px minimum touch target.
+    it('Apply and Cancel buttons carry [@media(pointer:coarse)]:h-11 (44 px touch target)', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      // Pick a category so the Apply button renders.
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
+
+      const applyBtn = screen.getByRole('button', { name: /Apply filter/i })
+      const cancelBtn = screen.getByRole('button', { name: /Cancel adding filter/i })
+
+      expect(applyBtn.className).toContain('[@media(pointer:coarse)]:h-11')
+      expect(cancelBtn.className).toContain('[@media(pointer:coarse)]:h-11')
+    })
   })
 
   describe('removing filters', () => {

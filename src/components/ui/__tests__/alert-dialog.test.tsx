@@ -67,6 +67,27 @@ describe('AlertDialog ref forwarding', () => {
 })
 
 // ---------------------------------------------------------------------------
+// responsive viewport cap (PEND-28 H1)
+// ---------------------------------------------------------------------------
+
+describe('AlertDialogContent viewport cap', () => {
+  it('caps height to dynamic viewport and scrolls overflow', () => {
+    const { baseElement } = render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogTitle>Title</AlertDialogTitle>
+          <AlertDialogDescription>Body</AlertDialogDescription>
+        </AlertDialogContent>
+      </AlertDialog>,
+    )
+    const content = baseElement.querySelector('[data-slot="alert-dialog-content"]')
+    expect(content).not.toBeNull()
+    expect(content?.className).toContain('max-h-[calc(100dvh-2rem)]')
+    expect(content?.className).toContain('overflow-y-auto')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // a11y
 // ---------------------------------------------------------------------------
 

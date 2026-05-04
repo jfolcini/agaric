@@ -405,5 +405,21 @@ describe('DiffDisplay', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+
+    // PEND-28b M7: hunk-nav row must wrap on narrow viewports so long file
+    //              paths / counter text don't overflow horizontally on phones.
+    it('PEND-28b M7: hunk-nav row has flex-wrap', () => {
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'before '),
+        makeSpan('Insert', 'changed'),
+        makeSpan('Equal', ' after'),
+      ]
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+
+      const nav = container.querySelector('.diff-hunk-nav')
+      expect(nav).not.toBeNull()
+      expect(nav?.className).toContain('flex-wrap')
+    })
   })
 })
