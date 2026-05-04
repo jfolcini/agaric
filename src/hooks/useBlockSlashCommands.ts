@@ -125,7 +125,7 @@ function readCurrentContent(ctx: SlashCommandContext): string {
     const json = ctx.rovingEditor.editor.getJSON() as DocNode
     return serialize(json, notifyUnknownNodeTypeToast)
   }
-  const block = ctx.pageStore.getState().blocks.find((b) => b.id === ctx.blockId)
+  const block = ctx.pageStore.getState().blocksById.get(ctx.blockId)
   return block?.content ?? ''
 }
 

@@ -73,7 +73,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
   /** Get the current todo state for a block from the block store. */
   const getTodoState = useCallback(
     (blockId: string): string | null => {
-      return pageStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
+      return pageStore.getState().blocksById.get(blockId)?.todo_state ?? null
     },
     [pageStore],
   )
@@ -81,7 +81,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
   /** Cycle through task states: none -> TODO -> DOING -> DONE -> CANCELLED -> none. */
   const handleToggleTodo = useCallback(
     async (blockId: string) => {
-      const current = pageStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
+      const current = pageStore.getState().blocksById.get(blockId)?.todo_state ?? null
       const currentIdx = TASK_CYCLE.indexOf(current)
       const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
       const nextState = TASK_CYCLE[nextIdx] ?? null
@@ -125,7 +125,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
   const handleTogglePriority = useCallback(
     async (blockId: string) => {
       const cycle = getPriorityCycle()
-      const current = pageStore.getState().blocks.find((b) => b.id === blockId)?.priority ?? null
+      const current = pageStore.getState().blocksById.get(blockId)?.priority ?? null
       const currentIdx = cycle.indexOf(current)
       const nextIdx = (currentIdx + 1) % cycle.length
       const nextState = cycle[nextIdx] ?? null

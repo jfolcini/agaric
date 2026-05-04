@@ -98,8 +98,13 @@ export function BlockTree({
 }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
   // Per-page data from context
-  const { blocks, rootParentId, loading } = usePageBlockStore(
-    useShallow((s) => ({ blocks: s.blocks, rootParentId: s.rootParentId, loading: s.loading })),
+  const { blocks, blocksById, rootParentId, loading } = usePageBlockStore(
+    useShallow((s) => ({
+      blocks: s.blocks,
+      blocksById: s.blocksById,
+      rootParentId: s.rootParentId,
+      loading: s.loading,
+    })),
   )
   // Global focus/selection
   const { focusedBlockId, selectedBlockIds } = useBlockStore(
@@ -203,7 +208,7 @@ export function BlockTree({
   const editorPlaceholder = useMemo(() => {
     const defaultPlaceholder = t('editor.emptyBlockPlaceholder')
     if (!focusedBlockId || blocks.length === 0) return defaultPlaceholder
-    const focused = blocks.find((b) => b.id === focusedBlockId)
+    const focused = blocksById.get(focusedBlockId)
     if (!focused) return defaultPlaceholder
     const isFirstChild = blocks[0]?.id === focusedBlockId
     const isEmpty = !focused.content || focused.content.trim() === ''
@@ -211,7 +216,7 @@ export function BlockTree({
       return t('editor.templatePlaceholder')
     }
     return defaultPlaceholder
-  }, [focusedBlockId, blocks, t])
+  }, [focusedBlockId, blocks, blocksById, t])
 
   const rovingEditor = useRovingEditor({
     resolveBlockTitle: resolve.resolveBlockTitle,
@@ -568,7 +573,7 @@ export function BlockTree({
 
     if (prevId && prevId !== focusedBlockId && justCreatedBlockIds.current.has(prevId)) {
       justCreatedBlockIds.current.delete(prevId)
-      const block = pageStore.getState().blocks.find((b) => b.id === prevId)
+      const block = pageStore.getState().blocksById.get(prevId)
       if (block && (!block.content || block.content.trim() === '')) {
         remove(prevId)
       }
@@ -617,7 +622,7 @@ export function BlockTree({
   )
 
   // ── Active item for DragOverlay ────────────────────────────────────
-  const activeBlock = dnd.activeId ? (blocks.find((b) => b.id === dnd.activeId) ?? null) : null
+  const activeBlock = dnd.activeId ? (blocksById.get(dnd.activeId) ?? null) : null
 
   // ── Action / resolver bags published via context (MAINT-118) ────────
   // Memoised so descendants only re-render when callbacks change.

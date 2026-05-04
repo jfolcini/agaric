@@ -112,6 +112,10 @@ const _mockPageStore = {
   edit: mockEdit,
   splitBlock: mockSplitBlock,
   blocks: [] as Array<{ id: string; priority?: string | null }>,
+  // PEND-20 G — `EditableBlock`'s priority selector reads from `blocksById`.
+  // Provide an empty Map so `selector(s).priority` is `undefined`, matching
+  // the original `blocks.find(...)` behavior on an empty array.
+  blocksById: new Map<string, { id: string; priority?: string | null }>(),
 }
 vi.mock('../../stores/page-blocks', () => ({
   usePageBlockStore: (selector?: (s: typeof _mockPageStore) => unknown) =>

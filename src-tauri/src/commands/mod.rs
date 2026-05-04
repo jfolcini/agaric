@@ -8,7 +8,7 @@
 //! All commands return `Result<T, AppError>` — `AppError` already implements
 //! `Serialize` for Tauri 2 command error propagation.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use specta::Type;
@@ -700,9 +700,11 @@ async fn delete_property_core(
     }
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).
-    //    Clone op_record for the queue so the post-commit `notify_gcal_for_op`
-    //    call below still has access to the original.
-    tx.enqueue_background(op_record.clone());
+    //    PEND-25 L9: wrap in `Arc` once so the dispatch queue and the
+    //    post-commit `notify_gcal_for_op` borrow share the record by
+    //    refcount rather than deep-cloning the owned `String` payloads.
+    let op_record = Arc::new(op_record);
+    tx.enqueue_background(Arc::clone(&op_record));
     tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.

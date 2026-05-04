@@ -56,7 +56,8 @@ describe('useCheckboxSyntax', () => {
     mockedSetTodoState.mockRejectedValue(failure)
 
     const pageStore = {
-      getState: () => ({ blocks: [] }),
+      // PEND-20 G — `useCheckboxSyntax` reads via `blocksById.get(...)`.
+      getState: () => ({ blocks: [], blocksById: new Map() }),
       setState: vi.fn(),
     } as unknown as StoreApi<PageBlockState>
 
@@ -88,10 +89,14 @@ describe('useCheckboxSyntax', () => {
   it('reverts the optimistic todo_state mutation when setTodoState rejects (FE-H-7)', async () => {
     mockedSetTodoState.mockRejectedValue(new Error('ipc failed'))
 
+    const initialBlocks = [makeBlock({ id: 'B1', todo_state: 'TODO' })]
     const pageStore = createStore<PageBlockState>()(() => ({
-      blocks: [makeBlock({ id: 'B1', todo_state: 'TODO' })],
+      blocks: initialBlocks,
+      // PEND-20 G — keep Map in sync with `blocks`.
+      blocksById: new Map(initialBlocks.map((b) => [b.id, b])),
       rootParentId: 'R1',
       loading: false,
+      getBlockById: (id: string) => initialBlocks.find((b) => b.id === id),
       load: vi.fn(),
       createBelow: vi.fn(),
       edit: vi.fn(),

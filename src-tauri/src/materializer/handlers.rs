@@ -16,7 +16,7 @@ use crate::op_log::OpRecord;
 use crate::tag_inheritance;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 // MAINT-148g — `handle_foreground_task` previously took an unused
 // `_metrics: &QueueMetrics` parameter. Counters live on the consumer
@@ -74,8 +74,16 @@ pub(super) async fn handle_foreground_task(
                 }
                 max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
                 if gcal_handle.get().is_some() {
+                    // PEND-25 L2: wrap in `Arc` so `DeferredNotification`
+                    // holds the record by refcount. Batch input is
+                    // `Arc<Vec<OpRecord>>` (shared) and individual records
+                    // do not have their own `Arc` upstream, so one
+                    // `OpRecord::clone` is unavoidable here — the win is
+                    // that the field type is consistent with the single-op
+                    // `apply_op` path, which `Arc::clone`s without a deep
+                    // clone.
                     pending_events.push(DeferredNotification {
-                        record: (*record).clone(),
+                        record: Arc::new((*record).clone()),
                         snapshot,
                     });
                 }
@@ -117,9 +125,14 @@ pub(super) async fn handle_foreground_task(
     }
 }
 
+/// PEND-25 L2/L9: takes `&Arc<OpRecord>` so the post-commit
+/// `DeferredNotification` push is a cheap `Arc::clone` (atomic refcount
+/// bump) rather than a deep clone of the record's owned `String`
+/// payloads. Callers (the `MaterializeTask::ApplyOp` arm) already hold
+/// the record as `Arc<OpRecord>`, so the borrow threads through.
 pub(super) async fn apply_op(
     pool: &SqlitePool,
-    record: &OpRecord,
+    record: &Arc<OpRecord>,
     gcal_handle: &OnceLock<GcalConnectorHandle>,
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
@@ -133,7 +146,7 @@ pub(super) async fn apply_op(
     notify_gcal_for_events(
         gcal_handle,
         vec![DeferredNotification {
-            record: record.clone(),
+            record: Arc::clone(record),
             snapshot,
         }],
     );
@@ -164,8 +177,13 @@ async fn advance_apply_cursor(conn: &mut sqlx::SqliteConnection, seq: i64) -> Re
 
 /// Pair of (op record, pre-mutation snapshot) buffered for emission
 /// after a successful commit.  See the `BatchApplyOps` arm.
+///
+/// PEND-25 L2: `record` is `Arc<OpRecord>` so the per-event push only
+/// performs an atomic refcount bump rather than deep-cloning the
+/// record's owned `String` payloads. Pairs with PEND-25 L9 (the
+/// `Arc<OpRecord>` shift in `enqueue_*_background`).
 struct DeferredNotification {
-    record: OpRecord,
+    record: Arc<OpRecord>,
     snapshot: BlockDateSnapshot,
 }
 
@@ -274,138 +292,147 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             sqlx::query("PRAGMA defer_foreign_keys = ON")
                 .execute(&mut *conn)
                 .await?;
-            // Shared purge CTE from `crate::block_descendants`.
+            // PEND-20 C: materialise the descendants set ONCE into a
+            // TEMP table, then have the 15 DELETE / UPDATE statements
+            // below read from the table via `WHERE ... IN (SELECT id
+            // FROM _purge_descendants)`. Pre-refactor each statement
+            // re-evaluated the recursive `descendants_cte_purge!()` CTE
+            // end-to-end against the same subtree (15× walks per
+            // cascade), needlessly extending the writer-lock window.
             //
-            // PURGE intentionally does NOT filter `is_conflict = 0` — the
-            // goal is to erase every row that descends from the purged
-            // block, INCLUDING conflict copies. This is the only subtree
-            // CTE in the codebase that walks conflicts on purpose
-            // (invariant #9 allows this documented exception). `depth < 100`
-            // still bounds runaway recursion on corrupted data.
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            // The seed query mirrors `descendants_cte_purge!()` exactly:
+            // PURGE intentionally does NOT filter `is_conflict = 0`
+            // because the goal is to erase every row that descends from
+            // the purged block, INCLUDING conflict copies. This is the
+            // only subtree walk that intentionally walks conflicts —
+            // invariant #9's documented exception. `depth < 100` is
+            // preserved as the runaway-recursion guard.
+            //
+            // Cleanup pattern: SQLite TEMP tables are connection-scoped
+            // and the connection comes from a pool, so the table can
+            // outlive the handler unless we explicitly DROP it. The
+            // defensive `DROP TABLE IF EXISTS` at the top guards against
+            // a prior crash that leaked the table on this connection;
+            // the explicit `DROP TABLE` at the bottom keeps the
+            // connection's temp namespace clean for the next caller.
+            sqlx::query("DROP TABLE IF EXISTS _purge_descendants")
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query(
+                "CREATE TEMP TABLE _purge_descendants AS \
+                 WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT id, 0 FROM blocks WHERE id = ? \
+                     UNION ALL \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
+                     INNER JOIN descendants d ON b.parent_id = d.id \
+                     WHERE d.depth < 100 \
+                 ) \
+                 SELECT id FROM descendants",
+            )
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(
                 "DELETE FROM block_tags \
-                 WHERE block_id IN (SELECT id FROM descendants) \
-                    OR tag_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants) \
+                    OR tag_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM block_tag_inherited \
-                 WHERE block_id IN (SELECT id FROM descendants) \
-                    OR tag_id IN (SELECT id FROM descendants) \
-                    OR inherited_from IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants) \
+                    OR tag_id IN (SELECT id FROM _purge_descendants) \
+                    OR inherited_from IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM block_properties \
-                 WHERE block_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "UPDATE block_properties SET value_ref = NULL \
-                 WHERE value_ref IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE value_ref IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM block_links \
-                 WHERE source_id IN (SELECT id FROM descendants) \
-                    OR target_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE source_id IN (SELECT id FROM _purge_descendants) \
+                    OR target_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM agenda_cache \
-                 WHERE block_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM tags_cache \
-                 WHERE tag_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE tag_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM pages_cache \
-                 WHERE page_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE page_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM attachments \
-                 WHERE block_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM block_drafts \
-                 WHERE block_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "UPDATE blocks SET conflict_source = NULL \
-                 WHERE conflict_source IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE conflict_source IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM fts_blocks \
-                 WHERE block_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM page_aliases \
-                 WHERE page_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE page_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM projected_agenda_cache \
-                 WHERE block_id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE block_id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(concat!(
-                crate::descendants_cte_purge!(),
+            sqlx::query(
                 "DELETE FROM blocks \
-                 WHERE id IN (SELECT id FROM descendants)",
-            ))
-            .bind(block_id)
+                 WHERE id IN (SELECT id FROM _purge_descendants)",
+            )
             .execute(&mut *conn)
             .await?;
+            // PEND-20 C: explicitly drop the temp table so the pooled
+            // connection's temp namespace is empty for the next caller.
+            // SQLite drops it automatically at connection close, but the
+            // pool may keep this connection alive indefinitely.
+            sqlx::query("DROP TABLE _purge_descendants")
+                .execute(&mut *conn)
+                .await?;
         }
         OpType::MoveBlock => {
             let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;

@@ -47,10 +47,20 @@ export type { FlatBlock }
 export interface PageBlockState {
   /** Ordered flat-tree of blocks for this page (depth-annotated). */
   blocks: FlatBlock[]
+  /**
+   * O(1) lookup index over `blocks`, keyed by block id (PEND-20 G).
+   * Always rebuilt from `blocks` on every mutation that touches the array;
+   * the array is the source of truth for ordering, the Map is a derived cache.
+   * Mutations produce a new Map reference so Zustand selector subscribers fire.
+   */
+  blocksById: Map<string, FlatBlock>
   /** The root parent ID for this page. */
   rootParentId: string | null
   /** Loading state. */
   loading: boolean
+
+  /** O(1) helper — `state.blocksById.get(id)`. */
+  getBlockById: (id: string) => FlatBlock | undefined
 
   /** Load the full block subtree from the backend. */
   load: () => Promise<void>
@@ -153,16 +163,53 @@ function computeReorderPosition(
   return midpointPosition(beforePos, afterPos)
 }
 
+// ── blocksById helpers (PEND-20 G) ───────────────────────────────────────
+
+/**
+ * Build a fresh `blocksById` Map from a `blocks` array.
+ *
+ * Always returns a NEW Map instance — Zustand requires a new reference for
+ * selector subscribers (e.g. `usePageBlockStore((s) => s.blocksById)`) to fire.
+ * Last-write-wins on duplicate ids; in practice the loader and reducers never
+ * produce duplicates, but a defensive `set()` keeps the contract explicit.
+ */
+function buildBlocksById(blocks: FlatBlock[]): Map<string, FlatBlock> {
+  const map = new Map<string, FlatBlock>()
+  for (const b of blocks) map.set(b.id, b)
+  return map
+}
+
+/**
+ * Augment an external `setState` partial so that callers passing only
+ * `{ blocks: [...] }` get `blocksById` derived automatically. If the caller
+ * supplies an explicit `blocksById` (e.g. fine-grained tests of the invariant),
+ * it is honoured as-is.
+ */
+function augmentBlocksUpdate<T extends Partial<PageBlockState> | PageBlockState | null | undefined>(
+  update: T,
+): T {
+  if (update == null) return update
+  const obj = update as Partial<PageBlockState>
+  const touchesBlocks = Object.hasOwn(obj, 'blocks')
+  const hasMap = Object.hasOwn(obj, 'blocksById')
+  if (!touchesBlocks || hasMap) return update
+  const blocks = obj.blocks ?? []
+  return { ...update, blocksById: buildBlocksById(blocks) } as T
+}
+
 // ── Store factory ────────────────────────────────────────────────────────
 
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   /** Guard: block IDs currently being split. Prevents re-entrant splitBlock calls. */
   const splitInProgress = new Set<string>()
 
-  return createStore<PageBlockState>((set, get) => ({
+  const store = createStore<PageBlockState>((set, get) => ({
     blocks: [],
+    blocksById: new Map(),
     rootParentId: pageId,
     loading: true,
+
+    getBlockById: (id: string) => get().blocksById.get(id),
 
     load: async () => {
       // FE-H-22 — fail closed during pre-bootstrap. Earlier we forwarded
@@ -189,7 +236,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // visual flash and store/editor divergence
         const focusedBlockId = useBlockStore.getState().focusedBlockId
         if (focusedBlockId) {
-          const currentBlock = get().blocks.find((b) => b.id === focusedBlockId)
+          const currentBlock = get().blocksById.get(focusedBlockId)
           if (currentBlock) {
             newBlocks = newBlocks.map((b) =>
               b.id === focusedBlockId ? { ...b, content: currentBlock.content } : b,
@@ -197,7 +244,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           }
         }
 
-        set({ blocks: newBlocks, loading: false })
+        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks), loading: false })
         logger.debug('page-blocks', 'page loaded', {
           pageId: rootParentId ?? '',
           blockCount: newBlocks.length,
@@ -259,7 +306,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         }
         const newBlocks = [...blocks]
         newBlocks.splice(insertIdx, 0, newBlock)
-        set({ blocks: newBlocks })
+        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
         notifyUndoNewAction(rootParentId)
         return result.id
       } catch (err) {
@@ -270,22 +317,24 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     edit: async (blockId: string, content: string) => {
-      const { rootParentId, blocks } = get()
-      const previousContent = blocks.find((b) => b.id === blockId)?.content
-      set((state) => ({
-        blocks: state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b)),
-      }))
+      const { rootParentId, blocksById } = get()
+      const previousContent = blocksById.get(blockId)?.content
+      set((state) => {
+        const blocks = state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b))
+        return { blocks, blocksById: buildBlocksById(blocks) }
+      })
       try {
         await editBlock(blockId, content)
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         // Rollback optimistic update
         if (previousContent !== undefined) {
-          set((state) => ({
-            blocks: state.blocks.map((b) =>
+          set((state) => {
+            const blocks = state.blocks.map((b) =>
               b.id === blockId ? { ...b, content: previousContent } : b,
-            ),
-          }))
+            )
+            return { blocks, blocksById: buildBlocksById(blocks) }
+          })
         }
         logger.error('page-blocks', 'Failed to edit block', { blockId }, err)
         toast.error(i18n.t('error.saveFailed'))
@@ -298,9 +347,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         await deleteBlock(blockId)
         // Remove block AND its descendants from the flat tree
         const descendants = getDragDescendants(blocks, blockId)
-        set((state) => ({
-          blocks: state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id)),
-        }))
+        set((state) => {
+          const newBlocks = state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id))
+          return { blocks: newBlocks, blocksById: buildBlocksById(newBlocks) }
+        })
         // Focus/selection cleanup is the caller's responsibility — all current
         // callers (handleDeleteBlock, handleMerge*, handleEscapeCancel, BlockTree
         // empty-block cleanup) explicitly manage focus after remove() resolves.
@@ -329,7 +379,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // `createBelow` fails (e.g. block-3 creation in a 4-line split after
         // blocks 1+2 succeeded), we leave the partial valid state alone —
         // rolling back at that point would orphan the already-created blocks.
-        const previousContent = get().blocks.find((b) => b.id === blockId)?.content
+        const previousContent = get().blocksById.get(blockId)?.content
         await get().edit(blockId, plan.first)
         let lastId = blockId
         for (const content of plan.rest) {
@@ -339,11 +389,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             // back when no new blocks were created yet — the `lastId === blockId`
             // check is the durable signal for "first iteration failed."
             if (lastId === blockId && previousContent !== undefined) {
-              set((state) => ({
-                blocks: state.blocks.map((b) =>
+              set((state) => {
+                const blocks = state.blocks.map((b) =>
                   b.id === blockId ? { ...b, content: previousContent } : b,
-                ),
-              }))
+                )
+                return { blocks, blocksById: buildBlocksById(blocks) }
+              })
             }
             return
           }
@@ -386,7 +437,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           ...(moved as FlatBlock),
           position: newPosition,
         })
-        set({ blocks: newBlocks })
+        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
@@ -423,7 +474,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 
       try {
         await moveBlock(blockId, prevSibling.id, 1)
-        set({ blocks: computeIndentedBlocks(blocks, blockId, prevSibling) })
+        const newBlocks = computeIndentedBlocks(blocks, blockId, prevSibling)
+        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to indent block', { blockId }, err)
@@ -432,11 +484,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     dedent: async (blockId: string) => {
-      const { blocks, rootParentId } = get()
-      const block = blocks.find((b) => b.id === blockId)
+      const { blocks, blocksById, rootParentId } = get()
+      const block = blocksById.get(blockId)
       if (!block?.parent_id) return
 
-      const parent = blocks.find((b) => b.id === block.parent_id)
+      const parent = blocksById.get(block.parent_id)
       if (!parent) return
 
       const newParentId = parent.parent_id
@@ -466,7 +518,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         }
 
         remaining.splice(insertAt, 0, ...movedItems)
-        set({ blocks: remaining })
+        set({ blocks: remaining, blocksById: buildBlocksById(remaining) })
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to dedent block', { blockId }, err)
@@ -475,8 +527,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     moveUp: async (blockId: string) => {
-      const { blocks, rootParentId } = get()
-      const block = blocks.find((b) => b.id === blockId)
+      const { blocks, blocksById, rootParentId } = get()
+      const block = blocksById.get(blockId)
       if (!block) return
 
       const parentId = block.parent_id
@@ -501,8 +553,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     moveDown: async (blockId: string) => {
-      const { blocks, rootParentId } = get()
-      const block = blocks.find((b) => b.id === blockId)
+      const { blocks, blocksById, rootParentId } = get()
+      const block = blocksById.get(blockId)
       if (!block) return
 
       const parentId = block.parent_id
@@ -526,6 +578,27 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       }
     },
   }))
+
+  // PEND-20 G — escape hatch for external callers (tests, ad-hoc setState).
+  // Wrap `store.setState` so callers passing only `{ blocks: [...] }` get
+  // `blocksById` derived automatically. Internal `set(...)` calls inside the
+  // factory already maintain the Map atomically and bypass this wrap.
+  const origSetState = store.setState
+  store.setState = ((partial: unknown, replace?: unknown) => {
+    if (typeof partial === 'function') {
+      const updater = partial as (state: PageBlockState) => Partial<PageBlockState> | PageBlockState
+      return (origSetState as (p: unknown, r?: unknown) => void)(
+        (state: PageBlockState) => augmentBlocksUpdate(updater(state)),
+        replace,
+      )
+    }
+    return (origSetState as (p: unknown, r?: unknown) => void)(
+      augmentBlocksUpdate(partial as Partial<PageBlockState>),
+      replace,
+    )
+  }) as typeof store.setState
+
+  return store
 }
 
 // ── Store registry ───────────────────────────────────────────────────────

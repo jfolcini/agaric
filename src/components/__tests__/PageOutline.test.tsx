@@ -34,10 +34,14 @@ vi.mock('lucide-react', () => ({
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
+  // PEND-20 G — `blocksById` mirrors `blocks` for O(1) lookups.
+  const blocksById = new Map(blocks.map((b) => [b.id, b]))
   return createStore<PageBlockState>()(() => ({
     blocks,
+    blocksById,
     rootParentId: 'PAGE_1',
     loading: false,
+    getBlockById: (id: string) => blocksById.get(id),
     load: vi.fn(),
     createBelow: vi.fn(),
     edit: vi.fn(),
