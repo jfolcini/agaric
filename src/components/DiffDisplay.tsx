@@ -145,7 +145,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
         </p>
       </div>
       {hasHunks && (
-        <div className="diff-hunk-nav mt-2 flex items-center gap-2">
+        <div className="diff-hunk-nav mt-2 flex flex-wrap items-center gap-2">
           <Button
             type="button"
             variant="ghost"

@@ -99,7 +99,7 @@ export function DuePanelFilters({
       <button
         type="button"
         className={cn(
-          'text-xs px-1.5 py-0.5 rounded border transition-colors [@media(pointer:coarse)]:min-h-[44px]',
+          'text-xs px-1.5 py-0.5 rounded border transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
           hideBeforeScheduled
             ? 'bg-primary/10 border-primary/30 text-primary'
             : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50 active:bg-accent/70',

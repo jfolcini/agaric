@@ -285,7 +285,11 @@ export function FormattingToolbar({
                 </Button>
               </Tip>
             </PopoverAnchor>
-            <PopoverContent align="start" className="w-72 p-3" data-editor-portal>
+            <PopoverContent
+              align="start"
+              className="w-72 max-w-[calc(100vw-2rem)] p-3"
+              data-editor-portal
+            >
               <LinkEditPopover
                 editor={editor}
                 isEditing={state.link}
@@ -326,7 +330,11 @@ export function FormattingToolbar({
                 </Button>
               </Tip>
             </PopoverAnchor>
-            <PopoverContent align="start" className="w-auto p-1" data-editor-portal>
+            <PopoverContent
+              align="start"
+              className="w-auto max-w-[calc(100vw-2rem)] p-1"
+              data-editor-portal
+            >
               <CodeLanguageSelector
                 editor={editor}
                 isCodeBlock={state.codeBlock}
@@ -357,7 +365,11 @@ export function FormattingToolbar({
                 </Button>
               </Tip>
             </PopoverAnchor>
-            <PopoverContent align="start" className="w-auto p-1" data-editor-portal>
+            <PopoverContent
+              align="start"
+              className="w-auto max-w-[calc(100vw-2rem)] p-1"
+              data-editor-portal
+            >
               <HeadingLevelSelector
                 editor={editor}
                 headingLevel={state.headingLevel}

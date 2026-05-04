@@ -92,11 +92,16 @@ vi.mock('../ui/popover', () => ({
   PopoverAnchor: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   PopoverContent: ({
     children,
+    className,
   }: {
     children: React.ReactNode
     align?: string
     className?: string
-  }) => <div data-testid="popover-content">{children}</div>,
+  }) => (
+    <div data-testid="popover-content" className={className}>
+      {children}
+    </div>
+  ),
 }))
 
 // Mock LinkEditPopover — render a simple stub with data attributes for props
@@ -1149,6 +1154,33 @@ describe('FormattingToolbar', () => {
       // renders its plain `t('toolbar.headingTip')` label intact.
       const headingTooltip = tooltipTexts().find((text) => /^Heading\b/.test(text))
       expect(headingTooltip).toBe(t('toolbar.headingTip'))
+    })
+  })
+
+  // ── PEND-28 H5: editor portals carry viewport-clamp ───────────────────
+  // Each `data-editor-portal` PopoverContent must declare
+  // `max-w-[calc(100vw-2rem)]` so it never overflows the viewport on
+  // narrow screens (mirrors the Radix baseline in `ui/popover.tsx`).
+  describe('viewport-clamp class on editor portals (PEND-28 H5)', () => {
+    it('link popover carries max-w-[calc(100vw-2rem)]', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const popovers = screen.getAllByTestId('popover-content')
+      // Link popover is the first PopoverContent rendered in the toolbar.
+      expect(popovers[0]?.className).toContain('max-w-[calc(100vw-2rem)]')
+    })
+
+    it('code-block language popover carries max-w-[calc(100vw-2rem)]', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const popovers = screen.getAllByTestId('popover-content')
+      // Code-block popover is the second PopoverContent.
+      expect(popovers[1]?.className).toContain('max-w-[calc(100vw-2rem)]')
+    })
+
+    it('heading-level popover carries max-w-[calc(100vw-2rem)]', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const popovers = screen.getAllByTestId('popover-content')
+      // Heading popover is the third PopoverContent.
+      expect(popovers[2]?.className).toContain('max-w-[calc(100vw-2rem)]')
     })
   })
 })

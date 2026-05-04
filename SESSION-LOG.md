@@ -2,11 +2,85 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 666 (closed 8 more PEND-23 sub-items — last actionable HIGH H3 + 4 MEDIUM + 3 LOW; PEND-23 now: 0 HIGH / 2 MEDIUM / 14 LOW remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1109+ items.
+**Sessions:** 1 – 667 (closed PEND-28b H1-H6 + M2-M5 + M7 — all 6 HIGH + 5 MEDIUM; PEND-28b now: 0 HIGH / 8 MEDIUM / 1 LOW remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1120+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 667 — closed PEND-28b H1 + H2 + H3 + H4 + H5 + H6 + M2 + M3 + M4 + M5 + M7 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 4 build (H1+H2 primitives, H3+H4+H6 component overrides, H5 FormattingToolbar, M2+M3+M4+M5+M7 trivials) + 0 reviewers (subagents self-validated; orchestrator only added the cache-clear before final prek). |
+| **Items closed** | PEND-28b H1, H2, H3, H4, H5, H6, M2, M3, M4, M5, M7 (11 sub-items: ALL 6 HIGH + 5 MEDIUM). PEND-28b now: 0 HIGH / 8 MEDIUM (M1 BugReportDialog body scroll, M6 narrow-desktop indent, M8 DaySection wrap, M9 HistoryFilterBar mobile stack, M10 60vh→60dvh, M11 JournalControls min-w, M12 HistorySheet width, M13 QueryResultTable header-button touch) / 1 LOW remaining. |
+| **Items modified** | — |
+| **Tests added** | +66 frontend across 9 test files. |
+| **Files touched** | 17 source + 4 docs (PEND-28b plan / REVIEW-LATER / SESSION-LOG / FEATURE-MAP). |
+
+**Summary:** Frontend-only batch — 4 parallel subagents on non-overlapping files, all 4 finished cleanly without WIP-commit protection. The two primitive-level fixes (H1+H2: `max-h` on Dialog / AlertDialog / Popover) are the headline wins — they propagate to every dialog and popover in the app. The other 9 items are 1-3 LOC className changes per consumer. Pre-clearing `node_modules/.vite/vitest` cache before final prek (per session 666's lesson) prevented the cross-pollution flakes that would otherwise have surfaced in shared imports — all 9456+ tests pass cleanly. H5 subagent flagged the plan's premise was wrong (the FormattingToolbar popovers ARE Radix-based, not raw portals) — applied the explicit className anyway as defense-in-depth + consistency with the codebase's "explicit declaration" convention for editor portals.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 36 → 36 (no new items filed)
+- **Previously resolved:** 1109+ → 1120+ across 666 → 667 sessions
+
+**Files touched (this session):**
+
+Frontend (TypeScript) — H1 + H2 primitive `max-h`:
+- `src/components/ui/dialog.tsx` (1 line edited): `DialogContent` className adds `max-h-[calc(100dvh-2rem)]` + `overflow-y-auto` (after the existing `max-w-[calc(100%-2rem)]`).
+- `src/components/ui/alert-dialog.tsx` (1 line edited): `AlertDialogContent` adds the same pair.
+- `src/components/ui/popover.tsx` (1 line edited): `PopoverContent` adds `max-h-[calc(100dvh-4rem)]` only (no `overflow-y-auto` per plan — popover bodies that need scroll already wrap in `<ScrollArea>` at the call site).
+- `src/components/ui/__tests__/dialog.test.tsx` (+19): `describe('DialogContent viewport cap')` asserting both classes.
+- `src/components/ui/__tests__/alert-dialog.test.tsx` (+20): same shape.
+- `src/components/ui/__tests__/popover.test.tsx` (+13): asserts `max-h-[calc(100dvh-4rem)]` only.
+
+Frontend (TypeScript) — H3 + H4 + H6 component overrides:
+- `src/components/BlockPropertyDrawer.tsx` (1 line, +6 chars): `className="w-80"` → `className="w-3/4 sm:w-80"` on the `<SheetContent>`. Aligns with `BlockGutterControls` and `HistorySheet` pattern.
+- `src/components/BlockPropertyEditor.tsx` (1 line, +28 chars): outer portal `<div>` (line 219) gains `max-w-[calc(100vw-2rem)]`. Independent of session 665's H1 ARIA scaffolding (which lives on the inner listbox div).
+- `src/components/backlink-filter/AddFilterRow.tsx` (2 lines, ~30 chars each): both Apply (line 273) and Cancel (line 284) buttons gain `[@media(pointer:coarse)]:h-11`. Re-asserts the touch-coarse height that the row's custom `h-7` was suppressing.
+- `src/components/__tests__/BlockPropertyDrawer.test.tsx`: 1 new test asserting `w-3/4 sm:w-80`.
+- `src/components/__tests__/BlockPropertyEditor.test.tsx`: 1 new test asserting `max-w-[calc(100vw-2rem)]` on `[data-editor-portal]` (placed in existing `portal rendering` describe block).
+- `src/components/__tests__/BacklinkFilterBuilder.test.tsx`: 1 new test asserting `[@media(pointer:coarse)]:h-11` on both Apply and Cancel buttons.
+
+Frontend (TypeScript) — H5 FormattingToolbar 3 popovers:
+- `src/components/FormattingToolbar.tsx` (3 className edits, +14 / −3): link popover (`w-72 max-w-[calc(100vw-2rem)] p-3`), code-block popover (`w-auto max-w-[calc(100vw-2rem)] p-1`), heading popover (`w-auto max-w-[calc(100vw-2rem)] p-1`). Plan's premise was wrong (these ARE Radix popovers and inherit the baseline) — explicit declaration kept as defense-in-depth + consistency with sibling editor-portal components that all declare it explicitly.
+- `src/components/__tests__/FormattingToolbar.test.tsx` (+33): mock now forwards `className`; new `describe('viewport-clamp class on editor portals (PEND-28 H5)')` with 3 tests (link + code-block + heading).
+
+Frontend (TypeScript) — M2 + M3 + M4 + M5 + M7 trivials:
+- `src/components/DuePanelFilters.tsx` (1 line): `[@media(pointer:coarse)]:min-w-[44px]` added to the `hideBeforeScheduled` toggle (matches sibling filter pills).
+- `src/components/AgendaResults.tsx` (1 line): `[@media(pointer:coarse)]:text-sm` added to the priority badge (matches sibling due-date chip).
+- `src/components/AgendaSortGroupControls.tsx` (1 line): `[@media(pointer:coarse)]:text-sm` added to the shared `DropdownSelector` button — covers both sort + group triggers via the shared sub-component.
+- `src/components/PageAliasSection.tsx` (1 line): `sm:w-32` viewport-width breakpoint added between `w-24` and `[@media(pointer:coarse)]:w-full` on the alias `<Input>`.
+- `src/components/DiffDisplay.tsx` (1 line): `flex-wrap` added to the `.diff-hunk-nav` container so long file paths / many hunks wrap on narrow viewports.
+- 5 corresponding test files (+53 LOC across them): 5 new test assertions, one per item.
+
+Plan file:
+- `pending/PEND-28-ux-responsiveness-review-findings.md`: H1 / H2 / H3 / H4 / H5 / H6 / M2 / M3 / M4 / M5 / M7 sub-headers struck through with `~~...~~` + ✅ session-667 marker. Status line at top: "0 HIGH + 8 MEDIUM + 1 LOW remaining".
+
+Docs:
+- `pending/REVIEW-LATER.md`: header bumped to session 667 (no new MAINT items)
+- `SESSION-LOG.md`: this entry
+- `FEATURE-MAP.md`: primitive `max-h` cap documented
+
+**Verification:**
+- `rm -rf node_modules/.vite/vitest` (per session 666's lesson — cross-pollution from 4 concurrent subagents touching shared imports) → `npx vitest run` — 9456+/9456+ pass
+- `cd src-tauri && cargo nextest run` — 3510/3510 pass, 4 skipped (no Rust changes this session)
+- `prek run --all-files` — all hooks pass (one round, no orchestrator fixes needed)
+
+**Process notes:**
+- **Pre-clearing the vitest cache worked.** Last session needed orchestrator-direct fixes (biome, lint) plus a vitest cache clear to get prek green; this session needed only the cache clear. Lesson is now in PROMPT.md territory — should add to the file.
+- **All 4 subagents finished cleanly** without WIP-commit protection. The shared working tree is mostly fine for pure-frontend batches as long as tests don't run mid-edit on unstable file states.
+- **H5 plan-vs-reality deviation noted but didn't block.** The plan's "not Radix popovers" claim was empirically wrong — `FormattingToolbar.tsx` line 39 imports `PopoverContent` from `./ui/popover`. The subagent verified by reading the source and applied the change as defense-in-depth. Worth noting that other plans may have similar premise inaccuracies; subagents must verify the technical claim before applying the literal fix.
+
+**Lessons learned (for future sessions):**
+- **Always pre-clear `node_modules/.vite/vitest` before the final orchestrator prek run** when the batch has ≥3 concurrent frontend subagents touching shared primitive imports. Costs ~15s; saves the false-positive flake noise that would otherwise mask real failures.
+- **Plans can have inaccurate technical premises** (H5's claim that FormattingToolbar uses raw portals was wrong). Subagents should verify the claim by reading the source, then apply the requested fix anyway if it's defense-in-depth — and report the deviation explicitly so future plan edits can correct the body.
+- **`max-h-[calc(100dvh-Nrem)]` on primitives is the highest-leverage win** in a UX responsiveness sweep. Two `<DialogContent>` lines + one `<PopoverContent>` line propagate to every dialog/popover in the app. PEND-28b's "headline win" framing was correct.
+
+**Commit plan:** single commit / not pushed.
+
+---
 
 ## Session 666 — closed PEND-23 H3 + M3 + M7 + M8 + M9 + L1 + L8 + L11 (2026-05-04)
 

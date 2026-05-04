@@ -210,5 +210,6 @@ describe('DuePanelFilters', () => {
     const toggle = screen.getByRole('button', { name: /Scheduled: show all/i })
     expect(toggle).toHaveAttribute('aria-label', 'Scheduled: show all')
     expect(toggle.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+    expect(toggle.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
   })
 })

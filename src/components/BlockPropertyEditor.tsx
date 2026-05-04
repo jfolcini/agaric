@@ -216,7 +216,7 @@ export function BlockPropertyEditor({
     <div
       ref={propPopupRef}
       data-editor-portal=""
-      className="rounded-md border bg-popover p-1 shadow-lg"
+      className="rounded-md border bg-popover p-1 shadow-lg max-w-[calc(100vw-2rem)]"
       style={{ position: 'fixed', left: HIDDEN_LEFT, top: HIDDEN_TOP, zIndex: 50 }}
       role="dialog"
       aria-label={t('block.editProperty')}
