@@ -18,6 +18,11 @@ import { format, subDays } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+let mockInvalidationKey = 0
+vi.mock('../../hooks/useBlockPropertyEvents', () => ({
+  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: mockInvalidationKey })),
+}))
+
 vi.mock('lucide-react', () => ({
   Circle: (props: Record<string, unknown>) => <svg data-testid="icon-todo" {...props} />,
   Clock: (props: Record<string, unknown>) => <svg data-testid="icon-doing" {...props} />,
@@ -100,6 +105,7 @@ function defaultProps(overrides: Partial<AgendaResultsProps> = {}): AgendaResult
 describe('AgendaResults', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockInvalidationKey = 0
     mockGetProperties.mockResolvedValue([])
     mockBatchResolve.mockResolvedValue([])
     useNavigationStore.setState({
@@ -601,6 +607,38 @@ describe('AgendaResults', () => {
     })
 
     expect(screen.queryByTestId('dependency-indicator')).not.toBeInTheDocument()
+  })
+
+  // PEND-27 P6: cache must be cleared on a property-change event so the
+  // dependency indicator picks up fresh data after a property edit.
+  it('PEND-27 P6: clears properties cache on block:properties-changed event', async () => {
+    mockGetProperties.mockResolvedValue([])
+
+    const blocks = [makeBlock({ id: 'B1', content: 'Cached task' })]
+    const { rerender } = render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    // Initial mount fetches properties for B1.
+    await waitFor(() => {
+      expect(mockGetProperties).toHaveBeenCalledWith('B1')
+    })
+    expect(mockGetProperties).toHaveBeenCalledTimes(1)
+
+    // Unmount the indicator (empty list) and remount with the same block.
+    // Without invalidation, the cached entry survives the ref so no new
+    // IPC fires.
+    rerender(<AgendaResults {...defaultProps({ blocks: [] })} />)
+    rerender(<AgendaResults {...defaultProps({ blocks })} />)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(mockGetProperties).toHaveBeenCalledTimes(1)
+
+    // Simulate a `block:properties-changed` event: the hook bumps
+    // invalidationKey, which must cause AgendaResults to clear the cache.
+    mockInvalidationKey = 1
+    rerender(<AgendaResults {...defaultProps({ blocks: [] })} />)
+    rerender(<AgendaResults {...defaultProps({ blocks })} />)
+    await waitFor(() => {
+      expect(mockGetProperties).toHaveBeenCalledTimes(2)
+    })
   })
 
   // UX-195: the due date chip must get extra vertical padding on touch devices

@@ -77,6 +77,22 @@ describe('formatCompactDate', () => {
   it('handles December of a different year', () => {
     expect(formatCompactDate('2027-12-31')).toBe('Dec 31, 2027')
   })
+
+  it('returns original string for month 0', () => {
+    expect(formatCompactDate('2026-00-15')).toBe('2026-00-15')
+  })
+
+  it('returns original string for month 13', () => {
+    expect(formatCompactDate('2026-13-15')).toBe('2026-13-15')
+  })
+
+  it('returns original string for day 0', () => {
+    expect(formatCompactDate('2026-04-00')).toBe('2026-04-00')
+  })
+
+  it('returns original string for day 32', () => {
+    expect(formatCompactDate('2026-04-32')).toBe('2026-04-32')
+  })
 })
 
 describe('MONTH_SHORT', () => {

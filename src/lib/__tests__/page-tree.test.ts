@@ -113,4 +113,48 @@ describe('buildPageTree', () => {
     expect(tree[1]?.name).toBe('docs')
     expect(tree[1]?.children).toHaveLength(1)
   })
+
+  // PEND-27 P8: the per-level Map index used internally must not leak
+  // into the returned tree — node shape is `{ name, fullPath, pageId?,
+  // children }` only, byte-equivalent to the pre-Map implementation.
+  it('PEND-27 P8: returned nodes expose no internal index fields', () => {
+    const pages = [
+      { id: 'P1', content: 'work/projects/alpha' },
+      { id: 'P2', content: 'work/projects/beta' },
+      { id: 'P3', content: 'work/notes' },
+      { id: 'P4', content: 'docs' },
+    ]
+    const tree = buildPageTree(pages)
+
+    function visit(node: unknown): void {
+      const keys = Object.keys(node as object).sort()
+      const allowed = ['children', 'fullPath', 'name', 'pageId']
+      for (const k of keys) {
+        expect(allowed).toContain(k)
+      }
+      const children = (node as { children: unknown[] }).children
+      for (const child of children) visit(child)
+    }
+    for (const node of tree) visit(node)
+
+    // Byte-equivalent to the pre-Map implementation for this fixture.
+    expect(tree).toEqual([
+      {
+        name: 'work',
+        fullPath: 'work',
+        children: [
+          {
+            name: 'projects',
+            fullPath: 'work/projects',
+            children: [
+              { name: 'alpha', fullPath: 'work/projects/alpha', pageId: 'P1', children: [] },
+              { name: 'beta', fullPath: 'work/projects/beta', pageId: 'P2', children: [] },
+            ],
+          },
+          { name: 'notes', fullPath: 'work/notes', pageId: 'P3', children: [] },
+        ],
+      },
+      { name: 'docs', fullPath: 'docs', pageId: 'P4', children: [] },
+    ])
+  })
 })

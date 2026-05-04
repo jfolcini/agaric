@@ -19,6 +19,7 @@ vi.mock('../../lib/tauri', () => ({
 
 import type { BacklinkGroup } from '../../lib/tauri'
 import { batchResolve } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 import { useBacklinkResolution } from '../useBacklinkResolution'
 
 const mockedBatchResolve = vi.mocked(batchResolve)
@@ -50,13 +51,19 @@ function makeGroup(blocks: Array<{ id: string; content: string | null }>): Backl
   }
 }
 
+const initialSpaceState = useSpaceStore.getState()
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()
+  // Default: no active space — `keyFor(null, id)` resolves to the
+  // `__global__::id` slot so existing tests behave as before.
+  useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: null })
 })
 
 afterEach(() => {
   vi.useRealTimers()
+  useSpaceStore.setState({ ...initialSpaceState })
 })
 
 describe('useBacklinkResolution', () => {
@@ -299,5 +306,55 @@ describe('useBacklinkResolution', () => {
     await waitFor(() => {
       expect(result.current.resolveTagName(ULID_TAG)).toBe(`#${ULID_TAG.slice(0, 8)}...`)
     })
+  })
+
+  it('returns different titles for the same ULID in two spaces within the TTL window (PEND-30 L-2)', async () => {
+    // Same backlink id resolves to different titles in two different
+    // spaces. Without space-aware cache keys the second render would
+    // hit the stale "Title in A" entry (still well within the 5-min
+    // TTL) and skip the IPC entirely.
+    useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: 'SPACE_AAAA' })
+
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Title in A', block_type: 'page', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('Title in A')
+    })
+    expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+
+    // Switch space — the hook's `currentSpaceId` selector flips,
+    // the effect re-runs, and `keyFor('SPACE_BBBB', ULID_A)` is a
+    // cache miss → a second IPC call returns the B-space title.
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Title in B', block_type: 'page', deleted: false },
+    ])
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_BBBB' })
+    })
+
+    await waitFor(() => {
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('Title in B')
+    })
+    expect(mockedBatchResolve).toHaveBeenCalledTimes(2)
+
+    // Switch back to space A — both entries are still within TTL, so
+    // the cache should serve "Title in A" without a third IPC call.
+    // (If the cache were id-only, switching back would over-write
+    // "Title in A" with "Title in B" and this assertion would fail.)
+    mockedBatchResolve.mockClear()
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_AAAA' })
+    })
+
+    await waitFor(() => {
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('Title in A')
+    })
+    expect(mockedBatchResolve).not.toHaveBeenCalled()
   })
 })

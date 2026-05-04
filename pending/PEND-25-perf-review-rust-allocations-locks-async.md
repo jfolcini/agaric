@@ -29,27 +29,27 @@ Severity floor for inclusion in this file:
 
 ## Summary
 
-| ID  | Severity | Category    | Location                                                                  | Cost     | Risk | Confidence |
-|-----|----------|-------------|---------------------------------------------------------------------------|----------|------|------------|
-| M1  | MEDIUM*  | startup     | `src-tauri/src/lib.rs` setup hook (3 deferrable `block_on`s)              | M (4–7h) | low  | medium     |
-| M2  | MEDIUM   | dep-bloat   | `src-tauri/Cargo.toml:169` (`oauth2` reqwest 0.12 vs repo 0.13) — MAINT-91| L (8h+)  | med  | high       |
-| L1  | LOW      | lock        | `src-tauri/src/materializer/dispatch.rs:60–74`                            | trivial  | low  | high       |
-| L2  | LOW      | allocation  | `src-tauri/src/materializer/handlers.rs:78,136`                           | S (1–2h) | low  | high       |
-| L3  | LOW      | allocation  | `src-tauri/src/sync_protocol/operations.rs:364–368`                       | trivial  | low  | high       |
-| L4  | LOW      | allocation  | `src-tauri/src/sync_protocol/operations.rs:479,489`                       | trivial  | low  | high       |
-| L5  | LOW      | hash        | `src-tauri/src/backlink/{query.rs,grouped.rs}` + `materializer/dedup.rs`  | S (1h)   | low  | high       |
-| L6  | LOW      | allocation  | `src-tauri/src/fts/strip.rs:68–73, 157–161`                               | S (1–2h) | low  | high       |
-| L7  | LOW      | sql         | `src-tauri/src/fts/index.rs:240–257`                                      | S (1h)   | low  | high       |
-| L8  | LOW      | memory      | `src-tauri/src/commands/agenda.rs:371–539` (on-the-fly fallback)          | M (3–5h) | med  | high       |
-| L9  | LOW      | allocation  | 7 sites: `commands/{properties.rs:159,428; mod.rs:705; blocks/crud.rs:490,656,775,1054}` | S (2h) | low | high  |
-| L10 | LOW      | allocation  | `src-tauri/src/dag.rs:178–204` (`walk_edit_chain`)                        | trivial  | low  | medium     |
-| L11 | LOW      | allocation  | `src-tauri/src/merge/detect.rs:161–166`                                   | trivial  | low  | high       |
-| L12 | LOW      | allocation  | `src-tauri/src/mcp/server.rs:512` (error-clip path)                       | trivial  | low  | high       |
-| ~~L13~~ | — | — | ~~`src-tauri/src/sync_protocol/operations.rs:171, 767`~~ | — | — | — |
-| L14 | LOW      | allocation  | `src-tauri/src/gcal_push/connector.rs:118–122` (`EventPatch` builder)     | trivial  | low  | high       |
-| L15 | LOW      | memory      | `src-tauri/src/gcal_push/connector.rs:255` (unbounded `dirty_tx`)         | S (1–2h) | low  | high       |
-| L16 | LOW      | n+1         | `src-tauri/src/gcal_push/connector.rs:486+589–595` (per-date agenda fetch)| S (2h)   | low  | high       |
-| L17 | LOW      | allocation  | `src-tauri/src/error.rs:169` (`Serialize` always calls `to_string`)       | trivial  | low  | high       |
+| ID      | Severity | Category    | Location                                                                                 | Cost     | Risk | Confidence |
+|---------|----------|-------------|------------------------------------------------------------------------------------------|----------|------|------------|
+| M1      | MEDIUM*  | startup     | `src-tauri/src/lib.rs` setup hook (3 deferrable `block_on`s)                             | M (4–7h) | low  | medium     |
+| M2      | MEDIUM   | dep-bloat   | `src-tauri/Cargo.toml:169` (`oauth2` reqwest 0.12 vs repo 0.13) — MAINT-91               | L (8h+)  | med  | high       |
+| L1      | LOW      | lock        | `src-tauri/src/materializer/dispatch.rs:60–74`                                           | trivial  | low  | high       |
+| L2      | LOW      | allocation  | `src-tauri/src/materializer/handlers.rs:78,136`                                          | S (1–2h) | low  | high       |
+| L3      | LOW      | allocation  | `src-tauri/src/sync_protocol/operations.rs:364–368`                                      | trivial  | low  | high       |
+| L4      | LOW      | allocation  | `src-tauri/src/sync_protocol/operations.rs:479,489`                                      | trivial  | low  | high       |
+| L5      | LOW      | hash        | `src-tauri/src/backlink/{query.rs,grouped.rs}` + `materializer/dedup.rs`                 | S (1h)   | low  | high       |
+| L6      | LOW      | allocation  | `src-tauri/src/fts/strip.rs:68–73, 157–161`                                              | S (1–2h) | low  | high       |
+| L7      | LOW      | sql         | `src-tauri/src/fts/index.rs:240–257`                                                     | S (1h)   | low  | high       |
+| L8      | LOW      | memory      | `src-tauri/src/commands/agenda.rs:371–539` (on-the-fly fallback)                         | M (3–5h) | med  | high       |
+| L9      | LOW      | allocation  | 7 sites: `commands/{properties.rs:159,428; mod.rs:705; blocks/crud.rs:490,656,775,1054}` | S (2h)   | low  | high       |
+| L10     | LOW      | allocation  | `src-tauri/src/dag.rs:178–204` (`walk_edit_chain`)                                       | trivial  | low  | medium     |
+| L11     | LOW      | allocation  | `src-tauri/src/merge/detect.rs:161–166`                                                  | trivial  | low  | high       |
+| L12     | LOW      | allocation  | `src-tauri/src/mcp/server.rs:512` (error-clip path)                                      | trivial  | low  | high       |
+| ~~L13~~ | —        | —           | ~~`src-tauri/src/sync_protocol/operations.rs:171, 767`~~                                 | —        | —    | —          |
+| L14     | LOW      | allocation  | `src-tauri/src/gcal_push/connector.rs:118–122` (`EventPatch` builder)                    | trivial  | low  | high       |
+| L15     | LOW      | memory      | `src-tauri/src/gcal_push/connector.rs:255` (unbounded `dirty_tx`)                        | S (1–2h) | low  | high       |
+| L16     | LOW      | n+1         | `src-tauri/src/gcal_push/connector.rs:486+589–595` (per-date agenda fetch)               | S (2h)   | low  | high       |
+| L17     | LOW      | allocation  | `src-tauri/src/error.rs:169` (`Serialize` always calls `to_string`)                      | trivial  | low  | high       |
 
 *M1 is rated MEDIUM **conditional on a profile**: only 3 of the 11 `block_on` calls are deferrable; the original reviewer's "window appears frozen" wording was speculative. **Profile on Android first.**
 

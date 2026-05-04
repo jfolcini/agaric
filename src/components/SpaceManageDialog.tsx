@@ -697,7 +697,16 @@ export function SpaceManageDialog({
   const emptinessFetchedRef = useRef<Set<string>>(new Set())
   const journalTemplateFetchedRef = useRef<Set<string>>(new Set())
 
+  // PEND-29 B-7: cancellation flag prevents post-unmount setState on
+  // both IIFEs. Closing the dialog unmounts the content (Radix portal,
+  // no `forceMount`); without the guard the in-flight `listBlocks` /
+  // `getProperties` IPCs resolved into setState calls on an unmounted
+  // component. The `emptinessFetchedRef` / `journalTemplateFetchedRef`
+  // dedup behavior is preserved — the catch path's `delete(id)` now
+  // also gates on `active` so we don't re-open a slot for a dead
+  // component.
   useEffect(() => {
+    let active = true
     for (const space of availableSpaces) {
       const id = space.id
       if (!emptinessFetchedRef.current.has(id)) {
@@ -709,6 +718,7 @@ export function SpaceManageDialog({
               spaceId: id,
               limit: 1,
             })
+            if (!active) return
             // Spaces are themselves page blocks. The current
             // `listBlocks(blockType:'page', spaceId)` query returns
             // only pages whose `space` property points at the target —
@@ -720,7 +730,7 @@ export function SpaceManageDialog({
             // On error, allow a retry on the next render so the user
             // can recover by reopening the dialog. Delete stays
             // disabled until a probe succeeds.
-            emptinessFetchedRef.current.delete(id)
+            if (active) emptinessFetchedRef.current.delete(id)
             logger.warn(LOG_MODULE, 'failed to probe space emptiness', { spaceId: id }, err)
           }
         })()
@@ -730,11 +740,12 @@ export function SpaceManageDialog({
         void (async () => {
           try {
             const props = await getProperties(id)
+            if (!active) return
             const row = props.find((p) => p.key === 'journal_template')
             const value = row?.value_text ?? ''
             setJournalTemplateBySpace((prev) => ({ ...prev, [id]: value }))
           } catch (err) {
-            journalTemplateFetchedRef.current.delete(id)
+            if (active) journalTemplateFetchedRef.current.delete(id)
             logger.warn(
               LOG_MODULE,
               'failed to load journal template property',
@@ -744,6 +755,9 @@ export function SpaceManageDialog({
           }
         })()
       }
+    }
+    return () => {
+      active = false
     }
   }, [availableSpaces])
 

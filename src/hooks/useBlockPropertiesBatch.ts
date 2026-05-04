@@ -28,9 +28,11 @@ export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPro
 
   useEffect(() => {
     if (blocks.length === 0) return
+    let cancelled = false
     const visibleIds = blocks.map((b) => b.id)
     getBatchProperties(visibleIds)
       .then((result) => {
+        if (cancelled) return
         const mapped: BlockPropertiesMap = {}
         for (const [blockId, props] of Object.entries(result)) {
           mapped[blockId] = props
@@ -48,8 +50,12 @@ export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPro
         setBlockProperties(mapped)
       })
       .catch((err: unknown) => {
+        if (cancelled) return
         logger.warn('BlockTree', 'Failed to load batch properties for blocks', undefined, err)
       })
+    return () => {
+      cancelled = true
+    }
   }, [blocks])
 
   return blockProperties

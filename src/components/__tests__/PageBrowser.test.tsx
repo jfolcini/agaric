@@ -12,7 +12,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,24 +22,39 @@ import { emptyPage, makePage } from '../../__tests__/fixtures'
 import { useSpaceStore } from '../../stores/space'
 import { PageBrowser } from '../PageBrowser'
 
+// Capture every `estimateSize` callback passed to `useVirtualizer` so the
+// PEND-30 L-5 referential-stability test can assert the function identity
+// is unchanged across re-renders that don't change `groupedRows`.
+//
+// The captured signature is the production one (`(index: number) => number`),
+// but the mock invokes it without args throughout this test file (legacy
+// zero-arg invocation predates the L-5 change). The `(...args: never[])`
+// type lets both calling conventions type-check cleanly without `any`.
+type EstimateSizeFn = (...args: never[]) => number
+const capturedEstimateSizes: Array<EstimateSizeFn> = []
+
 // Mock @tanstack/react-virtual to render all items (jsdom has zero-height containers)
 vi.mock('@tanstack/react-virtual', () => {
   const scrollToIndex = vi.fn()
   const measureElement = () => {}
   return {
-    useVirtualizer: (opts: { count: number; estimateSize: () => number }) => ({
-      getVirtualItems: () =>
-        Array.from({ length: opts.count }, (_, i) => ({
-          index: i,
-          key: i,
-          start: i * opts.estimateSize(),
-          size: opts.estimateSize(),
-          end: (i + 1) * opts.estimateSize(),
-        })),
-      getTotalSize: () => opts.count * opts.estimateSize(),
-      scrollToIndex,
-      measureElement,
-    }),
+    useVirtualizer: (opts: { count: number; estimateSize: EstimateSizeFn }) => {
+      capturedEstimateSizes.push(opts.estimateSize)
+      const size = () => (opts.estimateSize as () => number)()
+      return {
+        getVirtualItems: () =>
+          Array.from({ length: opts.count }, (_, i) => ({
+            index: i,
+            key: i,
+            start: i * size(),
+            size: size(),
+            end: (i + 1) * size(),
+          })),
+        getTotalSize: () => opts.count * size(),
+        scrollToIndex,
+        measureElement,
+      }
+    },
   }
 })
 
@@ -64,6 +79,7 @@ function findTrashButton(row: HTMLElement): HTMLButtonElement {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  capturedEstimateSizes.length = 0
   localStorage.removeItem('page-browser-sort')
   localStorage.removeItem('starred-pages')
   // FEAT-3 Phase 2 — PageBrowser now gates its render and listBlocks
@@ -1259,6 +1275,96 @@ describe('PageBrowser', () => {
 
       expect(screen.getByText('Meeting notes')).toBeInTheDocument()
       expect(screen.getByText('Shopping list')).toBeInTheDocument()
+    })
+
+    // -----------------------------------------------------------------
+    // PEND-29 B-2: alias-resolution stale-fetch guard. When a slow
+    // promise resolves AFTER a newer query has been issued, the older
+    // result must be discarded so `aliasMatchId` reflects the latest
+    // query — not the older in-flight one.
+    // -----------------------------------------------------------------
+
+    it('alias resolution discards stale promise resolution (PEND-29 B-2)', async () => {
+      const user = userEvent.setup()
+
+      // Two pages: `Apple` (P_APPLE) and `Banana` (P_BANANA). The alias
+      // resolver below returns the page id matching the query, with an
+      // intentional out-of-order resolution: the older `App` query
+      // resolves AFTER the newer `Banana` query.
+      mockedInvoke.mockReset()
+      let resolveApp!: (v: unknown) => void
+      let resolveBanana!: (v: unknown) => void
+      const aliasCalls: string[] = []
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'list_blocks') {
+          return Promise.resolve({
+            items: [
+              makePage({ id: 'P_APPLE', content: 'Apple' }),
+              makePage({ id: 'P_BANANA', content: 'Banana' }),
+            ],
+            next_cursor: null,
+            has_more: false,
+          })
+        }
+        if (cmd === 'resolve_page_by_alias') {
+          // biome-ignore lint/suspicious/noExplicitAny: dynamic IPC args
+          const query = (args as any)?.alias as string | undefined
+          aliasCalls.push(query ?? '')
+          if (query === 'App') {
+            return new Promise((resolve) => {
+              resolveApp = resolve
+            })
+          }
+          if (query === 'Banana') {
+            return new Promise((resolve) => {
+              resolveBanana = resolve
+            })
+          }
+          return Promise.resolve(null)
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+
+      // Type the first (stale) query.
+      await user.type(searchInput, 'App')
+      await waitFor(() => {
+        expect(aliasCalls.includes('App')).toBe(true)
+      })
+
+      // Replace it with a newer query — this fires a second IPC and
+      // increments `aliasReqIdRef`, marking the in-flight `App` promise
+      // as stale.
+      await user.clear(searchInput)
+      await user.type(searchInput, 'Banana')
+      await waitFor(() => {
+        expect(aliasCalls.includes('Banana')).toBe(true)
+      })
+
+      // Resolve the newer query first → this is the truthy result and
+      // should set `aliasMatchId` to `P_BANANA`.
+      await act(async () => {
+        resolveBanana(['P_BANANA', 'Banana'])
+      })
+
+      // Now resolve the OLDER `App` query with `P_APPLE`. Without the
+      // stale-fetch guard this would overwrite `aliasMatchId` and the
+      // `App` page would briefly be highlighted in the filtered list,
+      // which is impossible because the search input no longer contains
+      // `App`. With the guard, the old result is discarded.
+      await act(async () => {
+        resolveApp(['P_APPLE', 'Apple'])
+      })
+
+      // After both promises settle, the live filter still reads
+      // `Banana`, so only `Banana` is visible. The stale `Apple` match
+      // never leaks through.
+      expect(screen.getByTitle('Banana')).toBeInTheDocument()
+      expect(screen.queryByText('Apple')).not.toBeInTheDocument()
     })
   })
 
@@ -2484,5 +2590,53 @@ describe('PageBrowser', () => {
         { timeout: 5000 },
       )
     }, 10000)
+  })
+
+  // ====================================================================
+  // PEND-30 L-5 — useVirtualizer.estimateSize must be referentially
+  // stable across re-renders that don't change `groupedRows`. TanStack
+  // Virtual treats option-identity changes as a re-measure trigger.
+  // ====================================================================
+
+  describe('PEND-30 L-5 estimateSize referential stability', () => {
+    it('estimateSize identity is preserved across re-renders that do not change groupedRows', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Snapshot the estimateSize ref after the initial render. Multiple
+      // captures may exist due to the mount-time settle (effects fire,
+      // useStarredPages reads localStorage, etc.) — pick the latest as
+      // the post-stabilisation reference.
+      expect(capturedEstimateSizes.length).toBeGreaterThan(0)
+      const initialEstimateSize = capturedEstimateSizes[capturedEstimateSizes.length - 1]
+
+      // Trigger a re-render that changes only the `newPageName` state —
+      // `groupedRows`, `pages`, `filterText`, sorting, and starred set
+      // are all untouched, so the memoized `estimateSize` returned by
+      // `useCallback([groupedRows])` must be the same reference.
+      const newPageInput = screen.getByPlaceholderText('New page name...')
+      const beforeCount = capturedEstimateSizes.length
+      await user.type(newPageInput, 'Draft')
+      // Wait for at least one re-render to register a new captured ref.
+      await waitFor(() => {
+        expect(capturedEstimateSizes.length).toBeGreaterThan(beforeCount)
+      })
+
+      // Every captured estimateSize after the initial stabilisation
+      // should be the same reference — `groupedRows` did not change.
+      for (let i = beforeCount; i < capturedEstimateSizes.length; i++) {
+        expect(capturedEstimateSizes[i]).toBe(initialEstimateSize)
+      }
+    })
   })
 })

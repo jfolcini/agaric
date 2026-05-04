@@ -30,7 +30,7 @@ import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { common, createLowlight } from 'lowlight'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { AtTagPicker, atTagPickerPluginKey } from './extensions/at-tag-picker'
@@ -373,6 +373,19 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     },
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
   })
+
+  // PEND-30 L-4: B-77 cleanup layer 5 — when the host component unmounts
+  // (e.g. an exception during render that swaps the tree, fast tab switch),
+  // TipTap's `useEditor` destroys the editor without going through the
+  // suggestion plugin's `onExit`, which can leave orphan popup DOM. Sweep
+  // any survivors here so the next mount of the editor never reuses stale
+  // popups.
+  useEffect(
+    () => () => {
+      cleanupOrphanedPopups()
+    },
+    [],
+  )
 
   const mount = useCallback(
     (blockId: string, markdown: string) => {

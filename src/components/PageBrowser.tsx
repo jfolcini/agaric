@@ -107,6 +107,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Tracks the handleCreateUnder focus setTimeout so we can cancel it on
   // unmount and avoid focusing a stale DOM node (#MAINT-14).
   const pendingFocusRef = useRef<number | null>(null)
+  // PEND-29 B-2: monotonic request id for alias resolution. When the user
+  // types fast, the older `resolvePageByAlias` promise can resolve after the
+  // newer one and overwrite `aliasMatchId` with stale data; the request-id
+  // pattern (mirrors `useQueryExecution` post-PEND-22) discards results from
+  // any but the most recent in-flight request.
+  const aliasReqIdRef = useRef(0)
 
   // Clear any pending focus timer on unmount.
   useEffect(
@@ -132,18 +138,24 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     prevLengthRef.current = pages.length
   }, [pages.length, t])
 
-  // Alias resolution for filter
+  // Alias resolution for filter (PEND-29 B-2: stale-fetch guard via
+  // request-id ref so an older promise resolving after a newer one cannot
+  // overwrite `aliasMatchId` with stale data).
   useEffect(() => {
     if (!filterText.trim()) {
       setAliasMatchId(null)
       return
     }
-    resolvePageByAlias(filterText.trim())
+    const myReqId = ++aliasReqIdRef.current
+    const query = filterText.trim()
+    resolvePageByAlias(query)
       .then((result) => {
+        if (myReqId !== aliasReqIdRef.current) return
         setAliasMatchId(result ? result[0] : null)
       })
       .catch((err) => {
-        logger.warn('PageBrowser', 'alias resolution failed', { query: filterText.trim() }, err)
+        if (myReqId !== aliasReqIdRef.current) return
+        logger.warn('PageBrowser', 'alias resolution failed', { query }, err)
         setAliasMatchId(null)
       })
   }, [filterText])
@@ -259,13 +271,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setFocusedIndex(0)
   }, [filterText, sortOption, setFocusedIndex])
 
-  const virtualizer = useVirtualizer({
-    count: virtualItemCount,
-    getScrollElement: () => listRef.current,
-    // Header rows (~36px) sentinel-interspersed between page rows
-    // (~44px) and tree-page rows (~44px for the root; descendants
-    // render inside the same DOM wrapper).
-    estimateSize: (index) => {
+  // PEND-30 L-5: wrap `estimateSize` in `useCallback` so its identity is
+  // stable across re-renders that don't change `groupedRows`. TanStack
+  // Virtual treats option-identity changes as a re-measure trigger.
+  const estimateSize = useCallback(
+    (index: number) => {
       const row = groupedRows[index]
       if (row?.kind === 'header') return HEADER_ROW_HEIGHT
       // Both `page` and `tree-page` share the 44px row height. The
@@ -273,6 +283,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       // actual height when descendants expand the wrapper.
       return PAGE_ROW_HEIGHT
     },
+    [groupedRows],
+  )
+
+  const virtualizer = useVirtualizer({
+    count: virtualItemCount,
+    getScrollElement: () => listRef.current,
+    // Header rows (~36px) sentinel-interspersed between page rows
+    // (~44px) and tree-page rows (~44px for the root; descendants
+    // render inside the same DOM wrapper).
+    estimateSize,
     overscan: 5,
   })
 

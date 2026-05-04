@@ -2,8 +2,19 @@
  * Tests for src/lib/tree-utils.ts — flat tree builder, projection, and position computation.
  */
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
 import { makeBlock } from '../../__tests__/fixtures'
+import { logger } from '../logger'
 import {
   buildFlatTree,
   computePosition,
@@ -13,6 +24,12 @@ import {
   getProjection,
   SENTINEL_ID,
 } from '../tree-utils'
+
+const mockedLoggerWarn = vi.mocked(logger.warn)
+
+beforeEach(() => {
+  mockedLoggerWarn.mockClear()
+})
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 // Thin positional-arg wrappers around the shared `makeBlock` fixture
@@ -126,6 +143,30 @@ describe('buildFlatTree', () => {
     const ids = result.map((b) => b.id)
     expect(new Set(ids).size).toBe(ids.length)
     expect(ids).toContain('B')
+  })
+
+  it('caps recursion at MAX_TREE_DEPTH on a pathologically deep linear chain (M-2)', () => {
+    // Synthetic 2000-block linear chain: b0 ← b1 ← b2 ← … ← b1999
+    // Without the depth bound this would throw `RangeError: Maximum call
+    // stack size exceeded` on the recursive `dfs` call at depth ~1100.
+    const blocks: FlatBlock[] = []
+    blocks.push(mkBlock('b0', null, 1))
+    for (let i = 1; i < 2000; i++) {
+      blocks.push(mkBlock(`b${i}`, `b${i - 1}`, 1))
+    }
+
+    const result = buildFlatTree(blocks)
+
+    // The bound is MAX_TREE_DEPTH = 1000 → DFS visits depth 0..1000 (1001
+    // nodes) and then early-returns when called for depth 1001.
+    expect(result.length).toBeLessThanOrEqual(1001)
+    expect(result.length).toBeGreaterThanOrEqual(1000)
+    expect(mockedLoggerWarn).toHaveBeenCalledTimes(1)
+    expect(mockedLoggerWarn).toHaveBeenCalledWith(
+      'tree-utils',
+      'tree depth limit exceeded',
+      expect.objectContaining({ maxDepth: 1000 }),
+    )
   })
 })
 

@@ -202,8 +202,11 @@ describe('DailyView UX-258 selectedBlockId scroll-into-view', () => {
       expect(useBlockStore.getState().focusedBlockId).toBe('BLOCK_X')
     })
 
-    // selectedBlockId is cleared synchronously inside the effect.
-    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+    // selectedBlockId is cleared inside the rAF callback — by the time the
+    // scroll/focus assertions above resolve, the clear has run too.
+    await vi.waitFor(() => {
+      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+    })
   })
 
   it('clears selectedBlockId without scrolling when the DOM node is absent', async () => {
@@ -211,14 +214,13 @@ describe('DailyView UX-258 selectedBlockId scroll-into-view', () => {
 
     render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
 
-    // The effect calls clearSelection() synchronously — assertion is safe immediately.
-    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
-
-    // Drain one rAF tick so any scheduled callback runs and we can prove no scroll fired.
+    // Drain one rAF tick so any scheduled callback runs (clearSelection runs
+    // inside the rAF callback) and we can prove no scroll fired.
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => resolve())
     })
 
+    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
     expect(scrollSpy).not.toHaveBeenCalled()
   })
 
@@ -255,5 +257,16 @@ describe('DailyView UX-258 selectedBlockId scroll-into-view', () => {
     })
 
     expect(scrollSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels the pending requestAnimationFrame on unmount', () => {
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame')
+    useNavigationStore.setState({ selectedBlockId: 'BLOCK_Z' })
+
+    const { unmount } = render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
+    unmount()
+
+    expect(cancelSpy).toHaveBeenCalled()
+    cancelSpy.mockRestore()
   })
 })

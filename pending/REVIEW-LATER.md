@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 659 — closed PEND-22 (frontend robustness review findings): graph-worker dispatcher wrapped in try/catch with re-throw to preserve boundary `error` event; new `WorkerErrorMessage` type routed through `reportFailure('worker-reported', …)` in `graph-sim-helpers.ts`; `useQueryExecution` gained a `reqIdRef` counter (Option A) preventing slow in-flight fetches from clobbering newer fetches' results. +2 frontend tests; 9294/9294 vitest pass; tsc + biome clean. Reviewer PASS — no fixes needed.)
+> **Last updated:** 2026-05-04 (Session 660 — frontend code-quality batch: PEND-27 closed (8 items P1-P8: `Promise.all` agenda fan-out, incremental Unicode fold, set-intersection helper, functional setters + ref mirror, `LinkedReferences` Map merge, `AgendaResults` cache invalidation, `suggestion-renderer` rAF coalesce, `buildPageTree` Map-per-level); PEND-29 partial (B-2..B-10 closed; B-1 BulletList removal skipped per user); PEND-30 partial (M-1, M-2, L-1, L-2, L-4, L-5 closed; L-3 portal-attribute migration deferred per user; D-1..D-4 still tracked in plan). ~26 new frontend tests; 9327/9327 vitest pass; `prek run --all-files` clean.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 

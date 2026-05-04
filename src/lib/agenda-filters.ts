@@ -248,14 +248,27 @@ async function queryPropertyDateDimension(
     if (!range) continue
     const start = new Date(`${range.start}T00:00:00`)
     const end = new Date(`${range.end}T00:00:00`)
+    // PEND-27 P1 (Tier 1) — fan out per-day IPC calls in parallel rather
+    // than awaiting sequentially. Each `queryByProperty` is read-only and
+    // idempotent, so ordering only affects which equal row wins the final
+    // `result.set(b.id, b)` — benign. Cuts wall-clock from N×roundtrip to
+    // ~1×roundtrip + small fan-out overhead. The Tier 2 backend command
+    // (`query_by_property_date_range`) is tracked separately.
+    const dates: string[] = []
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const dateStr = formatDate(d)
-      const resp = await queryByProperty({
-        key: propertyKey,
-        valueDate: dateStr,
-        limit: AGENDA_QUERY_LIMIT,
-        spaceId,
-      })
+      dates.push(formatDate(d))
+    }
+    const responses = await Promise.all(
+      dates.map((dateStr) =>
+        queryByProperty({
+          key: propertyKey,
+          valueDate: dateStr,
+          limit: AGENDA_QUERY_LIMIT,
+          spaceId,
+        }),
+      ),
+    )
+    for (const resp of responses) {
       for (const b of resp.items) {
         result.set(b.id, b)
       }
@@ -301,6 +314,28 @@ async function queryPropertyDimension(
     }
   }
   return result
+}
+
+/**
+ * Intersect a non-empty list of result sets, iterating the smaller of
+ * each pair to halve allocations vs. the spread-into-array + filter +
+ * `new Set` pattern. PEND-27 P3 — extracted as a helper so the main
+ * `executeAgendaFilters` body stays under the cognitive-complexity cap.
+ */
+function intersectSets(sets: Set<string>[]): Set<string> {
+  let intersection = sets[0] as Set<string>
+  for (let i = 1; i < sets.length; i++) {
+    const other = sets[i]
+    if (!other) continue
+    const [smaller, larger] =
+      intersection.size <= other.size ? [intersection, other] : [other, intersection]
+    const next = new Set<string>()
+    for (const id of smaller) {
+      if (larger.has(id)) next.add(id)
+    }
+    intersection = next
+  }
+  return intersection
 }
 
 // ---------------------------------------------------------------------------
@@ -427,13 +462,11 @@ export async function executeAgendaFilters(
     resultSets.push(ids)
   }
 
-  // Intersect all result sets
+  // Intersect all result sets via the PEND-27 P3 helper (smaller-of-two
+  // pair walk; halves allocations vs. the previous spread+filter+new Set).
   let blocks: BlockRow[] = []
   if (resultSets.length > 0) {
-    let intersection = resultSets[0] as Set<string>
-    for (let i = 1; i < resultSets.length; i++) {
-      intersection = new Set([...intersection].filter((id) => resultSets[i]?.has(id)))
-    }
+    const intersection = intersectSets(resultSets)
     blocks = [...intersection].map((id) => allBlocks.get(id) as BlockRow).filter(Boolean)
   }
 

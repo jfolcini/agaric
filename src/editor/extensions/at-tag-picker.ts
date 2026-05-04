@@ -157,6 +157,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
             extensionOptions
               .onCreate(item.label)
               .then((newId) => {
+                if (editor.view?.isDestroyed) return
                 editor
                   .chain()
                   .focus()

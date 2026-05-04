@@ -58,7 +58,7 @@ Everything else was either:
 > correctness gaps; PEND-26 closes invariant-#8 / depth-cap gaps;
 > this file closes a small set of "size and shape" maintenance
 > hotspots that future feature work will benefit from straightening.
-
+>
 > **Process caveat — honesty about Round 2.** The Round-2 validation
 > background subagents were lost when the session paused (twice, on
 > two re-dispatches). The validation reported here was performed

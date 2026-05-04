@@ -83,7 +83,9 @@ export function formatCompactDate(dateStr: string): string {
   const parts = dateStr.split('-')
   if (parts.length !== 3) return dateStr
   const [y, m, d] = parts.map(Number)
+  if (y === undefined || m === undefined || d === undefined) return dateStr
   if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
+  if (m < 1 || m > 12 || d < 1 || d > 31) return dateStr
   const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
   const day = d ?? 1
   const now = new Date()

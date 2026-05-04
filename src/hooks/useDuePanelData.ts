@@ -8,7 +8,7 @@
  * Extracted from DuePanel.tsx for testability (#651-R6).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatDate, getTodayString } from '@/lib/date-utils'
@@ -171,6 +171,12 @@ export function useDuePanelData({
   const [hasMore, setHasMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
+  // PEND-27 P4 — mirror `blocks` into a ref so `fetchBlocks` can compute
+  // the merged paginated list (`prev + new items`) without keeping
+  // `blocks` in its deps array. Updated on every render to stay in sync
+  // with the latest committed state.
+  const blocksRef = useRef<BlockRow[]>(blocks)
+  blocksRef.current = blocks
   const [projectedEntries, setProjectedEntries] = useState<ProjectedAgendaEntry[]>([])
   const [projectedLoading, setProjectedLoading] = useState(false)
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
@@ -305,7 +311,15 @@ export function useDuePanelData({
     }
   }, [isToday, warningDays, invalidationKey, currentSpaceId])
 
-  // Fetch blocks due on the given date
+  // Fetch blocks due on the given date.
+  // PEND-27 P4 — `blocks` / `totalCount` / `pageTitles` are no longer in
+  // the deps array; mutable state is read via functional setters
+  // (`setTotalCount(prev => …)`, `setPageTitles(prev => …)`) and via
+  // `blocksRef` for the paginated merge. Reduces callback churn and
+  // closes the latent stale-closure footgun if a future maintainer
+  // dropped one of the deps. MAINT-129 byte-equivalent map ordering is
+  // preserved: `new Map(prev)` clones existing entries in insertion
+  // order, the loop appends resolved entries in iteration order.
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
       setLoading(true)
@@ -315,15 +329,12 @@ export function useDuePanelData({
         // forces a no-match SQL filter rather than a runtime null deref.
         const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId ?? '')
         const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
-        const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
+        const newBlocks = cursor ? [...blocksRef.current, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(cursor ? totalCount + nonEmptyItems.length : nonEmptyItems.length)
+        setTotalCount((prev) => (cursor ? prev + nonEmptyItems.length : nonEmptyItems.length))
 
-        // Resolve parent page titles. Uses the closed-over `pageTitles`
-        // (not a functional update) to preserve byte-equivalent behaviour
-        // with the pre-MAINT-129 implementation.
         const uniqueParentIds = [
           ...new Set(newBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
         ]
@@ -331,11 +342,13 @@ export function useDuePanelData({
           uniqueParentIds,
           () => false,
           (resolved) => {
-            const titleMap = new Map(pageTitles)
-            for (const r of resolved) {
-              titleMap.set(r.id, r.title ?? 'Untitled')
-            }
-            setPageTitles(titleMap)
+            setPageTitles((prev) => {
+              const next = new Map(prev)
+              for (const r of resolved) {
+                next.set(r.id, r.title ?? 'Untitled')
+              }
+              return next
+            })
           },
         )
       } catch (err) {
@@ -344,7 +357,7 @@ export function useDuePanelData({
         setLoading(false)
       }
     },
-    [date, blocks, totalCount, pageTitles, sourceFilter, currentSpaceId],
+    [date, sourceFilter, currentSpaceId],
   )
 
   // Fetch on mount and when date or sourceFilter changes

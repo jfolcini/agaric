@@ -21,18 +21,11 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { activeSpaceKey } from '../lib/active-space'
 import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
-import { useSpaceStore } from './space'
 
 export type JournalMode = 'daily' | 'weekly' | 'monthly' | 'agenda'
 export type JournalPanel = 'due' | 'references' | 'done'
-
-/**
- * Reserved key used for the "no active space" slice. If a user boots
- * without `currentSpaceId` set (early boot, or no spaces yet) actions
- * read/write this slice rather than dropping data on the floor.
- */
-const LEGACY_SPACE_KEY = '__legacy__'
 
 interface JournalStore {
   mode: JournalMode
@@ -57,11 +50,6 @@ interface JournalStore {
   /** Navigate to daily view for a date and scroll to a specific panel. */
   goToDateAndPanel: (date: Date, panel: JournalPanel) => void
   clearScrollTarget: () => void
-}
-
-/** Resolve the active per-space key, falling back to the legacy slot. */
-function activeSpaceKey(): string {
-  return useSpaceStore.getState().currentSpaceId ?? LEGACY_SPACE_KEY
 }
 
 /** Format a Date as a local-time `YYYY-MM-DD` string (matches `formatDate`). */

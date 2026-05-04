@@ -183,4 +183,84 @@ describe('indexOfFolded', () => {
     // match should visually read as `İstanbul`.
     expect(haystack.slice(offset, offset + 'İstanbul'.length)).toBe('İstanbul')
   })
+
+  // -------------------------------------------------------------------
+  // PEND-27 P2 — incremental-fold cases
+  //
+  // The reverse-mapping scan in `indexOfFolded` builds the folded
+  // prefix one code unit at a time instead of refolding the growing
+  // prefix from scratch on every iteration. These cases exercise each
+  // class of fold transformation (length-changing ligature decomposition,
+  // combining-mark stripping, CJK no-op fold, all-ASCII fast-path) so
+  // the incremental walker has to handle each correctly.
+  // -------------------------------------------------------------------
+  describe('PEND-27 P2 — incremental fold across transformation classes', () => {
+    it('ligature ﬁ (U+FB01) folds to "fi" — match offset lands on the ligature', () => {
+      // 'aﬁx' folds to 'afix'. Searching for 'fi' must locate the
+      // ligature at code-unit index 1 in the original.
+      const haystack = 'aﬁx'
+      const offset = indexOfFolded(haystack, 'fi')
+      expect(offset).toBe(1)
+      expect(haystack[offset]).toBe('ﬁ')
+    })
+
+    it('ligature ﬁ — full-string match returns offset 0', () => {
+      expect(indexOfFolded('ﬁle', 'fi')).toBe(0)
+      expect(indexOfFolded('ﬁle', 'file')).toBe(0)
+    })
+
+    it('combining marks: precomposed é (U+00E9) folds to "e"', () => {
+      // 'café' — precomposed é at index 3.
+      const haystack = 'café'
+      expect(indexOfFolded(haystack, 'e')).toBe(3)
+    })
+
+    it('combining marks: decomposed e + U+0301 also folds to "e"', () => {
+      // Decomposed form: 'cafe' + combining acute (U+0301) — equivalent to
+      // the precomposed 'café' but expressed as five code points.
+      const haystack = 'cafe\u0301'
+      // The folded haystack is 'cafe'; the visible 'e' starts at offset 3.
+      expect(indexOfFolded(haystack, 'e')).toBe(3)
+    })
+
+    it('combining marks: standalone combining mark folds away cleanly', () => {
+      // 'a' + combining acute + 'bc' folds to 'abc'. Searching for 'a'
+      // must locate the base at offset 0; the combining mark contributes
+      // an empty fold, so it does not perturb the offset.
+      const haystack = `a${'\u0301'}bc`
+      expect(indexOfFolded(haystack, 'a')).toBe(0)
+      // Searching for 'b' in this haystack lands on the index just past
+      // the folded 'a' (index 1, between the base letter and its
+      // combining mark). That's the documented "off by one combining
+      // mark" cosmetic case — the assertion pins the actual behavior so
+      // a future refactor can't silently shift it.
+      expect(indexOfFolded(haystack, 'b')).toBe(1)
+    })
+
+    it('CJK characters fold to themselves (no decomposition, no case fold)', () => {
+      // CJK ideographs have no NFKD decomposition and no case mapping —
+      // the fold is a pure no-op. The match must still land at the
+      // correct offset.
+      const haystack = 'Hello 世界 Hello'
+      expect(indexOfFolded(haystack, '世界')).toBe(6)
+      expect(indexOfFolded(haystack, '世')).toBe(6)
+      expect(indexOfFolded(haystack, '界')).toBe(7)
+    })
+
+    it('CJK no-match returns -1', () => {
+      // Force the non-ASCII branch (haystack contains CJK), but query
+      // for an ideograph that isn't present.
+      expect(indexOfFolded('Hello 世界', '中')).toBe(-1)
+    })
+
+    it('all-ASCII fast path: returns the same offset as String.prototype.indexOf', () => {
+      // Both arguments ASCII — exercises the early-return at line 96.
+      // The result must match `.toLowerCase().indexOf(...)` exactly so
+      // the fast path stays a true superset of the slow path.
+      const haystack = 'The quick brown fox jumps over the lazy dog'
+      expect(indexOfFolded(haystack, 'BROWN')).toBe(haystack.toLowerCase().indexOf('brown'))
+      expect(indexOfFolded(haystack, 'lazy')).toBe(haystack.toLowerCase().indexOf('lazy'))
+      expect(indexOfFolded(haystack, 'cat')).toBe(-1)
+    })
+  })
 })

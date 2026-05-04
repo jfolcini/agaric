@@ -252,6 +252,14 @@ describe('useDuePanelData', () => {
         expect.objectContaining({ cursor: 'cursor_page2' }),
       )
     })
+
+    // PEND-27 P4 — the merged paginated list reads through `blocksRef`
+    // (no `blocks` in the deps array). The post-load state must contain
+    // BOTH pages' items, in order, to prove the ref is fresh by the time
+    // the second `fetchBlocks` runs.
+    await waitFor(() => {
+      expect(result.current.blocks.map((b) => b.id)).toEqual(['B1', 'B2'])
+    })
   })
 
   it('applies property: filter client-side', async () => {

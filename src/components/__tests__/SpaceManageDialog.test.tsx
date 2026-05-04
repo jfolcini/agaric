@@ -26,9 +26,19 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import type { SpaceRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { SpaceManageDialog } from '../SpaceManageDialog'
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -731,6 +741,77 @@ describe('SpaceManageDialog', () => {
     ).length
     expect(finalListBlocks).toBe(initialListBlocks)
     expect(finalGetProperties).toBe(initialGetProperties)
+  })
+
+  // ── PEND-29 B-7 — cancellation guard on the per-space probe IIFEs ───
+  //
+  // Both `void async` IIFEs inside the `useEffect` resolve into
+  // `setEmptinessBySpace` / `setJournalTemplateBySpace` calls. Closing
+  // the dialog unmounts the content (Radix, no `forceMount`); without
+  // the `active` flag those resolutions wrote state on an unmounted
+  // component (React 19 strict-mode warning surface). This test
+  // exercises the post-unmount resolution path: it must complete
+  // cleanly with no React warnings on `console.error` and no logger
+  // calls (success path returns early, never reaching the catch).
+  it('cancels in-flight emptiness/journal-template probes on unmount (PEND-29 B-7)', async () => {
+    let resolveBlocks!: (v: unknown) => void
+    let resolveProps!: (v: unknown) => void
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'list_blocks') {
+        return new Promise((resolve) => {
+          resolveBlocks = resolve
+        })
+      }
+      if (cmd === 'get_properties') {
+        return new Promise((resolve) => {
+          resolveProps = resolve
+        })
+      }
+      return null
+    })
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { unmount } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // Wait for both IIFEs to fire their respective IPC calls.
+    await waitFor(() => {
+      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'list_blocks')).toBe(true)
+      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'get_properties')).toBe(true)
+    })
+
+    // Unmount before either probe resolves — cleanup sets active=false.
+    unmount()
+
+    // Resolve both deferred IPCs post-unmount and let the microtask
+    // chain settle inside `act(async)`.
+    await act(async () => {
+      resolveBlocks(emptyPage)
+      resolveProps([])
+    })
+
+    // Cancellation guard short-circuits the success path: no
+    // `setEmptinessBySpace` / `setJournalTemplateBySpace` runs, and
+    // therefore no `logger.warn` for the emptiness/journal-template
+    // catch paths (the catches never fire either).
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+      expect.any(String),
+      'failed to probe space emptiness',
+      expect.anything(),
+      expect.anything(),
+    )
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+      expect.any(String),
+      'failed to load journal template property',
+      expect.anything(),
+      expect.anything(),
+    )
+    // No React-level warnings about state updates on an unmounted
+    // component slipped through the strict-mode console.error channel.
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+
+    consoleErrorSpy.mockRestore()
   })
 
   // Accessibility audits — four states matter visually:

@@ -39,28 +39,28 @@ Severity floor for inclusion in this file:
 
 ## Summary
 
-| ID  | Severity | Category        | Location                                                                                                  | Cost     | Risk |
-|-----|----------|-----------------|-----------------------------------------------------------------------------------------------------------|----------|------|
-| H1  | HIGH     | primitive       | `src/components/ui/dialog.tsx:60` + `ui/alert-dialog.tsx:55` (no `max-h` on Content)                      | trivial  | low  |
-| H2  | HIGH     | primitive       | `src/components/ui/popover.tsx:36` (no `max-h` on PopoverContent)                                         | trivial  | low  |
-| H3  | HIGH     | drawer          | `src/components/BlockPropertyDrawer.tsx:245` (`w-80` overrides Sheet baseline)                            | trivial  | low  |
-| H4  | HIGH     | editor portal   | `src/components/BlockPropertyEditor.tsx:213-249` (custom floating-UI portal, no viewport cap)             | trivial  | low  |
-| H5  | HIGH     | editor portal   | `src/components/FormattingToolbar.tsx:288–360` (3 `data-editor-portal` surfaces)                          | trivial  | low  |
+| ID  | Severity | Category        | Location                                                                                                    | Cost     | Risk |
+|-----|----------|-----------------|-------------------------------------------------------------------------------------------------------------|----------|------|
+| H1  | HIGH     | primitive       | `src/components/ui/dialog.tsx:60` + `ui/alert-dialog.tsx:55` (no `max-h` on Content)                        | trivial  | low  |
+| H2  | HIGH     | primitive       | `src/components/ui/popover.tsx:36` (no `max-h` on PopoverContent)                                           | trivial  | low  |
+| H3  | HIGH     | drawer          | `src/components/BlockPropertyDrawer.tsx:245` (`w-80` overrides Sheet baseline)                              | trivial  | low  |
+| H4  | HIGH     | editor portal   | `src/components/BlockPropertyEditor.tsx:213-249` (custom floating-UI portal, no viewport cap)               | trivial  | low  |
+| H5  | HIGH     | editor portal   | `src/components/FormattingToolbar.tsx:288–360` (3 `data-editor-portal` surfaces)                            | trivial  | low  |
 | H6  | HIGH     | touch target    | `src/components/backlink-filter/AddFilterRow.tsx:273,284` (custom `h-7` defeats `size="xs"` touch override) | trivial  | low  |
-| M1  | MEDIUM   | dialog body     | `src/components/BugReportDialog.tsx:328,519` (long form + nested log preview, no body scroll)             | S (1h)   | low  |
-| M2  | MEDIUM   | touch target    | `src/components/DuePanelFilters.tsx:102` (toggle has `min-h-[44px]` but missing `min-w-[44px]`)           | trivial  | low  |
-| M3  | MEDIUM   | touch typography| `src/components/AgendaResults.tsx:269` (priority badge keeps `text-xs` on touch while date chip scales)   | trivial  | low  |
-| M4  | MEDIUM   | touch typography| `src/components/AgendaSortGroupControls.tsx:52-54` (44 px buttons keep `text-xs`)                         | trivial  | low  |
-| M5  | MEDIUM   | input width     | `src/components/PageAliasSection.tsx:60` (`w-24` on narrow desktop)                                       | trivial  | low  |
-| M6  | MEDIUM   | indent          | `src/index.css:798-806` + `src/components/SortableBlock.tsx:311` (no viewport-width breakpoint)           | trivial  | low  |
-| M7  | MEDIUM   | wrap            | `src/components/DiffDisplay.tsx:148-166` (hunk-nav row missing `flex-wrap`)                               | trivial  | low  |
-| M8  | MEDIUM   | wrap            | `src/components/journal/DaySection.tsx:66-131` (heading row no `flex-wrap`)                               | trivial  | low  |
-| M9  | MEDIUM   | wrap            | `src/components/HistoryFilterBar.tsx:88-186` (full row no `flex-col` on mobile)                           | S (1h)   | low  |
-| M10 | MEDIUM   | viewport unit   | `src/components/KeyboardSettingsTab.tsx:143` (`60vh` not `60dvh`)                                         | trivial  | low  |
-| M11 | MEDIUM   | input width     | `src/components/JournalControls.tsx:162` (`min-w-[100px]` reserves 28 % of phone width)                   | trivial  | low  |
-| M12 | MEDIUM   | drawer          | `src/components/HistorySheet.tsx:28` (`w-3/4 sm:w-80` is 270 px on phones)                                | trivial  | low  |
-| M13 | MEDIUM   | touch target    | `src/components/QueryResultTable.tsx:60-79` (header sort buttons ~28 px tall, no `touch-target`)          | trivial  | low  |
-| L1  | LOW      | overflow        | `src/components/AlertSection.tsx:108-118` (date span has `shrink-0` but no `truncate`)                    | trivial  | low  |
+| M1  | MEDIUM   | dialog body     | `src/components/BugReportDialog.tsx:328,519` (long form + nested log preview, no body scroll)               | S (1h)   | low  |
+| M2  | MEDIUM   | touch target    | `src/components/DuePanelFilters.tsx:102` (toggle has `min-h-[44px]` but missing `min-w-[44px]`)             | trivial  | low  |
+| M3  | MEDIUM   | touch typography| `src/components/AgendaResults.tsx:269` (priority badge keeps `text-xs` on touch while date chip scales)     | trivial  | low  |
+| M4  | MEDIUM   | touch typography| `src/components/AgendaSortGroupControls.tsx:52-54` (44 px buttons keep `text-xs`)                           | trivial  | low  |
+| M5  | MEDIUM   | input width     | `src/components/PageAliasSection.tsx:60` (`w-24` on narrow desktop)                                         | trivial  | low  |
+| M6  | MEDIUM   | indent          | `src/index.css:798-806` + `src/components/SortableBlock.tsx:311` (no viewport-width breakpoint)             | trivial  | low  |
+| M7  | MEDIUM   | wrap            | `src/components/DiffDisplay.tsx:148-166` (hunk-nav row missing `flex-wrap`)                                 | trivial  | low  |
+| M8  | MEDIUM   | wrap            | `src/components/journal/DaySection.tsx:66-131` (heading row no `flex-wrap`)                                 | trivial  | low  |
+| M9  | MEDIUM   | wrap            | `src/components/HistoryFilterBar.tsx:88-186` (full row no `flex-col` on mobile)                             | S (1h)   | low  |
+| M10 | MEDIUM   | viewport unit   | `src/components/KeyboardSettingsTab.tsx:143` (`60vh` not `60dvh`)                                           | trivial  | low  |
+| M11 | MEDIUM   | input width     | `src/components/JournalControls.tsx:162` (`min-w-[100px]` reserves 28 % of phone width)                     | trivial  | low  |
+| M12 | MEDIUM   | drawer          | `src/components/HistorySheet.tsx:28` (`w-3/4 sm:w-80` is 270 px on phones)                                  | trivial  | low  |
+| M13 | MEDIUM   | touch target    | `src/components/QueryResultTable.tsx:60-79` (header sort buttons ~28 px tall, no `touch-target`)            | trivial  | low  |
+| L1  | LOW      | overflow        | `src/components/AlertSection.tsx:108-118` (date span has `shrink-0` but no `truncate`)                      | trivial  | low  |
 
 ---
 

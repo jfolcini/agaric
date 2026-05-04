@@ -17,8 +17,9 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { activeSpaceKey } from '../lib/active-space'
 import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
-import { useSpaceStore } from './space'
+import { LEGACY_SPACE_KEY } from './space'
 
 export interface PageRef {
   pageId: string
@@ -32,9 +33,6 @@ export interface PageRef {
  * with vanished entries.
  */
 const MAX_RETAINED = 10
-
-/** Reserved key for the no-active-space slot. Mirrors `navigation.ts`. */
-const LEGACY_SPACE_KEY = '__legacy__'
 
 interface RecentPagesState {
   /**
@@ -67,10 +65,6 @@ type RecentState = RecentPagesState
 export function selectRecentPagesForSpace(state: RecentState, spaceId: string | null): PageRef[] {
   if (spaceId == null) return state.recentPages
   return state.recentPagesBySpace[spaceId] ?? state.recentPages
-}
-
-function activeSpaceKey(): string {
-  return useSpaceStore.getState().currentSpaceId ?? LEGACY_SPACE_KEY
 }
 
 export const useRecentPagesStore = create<RecentPagesState>()(

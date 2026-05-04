@@ -70,6 +70,7 @@ async function resolveAndInsertBlockRef(
 
   try {
     const items = await options.items(text)
+    if (editor.view?.isDestroyed) return
     const exactMatch = items.find(
       (item) => !item.isCreate && item.label.toLowerCase() === text.toLowerCase(),
     )
@@ -98,6 +99,7 @@ async function resolveAndInsertBlockRef(
     }
   } catch (err) {
     logger.warn('BlockRefPicker', errorMessage, { text }, err)
+    if (editor.view?.isDestroyed) return
     // On error, re-insert as plain text so the user doesn't lose content
     if (isStale()) {
       insertPlainAtCursor()

@@ -643,6 +643,79 @@ describe('executeAgendaFilters', () => {
 
       expect(result.blocks).toHaveLength(0)
     })
+
+    // PEND-27 P1 — `Last 7 days` is the canonical fan-out preset for the
+    // property-date dimension: it issues one `query_by_property` per day
+    // in the resolved range, dispatched in parallel via `Promise.all`.
+    // The test pins the post-fix invariant: every day in the range is
+    // queried with `valueDate=<that day>`, and the merged map contains
+    // every block returned across the fan-out (deduped on id).
+    it('Last 7 days fans out one query_by_property per day and merges results', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      // Expected days: 2025-03-09 .. 2025-03-15 (inclusive, 7 entries).
+      const expectedDates = [
+        '2025-03-09',
+        '2025-03-10',
+        '2025-03-11',
+        '2025-03-12',
+        '2025-03-13',
+        '2025-03-14',
+        '2025-03-15',
+      ]
+      // Return a distinct block per day so we can assert all of them
+      // survived the merge. Two days additionally return a duplicate id
+      // to lock the dedup-by-id invariant inside the result Map.
+      const seenDates = new Set<string>()
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        if (cmd !== 'query_by_property') return emptyPage
+        const a = args as Record<string, unknown>
+        if (a['key'] !== 'completed_at') return emptyPage
+        const valueDate = a['valueDate'] as string
+        seenDates.add(valueDate)
+        if (valueDate === '2025-03-09') {
+          return {
+            items: [makeBlock({ id: 'completed-09' }), makeBlock({ id: 'completed-shared' })],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (valueDate === '2025-03-15') {
+          return {
+            items: [makeBlock({ id: 'completed-15' }), makeBlock({ id: 'completed-shared' })],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return {
+          items: [makeBlock({ id: `completed-${valueDate.slice(-2)}` })],
+          next_cursor: null,
+          has_more: false,
+        }
+      })
+
+      const result = await executeAgendaFilters(
+        [{ dimension: 'completedDate', values: ['Last 7 days'] }],
+        null,
+      )
+
+      // Every day in the range was queried exactly once.
+      expect([...seenDates].sort()).toEqual(expectedDates)
+      // Result contains one block per day plus the shared dedup block —
+      // 7 distinct ids, no duplicates.
+      const ids = result.blocks.map((b) => b.id).sort()
+      expect(ids).toEqual([
+        'completed-09',
+        'completed-10',
+        'completed-11',
+        'completed-12',
+        'completed-13',
+        'completed-14',
+        'completed-15',
+        'completed-shared',
+      ])
+    })
   })
 
   describe('createdDate filter', () => {

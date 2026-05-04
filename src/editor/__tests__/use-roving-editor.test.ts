@@ -953,3 +953,31 @@ describe('mount() suggestion-exit dispatch error handling (MAINT-176)', () => {
     unmountHook()
   })
 })
+
+// -- PEND-30 L-4: cleanupOrphanedPopups runs on host-component unmount -------
+
+describe('PEND-30 L-4 host-unmount popup sweep', () => {
+  it('calls cleanupOrphanedPopups exactly once when the host component unmounts', async () => {
+    // Plant an orphan popup so cleanupOrphanedPopups has visible work to
+    // do — the function `.querySelectorAll('.suggestion-popup')`s the
+    // body and removes any matches.
+    const orphan = document.createElement('div')
+    orphan.classList.add('suggestion-popup')
+    document.body.appendChild(orphan)
+    expect(document.querySelectorAll('.suggestion-popup').length).toBe(1)
+
+    const hook = renderHook(() => useRovingEditor())
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+
+    // Pre-unmount sanity: the planted orphan still exists. The hook
+    // does NOT call `cleanupOrphanedPopups` during normal mount.
+    expect(document.querySelectorAll('.suggestion-popup').length).toBe(1)
+
+    hook.result.current.editor?.destroy()
+    hook.unmount()
+
+    // The unmount-cleanup useEffect ran cleanupOrphanedPopups, sweeping
+    // the orphan. (The body never touched it during normal lifecycle.)
+    expect(document.querySelectorAll('.suggestion-popup').length).toBe(0)
+  })
+})
