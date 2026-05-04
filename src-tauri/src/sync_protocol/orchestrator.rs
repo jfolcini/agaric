@@ -523,9 +523,18 @@ impl SyncOrchestrator {
                 // sent this session.
                 let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
 
-                // Ensure the peer row exists, then record the sync
-                peer_refs::upsert_peer_ref(&self.pool, &peer_id).await?;
-                complete_sync(&self.pool, &peer_id, &last_hash, &last_sent_hash).await?;
+                // PEND-24 M2: wrap the post-session bookkeeping pair
+                // (ensure peer row + record final hashes) in a single
+                // `BEGIN IMMEDIATE` transaction so a crash or error
+                // between the two writes cannot leave a peer row whose
+                // `last_hash` is stale relative to the ops actually
+                // applied. The orchestrator runs serially per peer so
+                // contention on this lock is bounded; the tx exists for
+                // crash atomicity, not concurrency.
+                let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+                peer_refs::upsert_peer_ref_in_tx(&mut tx, &peer_id).await?;
+                complete_sync_in_tx(&mut tx, &peer_id, &last_hash, &last_sent_hash).await?;
+                tx.commit().await?;
 
                 self.state = SyncState::Complete;
                 self.session.state = SyncState::Complete;

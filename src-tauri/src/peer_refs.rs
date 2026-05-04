@@ -83,6 +83,27 @@ pub async fn upsert_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<(), App
     Ok(())
 }
 
+/// In-transaction variant of [`upsert_peer_ref`].
+///
+/// PEND-24 M2: the post-session bookkeeping pair (`upsert_peer_ref`
+/// followed by [`update_on_sync`]) must run inside a single
+/// `BEGIN IMMEDIATE` transaction so a crash between the two writes
+/// cannot leave a peer row whose `last_hash` is stale relative to
+/// the ops actually applied. This variant exists so the orchestrator
+/// can compose both writes inside one transaction.
+pub async fn upsert_peer_ref_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    peer_id: &str,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        "INSERT OR IGNORE INTO peer_refs (peer_id) VALUES (?)",
+        peer_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Insert a new peer ref with a certificate hash (used during pairing).
 ///
 /// Uses `INSERT … ON CONFLICT(peer_id) DO UPDATE` so re-pairing an existing
@@ -140,6 +161,9 @@ pub async fn upsert_peer_ref_with_cert(
 ///
 /// **Caller responsibility:** this should run inside a `BEGIN IMMEDIATE`
 /// transaction in production to prevent concurrent modifications.
+/// Use [`update_on_sync_in_tx`] when composing with another peer-ref
+/// write (e.g., a preceding [`upsert_peer_ref_in_tx`] from the
+/// orchestrator's bookkeeping pair).
 pub async fn update_on_sync(
     pool: &SqlitePool,
     peer_id: &str,
@@ -156,6 +180,41 @@ pub async fn update_on_sync(
         peer_id,
     )
     .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
+    }
+    Ok(())
+}
+
+/// In-transaction variant of [`update_on_sync`].
+///
+/// PEND-24 M2: paired with [`upsert_peer_ref_in_tx`] so the
+/// orchestrator's post-session bookkeeping (ensure-row + record-sync)
+/// commits atomically. A crash between the two writes — or any other
+/// failure that aborts the transaction — rolls both back so the next
+/// session sees a consistent peer-ref state instead of a stale
+/// `last_hash`.
+///
+/// Returns [`AppError::NotFound`] if `peer_id` does not exist after
+/// the upsert (only possible if the caller skipped the upsert).
+pub async fn update_on_sync_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    peer_id: &str,
+    last_hash: &str,
+    last_sent_hash: &str,
+) -> Result<(), AppError> {
+    let now = crate::now_rfc3339();
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET last_hash = ?, last_sent_hash = ?, synced_at = ?
+         WHERE peer_id = ?",
+        last_hash,
+        last_sent_hash,
+        now,
+        peer_id,
+    )
+    .execute(&mut **tx)
     .await?;
 
     if result.rows_affected() == 0 {

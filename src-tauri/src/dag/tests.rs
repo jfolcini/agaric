@@ -337,6 +337,79 @@ async fn append_merge_op_rejects_empty_parents() {
     );
 }
 
+// PEND-24 M5 — `append_merge_op` now dedups `parent_entries` after the
+// canonical sort, before hashing, so a buggy caller that hands in
+// duplicate `(device_id, seq)` pairs cannot construct an op with a
+// degenerate parent set. The two tests below pin both halves of the
+// fix: (1) duplicates collapse but the op is still well-formed when
+// at least 2 distinct parents survive; (2) post-dedup count is
+// re-validated, so an input that collapses below the 2-parent floor
+// is rejected even if its pre-dedup `len()` looked legal.
+
+#[tokio::test]
+async fn append_merge_op_rejects_duplicate_parents() {
+    let (pool, _dir) = test_pool().await;
+
+    // A duplicate (A, 1) plus a distinct (B, 1) — three pre-dedup
+    // entries collapse to two distinct ones. The op must still
+    // succeed and its `parent_seqs` must contain exactly the two
+    // distinct entries (sorted).
+    let payload = make_edit("B1", "merged", None);
+    let parents = vec![
+        (DEV_A.to_owned(), 1),
+        (DEV_A.to_owned(), 1),
+        (DEV_B.to_owned(), 1),
+    ];
+
+    let record = append_merge_op(&pool, "local", payload, parents)
+        .await
+        .expect("dedup must keep the op valid when 2 distinct parents survive");
+
+    let parent_seqs = record.parsed_parent_seqs().unwrap().unwrap();
+    assert_eq!(
+        parent_seqs.len(),
+        2,
+        "duplicate parent entries must collapse; got {parent_seqs:?}"
+    );
+    assert_eq!(
+        parent_seqs[0],
+        (DEV_A.to_owned(), 1),
+        "first parent (sorted) should be device-A"
+    );
+    assert_eq!(
+        parent_seqs[1],
+        (DEV_B.to_owned(), 1),
+        "second parent (sorted) should be device-B"
+    );
+}
+
+#[tokio::test]
+async fn append_merge_op_dedups_then_rejects_if_under_two() {
+    let (pool, _dir) = test_pool().await;
+
+    // Pre-dedup len = 2 (looks legal), post-dedup len = 1 — the
+    // re-check after `sorted_parents.dedup()` must catch this.
+    let payload = make_edit("B1", "text", None);
+    let err = append_merge_op(
+        &pool,
+        DEV_A,
+        payload,
+        vec![(DEV_A.to_owned(), 1), (DEV_A.to_owned(), 1)],
+    )
+    .await;
+
+    assert!(
+        matches!(err, Err(AppError::InvalidOperation(_))),
+        "duplicate-only parent_entries should collapse to <2 distinct \
+         entries and fail with InvalidOperation; got {err:?}"
+    );
+    let msg = err.unwrap_err().to_string();
+    assert!(
+        msg.contains("at least 2"),
+        "expected 'at least 2' error after dedup, got: {msg}"
+    );
+}
+
 #[tokio::test]
 async fn append_merge_op_hash_verifies() {
     let (pool, _dir) = test_pool().await;

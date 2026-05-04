@@ -487,8 +487,23 @@ pub(crate) async fn try_receive_snapshot_catchup(
     // reflects the catch-up. `last_sent_hash` stays empty — we did not
     // send anything in this session. The next scheduled sync will pick
     // up any ops the responder wrote after the snapshot was taken.
-    peer_refs::upsert_peer_ref(pool, resolved_peer_id).await?;
-    if let Err(e) = peer_refs::update_on_sync(pool, resolved_peer_id, &up_to_hash, "").await {
+    //
+    // PEND-24 M2: wrap the ensure-row + record-sync pair in a single
+    // `BEGIN IMMEDIATE` transaction so a crash between the two writes
+    // cannot leave a peer row whose `last_hash` is stale relative to
+    // the snapshot frontier just applied. The bookkeeping write is
+    // still treated as non-fatal — the snapshot itself is already
+    // durable, and a failed bookkeeping commit just means the next
+    // scheduler tick will reconsider this peer — but the rollback
+    // ensures we don't leave a half-written peer row behind.
+    let bookkeeping = async {
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        peer_refs::upsert_peer_ref_in_tx(&mut tx, resolved_peer_id).await?;
+        peer_refs::update_on_sync_in_tx(&mut tx, resolved_peer_id, &up_to_hash, "").await?;
+        tx.commit().await?;
+        Ok::<(), AppError>(())
+    };
+    if let Err(e) = bookkeeping.await {
         // Non-fatal: the snapshot itself is already durable, and a
         // failed bookkeeping update just means the next scheduler
         // tick will reconsider this peer — not data loss.

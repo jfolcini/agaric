@@ -83,6 +83,25 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
     let status = response.status().as_u16();
     let final_url = response.url().to_string();
 
+    // PEND-24 M4 — short-circuit on non-2xx so 4xx/5xx HTML error pages
+    // (e.g. a 404 with `<title>Page not found</title>`) don't get parsed
+    // and cached as the target page's metadata. `auth_required` still
+    // tracks 401/403 so the existing reauth-card UX keeps working.
+    // `not_found` is intentionally NOT a stored field yet — when a
+    // frontend follow-up wants to distinguish 404 from 5xx, it can
+    // reach for the schema migration; until then the bug fix is the
+    // early return.
+    if !response.status().is_success() {
+        return Ok(LinkMetadata {
+            url: final_url,
+            title: None,
+            favicon_url: None,
+            description: None,
+            fetched_at: now_rfc3339(),
+            auth_required: status == 401 || status == 403,
+        });
+    }
+
     // Check Content-Type — only fetch text/html
     let content_type = response
         .headers()

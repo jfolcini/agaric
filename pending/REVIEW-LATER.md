@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-04 (Session 663 — closed PEND-19 + PEND-31 + PEND-32 + PEND-34 in one batch: `RecentPagesStrip` chip + single-line scroll redesign (PEND-19 + PEND-32 bundled per plan), references-panel filter affordance consolidation (PEND-31), `[[` page-link picker progressive alias filtering (PEND-34, new `list_page_aliases_by_prefix` Tauri command + active-space scoping). Deleted 4 plan files. 3 new MAINT items filed (MAINT-210 `references.moreFilters` dead key; MAINT-211 edge-fade affordance; MAINT-212 raise `MAX_RETAINED`). +24 frontend tests (33 RecentPagesStrip / 5 References / 4 picker) + 7 Rust tests. 9351/9351 vitest + 3491/3492 nextest (1 pre-existing perf flake unrelated) + `prek run --all-files` clean.)
+> **Last updated:** 2026-05-04 (Session 664 — closed PEND-24 C1 + C2 + M2 + M3 + M4 + M5 + M6 in one batch (7 of the 11 sub-items; H2 was already done session 662; H1 + H3 + M1 stay in the plan file for a future pass). MCP space-isolation enforcement (`validate_block_in_space` helper + `space_id` on all 6 rw tools), agenda-projection malformed-date warn, `append_merge_op` parent dedup, `link_metadata` non-2xx short-circuit, `peer_refs` + `complete_sync` atomicity (sync_protocol orchestrator + sync_daemon snapshot_transfer), `restore_block_inner` synchronous `page_id` refresh. 2 new MAINT items filed (MAINT-213 M4 frontend follow-up, MAINT-214 M6 sibling cases in `restore_all_deleted_inner` + `apply_op_revert`). +18 Rust tests. 3510/3510 nextest + 9351/9351 vitest + `prek run --all-files` clean.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-33 open items in the summary table; 35 detail entries (FE-* sub-tables don't appear in the summary).
+35 open items in the summary table; 35 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -52,6 +52,8 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-210 | MAINT | `references.moreFilters` i18n key in `src/lib/i18n/references.ts:19` is now unused — PEND-31 removed the "Show / Hide filters" toggle that consumed it (along with `showFilters` / `hideFilters` / `filtersLabel`, which were deleted in the same change). Left in place in PEND-31 per AGENTS "Surgical Changes" rule (don't remove pre-existing dead code unless asked). Sweep on next i18n pass. | trivial | — |
 | MAINT-211 | MAINT | `RecentPagesStrip` single-line scroll has no edge-fade affordance — off-screen chips are cued only by Radix's auto-hide horizontal scrollbar + a partially-cut last chip. Plan PEND-32 deferred a `mask-image` right-edge fade because it requires a `ResizeObserver` to toggle on/off based on overflow. Revisit only if real-world feedback says off-screen chips are hard to discover; see `src/components/RecentPagesStrip.tsx`. | S | Real-world discoverability feedback |
 | MAINT-212 | MAINT | `MAX_RETAINED = 10` in `src/stores/recent-pages.ts` was sized for the pre-PEND-32 grid layout (which wrapped to 2 rows beyond ~7 chips). Now that the strip scrolls horizontally on a single fixed-height row, the cap could be raised (15-20) to retain longer history without hurting layout. Independent UX call; pursue when the user wants longer recents. | trivial | UX call on retention depth |
+| MAINT-213 | MAINT | PEND-24 M4 follow-up — frontend distinct UX for 401/403 (sign-in card) vs 404/410 (gone) vs 5xx (transient/retry). Today the backend short-circuits on every non-2xx and returns minimal metadata; only `auth_required` is persisted. Adding a `not_found` boolean to `LinkMetadata` (+ migration + `link_metadata` table column + serde default-false on existing rows) would let the frontend distinguish "signed-out" from "page is gone" from "server flaked". File when the link card UI rework wants the distinction. | S-M (Rust column + frontend chrome) | Frontend rework that wants the distinction |
+| MAINT-214 | MAINT | PEND-24 M6 sibling cases — two more paths still update `page_id` async-only (asymmetric vs `move_block_inner` and the now-fixed `restore_block_inner`): (a) `restore_all_deleted_inner` (`src-tauri/src/commands/blocks/crud.rs:1051`) — bulk restore covers every soft-deleted block in one `UPDATE`; `RebuildPageIds` is the only refresh path. (b) `apply_op_revert` for `OpPayload::RestoreBlock` and `OpPayload::MoveBlock` (`src-tauri/src/commands/history.rs:74` and `:105`) — undo/redo replay. Both should mirror M6 / `move_block_inner`'s recursive-CTE `UPDATE page_id`. Discovered during M6 implementation but explicitly out of scope per the plan's "this fix scoped to `restore_block_inner`" boundary. | S each | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |

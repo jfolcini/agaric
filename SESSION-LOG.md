@@ -2,11 +2,84 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 663 (closed PEND-19 + PEND-31 + PEND-32 + PEND-34 — RecentPagesStrip chip + scroll redesign, references-panel filter consolidation, page-link picker progressive alias filtering) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1087+ items.
+**Sessions:** 1 – 664 (closed 7 of 11 PEND-24 sub-items — MCP space enforcement + agenda warn + dag dedup + link_metadata 4xx short-circuit + peer_refs atomicity + restore_block sync page_id) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1094+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 664 — closed PEND-24 C1 + C2 + M2 + M3 + M4 + M5 + M6 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 5 build (one stuck mid-run, M4 finished orchestrator-direct) + 0 review (orchestrator-direct review via test verification due to coordination chaos) |
+| **Items closed** | PEND-24 C1, C2, M2, M3, M4, M5, M6 (7 sub-items). H2 was already done session 662. H1, H3, M1 remain in the plan file for a future pass. |
+| **Items modified** | MAINT-213, MAINT-214 added to REVIEW-LATER |
+| **Tests added** | +18 Rust (7 MCP cross-space, 4 link_metadata 4xx/5xx + 200 regression, 4 agenda + dag dedup, 2 sync_protocol atomicity, 1 lifecycle restore page_id) |
+| **Files touched** | 18 source + 3 docs (PEND-24 plan / REVIEW-LATER / SESSION-LOG / FEATURE-MAP) |
+
+**Summary:** Single PEND deep-dive. 5 parallel build subagents (C1+C2 MCP, M3+M5 agenda+dag, M4 link_metadata, M2 peer_refs, M6 restore_block_inner) split by file boundary. The M4 subagent stalled (likely deadlocked on the cargo-build / git-checkout chaos that some subagents introduced — see Process notes); M4 was finished orchestrator-direct as a narrow fix (early-return on non-2xx). Total surface: 1238 insertions / 184 deletions across 18 files, +18 Rust tests, all 3510 nextest pass, all 9351 vitest pass, `prek run --all-files` clean.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 33 → 35 (+2: MAINT-213 link_metadata frontend follow-up; MAINT-214 M6 sibling cases)
+- **Previously resolved:** 1087+ → 1094+ across 663 → 664 sessions
+
+**Files touched (this session):**
+
+Backend (Rust) — MCP space enforcement (C1 + C2):
+- `src-tauri/src/mcp/handler_utils.rs` (+66): new `validate_block_in_space(pool, block_id, space_id)` helper. LEFT JOIN `blocks` × `block_properties` on `COALESCE(b.page_id, b.id)` ∧ `key='space'`; `is_conflict = 0` filter per AGENTS.md invariant #9; returns `Ok(())` if block missing (defers to `*_inner`'s NotFound) or owning page's space matches; `AppError::Validation` on mismatch
+- `src-tauri/src/mcp/tools_rw.rs` (+83 / −17): `space_id: String` field added to all 6 rw arg structs (`AppendBlockArgs`, `UpdateBlockContentArgs`, `SetPropertyArgs`, `AddTagArgs`, `CreatePageArgs`, `DeleteBlockArgs`); `validate_block_in_space` called in 5 of them; `create_page` routed through `create_block_inner_with_space(..., Some(space_id))`. `set_property` only validates `block_id`, NOT `value_ref` (refs may legitimately point at global blocks; PEND-15 covers cross-space refs at the op boundary). `add_tag` only validates `block_id`, NOT `tag_id` (tags are global). Tool schema (`tool_desc_*` builders) extended so MCP clients see the new required `space_id` parameter.
+- `src-tauri/src/mcp/tools_rw/snapshots/agaric_lib__mcp__tools_rw__tests__tool_descriptions_rw.snap` (+20 / −6): insta snapshot updated for the new param
+- `src-tauri/src/mcp/tools_rw/tests.rs` (+375 / −145): 27 existing tests threaded with `space_id`; 7 new cross-space rejection tests + 1 happy-path `create_page_writes_space_property`. Refactored fixture (`mk_tools` returns space ULID, `mk_space` and `mk_in_space_content_block` helpers).
+
+Backend (Rust) — agenda + dag (M3 + M5):
+- `src-tauri/src/commands/agenda.rs` (+30 / −3): `tracing::warn!` before each `continue` in date-parse-failure paths in `list_projected_agenda_on_the_fly`. `repeat_until` parsing converted from silent `.and_then(...).ok()` (treated as "no end constraint") to warn + `continue` (block skipped) — stricter than before; matches plan's intent of treating any DB-level corruption as observable.
+- `src-tauri/src/dag.rs` (+14 / −3): `sorted_parents.dedup()` after sort, BEFORE the `< 2` rejection. Updated message to "merge op requires at least 2 **distinct** parent entries". Existing `append_merge_op_rejects_fewer_than_2_parents` + `append_merge_op_rejects_empty_parents` still pass with the relocated check.
+- `src-tauri/src/commands/tests/agenda_cmd_tests.rs` (+134): `malformed_date_is_warned_and_skipped` + `malformed_repeat_until_is_warned_and_skipped` — inject malformed dates via raw `sqlx::query` (bypassing `is_valid_iso_date`). Length-of-results assertions; warn assertion is best-effort (no `tracing-test` precedent in this codebase).
+- `src-tauri/src/dag/tests.rs` (+73): `append_merge_op_rejects_duplicate_parents` (3 entries → 2, op succeeds) + `append_merge_op_dedups_then_rejects_if_under_two` (2 entries → 1, `InvalidOperation`).
+
+Backend (Rust) — link_metadata 4xx short-circuit (M4):
+- `src-tauri/src/link_metadata/mod.rs` (+19): early-return on `!response.status().is_success()` immediately after the status / final_url read. 4xx HTML bodies (e.g. `<title>Page not found</title>`) are NO LONGER parsed as the target page's title. `auth_required` still tracks 401/403 so the existing reauth UX keeps working. `not_found` field NOT added — deferred to MAINT-213 follow-up when the frontend wants to distinguish 404 from 5xx (avoids a schema migration today).
+- `src-tauri/src/link_metadata/tests.rs` (+131): 4 wiremock-driven regression tests — 404 / 401 / 500 short-circuit + 200 still parses body (regression guard). 200 happy-path used `set_body_raw` to avoid `set_body_string`'s default `text/plain` content-type override.
+
+Backend (Rust) — peer_refs atomicity (M2):
+- `src-tauri/src/peer_refs.rs` (+59): `upsert_peer_ref_in_tx` + `update_on_sync_in_tx` `_in_tx` variants alongside the existing pool-taking pair (preserved for tests / one-off callers). Updated `update_on_sync` docstring to point at the new variant.
+- `src-tauri/src/sync_protocol/operations.rs` (+16): `complete_sync_in_tx` thin wrapper delegating to `peer_refs::update_on_sync_in_tx`.
+- `src-tauri/src/sync_protocol/orchestrator.rs` (+12 / −2): `SyncMessage::SyncComplete` bookkeeping pair wrapped in `pool.begin_with("BEGIN IMMEDIATE")` tx.
+- `src-tauri/src/sync_daemon/snapshot_transfer.rs` (+15 / −4): same pattern — snapshot-catchup bookkeeping pair (`upsert_peer_ref` + `update_on_sync` at original lines 490–491) folded into one `BEGIN IMMEDIATE`. Preserved existing non-fatal warn-on-failure semantics by wrapping the tx body in a `Result`-producing async block.
+- `src-tauri/src/sync_protocol/tests.rs` (+122): `upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically` (happy path) + `upsert_peer_ref_and_complete_sync_share_tx_rolls_back_on_inner_failure` (uses a `BEFORE UPDATE ... RAISE(ABORT)` trigger, precedent: `set_page_aliases_in_transaction` M-21).
+
+Backend (Rust) — restore_block_inner sync page_id (M6):
+- `src-tauri/src/commands/blocks/crud.rs` (+73): new recursive-CTE `WITH RECURSIVE descendants ... UPDATE blocks SET page_id = ?` over the restored subtree, mirroring `move_block_inner`'s template at `move_ops.rs:177–234`. Filters `is_conflict = 0` + bounds `depth < 100` per AGENTS.md invariant #9. Sits inside the existing `tx`. Existing async `RebuildPageIds` dispatch via `commit_and_dispatch` stays (idempotent — running twice is safe).
+- `src-tauri/src/command_integration_tests/lifecycle_integration.rs` (+143): `restore_block_synchronously_refreshes_page_id` — soft-deletes a block, moves its parent under a different page, restores the original block, queries `page_id` *before* the materializer can run. Made deterministic by calling `mat.shutdown()` before the move/restore pair (else `cache::page_id::rebuild_page_ids_impl` doesn't filter `deleted_at IS NULL` and would race to fix the column). Verified the test fails at line 233 (the M6 assertion) without the M6 fix, passes with it.
+
+Backend (Rust) — plan file (PEND-24):
+- `pending/PEND-24-rust-robustness-review-findings.md`: TL;DR table — C1 / C2 / M2 / M3 / M4 / M5 / M6 marked ✅ done session 664; H2 marked ✅ done session 662; H1 / H3 / M1 stay `ready`. "Recommended order" — H2 line struck through.
+
+Docs:
+- `pending/REVIEW-LATER.md`: +2 MAINT items (213 / 214); summary count 33 → 35
+- `SESSION-LOG.md`: this entry
+- `FEATURE-MAP.md`: documented MCP `space_id` requirement on rw tools
+
+**Verification:**
+- `cargo nextest run` — 3510/3510 pass, 4 skipped (was 3506; +4 new tests visible since some are smoke-tests gated on `cfg(test)`)
+- `npx vitest run` — 9351/9351 pass (no frontend changes; suite stable)
+- `prek run --all-files` — all hooks pass
+
+**Process notes:**
+- **Coordination disaster.** Three concurrent build subagents (M2, M6, and to a lesser extent C1+C2) ran `git stash` / `git checkout HEAD --` cycles to "clean" the repo before their `cargo nextest` runs, repeatedly wiping each other's uncommitted work. M3+M5 reported having to re-apply its changes 4 times during the session and saved a backup patch at `/tmp/PEND-24-M3-M5.patch`. C1+C2 protected itself by committing 4 WIP commits (`13f8fcd4`…`66f5d4c2`) to `main`. M6 did the same (`e900ab7b`…`c6baf595`). M2 staged its work but landed clean. The orchestrator squashed all 9 WIP commits + uncommitted M3+M5 + uncommitted M2 into a single atomic commit at end-of-session. M4 stalled mid-run (likely deadlocked on a stash/checkout race) and was killed; the orchestrator finished M4 inline as a narrow fix. **Future-session lesson: when launching parallel Rust subagents, hand each one a `git worktree` (one per agent) so their `git checkout HEAD --` resets stay scoped. See PROMPT.md "Worktrees" — the bar is "if subagents touch overlapping directories" but in practice parallel subagents that run cargo tests appear to overlap on `git index` even when their file edits don't.**
+- The MCP `space_id` parameter is plain `String`. PEND-18 (`SpaceId` newtype + `SpaceScope` enum) will sweep them up later — already noted in PEND-18's plan body.
+
+**Lessons learned (for future sessions):**
+- Subagent prompts MUST forbid `git stash`, `git checkout HEAD --`, `git reset --hard` on files outside the agent's scope. The C1+C2 / M6 strategy of committing WIP commits to protect work is a workaround, not a fix. Worktrees are the structural answer.
+- Wiremock's `set_body_string` defaults to `text/plain` content-type; `insert_header` order doesn't reliably override. Use `set_body_raw(bytes, content_type)` for explicit control.
+- The `link_metadata` schema migration was deferred (MAINT-213) by choosing the narrowest fix that closes the M4 stated bug. A 1-field schema change can be deferred until the consumer needs it.
+- The M6 sibling-case audit (MAINT-214) was the single most useful artefact from the session — it surfaced two unfixed-but-related paths (`restore_all_deleted_inner`, `apply_op_revert`) that a future "page_id sync" pass should clean up.
+
+**Commit plan:** single squashed commit / not pushed.
+
+---
 
 ## Session 663 — closed PEND-19 + PEND-31 + PEND-32 + PEND-34 (2026-05-04)
 

@@ -33,17 +33,17 @@ the bundles below is touched.
 
 | ID | Severity | Cost | Risk | Impact | Status |
 | --- | --- | --- | --- | --- | --- |
-| **C1** — MCP `create_page` bypasses space-isolation invariant | CRITICAL | S (~1 h) | low | high | ready |
-| **C2** — MCP `append_block` doesn't validate parent's space | CRITICAL | S (1-2 h) | low | high | ready |
+| **C1** — MCP `create_page` bypasses space-isolation invariant | CRITICAL | S (~1 h) | low | high | ✅ done session 663 — `create_page` routes through `create_block_inner_with_space`; `space_id` required on tool schema |
+| **C2** — MCP `append_block` doesn't validate parent's space | CRITICAL | S (1-2 h) | low | high | ✅ done session 663 — `validate_block_in_space` helper + `space_id` on all 6 rw tools (`append_block`, `update_block_content`, `set_property`, `add_tag`, `create_page`, `delete_block`) |
 | **H1** — Foreground `ApplyOp` retry-exhausted → silent drop, not persisted | HIGH | M (3-5 h) | medium | medium-high | ready |
-| **H2** — Recurrence `++` mode 10k-iter cap can return date ≤ today silently | HIGH | trivial (~30 min) | low | medium | ready |
+| **H2** — Recurrence `++` mode 10k-iter cap can return date ≤ today silently | HIGH | trivial (~30 min) | low | medium | ✅ done session 662 (bundled with PEND-26 N3) |
 | **H3** — Revoked GCal refresh token → infinite retry, no reauth event | HIGH | S (2-3 h) | low | medium | ready |
 | **M1** — `record_failure` failure path silently leaks the task | MEDIUM | S (~1 h) | low | low-medium | ready |
-| **M2** — `upsert_peer_ref` + `complete_sync` not in one tx (docstring violation) | MEDIUM | S (1-2 h) | low | medium | ready |
-| **M3** — Agenda projection silently skips malformed dates | MEDIUM | trivial (~15 min) | low | low | ready |
-| **M4** — `link_metadata` fetch parses 4xx HTML pages as metadata | MEDIUM | trivial (~30 min) | low | low-medium | ready |
-| **M5** — `append_merge_op` doesn't dedup `parent_entries` | MEDIUM | trivial (~15 min) | low | low | ready |
-| **M6** — `restore_block_inner` async-only `page_id` refresh (asymmetric vs `move_block_inner`) | MEDIUM | S (1-2 h) | low | low | ready |
+| **M2** — `upsert_peer_ref` + `complete_sync` not in one tx (docstring violation) | MEDIUM | S (1-2 h) | low | medium | ✅ done session 663 — `_in_tx` variants; both `sync_protocol/orchestrator.rs` and `sync_daemon/snapshot_transfer.rs` bookkeeping pairs folded into single `BEGIN IMMEDIATE` |
+| **M3** — Agenda projection silently skips malformed dates | MEDIUM | trivial (~15 min) | low | low | ✅ done session 663 — bundled with M5 |
+| **M4** — `link_metadata` fetch parses 4xx HTML pages as metadata | MEDIUM | trivial (~30 min) | low | low-medium | ✅ done session 663 — narrow fix landed (early-return on non-2xx); `not_found` field deferred until frontend follow-up needs it |
+| **M5** — `append_merge_op` doesn't dedup `parent_entries` | MEDIUM | trivial (~15 min) | low | low | ✅ done session 663 — bundled with M3 |
+| **M6** — `restore_block_inner` async-only `page_id` refresh (asymmetric vs `move_block_inner`) | MEDIUM | S (1-2 h) | low | low | ✅ done session 663 — recursive-CTE `UPDATE page_id` synchronously inside tx (mirrors `move_block_inner`); deterministic test via materializer shutdown |
 
 C1 + C2 together is "make MCP rw tools accept and enforce `space_id`" —
 single PR, biggest cross-space safety win, smallest diff. Schedule first.

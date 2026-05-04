@@ -889,6 +889,22 @@ pub async fn complete_sync(
     peer_refs::update_on_sync(pool, peer_id, last_received_hash, last_sent_hash).await
 }
 
+/// In-transaction variant of [`complete_sync`].
+///
+/// PEND-24 M2: composes with [`peer_refs::upsert_peer_ref_in_tx`]
+/// inside a single `BEGIN IMMEDIATE` so the post-session bookkeeping
+/// pair (ensure peer row + record final hashes) commits atomically.
+/// A crash or error between the two writes rolls both back, leaving
+/// the next session with consistent peer-ref state.
+pub async fn complete_sync_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    peer_id: &str,
+    last_received_hash: &str,
+    last_sent_hash: &str,
+) -> Result<(), AppError> {
+    peer_refs::update_on_sync_in_tx(tx, peer_id, last_received_hash, last_sent_hash).await
+}
+
 // ---------------------------------------------------------------------------
 // M-43 / M-44 LWW idempotency tests
 // ---------------------------------------------------------------------------

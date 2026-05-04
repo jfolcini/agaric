@@ -811,6 +811,79 @@ pub async fn restore_block_inner(
         );
     }
 
+    // PEND-24 M6: refresh `page_id` for the restored subtree synchronously,
+    // mirroring the recursive-CTE UPDATE in `move_block_inner` (see
+    // `move_ops.rs:177-234`). The async `RebuildPageIds` task dispatched
+    // via `commit_and_dispatch` below stays in place (idempotent — running
+    // it again is safe), but without this sync update there's a window
+    // where callers reading right after commit see a stale `page_id`
+    // (e.g. pointing at a page the parent has since been moved out of:
+    // `move_block_inner`'s recursive UPDATE skips deleted descendants,
+    // so a soft-deleted block keeps its pre-move `page_id` until restore).
+    //
+    // Invariant #9: the recursive CTE filters `is_conflict = 0` in both
+    // members AND bounds `depth < 100`. Conflict copies inherit
+    // `parent_id` from the original and would otherwise be reparented
+    // under the restored subtree.
+    //
+    // 1. Compute the effective `page_id` for the restored block:
+    //    parent's `page_id` (or parent's `id` if parent is a page) for
+    //    non-pages; self for pages.
+    let parent_id: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
+             FROM blocks WHERE id = ?",
+        )
+        .bind(pid)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+    let is_page: bool =
+        sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_one(&mut **tx)
+            .await?
+            == "page";
+    if !is_page {
+        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+            .bind(&new_page_id)
+            .bind(&block_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    // 2. Cascade page_id to all non-page active descendants. Pages keep
+    //    their own id as page_id regardless of parent (mirrors the
+    //    template at `move_ops.rs:219-234`).
+    let effective_page_id = if is_page {
+        Some(block_id.clone())
+    } else {
+        new_page_id
+    };
+    sqlx::query(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET page_id = ?2 \
+         WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+    )
+    .bind(&block_id)
+    .bind(&effective_page_id)
+    .execute(&mut **tx)
+    .await?;
+
     // P-4: Recompute inherited tags for restored subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 
