@@ -313,7 +313,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                           {t('propertiesView.editOptions')}
                         </Button>
                       </PopoverTrigger>
-                      <PopoverContent>
+                      <PopoverContent aria-label={t('propertiesView.editOptionsPopoverLabel')}>
                         <div className="space-y-2">
                           <Input
                             value={editOptionsValue}

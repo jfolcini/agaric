@@ -17,7 +17,8 @@ export function EmptyState({
   compact,
 }: EmptyStateProps): React.ReactElement {
   return (
-    <div
+    <section
+      aria-label={message}
       className={cn(
         'rounded-lg border border-dashed text-center text-sm text-muted-foreground',
         compact ? 'p-6' : 'p-8',
@@ -27,6 +28,6 @@ export function EmptyState({
       <h2 className="text-sm font-medium">{message}</h2>
       {description && <p className="mt-1">{description}</p>}
       {action}
-    </div>
+    </section>
   )
 }

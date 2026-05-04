@@ -318,7 +318,7 @@ describe('JournalPage', () => {
       })
 
       // Should show exactly 1 day section (today)
-      const sections = screen.getAllByRole('region')
+      const sections = screen.getAllByRole('region', { name: /^Journal for / })
       expect(sections).toHaveLength(1)
 
       const todayDisplay = formatDateDisplay(new Date())
@@ -457,7 +457,7 @@ describe('JournalPage', () => {
       const weekTab = screen.getByRole('tab', { name: /weekly view/i })
       await user.click(weekTab)
 
-      const sections = screen.getAllByRole('region')
+      const sections = screen.getAllByRole('region', { name: /^Journal for / })
       expect(sections).toHaveLength(7)
     })
 
@@ -474,7 +474,7 @@ describe('JournalPage', () => {
       const weekTab = screen.getByRole('tab', { name: /weekly view/i })
       await user.click(weekTab)
 
-      const sections = screen.getAllByRole('region')
+      const sections = screen.getAllByRole('region', { name: /^Journal for / })
       const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
       const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 })
 
@@ -755,7 +755,7 @@ describe('JournalPage', () => {
       })
 
       // Click the "Add block" button in today's section
-      const sections = screen.getAllByRole('region')
+      const sections = screen.getAllByRole('region', { name: /^Journal for / })
       const todaySection = sections[0] as HTMLElement
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
@@ -807,7 +807,7 @@ describe('JournalPage', () => {
           has_more: false,
         })
 
-      const sections = screen.getAllByRole('region')
+      const sections = screen.getAllByRole('region', { name: /^Journal for / })
       const todaySection = sections[0] as HTMLElement
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
@@ -871,7 +871,7 @@ describe('JournalPage', () => {
         return { items: [], next_cursor: null, has_more: false }
       })
 
-      const sections = screen.getAllByRole('region')
+      const sections = screen.getAllByRole('region', { name: /^Journal for / })
       const todaySection = sections[0] as HTMLElement
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
@@ -1002,7 +1002,7 @@ describe('JournalPage', () => {
       })
       const weekTab = screen.getByRole('tab', { name: /weekly view/i })
       await user.click(weekTab)
-      const sections = screen.getAllByRole('region')
+      const sections = screen.getAllByRole('region', { name: /^Journal for / })
       for (const section of sections) {
         expect(section.id).toMatch(/^journal-\d{4}-\d{2}-\d{2}$/)
       }
@@ -1995,7 +1995,7 @@ describe('JournalPage', () => {
       await user.click(weekTab)
 
       await waitFor(() => {
-        expect(screen.getAllByRole('region').length).toBe(7)
+        expect(screen.getAllByRole('region', { name: /^Journal for / }).length).toBe(7)
       })
 
       expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
@@ -2185,7 +2185,7 @@ describe('JournalPage', () => {
 
       // Wait for the component to finish loading
       await waitFor(() => {
-        expect(screen.getAllByRole('region').length).toBe(7)
+        expect(screen.getAllByRole('region', { name: /^Journal for / }).length).toBe(7)
       })
 
       // No badge buttons should be rendered (legend shows "Due" without a count prefix)

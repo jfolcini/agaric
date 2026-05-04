@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-04 (Session 665 — closed PEND-23 H1 + H2 + H4 + M1 + M2 + M4 + M5 in one batch (7 of the ~31 sub-items, all 3 actionable HIGH plus 4 MEDIUM): `BlockPropertyEditor` listbox ARIA roles, `BootGate` ScrollArea, 3 empty primitive test files filled (52 new tests), `DateChipEditor` `currentDate` pre-fill, `TagValuePicker` logger.warn, `QuickCaptureDialog` redundant aria-labels, Solarized-dark accent palette. +57 frontend tests across 7 test files. AGENTS.md test-count drift bumped 7300+ → 9300+. 4 SortableBlock tests adjusted from `role="button"` to `role="option"` for the H1 ARIA migration. 9456+/9456+ vitest + 3510/3510 nextest + `prek run --all-files` clean.)
+> **Last updated:** 2026-05-04 (Session 666 — closed PEND-23 H3 + M3 + M7 + M8 + M9 + L1 + L8 + L11 in one batch (8 sub-items: the last actionable HIGH plus 4 MEDIUM and 3 LOW): new `useDialogOrSheet()` hook + `ConfirmDialog` Sheet on mobile, `PopoverContent` aria-label across 5 popovers, `SectionTitle` semantic-color enum, `Input`/`Textarea` `[@media(pointer:coarse)]:text-base`, `GraphView` EmptyState on error, `EmptyState` `<section aria-label>` landmark, `Toaster` mobile-aware position, dark-mode `--task-done`/`--task-doing` distinguishability. +52 frontend tests. PEND-23 status: 0 HIGH + 2 MEDIUM (M6 focus-ring extraction, M10 keyboard-nav hook) + 14 LOW remaining. 9443/9443 vitest + 3510/3510 nextest + `prek run --all-files` clean.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-35 open items in the summary table; 35 detail entries (FE-* sub-tables don't appear in the summary).
+36 open items in the summary table; 35 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -54,6 +54,7 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-212 | MAINT | `MAX_RETAINED = 10` in `src/stores/recent-pages.ts` was sized for the pre-PEND-32 grid layout (which wrapped to 2 rows beyond ~7 chips). Now that the strip scrolls horizontally on a single fixed-height row, the cap could be raised (15-20) to retain longer history without hurting layout. Independent UX call; pursue when the user wants longer recents. | trivial | UX call on retention depth |
 | MAINT-213 | MAINT | PEND-24 M4 follow-up — frontend distinct UX for 401/403 (sign-in card) vs 404/410 (gone) vs 5xx (transient/retry). Today the backend short-circuits on every non-2xx and returns minimal metadata; only `auth_required` is persisted. Adding a `not_found` boolean to `LinkMetadata` (+ migration + `link_metadata` table column + serde default-false on existing rows) would let the frontend distinguish "signed-out" from "page is gone" from "server flaked". File when the link card UI rework wants the distinction. | S-M (Rust column + frontend chrome) | Frontend rework that wants the distinction |
 | MAINT-214 | MAINT | PEND-24 M6 sibling cases — two more paths still update `page_id` async-only (asymmetric vs `move_block_inner` and the now-fixed `restore_block_inner`): (a) `restore_all_deleted_inner` (`src-tauri/src/commands/blocks/crud.rs:1051`) — bulk restore covers every soft-deleted block in one `UPDATE`; `RebuildPageIds` is the only refresh path. (b) `apply_op_revert` for `OpPayload::RestoreBlock` and `OpPayload::MoveBlock` (`src-tauri/src/commands/history.rs:74` and `:105`) — undo/redo replay. Both should mirror M6 / `move_block_inner`'s recursive-CTE `UPDATE page_id`. Discovered during M6 implementation but explicitly out of scope per the plan's "this fix scoped to `restore_block_inner`" boundary. | S each | — |
+| MAINT-215 | MAINT | PEND-23 H3 follow-up — propagate `useDialogOrSheet()` (new hook in `src/hooks/useDialogOrSheet.ts`, session 666) to the standalone Dialog consumers that PEND-23 H3 explicitly scoped out: `BugReportDialog`, `PdfViewerDialog`, `RenameDialog`, `WelcomeModal`, `QuickCaptureDialog`, `SpaceManageDialog`. Each is a separate Dialog primitive (not a wrapper around `ConfirmDialog`) so it doesn't inherit Sheet behaviour for free. Each migration is independent (cherry-pickable per dialog) and ~30–60 LOC + a mobile-path test. | S each | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |

@@ -83,6 +83,7 @@ export const conflicts: Record<string, string> = {
   'history.opTypeDescription.purgeBlock': 'A block was permanently deleted',
   'history.opTypeLegendLabel': 'Op type legend',
   'history.opTypeLegendTitle': 'What do these mean?',
+  'history.opTypeLegendPopoverLabel': 'Operation type legend',
   'history.selectBlockEmpty': 'Select a block to see history',
   'history.noHistoryEmpty': 'No history for this block',
   'history.restoreConfirmTitle': 'Restore to this version?',

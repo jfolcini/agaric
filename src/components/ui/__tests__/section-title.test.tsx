@@ -3,8 +3,10 @@
  *
  * Validates:
  *  - Renders label and count
- *  - Applies color and className
+ *  - Applies semantic color tokens (PEND-23 M7: prop is now a typed enum)
+ *  - Defaults to `text-foreground` when `color` is omitted
  *  - Forwards ref to the h4 element
+ *  - Merges custom className
  *  - a11y compliance via axe audit
  */
 
@@ -16,35 +18,59 @@ import { SectionTitle } from '../section-title'
 
 describe('SectionTitle', () => {
   it('renders label text', () => {
-    render(<SectionTitle color="text-red-500" label="Overdue" count={3} />)
+    render(<SectionTitle color="overdue" label="Overdue" count={3} />)
     expect(screen.getByText('Overdue')).toBeInTheDocument()
   })
 
   it('renders count in parentheses', () => {
-    render(<SectionTitle color="text-red-500" label="Overdue" count={3} />)
+    render(<SectionTitle color="overdue" label="Overdue" count={3} />)
     expect(screen.getByText('(3)')).toBeInTheDocument()
   })
 
   it('renders as an h4 element', () => {
-    render(<SectionTitle color="text-red-500" label="Overdue" count={3} />)
+    render(<SectionTitle color="overdue" label="Overdue" count={3} />)
     const heading = screen.getByRole('heading', { level: 4 })
     expect(heading).toBeInTheDocument()
   })
 
-  it('applies color class', () => {
-    render(<SectionTitle color="text-red-500" label="Overdue" count={3} />)
+  it('maps color="overdue" to the destructive semantic token', () => {
+    render(<SectionTitle color="overdue" label="Overdue" count={3} />)
     const heading = screen.getByRole('heading', { level: 4 })
-    expect(heading.className).toContain('text-red-500')
+    expect(heading.className).toContain('text-destructive')
+  })
+
+  it('maps color="done" to text-status-done-foreground', () => {
+    render(<SectionTitle color="done" label="Done" count={1} />)
+    const heading = screen.getByRole('heading', { level: 4 })
+    expect(heading.className).toContain('text-status-done-foreground')
+  })
+
+  it('maps color="active" to text-status-active-foreground', () => {
+    render(<SectionTitle color="active" label="Active" count={1} />)
+    const heading = screen.getByRole('heading', { level: 4 })
+    expect(heading.className).toContain('text-status-active-foreground')
+  })
+
+  it('maps color="pending" to text-status-pending-foreground', () => {
+    render(<SectionTitle color="pending" label="Pending" count={1} />)
+    const heading = screen.getByRole('heading', { level: 4 })
+    expect(heading.className).toContain('text-status-pending-foreground')
+  })
+
+  it('defaults to text-foreground when color is omitted', () => {
+    render(<SectionTitle label="Default" count={0} />)
+    const heading = screen.getByRole('heading', { level: 4 })
+    expect(heading.className).toContain('text-foreground')
   })
 
   it('merges custom className', () => {
-    render(<SectionTitle color="text-red-500" label="Overdue" count={3} className="my-custom" />)
+    render(<SectionTitle color="overdue" label="Overdue" count={3} className="my-custom" />)
     const heading = screen.getByRole('heading', { level: 4 })
     expect(heading.className).toContain('my-custom')
   })
 
   it('applies base layout classes', () => {
-    render(<SectionTitle color="text-red-500" label="Overdue" count={3} />)
+    render(<SectionTitle color="overdue" label="Overdue" count={3} />)
     const heading = screen.getByRole('heading', { level: 4 })
     expect(heading.className).toContain('text-xs')
     expect(heading.className).toContain('font-semibold')
@@ -54,12 +80,12 @@ describe('SectionTitle', () => {
 
   it('forwards ref', () => {
     const ref = React.createRef<HTMLHeadingElement>()
-    render(<SectionTitle ref={ref} color="text-red-500" label="Overdue" count={3} />)
+    render(<SectionTitle ref={ref} color="overdue" label="Overdue" count={3} />)
     expect(ref.current).toBeInstanceOf(HTMLHeadingElement)
   })
 
   it('a11y: no violations', async () => {
-    const { container } = render(<SectionTitle color="text-red-500" label="Overdue" count={3} />)
+    const { container } = render(<SectionTitle color="overdue" label="Overdue" count={3} />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

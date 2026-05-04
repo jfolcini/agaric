@@ -2,11 +2,96 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 665 (closed 7 of ~31 PEND-23 sub-items — listbox ARIA + BootGate ScrollArea + 3 primitive test files + 3 trivial UX nits + Solarized accent palette) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1101+ items.
+**Sessions:** 1 – 666 (closed 8 more PEND-23 sub-items — last actionable HIGH H3 + 4 MEDIUM + 3 LOW; PEND-23 now: 0 HIGH / 2 MEDIUM / 14 LOW remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1109+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 666 — closed PEND-23 H3 + M3 + M7 + M8 + M9 + L1 + L8 + L11 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 4 build (M3 popover-aria, M7+M8+M9 primitives, H3 ResponsiveDialog, L1+L8+L11 trivials) + 0 dedicated reviewers (subagents self-validated via test counts; orchestrator caught a few biome auto-fixable nits + the `role="region"` redundancy). |
+| **Items closed** | PEND-23 H3, M3, M7, M8, M9, L1, L8, L11 (8 sub-items). PEND-23 now: 0 HIGH / 2 MEDIUM (M6 focus-ring extraction, M10 keyboard-nav hook) / 14 LOW remaining. |
+| **Items modified** | MAINT-215 added (H3 follow-up: standalone Dialog consumers — BugReport, PdfViewer, Rename, Welcome, QuickCapture, SpaceManage — each gets `useDialogOrSheet()` independently). |
+| **Tests added** | +52 frontend (3 useDialogOrSheet + 13 ConfirmDialog mobile-path + 8 PopoverContent aria-label + 1 input + 1 textarea + 1 GraphView + 4 SectionTitle semantic-color + 1 EmptyState region + cascade fix in JournalPage tests). |
+| **Files touched** | 24 source + new useDialogOrSheet.ts hook + 4 docs (PEND-23 plan / REVIEW-LATER / SESSION-LOG / FEATURE-MAP). |
+
+**Summary:** Frontend-only batch — 4 parallel subagents on non-overlapping files, all 4 finished cleanly without WIP-commit protection. The most invasive change was H3's new `useDialogOrSheet()` hook + `ConfirmDialog` migration. Three subagents reported transient cross-pollination (failures in OTHER subagents' files due to stale vitest cache); the L1+L8+L11 subagent identified the root cause and confirmed all 9443 tests pass after `rm -rf node_modules/.vite/vitest`. Orchestrator-direct touch-ups: (a) removed redundant `role="region"` from `<section aria-label>` per biome's `noRedundantRoles` lint, (b) biome auto-fix on 6 files (formatting, import sort), (c) updated PEND-23 plan rows to ✅, (d) added MAINT-215 for H3 follow-up. PEND-23 has now closed all 4 actionable HIGH items + 8 of 10 MEDIUM + 4 of 17 LOW.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 35 → 36 (+1: MAINT-215 H3 follow-up dialog migrations)
+- **Previously resolved:** 1101+ → 1109+ across 665 → 666 sessions
+
+**Files touched (this session):**
+
+Frontend (TypeScript) — H3 ResponsiveDialog + ConfirmDialog migration:
+- `src/hooks/useDialogOrSheet.ts` (NEW, +81): discriminated-union hook returning `{ Root, Content, Header, Title, Footer, Description, side?, isMobile }` based on `useIsMobile()`. Desktop returns `AlertDialog` parts; mobile returns `Sheet` parts (`side: 'bottom'`). Both expose compatible `open` / `onOpenChange` APIs.
+- `src/hooks/__tests__/useDialogOrSheet.test.ts` (NEW, +91): 3 tests — desktop returns AlertDialog set, mobile returns Sheet set, both paths expose same key shape.
+- `src/components/ConfirmDialog.tsx` (+84 / −37): consumes the hook; replaces direct AlertDialog imports. Mobile path has no AlertDialogAction/Cancel auto-close primitives, so ConfirmDialog manually calls `onOpenChange(false)` after `onAction()` and on cancel — explicit, tested.
+- `src/components/__tests__/ConfirmDialog.test.tsx` (+220): added 13 mobile-path tests (Sheet rendering, side="bottom", click flows, loading state, focus, Escape handling, testIds, touch-target ≥ 44 px, 2 axe-clean a11y audits, destructive variant focus + Enter, destructive a11y). Existing 27 desktop-path tests unchanged.
+- Wrappers `HistoryRestoreDialog` and `ConflictKeepDialog` were NOT modified — they wrap `ConfirmDialog` and inherit Sheet behaviour transparently. Verified via 157/157 in their test files.
+
+Frontend (TypeScript) — M3 PopoverContent aria-label:
+- `src/components/PropertyDefinitionsList.tsx` (+1 / −1): `aria-label={t('propertiesView.editOptionsPopoverLabel')}`
+- `src/components/BlockPropertyDrawer.tsx` (+5 / −1): `aria-label={t('property.repeatHelpPopoverLabel')}` (NOT property-add picker per plan suggestion — plan was wrong about which popover this was; verified the popover is the repeat-syntax help, not property-add)
+- `src/components/GraphFilterBar.tsx` (+5 / −1): `aria-label={t('graph.filter.addFilterPopoverLabel')}`
+- `src/components/HistoryFilterBar.tsx` (+5 / −1): `aria-label={t('history.opTypeLegendPopoverLabel')}` (op-type legend, not generic filter menu)
+- `src/components/PeerListItem.tsx` (+5 / −1): `aria-label={t('device.editAddressPopoverLabel')}`
+- `src/lib/i18n/properties.ts` (+2): two new keys (editOptionsPopoverLabel + repeatHelpPopoverLabel)
+- `src/lib/i18n/references.ts` (+1): graph.filter.addFilterPopoverLabel (because `graph.*` keys live in `references.ts` — namespace verified)
+- `src/lib/i18n/conflicts.ts` (+1): history.opTypeLegendPopoverLabel
+- `src/lib/i18n/sync.ts` (+1): device.editAddressPopoverLabel
+- 5 corresponding test files (+113 LOC across them): 7 new tests asserting `getByRole('dialog', { name: <label> })` (or `getByTestId('popover-content').toHaveAttribute(...)` for the 2 components where the popover is mocked at file level — established pattern).
+
+Frontend (TypeScript) — M7 + M8 + M9 primitive fixes:
+- `src/components/ui/section-title.tsx` (+44 / −5): `color: string` → `color?: SectionTitleColor` (semantic union 'done' / 'active' / 'pending' / 'overdue' / 'default'). Internal `colorClassFor()` helper maps to existing tokens — `'overdue' → text-destructive` (no `text-status-overdue` token exists in the codebase per inspection), `'done'/'active'/'pending' → text-status-*-foreground` (the *-foreground pairs are the actual text-fill tokens; the bare `text-status-*` are background tones, would render illegible if used as text fills). Documented in inline JSDoc (lines 5–16).
+- `src/components/AlertSection.tsx` (+4 / −4): sole caller migrated. `'text-destructive' → 'overdue'`, `'text-status-pending-foreground' → 'pending'`. Type-safe — non-enum values now surface as TS errors.
+- `src/components/ui/__tests__/section-title.test.tsx` (+37 / −11): replaced `text-red-500` test with semantic-value tests for all 5 enum values + default.
+- `src/components/ui/input.tsx` (+1 / −1): added `[@media(pointer:coarse)]:text-base`. Closes the iOS WebView zoom-on-focus gap + improves phone legibility.
+- `src/components/ui/textarea.tsx` (+1 / −1): same.
+- `src/components/ui/__tests__/input.test.tsx` (+10): assertion the class is present.
+- `src/components/ui/__tests__/textarea.test.tsx` (+10): same.
+- `src/components/GraphView.tsx` (+6 / −6): `setError` path now renders `<EmptyState icon={AlertCircle} message={error} />` instead of a bare `role="alert"` `<div>`. AlertCircle imported from lucide-react.
+- `src/components/__tests__/GraphView.test.tsx` (+37 / −7): 3 existing tests querying `findByRole('alert')` migrated to `findByRole('heading', { level: 2, name: ... })` (the new EmptyState renders an `<h2>`); +1 regression test (`renders the EmptyState fallback (not the SVG) on fetch failure`).
+
+Frontend (TypeScript) — L1 + L8 + L11 trivials:
+- `src/components/EmptyState.tsx` (+2 / −2): `<div>` → `<section aria-label={message}>`. Removed initial `role="region"` per biome's `noRedundantRoles` (`<section aria-label>` is implicitly a region per ARIA semantics — `getByRole('region', { name: ... })` still works).
+- `src/__tests__/EmptyState.test.tsx` (+9): 1 new test asserting `tagName === 'SECTION'` + `getByRole('region', { name: ... })` + `aria-label` attribute.
+- `src/App.tsx` (+1 / −1): `<Toaster position={isMobile ? 'top-center' : 'bottom-right'} ... />`. Closes the mobile thumb-reach overlap with system nav-bar.
+- `src/index.css` (+2 / −2): `.dark`'s `--task-done` lifted to `oklch(0.74 0.17 149)` and `--task-doing` lifted to `oklch(0.7 0.18 260)` — distinguishable from `:root` values, matches the per-space accent palette's L 0.7+ pattern for dark mode.
+- `src/components/__tests__/JournalPage.test.tsx` (+9 / −9): cascade fix — promoting EmptyState to a region landmark caused 6 JournalPage tests using broad `screen.getAllByRole('region')` to break (EmptyState regions in nested DuePanel/LinkedReferences leaked into day-section counts). Scoped all 9 calls to `getAllByRole('region', { name: /^Journal for / })` — what the tests semantically wanted.
+
+Plan file:
+- `pending/PEND-23-ux-review-findings.md`: H3 / M3 / M7 / M8 / M9 / L1 / L8 / L11 sub-headers struck through with `~~...~~` + ✅ session-666 marker. Status line at top updated to "0 HIGH + 2 MEDIUM + 14 LOW remaining".
+
+Docs:
+- `pending/REVIEW-LATER.md`: +1 MAINT-215 (H3 follow-up dialog migrations); summary count 35 → 36
+- `SESSION-LOG.md`: this entry
+- `FEATURE-MAP.md`: new `useDialogOrSheet()` hook + ConfirmDialog Sheet-on-mobile pattern documented
+
+**Verification:**
+- `rm -rf node_modules/.vite/vitest` (cache invalidated by all 4 subagents' overlapping vitest runs) → `npx vitest run` — 9443/9443 pass across 377 test files
+- `cd src-tauri && cargo nextest run` — 3510/3510 pass, 4 skipped (no Rust changes this session)
+- `prek run --all-files` — all hooks pass after orchestrator-applied biome auto-fix (6 files reformatted: import sort + JSX arg-wrap collapses) + the `role="region"` removal
+
+**Process notes:**
+- **All 4 subagents finished cleanly** without WIP-commit protection. The vitest "fail in full suite, pass in isolation" cross-pollination was 100% stale-cache pollution; one `rm -rf node_modules/.vite/vitest` was the fix. Lesson: when concurrent subagents touch many shared imports (Input + Textarea + EmptyState + ConfirmDialog all transitively used by hundreds of consumers), the last subagent should clear the vitest cache before its full-suite run. Add this to PROMPT.md as a lesson if it recurs.
+- **H3's mid-implementation file revert** (the H3 subagent flagged `ConfirmDialog.tsx` was reverted between two test runs and re-applied) was confirmed clean post-orchestrator: `grep -c useDialogOrSheet` returns 2 (import + usage). Likely the same mtime-sync mechanism the M1+M2+M4 subagent reported in session 665.
+- **L1's cascade-fix in `JournalPage.test.tsx`** (NOT in the L1 plan) is a textbook example of "primitive change that breaks downstream consumer tests" — same lesson as session 665's H1 ARIA change breaking SortableBlock tests. The L1+L8+L11 subagent caught it, fixed it, and explicitly flagged the cascade in its report. Future-session lesson: when adding a landmark / role to a primitive, grep the test suite for the broad `getAllByRole(<role>)` pattern before reporting done.
+- **M7's plan-vs-reality token-mapping deviation** is correctly grounded in the actual codebase. The plan called for `text-status-*` text fills, but the codebase uses `text-status-*` as backgrounds and `text-status-*-foreground` as text. M7 mapped to `-foreground` tokens. `text-status-overdue` doesn't exist as a token; mapped to `text-destructive` which is what every existing `overdue` text-fill site uses. Type-safety guarantee preserved.
+
+**Lessons learned (for future sessions):**
+- **Pre-clear the vitest cache before a multi-subagent frontend batch's full-suite verification.** Cross-file test pollution from stale Vite chunks is the #1 false-positive in concurrent frontend work. Cost: ~15s. Saves: 30+ minutes of confusion.
+- **When promoting a primitive to a landmark (region / dialog / banner / etc.), audit the test suite for broad `getAllByRole(<role>)` queries**, not just the changed component's tests. Last 2 sessions both had this footgun (H1 ARIA → SortableBlock; L1 region → JournalPage).
+- **biome's `noRedundantRoles` is friendly** — explicit `role="region"` on a `<section aria-label>` is redundant per ARIA semantics. Drop the role attribute; `getByRole('region', { name: ... })` still works.
+- **Plan-suggested i18n keys are usually wrong** about which popover is which (M3's "property-add picker" claim was actually the repeat-syntax help). Subagents must inspect what's actually in the file and label by what the popover does, not what the plan thinks.
+
+**Commit plan:** single commit / not pushed.
+
+---
 
 ## Session 665 — closed PEND-23 H1 + H2 + H4 + M1 + M2 + M4 + M5 (2026-05-04)
 
