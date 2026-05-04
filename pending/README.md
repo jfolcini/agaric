@@ -14,7 +14,7 @@ Origin: a deep architectural review session run with five parallel investigation
 | PEND-04 | Threat-model audit — prune stale crypto docs | S (~1h) | ✅ done (bulk session 652; residue purged session 654 — `ARCHITECTURE.md` historical-note rephrase) |
 | PEND-05 | Projected-agenda parity test (cached vs on-the-fly) | S (1-2h) | ✅ done session 654 — test landed in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`. `#[ignore]`d on first run because it correctly detected real `.+1w` drift between cached + on-the-fly paths; filed as MAINT-196 in REVIEW-LATER. Re-enable once MAINT-196 ships the projection-path refactor. |
 | PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | ready (revised: reviewer caught the `TransferringFiles` state hallucination, Tier 2 cost +2-4h) |
-| PEND-07 | `STRICT` tables policy for new migrations | S (~1h) | ready |
+| PEND-07 | `STRICT` tables policy for new migrations | S (~1h) | ✅ done session 656 — AGENTS.md "Database" bullet added (with explicit user approval), `scripts/check-migrations-strict.mjs` (~69 LOC, pure node stdlib) + `prek.toml` hook entry. Migration-number floor `FIRST_STRICT_MIGRATION = 42` so `prek run --all-files` doesn't false-positive on the 41 pre-policy migrations; FTS5 carve-out via `CREATE VIRTUAL TABLE` skip. All 4 sanity tests pass (clean / bad migration fails / good passes / virtual table passes / prek integration passes). |
 | PEND-08 | `tauri.ts` ↔ `bindings.ts` parity pre-commit hook | S (1-2h) | ✅ done session 654 — script `scripts/check-tauri-bindings-parity.mjs` (~171 LOC) + `prek.toml` hook entry. First-run calibration found 101 bindings / 96 wrappers / **15 unwrapped** (not 5 as the plan estimated): 13 MCP+GCal direct-consumer commands + 2 renamed-wrapper twins (`compactOpLogCmd` → `compactOpLog`, `listAttachmentsBatch` → `getBatchAttachments`). Allowlist pinned. Sanity-tested both `missingNew` (rename detection) and `allowlistStale` paths. |
 | PEND-09 | CRDT migration (Loro), merge-layer only | L (3-4 months) | ready as a **planned spike + multi-phase migration** (revised after reviewer caught a 612-vs-559 reference count, optimistic timeline, missing risks; timeline now 11-15 weeks) |
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (3.5-5 months) | ready as a **planned spike + multi-phase migration** (revised after reviewer caught LOC undercount of ~87% — actual delete is ~14.6k LOC including test files, not ~7.8k; timeline 14-19 weeks; 13 risks + 13 open questions; iroh post-1.0 status is the headline kill criterion) |
@@ -37,7 +37,7 @@ Origin: a deep architectural review session run with five parallel investigation
 - PEND-05 (agenda parity test) — ✅ shipped session 654 (test `#[ignore]`d, drift filed as MAINT-196)
 - PEND-08 (parity hook) — ✅ shipped session 654
 - PEND-13 (`page_id` ↔ space drift test) — ✅ shipped session 655
-- PEND-07 (STRICT tables policy) — pure policy + small hook, ~1h. **Gated on AGENTS.md edit approval.**
+- PEND-07 (STRICT tables policy) — ✅ shipped session 656
 - PEND-14 (boolean property type) — schema + dispatch + frontend, 6.5-8h
 
 **Mid-tier** — useful but more invasive:
