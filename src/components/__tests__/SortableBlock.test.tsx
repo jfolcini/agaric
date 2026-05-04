@@ -3037,10 +3037,10 @@ describe('SortableBlock property chip click-to-edit', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // Verify all options are rendered as buttons
-    expect(screen.getByRole('button', { name: 'Backlog' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'In Progress' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument()
+    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    expect(screen.getByRole('option', { name: 'Backlog' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'In Progress' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Done' })).toBeInTheDocument()
 
     // No text input should be shown
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
@@ -3079,8 +3079,8 @@ describe('SortableBlock property chip click-to-edit', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // Click the 'High' option
-    const highOption = screen.getByRole('button', { name: 'High' })
+    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    const highOption = screen.getByRole('option', { name: 'High' })
     await user.click(highOption)
 
     // setProperty should have been called with the selected value
@@ -3125,13 +3125,13 @@ describe('SortableBlock property chip click-to-edit', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // The currently selected option should have the highlight classes
-    const featureBtn = screen.getByRole('button', { name: 'Feature' })
+    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    const featureBtn = screen.getByRole('option', { name: 'Feature' })
     expect(featureBtn.className).toContain('bg-accent')
     expect(featureBtn.className).toContain('font-medium')
 
     // Other options should NOT have the highlight classes
-    const bugBtn = screen.getByRole('button', { name: 'Bug' })
+    const bugBtn = screen.getByRole('option', { name: 'Bug' })
     expect(bugBtn.className).not.toContain('font-medium')
   })
 
@@ -4219,8 +4219,8 @@ describe('SortableBlock error paths', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // Select 'High' to close the dropdown
-    await user.click(screen.getByRole('button', { name: 'High' }))
+    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    await user.click(screen.getByRole('option', { name: 'High' }))
     expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
 
     // Second: click effort chip but listPropertyDefs now rejects

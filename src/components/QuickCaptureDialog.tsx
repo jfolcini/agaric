@@ -107,7 +107,7 @@ export function QuickCaptureDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-label={t('quickCapture.dialogTitle')} data-testid="quick-capture-dialog">
+      <DialogContent data-testid="quick-capture-dialog">
         <DialogHeader>
           <DialogTitle>{t('quickCapture.dialogTitle')}</DialogTitle>
           <DialogDescription>{t('settings.quickCapture.description')}</DialogDescription>
@@ -123,7 +123,7 @@ export function QuickCaptureDialog({
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder={t('quickCapture.placeholder')}
-            aria-label={t('quickCapture.dialogTitle')}
+            aria-label={t('quickCapture.captureInputLabel')}
             disabled={submitting}
             // Cmd / Ctrl + Enter as a power-user submit shortcut.
             onKeyDown={(e) => {

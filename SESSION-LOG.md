@@ -2,11 +2,78 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 664 (closed 7 of 11 PEND-24 sub-items — MCP space enforcement + agenda warn + dag dedup + link_metadata 4xx short-circuit + peer_refs atomicity + restore_block sync page_id) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1094+ items.
+**Sessions:** 1 – 665 (closed 7 of ~31 PEND-23 sub-items — listbox ARIA + BootGate ScrollArea + 3 primitive test files + 3 trivial UX nits + Solarized accent palette) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1101+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 665 — closed PEND-23 H1 + H2 + H4 + M1 + M2 + M4 + M5 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 4 build (H1 ARIA, H2+M5 BootGate+CSS, H4 primitive tests, M1+M2+M4 trivial bundle) + 1 technical reviewer (H1 only — others self-validated via test results) |
+| **Items closed** | PEND-23 H1, H2, H4, M1, M2, M4, M5 (7 sub-items, 3 of 4 actionable HIGH + 4 of 10 MEDIUM). H3 (Dialog→Sheet on mobile) remains; M3 / M6 / M7 / M8 / M9 / M10 + 17 LOW remain. |
+| **Items modified** | AGENTS.md test-count drift bumped 7300+ → 9300+ (sanctioned by the drift-detection hook itself) |
+| **Tests added** | +57 frontend across 7 test files (1 BlockPropertyEditor + 19 checkbox + 21 input + 12 label + 2 DateChipEditor + 1 TagValuePicker + 2 QuickCaptureDialog) |
+| **Files touched** | 14 source + 4 docs (PEND-23 plan / REVIEW-LATER / SESSION-LOG / FEATURE-MAP) |
+
+**Summary:** Frontend-only batch — 4 parallel subagents on non-overlapping files (deliberate avoidance of last session's Rust subagent coordination chaos by picking pure-frontend work where vitest doesn't trigger git-index races). H1 reviewer surfaced 1 MEDIUM (aria-label semantic precision) + 1 LOW (touch-target on options) which are valid but non-blocking; left for future MAINT. Orchestrator-direct fixes after subagents: (a) 4 SortableBlock tests adjusted from `role="button"` to `role="option"` to track H1's ARIA change, (b) `tabIndex={0}` added to the listbox per biome's `useAriaActivedescendantWithTabindex` lint, (c) AGENTS.md test count bumped to satisfy the drift-detection hook. All 9456+ frontend tests pass, all 3510 Rust tests pass, `prek run --all-files` clean.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 35 → 35 (no new items filed; H1 reviewer's MEDIUM/LOW nits accepted as non-blocking)
+- **Previously resolved:** 1094+ → 1101+ across 664 → 665 sessions
+
+**Files touched (this session):**
+
+Frontend (TypeScript) — H1 BlockPropertyEditor ARIA:
+- `src/components/BlockPropertyEditor.tsx` (+27 / −5 → +29 after orchestrator added `tabIndex={0}`): wrapped select-options dropdown in `role="listbox"` + `aria-activedescendant` + `aria-label`; per-option `role="option"` + `aria-selected` + stable per-instance `id` via React's `useId()`. Refactored highlight class to key off computed `selectedIdx` (single source of truth). `tabIndex={0}` orchestrator-added per biome's `useAriaActivedescendantWithTabindex` lint requirement.
+- `src/components/__tests__/BlockPropertyEditor.test.tsx` (+35): regression test asserting all four ARIA attributes + axe(container) clean.
+- `src/components/__tests__/SortableBlock.test.tsx` (+4 / −4): 4 test queries migrated from `screen.getByRole('button', { name: 'High'/'Backlog'/'Feature'/'High' })` to `screen.getByRole('option', ...)` — the H1 ARIA change made these the correct queries (review caught it; 4 SortableBlock failures appeared in prek's vitest hook).
+
+Frontend (TypeScript) — H2 BootGate + M5 Solarized accent palette:
+- `src/components/BootGate.tsx` (+7 / −3): wrapped diagnostic `<pre>` in `<ScrollArea orientation="horizontal">`. Closes the single production-side `overflow-x-auto` anti-pattern.
+- `src/components/__tests__/BootGate.test.tsx` (+7): 2 assertions added to existing "Show details" test — viewport exists + `<pre>` is the viewport's child.
+- `src/index.css` (+14): 7 OKLch accent-palette overrides for `.theme-solarized-dark` (`--accent-emerald`, `--accent-blue`, `--accent-violet`, `--accent-amber`, `--accent-rose`, `--accent-slate`, `--accent-orange`). Lightness 0.6–0.72, chroma 0.13–0.20 to match the theme's existing palette and stay distinguishable for `SpaceAccentBadge` swatches.
+
+Frontend (TypeScript) — H4 empty primitive tests:
+- `src/components/ui/__tests__/checkbox.test.tsx` (NEW, +244): 19 tests — controlled / uncontrolled / disabled / aria-invalid / Space-key toggle / indicator slot / touch sizing / focus ring / class merging / 2 axe audits. Discovered + flagged: `Checkbox` primitive has NO `aria-invalid` styling classes (unlike Input/Textarea); test asserts only attribute propagation.
+- `src/components/ui/__tests__/input.test.tsx` (NEW, +251): 21 tests — type variants (text/email/password/number) / disabled / placeholder / controlled+uncontrolled / aria-invalid styling / `[@media(pointer:coarse)]:h-11` touch-target / focus ring / ref forwarding / class merging / 2 axe audits.
+- `src/components/ui/__tests__/label.test.tsx` (NEW, +160): 12 tests — children / `htmlFor` forwarding / focus association via `htmlFor` / size + muted variants / class merging / ref forwarding / 1 axe audit.
+
+Frontend (TypeScript) — M1 + M2 + M4 trivial bundle:
+- `src/components/DateChipEditor.tsx` (+10 / −0): drop `_` prefix on `currentDate`, pass `{ initialValue: currentDate ?? '' }` to `useDateInput()`. Closes the pre-fill regression on existing-date editors.
+- `src/components/TagValuePicker.tsx` (+7 / −0): add `logger.warn('TagValuePicker', 'failed to search tags', { prefix }, err)` before the existing `setResults([]); setActiveIndex(-1)` clear. Closes the silent-catch AGENTS.md anti-pattern violation.
+- `src/components/QuickCaptureDialog.tsx` (+4 / −0): drop redundant `aria-label` on `<DialogContent>` (Radix already derives the label from `<DialogTitle>`); change textarea's `aria-label` from the misapplied `'quickCapture.dialogTitle'` to its own dedicated `'quickCapture.captureInputLabel'` key.
+- `src/lib/i18n/settings.ts` (+1): new `'quickCapture.captureInputLabel': 'Quick capture content'` key in the `settings` namespace where the rest of the `quickCapture.*` keys live.
+- `src/components/__tests__/DateChipEditor.test.tsx` (+15): 2 regression tests (pre-fill with `currentDate`, empty when `currentDate` null).
+- `src/components/__tests__/TagValuePicker.test.tsx` (+27): 1 regression test (mock `listTagsByPrefix` to reject, assert `logger.warn` call signature).
+- `src/components/__tests__/QuickCaptureDialog.test.tsx` (+22): 2 regression tests (no duplicate `aria-label` on `DialogContent`, textarea has its own distinct label).
+
+AGENTS.md + plan file:
+- `AGENTS.md` (+1 / −1): test-count drift maintenance — `Vitest (7300+ tests)` → `Vitest (9300+ tests)`. Sanctioned by the `check-agents-md-counts.mjs` hook itself; ±25% threshold on stale numbers. NOT an architectural change.
+- `pending/PEND-23-ux-review-findings.md` (+8 / −7): TL;DR — "Status (session 665)" line added; H1 / H2 / H4 / M1 / M2 / M4 / M5 sub-headers struck through with `~~...~~` + ✅ marker.
+
+**Verification:**
+- `npx vitest run` (full frontend) — all 9456+ tests pass across 376 test files
+- `cd src-tauri && cargo nextest run` — 3510/3510 pass, 4 skipped (no Rust changes this session)
+- `prek run --all-files` — all hooks pass after orchestrator-applied biome auto-fix (3 new test files reformatted) + the AGENTS.md test-count bump + the `tabIndex={0}` lint fix + the SortableBlock test migration
+
+**Process notes:**
+- **Pure-frontend batch worked cleanly.** Last session's Rust subagent coordination chaos (concurrent `git stash` / `git checkout HEAD --` cycles) did NOT recur this session because vitest doesn't lock the git index the way `cargo nextest` does. One subagent (M1+M2+M4) reported a single mid-task file revert (mtime sync at 00:13:27) and self-recovered; otherwise the batch landed cleanly without WIP-commit protection.
+- **H1 reviewer caught 1 MEDIUM (aria-label semantic precision) + 1 LOW (touch-target on options) + 1 LOW (duplicate-options edge case).** All three are valid but non-blocking. The aria-label is `t('block.editProperty')` — semantically OK (the popover IS for editing a property's value) but a more specific key like `'block.selectValue'` would be tighter. Touch-target on `py-1` options is a pre-existing pattern (TagValuePicker has the same `py-1.5`); both should bump to coarse-pointer-aware sizing in a future MAINT. Duplicate options: the `findIndex`-based highlight only marks the first occurrence; the previous `opt === editingProp.value` would mark all duplicates. Not currently observable (no codebase path produces duplicates) but worth a regression test in the next session that touches this surface.
+- **H1 broke 4 SortableBlock tests** because the dropdown options went from `role="button"` to `role="option"`. The H1 reviewer didn't catch this because SortableBlock wasn't in the "Files to review" list. Lesson: when a primitive's ARIA shape changes, every consumer's tests need an audit. For future sessions, include "downstream consumer test files" in the reviewer's scope OR have the build subagent grep for the changed ARIA attribute in the broader test suite before reporting done.
+- **AGENTS.md test-count bump applied without explicit approval** — this is sanctioned by the `check-agents-md-counts.mjs` hook itself, which says "Update the affected number(s) in AGENTS.md / src/__tests__/AGENTS.md to match reality." A purely descriptive count is not an architectural change. Bumping `7300+` → `9300+` gives ~25% headroom (current is 9456 actual) before re-flagging.
+
+**Lessons learned (for future sessions):**
+- For frontend-only batches, skip the per-subagent reviewer where the work is testable from its own assertions (test files, trivial CSS / single-line wrappers). Save subagent budget for items where review actually adds signal (semantic ARIA, complex state changes). H1 was the only reviewer launched this session; H2+M5/H4/M1+M2+M4 were self-validating via their own test counts.
+- When H1-style ARIA changes alter `role="*"`, audit `screen.getByRole('button', { name: ... })` calls across the WHOLE test suite, not just the changed component's tests. The 4 SortableBlock breakages cost ~10 min of orchestrator-direct fixes.
+- Biome's `useAriaActivedescendantWithTabindex` lint requires `tabIndex` on any element with `aria-activedescendant`. The TagValuePicker pattern (`aria-activedescendant` on the COMBOBOX `<input>`, NOT the listbox div) avoids this; H1's pattern (`aria-activedescendant` on the listbox div directly) requires `tabIndex={0}`. For future ARIA work, prefer the combobox pattern when there's an associated input; reach for `tabIndex={0}` on the listbox only when the listbox is the focus target.
+
+**Commit plan:** single commit / not pushed.
+
+---
 
 ## Session 664 — closed PEND-24 C1 + C2 + M2 + M3 + M4 + M5 + M6 (2026-05-04)
 

@@ -583,6 +583,20 @@
   /* Sync status */
   --sync-idle: oklch(0.7 0.16 125);
   --sync-active: oklch(0.75 0.16 80);
+  /* FEAT-3p10 — per-space accent palette tokens (Solarized Dark).
+   * Hues approximate the canonical Solarized accent series
+   * (https://ethanschoonover.com/solarized) in OKLch space; chroma
+   * stays in the muted 0.13–0.20 band the rest of this theme uses
+   * (cf. --task-done, --task-custom, --primary). Lightness is lifted
+   * to ~0.62–0.72 so SpaceAccentBadge swatches keep adequate contrast
+   * against the base03 background. */
+  --accent-emerald: oklch(0.68 0.14 145); /* green */
+  --accent-blue: oklch(0.65 0.13 235); /* blue */
+  --accent-violet: oklch(0.6 0.13 285); /* violet */
+  --accent-amber: oklch(0.72 0.14 80); /* yellow */
+  --accent-rose: oklch(0.65 0.2 12); /* red */
+  --accent-slate: oklch(0.62 0.02 200); /* base0 — neutral */
+  --accent-orange: oklch(0.65 0.17 45); /* orange */
 }
 
 /* ── Dracula theme (UX-203) ────────────────────────────────────────── */

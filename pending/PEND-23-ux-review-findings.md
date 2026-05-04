@@ -24,6 +24,8 @@ What remains: **4 HIGH, 10 MEDIUM, 17 LOW** confirmed findings. None are
 critical bugs. Most are small per-site fixes; two (M6 focus-ring extraction,
 H3 Dialog→Sheet on mobile) are slightly more invasive but still narrow.
 
+> **Status (session 665):** H1, H2, H4 done; M1, M2, M4, M5 done. **Remaining: 1 HIGH (H3), 6 MEDIUM (M3, M6, M7, M8, M9, M10), 17 LOW.** Cherry-pick by severity in future sessions.
+
 Cost: **S–M** if cherry-picked individually, **L** if all done in one bundle
 (estimated ~30–50 LOC per item × 31 items + ~2 new shared utilities).
 Risk: **low** across the board (no API shape changes, no schema migrations,
@@ -32,7 +34,7 @@ consolidation; **low–medium** UX impact otherwise.
 
 ## HIGH — fix soon
 
-### H1 — `BlockPropertyEditor` select-options dropdown lacks ARIA roles
+### ~~H1 — `BlockPropertyEditor` select-options dropdown lacks ARIA roles~~ ✅ done session 665
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/BlockPropertyEditor.tsx" lines="221-231" />
 
@@ -46,7 +48,7 @@ reference is `TagValuePicker.tsx:174–183`.
 cmdk (more invasive but uniform with the rest of the picker layer). Cost:
 ~30 LOC + 1 test. Risk: low.
 
-### H2 — `BootGate` diagnostic uses bare `overflow-x-auto`
+### ~~H2 — `BootGate` diagnostic uses bare `overflow-x-auto`~~ ✅ done session 665
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/BootGate.tsx" lines="113-113" />
 
@@ -76,7 +78,7 @@ to consumers that wrap it. Cost: M (~3–5 h, +1 hook + ~3 callsite touches +
 tests on both render paths). Risk: low — both Dialog and Sheet are Radix-based
 with compatible `open`/`onOpenChange` APIs.
 
-### H4 — Three primitive test files are empty
+### ~~H4 — Three primitive test files are empty~~ ✅ done session 665
 
 <ref_file file="/home/javier/dev/agaric/src/components/ui/**tests**/checkbox.test.tsx" />
 
@@ -95,7 +97,7 @@ controlled/uncontrolled interaction + disabled + axe. Consider tightening the
 
 ## MEDIUM — incremental cleanup
 
-### M1 — `DateChipEditor` ignores its own `currentDate` prop
+### ~~M1 — `DateChipEditor` ignores its own `currentDate` prop~~ ✅ done session 665
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/DateChipEditor.tsx" lines="42-49" />
 
@@ -108,7 +110,7 @@ value.
 **Fix:** `useDateInput({ initialValue: currentDate ?? '' })`. Add a regression
 test asserting the input pre-fills. Cost: 1 LOC + 1 test. Risk: trivial.
 
-### M2 — `TagValuePicker` swallows search errors silently
+### ~~M2 — `TagValuePicker` swallows search errors silently~~ ✅ done session 665
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/TagValuePicker.tsx" lines="40-56" />
 
@@ -143,7 +145,7 @@ label from the trigger.
 i18n keys per popover purpose (filter, picker, menu, settings panel). Cost:
 ~10 LOC across 5–7 files + i18n key additions. Risk: trivial.
 
-### M4 — `QuickCaptureDialog` has redundant + misapplied `aria-label`s
+### ~~M4 — `QuickCaptureDialog` has redundant + misapplied `aria-label`s~~ ✅ done session 665
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/QuickCaptureDialog.tsx" lines="108-128" />
 
@@ -158,7 +160,7 @@ input.
 i18n key (`'quickCapture.captureInputLabel'` or similar). Cost: ~5 LOC + 1
 test. Risk: trivial.
 
-### M5 — `.theme-solarized-dark` is missing accent-palette overrides
+### ~~M5 — `.theme-solarized-dark` is missing accent-palette overrides~~ ✅ done session 665
 
 <ref_snippet file="/home/javier/dev/agaric/src/index.css" lines="486-796" />
 

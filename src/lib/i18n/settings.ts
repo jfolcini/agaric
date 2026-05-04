@@ -41,6 +41,7 @@ export const settings: Record<string, string> = {
   'settings.quickCapture.saveFailed':
     "Couldn't register shortcut. It may conflict with another app.",
   'quickCapture.dialogTitle': 'Quick capture',
+  'quickCapture.captureInputLabel': 'Quick capture content',
   'quickCapture.placeholder': "What's on your mind?",
   'quickCapture.saveButton': 'Capture',
   'quickCapture.successToast': "Captured to today's journal",
