@@ -234,19 +234,287 @@ describe('RecentPagesStrip', () => {
   })
 
   // UX-284: keyboard focus on a chip should be visible from more than
-  // just the Button's `focus-visible:ring` — a subtle background tint
-  // is also applied via `focus-visible:bg-accent/50`. The class is
-  // present unconditionally in markup; Tailwind activates it via the
-  // `focus-visible:` variant. Asserting the className substring is the
-  // simplest way to pin the discoverability fix without coupling to
-  // jsdom's :focus-visible matching (which is unreliable).
+  // just the focus ring — a subtle background tint is also applied via
+  // `focus-visible:bg-accent/60` (PEND-19 bumped the prior `/50` to `/60`
+  // when the chip moved off the `Button ghost` baseline; the chip now has
+  // its own visible rest-state, so the focus tint is one shade darker to
+  // stay distinguishable from hover). The class is present unconditionally
+  // in markup; Tailwind activates it via the `focus-visible:` variant.
+  // Asserting the className substring pins the discoverability fix without
+  // coupling to jsdom's :focus-visible matching (which is unreliable).
   it('chips carry the focus-tint class for keyboard discoverability (UX-284)', () => {
     useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
 
     render(<RecentPagesStrip />)
 
     const chip = screen.getByRole('button', { name: 'Alpha' })
-    expect(chip.className).toContain('focus-visible:bg-accent/50')
+    expect(chip.className).toContain('focus-visible:bg-accent/60')
+  })
+
+  // ---------------------------------------------------------------------------
+  // PEND-19: chip styling — visible rest-state chrome, tighter geometry
+  // ---------------------------------------------------------------------------
+  describe('chip styling (PEND-19)', () => {
+    it('chips render with visible rest-state chrome (border + bg-secondary tint)', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Alpha' })
+      // PEND-19's chipClass spec — the rest-state chrome the redesign
+      // introduces. Asserting class substrings (rather than computed style)
+      // is the simplest way to pin the rest-state without coupling to
+      // jsdom's CSS engine.
+      expect(chip.className).toContain('border')
+      expect(chip.className).toContain('border-border/60')
+      expect(chip.className).toContain('bg-secondary/40')
+      expect(chip.className).toContain('text-muted-foreground')
+    })
+
+    it('chips truncate at the chosen max-width (160 px)', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Alpha' })
+      // PEND-19 sized the chip to its content with a hard upper bound so
+      // long titles don't blow out the row width.
+      expect(chip.className).toContain('max-w-[160px]')
+    })
+
+    it('chips set shrink-0 so the flex container does not compress them', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Alpha' })
+      // PEND-32 relies on this — without `shrink-0`, the flex children
+      // would compress to fit the viewport instead of overflowing into
+      // the horizontal scroll.
+      expect(chip.className).toContain('shrink-0')
+    })
+
+    it('chips render as a custom `<button>` (not a Button ghost variant)', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Alpha' })
+      // The new chip uses the `recent-page-chip` data-slot; the prior
+      // `Button` baseline emitted `data-slot="button"` and a `ghost`
+      // `data-variant`. Asserting on the new slot pins the redesign.
+      expect(chip.getAttribute('data-slot')).toBe('recent-page-chip')
+      expect(chip.getAttribute('data-variant')).toBeNull()
+    })
+
+    it('chips scale to 44 px touch target on coarse pointers (AGENTS.md mandatory pattern)', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Alpha' })
+      // Resting `h-7` (28 px) is below the 44 px floor AGENTS.md requires
+      // for any interactive element on a touch pointer. The strip is also
+      // mobile-hidden via `useIsMobile()`, but hybrid pointer devices
+      // (touch laptops, tablets in desktop mode) pass that gate while
+      // still reporting `pointer: coarse`. The chip carries explicit
+      // touch-target scaling so it stays compliant on those devices.
+      expect(chip.className).toContain('[@media(pointer:coarse)]:h-11')
+      expect(chip.className).toContain('[@media(pointer:coarse)]:px-3')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // PEND-32: single-line horizontal scroll layout
+  // ---------------------------------------------------------------------------
+  describe('single-line horizontal scroll (PEND-32)', () => {
+    function seedFiveChips() {
+      const { recordVisit } = useRecentPagesStore.getState()
+      recordVisit({ pageId: 'A', title: 'Alpha' })
+      recordVisit({ pageId: 'B', title: 'Bravo' })
+      recordVisit({ pageId: 'C', title: 'Charlie' })
+      recordVisit({ pageId: 'D', title: 'Delta' })
+      recordVisit({ pageId: 'E', title: 'Echo' })
+    }
+
+    it('renders the chip row inside a horizontal ScrollArea (no grid, no flex-wrap)', () => {
+      seedFiveChips()
+      const { container } = render(<RecentPagesStrip />)
+
+      // ScrollArea Root carries `data-slot="scroll-area"` from `ui/scroll-area.tsx`.
+      const scrollArea = container.querySelector('[data-slot="scroll-area"]')
+      expect(scrollArea).not.toBeNull()
+
+      // The viewport hosts the wheel handler and the `flex` chip row.
+      const viewport = container.querySelector(
+        '[data-slot="scroll-area-viewport"]',
+      ) as HTMLElement | null
+      expect(viewport).not.toBeNull()
+
+      // Inner chip row is a single-line flex container — no `grid`, no
+      // `flex-wrap`. PEND-32 explicitly walked back PEND-19's flex-wrap.
+      const innerRow = viewport?.querySelector('div.flex')
+      expect(innerRow).not.toBeNull()
+      expect(innerRow?.className).toContain('flex')
+      expect(innerRow?.className).not.toContain('flex-wrap')
+      expect(innerRow?.className).not.toContain('grid')
+      // Horizontal scroller renders one ScrollArea, never two — guard
+      // against a regression that wraps the row in `<ScrollArea
+      // orientation="both">`.
+      expect(container.querySelectorAll('[data-slot="scroll-area"]')).toHaveLength(1)
+    })
+
+    it('moves the row padding from the outer <nav> to the inner flex container', () => {
+      seedFiveChips()
+      const { container } = render(<RecentPagesStrip />)
+
+      const strip = screen.getByTestId('recent-pages-strip')
+      // Outer nav keeps the border + bg only; the previous `px-4 md:px-6
+      // py-1.5` lived here and confused the ScrollArea scrollbar inset.
+      expect(strip.className).not.toContain('px-4')
+      expect(strip.className).not.toContain('py-1.5')
+
+      const innerRow = container.querySelector(
+        '[data-slot="scroll-area-viewport"] div.flex',
+      ) as HTMLElement | null
+      // Tightened padding — `py-1` (4 px) instead of the old `py-1.5`
+      // (6 px) — and the horizontal padding moved inside.
+      expect(innerRow?.className).toContain('px-4')
+      expect(innerRow?.className).toContain('md:px-6')
+      expect(innerRow?.className).toContain('py-1')
+      expect(innerRow?.className).not.toContain('py-1.5')
+    })
+
+    it('translates dominant vertical wheel deltas to horizontal scroll', () => {
+      seedFiveChips()
+      const { container } = render(<RecentPagesStrip />)
+
+      const viewport = container.querySelector(
+        '[data-slot="scroll-area-viewport"]',
+      ) as HTMLDivElement
+      expect(viewport).not.toBeNull()
+
+      viewport.scrollLeft = 0
+      const evt = new WheelEvent('wheel', {
+        deltaY: 120,
+        deltaX: 0,
+        bubbles: true,
+        cancelable: true,
+      })
+      // Spy on preventDefault on the event itself — React 19 attaches
+      // `wheel` as a passive listener at the root, so the *effect* of
+      // `preventDefault()` is suppressed at the browser level (and
+      // `evt.defaultPrevented` stays false). The synthetic event still
+      // forwards the call to the native event, so the spy captures the
+      // handler's intent. Asserting the spy is what we actually care
+      // about — that the handler chose to claim the wheel event.
+      const preventDefaultSpy = vi.spyOn(evt, 'preventDefault')
+      fireEvent(viewport, evt)
+
+      expect(viewport.scrollLeft).toBe(120)
+      expect(preventDefaultSpy).toHaveBeenCalled()
+    })
+
+    it('leaves native horizontal scroll alone when deltaX dominates (trackpad swipe)', () => {
+      seedFiveChips()
+      const { container } = render(<RecentPagesStrip />)
+
+      const viewport = container.querySelector(
+        '[data-slot="scroll-area-viewport"]',
+      ) as HTMLDivElement
+
+      viewport.scrollLeft = 0
+      const evt = new WheelEvent('wheel', {
+        deltaY: 0,
+        deltaX: 120,
+        bubbles: true,
+        cancelable: true,
+      })
+      const preventDefaultSpy = vi.spyOn(evt, 'preventDefault')
+      fireEvent(viewport, evt)
+
+      // Handler must be a no-op when horizontal delta is dominant —
+      // otherwise we'd double-scroll on top of the browser's native
+      // horizontal trackpad gesture.
+      expect(viewport.scrollLeft).toBe(0)
+      expect(preventDefaultSpy).not.toHaveBeenCalled()
+    })
+
+    it('scrollIntoView fires on the focused chip during arrow-key traversal', async () => {
+      const user = userEvent.setup()
+      const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+      seedFiveChips()
+
+      render(<RecentPagesStrip />)
+
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+
+      // Tab onto the first chip; the focus-management effect runs and
+      // scrolls it into view. ArrowRight then advances focus and fires
+      // a second scrollIntoView call on the next chip.
+      await user.tab()
+      await user.keyboard('{ArrowRight}')
+
+      expect(scrollSpy).toHaveBeenCalled()
+      const lastCallArgs = scrollSpy.mock.calls.at(-1)?.[0]
+      expect(lastCallArgs).toMatchObject({
+        block: 'nearest',
+        inline: 'nearest',
+        behavior: 'smooth',
+      })
+      // The most recent invocation is on the chip that just received focus.
+      expect(scrollSpy.mock.contexts.at(-1)).toBe(chips[1])
+
+      scrollSpy.mockRestore()
+    })
+
+    it('honours prefers-reduced-motion → behavior: auto', async () => {
+      const user = userEvent.setup()
+      const originalMatchMedia = window.matchMedia
+      window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+        matches: query === '(prefers-reduced-motion: reduce)',
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      })) as typeof window.matchMedia
+
+      const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+      seedFiveChips()
+
+      render(<RecentPagesStrip />)
+
+      await user.tab()
+      await user.keyboard('{ArrowRight}')
+
+      expect(scrollSpy).toHaveBeenCalled()
+      const lastCallArgs = scrollSpy.mock.calls.at(-1)?.[0]
+      expect(lastCallArgs).toMatchObject({
+        block: 'nearest',
+        inline: 'nearest',
+        behavior: 'auto',
+      })
+
+      scrollSpy.mockRestore()
+      window.matchMedia = originalMatchMedia
+    })
+
+    it('has no a11y violations with the ScrollArea wrapper in place', async () => {
+      seedFiveChips()
+      const { container } = render(<RecentPagesStrip />)
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
   })
 
   // ---------------------------------------------------------------------------

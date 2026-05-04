@@ -19,8 +19,20 @@ export interface PickerItem {
   label: string
   /** When true, selecting this item creates a new page instead of linking to an existing one. */
   isCreate?: boolean
-  /** When true, this item was matched via page alias (not direct title). */
+  /**
+   * When true, this item was matched via a page alias (not direct
+   * title). Used for visual differentiation only — exact-vs-prefix
+   * disambiguation lives on `aliasText` (PEND-34).
+   */
   isAlias?: boolean
+  /**
+   * The actual alias text that matched (e.g. "pp"). Set on every
+   * alias-source result, exact and prefix alike. Used by the
+   * `[[text]]` input rule to tell whether the typed text is exactly
+   * an alias and should auto-resolve, vs. a prefix that should not
+   * (PEND-34).
+   */
+  aliasText?: string
   /** Category for grouping in the slash command menu (e.g. "Tasks", "Dates"). */
   category?: string
   /** Icon component from lucide-react, rendered inline before the label. */

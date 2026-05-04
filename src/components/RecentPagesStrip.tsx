@@ -3,13 +3,16 @@
  *
  * Mounted at the app-shell level between the hoisted `<TabBar />` (FEAT-7)
  * and the `<ViewHeaderOutletSlot />` (UX-198). Reads the MRU list from
- * `useRecentPagesStore` and renders one ghost-button "chip" per entry,
+ * `useRecentPagesStore` and renders one `<RecentPageChip>` per entry,
  * excluding the currently-open page so the strip shows places the user
  * might want to jump *back* to.
  *
- * Responsive grid (`repeat(auto-fit, minmax(120px, 180px))`) so the chip
- * count grows/shrinks with viewport width — no fixed N. Chip text truncates
- * with a `title` tooltip for hover context.
+ * Single-line horizontal scroll layout (PEND-32): chips stay on one row
+ * inside a `<ScrollArea orientation="horizontal">`. Chip text truncates
+ * with a `title` tooltip for hover context. Strip vertical chrome is
+ * bounded to ~36 px regardless of recent-page count or viewport width —
+ * the wrap-to-second-row behaviour of the previous CSS-grid layout is
+ * gone.
  *
  * Click semantics mirror the rest of the app:
  * - Plain click → `navigateToPage`.
@@ -25,6 +28,15 @@
  *   moved imperatively in a `useEffect` so screen readers announce each
  *   chip as the user traverses. Focus only moves when the strip already
  *   owns focus — avoids stealing focus on mount / re-render.
+ * - The same effect calls `scrollIntoView({ inline: 'nearest' })` on the
+ *   newly-focused chip so off-screen chips are revealed automatically
+ *   during arrow-key traversal (PEND-32). Honours `prefers-reduced-motion`
+ *   by falling back to `behavior: 'auto'`.
+ *
+ * Mouse wheel (PEND-32): vertical wheel deltas over the strip translate
+ * to horizontal scroll. Trackpad two-finger horizontal swipes (which set
+ * `deltaX` natively) fall through untouched via the `|deltaY| > |deltaX|`
+ * dominance guard.
  *
  * Auto-hidden when:
  * - `useIsMobile()` is true (desktop-only affordance).
@@ -35,8 +47,8 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { RecentPageChip } from '@/components/ui/recent-page-chip'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import {
@@ -93,6 +105,8 @@ export function RecentPagesStrip(): React.ReactElement | null {
   // chip after arrow-key traversal. Only move DOM focus when focus is already
   // inside the strip — avoids stealing focus on mount and on itemCount-driven
   // resets of `focusedIndex` to 0 (e.g., when a visit is recorded elsewhere).
+  // Also scroll the focused chip into view so off-screen chips get revealed
+  // when the user traverses past the visible window (PEND-32).
   const buttonRefs = useRef(new Map<number, HTMLButtonElement | null>())
 
   useEffect(() => {
@@ -100,7 +114,20 @@ export function RecentPagesStrip(): React.ReactElement | null {
     const isInsideStrip = Array.from(buttonRefs.current.values()).some((btn) => btn === activeEl)
     if (!isInsideStrip) return
     const target = buttonRefs.current.get(focusedIndex)
-    if (target != null) target.focus()
+    if (target == null) return
+    target.focus()
+    // PEND-32: only one inline read in the codebase today; per AGENTS.md
+    // "Simplicity First" we don't lift this into a dedicated hook until a
+    // second consumer appears. The global CSS rule in `index.css` already
+    // forces `scroll-behavior: auto` under reduced motion, but
+    // `scrollIntoView({ behavior: 'smooth' })` overrides that — the JS
+    // option needs to be passed explicitly.
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    target.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+    })
   }, [focusedIndex])
 
   const handleClick = useCallback(
@@ -117,13 +144,35 @@ export function RecentPagesStrip(): React.ReactElement | null {
     [navigateToPage, openInNewTab],
   )
 
+  // PEND-32: translate vertical wheel deltas to horizontal scroll when the
+  // cursor is over the strip. Trackpad two-finger horizontal swipes already
+  // populate `deltaX` natively, so let those through (the `|deltaY| >
+  // |deltaX|` dominance guard skips the handler in that case). Shift+wheel
+  // is also covered: the browser maps Shift+wheel to horizontal natively;
+  // our handler runs first, prevents the default, and applies the same
+  // delta — net behaviour is identical.
+  //
+  // Invariant: the strip MUST NOT be nested inside a scrollable parent.
+  // The `preventDefault()` here intercepts the wheel event before it can
+  // bubble, so a scrollable ancestor would silently lose vertical scroll
+  // when the cursor crosses the strip. The strip is mounted at the app-
+  // shell level (`<App>` → between `<TabBar>` and `<ViewHeaderOutletSlot>`),
+  // which is not scrollable. If that ever changes, revisit this handler
+  // (drop `preventDefault`, or guard on a parent-scroll check).
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.currentTarget.scrollLeft += e.deltaY
+      e.preventDefault()
+    }
+  }, [])
+
   if (isMobile) return null
   if (visible.length === 0) return null
 
   return (
     <nav
       aria-label={t('recent.ariaLabel')}
-      className="border-b border-border/40 bg-background px-4 md:px-6 py-1.5"
+      className="border-b border-border/40 bg-background"
       data-testid="recent-pages-strip"
       onKeyDown={(e) => {
         // The hook returns true when the key was consumed (arrow keys,
@@ -135,61 +184,53 @@ export function RecentPagesStrip(): React.ReactElement | null {
       }}
     >
       {/*
-       * Responsive grid: `auto-fit` packs chips at their natural min/max
-       * width. Rough chip counts at common desktop widths (with 32 px
-       * horizontal padding, 8 px gap):
-       *   - 1440 px viewport → ~7 chips per row
-       *   - 1280 px viewport → ~6 chips
-       *   - 1024 px viewport → ~5 chips
-       *   -  800 px viewport → ~4 chips
-       *   -  768 px viewport (desktop min) → ~3 chips
-       * Below 768 px the strip doesn't render at all (mobile gate above).
-       */}
-      <div
-        className="grid gap-2"
-        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 180px))' }}
+        PEND-32: no `pb-2` on viewport / no reserved scrollbar space.
+        Radix's horizontal scrollbar is auto-hide and adds ~10 px of
+        bottom inset only while visible. The induced shift is vertical,
+        not horizontal, so the chip row's alignment is unaffected. If
+        real-world feedback ever flags the jitter, add
+        `viewportClassName="pb-2"` to reserve the inset.
+      */}
+      <ScrollArea
+        orientation="horizontal"
+        className="w-full"
+        viewportClassName="overscroll-x-contain"
+        viewportProps={{ onWheel: handleWheel }}
       >
-        {visible.map((ref, idx) => {
-          const displayTitle = ref.title || t('recent.untitled')
-          return (
-            <Button
-              key={ref.pageId}
-              ref={(el) => {
-                // Track the live DOM node per index so the focus-management
-                // effect can `.focus()` the currently-focused chip. The map
-                // is rebuilt each render (inline ref callback); stale indices
-                // are cleared on unmount via the null-branch.
-                if (el != null) buttonRefs.current.set(idx, el)
-                else buttonRefs.current.delete(idx)
-              }}
-              tabIndex={idx === focusedIndex ? 0 : -1}
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'truncate justify-start text-xs text-muted-foreground hover:text-foreground',
-                // UX-284: subtle background tint on keyboard focus so the
-                // Button's focus-visible ring isn't the sole indicator —
-                // improves discoverability for arrow-key traversal across
-                // the strip.
-                'focus-visible:bg-accent/50',
-              )}
-              title={displayTitle}
-              onClick={(e) => handleClick(ref, e)}
-              onAuxClick={(e) => {
-                // Middle-click (button === 1) does not fire `onClick` in
-                // every browser but always fires `onAuxClick`. Mirror the
-                // Ctrl/Cmd branch of handleClick.
-                if (e.button === 1) {
-                  e.preventDefault()
-                  openInNewTab(ref.pageId, ref.title)
-                }
-              }}
-            >
-              <span className="truncate">{displayTitle}</span>
-            </Button>
-          )
-        })}
-      </div>
+        <div className="flex items-center gap-1.5 px-4 md:px-6 py-1">
+          {visible.map((ref, idx) => {
+            const displayTitle = ref.title || t('recent.untitled')
+            return (
+              <RecentPageChip
+                key={ref.pageId}
+                ref={(el) => {
+                  // Track the live DOM node per index so the focus-management
+                  // effect can `.focus()` and `.scrollIntoView()` the focused
+                  // chip. The map is rebuilt each render (inline ref callback);
+                  // stale indices are cleared on unmount via the null-branch.
+                  if (el != null) buttonRefs.current.set(idx, el)
+                  else buttonRefs.current.delete(idx)
+                }}
+                tabIndex={idx === focusedIndex ? 0 : -1}
+                className="truncate justify-start"
+                title={displayTitle}
+                onClick={(e) => handleClick(ref, e)}
+                onAuxClick={(e) => {
+                  // Middle-click (button === 1) does not fire `onClick` in
+                  // every browser but always fires `onAuxClick`. Mirror the
+                  // Ctrl/Cmd branch of handleClick.
+                  if (e.button === 1) {
+                    e.preventDefault()
+                    openInNewTab(ref.pageId, ref.title)
+                  }
+                }}
+              >
+                <span className="truncate">{displayTitle}</span>
+              </RecentPageChip>
+            )
+          })}
+        </div>
+      </ScrollArea>
     </nav>
   )
 }

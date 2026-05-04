@@ -67,9 +67,19 @@ async function resolveAndInsertBlockLink(
 
   try {
     const items = await options.items(text)
-    // Look for an exact match (case-insensitive) or an alias match
+    // Look for an exact match: case-insensitive label OR exact alias
+    // text. With prefix-alias matching now in `searchPages` (PEND-34),
+    // multiple items can carry `isAlias: true` for prefixes that aren't
+    // `text` exactly — only the alias whose `aliasText === text` should
+    // auto-resolve from the input rule / selection-resolve path. Using
+    // `aliasText` instead of the dropped `|| item.isAlias` short-circuit
+    // preserves the original "[[my-alias]] resolves to its target page"
+    // intent without auto-resolving prefix-only matches like "[[my]]".
+    const lower = text.toLowerCase()
     const exactMatch = items.find(
-      (item) => !item.isCreate && (item.label.toLowerCase() === text.toLowerCase() || item.isAlias),
+      (item) =>
+        !item.isCreate &&
+        (item.label.toLowerCase() === lower || item.aliasText?.toLowerCase() === lower),
     )
     if (exactMatch) {
       if (isStale()) {

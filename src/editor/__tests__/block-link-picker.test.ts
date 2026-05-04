@@ -109,6 +109,120 @@ describe('BlockLinkPicker input rule (H-13)', () => {
   })
 })
 
+// ── PEND-34: prefix-alias disambiguation in the input rule ─────────────
+//
+// Pre-PEND-34 the exact-match check was `label === text || item.isAlias`,
+// which auto-resolved any item carrying `isAlias: true` regardless of
+// whether the typed text was a prefix or the full alias. With prefix
+// matching now in `searchPages`, that fallback would auto-resolve
+// `[[my]]` to the first prefix-alias hit (e.g. `my-favourite-page`).
+// The fix narrows the alias branch to `aliasText === text` so only a
+// fully-typed alias triggers resolution.
+
+describe('BlockLinkPicker input rule — alias disambiguation (PEND-34)', () => {
+  it('[[my-alias]] input rule resolves to alias target', async () => {
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContent: (_c: unknown) => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 1000 } } },
+    } as unknown
+
+    // The picker returns the alias-prefix item. `aliasText === text`
+    // (case-insensitive), so the input rule's exact-match branch fires.
+    const mockItems = vi.fn().mockResolvedValue([
+      {
+        id: 'PAGE',
+        label: 'WGM (alias: my-alias)',
+        isAlias: true,
+        aliasText: 'my-alias',
+      },
+    ])
+    const ext = BlockLinkPicker.configure({ items: mockItems })
+
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const rules = (ext.config.addInputRules as Function).call({
+      options: ext.options,
+      editor: mockEditor,
+    })
+    const rule = rules[0]
+
+    const mockState = { tr: { delete: vi.fn() } }
+    rule.handler({
+      state: mockState,
+      range: { from: 1, to: 14 },
+      match: ['[[my-alias]]', 'my-alias'],
+    })
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    // Resolved as a block_link to the alias's target page.
+    expect(insertContentAtCalls).toEqual([
+      { pos: 1, content: { type: 'block_link', attrs: { id: 'PAGE' } } },
+    ])
+  })
+
+  it('[[my]] input rule does NOT resolve to a prefix-alias hit', async () => {
+    // Regression guard against the dropped `|| item.isAlias` short-
+    // circuit. With prefix matching, the picker returns alias items
+    // for `my` (prefixes like `my-alias`, `my-favourite`) — none of
+    // which equal the typed text `my`, so the input rule must fall
+    // through to plain-text re-insert (no `onCreate` configured).
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContent: (_c: unknown) => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 1000 } } },
+    } as unknown
+
+    const mockItems = vi.fn().mockResolvedValue([
+      {
+        id: 'PAGE_PREFIX',
+        label: 'WGM (alias: my-alias)',
+        isAlias: true,
+        aliasText: 'my-alias',
+      },
+    ])
+    const ext = BlockLinkPicker.configure({ items: mockItems })
+
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const rules = (ext.config.addInputRules as Function).call({
+      options: ext.options,
+      editor: mockEditor,
+    })
+    const rule = rules[0]
+
+    const mockState = { tr: { delete: vi.fn() } }
+    rule.handler({
+      state: mockState,
+      range: { from: 5, to: 11 },
+      match: ['[[my]]', 'my'],
+    })
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    // Plain text re-inserted at the captured position — NOT a
+    // block_link to the prefix-alias hit.
+    expect(insertContentAtCalls).toEqual([{ pos: 5, content: 'my' }])
+  })
+})
+
 describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)', () => {
   it('calls insertContentAt with captured position on exact match', async () => {
     // Track the calls to verify position-anchored insertion
@@ -477,9 +591,19 @@ describe('resolveBlockLinkFromSelection command', () => {
       },
     } as unknown
 
-    const mockItems = vi
-      .fn()
-      .mockResolvedValue([{ id: 'ALIAS_ID', label: 'Real Name', isAlias: true, isCreate: false }])
+    // PEND-34 — the alias-resolution path now keys on `aliasText === text`
+    // rather than the old `isAlias` short-circuit. The picker item must
+    // carry the matched alias text so the selection-resolve path can
+    // recognise it as an exact match.
+    const mockItems = vi.fn().mockResolvedValue([
+      {
+        id: 'ALIAS_ID',
+        label: 'Real Name',
+        isAlias: true,
+        aliasText: 'alias name',
+        isCreate: false,
+      },
+    ])
     const mockOnCreate = vi.fn().mockResolvedValue('SHOULD_NOT_USE')
     const ext = BlockLinkPicker.configure({ items: mockItems, onCreate: mockOnCreate })
     const command = getCommand(ext)

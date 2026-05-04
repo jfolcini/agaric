@@ -2,11 +2,89 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 662 (finished PEND-20 / PEND-25 / PEND-26 — materializer temp table + blocksById Map + Arc<OpRecord> shift + recurrence cap-as-Err) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1083+ items.
+**Sessions:** 1 – 663 (closed PEND-19 + PEND-31 + PEND-32 + PEND-34 — RecentPagesStrip chip + scroll redesign, references-panel filter consolidation, page-link picker progressive alias filtering) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1087+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 663 — closed PEND-19 + PEND-31 + PEND-32 + PEND-34 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 3 build + 4 review (2 PEND-31, 2 PEND-19+32) |
+| **Items closed** | PEND-19, PEND-31, PEND-32, PEND-34 (plan files deleted) + housekeeping (PEND-01 stale plan file removed; README pruned to mirror folder state) |
+| **Items modified** | MAINT-210, MAINT-211, MAINT-212 added |
+| **Tests added** | +24 frontend (33 RecentPagesStrip / 5 References / 4 picker) + 7 Rust (alias-prefix command) |
+| **Files touched** | 21 source + 5 docs (READMEs / REVIEW-LATER / SESSION-LOG / FEATURE-MAP); 1 new `.sqlx/` cache file; 1 new UI primitive (`RecentPageChip`) |
+
+**Summary:** Mixed UX-polish + small backend feature batch shipped via 3 parallel build subagents (one per logical work unit) and 4 review subagents (technical + UX per user-facing change). One CRITICAL/HIGH finding from PEND-19+32 reviewers (chip lacked `[@media(pointer:coarse)]:h-11` touch-target scaling) fixed orchestrator-direct, plus 2 doc-only inline comments added (wheel-handler parent-scroll invariant; scrollbar-jitter rationale) per UX reviewer's MEDIUM findings.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 30 → 33 (+3: MAINT-210 dead i18n key, MAINT-211 edge-fade affordance, MAINT-212 raise `MAX_RETAINED`)
+- **Previously resolved:** 1083+ → 1087+ across 662 → 663 sessions
+
+**Files touched (this session):**
+
+Backend (Rust):
+- `src-tauri/src/commands/pages.rs` (+86): new `PageAliasPrefixRow` struct, `MAX_PAGE_ALIASES_PREFIX = 50` const, `list_page_aliases_by_prefix_inner` (`sqlx::query_as!` macro form, `COLLATE NOCASE` LIKE, `ORDER BY length(pa.alias), pa.alias`, `b.deleted_at IS NULL`, optional `space_id` short-circuit), `list_page_aliases_by_prefix` Tauri command
+- `src-tauri/src/commands/mod.rs` (+9): re-exports for the new command + inner + specta shim
+- `src-tauri/src/lib.rs` (+1): `list_page_aliases_by_prefix` registered in `agaric_commands![]`
+- `src-tauri/src/commands/tests/page_cmd_tests.rs` (+216): 7 new tests (returns_matching, case_insensitive, excludes_deleted_pages, respects_limit, orders_shortest_first, escapes_like_metachars, scopes_to_active_space)
+- `src-tauri/.sqlx/query-03805400…json` (new): committed query cache for the new SQL
+
+Frontend (TypeScript) — picker (PEND-34):
+- `src/lib/tauri.ts` (+26): `listPageAliasesByPrefix({ prefix, limit, spaceId })` wrapper alongside the still-used `resolvePageByAlias`
+- `src/lib/bindings.ts` (auto-regen via specta)
+- `src/lib/tauri-mock/handlers.ts` (+35): in-process mock mirroring backend semantics (prefix-startswith, length+alias sort, soft-delete exclusion, optional space scope) — required to keep `handlers-drift` parity test green
+- `src/editor/SuggestionList.tsx` (+13): `aliasText?: string` field on `PickerItem`
+- `src/hooks/useBlockResolve.ts` (+35): `tryPrependAliasMatch` → `mergeAliasPrefixMatches`; reads `useSpaceStore.getState().currentSpaceId`; folds prefix matches into result list deduped by pageId; logs warn on alias-service failure (never aborts picker)
+- `src/editor/extensions/block-link-picker.ts` (+10): exact-match check refined to `label === text || aliasText === text` (drops the unsafe `|| isAlias` short-circuit so `[[my]]` no longer auto-resolves to a prefix-alias hit)
+- `src/hooks/__tests__/useBlockResolve.test.ts` (+25): retargeted alias-block mocks; 5 alias retargets + 4 priority-ordering retargets + 2 fundamentally new prefix tests
+- `src/editor/__tests__/block-link-picker.test.ts` (+128): 2 new input-rule tests (alias-text resolves; prefix-alias does NOT)
+
+Frontend (TypeScript) — RecentPagesStrip (PEND-19 + PEND-32 bundled):
+- `src/components/ui/recent-page-chip.tsx` (NEW, +57): purpose-built `<button data-slot="recent-page-chip">` chip primitive with visible rest-state chrome (`border-border/60 bg-secondary/40`), `h-7` resting / `[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:px-3` touch scaling, `max-w-[160px]`, `shrink-0`, focus-visible ring + UX-284 `bg-accent/60` tint
+- `src/components/RecentPagesStrip.tsx` (+82): grid → `<ScrollArea orientation="horizontal">` wrapping `<div className="flex items-center gap-1.5 px-4 md:px-6 py-1">`; new `handleWheel` (vertical→horizontal translation with `|deltaY| > |deltaX|` dominance guard); `scrollIntoView({ block, inline: 'nearest', behavior: prefersReducedMotion ? 'auto' : 'smooth' })` augmenting focus-management effect; doc comments on wheel-handler parent-scroll invariant + scrollbar-jitter rationale (orchestrator-added per UX reviewer MEDIUMs)
+- `src/components/__tests__/RecentPagesStrip.test.tsx` (+242): +13 regression cases (chip styling × 4, layout × 6, touch-target × 1, axe × 1, scrollIntoView reduced-motion × 1)
+
+Frontend (TypeScript) — References (PEND-31):
+- `src/components/LinkedReferences.tsx` (−45): `SourcePageFilter` lifted into header row; `SlidersHorizontal` toggle deleted; `BacklinkFilterBuilder` renders unconditionally when expanded; badge gating loosened
+- `src/components/UnlinkedReferences.tsx` (−21): toggle deleted; `BacklinkFilterBuilder` renders unconditionally when not collapsed; badge gating loosened
+- `src/lib/i18n/references.ts` (−3): deleted `hideFilters`, `showFilters`, `filtersLabel` (kept `filtersAppliedBadge` + `filtersAppliedAriaLabel`)
+- `src/components/__tests__/LinkedReferences.test.tsx` (−62): -3 deleted, +2 new, 4 updated (47 total, 47/47 pass)
+- `src/components/__tests__/UnlinkedReferences.test.tsx` (−93): -5 deleted, +3 new, 5 updated (36 total, 36/36 pass)
+
+Docs / housekeeping:
+- `pending/PEND-01-mdns-rename-blocknotes-to-agaric.md` (DELETED — was already shipped session 652)
+- `pending/PEND-19-recent-pages-strip-redesign.md` (DELETED — closed this session)
+- `pending/PEND-31-references-filter-affordance-consolidation.md` (DELETED — closed this session)
+- `pending/PEND-32-recent-pages-strip-single-line-scroll.md` (DELETED — closed this session)
+- `pending/PEND-34-page-link-picker-progressive-alias-filtering.md` (DELETED — closed this session)
+- `pending/README.md` (rewritten): pruned ~30 stale ✅-done rows that lingered against the README's own "delete on completion" convention; added rows for PEND-23, PEND-28a/b (the duplicate-ID files now disambiguated in the index), PEND-33 that had been missing
+- `pending/REVIEW-LATER.md`: +3 MAINT items (210/211/212), summary count 30 → 33
+- `FEATURE-MAP.md`: documented `list_page_aliases_by_prefix` IPC command; documented `RecentPageChip` UI primitive
+
+**Verification:**
+- `npx vitest run src/components/__tests__/RecentPagesStrip.test.tsx` — 33/33 pass
+- `npx vitest run` (full frontend) — 9351/9351 pass across 373 test files
+- `cd src-tauri && cargo nextest run` — 3491/3492 pass (1 pre-existing perf flake `bug_report::tests::collect_metadata_completes_quickly_for_oversized_log_file`, unrelated)
+- `prek run --all-files` — all hooks pass after one markdownlint fix (MD028 blockquote-blank-line in `pending/README.md`)
+
+**Process notes:**
+- Two reviewers diverged on severity for the same finding (chip touch-target): technical = CRITICAL/FAIL, UX = HIGH/PASS-WITH-NITS. Both correct: AGENTS.md "all interactive elements meet 44 px on touch" is a blanket rule (technical's framing), but the strip is mobile-hidden so the practical exposure is hybrid pointer devices only (UX's framing). Fix landed orchestrator-direct.
+- PEND-34's tauri-mock handler addition was not in the plan but is required by the `handlers-drift` parity test (which is itself MAINT-206 in flight). Builder added a faithful in-process mock; took 15 min and kept the test green.
+- PEND-31's `references.moreFilters` dead i18n key surfaced as a logical follow-up of the toggle removal; left in place per AGENTS "Surgical Changes" rule, filed as MAINT-210.
+
+**Lessons learned (for future sessions):**
+- When two reviewers disagree on severity for the same finding, the underlying signal is usually solid — fix it, even at the lower severity. The disagreement is about framing, not facts.
+- Plans that bundle (PEND-19 + PEND-32) save a round trip vs. sequence; the build subagent picked PEND-32's recommendation cleanly.
+- `tauri-mock/handlers.ts` parity (MAINT-206) keeps catching new commands from drift tests — the parity hook (mirror of PEND-08) is overdue.
+
+**Commit plan:** single commit / not pushed.
+
+---
 
 - **Session 662 (2026-05-04, finished PEND-20 / PEND-25 / PEND-26)** — three-PEND closure batch shipped via 3 parallel build subagents (A=PEND-20 C + PEND-25 L2/L9, B=PEND-26 N3 + PEND-24 H2, C=PEND-20 G frontend) + 1 technical reviewer. **PEND-20 closed:** C — `materializer/handlers.rs` `OpType::PurgeBlock` arm now seeds a `_purge_descendants` TEMP TABLE once via the existing `descendants_cte_purge!()` macro, then 15 downstream DELETE/UPDATE statements read `IN (SELECT id FROM _purge_descendants)` (was 15 CTE re-evaluations). Defensive `DROP TABLE IF EXISTS` at handler entry + explicit `DROP TABLE` at exit guards against pooled-connection temp-table leaks. G — `PageBlockStore` (`src/stores/page-blocks.ts`) gained `blocksById: Map<string, FlatBlock>` field + `getBlockById(id)` selector helper; every internal `set` that touches `blocks` now writes a fresh `blocksById` via `buildBlocksById()`; external `store.setState({ blocks })` is wrapped post-creation so partial updates auto-derive the Map (escape hatch: explicit `blocksById` is honored). Internal `blocks.find` lookups in load / edit / splitBlock / dedent / moveUp / moveDown converted to `blocksById.get`; `findIndex` calls in createBelow / reorder / indent kept (need array index for ordering). Consumer conversions: `EditableBlock.tsx`, `BlockTree.tsx` (3 sites), `BlockPropertyDrawer.tsx`, `useCheckboxSyntax.ts`, `useBlockSlashCommands.ts`, `PageEditor.tsx`, `useBlockProperties.ts`. Skipped (with rationale): backlink-group `blocks.find` (different shape), drag-position `findIndex` (needs array index), hook-parameter `blocks` (no store access). +14 frontend tests covering Map sync invariant + reactivity (subscribe + render-counter probe + escape-hatch). **PEND-25 closed:** L2 — `DeferredNotification.record` field type changed from `OpRecord` to `Arc<OpRecord>`; `apply_op` takes `&Arc<OpRecord>` and uses `Arc::clone(record)` for the deferred push. The `BatchApplyOps` arm wraps in `Arc::new((*record).clone())` because individual records inside `Arc<Vec<OpRecord>>` aren't pre-`Arc`'d (one unavoidable clone, documented inline). L9 — `db.rs::PendingDispatch::Background(Arc<OpRecord>)` and `EditBackground { record: Arc<OpRecord>, ... }`; `enqueue_background` and `enqueue_edit_background` take `impl Into<Arc<OpRecord>>` (not hard `Arc<OpRecord>`) so the ~20 unrelated callsites that move `OpRecord` directly continue to compile via `From<T> for Arc<T>`. The 6 PEND-25-targeted callsites (`commands/properties.rs:163, 433`, `commands/mod.rs:706`, `commands/blocks/crud.rs:507, 687, 820, 1120`) use the explicit `let op_record = Arc::new(op_record); … Arc::clone(&op_record)` pattern to share the `Arc` with downstream `notify_gcal_for_op` and similar consumers. New test `apply_op_arc_record_does_not_leak_strong_count` asserts `Arc::strong_count` returns to 1 after the foreground handler runs. **PEND-26 closed:** N3 + PEND-24 H2 bundled — `recurrence/parser.rs` `shift_date` signature changed from `Option<String>` to `Result<Option<String>, AppError>` (three-channel return: `Ok(Some)` success / `Ok(None)` parse-shape failure stays silent / `Err(AppError::Validation)` for `++` arm dead-ends). `++` arm rewritten with `hit_cap` flag: N3's `let-else` on `shift_date_once` returns `Err(AppError::Validation("recurrence ++ arithmetic overflow: …"))` on `NaiveDate` overflow (was silent `?` propagating `None`); H2's post-loop `if hit_cap { return Err(...) }` returns `Err(AppError::Validation("recurrence ++ cap exceeded: original={original} interval={interval} today={today}"))` instead of stale past-date. `recurrence/compute.rs::handle_recurrence_in_tx` propagates with `?` so the IMMEDIATE tx rolls back. Error variant choice — `AppError::Validation` matches surrounding `recurrence/properties` idiom (15+ existing callsites; the PEND-24 H2 plan example used `InvalidOperation` but the user task said "match surrounding idiom" — `Validation` wins). +4 tests: `plus_plus_with_very_old_origin_returns_err` (H2 cap-exceeded), `plus_plus_overflow_returns_err` (N3 NaiveDate overflow on `2150-01-15 + ++100y`), `plus_plus_boundary_success_under_cap` (success at 6 iterations), `plus_plus_cap_exceeded_propagates_through_handle_recurrence` (caller-level integration, asserts rollback works — zero siblings committed, op_log unchanged). **Process notes:** subagent C's first run was silently reverted by parallel `git stash` operations from sibling subagents A and B (both reported having to stash/unstash to verify in isolation); orchestrator detected the empty file diff post-hoc and relaunched C in the now-stable tree, which shipped clean. Tech reviewer covered all 5 items (PEND-20 C + PEND-25 L2/L9 + PEND-26 N3 + PEND-24 H2) and PASSED with no fixes needed. **Orchestrator-direct fix:** test file `src/stores/__tests__/page-blocks.test.ts:1824` typed `seen: Map<string, unknown>[]` which `tsc -b` rejected for `.content` access; tightened to `Map<string, FlatBlock>[]` + added `FlatBlock` to the `page-blocks` import block. **Orchestrator-direct fix #2:** `cargo fmt --all` reformatted some new soft_delete fixtures. **Orchestrator-direct fix #3:** vitest WeeklyView.test.tsx flake on parallel-load axe cold-start (passed in isolation 10/10); re-ran prek to confirm clean. **REVIEW-LATER updates:** added MAINT-91 (oauth2 reqwest 0.12 dup, was missing despite Cargo.toml references — restored), MAINT-208 (PEND-25 M1 Android boot profile-conditional `block_on` deferral), MAINT-209 (PEND-25 L15 + L16 gcal speculative). PEND-25 L8 stays tracked under existing MAINT-196 (projection-path drift). L13 dropped permanently (sync-merge superseded by PEND-09). **Plan files deleted:** `pending/PEND-20-sql-perf-review-findings.md`, `pending/PEND-25-perf-review-rust-allocations-locks-async.md`, `pending/PEND-26-rust-robustness-review-second-pass.md`. **Verification:** `cargo nextest run` 3485 passed, 4 skipped. `npx vitest run` 9343 passed (no regressions; pre-existing parallel-load axe flakes pass in isolation). `prek run --all-files` green across all 45 hooks. Files touched: 21 (~+1500 / -55, including .sqlx delta of 0). Tests added: ~11 new Rust + ~14 new frontend = ~25 total.
 

@@ -1,88 +1,71 @@
-# `pending/` — planned tasks from the 2026-05-03 architectural review
+# `pending/` — planned tasks
 
-Origin: a deep architectural review session run with five parallel investigation subagents, followed by per-task planning subagents and per-task reviewer subagents (planner + reviewer pairs). Each plan was independently audited for hallucinations, exaggeration, and unverified claims; corrections were folded back into the final plan files.
-
-> **These are plans, not commits.** They describe scoped, time-estimated work with explicit cost / impact / risk. Each one is independently approve-able — pick what you want, when you want.
+> **These are plans, not commits.** Scoped, time-estimated work with explicit cost / impact / risk. Each one is independently approve-able — pick what you want, when you want.
+>
+> **Convention:** when a task is done (or rejected), delete its plan file. `git log` + `SESSION-LOG.md` are the audit trail. The index below mirrors what's actually in `pending/` — no historical "Resolved" rows.
 
 ## Index
 
 | ID | Title | Cost | Status |
 | --- | --- | --- | --- |
-| PEND-01 | Rename `MDNS_SERVICE_NAME` `BlockNotes` → `Agaric` | trivial | ✅ done this session |
-| PEND-02 | Rename "CQRS hybrid model" → "event sourcing with materialized views" | S | ready (gated on AGENTS.md edit approval) |
-| PEND-03 | Materializer silent-drop fix for global cache rebuilds | M (4-7h) | ✅ done session 658 — migration 0044 (STRICT, `'__GLOBAL__'` sentinel for PK), 7 new RetryKind variants, consumer+coordinator persist on drop, new `bg_dropped_global` counter, AGENTS.md "Backend Architecture" bullet (with user approval). +7 tests; 3455/3455 nextest pass. Filed MAINT-199 — STRICT-hook mis-parses `;` in SQL comments as statement terminator (surfaced during PEND-03 author's workaround). |
-| PEND-04 | Threat-model audit — prune stale crypto docs | S (~1h) | ✅ done (bulk session 652; residue purged session 654 — `ARCHITECTURE.md` historical-note rephrase) |
-| PEND-05 | Projected-agenda parity test (cached vs on-the-fly) | S (1-2h) | ✅ done session 654 — test landed in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`. `#[ignore]`d on first run because it correctly detected real `.+1w` drift between cached + on-the-fly paths; filed as MAINT-196 in REVIEW-LATER. Re-enable once MAINT-196 ships the projection-path refactor. |
-| PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | ready (revised: reviewer caught the `TransferringFiles` state hallucination, Tier 2 cost +2-4h) |
-| PEND-07 | `STRICT` tables policy for new migrations | S (~1h) | ✅ done session 656 — AGENTS.md "Database" bullet added (with explicit user approval), `scripts/check-migrations-strict.mjs` (~69 LOC, pure node stdlib) + `prek.toml` hook entry. Migration-number floor `FIRST_STRICT_MIGRATION = 42` so `prek run --all-files` doesn't false-positive on the 41 pre-policy migrations; FTS5 carve-out via `CREATE VIRTUAL TABLE` skip. All 4 sanity tests pass (clean / bad migration fails / good passes / virtual table passes / prek integration passes). |
-| PEND-08 | `tauri.ts` ↔ `bindings.ts` parity pre-commit hook | S (1-2h) | ✅ done session 654 — script `scripts/check-tauri-bindings-parity.mjs` (~171 LOC) + `prek.toml` hook entry. First-run calibration found 101 bindings / 96 wrappers / **15 unwrapped** (not 5 as the plan estimated): 13 MCP+GCal direct-consumer commands + 2 renamed-wrapper twins (`compactOpLogCmd` → `compactOpLog`, `listAttachmentsBatch` → `getBatchAttachments`). Allowlist pinned. Sanity-tested both `missingNew` (rename detection) and `allowlistStale` paths. |
-| PEND-09 | CRDT migration (Loro), merge-layer only | L (3-4 months) | ready as a **planned spike + multi-phase migration** (revised after reviewer caught a 612-vs-559 reference count, optimistic timeline, missing risks; timeline now 11-15 weeks) |
-| PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (3.5-5 months) | ready as a **planned spike + multi-phase migration** (revised after reviewer caught LOC undercount of ~87% — actual delete is ~14.6k LOC including test files, not ~7.8k; timeline 14-19 weeks; 13 risks + 13 open questions; iroh post-1.0 status is the headline kill criterion) |
-| PEND-11 | Space indicator redesign (thin top stripe + sidebar picker only) | — | (out-of-band plan, separate UX track) |
-| PEND-12 | build.rs codegen for space-filter SQL fragment (unblocks MAINT-172) | M (7-11h) | ready (revised after reviewer caught: site count was 16 not 20, `include_str!`+sqlx composition needs Phase 0 spike, bind indices 2-8 not 1-8, hook false-positive risk on comments/tests) |
-| PEND-13 | Drift test for `page_id` ↔ `space` consistency | S (1.5-2.5h) | ✅ done session 655 — `page_id_space_drift_audit_per_block` + `page_id_space_drift_audit_after_lifecycle_ops` landed in `src-tauri/src/integration_tests.rs` (+441 LOC); both pass on first run (no drift surfaced — confirms invariants currently hold); 3 helpers + shared `run_drift_audit` use `sqlx::query_scalar!` so .sqlx cache catches future SQL drift; all recursive CTEs filter `is_conflict = 0` + bound `depth < 100` per AGENTS.md invariant #9. Conflict-copy fixture deferred per plan open-question #2. |
-| PEND-14 | Native `boolean` value type for property system | M (6.5-8h) | ✅ done session 657 — migrations 0042 (`value_bool` column) + 0043 (CHECK constraint allowing 'boolean', STRICT per PEND-07). `setProperty` IPC refactored to `SetPropertyArgs` bundle (forced by specta's 10-arg cap); frontend wrapper insulates 12 production callsites. Tech reviewer caught + fixed `reverse/property_ops.rs` dropping `value_bool` on undo. UX reviewer caught + fixed Checkbox 16-20px touch-target violation (44px AGENTS.md floor) via local hitbox wrapper. Systematic Checkbox primitive fix tracked as MAINT-197; indeterminate-for-null option tracked as MAINT-198 (needs user signal — reverses plan's open-question #1). |
-| PEND-15 | Hard space separation — no cross-space links | L (7-12 weeks) | ready (revised after reviewer caught: critical sequencing constraint with PEND-09 — Phase 1 MUST land before CRDT cutover; severance Option (a) struck, Option (b) mandated; tag-scoping migration sub-phase added; `set_property` ref-type validation specified; cost upgraded from 4-8w to 7-12w) |
-| PEND-16 | Daily-journal double-block render race | — | (out-of-band bug fix, separate track) |
-| PEND-17 | Block history sheet — visible diff-nav + restore-with-preview | — | (out-of-band UX plan, separate track) |
-| PEND-18 | `SpaceId` newtype + `SpaceScope` enum (lift Spaces enforcement into the type system) | M-L (9-15h) | ready (revised after reviewer caught: call-site count, mirror-target shape, missing specta+sqlx Phase 0 spike, test-fixture migration, IPC↔frontend coupling, sequencing-with-PEND-12) — renumbered from 11 due to id collision |
-| PEND-19 | `RecentPagesStrip` redesign — visible chip chrome + tighter geometry | S (1.5-3h) | ready (UX polish, visual-only, no data path; out-of-band — separate UX track) |
-| PEND-20 | SQL / perf review findings (post-validation) | mostly S, one M (G), one trivial bundle (A) | ✅ done sessions 661 + 662 — session 661 shipped A (migration 0045) + B.1 + B.2 + D + E + F + H. Session 662 closed C (materializer descendants temp-table — single CTE walk into `_purge_descendants` reused by 15 DELETE/UPDATEs in the PurgeBlock arm) + G (`blocksById: Map<string, FlatBlock>` in `PageBlockStore` with full-rebuild on every mutation, O(1) lookups in 9 consumers: `EditableBlock`, `BlockTree` × 3 sites, `BlockPropertyDrawer`, `useCheckboxSyntax`, `useBlockSlashCommands`, `PageEditor`, `useBlockProperties`). L1-L10 LOW items remain documented as accept-as-is per plan body. Sync-merge `json_extract` excluded (superseded by PEND-09). |
-| PEND-21 | Structural breadcrumb — icon-button affordance + drop redundant exit-zoom button | S (1-2h) | ready (UX polish on `Breadcrumb` icon triggers + `BlockZoomBar` dedup; out-of-band — separate UX track) |
-| PEND-22 | Frontend robustness review findings | S (~1.5-3h) | ✅ done session 659 — graph-worker dispatcher wrapped in try/catch + global `error`/`unhandledrejection` handlers + new `WorkerErrorMessage` type routed through `reportFailure('worker-reported', …)` in `graph-sim-helpers.ts`; `useQueryExecution` gained a `reqIdRef` counter (Option A) with 4 guards covering all await sites + empty-expression early-return + `endFetch` finally. +2 tests (worker-reported message routing, stale-fetch result discarding). 9294/9294 vitest pass. Reviewer PASS. |
-| PEND-24 | Rust robustness review findings (post-validation) | mostly S, two trivial, one M (H1) | ready (2 CRITICAL + 3 HIGH + 6 MEDIUM; 13 FALSE + ~17 OUT-OF-SCOPE + 4 ALREADY-KNOWN rejected by validation; 4 LOW nits noted but not bundled) |
-| PEND-25 | Rust performance review (allocations / locks / async) | mostly trivial-S; one M (M1 conditional on Android profile) | ✅ done sessions 661 + 662 — session 661 shipped L1 + L3 + L4 + L5 + L6 + L7 + L10 + L11 + L12 + L14 + L17. Session 662 closed L2 + L9 paired (`Arc<OpRecord>` threaded through `DeferredNotification.record`, `PendingDispatch::Background` / `EditBackground`, `enqueue_*_background` family signatures via `impl Into<Arc<OpRecord>>`, 6 PEND-25-targeted callsites in commands/properties.rs, mod.rs, blocks/crud.rs use `Arc::new` + `Arc::clone(&op_record)`). Conditional/blocked items (M1 Android, L15+L16 speculative, M2 oauth2, L8 MAINT-196) re-tracked in REVIEW-LATER as MAINT-91 + MAINT-208 + MAINT-209. L13 excluded permanently (sync-merge superseded by PEND-09). |
-| PEND-26 | Rust robustness review — second pass (post-validation) | mostly trivial; one S (N2) | ✅ done sessions 661 + 662 — session 661 shipped N1 + N2 + N4. Session 662 closed N3 (recurrence `++` arm `?` propagation overflow) bundled with PEND-24 H2 (10 000-iter cap exhaustion); both surface as `Err(AppError::Validation)` in `recurrence/parser.rs`'s rewritten `++` arm with `hit_cap` flag; `shift_date` signature changed from `Option<String>` to `Result<Option<String>, AppError>` (three-channel return: `Ok(Some)` success / `Ok(None)` parse failure stays silent / `Err` propagates and rolls back the IMMEDIATE tx through `handle_recurrence_in_tx`). +4 tests covering both bug IDs + caller-level integration. |
-| PEND-27 | Frontend perf review — JS / TS findings | mostly trivial; one S (P1 Tier 1) | ✅ done session 660 — all 8 items P1-P8 closed. P1 Tier 1 (`Promise.all` fan-out for the per-day `queryByProperty` calls in `agenda-filters.ts`) + P2 (incremental Unicode fold in `fold-for-search.ts`) + P3 (set intersection via extracted `intersectSets` helper) + P4 (`fetchBlocks` functional setters + `blocksRef` mirror) + P5 (LinkedReferences pagination merge via Map) + P6 (`AgendaResults` cache invalidation on `useBlockPropertyEvents` + `currentSpaceId`) + P7 (suggestion popup rAF coalesce in `suggestion-renderer`) + P8 (`buildPageTree` Map-per-level via parallel `WeakMap`-style index). Tier 2 backend command for P1 (`query_by_property_date_range`) deferred. +13 frontend tests. 9327/9327 vitest pass. |
-| PEND-29 | Frontend robustness review — second pass (post-validation) | mostly trivial; one S (B-1 Option A) | partial — session 660 closed B-2 (PageBrowser alias stale-fetch guard via `aliasReqIdRef`) + B-3 (formatCompactDate range guard) + B-4 (3 picker-extension `editor.view.isDestroyed` guards) + B-5 (`runWithTimeout` `setTimeout` cleanup via `.finally`) + B-6 (`UnlinkedReferences` + `LinkedReferences` cancelled-flag mount-once effects) + B-7 (`SpaceManageDialog` two `void async` IIFEs gated on `active` flag) + B-8 (JournalPage + DailyView rAF cancel on cleanup) + B-10 (`tauri-mock` build-time gate via `import.meta.env.PROD`). **B-1 (BulletList extension Option A removal) skipped per user decision** — needs product signal first; the toast-warned data-loss path is documented but not closed. |
-| PEND-30 | Frontend maintainability review — JS / TS findings (post-validation) | trivial bundle (~1h) for ship-now; M-L per item if D-1..D-4 are taken later | partial — session 660 closed M-1 (`useBlockPropertiesBatch` cancelled-flag staleness guard) + M-2 (`tree-utils.buildFlatTree` `MAX_TREE_DEPTH = 1000` early-return) + L-1 (`activeSpaceKey()` extracted to new `src/lib/active-space.ts`, dedup'd from 4 stores) + L-2 (`useBacklinkResolution` cache key now space-aware via `keyFor(spaceId, id)`) + L-4 (`use-roving-editor` host-unmount `cleanupOrphanedPopups()` sweep) + L-5 (`PageBrowser` `useVirtualizer.estimateSize` wrapped in `useCallback`). **L-3 (portal selector `EDITOR_PORTAL_SELECTORS` → `[data-editor-overlay]` migration) deferred per user decision** — touches 7+ overlay components and the third-party `.rdp` class makes it higher-risk than the plan's 30-min estimate suggests. D-1..D-4 decomposition opportunities still tracked here for future maintainability passes. |
+| PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | ready (Tier 1 sync progress first ~6-10h, Tier 2 file transfer later ~6-9h) |
+| PEND-09 | CRDT migration (Loro), merge-layer only | L (11-15 weeks) | ready as a **planned spike + multi-phase migration** |
+| PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
+| PEND-11 | Space indicator redesign (thin top stripe + sidebar picker only) | — | (out-of-band UX track) |
+| PEND-12 | build.rs codegen for space-filter SQL fragment (unblocks MAINT-172) | M (7-11h) | ready — **must land AFTER PEND-18** to avoid merge conflicts in shared `_inner` files |
+| PEND-15 | Hard space separation — no cross-space links | L (7-12 weeks) | ready — **Phase 1 MUST land before PEND-09 Phase 2 cutover** (avoids CRDT engine producing fresh cross-space refs that one-shot severance would never see) |
+| PEND-16 | Daily-journal double-block render race | — | (out-of-band bug fix track) |
+| PEND-17 | Block history sheet — visible diff-nav + restore-with-preview | — | (out-of-band UX track) |
+| PEND-18 | `SpaceId` newtype + `SpaceScope` enum (lift Spaces enforcement into the type system) | M-L (9-15h) | ready — Phase 0 specta+sqlx spike before main implementation |
+| PEND-21 | Structural breadcrumb — icon-button affordance + drop redundant exit-zoom button | S (1-2h) | ready (out-of-band UX track on `Breadcrumb` + `BlockZoomBar`) |
+| PEND-23 | UX review findings (post-validation) | mostly S; M for H3 / M6 | ready — 4 HIGH + 10 MEDIUM + 17 LOW; cherry-pickable per item |
+| PEND-24 | Rust robustness review findings (post-validation) | mostly S, two trivial, one M (H1) | ready — 2 CRITICAL + 3 HIGH + 6 MEDIUM remaining (LOW nits noted but not bundled) |
+| PEND-28a | Rust maintainability review findings (post-validation) | mostly S | ready — file: `PEND-28-rust-maintainability-review-findings.md` (shares ID with PEND-28b) |
+| PEND-28b | UX responsiveness review (mobile / tablet, 2026-05-04) | mostly S | ready — file: `PEND-28-ux-responsiveness-review-findings.md` (shares ID with PEND-28a) |
+| PEND-29 | Frontend robustness review — second pass | trivial (B-1 only remaining) | partial — **B-1 (BulletList Option A) needs product decision** (Option A remove vs Option B implement) before it can land |
+| PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
+| PEND-33 | `FormattingToolbar` overflow handling: BubbleMenu + priority overflow popover | M-L (10-16h split: Layer A ≈ 3-5h, Layer B ≈ 7-11h) | ready — Layer A and Layer B independently approve-able |
 
 ## Recommended order
 
-**Quick wins first** — schedule when convenient, low/no dependencies:
+**Quick wins first** — schedule when convenient, low / no dependencies:
 
-- PEND-01 (mDNS BlockNotes→Agaric rename) — ✅ shipped (commit 5db55af, session 652)
-- PEND-02 (CQRS naming rename) — ✅ shipped (commit 27ca079, session 652)
-- PEND-04 (stale crypto docs) — ✅ shipped (bulk: session 652; residue: session 654)
-- PEND-05 (agenda parity test) — ✅ shipped session 654 (test `#[ignore]`d, drift filed as MAINT-196)
-- PEND-08 (parity hook) — ✅ shipped session 654
-- PEND-13 (`page_id` ↔ space drift test) — ✅ shipped session 655
-- PEND-07 (STRICT tables policy) — ✅ shipped session 656
-- PEND-14 (boolean property type) — ✅ shipped session 657 (followups: MAINT-197 + MAINT-198 in REVIEW-LATER)
-- PEND-03 (materializer silent-drop fix) — ✅ shipped session 658 (followup: MAINT-199 STRICT-hook bug)
-- PEND-22 (frontend robustness — graph-worker error envelope + useQueryExecution stale-fetch guard) — ✅ shipped session 659
-- PEND-27 (frontend perf — Promise.all fan-out + incremental Unicode fold + set intersection + functional setters + Map merges + cache invalidation + rAF coalesce + page-tree Map) — ✅ shipped session 660
-- PEND-20 / PEND-25 / PEND-26 (Rust backend triple — index hygiene + json_extract retirement + FTS chunked rebuild + alloc/lock micro-fixes + cascade depth saturation detection + uppercase normalize) — ✅ shipped session 661 (partial across all three; remaining items individually noted in their rows above)
-- PEND-20 + PEND-25 + PEND-26 finish (materializer descendants temp-table + `blocksById` Map + `Arc<OpRecord>` paired shift + recurrence `++` overflow / cap-exceeded as `Err`) — ✅ shipped session 662; PEND-20 / PEND-25 / PEND-26 plan files deleted
+- PEND-21 (breadcrumb icon-affordance + exit-zoom dedup)
+- PEND-29 B-1 — blocked on product decision
 
 **Mid-tier** — useful but more invasive:
 
-- PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first (~6-10h), Tier 2 file transfer later (~6-9h)
-- PEND-29 (Frontend robustness review — second pass) — partial as of session 660. Only B-1 (`BulletList` extension) remains; needs a product decision (Option A remove vs Option B implement) before it can land. B-2..B-10 shipped session 660.
-- PEND-30 (Frontend maintainability review) — partial as of session 660. M-1 / M-2 / L-1 / L-2 / L-4 / L-5 shipped; L-3 deferred (portal selector migration, see plan body for rationale); D-1..D-4 decomposition opportunities still tracked here so future maintainability passes don't re-discover them.
+- PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first, Tier 2 file transfer later
+- PEND-23 (UX review findings) — pick HIGH items first; rest cherry-pickable
+- PEND-24 (Rust robustness review) — 2 CRITICAL + 3 HIGH + 6 MEDIUM
+- PEND-28a (Rust maintainability)
+- PEND-28b (UX responsiveness — mobile / tablet)
+- PEND-30 (D-1..D-4 decomposition) — opportunistic, low priority
+- PEND-33 (FormattingToolbar overflow) — Layer A first, Layer B optional follow-up
 
 **Spaces enforcement bundle** — sequential, NOT parallel (touch the same `_inner` signatures):
 
 - PEND-18 (`SpaceId` newtype + `SpaceScope` enum) — 9-15h. Has a Phase 0 specta+sqlx spike.
 - PEND-12 (build.rs codegen for space-filter SQL, unblocks MAINT-172) — 7-11h. Has a Phase 0 `include_str!`+sqlx spike. Lands AFTER PEND-18 to avoid merge conflicts in shared `_inner` files.
 
-**Out-of-band tracks** (planned in parallel by the user, separate from this session's bundle):
+**Out-of-band UX tracks** — independent, low / no dependencies on the bundle:
 
-- PEND-11 (space indicator UI redesign), PEND-16 (journal double-block race fix), PEND-17 (block-history diff-nav + restore-with-preview), PEND-19 (`RecentPagesStrip` redesign), PEND-21 (structural breadcrumb icon-affordance + exit-zoom dedup). These were authored in separate sessions and don't share dependencies with the type-system / spaces-enforcement bundle. Schedule independently.
+- PEND-11 (space indicator UI redesign), PEND-16 (journal double-block race fix), PEND-17 (block-history diff-nav + restore-with-preview), PEND-21 (structural breadcrumb icon-affordance + exit-zoom dedup).
 
 **Strategic** — independent decisions with multi-phase timelines:
 
-- PEND-15 (hard space separation, no cross-space links) — 7-12 weeks. **Phase 1 MUST land before PEND-09 Phase 2 cutover** (avoids CRDT engine producing fresh cross-space refs from concurrent edits that one-shot severance would never see).
+- PEND-15 (hard space separation, no cross-space links) — 7-12 weeks. **Phase 1 MUST land before PEND-09 Phase 2 cutover**.
 - PEND-09 (CRDT migration via Loro) — 11-15 weeks. Start with 2-week time-boxed Phase 0 spike. Don't commit to Phases 1+ before the spike report. **Phase 2 cutover gated on PEND-15 Phase 1 completion.**
 - PEND-10 (iroh transport adoption) — 14-19 weeks. Start with 3-week time-boxed Phase 0 spike. Headline kill criterion: iroh's current version + wire-format stability stance.
 
-**Recommended sequencing of the strategic trio:** PEND-15 Phase 1 → PEND-09 (CRDT, transport unchanged) → PEND-10 (iroh, post-CRDT). The hard constraint is "PEND-15 Phase 1 before PEND-09 Phase 2 cutover"; PEND-10 sits anywhere outside that pair. Combined calendar, sequential: **~30-40 weeks of focused engineering** — most of a year for a solo maintainer. **Don't pursue more than one strategic item in parallel.**
+**Recommended sequencing of the strategic trio:** PEND-15 Phase 1 → PEND-09 (CRDT, transport unchanged) → PEND-10 (iroh, post-CRDT). Combined calendar, sequential: **~30-40 weeks of focused engineering** — most of a year for a solo maintainer. **Don't pursue more than one strategic item in parallel.**
 
 ## Workflow notes
 
 - Each plan is self-contained. Read its file before starting.
-- Reviewer corrections are folded into the body of each file (with reviewer attribution where it surfaced a real bug — e.g. PEND-03's SQL constraint, PEND-05's horizon-drift gap, PEND-06's `TransferringFiles` hallucination, PEND-09's reference-count undercount).
+- Reviewer corrections are folded into the body of each file with reviewer attribution where they surfaced a real bug.
 - Cost / Impact / Risk live near the bottom of each plan. Review those three before deciding to schedule.
-- When a task is done, **delete its file from `pending/`** (matching the REVIEW-LATER.md convention of "delete on completion, no historical record"). Land the work in a normal commit; the git history is the audit trail.
+- When a task is done, **delete its file from `pending/`** (matching the REVIEW-LATER.md convention of "delete on completion, no historical record"). Land the work in a normal commit; the git history (and `SESSION-LOG.md`) are the audit trail.
 - If a task is started but not finished, leave the file in place and add a short status note at the top.
 - Tasks that get rejected: also delete the file. Don't keep "rejected" plans around; that's documentation rot.
+- The README index above mirrors what's actually in `pending/`. If you add or remove a plan file, update the index in the same commit.

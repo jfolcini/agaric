@@ -6,7 +6,7 @@
  * converts the first plain-text mention into a [[pageId]] link.
  */
 
-import { Link2, SlidersHorizontal } from 'lucide-react'
+import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,7 +14,6 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -63,7 +62,6 @@ export function UnlinkedReferences({
   const [truncated, setTruncated] = useState(false)
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
@@ -136,7 +134,6 @@ export function UnlinkedReferences({
   // biome-ignore lint/correctness/useExhaustiveDependencies: pageId is the intentional trigger for resetting collapse state on navigation
   useEffect(() => {
     setCollapsed(true)
-    setShowAdvancedFilters(false)
   }, [pageId])
 
   // Load tags on mount (PEND-29 B-6: cancellation flag avoids React 19
@@ -284,7 +281,7 @@ export function UnlinkedReferences({
 
   return (
     <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
-      {/* Main header — collapsible, collapsed by default, with inline filter toggle */}
+      {/* Main header — collapsible, collapsed by default */}
       <div className="flex flex-nowrap items-center gap-1 min-w-0">
         <CollapsiblePanelHeader
           isCollapsed={collapsed}
@@ -293,29 +290,7 @@ export function UnlinkedReferences({
         >
           {headerLabel}
         </CollapsiblePanelHeader>
-        {!collapsed && totalCount > 0 && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="shrink-0 h-7 gap-1 text-muted-foreground"
-                onClick={() => setShowAdvancedFilters((prev) => !prev)}
-                aria-expanded={showAdvancedFilters}
-                aria-label={
-                  showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')
-                }
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{t('references.filtersLabel')}</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')}
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {!collapsed && showAdvancedFilters && filters.length > 0 && (
+        {!collapsed && filters.length > 0 && (
           <Badge
             variant="secondary"
             className="unlinked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-[10px]"
@@ -326,7 +301,7 @@ export function UnlinkedReferences({
         )}
       </div>
 
-      {showAdvancedFilters && !collapsed && (
+      {!collapsed && (
         <div className="unlinked-references-advanced-filters px-2">
           <BacklinkFilterBuilder
             filters={filters}

@@ -19,8 +19,8 @@ vi.mock('../../lib/tauri', () => ({
   createBlock: vi.fn(),
   createPageInSpace: vi.fn(),
   listBlocks: vi.fn(),
+  listPageAliasesByPrefix: vi.fn(),
   listTagsByPrefix: vi.fn(),
-  resolvePageByAlias: vi.fn(),
   searchBlocks: vi.fn(),
 }))
 
@@ -28,8 +28,8 @@ import {
   createBlock,
   createPageInSpace,
   listBlocks,
+  listPageAliasesByPrefix,
   listTagsByPrefix,
-  resolvePageByAlias,
   searchBlocks,
 } from '../../lib/tauri'
 import { keyFor, useResolveStore } from '../../stores/resolve'
@@ -39,8 +39,8 @@ import { useBlockResolve } from '../useBlockResolve'
 const mockedCreateBlock = vi.mocked(createBlock)
 const mockedCreatePageInSpace = vi.mocked(createPageInSpace)
 const mockedListBlocks = vi.mocked(listBlocks)
+const mockedListPageAliasesByPrefix = vi.mocked(listPageAliasesByPrefix)
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
-const mockedResolvePageByAlias = vi.mocked(resolvePageByAlias)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 
 beforeEach(() => {
@@ -1440,39 +1440,61 @@ describe('pagesListRef', () => {
   })
 })
 
-// ── searchPages alias matching ──────────────────────────────────────────
+// ── searchPages alias matching (PEND-34) ────────────────────────────────
+//
+// PEND-34 replaced the exact-match `resolvePageByAlias` call with the
+// prefix-indexed `listPageAliasesByPrefix` so every keystroke after `[[`
+// folds matching aliases into the result list. Each row of the returned
+// `[pageId, alias, title]` tuple becomes one picker item that carries
+// the matched `alias` text on `aliasText` (used by the input-rule's
+// exact-match disambiguation).
 
-describe('searchPages — alias matching via resolvePageByAlias', () => {
-  it('searchPages matches alias via resolvePageByAlias', async () => {
+describe('searchPages — alias prefix matching (PEND-34)', () => {
+  it('prepends every alias prefix match in returned order', async () => {
     // FTS returns no direct matches
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
-
-    // Alias lookup finds a page
-    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_PAGE_1', 'Daily Notes'])
+    // Backend returned two prefix-aliased rows for query "w" — both
+    // should surface, in the order the backend chose (shortest-first).
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([
+      ['PAGE_A', 'wgm', 'WGM'],
+      ['PAGE_B', 'weekly', 'Weekly Review'],
+    ])
 
     const { result } = renderHook(() => useBlockResolve())
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
     await act(async () => {
-      items = await result.current.searchPages('daily-note')
+      items = await result.current.searchPages('weekly-meeting')
     })
 
-    expect(mockedResolvePageByAlias).toHaveBeenCalledWith('daily-note')
+    expect(mockedListPageAliasesByPrefix).toHaveBeenCalledWith({
+      prefix: 'weekly-meeting',
+      limit: 50,
+      spaceId: 'SPACE_TEST',
+    })
 
-    // The alias match should be prepended to the results
+    // Both alias matches should be at the top, in the returned order.
     const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate).toHaveLength(2)
     expect(nonCreate[0]).toEqual({
-      id: 'ALIAS_PAGE_1',
-      label: 'Daily Notes (alias: daily-note)',
+      id: 'PAGE_A',
+      label: 'WGM (alias: wgm)',
       isAlias: true,
+      aliasText: 'wgm',
+    })
+    expect(nonCreate[1]).toEqual({
+      id: 'PAGE_B',
+      label: 'Weekly Review (alias: weekly)',
+      isAlias: true,
+      aliasText: 'weekly',
     })
   })
 
-  it('searchPages skips alias when already in results', async () => {
+  it('dedupes alias match when page already present from FTS', async () => {
     // FTS already has the page
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [
@@ -1496,8 +1518,10 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
       has_more: false,
     })
 
-    // Alias also resolves to the same page
-    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_PAGE_2', 'Weekly Review'])
+    // Alias prefix lookup also returns the same page
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([
+      ['ALIAS_PAGE_2', 'weekly', 'Weekly Review'],
+    ])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1506,15 +1530,18 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
       items = await result.current.searchPages('weekly')
     })
 
-    // The alias match should NOT be duplicated
+    // The alias match should NOT be duplicated — same-page dedupe.
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toHaveLength(1)
     expect(nonCreate[0]).toEqual(
       expect.objectContaining({ id: 'ALIAS_PAGE_2', label: 'Weekly Review' }),
     )
+    // The single match is the FTS row, not the alias row (which would
+    // carry `isAlias: true`).
+    expect(nonCreate[0]?.isAlias).toBeUndefined()
   })
 
-  it('searchPages ignores alias lookup failure silently', async () => {
+  it('alias prefix lookup failure does not abort picker', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
@@ -1522,28 +1549,28 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
     })
 
     // Alias lookup throws
-    mockedResolvePageByAlias.mockRejectedValue(new Error('alias service down'))
+    mockedListPageAliasesByPrefix.mockRejectedValue(new Error('alias service down'))
 
     const { result } = renderHook(() => useBlockResolve())
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
     await act(async () => {
-      // Should NOT throw
+      // Should NOT throw — service failure is logged + swallowed
       items = await result.current.searchPages('broken-alias')
     })
 
-    // Only the create option should be present
+    // Only the create option should be present (no FTS matches in fixture)
     expect(items).toEqual([{ id: '__create__', label: 'broken-alias', isCreate: true }])
   })
 
-  it('searchPages handles null alias title as "Untitled"', async () => {
+  it('handles null alias title as "Untitled"', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
 
-    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_PAGE_3', null])
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([['ALIAS_PAGE_3', 'mystery', null]])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1557,10 +1584,11 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
       id: 'ALIAS_PAGE_3',
       label: 'Untitled (alias: mystery)',
       isAlias: true,
+      aliasText: 'mystery',
     })
   })
 
-  it('searchPages does not call resolvePageByAlias for empty query', async () => {
+  it('does not call listPageAliasesByPrefix for empty query', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
     act(() => {
@@ -1571,7 +1599,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
       await result.current.searchPages('')
     })
 
-    expect(mockedResolvePageByAlias).not.toHaveBeenCalled()
+    expect(mockedListPageAliasesByPrefix).not.toHaveBeenCalled()
   })
 })
 
@@ -1624,7 +1652,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_ONLY', 'Aliased Page'])
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([['ALIAS_ONLY', 'meeting', 'Aliased Page']])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1639,6 +1667,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       id: 'ALIAS_ONLY',
       label: 'Aliased Page (alias: meeting)',
       isAlias: true,
+      aliasText: 'meeting',
     })
     expect(items[1]?.id).toBe('FTS_HIT_1')
     expect(items[2]?.id).toBe('FTS_HIT_2')
@@ -1646,7 +1675,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
   })
 
   it('orders results: alias first, then cache matches, then create last (short query)', async () => {
-    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_SHORT', 'Alias Target'])
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([['ALIAS_SHORT', 'ab', 'Alias Target']])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1694,7 +1723,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedResolvePageByAlias.mockResolvedValueOnce(null)
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1806,7 +1835,9 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_FIRST', 'Canonical Page'])
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([
+      ['ALIAS_FIRST', 'content', 'Canonical Page'],
+    ])
 
     const { result } = renderHook(() => useBlockResolve())
 

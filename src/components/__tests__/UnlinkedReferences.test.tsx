@@ -43,9 +43,6 @@ vi.mock('lucide-react', () => ({
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
   Link2: (props: Record<string, unknown>) => <svg data-testid="link2-icon" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader2-icon" {...props} />,
-  SlidersHorizontal: (props: Record<string, unknown>) => (
-    <svg data-testid="sliders-horizontal-icon" {...props} />
-  ),
 }))
 
 vi.mock('../BacklinkFilterBuilder', () => ({
@@ -864,60 +861,11 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-168: Filter controls for unlinked references
+  // PEND-31: BacklinkFilterBuilder visibility
   // ---------------------------------------------------------------------------
 
-  // Filter button appears when expanded with results
-  it('filter button appears when expanded with results (UX-168)', async () => {
-    const user = userEvent.setup()
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockedListUnlinked.mockResolvedValue(resp)
-
-    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
-
-    // Expand
-    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
-
-    // Wait for content to appear
-    await screen.findByText('mention text')
-
-    // Filter button should be visible
-    expect(screen.getByRole('button', { name: /show filters/i })).toBeInTheDocument()
-  })
-
-  // UX-363: filter button shows visible "Filters" text label
-  it('filter button shows visible "Filters" text label (UX-363)', async () => {
-    const user = userEvent.setup()
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockedListUnlinked.mockResolvedValue(resp)
-
-    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
-
-    // Expand
-    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
-    await screen.findByText('mention text')
-
-    // Visible "Filters" text inside the icon button (sibling of the icon).
-    const filterBtn = screen.getByRole('button', { name: /show filters/i })
-    expect(filterBtn).toContainElement(screen.getByText('Filters'))
-  })
-
-  // Filter button hidden when collapsed
-  it('filter button hidden when collapsed (UX-168)', async () => {
+  // BacklinkFilterBuilder hidden while collapsed (default state).
+  it('BacklinkFilterBuilder hidden when collapsed (PEND-31)', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
       next_cursor: null,
@@ -935,12 +883,15 @@ describe('UnlinkedReferences', () => {
       expect(mockedListUnlinked).toHaveBeenCalled()
     })
 
-    // Still collapsed — filter button should NOT be visible
+    // Collapsed by default — filter builder must not render.
+    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
+    // No leftover show/hide-filters toggle exists either.
     expect(screen.queryByRole('button', { name: /show filters/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /hide filters/i })).not.toBeInTheDocument()
   })
 
-  // Filter button toggles BacklinkFilterBuilder
-  it('filter button toggles filter panel (UX-168)', async () => {
+  // BacklinkFilterBuilder visible whenever expanded — no toggle click required.
+  it('BacklinkFilterBuilder visible unconditionally when expanded (PEND-31)', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -958,52 +909,12 @@ describe('UnlinkedReferences', () => {
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
-    // Advanced filters not visible initially
-    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
-
-    // Click filter button to show
-    await user.click(screen.getByRole('button', { name: /show filters/i }))
-
-    // Advanced filters now visible
+    // Advanced filters visible immediately — no toggle click needed.
     expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
-
-    // Click filter button to hide
-    await user.click(screen.getByRole('button', { name: /hide filters/i }))
-
-    // Advanced filters hidden again
-    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
   })
 
-  // Filter button aria-expanded toggles correctly
-  it('filter button aria-expanded toggles correctly (UX-168)', async () => {
-    const user = userEvent.setup()
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockedListUnlinked.mockResolvedValue(resp)
-
-    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
-
-    // Expand
-    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
-    await screen.findByText('mention text')
-
-    const filterBtn = screen.getByRole('button', { name: /show filters/i })
-    expect(filterBtn).toHaveAttribute('aria-expanded', 'false')
-
-    await user.click(filterBtn)
-
-    const hideBtn = screen.getByRole('button', { name: /hide filters/i })
-    expect(hideBtn).toHaveAttribute('aria-expanded', 'true')
-  })
-
-  // Filter state resets when pageId changes
-  it('resets filter visibility when pageId changes (UX-168)', async () => {
+  // Filter builder hidden again when the panel collapses on pageId change.
+  it('BacklinkFilterBuilder hides when collapsed on pageId change (PEND-31)', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1017,20 +928,19 @@ describe('UnlinkedReferences', () => {
 
     const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
-    // Expand and open filters
+    // Expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
-    await user.click(screen.getByRole('button', { name: /show filters/i }))
     expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
 
-    // Re-render with different pageId
+    // Re-render with different pageId — component collapses again.
     rerender(
       <TooltipProvider>
         <UnlinkedReferences pageId="PAGE2" pageTitle="Other Page" />
       </TooltipProvider>,
     )
 
-    // Component should collapse, so filter builder should be gone
+    // Filter builder should be gone (panel collapsed by default).
     await waitFor(() => {
       expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
     })
@@ -1142,12 +1052,9 @@ describe('UnlinkedReferences', () => {
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
-    // Expand
+    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
-
-    // Open advanced filters
-    await user.click(screen.getByRole('button', { name: /show filters/i }))
     expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
 
     // Initial fetch had no filters
@@ -1187,9 +1094,9 @@ describe('UnlinkedReferences', () => {
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
+    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
-    await user.click(screen.getByRole('button', { name: /show filters/i }))
 
     mockedListUnlinked.mockClear()
 
@@ -1231,12 +1138,10 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-240: Filter toggle must stay inline with header on narrow viewports
+  // UX-240: Header row keeps flex-nowrap / min-w-0 layout primitives
   // ---------------------------------------------------------------------------
 
-  // Conservative preventive styling: outer row is flex-nowrap with min-w-0,
-  // header button carries min-w-0, and the filter button remains shrink-0.
-  it('outer header row and children carry flex-nowrap / min-w-0 / shrink-0 (UX-240)', async () => {
+  it('outer header row and children carry flex-nowrap / min-w-0 (UX-240)', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1253,7 +1158,7 @@ describe('UnlinkedReferences', () => {
       pageTitle: 'My Page',
     })
 
-    // Expand so the filter button is rendered alongside the header.
+    // Expand to render the full header layout (badge, etc.).
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
@@ -1267,10 +1172,6 @@ describe('UnlinkedReferences', () => {
     expect(headerButton).toHaveClass('min-w-0')
     // But still render full-width as a click target.
     expect(headerButton).toHaveClass('w-full')
-
-    // Filter toggle keeps shrink-0 so it never collapses to zero width.
-    const filterButton = screen.getByRole('button', { name: /show filters/i })
-    expect(filterButton).toHaveClass('shrink-0')
   })
 
   // ---------------------------------------------------------------------------
@@ -1323,11 +1224,11 @@ describe('UnlinkedReferences', () => {
       pageTitle: 'My Page',
     })
 
+    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
-    // Open advanced filters but apply no filter.
-    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    // No filter applied yet, so the count badge stays hidden.
     expect(container.querySelector('.unlinked-references-filter-count')).toBeNull()
   })
 
@@ -1348,11 +1249,11 @@ describe('UnlinkedReferences', () => {
       pageTitle: 'My Page',
     })
 
+    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
-    // Open advanced filters and apply a filter via the mock.
-    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    // Apply a filter via the always-visible builder.
     await user.click(screen.getByTestId('test-apply-tag-filter'))
 
     const badge = await waitFor(() => {
@@ -1381,10 +1282,10 @@ describe('UnlinkedReferences', () => {
       pageTitle: 'My Page',
     })
 
+    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
-    await user.click(screen.getByRole('button', { name: /show filters/i }))
     await user.click(screen.getByTestId('test-apply-tag-filter'))
 
     await waitFor(() => {
