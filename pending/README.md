@@ -31,6 +31,9 @@ Origin: a deep architectural review session run with five parallel investigation
 | PEND-21 | Structural breadcrumb — icon-button affordance + drop redundant exit-zoom button | S (1-2h) | ready (UX polish on `Breadcrumb` icon triggers + `BlockZoomBar` dedup; out-of-band — separate UX track) |
 | PEND-22 | Frontend robustness review findings | S (~1.5-3h) | ✅ done session 659 — graph-worker dispatcher wrapped in try/catch + global `error`/`unhandledrejection` handlers + new `WorkerErrorMessage` type routed through `reportFailure('worker-reported', …)` in `graph-sim-helpers.ts`; `useQueryExecution` gained a `reqIdRef` counter (Option A) with 4 guards covering all await sites + empty-expression early-return + `endFetch` finally. +2 tests (worker-reported message routing, stale-fetch result discarding). 9294/9294 vitest pass. Reviewer PASS. |
 | PEND-24 | Rust robustness review findings (post-validation) | mostly S, two trivial, one M (H1) | ready (2 CRITICAL + 3 HIGH + 6 MEDIUM; 13 FALSE + ~17 OUT-OF-SCOPE + 4 ALREADY-KNOWN rejected by validation; 4 LOW nits noted but not bundled) |
+| PEND-25 | Rust performance review (allocations / locks / async) | mostly trivial-S; one M (M1 conditional on Android profile) | ready (2 MEDIUM + 16 LOW; complementary to PEND-20's SQL-level findings; sync-merge double-parse excluded — superseded by PEND-09; 8 hallucinations/wrong-claims caught by validation, listed in body) |
+| PEND-26 | Rust robustness review — second pass (post-validation) | mostly trivial; one S (N2) | ready (3 MEDIUM + 1 LOW; complementary to PEND-24, no overlap except recurrence `++` arm where N3 + PEND-24 H2 are distinct bugs in the same code path; ~13 review findings rejected by validation including 8 invariant-violation claims, all listed in body) |
+| PEND-27 | Frontend perf review — JS / TS findings | mostly trivial; one S (P1 Tier 1) | ready (2 MEDIUM + 6 LOW; companion to PEND-20 SQL + PEND-25 Rust perf; ~10 hallucinations + ~15 nits rejected by validation, all listed in body. Highest leverage: P1 Tier 1 frontend `Promise.all` for the per-day `queryByProperty` fan-out — ~1-2h) |
 
 ## Recommended order
 
@@ -51,6 +54,9 @@ Origin: a deep architectural review session run with five parallel investigation
 
 - PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first (~6-10h), Tier 2 file transfer later (~6-9h)
 - PEND-20 (SQL / perf review findings) — bundle A (index hygiene migration) is ~1h and lives in the quick-wins tier on its own; bundles B/F/H are also <1h each. The remaining bundles (C/D/E ~ 1-3h each, G is 3-5h) are all independently approve-able. Excludes the sync-merge layer (superseded by PEND-09).
+- PEND-25 (Rust perf review — allocations / locks / async) — independent of PEND-20 (different layer). The L1/L3/L5 trio is ~1-2h total and is the highest-leverage mechanical-win bundle; L2+L9 land together (`Arc<OpRecord>` shift, ~2-3h). M1 only if Android boot profile shows >100ms of deferrable `block_on` cost. Sync-merge double-parse excluded for the same PEND-09 reason.
+- PEND-26 (Rust robustness review — second pass) — independent of PEND-24 in scope; only point of contact is the recurrence `++` arm (N3 + PEND-24 H2 are distinct bugs, bundle them in the same commit if either ships). Total ~2-3h: N1+N3+N4 trivial-bundle (~30 min) plus N2 cascade-depth helper (~1-2h).
+- PEND-27 (Frontend perf review — JS / TS) — independent of PEND-20 + PEND-25 (different layer). P1 Tier 1 (`Promise.all` fan-out for `queryPropertyDateDimension`) is the single highest-leverage user-visible win in this bundle; ~1-2h. P3 + P5 + P8 are all `trivial`-cost mechanical fixes that can land alongside P1 in one commit. P2 (incremental Unicode fold) only matters for non-ASCII heavy users; P4 / P6 / P7 are footgun-fixes whose runtime gain is small.
 
 **Spaces enforcement bundle** — sequential, NOT parallel (touch the same `_inner` signatures):
 

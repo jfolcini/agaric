@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items in the summary table; 24 detail entries (FE-* sub-tables don't appear in the summary).
+30 open items in the summary table; 32 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -38,6 +38,14 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-197 | MAINT | `Checkbox` UI primitive at `src/components/ui/checkbox.tsx:17,21` renders at 16/20 px — below the 44 px coarse-pointer floor mandated by AGENTS.md. PEND-14 added a local hitbox-wrapper in `PropertyRowEditor` as a stopgap; the systematic fix is to augment the primitive itself (mirroring how `Select` carries its own touch sizing). After landing, remove the local wrapper. | S | — |
 | MAINT-198 | MAINT | `PropertyRowEditor` boolean cell renders unchecked for both `value_bool === null` ("no value") and `value_bool === 0` ("false"). PEND-14's plan endorsed this conflation, but Radix Checkbox supports `checked="indeterminate"` which would distinguish the two. Reverses the plan's open-question #1 decision; do not land without a fresh user signal. | S | User signal (reverses PEND-14 plan decision) |
 | MAINT-199 | MAINT | `scripts/check-migrations-strict.mjs` mis-parses `;` inside SQL `--` comments as the statement terminator. Authors hitting this had to strip inline semicolons from migration comments. Fix: preprocess the input to strip `--` line comments + `/* */` block comments before scanning. Surfaced during PEND-03 (session 658). | S | — |
+| MAINT-200 | MAINT | `useResolveStore.preload()` sets `_preloaded: true` in the catch branch (`src/stores/resolve.ts:208`), permanently disabling retry for the rest of the session. A single transient backend failure leaves tag chips and page-link breadcrumbs stuck on ULIDs / "Untitled" until the app is restarted. Fix: only flip `_preloaded` on success, or split into `'idle' \| 'ready' \| 'failed'`. | S | — |
+| MAINT-201 | MAINT | `useDuePanelData` projected-agenda cache (`src/hooks/useDuePanelData.ts:45`, module-level `Map<string, ProjectedCacheEntry>`) checks TTL on read but never deletes stale entries. Every distinct `(spaceId, date)` key the user visits stays in the map until full reload. Fix: `delete()` on TTL expiry, or wrap in a small LRU with a hard cap (~100). | S | — |
+| MAINT-202 | MAINT | `UnfinishedTasks.tsx` has three `catch {}` blocks that violate AGENTS.md "no silent catch": localStorage write failures (lines 113-117 and 144-148, comment "Silently ignore storage errors") and the main fetch (lines 232-236, "On error, show empty state") swallow without `logger.warn`. Read-side catches (lines 102-108, 132-141) return safe defaults and are fine. | S | — |
+| MAINT-203 | MAINT | The FE-M-15 stale-`insertPos` race-condition guard is duplicated across 3 picker extensions: `at-tag-picker.ts:50-122` (still inlined), `block-link-picker.ts:51-122` (already extracted as `resolveAndInsertBlockLink`), `block-ref-picker.ts:54-122` (already extracted as `resolveAndInsertBlockRef`). Differs only in token shape (`#TAG` / `[[ULID]]` / `((ULID))`) and presence of `onCreate`. Extract a shared helper so the next race-fix lands in one place. | S-M | — |
+| MAINT-204 | MAINT | `markdown-serialize.ts:47` stores the `onUnknownNode` callback in a module-scoped `let currentOnUnknownNode` set/cleared by `serialize()` via `try/finally`. Cleanup is robust today (sync, single-threaded), but the pattern is re-entrance-unsafe — any future async helper or recursive serialize call leaks state silently. Fix: thread the callback as a parameter, or scope it via a closure object built inside `serialize()`. | S | — |
+| MAINT-205 | MAINT | `src/lib/i18n/index.ts:35-49` merges 14 namespace files via spread into one flat `translation: Record<string, string>`. A duplicate dotted key across two namespaces is silently overwritten (last-spread-wins). No current collisions, but no test guards it. Fix: tiny vitest asserting merged-key count equals the sum of namespace key counts (or pairwise `assertNoOverlap`). | S | — |
+| MAINT-206 | MAINT | No automated parity check between `src/lib/tauri-mock/handlers.ts` `HANDLERS` map and the specta-generated commands in `src/lib/bindings.ts`. Adding a backend command without a matching handler silently returns `null` from the mock dispatcher, which masks real test failures. Mirrors PEND-08's `tauri.ts ↔ bindings.ts` parity hook for the test mock. | S | — |
+| MAINT-207 | MAINT | Frontend hygiene bundle (5 low-impact items): (a) `Input` and `Textarea` duplicate identical focus-visible + aria-invalid class strings — extract a shared base. (b) `MonthlyView` accepts `onNavigateToPage` and `onAddBlock` only to ignore them via `_`-prefixed renames — drop both from the API + caller. (c) `limit: 50` literal repeated in 11+ production sites (SearchPanel, LinkedReferences, TrashView, DonePanel, ConflictList, HistoryPanel, TagFilterPanel, PageBrowser, HistoryView, useDuePanelData) — define `PAGINATION_LIMIT` in `src/lib/constants.ts`. (d) `SearchPanel.tsx:99-130` carries ~22 useState slices — collapse filter/popover state into a `useReducer` or two extracted hooks. (e) `SearchInput.tsx:69-72` synthesizes a partial `ChangeEvent` via `as unknown as` for the clear-button — expose an explicit `onClear` callback instead, or construct a fuller event. | S-M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
@@ -486,6 +494,99 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low — preprocessor is a pure transformation; existing migrations are already STRICT-compliant so a less-aggressive parser will still pass them. Add a regression test based on the repro above.
 - **Impact:** Medium — eliminates a class of false positives that force authors to write less-readable migration comments.
 - **Status:** Open. Filed by PEND-03 review (session 658). The author worked around it by stripping inline semicolons from the 0044 migration comments; the hook itself was not modified.
+
+### MAINT-200 — `useResolveStore.preload()` permanently disables retry on failure
+
+- **Domain:** Frontend / Resolve store
+- **Location:** `src/stores/resolve.ts:206-209`
+- **What:** Both the success branch and the catch branch call `set({ _preloaded: true })`. Other call sites short-circuit when `_preloaded` is already true, so a single transient failure (slow backend at boot, broken pipe, …) leaves the cache empty and unrecoverable for the rest of the session — tag chips show ULIDs, page-link breadcrumbs show "Untitled" everywhere.
+- **Why it matters:** A user-visible regression caused by a single transient error, with no recovery short of restarting the app.
+- **Cost:** S — split the flag (e.g. `'idle' | 'ready' | 'failed'`) so a failure does not poison subsequent attempts; only mark `ready` on success. Add a regression test that simulates one failure followed by a successful retry.
+- **Risk:** Low — only the catch branch changes; success path is unaffected.
+- **Impact:** Medium — recovers a real failure mode that today requires an app restart.
+- **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-201 — `useDuePanelData` projected-cache has no eviction (unbounded growth)
+
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useDuePanelData.ts:45,406-437`
+- **What:** A module-level `projectedCache: Map<string, ProjectedCacheEntry>` keyed by `${spaceId}|${date}` is read with a TTL check (`Date.now() - cached.timestamp < PROJECTED_CACHE_TTL_MS`), but stale entries are only ignored — never deleted. The only deletion path is `projectedCache.clear()` on `invalidationKey` bump. Every distinct date the user visits adds an entry that lives until full reload.
+- **Why it matters:** Not catastrophic — entries are small — but the map is unbounded. A power-user navigating across many months over a long session sees uncapped growth.
+- **Cost:** S — add `projectedCache.delete(k)` on TTL expiry, or wrap in a tiny LRU with cap ~100.
+- **Risk:** Low — eviction is local to one hook.
+- **Impact:** Low-medium — long-tail memory hygiene.
+- **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-202 — `UnfinishedTasks` silent-catch blocks violate AGENTS.md
+
+- **Domain:** Frontend / Journal
+- **Location:** `src/components/journal/UnfinishedTasks.tsx:113-117,144-148,232-236`
+- **What:** Three `catch {}` blocks swallow errors without logging. Two are localStorage write failures (`writeCollapsedState`, `writeGroupCollapsedState`) with the comment "Silently ignore storage errors"; the third is the main `fetchUnfinished` block (`catch { setBlocks([]) }` with comment "On error, show empty state"). AGENTS.md "Frontend Patterns Commonly Caught in Review" forbids silent `.catch(...) {}` blocks — `logger.warn` / `logger.error` is required. Read-side localStorage catches at lines 102-108 and 132-141 return safe defaults and don't apply.
+- **Why it matters:** A failing fetch shows the user an empty Unfinished panel with no signal in the console / IPC log. localStorage quota-exceeded gets the same treatment. AGENTS.md compliance + observability.
+- **Cost:** S — import `logger` from `src/lib/logger` and add three `logger.warn('UnfinishedTasks', ...)` calls.
+- **Risk:** Low — additive logging.
+- **Impact:** Medium — converts a mystery empty-state into a debuggable signal.
+- **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-203 — Picker stale-`insertPos` race-guard duplicated across at-tag / block-link / block-ref
+
+- **Domain:** Frontend / Editor extensions
+- **Location:** `src/editor/extensions/at-tag-picker.ts:50-122`, `src/editor/extensions/block-link-picker.ts:51-122`, `src/editor/extensions/block-ref-picker.ts:54-122`
+- **What:** All three picker extensions implement the same FE-M-15 race-condition guard (`isStale()` check + `insertPlainAtCursor` fallback when the user has typed past the original `range.from`). `block-link-picker` and `block-ref-picker` already factored their guard into per-extension helpers (`resolveAndInsertBlockLink`, `resolveAndInsertBlockRef`); `at-tag-picker` still has it inlined. The three helpers differ only in token shape (`#TAG`, `[[ULID]]`, `((ULID))`) and the presence/absence of an `onCreate` path.
+- **Why it matters:** Any future fix or enhancement to the guard has to land in three (or more) places. The `at-tag-picker` inlining is the most likely to drift.
+- **Cost:** S-M — extract a generic `resolveAndInsertPickerToken({ tokenFor, onCreate?, … })` in `picker-plugin.ts` (or a new `picker-helpers.ts`). Migrate the three call sites; preserve existing tests; add a unit test for the shared helper.
+- **Risk:** Low-medium — well-tested area; refactor only.
+- **Impact:** Medium — prevents the next race-fix from being pasted into 3 files.
+- **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-204 — Markdown serializer uses module-scope mutable callback state
+
+- **Domain:** Frontend / Editor / Markdown serializer
+- **Location:** `src/editor/markdown-serialize.ts:47-50,407-425`
+- **What:** A module-scoped `let currentOnUnknownNode: ((type: string) => void) | undefined` is set at the top of `serialize()` and reset in `finally`, then read by `notifyUnknownNodeType`. The header comment acknowledges the trade-off ("avoids threading the callback through every inline helper purely for one rare branch"). Cleanup is robust today, but the pattern is subtle and re-entrance-unsafe — a future helper that becomes async, or a `serialize` call inside a `serialize` call, leaks state.
+- **Why it matters:** Defensive against silent bugs if the serializer ever grows async paths or recursive entry points.
+- **Cost:** S — either thread the callback through the helpers as a parameter, or scope it via a closure object (e.g. `const ctx = { onUnknown }`) constructed inside `serialize()` and passed explicitly.
+- **Risk:** Low — purely structural; existing tests cover behavior.
+- **Impact:** Low — invariant insurance, not a current bug.
+- **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-205 — i18n namespace flat-merge has no collision detection
+
+- **Domain:** Frontend / i18n
+- **Location:** `src/lib/i18n/index.ts:35-49`
+- **What:** Fourteen namespace modules (`common`, `errors`, `toolbar`, `block`, `agenda`, `editor`, `pages`, `properties`, `references`, `conflicts`, `sync`, `shortcuts`, `settings`, …) are merged via object spread into one flat `Record<string, string>`. If two files define the same dotted key, the second silently wins. No collision check; no test guards it.
+- **Why it matters:** Today the namespaces use distinct prefixes and there are no collisions, but a single careless `'block.title'` redeclaration could silently change UI strings. The cost of guarding is trivial.
+- **Cost:** S — vitest like `expect(Object.keys(translation).length).toBe(common.length + errors.length + …)` or a per-pair `assertNoOverlap` helper that fails fast and lists the offending keys.
+- **Risk:** Low.
+- **Impact:** Low-medium — preserves a property the codebase already relies on.
+- **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-206 — `tauri-mock` ↔ `bindings.ts` parity is unchecked (mirror PEND-08 for the test mock)
+
+- **Domain:** Frontend / Test infrastructure
+- **Location:** `src/lib/tauri-mock/handlers.ts` (`HANDLERS` map) vs `src/lib/bindings.ts` (specta-generated commands)
+- **What:** PEND-08's parity hook checks that `src/lib/tauri.ts` wraps every command in `bindings.ts`. There is no equivalent check for the test mock. Adding a new backend command without a matching `HANDLERS[name]` entry silently returns `null` from the mock dispatcher, which masks real test failures or pollutes CI with "expected …, received null" failures distant from the cause.
+- **Why it matters:** The mock is the test surface for IPC. Drift between bindings and mock is invisible until tests fail confusingly.
+- **Cost:** S — write a vitest that imports both `HANDLERS` and the generated `commands` symbol from `bindings.ts`, then asserts the handler-keys set ⊇ the commands-keys set. Allowlist via constant for any deliberately-unimplemented commands.
+- **Risk:** Low.
+- **Impact:** Medium — catches drift on the next backend command add for ~30 min of test code.
+- **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-207 — Frontend hygiene bundle (Input/Textarea dup, MonthlyView dead props, PAGINATION_LIMIT, SearchPanel state, SearchInput synthetic event)
+
+- **Domain:** Frontend / UI primitives + components
+- **Locations:**
+  - **(a)** `src/components/ui/input.tsx:11-14` and `src/components/ui/textarea.tsx:11-14` (duplicate `focus-visible:*` + `aria-invalid:*` class strings).
+  - **(b)** `src/components/journal/MonthlyView.tsx:29-39` (accepts `onNavigateToPage` + `onAddBlock`, both ignored via `_`-prefix renames).
+  - **(c)** `limit: 50` literal repeated in 11+ production sites — `src/components/SearchPanel.tsx:151`, `LinkedReferences.tsx:89`, `TrashView.tsx:67`, `DonePanel.tsx:66,108`, `ConflictList.tsx:74`, `HistoryPanel.tsx:51`, `TagFilterPanel.tsx:113`, `PageBrowser.tsx:72`, `HistoryView.tsx:82`, `src/hooks/useDuePanelData.ts:204,255`.
+  - **(d)** `src/components/SearchPanel.tsx:99-130` carries ~22 `useState` slices (query / debouncedQuery / typing / cleared / loadingResultId / pageTitles / recentPages / aliasMatch / aliasQuery / 4 filter slices / 4 page-popover slices / 4 tag-popover slices).
+  - **(e)** `src/components/ui/search-input.tsx:64-72` synthesizes a partial `ChangeEvent` via `as unknown as React.ChangeEvent<HTMLInputElement>` to fire `onChange` from the clear button.
+- **What:** Five low-impact maintainability items that surfaced together in the JS/TS code review. Each is small in isolation; bundled because they share the same "frontend hygiene" theme and would land naturally in one MR.
+- **Why it matters:** None of these is a bug today. Each is a small drag on readability, an API debt from past refactors, or a future-bug-attractor.
+- **Cost:** S-M — (a) ~5 LOC extract into a shared base; (b) drop two props from the type + caller; (c) define + import `PAGINATION_LIMIT` in 11 places; (d) `useReducer` or split into 2 hooks (largest item, ~M); (e) prefer adding an explicit `onClear` callback over the synthetic event — failing that, build a more complete event.
+- **Risk:** Low — additive or refactor-only; covered by existing tests.
+- **Impact:** Low-medium — readability + a guard against the synthetic-event NPE for any future consumer that reads `e.bubbles` / calls `e.preventDefault()`.
+- **Status:** Open. Filed during JS/TS code review (session 660).
 
 ## TEST — Backend test improvements
 
