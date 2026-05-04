@@ -1,5 +1,7 @@
 # PEND-29 — Frontend robustness review (second pass): confirmed non-nit findings
 
+> **Status (session 660):** B-2 / B-3 / B-4 / B-5 / B-6 / B-7 / B-8 / B-10 closed in commit landing this session. **Only B-1 (BulletList extension data-loss path) remains open** — skipped per user decision; needs explicit product signal on Option A (remove the extension; current default recommendation) vs Option B (implement full bullet-list round-trip) before it can land. The toast-warned data-loss path on `bulletList` nodes is documented but not closed. The "Out of scope (intentionally)" + "Hallucinations rejected by Round 2 validation" sections remain authoritative for future reviewers.
+
 ## Origin
 
 Two-round JS/TS robustness review run 2026-05-04 over the production
@@ -78,10 +80,10 @@ architectural change.
 **Files:**
 
 * Extension registration: <ref_snippet file="/home/javier/dev/agaric/src/editor/use-roving-editor.ts" lines="11-11" />
-  + <ref_snippet file="/home/javier/dev/agaric/src/editor/use-roving-editor.ts" lines="306-306" />
+  * <ref_snippet file="/home/javier/dev/agaric/src/editor/use-roving-editor.ts" lines="306-306" />
 * Markdown serializer (handles `orderedList`, *not* `bulletList`):
   <ref_snippet file="/home/javier/dev/agaric/src/editor/markdown-serialize.ts" lines="338-342" />
-  +  <ref_snippet file="/home/javier/dev/agaric/src/editor/markdown-serialize.ts" lines="415-421" />
+  * <ref_snippet file="/home/javier/dev/agaric/src/editor/markdown-serialize.ts" lines="415-421" />
 * `BlockLevelNode` schema union (no `BulletListNode` member):
   <ref_snippet file="/home/javier/dev/agaric/src/editor/types.ts" lines="125-132" />
 * Parser has no bullet-list parser either — `grep -n bulletList src/editor/markdown-parse.ts` returns nothing
@@ -152,7 +154,8 @@ Then drop the `@tiptap/extension-bullet-list` package and the
 `@tiptap/extension-list-item` retains only its `OrderedList` parent (verify
 the package is still needed by something else; `ListItem` is still in the
 extensions array per line 307). One commit, ~3 LOC + a `package.json` edit
-+ a regression test that types `- foo` and asserts the result remains a
+
+* a regression test that types `- foo` and asserts the result remains a
 plain paragraph (not a list).
 
 **Option B — Implement full round-trip support.** Adds:
@@ -448,7 +451,7 @@ is eliminated by tree-shaking in `vite build` output.
 
 ### Confirmed but excluded as nits
 
-- **B-9 — ULID normalization documented as "every entry point" but only
+* **B-9 — ULID normalization documented as "every entry point" but only
   `ulidToDate` actually normalizes in JS/TS.** The threat model and the
   actual wire format protect this: ULIDs come from the Rust backend always
   uppercase, and the frontend treats them as opaque routing/lookup keys
@@ -456,7 +459,7 @@ is eliminated by tree-shaking in `vite build` output.
   change; not worth a commit on its own. Fold a one-line invariant comment
   at the top of `src/lib/format.ts` into any nearby edit when one happens.
 
-- **B-11 — Logger rate-limit key uses `${module}:${message}`, theoretically
+* **B-11 — Logger rate-limit key uses `${module}:${message}`, theoretically
   collidable if a module name ever contained `:`.** Verified all current
   module names are alphanumeric/hyphen — no collision possible.
   Theoretical-only; do not bundle.
@@ -465,22 +468,22 @@ is eliminated by tree-shaking in `vite build` output.
 
 Listed here for audit completeness; do not re-litigate:
 
-- **`usePollingQuery` focus-listener stale `load` cleanup.** False — the
+* **`usePollingQuery` focus-listener stale `load` cleanup.** False — the
   `useEffect` deps include `load`, so React calls cleanup with the *current*
   `load` reference *before* re-running. No leak.
-- **`usePropertyKeysCache` module-level `listen()` never unlistens.** False
+* **`usePropertyKeysCache` module-level `listen()` never unlistens.** False
   — process-lifetime listener is *intentional* and explicitly documented in
   the file comment block (lines 20-22).
-- **`main.tsx` global error handlers register before logger init / leak
+* **`main.tsx` global error handlers register before logger init / leak
   under HMR.** False — ESM imports run before module body, and Vite
   full-reloads on `main.tsx` changes (HMR does not apply to entry points).
-- **`date-utils.ts` next/last-N-days `parseInt` could be `NaN`** (originally
+* **`date-utils.ts` next/last-N-days `parseInt` could be `NaN`** (originally
   flagged High). False — the regex `/^(?:next|last)-(\d+)-days$/` makes
   `NaN` unreachable; `parseInt` of a digit-only string cannot be `NaN`.
-- **`markdown-serialize.ts` blockquote serializer doesn't recurse into
+* **`markdown-serialize.ts` blockquote serializer doesn't recurse into
   bulletList.** Moot — `BlockLevelNode` excludes `BulletListNode`; the type
   system already forbids it. Subsumed by B-1.
-- **`AddFilterRow` `formRef` captures stale form state across category
+* **`AddFilterRow` `formRef` captures stale form state across category
   changes.** False — `AddFilterRow.tsx:253-266` renders **different React
   component types** per category (`TypeFilterForm` / `StatusFilterForm` /
   `PropertyFilterForm` / …). React unmounts the old component and mounts
@@ -490,27 +493,27 @@ Listed here for audit completeness; do not re-litigate:
 
 ### Other excluded items
 
-- **`useSyncTrigger.scheduleNext` chain has no `.catch()`.** Confirmed
+* **`useSyncTrigger.scheduleNext` chain has no `.catch()`.** Confirmed
   syntactically but mitigated: `syncAll()` (lines 112-154) catches all
   errors internally and never rejects, so the recursive scheduling chain
   cannot break. Adding `.catch(() => {})` would be redundant; document the
   invariant if anyone refactors this code. Do not bundle.
-- **`useBlockPropertyEvents` debounce timer fires after unmount.** The
+* **`useBlockPropertyEvents` debounce timer fires after unmount.** The
   `useEffect` cleanup already clears the timer (lines 62-66). Theoretical
   edge case; not real.
-- **`ActivityFeed` `Fragment key` includes `idx`.** The `biome-ignore`
+* **`ActivityFeed` `Fragment key` includes `idx`.** The `biome-ignore`
   comment is justified — `entry.timestamp` and `entry.toolName` already
   dominate uniqueness, and the entries array is capped at 100 with
   newest-first prepending, so any index reshuffle is bounded and harmless.
-- **`ConflictDiscardDialog` opens with no preview when `blockId` is set
+* **`ConflictDiscardDialog` opens with no preview when `blockId` is set
   but the block is missing from `blocks`.** Real but extremely rare
   multi-device race; `onAction` already guards with `if (discardBlock)`,
   so the worst case is an empty dialog the user dismisses. Acceptable
   graceful degradation. Do not bundle.
-- **`TemplatePicker` mount-only focus `useEffect`.** `templatePages` is
+* **`TemplatePicker` mount-only focus `useEffect`.** `templatePages` is
   stable for the dialog's lifetime; dialog is unmounted on close.
   No bug.
-- **`AppearanceTab` font-size DOM mutation via
+* **`AppearanceTab` font-size DOM mutation via
   `document.documentElement.style.setProperty`.** Intentional and correct
   pattern for CSS custom properties; React doesn't track CSS vars.
 
@@ -536,20 +539,20 @@ Listed here for audit completeness; do not re-litigate:
 
 **Phase 2 — B-2 through B-10 bundle:**
 
-5. Apply each LOW fix in its own surgical edit (request-id, range guard,
+1. Apply each LOW fix in its own surgical edit (request-id, range guard,
    isDestroyed guard, timeout cleanup, cancelled flag x2, rAF cancel x2,
    build-time mock gate). ~80–120 LOC across 9 files.
-6. Add the focused tests:
-   - B-2: race test — old promise resolves after new one, assert
+2. Add the focused tests:
+   * B-2: race test — old promise resolves after new one, assert
      `aliasMatchId` matches new query.
-   - B-3: `'2026-00-15'` and `'2026-13-15'` cases.
-   - B-5: assert no pending timer after `runWithTimeout` resolves
+   * B-3: `'2026-00-15'` and `'2026-13-15'` cases.
+   * B-5: assert no pending timer after `runWithTimeout` resolves
      (use vitest fake timers).
-   - B-8: assert `cancelAnimationFrame` is called on cleanup.
-7. Run `npm run test` (vitest, 7300+ tests) — all green.
-8. Run `prek run --all-files` — Biome + parity hooks clean.
-9. Commit: `fix: frontend robustness misc — picker guards + cleanup hygiene
-   + cancel hygiene (PEND-29 LOW bundle)`.
+   * B-8: assert `cancelAnimationFrame` is called on cleanup.
+3. Run `npm run test` (vitest, 7300+ tests) — all green.
+4. Run `prek run --all-files` — Biome + parity hooks clean.
+5. Commit: `fix: frontend robustness misc — picker guards + cleanup hygiene
+   * cancel hygiene (PEND-29 LOW bundle)`.
 
 ## Cost / risk / impact
 

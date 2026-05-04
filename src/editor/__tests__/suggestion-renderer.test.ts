@@ -1129,3 +1129,189 @@ describe('viewport handling on coarse pointers (UX-273)', () => {
     renderer.onExit()
   })
 })
+
+// ===========================================================================
+// PEND-27 P7 — coalesce per-frame `updatePosition` calls so burst typing
+// doesn't run `computePosition` once per keystroke.
+// ===========================================================================
+
+describe('onUpdate rAF coalescing (PEND-27 P7)', () => {
+  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  function makeProps(query = ''): any {
+    return {
+      items: [],
+      command: vi.fn(),
+      clientRect: () =>
+        ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query,
+      range: { from: 0, to: 1 + query.length },
+      text: `/${query}`,
+      decorationNode: null,
+    }
+  }
+
+  // Map from rAF id → pending callback. Using a Map (instead of an
+  // array indexed by `id - 1`) keeps `cancelAnimationFrame` correct
+  // across `flushRaf()` cycles — flushing re-creates the array and
+  // would otherwise shift indices, breaking later cancellation.
+  let rafQueue: Map<number, FrameRequestCallback>
+  let rafIdCounter: number
+  let originalRaf: typeof requestAnimationFrame
+  let cancelSpy: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    rafQueue = new Map()
+    rafIdCounter = 1
+    originalRaf = window.requestAnimationFrame
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++
+      rafQueue.set(id, cb)
+      return id
+    })
+    cancelSpy = vi.fn((id: number) => {
+      rafQueue.delete(id)
+    })
+    vi.stubGlobal('cancelAnimationFrame', cancelSpy)
+  })
+
+  afterEach(() => {
+    vi.stubGlobal('requestAnimationFrame', originalRaf)
+    for (const el of document.querySelectorAll('.suggestion-popup')) {
+      el.remove()
+    }
+  })
+
+  // Snapshot for tests that need to assert "rAF was scheduled".
+  const pendingFrameCount = () => rafQueue.size
+
+  function flushRaf() {
+    let safety = 10
+    while (rafQueue.size > 0 && safety-- > 0) {
+      const batch = Array.from(rafQueue.values())
+      rafQueue.clear()
+      for (const cb of batch) cb(0)
+    }
+  }
+
+  /**
+   * Drain the in-flight `onStart` updatePosition microtasks so the
+   * initial computePosition call settles before the rAF-coalescing tests
+   * exercise `onUpdate`. Without this, the onStart-triggered
+   * `computePosition` lands AFTER `mockClear()` and pollutes the
+   * subsequent assertions.
+   */
+  async function settleOnStart(
+    mockedComputePosition: ReturnType<
+      typeof vi.mocked<typeof import('@floating-ui/dom').computePosition>
+    >,
+  ) {
+    flushRaf()
+    await vi.waitFor(() => {
+      expect(mockedComputePosition).toHaveBeenCalled()
+    })
+    mockedComputePosition.mockClear()
+    cancelSpy.mockClear()
+  }
+
+  it('three onUpdate calls within the same frame collapse to one computePosition (PEND-27 P7)', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValue({
+      x: 0,
+      y: 0,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+    await settleOnStart(mockedComputePosition)
+
+    // Fire three rapid onUpdate calls within the same frame.
+    renderer.onUpdate(makeProps('a'))
+    renderer.onUpdate(makeProps('ab'))
+    renderer.onUpdate(makeProps('abc'))
+
+    // Before any frame fires, computePosition has not been called.
+    expect(mockedComputePosition).not.toHaveBeenCalled()
+
+    // Each new onUpdate should have cancelled the prior pending frame
+    // — three calls means two cancellations.
+    expect(cancelSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
+
+    // Flush all pending frames; only the last scheduled callback survived
+    // the cancellations and runs.
+    flushRaf()
+
+    await vi.waitFor(() => {
+      expect(mockedComputePosition).toHaveBeenCalledTimes(1)
+    })
+
+    renderer.onExit()
+  })
+
+  it('cancels pending position frame on onExit so the rAF callback never runs', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValue({
+      x: 0,
+      y: 0,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+    await settleOnStart(mockedComputePosition)
+
+    // Schedule a position update, then immediately tear down. The
+    // pending frame must be cancelled.
+    renderer.onUpdate(makeProps('a'))
+    expect(pendingFrameCount()).toBeGreaterThan(0)
+
+    renderer.onExit()
+    expect(cancelSpy).toHaveBeenCalled()
+
+    // Flushing now is a no-op; computePosition is never called.
+    flushRaf()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mockedComputePosition).not.toHaveBeenCalled()
+  })
+
+  it('cancels pending position frame on Escape so the rAF callback never runs', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValue({
+      x: 0,
+      y: 0,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+    await settleOnStart(mockedComputePosition)
+
+    renderer.onUpdate(makeProps('a'))
+    expect(pendingFrameCount()).toBeGreaterThan(0)
+
+    const handled = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+    expect(handled).toBe(true)
+    expect(cancelSpy).toHaveBeenCalled()
+
+    flushRaf()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mockedComputePosition).not.toHaveBeenCalled()
+  })
+})

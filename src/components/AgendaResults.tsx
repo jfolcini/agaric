@@ -21,6 +21,7 @@ import { StatusIcon } from '@/components/ui/status-icon'
 import { dueDateColor, formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import {
   type AgendaSortBy,
@@ -33,6 +34,7 @@ import {
 import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow, PropertyRow } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { BlockListItem } from './BlockListItem'
 import { DateChipEditor } from './DateChipEditor'
 import { DependencyIndicator } from './DependencyIndicator'
@@ -152,8 +154,16 @@ export function AgendaResults({
       untitledLabel: t('agenda.untitled'),
     })
 
-  // Shared cache for block properties — avoids redundant IPC calls across renders
+  // Shared cache for block properties — avoids redundant IPC calls across renders.
+  // PEND-27 P6: cache is invalidated on `block:properties-changed` events and on
+  // space switches so the dependency indicator reflects fresh data after edits.
   const propertiesCacheRef = useRef<Map<string, PropertyRow[]>>(new Map())
+  const { invalidationKey: propertyInvalidationKey } = useBlockPropertyEvents()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey + space are signals that drive the cache-clear side-effect
+  useEffect(() => {
+    propertiesCacheRef.current.clear()
+  }, [propertyInvalidationKey, currentSpaceId])
 
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null)

@@ -21,7 +21,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1491,5 +1491,127 @@ describe('LinkedReferences', () => {
     // Filter toggle keeps shrink-0 so it never collapses to zero width.
     const filterButton = screen.getByRole('button', { name: /show filters/i })
     expect(filterButton).toHaveClass('shrink-0')
+  })
+
+  // ---------------------------------------------------------------------------
+  // PEND-27 P5: pagination merge uses Map<page_id, group> and unions blocks
+  // for groups that recur across pages.
+  // ---------------------------------------------------------------------------
+
+  it('pagination merge unions blocks for groups with overlapping page_id (PEND-27 P5)', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: 'block 1' },
+          { id: 'B2', content: 'block 2' },
+        ]),
+        makeGroup('P2', 'Page Two', [{ id: 'B3', content: 'block 3' }]),
+      ],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: 5,
+      filtered_count: 5,
+      truncated: false,
+    }
+    // Second page intentionally returns the SAME page_id `P1` plus a new
+    // page `P3`. The merge must union P1's blocks (B1, B2, B4, B5) and
+    // append P3 as a new group, never duplicating P1.
+    const page2 = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B4', content: 'block 4' },
+          { id: 'B5', content: 'block 5' },
+        ]),
+        makeGroup('P3', 'Page Three', [{ id: 'B6', content: 'block 6' }]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 5,
+      filtered_count: 5,
+      truncated: false,
+    }
+    let callCount = 0
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_backlinks_grouped') {
+        callCount++
+        return callCount === 1 ? page1 : page2
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    const loadMoreBtn = await screen.findByRole('button', {
+      name: /load more references/i,
+    })
+    await user.click(loadMoreBtn)
+
+    // After merge: blocks from BOTH pages of P1 are visible (B1, B2, B4, B5),
+    // and P3's new block B6 also renders. P1 must appear exactly once with
+    // updated count "(4)".
+    await screen.findByText('block 4')
+    expect(screen.getByText('block 1')).toBeInTheDocument()
+    expect(screen.getByText('block 2')).toBeInTheDocument()
+    expect(screen.getByText('block 5')).toBeInTheDocument()
+    expect(screen.getByText('block 6')).toBeInTheDocument()
+    // P1 group header now reads "(4)" — the union of both pages' blocks.
+    expect(screen.getByText('Page One (4)')).toBeInTheDocument()
+    // P3 group is appended once.
+    expect(screen.getByText('Page Three (1)')).toBeInTheDocument()
+    // No duplicate "Page One" headers.
+    expect(screen.queryAllByText(/^Page One/)).toHaveLength(1)
+  })
+
+  // ---------------------------------------------------------------------------
+  // PEND-29 B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
+  // ---------------------------------------------------------------------------
+
+  it('cancels the listTagsByPrefix promise on unmount (PEND-29 B-6)', async () => {
+    let rejectTags!: (err: unknown) => void
+    let listTagsCalled = false
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation((cmd: string, _args?: any) => {
+      if (cmd === 'list_tags_by_prefix') {
+        listTagsCalled = true
+        return new Promise((_, reject) => {
+          rejectTags = reject
+        })
+      }
+      if (cmd === 'list_backlinks_grouped') return Promise.resolve(emptyGrouped)
+      if (cmd === 'batch_resolve') return Promise.resolve([])
+      if (cmd === 'list_property_keys') return Promise.resolve([])
+      return Promise.resolve(undefined)
+    })
+
+    const { unmount } = renderLinkedReferences({ pageId: 'PAGE1' })
+
+    // Wait until the mount-once effect has fired the IPC call.
+    await waitFor(() => {
+      expect(listTagsCalled).toBe(true)
+    })
+
+    // Clear any toast.error calls that fired during the initial fetch
+    // (e.g. for `list_backlinks_grouped` returning empty is fine, but
+    // we want to assert the unmounted-rejection path specifically).
+    vi.mocked(toast.error).mockClear()
+
+    // Unmount before the promise settles — cleanup sets cancelled=true.
+    unmount()
+
+    // Reject the still-pending promise post-unmount and let the microtask
+    // chain settle inside an `act(async)` boundary so React would surface
+    // any setState-on-unmounted warning.
+    await act(async () => {
+      rejectTags(new Error('post-unmount rejection'))
+    })
+
+    // Cancellation flag short-circuits the catch — no toast fires for the
+    // dead component.
+    expect(toast.error).not.toHaveBeenCalledWith('Failed to load tags')
   })
 })

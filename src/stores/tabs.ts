@@ -23,13 +23,13 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { activeSpaceKey } from '../lib/active-space'
 import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
 import { isDateFormattedPage } from '../lib/date-utils'
 import { parseDate } from '../lib/parse-date'
 import { useJournalStore } from './journal'
 import { useNavigationStore } from './navigation'
 import { useRecentPagesStore } from './recent-pages'
-import { LEGACY_SPACE_KEY, useSpaceStore } from './space'
 
 export interface PageEntry {
   pageId: string
@@ -111,11 +111,6 @@ export function selectTabsForSpace(state: TabsState, spaceId: string | null): Ta
 export function selectActiveTabIndexForSpace(state: TabsState, spaceId: string | null): number {
   if (spaceId == null) return state.activeTabIndex
   return state.activeTabIndexBySpace[spaceId] ?? state.activeTabIndex
-}
-
-/** Resolve the active per-space key, falling back to the legacy slot. */
-function activeSpaceKey(): string {
-  return useSpaceStore.getState().currentSpaceId ?? LEGACY_SPACE_KEY
 }
 
 /** Default tab list — a single empty tab. Mirrors the initial state. */

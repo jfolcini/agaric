@@ -91,18 +91,19 @@ export function LinkedReferences({
           spaceId: currentSpaceId,
         })
         if (cursor) {
-          // Append: merge groups with same page_id
+          // Append: merge groups with same page_id (PEND-27 P5: Map<page_id, group>
+          // avoids the O(N×M) `.find()` per new group).
           setGroups((prev) => {
-            const merged = [...prev]
+            const byPageId = new Map(prev.map((g) => [g.page_id, g]))
             for (const newGroup of resp.groups) {
-              const existing = merged.find((g) => g.page_id === newGroup.page_id)
+              const existing = byPageId.get(newGroup.page_id)
               if (existing) {
                 existing.blocks = [...existing.blocks, ...newGroup.blocks]
               } else {
-                merged.push(newGroup)
+                byPageId.set(newGroup.page_id, newGroup)
               }
             }
-            return merged
+            return Array.from(byPageId.values())
           })
           // Expand newly added groups by default
           setGroupExpanded((prev) => {
@@ -152,14 +153,24 @@ export function LinkedReferences({
     ],
   )
 
-  // Load tags on mount
+  // Load tags on mount (PEND-29 B-6: cancellation flag avoids React 19
+  // strict-mode "state update on unmounted component" warnings on rapid
+  // mount/unmount).
   useEffect(() => {
+    let cancelled = false
     listTagsByPrefix({ prefix: '' })
-      .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
+      .then((result) => {
+        if (cancelled) return
+        setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name })))
+      })
       .catch((e) => {
+        if (cancelled) return
         logger.error('LinkedReferences', 'Failed to load tags', undefined, e)
         toast.error(t('references.loadTagsFailed'))
       })
+    return () => {
+      cancelled = true
+    }
   }, [t])
 
   // Fetch on mount and when pageId/filters change

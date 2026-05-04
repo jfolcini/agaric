@@ -16,7 +16,7 @@
  *  12. A11y audit passes
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -27,6 +27,15 @@ vi.mock('../../lib/tauri', () => ({
   editBlock: vi.fn(),
   listTagsByPrefix: vi.fn(),
   listPropertyKeys: vi.fn(),
+}))
+
+vi.mock('../../lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }))
 
 vi.mock('lucide-react', () => ({
@@ -97,6 +106,7 @@ vi.mock('../PageLink', () => ({
 }))
 
 import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
+import { logger } from '../../lib/logger'
 import {
   editBlock,
   listPropertyKeys,
@@ -1386,5 +1396,45 @@ describe('UnlinkedReferences', () => {
     await waitFor(() => {
       expect(container.querySelector('.unlinked-references-filter-count')).toBeNull()
     })
+  })
+
+  // ---------------------------------------------------------------------------
+  // PEND-29 B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
+  // ---------------------------------------------------------------------------
+
+  it('cancels the listTagsByPrefix promise on unmount (PEND-29 B-6)', async () => {
+    let rejectTags!: (err: unknown) => void
+    mockedListTagsByPrefix.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectTags = reject
+        }),
+    )
+
+    const { unmount } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Wait until the mount-once effect has fired the IPC call.
+    await waitFor(() => {
+      expect(mockedListTagsByPrefix).toHaveBeenCalled()
+    })
+
+    // Unmount before the promise settles — cleanup sets cancelled=true.
+    unmount()
+
+    // Reject the still-pending promise post-unmount and let the
+    // microtask chain settle inside an `act(async)` boundary so React
+    // would surface any setState-on-unmounted warning.
+    await act(async () => {
+      rejectTags(new Error('post-unmount rejection'))
+    })
+
+    // Cancellation flag short-circuits the catch — no logger.error is
+    // emitted for the dead component.
+    expect(vi.mocked(logger.error)).not.toHaveBeenCalledWith(
+      'UnlinkedReferences',
+      'Failed to load tags',
+      undefined,
+      expect.any(Error),
+    )
   })
 })

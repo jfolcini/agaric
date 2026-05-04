@@ -81,25 +81,27 @@ export function JournalPage({
   // Scroll to a specific day section when requested (e.g., Today button in weekly/monthly)
   useEffect(() => {
     if (!scrollToDate) return
-    requestAnimationFrame(() => {
+    const id = requestAnimationFrame(() => {
       const el = document.getElementById(`journal-${scrollToDate}`)
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
       clearScrollTarget()
     })
+    return () => cancelAnimationFrame(id)
   }, [scrollToDate, clearScrollTarget])
 
   // Scroll to a specific panel (due/references/done) when requested from badges
   useEffect(() => {
     if (!scrollToPanel) return
-    requestAnimationFrame(() => {
+    const id = requestAnimationFrame(() => {
       const el = document.getElementById(`journal-${scrollToPanel}-panel`)
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
       clearScrollTarget()
     })
+    return () => cancelAnimationFrame(id)
   }, [scrollToPanel, clearScrollTarget])
 
   /** Build a DayEntry from a Date. */

@@ -56,4 +56,22 @@ describe('runWithTimeout', () => {
     const racing = runWithTimeout(Promise.reject(originalError), 1_000, new Error('timeout'))
     await expect(racing).rejects.toBe(originalError)
   })
+
+  it('clears the pending timeout when the underlying promise wins', async () => {
+    const racing = runWithTimeout(Promise.resolve('ok'), 1_000, new Error('timeout'))
+    await racing
+    // After the race resolves, no pending setTimeout should remain — if the
+    // timer were still scheduled, vi.getTimerCount() would be ≥ 1.
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('clears the pending timeout when the underlying promise rejects', async () => {
+    const racing = runWithTimeout(
+      Promise.reject(new Error('underlying failure')),
+      1_000,
+      new Error('timeout'),
+    )
+    await expect(racing).rejects.toThrow('underlying failure')
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })

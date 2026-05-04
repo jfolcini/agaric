@@ -122,11 +122,21 @@ export function createSuggestionRenderer(
   let outsideClickHandler: ((e: PointerEvent) => void) | null = null
   let editorRef: Editor | null = null
   let deferredRegistrationId: number | null = null
+  // PEND-27 P7: pending rAF id used to coalesce `onUpdate` position
+  // recomputes. The popup must track the cursor, but if the user types
+  // multiple characters within a single frame we only need one
+  // `computePosition` per frame. Cancelled in every teardown path so the
+  // rAF callback never runs against a destroyed popup.
+  let pendingPositionFrame: number | null = null
 
   function cleanupListener() {
     if (deferredRegistrationId !== null) {
       cancelAnimationFrame(deferredRegistrationId)
       deferredRegistrationId = null
+    }
+    if (pendingPositionFrame !== null) {
+      cancelAnimationFrame(pendingPositionFrame)
+      pendingPositionFrame = null
     }
     if (outsideClickHandler) {
       document.removeEventListener('pointerdown', outsideClickHandler, true)
@@ -230,15 +240,27 @@ export function createSuggestionRenderer(
         return
       }
       renderer.updateProps(props)
-      if (popup) {
-        const popupRef = popup
+      if (!popup) return
+      // PEND-27 P7: coalesce per-frame so burst typing (>1 keystroke per
+      // frame) collapses to a single `computePosition` call. Cancel any
+      // previously-scheduled frame before scheduling a new one.
+      if (pendingPositionFrame !== null) {
+        cancelAnimationFrame(pendingPositionFrame)
+      }
+      const popupRef = popup
+      pendingPositionFrame = requestAnimationFrame(() => {
+        pendingPositionFrame = null
+        // The popup may have been destroyed between scheduling and now
+        // (teardown paths null `popup` and call `cancelAnimationFrame`,
+        // but defend against any stragglers).
+        if (!popup) return
         updatePosition(popupRef, props).catch((err: unknown) => {
           logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
           // MAINT-175: keep popup off-screen on failure rather than at the
           // last computed coordinates, which would orphan it mid-page.
           applySafePosition(popupRef, null)
         })
-      }
+      })
     },
 
     onKeyDown({ event }: SuggestionKeyDownProps) {

@@ -7,6 +7,7 @@
  * to a target depth / parent — enabling drag-to-indent.
  */
 
+import { logger } from './logger'
 import type { BlockRow } from './tauri'
 
 /** Sentinel ID used as drop target after the last block in the list. */
@@ -14,6 +15,16 @@ export const SENTINEL_ID = '__drop-after-last__'
 
 /** Dead zone in pixels: horizontal drag must exceed this before any indent change. */
 export const DEAD_ZONE_PX = 20
+
+/**
+ * Maximum tree-traversal depth for `dfs()` inside `buildFlatTree`. Mirrors
+ * the same defense the markdown parser ships at `MAX_PARSE_DEPTH = 10`
+ * (see `editor/markdown-parse.ts`). The `visited` set already breaks
+ * cycles, but a pathologically deep linear chain (depth 10 000+) would
+ * still blow the JS stack — this bound makes the failure mode loud and
+ * recoverable instead of a `RangeError`.
+ */
+const MAX_TREE_DEPTH = 1000
 
 /** A block with its depth in the visual tree. */
 export interface FlatBlock extends BlockRow {
@@ -60,6 +71,13 @@ export function buildFlatTree(
   const visited = new Set<string>()
 
   function dfs(parentId: string | null, depth: number): void {
+    if (depth > MAX_TREE_DEPTH) {
+      logger.warn('tree-utils', 'tree depth limit exceeded', {
+        depth,
+        maxDepth: MAX_TREE_DEPTH,
+      })
+      return
+    }
     const children = childrenMap.get(parentId)
     if (!children) return
     for (const child of children) {

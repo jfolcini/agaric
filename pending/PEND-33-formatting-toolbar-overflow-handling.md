@@ -119,6 +119,7 @@ external-link button (6 buttons total) **only when the selection is
 non-empty**.
 
 Rationale:
+
 - Every action in this group requires a selection to do anything
   meaningful. Bold / Italic / Code / Strike / Highlight all
   toggle marks on the selected range; toggling them with an empty
@@ -133,6 +134,7 @@ Rationale:
   editors (Medium, Notion, Linear, Confluence, Google Docs).
 
 Composition:
+
 - New file: `src/components/SelectionBubbleMenu.tsx`. Renders a
   `<BubbleMenu>` (from `@tiptap/react`) with the 5 mark toggles + the
   external-link trigger, reusing `createMarkToggles(editor)` and the
@@ -148,6 +150,7 @@ Composition:
   subtree, no special handling needed.
 
 Removed from `FormattingToolbar`:
+
 - The `markToggles` group (lines 258–262 in the JSX).
 - The first `<Separator>` between marks and refs (lines 264).
 - The standalone External Link `<Popover>` block (lines 266–298).
@@ -178,8 +181,8 @@ default 0 = drops first). Higher = stays longer.
 
 **Render the overflow trigger** as a single `MoreHorizontal` icon
 button (`…`) at the right edge of the toolbar. Click opens a
-`<Popover>` containing the overflowed items as a vertical list (label
-+ icon, full-width clickable rows — same pattern as
+`<Popover>` containing the overflowed items as a vertical list
+(label - icon, full-width clickable rows — same pattern as
 `HeadingLevelSelector`).
 
 **Within Layer B, the per-button priorities are:**
@@ -201,6 +204,7 @@ one visible button.
 
 **Keyboard / palette parity.** Every overflowed action remains
 reachable via:
+
 - The slash command palette (`/`), which already covers all 23 actions.
 - Keyboard shortcuts (`getShortcutKeys(...)` for the 3 entries in
   `TOOLBAR_SHORTCUT_IDS` + the StarterKit defaults).

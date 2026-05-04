@@ -38,8 +38,9 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { activeSpaceKey } from '../lib/active-space'
 import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
-import { useSpaceStore } from './space'
+import { LEGACY_SPACE_KEY } from './space'
 
 export type View =
   | 'journal'
@@ -55,9 +56,6 @@ export type View =
   | 'settings'
   | 'graph'
   | 'page-editor'
-
-/** Reserved key for the no-active-space slot. Mirrors `recent-pages.ts`. */
-const LEGACY_SPACE_KEY = '__legacy__'
 
 interface NavigationStore {
   /** Active sidebar / content view. Mirrors `currentViewBySpace[currentSpaceId]`. */
@@ -92,10 +90,6 @@ type NavigationState = NavigationStore
 export function selectCurrentViewForSpace(state: NavigationState, spaceId: string | null): View {
   if (spaceId == null) return state.currentView
   return state.currentViewBySpace[spaceId] ?? state.currentView
-}
-
-function activeSpaceKey(): string {
-  return useSpaceStore.getState().currentSpaceId ?? LEGACY_SPACE_KEY
 }
 
 export const useNavigationStore = create<NavigationStore>()(

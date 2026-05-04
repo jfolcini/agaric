@@ -9,6 +9,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '../lib/logger'
 import type { BacklinkGroup, ResolvedBlock } from '../lib/tauri'
 import { batchResolve } from '../lib/tauri'
+import { keyFor } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 
 export interface ResolveCacheEntry {
   title: string
@@ -64,24 +66,37 @@ function computeTitle(r: ResolvedBlock): string {
 }
 
 /** Write resolved entries into the cache with the current timestamp. */
-function storeResolvedEntries(cache: ResolveCache, resolved: ResolvedBlock[]): void {
+function storeResolvedEntries(
+  cache: ResolveCache,
+  resolved: ResolvedBlock[],
+  spaceId: string | null,
+): void {
   const now = Date.now()
   for (const r of resolved) {
-    cache.set(r.id, { title: computeTitle(r), deleted: r.deleted, cachedAt: now })
+    cache.set(keyFor(spaceId, r.id), { title: computeTitle(r), deleted: r.deleted, cachedAt: now })
   }
 }
 
 /** For every requested id the backend did not return, store a deleted-placeholder. */
-function fillUnresolvedPlaceholders(cache: ResolveCache, requestedIds: Iterable<string>): void {
+function fillUnresolvedPlaceholders(
+  cache: ResolveCache,
+  requestedIds: Iterable<string>,
+  spaceId: string | null,
+): void {
   const now = Date.now()
   for (const id of requestedIds) {
-    if (cache.has(id)) continue
-    cache.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true, cachedAt: now })
+    const key = keyFor(spaceId, id)
+    if (cache.has(key)) continue
+    cache.set(key, { title: `[[${id.slice(0, 8)}...]]`, deleted: true, cachedAt: now })
   }
 }
 
 /** Collect all [[ULID]] and #[ULID] token ids that aren't fresh in the cache. */
-function collectIdsToResolve(groups: BacklinkGroup[], cache: ResolveCache): Set<string> {
+function collectIdsToResolve(
+  groups: BacklinkGroup[],
+  cache: ResolveCache,
+  spaceId: string | null,
+): Set<string> {
   const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
   const TAG_RE = /#\[([0-9A-Z]{26})\]/g
   const ids = new Set<string>()
@@ -94,7 +109,7 @@ function collectIdsToResolve(groups: BacklinkGroup[], cache: ResolveCache): Set<
     }
   }
   for (const id of ids) {
-    const cached = cache.get(id)
+    const cached = cache.get(keyFor(spaceId, id))
     if (cached && now - cached.cachedAt <= TTL_MS) ids.delete(id)
   }
   return ids
@@ -108,23 +123,30 @@ function mergeResolvedIntoCache(
   cache: ResolveCache,
   resolved: ResolvedBlock[],
   requestedIds: Set<string>,
+  spaceId: string | null,
 ): void {
   evictExpiredEntries(cache, Date.now())
   evictOverflow(cache, requestedIds.size)
-  storeResolvedEntries(cache, resolved)
-  fillUnresolvedPlaceholders(cache, requestedIds)
+  storeResolvedEntries(cache, resolved, spaceId)
+  fillUnresolvedPlaceholders(cache, requestedIds, spaceId)
 }
 
 export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResolutionResult {
   const [resolveVersion, setResolveVersion] = useState(0)
   const resolveCache = useRef<ResolveCache>(new Map())
+  // PEND-30 L-2: include `currentSpaceId` in cache keys so two spaces with
+  // the same ULID (or — under PEND-15 — the same backlink existing in
+  // both spaces with different titles) don't bleed across the 5-minute
+  // TTL. Matches the `${spaceId}::${ulid}` convention from
+  // `useResolveStore` (`stores/resolve.ts`).
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
 
   // Resolve [[ULID]] and #[ULID] tokens in block content
   useEffect(() => {
     const allBlocks = groups.flatMap((g) => g.blocks)
     if (allBlocks.length === 0) return
 
-    const idsToResolve = collectIdsToResolve(groups, resolveCache.current)
+    const idsToResolve = collectIdsToResolve(groups, resolveCache.current, currentSpaceId)
 
     if (idsToResolve.size === 0) {
       setResolveVersion((v) => v + 1)
@@ -136,7 +158,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     batchResolve([...idsToResolve])
       .then((resolved) => {
         if (cancelled) return
-        mergeResolvedIntoCache(resolveCache.current, resolved, idsToResolve)
+        mergeResolvedIntoCache(resolveCache.current, resolved, idsToResolve, currentSpaceId)
         setResolveVersion((v) => v + 1)
       })
       .catch((err) => {
@@ -147,30 +169,32 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     return () => {
       cancelled = true
     }
-  }, [groups])
+  }, [groups, currentSpaceId])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
   const resolveBlockTitle = useCallback(
     (id: string): string => {
-      return resolveCache.current.get(id)?.title ?? `[[${id.slice(0, 8)}...]]`
+      return (
+        resolveCache.current.get(keyFor(currentSpaceId, id))?.title ?? `[[${id.slice(0, 8)}...]]`
+      )
     },
-    [resolveVersion],
+    [resolveVersion, currentSpaceId],
   )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
   const resolveBlockStatus = useCallback(
     (id: string): 'active' | 'deleted' => {
-      return resolveCache.current.get(id)?.deleted ? 'deleted' : 'active'
+      return resolveCache.current.get(keyFor(currentSpaceId, id))?.deleted ? 'deleted' : 'active'
     },
-    [resolveVersion],
+    [resolveVersion, currentSpaceId],
   )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
   const resolveTagName = useCallback(
     (id: string): string => {
-      return resolveCache.current.get(id)?.title ?? `#${id.slice(0, 8)}...`
+      return resolveCache.current.get(keyFor(currentSpaceId, id))?.title ?? `#${id.slice(0, 8)}...`
     },
-    [resolveVersion],
+    [resolveVersion, currentSpaceId],
   )
 
   const clearCache = useCallback(() => {

@@ -65,6 +65,7 @@ but the row container becomes a single-line scroller.
 ```
 
 Strip vertical chrome:
+
 - Single row: ~44 px (`py-1.5` × 2 + 32 px chip).
 - Two rows: ~76 px (44 + 8 px gap + 32 px chip).
 
@@ -310,7 +311,7 @@ contract touched. No new translation keys.
 
 ## Cost / risk / impact
 
-|  |  |
+| | |
 | --- | --- |
 | Cost | **S** — ~2–3 h end-to-end. ~20 LOC component diff (ScrollArea + onWheel + scrollIntoView), ~50 LOC tests. |
 | Risk | **Low** — visual + scroll-handling; behaviour, a11y, keyboard nav, and store contracts untouched. The wheel handler is the one piece with a non-obvious failure mode (over-eager `preventDefault` on trackpad horizontal swipe), guarded by deltaY-dominance check + tested. |

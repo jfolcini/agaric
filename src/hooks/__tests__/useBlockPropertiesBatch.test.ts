@@ -140,4 +140,55 @@ describe('useBlockPropertiesBatch', () => {
 
     expect(result.current).toEqual({})
   })
+
+  it('ignores a stale resolution when a newer fetch has superseded it (M-1 race guard)', async () => {
+    // Build two deferred IPC results. The first call (older blocks list)
+    // is resolved AFTER the second call so the older `.then` runs last —
+    // without the cancelled flag this would overwrite the newer state
+    // with stale data.
+    let resolveOld: (v: Record<string, PropertyRow[]>) => void = () => {}
+    let resolveNew: (v: Record<string, PropertyRow[]>) => void = () => {}
+    const oldPayload: Record<string, PropertyRow[]> = {
+      OLD: [row({ key: 'effort', value_text: 'old' })],
+    }
+    const newPayload: Record<string, PropertyRow[]> = {
+      NEW: [row({ key: 'effort', value_text: 'new' })],
+    }
+
+    mockedGetBatchProperties.mockReset()
+    mockedGetBatchProperties.mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          resolveOld = res
+        }),
+    )
+    mockedGetBatchProperties.mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          resolveNew = res
+        }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ blocks }: { blocks: Array<{ id: string }> }) => useBlockPropertiesBatch(blocks),
+      { initialProps: { blocks: [{ id: 'OLD' }] } },
+    )
+
+    // Trigger a re-render with a different block list before the first IPC
+    // settles. This causes the effect to re-run; cleanup flips
+    // `cancelled = true` for the older effect.
+    rerender({ blocks: [{ id: 'NEW' }] })
+
+    // Resolve newer first, then older — older `.then` must be a no-op.
+    resolveNew(newPayload)
+    await waitFor(() => {
+      expect(result.current['NEW']).toEqual([{ key: 'effort', value: 'new' }])
+    })
+    resolveOld(oldPayload)
+    await new Promise<void>((r) => queueMicrotask(r))
+
+    // State still reflects the newer fetch — older fetch did NOT overwrite it.
+    expect(result.current['NEW']).toEqual([{ key: 'effort', value: 'new' }])
+    expect(result.current['OLD']).toBeUndefined()
+  })
 })

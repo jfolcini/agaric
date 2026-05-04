@@ -98,22 +98,26 @@ export function indexOfFolded(haystack: string, needle: string): number {
     return haystack.toLowerCase().indexOf(needle.toLowerCase())
   }
   const foldedNeedle = foldForSearch(needle)
-  // Walk the haystack char by char, folding each cumulative prefix,
-  // and compare the folded slice against the folded needle.  O(n·m)
-  // in the worst case; acceptable for the short strings a filter UI
-  // works with.
   const haystackFolded = foldForSearch(haystack)
   const foldedIdx = haystackFolded.indexOf(foldedNeedle)
   if (foldedIdx === -1) return -1
-  // Map folded offset back to an original-string offset by scanning
-  // the original prefix until its fold matches `haystackFolded
-  // .slice(0, foldedIdx)`.
+  // Map folded offset back to an original-string offset.  PEND-27 P2 —
+  // walk the haystack one code unit at a time and accumulate the fold of
+  // each code unit onto a running buffer, instead of refolding the
+  // growing prefix from scratch on every iteration.  Reduces the scan
+  // from O(n²) to O(n) on non-ASCII input.  Per-code-unit folding is
+  // safe because NFKD decomposes individual code points independently
+  // and combining-mark stripping never re-introduces context across
+  // characters.
   const foldedPrefix = haystackFolded.slice(0, foldedIdx)
   let originalCursor = 0
+  let foldedSoFar = ''
   while (originalCursor <= haystack.length) {
-    if (foldForSearch(haystack.slice(0, originalCursor)) === foldedPrefix) {
-      return originalCursor
-    }
+    if (foldedSoFar === foldedPrefix) return originalCursor
+    if (originalCursor === haystack.length) break
+    // biome-ignore lint/style/noNonNullAssertion: bounds checked above
+    const nextChar = haystack[originalCursor]!
+    foldedSoFar += foldForSearch(nextChar)
     originalCursor++
   }
   // Defensive fallback: if the scan fails (should not happen for

@@ -139,13 +139,23 @@ export function UnlinkedReferences({
     setShowAdvancedFilters(false)
   }, [pageId])
 
-  // Load tags on mount
+  // Load tags on mount (PEND-29 B-6: cancellation flag avoids React 19
+  // strict-mode "state update on unmounted component" warnings on rapid
+  // mount/unmount).
   useEffect(() => {
+    let cancelled = false
     listTagsByPrefix({ prefix: '' })
-      .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
+      .then((result) => {
+        if (cancelled) return
+        setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name })))
+      })
       .catch((e) => {
+        if (cancelled) return
         logger.error('UnlinkedReferences', 'Failed to load tags', undefined, e)
       })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const handleLinkIt = useCallback(

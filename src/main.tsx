@@ -28,7 +28,12 @@ window.addEventListener('unhandledrejection', (event) => {
 async function main() {
   // When running in a regular browser (not Tauri webview), activate IPC mocks
   // so the UI renders for visual development/debugging.
-  if (!window.__TAURI_INTERNALS__) {
+  //
+  // The `import.meta.env.PROD` check lets Vite tree-shake the entire
+  // `tauri-mock` chunk out of the production bundle (PROD is statically
+  // `true` in `vite build`). The runtime `__TAURI_INTERNALS__` check is
+  // retained for the dev/test paths where PROD is `false`.
+  if (!import.meta.env.PROD && !window.__TAURI_INTERNALS__) {
     const { setupMock } = await import('./lib/tauri-mock')
     setupMock()
   }

@@ -34,12 +34,17 @@ export function DailyView({
 
   useEffect(() => {
     if (!selectedBlockId) return
-    const id = selectedBlockId
-    requestAnimationFrame(() => {
-      document.querySelector(`[data-block-id="${id}"]`)?.scrollIntoView({ block: 'nearest' })
-      useBlockStore.getState().setFocused(id)
+    const blockId = selectedBlockId
+    const rafId = requestAnimationFrame(() => {
+      document.querySelector(`[data-block-id="${blockId}"]`)?.scrollIntoView({ block: 'nearest' })
+      useBlockStore.getState().setFocused(blockId)
+      // Clear the navigation marker after the work is done. Doing this inside
+      // the rAF (rather than synchronously after scheduling it) means the
+      // cleanup-side `cancelAnimationFrame` only fires on a true unmount —
+      // not on the re-run triggered by the very state change we just made.
+      clearSelection()
     })
-    clearSelection()
+    return () => cancelAnimationFrame(rafId)
   }, [selectedBlockId, clearSelection])
 
   return (
