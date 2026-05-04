@@ -60,6 +60,11 @@ pub struct BlockPropertySnapshot {
     pub value_num: Option<f64>,
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
+    /// PEND-14: native boolean property storage. Defaults to `None` so
+    /// snapshots written before PEND-14 (no `value_bool` column) still
+    /// deserialize. SQLite represents booleans as INTEGER (0/1).
+    #[serde(default)]
+    pub value_bool: Option<i64>,
 }
 
 /// A block-to-block link captured in a snapshot.

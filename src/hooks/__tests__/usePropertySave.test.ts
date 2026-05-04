@@ -32,6 +32,7 @@ function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
     value_num: null,
     value_date: null,
     value_ref: null,
+    value_bool: null,
     ...overrides,
   }
 }
@@ -61,7 +62,7 @@ describe('usePropertySave handleSave', () => {
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'status',
-        valueText: 'active',
+        value: expect.objectContaining({ value_text: 'active' }),
       }),
     )
     expect(setProperties).toHaveBeenCalledWith(updatedProps)

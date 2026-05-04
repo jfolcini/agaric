@@ -684,10 +684,13 @@ describe('TagList', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
           blockId: 'T1',
           key: 'color',
-          valueText: '#ef4444',
-          valueNum: null,
-          valueDate: null,
-          valueRef: null,
+          value: {
+            value_text: '#ef4444',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
         })
       })
     })

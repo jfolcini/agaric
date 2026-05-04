@@ -190,10 +190,13 @@ describe('handleSaveProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'B1',
       key: 'author',
-      valueText: 'Bob',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: 'Bob',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
     expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'B1' })
     expect(onRefresh).toHaveBeenCalledWith(refreshedProps)
@@ -222,10 +225,13 @@ describe('handleSaveProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'B1',
       key: 'count',
-      valueNum: 99,
-      valueText: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: null,
+        value_num: 99,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
   })
 
@@ -243,10 +249,13 @@ describe('handleSaveProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'B1',
       key: 'due',
-      valueDate: '2026-06-15',
-      valueText: null,
-      valueNum: null,
-      valueRef: null,
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: '2026-06-15',
+        value_ref: null,
+        value_bool: null,
+      },
     })
   })
 

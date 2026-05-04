@@ -87,7 +87,7 @@ pub(crate) async fn collect_tables(
 
     let block_properties: Vec<BlockPropertySnapshot> = sqlx::query_as!(
         BlockPropertySnapshot,
-        "SELECT block_id, key, value_text, value_num, value_date, value_ref FROM block_properties"
+        "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool FROM block_properties"
     )
     .fetch_all(&mut *conn)
     .await?;

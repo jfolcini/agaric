@@ -63,6 +63,7 @@ function makeProp(key: string, overrides?: Partial<PropertyRowData>): PropertyRo
     value_num: null,
     value_date: null,
     value_ref: null,
+    value_bool: null,
     ...overrides,
   }
 }

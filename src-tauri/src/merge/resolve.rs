@@ -142,10 +142,11 @@ pub async fn create_conflict_copy(
     .execute(&mut *tx)
     .await?;
 
-    // Copy properties from the original block
+    // Copy properties from the original block. PEND-14 added the
+    // `value_bool` column; the conflict copy must preserve booleans.
     sqlx::query(
-        "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-         SELECT ?1, key, value_text, value_num, value_date, value_ref \
+        "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+         SELECT ?1, key, value_text, value_num, value_date, value_ref, value_bool \
          FROM block_properties WHERE block_id = ?2"
     )
     .bind(new_block_id.as_str())

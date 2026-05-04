@@ -287,6 +287,7 @@ async fn ensure_is_space_property(
         None,
         None,
         None,
+        None,
     )
     .await?;
     Ok(true)
@@ -328,6 +329,7 @@ async fn ensure_accent_color_property(
         block_id.to_owned(),
         "accent_color",
         Some(default_token.to_owned()),
+        None,
         None,
         None,
         None,
@@ -410,6 +412,7 @@ async fn migrate_pages_to_personal_space_batched(
             value_num: None,
             value_date: None,
             value_ref: Some(SPACE_PERSONAL_ULID.to_owned()),
+            value_bool: None,
         });
         op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
     }
@@ -574,6 +577,7 @@ pub async fn migrate_personal_pages_to_work(
             None,
             None,
             Some(SPACE_WORK_ULID.to_owned()),
+            None,
         )
         .await?;
     }
@@ -588,6 +592,7 @@ pub async fn migrate_personal_pages_to_work(
         SPACE_PERSONAL_ULID.to_owned(),
         "personal_to_work_migration_v1",
         Some("true".to_owned()),
+        None,
         None,
         None,
         None,

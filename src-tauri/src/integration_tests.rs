@@ -1315,6 +1315,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1329,6 +1330,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         None,
         None,
         Some("2025-06-15".into()),
+        None,
         None,
         None,
     )
@@ -1730,6 +1732,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1790,6 +1793,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         "importance".into(),
         None,
         Some(1.0),
+        None,
         None,
         None,
         None,
@@ -2250,6 +2254,7 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
         None,
         None,
         Some(crate::spaces::SPACE_PERSONAL_ULID.to_owned()),
+        None,
         None,
     )
     .await

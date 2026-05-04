@@ -138,9 +138,11 @@ pub async fn apply_reverse_in_tx(
                 .await?;
         }
         OpPayload::SetProperty(p) => {
+            // PEND-14: persist `value_bool` as INTEGER (0/1).
+            let value_bool_int: Option<i64> = p.value_bool.map(|b| b as i64);
             sqlx::query(
-                "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(p.block_id.as_str())
             .bind(&p.key)
@@ -148,6 +150,7 @@ pub async fn apply_reverse_in_tx(
             .bind(p.value_num)
             .bind(&p.value_date)
             .bind(&p.value_ref)
+            .bind(value_bool_int)
             .execute(&mut **tx)
             .await?;
         }

@@ -708,6 +708,7 @@ async fn dispatch_op_set_property() {
             value_num: None,
             value_date: Some("2025-01-15".into()),
             value_ref: None,
+            value_bool: None,
         }),
     )
     .await;
@@ -2214,6 +2215,7 @@ async fn agenda_cache_after_set_property() {
             value_num: None,
             value_date: Some("2025-03-15".into()),
             value_ref: None,
+            value_bool: None,
         }),
     )
     .await;
@@ -3082,6 +3084,7 @@ async fn reserved_key_todo_state() {
             value_num: None,
             value_date: None,
             value_ref: None,
+            value_bool: None,
         }),
     )
     .await;
@@ -4291,6 +4294,7 @@ mod gcal_hook {
                 value_num: None,
                 value_date: Some(new_str.clone()),
                 value_ref: None,
+                value_bool: None,
             }),
         )
         .await;
@@ -4366,6 +4370,7 @@ mod gcal_hook {
                     value_num: None,
                     value_date: Some(new_str.clone()),
                     value_ref: None,
+                    value_bool: None,
                 }),
             )
             .await;
@@ -4412,6 +4417,7 @@ mod gcal_hook {
                 value_num: None,
                 value_date: Some(due_str.clone()),
                 value_ref: None,
+                value_bool: None,
             }),
         )
         .await;
@@ -4456,6 +4462,7 @@ mod gcal_hook {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
         )
         .await;
@@ -4488,6 +4495,7 @@ mod gcal_hook {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
         )
         .await;

@@ -486,6 +486,7 @@ pub async fn import_markdown_inner(
                 None,
                 None,
                 None,
+                None,
             )
             .await?;
             properties_set += 1;

@@ -141,6 +141,7 @@ async fn apply_op_tag_inheritance_noop_for_edit_and_set_property() {
         value_num: None,
         value_date: None,
         value_ref: None,
+        value_bool: None,
     });
 
     let mut conn = pool.acquire().await.unwrap();

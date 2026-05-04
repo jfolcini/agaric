@@ -34,6 +34,7 @@ async fn set_property_writes_op_log_entry() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -84,6 +85,7 @@ async fn delete_property_writes_op_log_entry() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -155,6 +157,7 @@ async fn set_property_inner_with_nonexistent_block_returns_not_found() {
         None,
         None,
         None,
+        None,
     )
     .await;
 
@@ -201,6 +204,7 @@ async fn set_property_inner_with_empty_key_returns_validation() {
         // `op::validate_set_property` *before* any DB write happens.
         "".into(),
         Some("any".into()),
+        None,
         None,
         None,
         None,
@@ -267,6 +271,7 @@ async fn set_property_inner_with_type_mismatch_returns_validation() {
         None,
         None,
         None,
+        None,
     )
     .await;
 
@@ -274,6 +279,173 @@ async fn set_property_inner_with_type_mismatch_returns_validation() {
         matches!(result, Err(AppError::Validation(_))),
         "value-type mismatch (text vs date-typed definition) must return \
          AppError::Validation, got: {result:?}"
+    );
+}
+
+// ======================================================================
+// PEND-14 — boolean property end-to-end
+// ======================================================================
+
+/// PEND-14 — register a `boolean`-typed property definition, set the
+/// property on a real block via `set_property_inner`, and read it back
+/// through `get_properties_inner`.  Exercises the full dispatch chain
+/// for the new value type:
+///
+/// 1. `create_property_def_inner` accepts `value_type = "boolean"`
+///    (the gating `matches!(...)` arm extended).
+/// 2. `set_property_inner` accepts `value_bool = Some(true)` and routes
+///    through `set_property_in_tx` to the `block_properties.value_bool`
+///    column (INTEGER 0/1).
+/// 3. `get_properties_inner` returns the row with `value_bool = Some(1)`
+///    and all other typed columns NULL.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boolean_property_set_and_read_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // 1. Register a `boolean`-typed property definition.
+    create_property_def_inner(&pool, "flag".into(), "boolean".into(), None)
+        .await
+        .expect("create_property_def_inner must accept value_type='boolean'");
+
+    // 2. Create a target block and set `flag = true`.
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "boolean-target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "flag".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+    )
+    .await
+    .expect("set_property_inner must accept value_bool=Some(true)");
+    settle(&mat).await;
+
+    // 3. Read back via `get_properties_inner`. SQLite stores booleans
+    //    as INTEGER (0/1); `value_bool` deserializes to `Option<i64>`.
+    let rows = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let flag = rows
+        .iter()
+        .find(|r| r.key == "flag")
+        .expect("flag property must be present");
+    assert_eq!(flag.value_bool, Some(1));
+    assert!(flag.value_text.is_none());
+    assert!(flag.value_num.is_none());
+    assert!(flag.value_date.is_none());
+    assert!(flag.value_ref.is_none());
+}
+
+/// PEND-14 — `value_bool = Some(false)` round-trips as the literal `0`
+/// integer in `block_properties.value_bool` (distinct from `NULL`,
+/// which means "no value set").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boolean_property_false_persists_as_zero() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    create_property_def_inner(&pool, "archived".into(), "boolean".into(), None)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "boolean-false".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "archived".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(false),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let rows = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let archived = rows
+        .iter()
+        .find(|r| r.key == "archived")
+        .expect("archived property must be present");
+    assert_eq!(archived.value_bool, Some(0));
+}
+
+/// PEND-14 — providing `value_bool` for a property whose definition
+/// declares a non-boolean `value_type` (e.g. `text`) trips the type
+/// check in `set_property_in_tx` and returns `AppError::Validation`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boolean_property_type_mismatch_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // text-typed definition; supplying value_bool must be rejected.
+    create_property_def_inner(&pool, "label".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "boolean-mismatch".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "label".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "value_bool against a text-typed definition must return Validation, got: {result:?}"
     );
 }
 
@@ -306,6 +478,7 @@ async fn delete_property_on_deleted_block_returns_not_found() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -397,6 +570,7 @@ async fn get_batch_properties_happy_path() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -409,6 +583,7 @@ async fn get_batch_properties_happy_path() {
         b2.id.clone(),
         "status".into(),
         Some("done".into()),
+        None,
         None,
         None,
         None,
@@ -467,6 +642,7 @@ async fn get_batch_properties_does_not_affect_op_log() {
         block.id.clone(),
         "key1".into(),
         Some("val".into()),
+        None,
         None,
         None,
         None,
@@ -692,6 +868,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -708,6 +885,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -720,6 +898,7 @@ async fn query_by_property_happy_path() {
         b3.id.clone(),
         "priority".into(),
         Some("1".into()),
+        None,
         None,
         None,
         None,
@@ -951,7 +1130,9 @@ async fn create_property_def_invalid_chars_returns_validation() {
 #[tokio::test]
 async fn create_property_def_invalid_value_type_returns_validation() {
     let (pool, _dir) = test_pool().await;
-    let result = create_property_def_inner(&pool, "flag".into(), "boolean".into(), None).await;
+    // PEND-14: `boolean` is now a valid value_type. Use a clearly bogus
+    // identifier here to keep the negative-path coverage.
+    let result = create_property_def_inner(&pool, "flag".into(), "garbage".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "invalid value_type must return Validation error"

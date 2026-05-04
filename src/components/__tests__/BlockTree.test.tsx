@@ -2408,10 +2408,13 @@ describe('BlockTree repeat slash commands', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat',
-        valueText: 'weekly',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'weekly',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2439,10 +2442,13 @@ describe('BlockTree repeat slash commands', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat',
-        valueText: 'daily',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'daily',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2470,10 +2476,13 @@ describe('BlockTree repeat slash commands', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat',
-        valueText: 'monthly',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'monthly',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2501,10 +2510,13 @@ describe('BlockTree repeat slash commands', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat',
-        valueText: 'yearly',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'yearly',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2562,10 +2574,13 @@ describe('BlockTree repeat mode variants', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat',
-        valueText: '.+weekly',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: '.+weekly',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2596,10 +2611,13 @@ describe('BlockTree repeat mode variants', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat',
-        valueText: '++daily',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: '++daily',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2719,10 +2737,13 @@ describe('BlockTree repeat end-condition commands', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat-until',
-        valueText: null,
-        valueNum: null,
-        valueDate: '2026-06-30',
-        valueRef: null,
+        value: {
+          value_text: null,
+          value_num: null,
+          value_date: '2026-06-30',
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2753,10 +2774,13 @@ describe('BlockTree repeat end-condition commands', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'repeat-count',
-        valueText: null,
-        valueNum: 10,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: null,
+          value_num: 10,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -2845,10 +2869,13 @@ describe('BlockTree effort slash commands', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'effort',
-        valueText: '1h',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: '1h',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -5135,10 +5162,13 @@ describe('BlockTree assignee slash command presets', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'assignee',
-        valueText: 'Me',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'Me',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -5169,10 +5199,13 @@ describe('BlockTree assignee slash command presets', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'assignee',
-        valueText: '',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: '',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -5226,10 +5259,13 @@ describe('BlockTree location slash command presets', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'location',
-        valueText: 'Office',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'Office',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -5260,10 +5296,13 @@ describe('BlockTree location slash command presets', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'A',
         key: 'location',
-        valueText: '',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: '',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })

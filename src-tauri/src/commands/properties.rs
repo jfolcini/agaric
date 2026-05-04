@@ -109,6 +109,7 @@ pub async fn set_property_inner(
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
+    value_bool: Option<bool>,
     caller_context: Option<&str>,
 ) -> Result<BlockRow, AppError> {
     // L-122: when a caller_context is supplied, enforce the
@@ -125,6 +126,7 @@ pub async fn set_property_inner(
             value_num.is_some(),
             value_date.is_some(),
             value_ref.is_some(),
+            value_bool.is_some(),
         ]
         .iter()
         .filter(|b| **b)
@@ -132,7 +134,7 @@ pub async fn set_property_inner(
         if provided != 1 {
             return Err(AppError::Validation(format!(
                 "tool '{name}': exactly one of value_text / value_num / value_date / \
-                 value_ref must be provided (got {provided})"
+                 value_ref / value_bool must be provided (got {provided})"
             )));
         }
     }
@@ -149,6 +151,7 @@ pub async fn set_property_inner(
     };
     let (block, op_record) = set_property_in_tx(
         &mut tx, device_id, block_id, &key, value_text, value_num, value_date, value_ref,
+        value_bool,
     )
     .await?;
     // Clone `op_record` for the dispatch queue so the post-commit
@@ -261,6 +264,7 @@ pub async fn set_todo_state_inner(
         None,
         None,
         None,
+        None,
     )
     .await?;
     // Keep `todo_op` clone for the post-commit GCal notify (the queued
@@ -283,6 +287,7 @@ pub async fn set_todo_state_inner(
                 None,
                 Some(today),
                 None,
+                None,
             )
             .await?;
             tx.enqueue_background(op);
@@ -297,6 +302,7 @@ pub async fn set_todo_state_inner(
                 None,
                 None,
                 Some(today),
+                None,
                 None,
             )
             .await?;
@@ -314,6 +320,7 @@ pub async fn set_todo_state_inner(
                 None,
                 None,
                 Some(today),
+                None,
                 None,
             )
             .await?;
@@ -413,7 +420,7 @@ pub async fn set_priority_inner(
     };
 
     let (block, op_record) = set_property_in_tx(
-        &mut tx, device_id, block_id, "priority", level, None, None, None,
+        &mut tx, device_id, block_id, "priority", level, None, None, None, None,
     )
     .await?;
     // Clone `op_record` for the dispatch queue so the post-commit
@@ -456,6 +463,7 @@ pub async fn set_due_date_inner(
         date,
         None,
         None,
+        None,
     )
     .await
 }
@@ -488,6 +496,7 @@ pub async fn set_scheduled_date_inner(
         None,
         None,
         date,
+        None,
         None,
         None,
     )
@@ -527,7 +536,7 @@ pub async fn get_properties_inner(
 ) -> Result<Vec<PropertyRow>, AppError> {
     let rows = sqlx::query_as!(
         PropertyRow,
-        "SELECT key, value_text, value_num, value_date, value_ref \
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
          FROM block_properties WHERE block_id = ?",
         block_id
     )
@@ -563,10 +572,10 @@ pub async fn create_property_def_inner(
     // Validate value_type
     if !matches!(
         value_type.as_str(),
-        "text" | "number" | "date" | "select" | "ref"
+        "text" | "number" | "date" | "select" | "ref" | "boolean"
     ) {
         return Err(AppError::Validation(format!(
-            "invalid value_type '{value_type}': must be text, number, date, select, or ref"
+            "invalid value_type '{value_type}': must be text, number, date, select, ref, or boolean"
         )));
     }
     // Validate options: required for select, forbidden for others
@@ -848,7 +857,7 @@ pub async fn get_batch_properties_inner(
 
     let rows = sqlx::query_as!(
         BatchPropertyRow,
-        r#"SELECT block_id, key, value_text, value_num, value_date, value_ref
+        r#"SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool
            FROM block_properties
            WHERE block_id IN (SELECT value FROM json_each(?1))"#,
         ids_json,
@@ -864,6 +873,7 @@ pub async fn get_batch_properties_inner(
             value_num: r.value_num,
             value_date: r.value_date,
             value_ref: r.value_ref,
+            value_bool: r.value_bool,
         });
     }
 
@@ -881,10 +891,13 @@ pub async fn list_property_keys(read_pool: State<'_, ReadPool>) -> Result<Vec<St
 }
 
 /// Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
+///
+/// PEND-14: typed value fields are bundled into [`SetPropertyArgs`] so the
+/// IPC signature stays at 7 positional args (under specta's 10-arg cap).
+/// Adding `value_bool` as a 5th flat field would have exceeded the limit.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub async fn set_property(
     app: tauri::AppHandle,
     pool: State<'_, WritePool>,
@@ -892,10 +905,7 @@ pub async fn set_property(
     materializer: State<'_, Materializer>,
     block_id: String,
     key: String,
-    value_text: Option<String>,
-    value_num: Option<f64>,
-    value_date: Option<String>,
-    value_ref: Option<String>,
+    value: SetPropertyArgs,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone();
     let key_clone = key.clone();
@@ -905,10 +915,11 @@ pub async fn set_property(
         &materializer,
         block_id,
         key,
-        value_text,
-        value_num,
-        value_date,
-        value_ref,
+        value.value_text,
+        value.value_num,
+        value.value_date,
+        value.value_ref,
+        value.value_bool,
         None,
     )
     .await

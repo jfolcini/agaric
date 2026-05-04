@@ -106,10 +106,13 @@ describe('useBlockPropertyIpc.setProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'BLOCK_1',
       key: 'effort',
-      valueText: '3',
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: '3',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
   })
 
@@ -129,10 +132,13 @@ describe('useBlockPropertyIpc.setProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'BLOCK_1',
       key: 'priority',
-      valueText: null,
-      valueNum: 1,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: null,
+        value_num: 1,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
   })
 

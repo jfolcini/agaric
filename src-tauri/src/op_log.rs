@@ -613,6 +613,7 @@ mod tests {
                     value_num: None,
                     value_date: None,
                     value_ref: None,
+                    value_bool: None,
                 }),
             ),
             (
@@ -1301,6 +1302,7 @@ mod tests {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             FIXED_TS.into(),
         )
@@ -1330,6 +1332,7 @@ mod tests {
                 value_num: Some(42.0),
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             FIXED_TS.into(),
         )
@@ -1353,6 +1356,7 @@ mod tests {
                 value_num: None,
                 value_date: None,
                 value_ref: None,
+                value_bool: None,
             }),
             FIXED_TS.into(),
         )

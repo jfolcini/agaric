@@ -1814,6 +1814,7 @@ async fn snapshot_get_agenda_response_shape() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();

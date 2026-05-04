@@ -1132,10 +1132,13 @@ describe('PageHeader kebab menu (#639)', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'template',
-        valueText: 'true',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        value: {
+          value_text: 'true',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
       })
     })
   })
@@ -1816,10 +1819,13 @@ describe('PageHeader Move to space (FEAT-3 Phase 2)', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'space',
-        valueText: null,
-        valueNum: null,
-        valueDate: null,
-        valueRef: 'SPACE_WORK',
+        value: {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: 'SPACE_WORK',
+          value_bool: null,
+        },
       })
     })
     await waitFor(() => {

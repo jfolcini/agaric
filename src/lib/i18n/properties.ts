@@ -81,6 +81,7 @@ export const properties: Record<string, string> = {
   'property.clearDueDate': 'Clear due date',
   'property.clearScheduledDate': 'Clear scheduled date',
   'property.valueLabel': '{{key}} value',
+  'property.booleanToggle': 'Toggle boolean property {{key}}',
   'property.selectProperty': 'Select property...',
   'property.errorLoad': 'Failed to load property definitions',
   'property.errorCreate': 'Failed to create property definition',

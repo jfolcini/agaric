@@ -254,7 +254,7 @@ describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'repeat-until',
-        valueDate: '2025-12-31',
+        value: expect.objectContaining({ value_date: '2025-12-31' }),
       }),
     )
   })

@@ -204,6 +204,7 @@ export function AddPropertyPopover({
                 <SelectItem value="date">{t('pageProperty.dateType')}</SelectItem>
                 <SelectItem value="select">{t('pageProperty.selectType')}</SelectItem>
                 <SelectItem value="ref">{t('pageProperty.refType')}</SelectItem>
+                <SelectItem value="boolean">{t('pageProperty.booleanType')}</SelectItem>
               </SelectContent>
             </Select>
             <Button size="sm" className="w-full" onClick={handleCreateDef}>

@@ -40,6 +40,7 @@ async fn set_property_creates_property() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -118,6 +119,7 @@ async fn set_property_validates_key() {
         None,
         None,
         None,
+        None,
     )
     .await;
 
@@ -169,6 +171,7 @@ async fn set_property_inner_with_none_caller_context_uses_legacy_message() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect_err("two value fields must be rejected");
@@ -216,6 +219,7 @@ async fn set_property_inner_with_some_caller_context_names_caller() {
         "assignee".into(),
         Some("alice".into()),
         Some(3.0),
+        None,
         None,
         None,
         Some("set_property"),
@@ -274,6 +278,7 @@ async fn set_property_inner_with_some_caller_context_rejects_zero_values() {
         None,
         None,
         None,
+        None,
         Some("set_property"),
     )
     .await
@@ -325,6 +330,7 @@ async fn set_property_on_deleted_block_fails() {
         None,
         None,
         None,
+        None,
     )
     .await;
 
@@ -361,6 +367,7 @@ async fn delete_property_removes_property() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -431,6 +438,7 @@ async fn delete_property_allows_builtin_key() {
         Some("2026-01-01".into()),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -460,6 +468,7 @@ async fn delete_property_allows_builtin_key() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -477,6 +486,7 @@ async fn delete_property_allows_builtin_key() {
         block.id.clone(),
         "my_custom".into(),
         Some("val".into()),
+        None,
         None,
         None,
         None,
@@ -671,6 +681,7 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -683,6 +694,7 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
         b2.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -783,6 +795,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -795,6 +808,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -812,6 +826,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         "score".into(),
         None,
         Some(42.0),
+        None,
         None,
         None,
         None,
@@ -1527,6 +1542,7 @@ async fn set_property_routes_reserved_key_to_blocks_column() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1599,6 +1615,7 @@ async fn set_property_rejects_invalid_date_format() {
         Some("not-a-date".into()),
         None,
         None,
+        None,
     )
     .await;
 
@@ -1640,6 +1657,7 @@ async fn set_property_rejects_out_of_range_date() {
         Some("2025-13-45".into()),
         None,
         None,
+        None,
     )
     .await;
 
@@ -1677,6 +1695,7 @@ async fn set_property_rejects_due_date_with_value_text() {
         block.id.clone(),
         "due_date".into(),
         Some("2025-01-01".into()),
+        None,
         None,
         None,
         None,
@@ -1722,6 +1741,7 @@ async fn set_property_rejects_todo_state_with_value_date() {
         Some("2025-01-01".into()),
         None,
         None,
+        None,
     )
     .await;
 
@@ -1761,6 +1781,7 @@ async fn set_property_accepts_valid_reserved_key_with_correct_field() {
         None,
         None,
         Some("2025-01-15".into()),
+        None,
         None,
         None,
     )
@@ -1856,6 +1877,7 @@ async fn set_property_ref_type_enforces_value_ref() {
         None,
         None,
         None,
+        None,
     )
     .await;
 
@@ -1889,6 +1911,7 @@ async fn set_property_ref_type_enforces_value_ref() {
         None,
         None,
         Some(target.id.clone()),
+        None,
         None,
     )
     .await;
@@ -2603,6 +2626,7 @@ async fn set_repeat_property(
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3102,6 +3126,7 @@ async fn recurrence_stops_when_repeat_until_is_reached() {
         Some("2025-06-14".to_string()),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3168,6 +3193,7 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3182,6 +3208,7 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         "repeat-seq".to_string(),
         None,
         Some(2.0),
+        None,
         None,
         None,
         None,
@@ -3251,6 +3278,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3265,6 +3293,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         "repeat-seq".to_string(),
         None,
         Some(1.0),
+        None,
         None,
         None,
         None,
@@ -3520,6 +3549,7 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3605,6 +3635,7 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
         resp.id.clone(),
         "repeat".into(),
         Some("++weekly".into()),
+        None,
         None,
         None,
         None,
@@ -3699,6 +3730,7 @@ async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shift
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3761,6 +3793,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3776,6 +3809,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         None,
         None,
         Some("2026-12-31".into()),
+        None,
         None,
         None,
     )
@@ -4021,6 +4055,7 @@ async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4092,6 +4127,7 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
         block.id.clone(),
         "importance".into(),
         Some("high".into()),
+        None,
         None,
         None,
         None,
@@ -4234,6 +4270,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4246,6 +4283,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
         block.id.clone(),
         "mood".into(),
         Some("angry".into()),
+        None,
         None,
         None,
         None,
@@ -4288,6 +4326,7 @@ async fn bug20_set_property_text_type_has_no_options_restriction() {
         block.id.clone(),
         "assignee".into(),
         Some("anyone-whatsoever".into()),
+        None,
         None,
         None,
         None,
@@ -4350,6 +4389,7 @@ async fn bug20_select_property_with_null_options_is_permissive() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4395,6 +4435,7 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
         block.id.clone(),
         "priority".into(),
         Some("99".into()),
+        None,
         None,
         None,
         None,
@@ -4841,6 +4882,7 @@ async fn set_is_space_to_true_succeeds_m90() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4889,6 +4931,7 @@ async fn set_is_space_to_invalid_value_returns_error_m90() {
         block.id.clone(),
         "is_space".into(),
         Some("nope".into()),
+        None,
         None,
         None,
         None,

@@ -30,6 +30,7 @@ vi.mock('lucide-react', () => ({
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
+  Check: () => <svg data-testid="check-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   Clock: () => <svg data-testid="clock-icon" />,
   FileSearch: () => <svg data-testid="file-search-icon" />,
@@ -61,6 +62,7 @@ function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
     value_num: null,
     value_date: null,
     value_ref: null,
+    value_bool: null,
     ...overrides,
   }
 }
@@ -766,6 +768,85 @@ describe('PropertyRowEditor accessibility', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  it('boolean property has no a11y violations', async () => {
+    const { container } = render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('archived', { value_bool: 0 })}
+        def={makeDef('archived', 'boolean')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+})
+
+// PEND-14: native boolean property type renders a checkbox toggle and routes
+// edits through onSave with a 'true' / 'false' string (which the parent's
+// buildPropertyParams maps to value_bool).
+describe('PropertyRowEditor boolean type', () => {
+  it('renders a checkbox unchecked when value_bool is null', () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('archived', { value_bool: null })}
+        def={makeDef('archived', 'boolean')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: t('property.booleanToggle', { key: 'archived' }),
+    })
+    expect(checkbox).toBeInTheDocument()
+    expect(checkbox).toHaveAttribute('data-state', 'unchecked')
+  })
+
+  it('renders a checkbox checked when value_bool is 1', () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('archived', { value_bool: 1 })}
+        def={makeDef('archived', 'boolean')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: t('property.booleanToggle', { key: 'archived' }),
+    })
+    expect(checkbox).toHaveAttribute('data-state', 'checked')
+  })
+
+  it('toggling the checkbox calls onSave with the new boolean string', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('archived', { value_bool: 0 })}
+        def={makeDef('archived', 'boolean')}
+        onSave={onSave}
+      />,
+    )
+
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: t('property.booleanToggle', { key: 'archived' }),
+      }),
+    )
+
+    expect(onSave).toHaveBeenCalledWith('true')
+  })
 })
 
 describe('PropertyRowEditor ref picker', () => {
@@ -952,13 +1033,17 @@ describe('PropertyRowEditor ref picker', () => {
     await user.click(screen.getByText('Target Page'))
 
     await waitFor(() => {
+      // PEND-14: typed values are bundled under `value: SetPropertyArgs`.
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'BLOCK_1',
         key: 'linked_page',
-        valueRef: 'P1',
-        valueText: null,
-        valueNum: null,
-        valueDate: null,
+        value: {
+          value_ref: 'P1',
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_bool: null,
+        },
       })
     })
     expect(onRefSaved).toHaveBeenCalledTimes(1)

@@ -912,7 +912,7 @@ describe('listTagsForBlock', () => {
 // ---------------------------------------------------------------------------
 
 describe('setProperty', () => {
-  it('invokes set_property with all value fields', async () => {
+  it('invokes set_property with all value fields bundled under `value`', async () => {
     mockedInvoke.mockResolvedValueOnce(undefined)
 
     await setProperty({
@@ -922,16 +922,22 @@ describe('setProperty', () => {
       valueNum: 1,
       valueDate: '2025-01-15',
       valueRef: 'REF001',
+      valueBool: true,
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
+    // PEND-14: typed values are bundled under `value: SetPropertyArgs` so the
+    // IPC stays under specta's 10-positional-argument cap.
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'BLK001',
       key: 'priority',
-      valueText: 'high',
-      valueNum: 1,
-      valueDate: '2025-01-15',
-      valueRef: 'REF001',
+      value: {
+        value_text: 'high',
+        value_num: 1,
+        value_date: '2025-01-15',
+        value_ref: 'REF001',
+        value_bool: true,
+      },
     })
   })
 
@@ -943,10 +949,13 @@ describe('setProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'BLK001',
       key: 'status',
-      valueText: null,
-      valueNum: null,
-      valueDate: null,
-      valueRef: null,
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     })
   })
 

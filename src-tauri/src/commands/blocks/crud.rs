@@ -1345,6 +1345,7 @@ pub(crate) async fn set_property_in_tx(
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
+    value_bool: Option<bool>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
     // 1. Build and validate the payload before touching the DB
     let prop_payload = SetPropertyPayload {
@@ -1354,6 +1355,7 @@ pub(crate) async fn set_property_in_tx(
         value_num,
         value_date: value_date.clone(),
         value_ref: value_ref.clone(),
+        value_bool,
     };
     validate_set_property(&prop_payload)?;
 
@@ -1368,19 +1370,22 @@ pub(crate) async fn set_property_in_tx(
     }
 
     // 1c. Reserved key field validation (skip for clear operations where all values are None)
-    let is_clear =
-        value_text.is_none() && value_num.is_none() && value_date.is_none() && value_ref.is_none();
+    let is_clear = value_text.is_none()
+        && value_num.is_none()
+        && value_date.is_none()
+        && value_ref.is_none()
+        && value_bool.is_none();
     if !is_clear {
         match key {
             "due_date" | "scheduled_date" if value_date.is_none() => {
                 return Err(AppError::Validation(format!(
-                    "Property '{}' requires value_date, not value_text/value_num/value_ref.",
+                    "Property '{}' requires value_date, not value_text/value_num/value_ref/value_bool.",
                     key
                 )));
             }
             "todo_state" | "priority" if value_text.is_none() => {
                 return Err(AppError::Validation(format!(
-                    "Property '{}' requires value_text, not value_date/value_num/value_ref.",
+                    "Property '{}' requires value_text, not value_date/value_num/value_ref/value_bool.",
                     key
                 )));
             }
@@ -1415,6 +1420,7 @@ pub(crate) async fn set_property_in_tx(
                     "ref" => value_ref.is_some(),
                     "number" => value_num.is_some(),
                     "date" => value_date.is_some(),
+                    "boolean" => value_bool.is_some(),
                     _ => true,
                 };
                 if !type_matches {
@@ -1426,6 +1432,8 @@ pub(crate) async fn set_property_in_tx(
                         "date"
                     } else if value_ref.is_some() {
                         "ref"
+                    } else if value_bool.is_some() {
+                        "boolean"
                     } else {
                         "unknown"
                     };
@@ -1528,9 +1536,13 @@ pub(crate) async fn set_property_in_tx(
             ),
         }
     } else {
+        // PEND-14: persist `value_bool` as INTEGER (0/1) — SQLite has no
+        // native boolean type; the column CHECK constraint set in
+        // migration 0042 keeps the stored value to (0, 1, NULL).
+        let value_bool_int: Option<i64> = value_bool.map(|b| b as i64);
         sqlx::query(
-            "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&block_id)
         .bind(key)
@@ -1538,6 +1550,7 @@ pub(crate) async fn set_property_in_tx(
         .bind(value_num)
         .bind(&value_date)
         .bind(&value_ref)
+        .bind(value_bool_int)
         .execute(&mut **tx)
         .await?;
     }
