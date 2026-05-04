@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 657 — closed PEND-14 (boolean property type): native `value_bool` column on `block_properties` (migration 0042), `'boolean'` allowed in `property_definitions.value_type` CHECK constraint (migration 0043 STRICT), `SetPropertyPayload.value_bool` with `#[serde(default)]` for op-log back-compat, dispatch through 40+ Rust files, `setProperty` Tauri command refactored to bundle-arg shape (`SetPropertyArgs`) due to specta's 10-arg cap, frontend wrapper insulates 12 production callsites with zero changes, new `<Checkbox>` UI in `PropertyRowEditor`, `'boolean'` option in `AddPropertyPopover`. **Tech reviewer caught a real correctness bug** — `reverse/property_ops.rs` dropped `value_bool` on undo of `set_property`/`delete_property`; fixed + 2 regression tests. **UX reviewer caught 2 BLOCKING issues** — Checkbox 16-20px violated AGENTS.md 44px touch floor, Checkbox cell-height didn't match adjacent 28px Inputs; fixed orchestrator-direct via local hitbox wrapper. Filed MAINT-197 (systematic Checkbox primitive 44px hit-area) + MAINT-198 (indeterminate state for null `value_bool`, reverses plan's open-question #1 — needs user signal).)
+> **Last updated:** 2026-05-03 (Session 658 — closed PEND-03 (materializer silent-drop fix for global cache rebuilds): migration 0044 widens `materializer_retry_queue` to global tasks via `'__GLOBAL__'` sentinel + STRICT mode; `RetryKind` enum extended with 7 global variants; consumer + coordinator persist on drop; new `bg_dropped_global` counter on `QueueMetrics` → `StatusInfo`. AGENTS.md "Backend Architecture" bullet added with user approval. Tech reviewer PASS. Tech reviewer filed MAINT-199 — `scripts/check-migrations-strict.mjs` mis-parses `;` in SQL comments as statement terminator (real bug, surfaced during PEND-03; author worked around by stripping inline semicolons from migration comments). +7 backend tests; 3455/3455 nextest pass.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-21 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
+22 open items in the summary table; 24 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -37,6 +37,7 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-196 | MAINT | Projected-agenda projection path drift: `list_projected_agenda_inner` cached path emits 112 entries for a `.+1w` block over a 390-day window vs 110 from `list_projected_agenda_on_the_fly` — a real 2-entry divergence on the dot-plus completion-based mode. Surfaced by the PEND-05 parity test (now `#[ignore]`d in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`); A/B/C/E blocks are in parity. The deeper fix is to refactor the projection logic into a single function called by both paths, eliminating the drift surface entirely. Re-enable the parity test once the refactor lands. | M | — |
 | MAINT-197 | MAINT | `Checkbox` UI primitive at `src/components/ui/checkbox.tsx:17,21` renders at 16/20 px — below the 44 px coarse-pointer floor mandated by AGENTS.md. PEND-14 added a local hitbox-wrapper in `PropertyRowEditor` as a stopgap; the systematic fix is to augment the primitive itself (mirroring how `Select` carries its own touch sizing). After landing, remove the local wrapper. | S | — |
 | MAINT-198 | MAINT | `PropertyRowEditor` boolean cell renders unchecked for both `value_bool === null` ("no value") and `value_bool === 0` ("false"). PEND-14's plan endorsed this conflation, but Radix Checkbox supports `checked="indeterminate"` which would distinguish the two. Reverses the plan's open-question #1 decision; do not land without a fresh user signal. | S | User signal (reverses PEND-14 plan decision) |
+| MAINT-199 | MAINT | `scripts/check-migrations-strict.mjs` mis-parses `;` inside SQL `--` comments as the statement terminator. Authors hitting this had to strip inline semicolons from migration comments. Fix: preprocess the input to strip `--` line comments + `/* */` block comments before scanning. Surfaced during PEND-03 (session 658). | S | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
@@ -473,6 +474,18 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low — purely additive UX clarity. Reverses the plan's open-question #1 decision; needs explicit user nod before landing.
 - **Impact:** Low.
 - **Status:** Open. Filed during PEND-14 close (session 657). Reverses the plan's deliberate decision; do not land without a fresh user signal.
+
+### MAINT-199 — `check-migrations-strict.mjs` mis-parses `;` inside SQL `--` comments as the statement terminator
+
+- **Domain:** Pre-commit tooling / migrations
+- **Location:** `scripts/check-migrations-strict.mjs:48` (`src.indexOf(';', startIdx)`)
+- **What:** The hook walks each `CREATE TABLE` by finding the next `;` after the `CREATE` keyword, then asserts `STRICT` appears in the tail after the last `)`. It does NOT strip SQL comments first, so a `--` line comment containing `;` (e.g. `-- example: id; this column holds the id`) is treated as the statement terminator. The `STRICT` keyword (which lives outside the truncated slice) is never seen, and the hook flags the table as missing STRICT — even when the actual migration is correct.
+- **Repro:** `cat > /tmp/x.sql <<'EOF'`<br>`CREATE TABLE foo (`<br>`    id TEXT NOT NULL,  -- example: id; this column holds the id`<br>`    name TEXT NOT NULL,`<br>`    PRIMARY KEY (id)`<br>`) STRICT;`<br>`EOF`<br>`node scripts/check-migrations-strict.mjs /tmp/x.sql` → `ERROR: ... CREATE TABLE foo must use STRICT mode` (exit 1) — false positive.
+- **Why it matters:** Surfaced during PEND-03 (session 658). Authors had to remove inline `;` from migration comments to silence the hook. Future migrations with descriptive comments will hit the same trap. The hook also miscounts `(` / `)` if a comment contains them, so the `lastIndexOf(')')` heuristic is similarly fragile.
+- **Cost:** S — strip line comments (`-- ... <newline>`) and block comments (`/* ... */`) from `src` before applying the regex / boundary scan. Don't strip inside string literals (rare in DDL but possible in `DEFAULT 'literal'`).
+- **Risk:** Low — preprocessor is a pure transformation; existing migrations are already STRICT-compliant so a less-aggressive parser will still pass them. Add a regression test based on the repro above.
+- **Impact:** Medium — eliminates a class of false positives that force authors to write less-readable migration comments.
+- **Status:** Open. Filed by PEND-03 review (session 658). The author worked around it by stripping inline semicolons from the 0044 migration comments; the hook itself was not modified.
 
 ## TEST — Backend test improvements
 

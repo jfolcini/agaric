@@ -44,14 +44,26 @@ pub struct QueueMetrics {
     /// size; the rest of the batch is implicitly dropped together.
     pub fg_apply_dropped: AtomicU64,
     /// Background tasks that exhausted all in-memory retries (per-block
-    /// tasks persisted to `materializer_retry_queue`, or global rebuilds
-    /// that are re-dispatched elsewhere — see BUG-22), **and** tasks
+    /// tasks persisted to `materializer_retry_queue`, **and as of PEND-03
+    /// global cache rebuilds also persisted to that queue under the
+    /// `'__GLOBAL__'` sentinel** — see BUG-22 / PEND-03), **and** tasks
     /// that `try_enqueue_background` had to shed under backpressure
     /// because the bounded channel was full (M-7 / M-8). Both
     /// drop-classes are aggregated here so a non-zero value is the
     /// single observability signal that the materializer is silently
     /// degrading cache freshness.
     pub bg_dropped: AtomicU64,
+    /// PEND-03: subset of [`Self::bg_dropped`] attributable to global
+    /// cache rebuild tasks (`RebuildTagsCache`, `RebuildPagesCache`,
+    /// `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
+    /// `RebuildTagInheritanceCache`, `RebuildPageIds`,
+    /// `RebuildBlockTagRefsCache`). Lets operators distinguish a
+    /// per-block reindex backlog (large `bg_dropped`, small
+    /// `bg_dropped_global`) from a global-cache freshness gap (the two
+    /// counters move together). Bumped both when a global task is shed
+    /// at queue-full time and when one fails handler-side and is
+    /// persisted via [`super::retry_queue::record_failure`].
+    pub bg_dropped_global: AtomicU64,
     /// Number of times `enqueue_foreground` had to await on a full
     /// channel. A non-zero value indicates foreground backpressure.
     /// See MAINT-24.
@@ -88,6 +100,7 @@ impl Default for QueueMetrics {
             bg_panics: AtomicU64::new(0),
             fg_apply_dropped: AtomicU64::new(0),
             bg_dropped: AtomicU64::new(0),
+            bg_dropped_global: AtomicU64::new(0),
             fg_full_waits: AtomicU64::new(0),
             last_materialize_ms: AtomicU64::new(0),
         }
@@ -128,6 +141,17 @@ pub struct StatusInfo {
     /// Number of background tasks that were either persisted to the retry
     /// queue or silently dropped after exhausting retries.
     pub bg_dropped: u64,
+    /// PEND-03: subset of `bg_dropped` attributable to global cache
+    /// rebuilds (`RebuildTagsCache`, `RebuildPagesCache`,
+    /// `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
+    /// `RebuildTagInheritanceCache`, `RebuildPageIds`,
+    /// `RebuildBlockTagRefsCache`). A non-zero value means at least
+    /// one global cache rebuild was shed or persisted on this run.
+    /// Worst-case staleness is bounded by the persistent-retry-queue
+    /// backoff cap (1h) because every dropped global task is also
+    /// recorded under the `'__GLOBAL__'` sentinel for sweeper-driven
+    /// re-enqueue.
+    pub bg_dropped_global: u64,
     /// Running count of background tasks deduped in the batch drain (was
     /// already tracked atomically; now surfaced).
     pub bg_deduped: u64,

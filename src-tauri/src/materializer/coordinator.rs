@@ -23,6 +23,13 @@ pub struct Materializer {
     pub(super) shutdown_flag: Arc<AtomicBool>,
     pub(super) metrics: Arc<QueueMetrics>,
     pub(super) reader_pool: SqlitePool,
+    /// PEND-03: write-capable pool used by the queue-saturation drop
+    /// path in [`Self::try_enqueue_background`] to persist dropped
+    /// global cache rebuilds to `materializer_retry_queue`. The
+    /// `reader_pool` enforces `PRAGMA query_only = ON` so it cannot
+    /// be used here. Both pools point at the same SQLite file; this
+    /// field exists to satisfy the write-side query-permission check.
+    pub(super) write_pool: SqlitePool,
     /// Set once the initial background task spawned by [`Materializer::build`]
     /// has finished populating [`QueueMetrics::cached_block_count`]. Tests
     /// that want to overwrite `cached_block_count` with a simulated value
@@ -192,6 +199,9 @@ impl Materializer {
             let g = gcal_handle.clone();
             Self::spawn_task(&tasks, consumer::run_foreground(p, fg_rx, s, m, g));
         }
+        // PEND-03: clone write_pool for the queue-saturation persistence
+        // path before moving the original into `run_background`.
+        let write_pool_for_struct = write_pool.clone();
         {
             let s = shutdown_flag.clone();
             let m = metrics.clone();
@@ -239,6 +249,7 @@ impl Materializer {
             shutdown_flag,
             metrics,
             reader_pool,
+            write_pool: write_pool_for_struct,
             block_count_cache_ready_flag,
             block_count_cache_ready_notify,
             pending_block_count_refreshes,
@@ -585,14 +596,54 @@ impl Materializer {
                 self.check_queue_pressure();
                 Ok(())
             }
-            Err(mpsc::error::TrySendError::Full(_)) => {
+            Err(mpsc::error::TrySendError::Full(task)) => {
                 // M-7 / M-8: when the bounded background channel is full,
                 // we shed the task and warn — but every dropped fan-out
                 // (RebuildTagsCache, RebuildAgendaCache, …) must also be
                 // visible in the `StatusInfo.bg_dropped` counter. Without
                 // this increment, sustained backpressure silently degrades
                 // cache freshness with no observable signal.
+                //
+                // PEND-03: when the dropped task is a global cache rebuild,
+                // the silent-drop path historically left the cache stale
+                // until the next mutation re-dispatched the rebuild. We
+                // now (1) bump the dedicated `bg_dropped_global`
+                // sub-counter for observability, and (2) persist the task
+                // to `materializer_retry_queue` under the `'__GLOBAL__'`
+                // sentinel so the sweeper re-enqueues it within the
+                // backoff cap (1h). Per-block tasks are also persistable,
+                // but they are already routed through the failure path
+                // in `consumer.rs`; only the queue-saturation path
+                // bypasses the consumer and so needs a sentinel-friendly
+                // persistence here. We deliberately keep this in-line
+                // (not async) by spawning the write — `try_enqueue_*`
+                // is sync and on the hot path; the persist is fire-and-
+                // forget with errors warned (matching existing pattern).
                 self.metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
+                if super::retry_queue::RetryKind::from_task(&task)
+                    .map(|(kind, _)| kind.is_global())
+                    .unwrap_or(false)
+                {
+                    self.metrics
+                        .bg_dropped_global
+                        .fetch_add(1, Ordering::Relaxed);
+                    let pool = self.write_pool.clone();
+                    let task_for_spawn = task.clone();
+                    Self::spawn_task(&self.tasks, async move {
+                        if let Err(e) = super::retry_queue::record_failure(
+                            &pool,
+                            &task_for_spawn,
+                            "background queue full",
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                error = %e,
+                                "failed to persist dropped global task to materializer_retry_queue"
+                            );
+                        }
+                    });
+                }
                 tracing::warn!("background queue full, dropping task");
                 Ok(())
             }
@@ -791,6 +842,7 @@ impl Materializer {
             bg_panics: self.metrics.bg_panics.load(Ordering::Relaxed),
             fg_apply_dropped: self.metrics.fg_apply_dropped.load(Ordering::Relaxed),
             bg_dropped: self.metrics.bg_dropped.load(Ordering::Relaxed),
+            bg_dropped_global: self.metrics.bg_dropped_global.load(Ordering::Relaxed),
             bg_deduped: self.metrics.bg_deduped.load(Ordering::Relaxed),
             fg_full_waits: self.metrics.fg_full_waits.load(Ordering::Relaxed),
             last_materialize_at,

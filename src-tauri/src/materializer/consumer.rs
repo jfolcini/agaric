@@ -9,7 +9,7 @@
 //! | Tier | Site | Tasks routed here | Retries | Backoff | On exhaustion |
 //! |------|------|-------------------|---------|---------|---------------|
 //! | Foreground (fg) | [`process_single_foreground_task`] | `ApplyOp`, `BatchApplyOps`, `Barrier` | 1 | constant 100 ms | Bump `fg_errors` (and, for Apply / BatchApplyOps, `fg_apply_dropped` plus a divergence warn carrying op coords). The op is **silently dropped** — there is no persistent retry queue for the apply path because re-applying a failed op out of order would break the op-log invariant. Sync replay is the recovery mechanism. |
-//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | Bump `bg_errors` / `bg_panics`. Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are then **persisted** to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`] (BUG-22). Global rebuilds are not persisted because they're re-dispatched by other code paths. |
+//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | Bump `bg_errors` / `bg_panics`. Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are persisted to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`] (BUG-22). PEND-03 extends persistence to global cache rebuilds (`RebuildTagsCache`, …, `RebuildBlockTagRefsCache`) under the `'__GLOBAL__'` sentinel so a failure / saturation drop no longer leaves caches stale until the next user mutation. Truly non-retryable tasks (`RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`, …) are silently counted on `bg_dropped` without persistence. |
 //!
 //! The in-memory backoffs (this module) handle transient WAL-lock
 //! contention; the persistent retry queue handles harder failures
@@ -513,13 +513,24 @@ pub(super) async fn run_background(
                 } else if !succeeded {
                     metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
                 }
-                // BUG-22: Persist exhausted failures for retryable tasks to
-                // `materializer_retry_queue` so the boot-time / periodic sweeper
-                // can re-enqueue them later. Only idempotent per-block tasks
-                // (UpdateFtsBlock, ReindexBlockLinks) are persisted — global
-                // rebuild tasks are retriggered by other code paths.
+                // BUG-22 / PEND-03: Persist exhausted failures for retryable
+                // tasks to `materializer_retry_queue` so the boot-time /
+                // periodic sweeper can re-enqueue them later. Both
+                // idempotent per-block tasks (UpdateFtsBlock,
+                // ReindexBlockLinks, ReindexBlockTagRefs) AND global cache
+                // rebuilds (RebuildTagsCache, RebuildPagesCache, …) are
+                // persisted. Global tasks use the `'__GLOBAL__'` sentinel
+                // for `block_id` (PEND-03 — eliminates the silent-drop gap
+                // where a failed cache rebuild would leave caches stale
+                // until the next user mutation re-dispatched it).
+                //
+                // The remaining truly-non-retryable tasks
+                // (`ApplyOp`, `BatchApplyOps`, `Barrier`, `RebuildFtsIndex`,
+                // `FtsOptimize`, `CleanupOrphanedAttachments`,
+                // `ReindexFtsReferences`, `RemoveFtsBlock`) hit the `else`
+                // arm and are silently counted without persistence.
                 if !succeeded {
-                    if super::retry_queue::RetryKind::from_task(&task).is_some() {
+                    if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(&task) {
                         let err_msg = last_error_msg.as_deref().unwrap_or("unknown error");
                         if let Err(persist_err) =
                             super::retry_queue::record_failure(&pool, &task, err_msg).await
@@ -530,11 +541,15 @@ pub(super) async fn run_background(
                             );
                         } else {
                             metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
+                            // PEND-03: surface global-cache drops separately
+                            // so operators can distinguish per-block reindex
+                            // backlog from global-cache freshness gaps.
+                            if kind.is_global() {
+                                metrics.bg_dropped_global.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     } else {
-                        // Non-retryable global task (RebuildTagsCache, etc.):
-                        // these are re-dispatched by other code paths, so
-                        // silently count the drop without persisting.
+                        // Truly non-retryable task: silent count, no persist.
                         metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
                     }
                 }

@@ -1033,6 +1033,109 @@ async fn enqueue_full_cache_rebuild_under_backpressure_increments_bg_dropped() {
 
     mat.shutdown();
 }
+
+/// PEND-03: when the bg queue is full and a global cache rebuild
+/// (`RebuildTagsCache`) is dispatched, three things must happen:
+///   1. The task is shed (queue stays full, no panic).
+///   2. `bg_dropped_global` ticks (separate from `bg_dropped` so
+///      operators can distinguish a per-block reindex backlog from a
+///      global-cache freshness gap).
+///   3. The task is persisted to `materializer_retry_queue` under the
+///      `'__GLOBAL__'` sentinel so the sweeper picks it up later.
+#[tokio::test]
+async fn test_global_task_dropped_on_queue_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Saturate the bg queue first. Push 2x capacity so the Full arm
+    // has plenty of opportunities to fire.
+    for _ in 0..2048 {
+        let _ = mat.try_enqueue_background(MaterializeTask::RebuildPagesCache);
+    }
+
+    let global_drops = mat
+        .metrics()
+        .bg_dropped_global
+        .load(AtomicOrdering::Relaxed);
+    assert!(
+        global_drops > 0,
+        "bg_dropped_global must increment when global tasks are shed under saturation, got {global_drops}"
+    );
+
+    // The persistence side-effect happens via spawn_task. Drain the
+    // pending task set so we observe the row before asserting.
+    // 250ms is enough for the tokio executor to drive the awaiter
+    // through `record_failure` (single SQLite UPSERT in WAL mode).
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let row = sqlx::query!(
+            "SELECT block_id, task_kind FROM materializer_retry_queue \
+             WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildPagesCache'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        if row.is_some() {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "PEND-03: dropped global RebuildPagesCache must be persisted to \
+                 materializer_retry_queue under '__GLOBAL__'; row never appeared"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    mat.shutdown();
+}
+
+/// PEND-03: a persisted global `RebuildAgendaCache` row whose
+/// `next_attempt_at` is already in the past must be re-enqueued by
+/// `sweep_once` and the row deleted from `materializer_retry_queue`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_global_task_re_enqueued_after_backoff() {
+    use crate::materializer::retry_queue;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Plant a global retry row with an already-past next_attempt_at,
+    // simulating "the backoff window expired".
+    let past = (chrono::Utc::now() - chrono::Duration::minutes(2))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    sqlx::query!(
+        "INSERT INTO materializer_retry_queue \
+             (block_id, task_kind, attempts, next_attempt_at) \
+         VALUES (?, ?, ?, ?)",
+        "__GLOBAL__",
+        "RebuildAgendaCache",
+        1_i64,
+        past,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let n = retry_queue::sweep_once(&pool, &pool, &mat).await.unwrap();
+    assert_eq!(
+        n, 1,
+        "the due global rebuild row must be re-enqueued by the sweeper"
+    );
+
+    // Row is gone after successful re-enqueue; the consumer would
+    // re-add it with attempts=2 if it fails again.
+    let remaining: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) AS \"n!: i64\" FROM materializer_retry_queue \
+         WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildAgendaCache'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0, "swept row must be deleted after re-enqueue");
+
+    mat.shutdown();
+}
+
 #[tokio::test]
 async fn try_enqueue_after_shutdown_err() {
     let (pool, _dir) = test_pool().await;

@@ -1013,6 +1013,19 @@ export type StatusInfo = {
 	 */
 	bg_dropped: number,
 	/**
+	 *  PEND-03: subset of `bg_dropped` attributable to global cache
+	 *  rebuilds (`RebuildTagsCache`, `RebuildPagesCache`,
+	 *  `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
+	 *  `RebuildTagInheritanceCache`, `RebuildPageIds`,
+	 *  `RebuildBlockTagRefsCache`). A non-zero value means at least
+	 *  one global cache rebuild was shed or persisted on this run.
+	 *  Worst-case staleness is bounded by the persistent-retry-queue
+	 *  backoff cap (1h) because every dropped global task is also
+	 *  recorded under the `'__GLOBAL__'` sentinel for sweeper-driven
+	 *  re-enqueue.
+	 */
+	bg_dropped_global: number,
+	/**
 	 *  Running count of background tasks deduped in the batch drain (was
 	 *  already tracked atomically; now surfaced).
 	 */

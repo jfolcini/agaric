@@ -10,7 +10,7 @@ Origin: a deep architectural review session run with five parallel investigation
 | --- | --- | --- | --- |
 | PEND-01 | Rename `MDNS_SERVICE_NAME` `BlockNotes` → `Agaric` | trivial | ✅ done this session |
 | PEND-02 | Rename "CQRS hybrid model" → "event sourcing with materialized views" | S | ready (gated on AGENTS.md edit approval) |
-| PEND-03 | Materializer silent-drop fix for global cache rebuilds | M (4-7h) | ready (revised after reviewer found a SQL constraint bug + 7 enum variants needed, not 1) |
+| PEND-03 | Materializer silent-drop fix for global cache rebuilds | M (4-7h) | ✅ done session 658 — migration 0044 (STRICT, `'__GLOBAL__'` sentinel for PK), 7 new RetryKind variants, consumer+coordinator persist on drop, new `bg_dropped_global` counter, AGENTS.md "Backend Architecture" bullet (with user approval). +7 tests; 3455/3455 nextest pass. Filed MAINT-199 — STRICT-hook mis-parses `;` in SQL comments as statement terminator (surfaced during PEND-03 author's workaround). |
 | PEND-04 | Threat-model audit — prune stale crypto docs | S (~1h) | ✅ done (bulk session 652; residue purged session 654 — `ARCHITECTURE.md` historical-note rephrase) |
 | PEND-05 | Projected-agenda parity test (cached vs on-the-fly) | S (1-2h) | ✅ done session 654 — test landed in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`. `#[ignore]`d on first run because it correctly detected real `.+1w` drift between cached + on-the-fly paths; filed as MAINT-196 in REVIEW-LATER. Re-enable once MAINT-196 ships the projection-path refactor. |
 | PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | ready (revised: reviewer caught the `TransferringFiles` state hallucination, Tier 2 cost +2-4h) |
@@ -26,6 +26,9 @@ Origin: a deep architectural review session run with five parallel investigation
 | PEND-16 | Daily-journal double-block render race | — | (out-of-band bug fix, separate track) |
 | PEND-17 | Block history sheet — visible diff-nav + restore-with-preview | — | (out-of-band UX plan, separate track) |
 | PEND-18 | `SpaceId` newtype + `SpaceScope` enum (lift Spaces enforcement into the type system) | M-L (9-15h) | ready (revised after reviewer caught: call-site count, mirror-target shape, missing specta+sqlx Phase 0 spike, test-fixture migration, IPC↔frontend coupling, sequencing-with-PEND-12) — renumbered from 11 due to id collision |
+| PEND-19 | `RecentPagesStrip` redesign — visible chip chrome + tighter geometry | S (1.5-3h) | ready (UX polish, visual-only, no data path; out-of-band — separate UX track) |
+| PEND-20 | SQL / perf review findings (post-validation) | mostly S, one M (G), one trivial bundle (A) | ready (8 actionable bundles A-H + 10 LOW items mostly accepted; sync-merge `json_extract` excluded — superseded by PEND-09 CRDT migration) |
+| PEND-21 | Structural breadcrumb — icon-button affordance + drop redundant exit-zoom button | S (1-2h) | ready (UX polish on `Breadcrumb` icon triggers + `BlockZoomBar` dedup; out-of-band — separate UX track) |
 
 ## Recommended order
 
@@ -39,11 +42,12 @@ Origin: a deep architectural review session run with five parallel investigation
 - PEND-13 (`page_id` ↔ space drift test) — ✅ shipped session 655
 - PEND-07 (STRICT tables policy) — ✅ shipped session 656
 - PEND-14 (boolean property type) — ✅ shipped session 657 (followups: MAINT-197 + MAINT-198 in REVIEW-LATER)
+- PEND-03 (materializer silent-drop fix) — ✅ shipped session 658 (followup: MAINT-199 STRICT-hook bug)
 
 **Mid-tier** — useful but more invasive:
 
-- PEND-03 (materializer silent-drop fix) — schema migration + dispatch, 4-7h
 - PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first (~6-10h), Tier 2 file transfer later (~6-9h)
+- PEND-20 (SQL / perf review findings) — bundle A (index hygiene migration) is ~1h and lives in the quick-wins tier on its own; bundles B/F/H are also <1h each. The remaining bundles (C/D/E ~ 1-3h each, G is 3-5h) are all independently approve-able. Excludes the sync-merge layer (superseded by PEND-09).
 
 **Spaces enforcement bundle** — sequential, NOT parallel (touch the same `_inner` signatures):
 
@@ -52,7 +56,7 @@ Origin: a deep architectural review session run with five parallel investigation
 
 **Out-of-band tracks** (planned in parallel by the user, separate from this session's bundle):
 
-- PEND-11 (space indicator UI redesign), PEND-16 (journal double-block race fix), PEND-17 (block-history diff-nav + restore-with-preview). These three were authored in another session and don't share dependencies with the type-system / spaces-enforcement bundle. Schedule independently.
+- PEND-11 (space indicator UI redesign), PEND-16 (journal double-block race fix), PEND-17 (block-history diff-nav + restore-with-preview), PEND-19 (`RecentPagesStrip` redesign), PEND-21 (structural breadcrumb icon-affordance + exit-zoom dedup). These were authored in separate sessions and don't share dependencies with the type-system / spaces-enforcement bundle. Schedule independently.
 
 **Strategic** — independent decisions with multi-phase timelines:
 
