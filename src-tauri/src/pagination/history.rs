@@ -11,8 +11,10 @@ use crate::error::AppError;
 /// multiple devices — the op_log PK is `(device_id, seq)` and `seq` alone
 /// is not globally unique.
 ///
-/// A `LIKE` pre-filter narrows candidates before `json_extract` to avoid
-/// full-table JSON parsing (same pattern as `recovery.rs`).
+/// PEND-20 B.2: queries the native `block_id` column (migration 0030)
+/// directly, replacing the old `LIKE` pre-filter + `json_extract`
+/// fallback. The `idx_op_log_block_id` index makes this O(log N) instead
+/// of a full op_log scan with per-row JSON parsing.
 ///
 /// Note: This queries ALL op types for a block (create, edit, add_tag,
 /// remove_tag, move, set_property, etc.).
@@ -49,8 +51,7 @@ pub async fn list_block_history(
         HistoryEntry,
         "SELECT device_id, seq, op_type, payload, created_at \
          FROM op_log \
-         WHERE payload LIKE '%\"block_id\":\"' || ?1 || '\"%' \
-           AND json_extract(payload, '$.block_id') = ?1 \
+         WHERE block_id = ?1 \
            AND (?2 IS NULL OR (\
                 seq < ?3 OR (seq = ?3 AND device_id < ?5))) \
          ORDER BY seq DESC, device_id DESC \

@@ -43,6 +43,21 @@ pub async fn restore_block(
     .execute(&mut *tx)
     .await?;
 
+    // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so an
+    // operator has a breadcrumb if a pathological tree silently truncated
+    // the restore. The cap (invariant #9) is preserved; we only ADD
+    // detection + surfacing here. Standard-variant helper is invariant
+    // to deleted_at state, so post-cascade it walks the now-restored
+    // subtree and reports MAX depth correctly.
+    if crate::block_descendants::cascade_depth_saturated(&mut *tx, block_id).await? {
+        tracing::warn!(
+            block_id = %block_id,
+            op = "restore_block",
+            "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+             below depth 100 were not restored. Tree is pathologically deep.",
+        );
+    }
+
     tx.commit().await?;
 
     // L-102: a wrong-token call (stale `deleted_at_ref` from a UI undo retry,

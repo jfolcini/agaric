@@ -1,5 +1,7 @@
 # PEND-20 — SQL / perf review findings (post-validation)
 
+> **Status (session 661):** A / B.1 / B.2 / D / E / F / H closed in the commit landing this session. **Remaining: C** (materializer descendants temp-table optimization, M 2-3h — touches the same `materializer/handlers.rs:285-408` block as E, schedule together), **G** (frontend `blocksById` Map in `PageBlockStore`, S-M 3-5h — frontend-only, can ship in a future frontend batch), **L1-L10** (LOW items; most accepted as-is per the plan body, only act if touched in adjacent work). The sync-merge `json_extract` finding remains explicitly excluded — superseded by PEND-09 CRDT migration.
+
 ## Origin
 
 Two-pass review run 2026-05-04: 6 parallel discovery subagents over the

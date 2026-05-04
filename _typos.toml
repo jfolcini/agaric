@@ -81,6 +81,10 @@ BA = "BA"
 # that simulate mid-typing of "tomorrow" / "hello" character by char.
 tomor = "tomor"
 hel = "hel"
+# `caf` — deliberate partial-typing fixture appearing in pending/PEND-34
+# (alias-prefix matching example: `caf` → `café-notes`) and in editor
+# fold-for-search tests as a leading prefix of "café".
+caf = "caf"
 # `val=ue` — test fixture in `query-utils.test.ts` for the
 # "property:key=val=ue" parser case (equals signs inside the value).
 ue = "ue"

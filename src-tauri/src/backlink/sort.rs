@@ -1,10 +1,9 @@
 //! Sorting utilities for backlink queries: sort block ID sets by creation
 //! time or by text/numeric/date property values.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 
 use super::types::{BacklinkSort, SortDir};
 use super::SMALL_IN_LIMIT;
@@ -80,7 +79,7 @@ pub(crate) async fn sort_ids(
 fn sort_with_property_map<V>(
     ids: &FxHashSet<String>,
     dir: &SortDir,
-    prop_map: &HashMap<String, Option<V>>,
+    prop_map: &FxHashMap<String, Option<V>>,
 ) -> Vec<String>
 where
     V: PartialOrd,
@@ -115,7 +114,7 @@ async fn fetch_text_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
-) -> Result<HashMap<String, Option<String>>, AppError> {
+) -> Result<FxHashMap<String, Option<String>>, AppError> {
     if ids.len() <= SMALL_IN_LIMIT {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
@@ -151,7 +150,7 @@ async fn fetch_num_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
-) -> Result<HashMap<String, Option<f64>>, AppError> {
+) -> Result<FxHashMap<String, Option<f64>>, AppError> {
     if ids.len() <= SMALL_IN_LIMIT {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
@@ -187,7 +186,7 @@ async fn fetch_date_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
-) -> Result<HashMap<String, Option<String>>, AppError> {
+) -> Result<FxHashMap<String, Option<String>>, AppError> {
     if ids.len() <= SMALL_IN_LIMIT {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()

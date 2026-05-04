@@ -677,6 +677,71 @@ async fn edit_block_sequential_edits_chain_prev_edit() {
     );
 }
 
+/// PEND-20 B.1 parity: after the rewrite from
+/// `json_extract(payload, '$.block_id')` + `ORDER BY created_at DESC`
+/// to `block_id = ?` + `ORDER BY (seq DESC, device_id DESC)`,
+/// `find_prev_edit_in_tx` must still chain the most-recent edit
+/// across multiple edits — this is the same contract the lookup served
+/// before the rewrite. Three sequential edits inside one second
+/// (`created_at` would tie at millisecond resolution) prove that the
+/// new ordering picks the highest-seq edit unambiguously.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_prev_edit_picks_highest_seq_after_b1_rewrite() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v1".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
+        .await
+        .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v3".into())
+        .await
+        .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v4".into())
+        .await
+        .unwrap();
+
+    // The op_log holds: 1 create + 3 edit ops. The latest edit's
+    // `prev_edit` must reference the second-latest edit, i.e. the op
+    // with the second-highest `seq` for this block.
+    let rows = sqlx::query!(
+        "SELECT seq, payload FROM op_log \
+         WHERE block_id = ? AND op_type = 'edit_block' \
+         ORDER BY seq DESC",
+        created.id,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(rows.len(), 3, "three edit_block ops expected");
+
+    // Latest op_log row = v4 edit. Its prev_edit must point at the v3 edit.
+    // `prev_edit` serializes as a `[device_id, seq]` JSON array
+    // (`Option<(String, i64)>`); see `op.rs::edit_block_prev_edit_serializes_as_array_or_null`.
+    let latest_payload: serde_json::Value = serde_json::from_str(&rows[0].payload).unwrap();
+    let prev_edit = latest_payload["prev_edit"].as_array().expect(
+        "PEND-20 B.1: prev_edit must be set after sequential edits, even with native column",
+    );
+    assert_eq!(prev_edit.len(), 2, "prev_edit is (device_id, seq) tuple");
+    let prev_seq = prev_edit[1].as_i64().unwrap();
+    assert_eq!(
+        prev_seq, rows[1].seq,
+        "PEND-20 B.1: prev_edit.seq must point at the second-latest edit (highest-seq predecessor)"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_block_nonexistent_returns_not_found() {
     let (pool, _dir) = test_pool().await;

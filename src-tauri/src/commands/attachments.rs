@@ -119,7 +119,11 @@ pub async fn add_attachment_inner(
     // Doing this inside the IMMEDIATE tx keeps it TOCTOU-safe relative
     // to the row insert.
     let full_path = app_data_dir.join(&fs_path);
-    let metadata = std::fs::metadata(&full_path)?;
+    // PEND-20 H: async stat — avoids blocking the writer-tx thread on slow /
+    // contended storage (Android eMMC, USB-mounted vaults). The TOCTOU
+    // window between stat and insert is irrelevant — sync GC reconciles
+    // missing attachments anyway (AGENTS.md §Threat Model).
+    let metadata = tokio::fs::metadata(&full_path).await?;
     let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
     if on_disk_len != size_bytes {
         return Err(AppError::Validation(format!(

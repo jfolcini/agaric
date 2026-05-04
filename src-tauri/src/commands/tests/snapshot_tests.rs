@@ -118,10 +118,13 @@ async fn snapshot_status_info_response() {
 async fn snapshot_block_history_response() {
     let (pool, _dir) = test_pool().await;
 
-    // Insert deterministic op_log entries directly
+    // Insert deterministic op_log entries directly. PEND-20 B.2 — the
+    // `block_id` column must be populated explicitly because
+    // `list_block_history` now queries that column instead of
+    // `json_extract(payload, '$.block_id')`.
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind("snap-device")
     .bind(1_i64)
@@ -129,6 +132,7 @@ async fn snapshot_block_history_response() {
     .bind("create_block")
     .bind(r#"{"block_id":"SNAP_HIST","block_type":"content","content":"hi"}"#)
     .bind("2025-06-15T12:00:00Z")
+    .bind("SNAP_HIST")
     .execute(&pool)
     .await
     .unwrap();

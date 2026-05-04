@@ -132,6 +132,14 @@ pub async fn create_page_in_space_inner(
     content: String,
     space_id: String,
 ) -> Result<BlockId, AppError> {
+    // PEND-26 N1: normalize ULID to uppercase per AGENTS.md invariant #8.
+    // Strict ULID-typed args from Tauri are already uppercase by
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here. Mirrors
+    // the pattern used by every other command that accepts a ULID
+    // (`commands/blocks/crud.rs`, `commands/pages.rs`, `commands/tags.rs`).
+    let space_id = space_id.to_ascii_uppercase();
+
     // MAINT-112: CommandTx couples commit + post-commit dispatch. The
     // previous implementation returned without dispatching and the
     // wrapper re-queried op_log to find the two freshly-appended rows —
@@ -1004,6 +1012,40 @@ mod tests {
         assert_eq!(
             after_blocks, before_blocks,
             "atomicity: no new block row must be materialised on rejection"
+        );
+    }
+
+    /// PEND-26 N1 — invariant #8: ULIDs must be normalised to uppercase
+    /// at every entry point. A caller (MCP agent, importer, etc.) that
+    /// passes a lowercase `space_id` must succeed, and the resulting
+    /// `space` ref-property must be stored in canonical uppercase so
+    /// hash-determinism / FK semantics line up with every other command.
+    #[tokio::test]
+    async fn create_page_in_space_normalizes_lowercase_space_id() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        let space_id_lower = SPACE_PERSONAL_ULID.to_ascii_lowercase();
+        let new_id = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Lowercase space_id".into(),
+            space_id_lower,
+        )
+        .await
+        .expect("lowercase space_id must be accepted (uppercase-normalised internally)");
+        let id = new_id.as_str();
+
+        // The stored `space` ref-property must be the canonical uppercase
+        // ULID, not whatever case the caller happened to pass in.
+        let space_ref = get_space_property_ref(&pool, id).await;
+        assert_eq!(
+            space_ref.as_deref(),
+            Some(SPACE_PERSONAL_ULID),
+            "space ref-property must be stored as the canonical uppercase ULID"
         );
     }
 }

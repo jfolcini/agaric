@@ -108,6 +108,31 @@ async fn new_creates_materializer_with_functional_queues() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// L-1 (PEND-25): the foreground / background sender accessors must
+// hand out clones of the *same* tokio mpsc channel on every call.
+// Storage moved from `Arc<Mutex<Option<Sender>>>` to
+// `Arc<OnceLock<Sender>>` — repeated `fg_sender()` / `bg_sender()` calls
+// must continue to share one channel (write-once semantic).
+// ──────────────────────────────────────────────────────────────────────
+#[tokio::test]
+async fn fg_and_bg_sender_return_same_channel_across_calls() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    let fg1 = mat.fg_sender().expect("fg sender available after new()");
+    let fg2 = mat.fg_sender().expect("fg sender still available");
+    assert!(
+        fg1.same_channel(&fg2),
+        "fg_sender must hand out the same channel on every call"
+    );
+    let bg1 = mat.bg_sender().expect("bg sender available after new()");
+    let bg2 = mat.bg_sender().expect("bg sender still available");
+    assert!(
+        bg1.same_channel(&bg2),
+        "bg_sender must hand out the same channel on every call"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // TEST-2: wait_for_initial_block_count_cache
 //
 // Deterministic synchronization point for tests that want to overwrite

@@ -2789,3 +2789,341 @@ async fn search_fts_nonexistent_space_returns_empty() {
         "empty result must have no cursor"
     );
 }
+
+// ======================================================================
+// PEND-20 D — Chunked rebuild_fts_index regression test
+// ======================================================================
+//
+// Before D, `rebuild_fts_index_impl` ran the entire DELETE + per-row
+// INSERT loop inside one BEGIN…COMMIT, holding the writer lock for
+// several seconds on a 100k-block vault. Now the rebuild splits into
+// `FTS_REINDEX_CHUNK`-sized batches with a fresh transaction per chunk.
+//
+// This test inserts `FTS_REINDEX_CHUNK + 500` content blocks (≥ 1500
+// per the task spec) so the chunked rebuild path runs at least twice
+// (one full chunk, one partial trailing chunk), then asserts that
+// every block is searchable end-to-end through the FTS5 MATCH query.
+// Chunking must be transparent to consumers.
+
+#[tokio::test]
+async fn rebuild_fts_index_chunked_indexes_all_blocks() {
+    use super::index::FTS_REINDEX_CHUNK;
+
+    let (pool, _dir) = test_pool().await;
+
+    let n: usize = FTS_REINDEX_CHUNK + 500;
+    let mut block_ids: Vec<String> = Vec::with_capacity(n);
+
+    // Bulk-seed inside one tx — the test setup is not the system under
+    // test; the chunked path under test only kicks in for `rebuild_fts_index`.
+    let mut setup_tx = pool.begin().await.unwrap();
+    for i in 0..n {
+        // 26-char id: 12-char prefix + 10 zeros + 4-digit `i`.
+        let blk = format!("01HQRBLDIDX0000000000{i:05}");
+        // Embed a unique trigram-friendly token per block so we can probe
+        // each one individually via `search_fts`. `block_<i>_token` is
+        // the marker; the `i` is zero-padded so trigram hits are stable.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, NULL, ?)",
+        )
+        .bind(&blk)
+        .bind(format!("rebuild_uniq_{i:05}_marker"))
+        .bind(i64::try_from(i).unwrap() + 1)
+        .execute(&mut *setup_tx)
+        .await
+        .unwrap();
+        block_ids.push(blk);
+    }
+    setup_tx.commit().await.unwrap();
+
+    // Run the chunked rebuild.
+    rebuild_fts_index(&pool).await.unwrap();
+
+    // Sanity: total fts_blocks rows == n. A regression that dropped one
+    // chunk's INSERTs would surface here loudly.
+    let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM fts_blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        usize::try_from(total).unwrap(),
+        n,
+        "all {n} blocks must have an fts_blocks row after the chunked rebuild"
+    );
+
+    // Probe the chunk boundaries: a regression that lost a chunk would
+    // miss at least one of these.
+    let sample = [
+        0_usize,
+        FTS_REINDEX_CHUNK - 1,
+        FTS_REINDEX_CHUNK,
+        FTS_REINDEX_CHUNK + 100,
+        n - 1,
+    ];
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    for &i in &sample {
+        let token = format!("rebuild_uniq_{i:05}_marker");
+        let results = search_fts(&pool, &token, &page, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            results.items.len(),
+            1,
+            "search for unique token {token:?} (idx {i}) must hit exactly one block via FTS"
+        );
+        assert_eq!(
+            results.items[0].id, block_ids[i],
+            "search hit at idx {i} must be the block we seeded with that token"
+        );
+    }
+}
+
+// ======================================================================
+// PEND-20 E — update_fts_for_block produces identical output via
+// _with_maps. Regression test for the load_ref_maps refactor.
+// ======================================================================
+//
+// `update_fts_for_block` is now a convenience wrapper that loads ref
+// maps and delegates to `update_fts_for_block_with_maps`. The output
+// FTS row must be identical to the pre-refactor behaviour: same
+// `stripped` text for blocks with tag/page references, same
+// remove-from-index semantics for deleted/conflict/null-content
+// blocks. This test pins the contract.
+
+#[tokio::test]
+async fn update_fts_for_block_with_maps_matches_wrapper_output() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
+    insert_block(&pool, PAGE_ULID, "page", "My Page", None, None).await;
+
+    let content = format!("**bold** and `code` see [[{PAGE_ULID}]] tag #[{TAG_ULID}] more");
+    insert_block(&pool, BLOCK_A, "content", &content, None, Some(0)).await;
+
+    // Path 1: convenience wrapper.
+    update_fts_for_block(&pool, BLOCK_A).await.unwrap();
+    let stripped_via_wrapper: String =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // Path 2: explicit map load + _with_maps. Must produce the same row.
+    let (tag_names, page_titles) = crate::fts::load_ref_maps(&pool).await.unwrap();
+    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
+        .await
+        .unwrap();
+    let stripped_via_with_maps: String =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stripped_via_wrapper, stripped_via_with_maps,
+        "wrapper and _with_maps must produce identical fts_blocks.stripped output"
+    );
+
+    // The two paths must also resolve `My Page` and `urgent` end-to-end.
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let urgent = search_fts(&pool, "urgent", &page, None, None, None)
+        .await
+        .unwrap();
+    assert!(
+        urgent.items.iter().any(|b| b.id == BLOCK_A),
+        "BLOCK_A must match resolved tag name 'urgent' via FTS"
+    );
+}
+
+#[tokio::test]
+async fn update_fts_for_block_with_maps_removes_deleted_block() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, BLOCK_A, "content", "text body", None, Some(0)).await;
+    let (tag_names, page_titles) = crate::fts::load_ref_maps(&pool).await.unwrap();
+    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
+        .await
+        .unwrap();
+
+    soft_delete_block(&pool, BLOCK_A).await;
+    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
+        .await
+        .unwrap();
+
+    let count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?",
+        BLOCK_A
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 0,
+        "_with_maps variant must remove the FTS row for a deleted block, matching the wrapper"
+    );
+}
+
+// ======================================================================
+// PEND-25 L6 — Combined inline-markup regex matches the previous
+// chained behaviour for every fixture case (bold / italic / code /
+// strike / highlight, including nested cases).
+// ======================================================================
+//
+// The implementation now applies a single alternation regex
+// (`MARKUP_RE`) iteratively until stable, rather than five separate
+// sequential `replace_all` passes. This fixture-based regression test
+// asserts that the combined-pass output equals the documented
+// per-pattern semantics on every flavour of input the old chain
+// produced. If a refactor breaks the equivalence (e.g. by skipping
+// the iteration loop and breaking nested cases), one of these
+// assertions will fail.
+
+#[test]
+fn strip_inline_markup_combined_matches_chain_semantics() {
+    use super::strip::strip_for_fts_with_maps;
+    let tag_names: HashMap<String, String> = HashMap::new();
+    let page_titles: HashMap<String, String> = HashMap::new();
+
+    // (input, expected) — covers every individual delimiter, every
+    // pairwise combination on the same line, and the nested cases that
+    // require the iterative fixed-point loop.
+    let cases: &[(&str, &str)] = &[
+        // 1. Plain text passes through unchanged (no allocation).
+        ("plain text with no markup", "plain text with no markup"),
+        // 2. Each individual delimiter type.
+        ("**bold**", "bold"),
+        ("*italic*", "italic"),
+        ("`code`", "code"),
+        ("~~strike~~", "strike"),
+        ("==hi==", "hi"),
+        // 3. Mixed unrelated delimiters on the same input.
+        ("**a** *b* `c` ~~d~~ ==e==", "a b c d e"),
+        // 4. Nested bold-around-italic — the canonical reason the
+        //    iterative loop exists. Bold strips first
+        //    (`**bold *italic***` → `bold *italic*`); a second iteration
+        //    strips the residual italic.
+        ("**bold *italic***", "bold italic"),
+        // 5. Code inside italic — italic match consumes the whole `*…*`
+        //    range including the backticks, leaving the code delimiters
+        //    behind for iteration 2.
+        ("*foo `bar` baz*", "foo bar baz"),
+        // 6. Two consecutive bold groups — neither nested nor adjacent
+        //    enough to confuse the alternation.
+        ("**a** and **b**", "a and b"),
+        // 7. Text outside any markup is preserved.
+        ("hello **world** rest", "hello world rest"),
+        // 8. Empty input.
+        ("", ""),
+    ];
+
+    for (input, expected) in cases {
+        let got = strip_for_fts_with_maps(input, &tag_names, &page_titles);
+        assert_eq!(
+            &got, expected,
+            "combined markup regex output for {input:?} must equal the chained semantics"
+        );
+    }
+}
+
+// ======================================================================
+// PEND-25 L7 — Multi-row INSERT path covers 600+ blocks correctly.
+// ======================================================================
+//
+// `reindex_fts_references` now stages (id, stripped) pairs in memory
+// per outer chunk and emits multi-row INSERT statements via
+// `sqlx::QueryBuilder` in sub-chunks of `FTS_INSERT_BATCH = 200`. With
+// 600+ blocks this path runs at least 3 sub-INSERTs per outer chunk
+// (or more if blocks split across multiple outer chunks) and must
+// insert every block exactly once — no duplicates from a stray loop
+// pass, no missing rows from a chunk-boundary off-by-one.
+
+#[tokio::test]
+async fn reindex_fts_references_multi_row_insert_no_duplicates() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQTAGMRINSERTBATCH000001";
+    insert_block(&pool, tag_id, "tag", "alpha", None, Some(0)).await;
+
+    // 600 referencing blocks — exercises 3 multi-row INSERTs at the
+    // default `FTS_INSERT_BATCH = 200`.
+    let n: usize = 600;
+    let mut block_ids: Vec<String> = Vec::with_capacity(n);
+
+    let mut setup_tx = pool.begin().await.unwrap();
+    for i in 0..n {
+        let blk = format!("01HQBLKMRINS00000000000{i:04}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, NULL, ?)",
+        )
+        .bind(&blk)
+        .bind(format!("row {i} #[{tag_id}]"))
+        .bind(i64::try_from(i).unwrap() + 1)
+        .execute(&mut *setup_tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(&blk)
+            .bind(tag_id)
+            .execute(&mut *setup_tx)
+            .await
+            .unwrap();
+        block_ids.push(blk);
+    }
+    setup_tx.commit().await.unwrap();
+
+    // Initial index, then trigger a reindex that exercises the new
+    // multi-row INSERT path.
+    rebuild_fts_index(&pool).await.unwrap();
+    sqlx::query("UPDATE blocks SET content = 'beta' WHERE id = ?")
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    reindex_fts_references(&pool, tag_id).await.unwrap();
+
+    // Each referencing block must end up with EXACTLY one fts_blocks row.
+    // A duplicated INSERT (e.g. from a stray retry pass) would surface
+    // as count > 1; a missing INSERT would surface as count = 0.
+    let ids_json = serde_json::to_string(&block_ids).unwrap();
+    let row_counts: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
+        "SELECT block_id, COUNT(*) FROM fts_blocks \
+         WHERE block_id IN (SELECT value FROM json_each(?)) \
+         GROUP BY block_id",
+    )
+    .bind(&ids_json)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row_counts.len(),
+        n,
+        "every referencing block must have a row (got {} of {n})",
+        row_counts.len()
+    );
+    for (blk, count) in &row_counts {
+        assert_eq!(
+            *count, 1,
+            "block {blk} must have exactly 1 fts_blocks row (got {count})"
+        );
+    }
+
+    // Probe at sub-INSERT chunk boundaries (FTS_INSERT_BATCH = 200): the
+    // 0th, 199th (last in chunk 1), 200th (first in chunk 2), 399th,
+    // 400th (first in chunk 3), and last row.
+    for &i in &[0_usize, 199, 200, 399, 400, n - 1] {
+        let blk = &block_ids[i];
+        let stripped: String =
+            sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+                .bind(blk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            stripped.contains("beta"),
+            "block {blk} (idx {i}) must contain renamed tag 'beta' after multi-row INSERT, got: {stripped:?}"
+        );
+    }
+}

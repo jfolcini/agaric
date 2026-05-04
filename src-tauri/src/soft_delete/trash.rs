@@ -95,6 +95,20 @@ pub async fn cascade_soft_delete(
     .execute(&mut *tx)
     .await?;
 
+    // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so an
+    // operator has a breadcrumb if a pathological tree silently truncated
+    // the soft-delete. The cap (invariant #9) is preserved; we only ADD
+    // detection + surfacing here. The standard-variant helper is
+    // invariant to whether the cascade has run, so this works post-UPDATE.
+    if crate::block_descendants::cascade_depth_saturated(&mut *tx, block_id).await? {
+        tracing::warn!(
+            seed_block_id = %block_id,
+            op = "cascade_soft_delete",
+            "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+             below depth 100 were not soft-deleted. Tree is pathologically deep.",
+        );
+    }
+
     let count = result.rows_affected();
     tx.commit().await?;
     tracing::info!(

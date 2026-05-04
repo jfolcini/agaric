@@ -1,5 +1,7 @@
 # PEND-25 — Rust performance review (2026-05-04): allocations / locks / async findings
 
+> **Status (session 661):** L1 / L3 / L4 / L5 / L6 / L7 / L10 / L11 / L12 / L14 / L17 closed in the commit landing this session (11 items). **Remaining and explicitly deferred: L2 + L9** (`Arc<OpRecord>` shift — must ship paired; ~2-3h together), **L8** (projected-agenda on-the-fly LIMIT — blocked on MAINT-196 projection-path refactor), **L15 + L16** (gcal channel + agenda batch — speculative, only if profiling shows concrete need), **M1** (deferred `block_on` startup — Android-profile-conditional, only act if cumulative cost >100ms is measured), **M2** (oauth2 v5 duplicate `reqwest 0.12` — already tracked as MAINT-91; do not pursue independently). **L13 explicitly excluded** — sync-merge double-parse, superseded by PEND-09 CRDT migration.
+
 ## TL;DR
 
 Two-pass performance review of the Rust backend (`src-tauri/`, ~183 K LOC across 210 files), focused exclusively on perf. **Pass 1**: six parallel investigation subagents partitioned the codebase by area. **Pass 2**: five parallel skeptical-validator subagents re-opened every finding against the actual code, grepped callers for frequency, cross-checked indexes against `migrations/`, and downgraded or refuted overstated claims.

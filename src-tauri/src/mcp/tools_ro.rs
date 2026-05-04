@@ -569,8 +569,14 @@ fn tool_desc_get_agenda() -> ToolDescription {
 fn tool_desc_journal_for_date() -> ToolDescription {
     ToolDescription {
         name: TOOL_JOURNAL_FOR_DATE.to_string(),
+        // PEND-26 N4: lead with the side-effect so an LLM agent skimming
+        // a tool list does not classify this as read-only based on the
+        // file group / leading verb. The tool emits a `CreateBlock` op
+        // with origin `agent:<name>` on first read-of-the-day (M-82 / M-84).
         description:
-            "Return the journal page for a specific date in the given space, creating it if missing. Idempotent per-space."
+            "Creates the page if missing (one `CreateBlock` op with origin `agent:<name>`), \
+             then returns the journal page for `space_id` on `date`. \
+             Idempotent per `(space_id, date)` after the first call."
                 .to_string(),
         input_schema: json!({
             "type": "object",

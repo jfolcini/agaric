@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-The `[[ ` page-link picker (and the `PageBrowser` / `SearchPanel` filters,
+The `[[` page-link picker (and the `PageBrowser` / `SearchPanel` filters,
 out-of-scope here) currently only surfaces an alias when the user has
 typed the **entire** alias text. Typing one character at a time never
 narrows by alias — only by page title. This kills aliases as a discovery

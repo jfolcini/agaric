@@ -76,6 +76,26 @@ pub const JSONRPC_RESOURCE_NOT_FOUND: i64 = -32001;
 /// underlying error message contains multi-byte codepoints.
 pub(crate) const ERROR_CLIP_CAP: usize = 200;
 
+/// L-12 (PEND-25): truncate `s` to the first `max` Unicode scalars and
+/// return a borrowed slice over the input. Always lands on a valid
+/// UTF-8 boundary because `char_indices()` walks scalars, so the
+/// returned `&str` is safe to serialise as JSON even when the input
+/// contains multi-byte codepoints.
+///
+/// Kept module-local: today the only caller is the dispatch error-clip
+/// path in this file. If a second caller materialises (e.g. the
+/// rmcp-spike error branch) promote to `pub(crate)` and re-export from
+/// `super` rather than duplicating the helper. We deliberately do **not**
+/// move it to a generic `util` module — its semantics are tied to
+/// `ERROR_CLIP_CAP`-style "produce a JSON-safe short suffix" use cases,
+/// not generic string handling.
+fn truncate_chars(s: &str, max: usize) -> &str {
+    match s.char_indices().nth(max) {
+        Some((byte_idx, _)) => &s[..byte_idx],
+        None => s,
+    }
+}
+
 /// L-113 grace period: when [`super::McpLifecycle::disconnect_all`]
 /// fires while a `tools/call` is mid-dispatch, the per-connection task
 /// waits up to this long for the in-flight future to finish before
@@ -509,7 +529,15 @@ async fn handle_tools_call<R: ToolRegistry>(
                 // into the activity feed. See [`ERROR_CLIP_CAP`] for
                 // the rationale on the cap and the Unicode-scalar
                 // (rather than byte) basis.
-                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
+                //
+                // L-12 (PEND-25): the previous shape was
+                // `err.to_string().chars().take(ERROR_CLIP_CAP).collect()`
+                // — the `collect()` allocated a freshly-grown `String`
+                // byte-by-byte. `truncate_chars` returns a borrowed
+                // slice over the full message, and the single
+                // `to_owned()` allocates exactly the truncated length.
+                let full = err.to_string();
+                let short = truncate_chars(&full, ERROR_CLIP_CAP).to_owned();
                 (name.clone(), ActRes::Err(short))
             }
         };

@@ -115,6 +115,7 @@ fn bench_set_property(c: &mut Criterion) {
                             None,
                             None,
                             None,
+                            None,
                         )
                         .await
                         .unwrap()

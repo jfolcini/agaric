@@ -25,10 +25,11 @@ mod tests;
 pub use index::{
     fts_optimize, rebuild_fts_index, rebuild_fts_index_split, reindex_fts_references,
     remove_fts_for_block, update_fts_for_block, update_fts_for_block_split,
+    update_fts_for_block_split_with_maps, update_fts_for_block_with_maps,
 };
 pub use search::search_fts;
 pub use strip::strip_for_fts;
 
 // Re-export crate-internal API
 pub(crate) use search::sanitize_fts_query;
-pub(crate) use strip::{PAGE_LINK_RE, TAG_REF_RE};
+pub(crate) use strip::{load_ref_maps, PAGE_LINK_RE, TAG_REF_RE};
