@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT attempts FROM materializer_retry_queue WHERE block_id = ? AND task_type = ?",
+  "query": "SELECT attempts FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
   "describe": {
     "columns": [
       {
@@ -16,5 +16,5 @@
       false
     ]
   },
-  "hash": "8f471547d211c4d1be2d32c8e001e4e317d806a5c262399072282c0e16734ca9"
+  "hash": "d79e1d46e4c5cb3e1c6a1fbf69de1a1031cdd8e93bfedceab9c98d6fd4aea070"
 }

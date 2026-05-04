@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id, task_type FROM materializer_retry_queue WHERE next_attempt_at <= ? ORDER BY next_attempt_at ASC LIMIT ?",
+  "query": "SELECT block_id, task_kind FROM materializer_retry_queue WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildPagesCache'",
   "describe": {
     "columns": [
       {
@@ -9,18 +9,18 @@
         "type_info": "Text"
       },
       {
-        "name": "task_type",
+        "name": "task_kind",
         "ordinal": 1,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 0
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "fecdc5c91d373f62e029cfe6620997e5c1f4aeb00b6bface3ab835efa2cce848"
+  "hash": "a0fcc7c0ebfdebacd072af39f79bc3b0005773407369c4d695fc898b63628cb5"
 }
