@@ -18,8 +18,14 @@ use tokio::task::JoinSet;
 
 #[derive(Clone)]
 pub struct Materializer {
-    pub(super) fg_tx: Arc<Mutex<Option<mpsc::Sender<MaterializeTask>>>>,
-    pub(super) bg_tx: Arc<Mutex<Option<mpsc::Sender<MaterializeTask>>>>,
+    /// L-1: the foreground sender is set once during [`Self::build`] and
+    /// never replaced. `OnceLock` removes the per-call `Mutex` acquisition
+    /// from the [`Self::fg_sender`] hot path while still gating
+    /// post-shutdown sends through [`Self::shutdown_flag`].
+    pub(super) fg_tx: Arc<OnceLock<mpsc::Sender<MaterializeTask>>>,
+    /// L-1: see [`Self::fg_tx`] — same write-once shape for the
+    /// background queue sender.
+    pub(super) bg_tx: Arc<OnceLock<mpsc::Sender<MaterializeTask>>>,
     pub(super) shutdown_flag: Arc<AtomicBool>,
     pub(super) metrics: Arc<QueueMetrics>,
     pub(super) reader_pool: SqlitePool,
@@ -243,9 +249,22 @@ impl Materializer {
             let s = shutdown_flag.clone();
             Self::spawn_task(&tasks, Self::metrics_snapshot_task(m, s, lifecycle));
         }
+        // L-1: senders live in `OnceLock`s instead of `Mutex<Option<…>>`
+        // since they are written exactly once here and never replaced.
+        // Reads stay lock-free on the hot path; post-shutdown gating is
+        // handled by checking `shutdown_flag` inside `fg_sender` /
+        // `bg_sender`.
+        let fg_tx_cell: Arc<OnceLock<mpsc::Sender<MaterializeTask>>> = Arc::new(OnceLock::new());
+        fg_tx_cell
+            .set(fg_tx)
+            .expect("freshly-constructed OnceLock cannot already be set");
+        let bg_tx_cell: Arc<OnceLock<mpsc::Sender<MaterializeTask>>> = Arc::new(OnceLock::new());
+        bg_tx_cell
+            .set(bg_tx)
+            .expect("freshly-constructed OnceLock cannot already be set");
         Self {
-            fg_tx: Arc::new(Mutex::new(Some(fg_tx))),
-            bg_tx: Arc::new(Mutex::new(Some(bg_tx))),
+            fg_tx: fg_tx_cell,
+            bg_tx: bg_tx_cell,
             shutdown_flag,
             metrics,
             reader_pool,
@@ -705,16 +724,13 @@ impl Materializer {
     /// drain here so a stuck task can never block process exit.
     pub fn shutdown(&self) {
         self.shutdown_flag.store(true, Ordering::Release);
-        let _ = self
-            .fg_tx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        let _ = self
-            .bg_tx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
+        // L-1: with senders living in `OnceLock`s we cannot drop them
+        // here to wake the consumer's `recv().await`. The `tasks`
+        // `abort_all()` below cancels each consumer at its next await
+        // point (which is the `recv().await`), and post-shutdown
+        // `fg_sender` / `bg_sender` calls return `Channel(...)` because
+        // they short-circuit on `shutdown_flag`. Future `try_send` calls
+        // also surface `Closed` once the consumer's receiver drops.
         // M-12: abort tracked tasks. Brief lock — `abort_all` is sync
         // and just signals; tasks finalize asynchronously.
         self.tasks

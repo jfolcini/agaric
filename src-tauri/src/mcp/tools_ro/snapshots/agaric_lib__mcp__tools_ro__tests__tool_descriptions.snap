@@ -151,7 +151,7 @@ expression: wire
       - end_date
     type: object
   name: get_agenda
-- description: "Return the journal page for a specific date in the given space, creating it if missing. Idempotent per-space."
+- description: "Creates the page if missing (one `CreateBlock` op with origin `agent:<name>`), then returns the journal page for `space_id` on `date`. Idempotent per `(space_id, date)` after the first call."
   inputSchema:
     additionalProperties: false
     properties:

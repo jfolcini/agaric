@@ -60,11 +60,25 @@ pub(crate) async fn find_prev_edit_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<Option<(String, i64)>, AppError> {
+    // PEND-20 B.1: query the native `block_id` column (migration 0030)
+    // instead of `json_extract(payload, '$.block_id')` so the lookup is
+    // index-supported by `idx_op_log_block_id` (migration 0030, line 23)
+    // rather than a full op_log scan.
+    //
+    // The `ORDER BY (seq DESC, device_id DESC)` is the op log's natural
+    // primary-key ordering and is functionally equivalent to the previous
+    // `created_at DESC` for this single-row lookup: within one device the
+    // most-recent edit is always the highest seq, and across devices the
+    // tuple is well-defined and total. There is no compound
+    // `(block_id, seq DESC, device_id DESC)` index today — the
+    // `idx_op_log_block_id` index narrows the scan to ops touching this
+    // block (typically a handful) and SQLite resolves the ORDER BY in
+    // memory on that small set, which is the desired plan.
     let row = sqlx::query!(
         "SELECT device_id, seq FROM op_log \
-         WHERE json_extract(payload, '$.block_id') = ? \
+         WHERE block_id = ?1 \
          AND op_type IN ('edit_block', 'create_block') \
-         ORDER BY created_at DESC \
+         ORDER BY seq DESC, device_id DESC \
          LIMIT 1",
         block_id
     )
@@ -647,6 +661,19 @@ pub async fn delete_block_inner(
     .execute(&mut **tx)
     .await?;
 
+    // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so
+    // an operator has a breadcrumb if a pathological tree silently
+    // truncated the soft-delete. The cap itself is preserved (invariant
+    // #9); we only ADD detection + surfacing here.
+    if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
+        tracing::warn!(
+            block_id = %block_id,
+            op = "delete_block",
+            "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+             below depth 100 were not soft-deleted. Tree is pathologically deep.",
+        );
+    }
+
     // P-4: Remove inherited entries for soft-deleted subtree
     crate::tag_inheritance::remove_subtree_inherited(&mut tx, &block_id).await?;
 
@@ -766,6 +793,19 @@ pub async fn restore_block_inner(
     .execute(&mut **tx)
     .await?;
 
+    // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so
+    // an operator has a breadcrumb if a pathological tree silently
+    // truncated the restore. The cap itself is preserved (invariant
+    // #9); we only ADD detection + surfacing here.
+    if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
+        tracing::warn!(
+            block_id = %block_id,
+            op = "restore_block",
+            "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+             below depth 100 were not restored. Tree is pathologically deep.",
+        );
+    }
+
     // P-4: Recompute inherited tags for restored subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 
@@ -839,6 +879,22 @@ pub async fn purge_block_inner(
             )));
         }
         Some(_) => {} // block is deleted, proceed with purge
+    }
+
+    // PEND-26 N2: refuse to purge a tree that is so deep the cascade
+    // would saturate the depth-100 cap. Hard delete must be
+    // all-or-nothing — a saturating cascade leaves dangling rows past
+    // depth 100. Checked BEFORE the physical delete so the abort is
+    // a clean rollback (op_log entry not yet appended; tx not yet
+    // committed). Standard-variant under-detection of pure-conflict
+    // chains is acceptable: the cap is preserved either way and the
+    // operator gets a clear error on the common case.
+    if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
+        return Err(AppError::Validation(format!(
+            "block '{block_id}' subtree is too deep to purge (>=99 levels); \
+             the recursive cascade would hit the depth-100 cap and leave \
+             descendants below depth 100 dangling. Purge in chunks instead.",
+        )));
     }
 
     let payload = OpPayload::PurgeBlock(PurgeBlockPayload {

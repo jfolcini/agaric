@@ -539,12 +539,25 @@ pub async fn list_page_links_inner(
     // of the edge. The shape collapses to a single conjunction over
     // the two `COALESCE(...) IN (...)` checks so the filter holds
     // only when both source-page and target-page belong to the
-    // requested space. Kept inline (not via the macro) because this
-    // is dynamic SQL (`sqlx::query_as`) and we need two filtered
-    // sub-queries against `block_properties` rather than the single
-    // form most other call-sites use.
+    // requested space.
+    //
+    // PEND-20 F: the space-filter subquery used to be inlined twice
+    // (once per endpoint), which forces SQLite to evaluate the same
+    // `block_properties WHERE key='space' AND value_ref=?1` lookup
+    // twice per row. Wrapping it in a CTE with the `AS MATERIALIZED`
+    // hint forces SQLite to compute the membership set once and reuse
+    // it for both endpoints; without the hint the planner inlines the
+    // CTE and we get the same twice-evaluated subquery shape (verified
+    // via `EXPLAIN QUERY PLAN`). After PEND-20 A's covering index
+    // lands the underlying lookup is index-only, so the gain here is
+    // "subquery materialised once instead of twice" rather than a
+    // planner-level shift.
     let links = sqlx::query_as::<_, PageLink>(
-        "SELECT
+        "WITH space_members AS MATERIALIZED (
+             SELECT block_id FROM block_properties
+             WHERE key = 'space' AND value_ref = ?1
+         )
+         SELECT
             COALESCE(sb.parent_id, bl.source_id) AS source_id,
             bl.target_id AS target_id,
             COUNT(*) AS ref_count
@@ -563,14 +576,8 @@ pub async fn list_page_links_inner(
          WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
              AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
              AND (?1 IS NULL OR (
-                 COALESCE(sb.parent_id, bl.source_id) IN (
-                     SELECT bp_src.block_id FROM block_properties bp_src
-                     WHERE bp_src.key = 'space' AND bp_src.value_ref = ?1
-                 )
-                 AND bl.target_id IN (
-                     SELECT bp_tgt.block_id FROM block_properties bp_tgt
-                     WHERE bp_tgt.key = 'space' AND bp_tgt.value_ref = ?1
-                 )
+                 COALESCE(sb.parent_id, bl.source_id) IN (SELECT block_id FROM space_members)
+                 AND bl.target_id IN (SELECT block_id FROM space_members)
              ))
          GROUP BY 1, 2",
     )

@@ -101,7 +101,14 @@ pub const DEDICATED_CALENDAR_NAME: &str = "Agaric Agenda";
 /// `AppError::Validation` so the surrounding [`classify_date_err`]
 /// shovels it into [`DateFailure::Other`] (it would mean the digest
 /// produced an invalid date, which is a programmer error).
-fn event_to_patch(event: &Event) -> Result<EventPatch, AppError> {
+/// L-14 (PEND-25): take the `Event` by value so the three owned
+/// `String` fields (`summary`, `description`, `transparency`) move
+/// straight into the `EventPatch` setters via the existing
+/// `impl Into<String>` shape — no more `String::clone` per builder
+/// step. The early `parse_from_str` calls borrow `event.start.date` /
+/// `event.end.date` before the moves; partial-move semantics let us
+/// then consume the other fields.
+fn event_to_patch(event: Event) -> Result<EventPatch, AppError> {
     let start = NaiveDate::parse_from_str(&event.start.date, "%Y-%m-%d").map_err(|e| {
         AppError::Validation(format!(
             "gcal.connector.bad_start_date: {}: {e}",
@@ -115,11 +122,11 @@ fn event_to_patch(event: &Event) -> Result<EventPatch, AppError> {
         ))
     })?;
     Ok(EventPatch::new()
-        .with_summary(event.summary.clone())
-        .with_description(event.description.clone())
+        .with_summary(event.summary)
+        .with_description(event.description)
         .with_start(start)
         .with_end(end)
-        .with_transparency(event.transparency.clone()))
+        .with_transparency(event.transparency))
 }
 
 // ---------------------------------------------------------------------------
@@ -673,7 +680,11 @@ async fn push_date(
             // optional-field handling.  A parse failure here is a
             // programmer error (digest produced an invalid date) and
             // surfaces as `DateFailure::Other`.
-            let patch = event_to_patch(&event).map_err(|e| classify_date_err(&e))?;
+            //
+            // L-14 (PEND-25): pass `event` by value so the helper can
+            // move its `String` fields into the patch setters without
+            // an intermediate clone per field.
+            let patch = event_to_patch(event).map_err(|e| classify_date_err(&e))?;
             match api
                 .patch_event(token, calendar_id, &prior.gcal_event_id, &patch)
                 .await
@@ -2432,6 +2443,66 @@ mod tests {
         // does not currently expose a graceful-shutdown trigger; the
         // drop relies on tokio cancelling the task on runtime shutdown.)
         drop(task);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // L-14 (PEND-25): `event_to_patch` produces the same `EventPatch`
+    // before / after the move-by-value refactor.
+    //
+    // The pre-refactor shape was `event: &Event` + per-field
+    // `String::clone` into the builder; the post-refactor shape is
+    // `event: Event` + direct moves. Both must yield byte-identical
+    // patches for any well-formed input. We anchor the assertion
+    // against an explicit `EventPatch` literal so a future change to
+    // `with_*` setters has to come back through this test.
+    // ──────────────────────────────────────────────────────────────────
+    #[test]
+    fn event_to_patch_produces_expected_patch_after_l14_refactor() {
+        let event = Event {
+            summary: "Agaric Agenda — Wed Apr 22".to_owned(),
+            description: "* Pay rent\n* Walk the dog".to_owned(),
+            start: digest::EventDate {
+                date: "2026-04-22".to_owned(),
+            },
+            end: digest::EventDate {
+                date: "2026-04-22".to_owned(),
+            },
+            transparency: "transparent".to_owned(),
+        };
+
+        let expected = EventPatch {
+            summary: Some("Agaric Agenda — Wed Apr 22".to_owned()),
+            description: Some("* Pay rent\n* Walk the dog".to_owned()),
+            start: Some(NaiveDate::from_ymd_opt(2026, 4, 22).unwrap()),
+            end: Some(NaiveDate::from_ymd_opt(2026, 4, 22).unwrap()),
+            transparency: Some("transparent".to_owned()),
+        };
+
+        let actual = event_to_patch(event).expect("well-formed event must yield Ok patch");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn event_to_patch_surfaces_validation_error_on_bad_date() {
+        // Pre- and post-refactor must both surface `Validation` for an
+        // unparseable date — the move-by-value change does not alter
+        // the early-return semantics of the parse step.
+        let event = Event {
+            summary: "x".to_owned(),
+            description: "y".to_owned(),
+            start: digest::EventDate {
+                date: "not-a-date".to_owned(),
+            },
+            end: digest::EventDate {
+                date: "2026-04-22".to_owned(),
+            },
+            transparency: "transparent".to_owned(),
+        };
+        let err = event_to_patch(event).expect_err("bad start date must error");
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "expected AppError::Validation, got {err:?}"
+        );
     }
 }
 

@@ -2515,3 +2515,92 @@ async fn list_page_links_disjointness_feat3p4() {
     assert_eq!(a.len(), 1);
     assert_eq!(b.len(), 1);
 }
+
+/// PEND-20 F parity: the CTE-based space-filter dedup must produce
+/// identical results to the previous twice-inlined subquery shape.
+///
+/// Fixture: source page only in space A; target page only in space B
+/// (cross-space edge). The space filter requires BOTH endpoints to
+/// belong to the requested space, so the edge must be excluded from
+/// both A's and B's scoped query — exactly as before. This anchors
+/// the contract that wrapping the membership lookup in a `WITH
+/// space_members AS (...)` CTE doesn't change result-set semantics.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_cte_parity_with_inlined_subquery_pend20f() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    for (id, title) in &[
+        ("PEND20F_AA", "in A"),
+        ("PEND20F_AB", "in A second"),
+        ("PEND20F_BA", "in B"),
+        ("PEND20F_BB", "in B second"),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, NULL, NULL)",
+        )
+        .bind(id)
+        .bind(title)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    assign_to_space(&pool, "PEND20F_AA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "PEND20F_AB", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "PEND20F_BA", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "PEND20F_BB", TEST_SPACE_B_ID).await;
+
+    // Within-A edge.
+    insert_link(&pool, "PEND20F_AA", "PEND20F_AB").await;
+    // Cross-space edges — both endpoints would need to belong to the
+    // scoped space, so neither should ever appear in a scoped result.
+    insert_link(&pool, "PEND20F_AA", "PEND20F_BA").await;
+    insert_link(&pool, "PEND20F_BA", "PEND20F_AA").await;
+    // Within-B edge.
+    insert_link(&pool, "PEND20F_BA", "PEND20F_BB").await;
+
+    let scope_a = crate::commands::list_page_links_inner(&pool, Some(TEST_SPACE_ID.into()))
+        .await
+        .unwrap();
+    let scope_b = crate::commands::list_page_links_inner(&pool, Some(TEST_SPACE_B_ID.into()))
+        .await
+        .unwrap();
+    let unscoped = crate::commands::list_page_links_inner(&pool, None)
+        .await
+        .unwrap();
+
+    let to_set = |v: Vec<crate::commands::PageLink>| {
+        v.into_iter()
+            .map(|l| (l.source_id.into(), l.target_id.into()))
+            .collect::<std::collections::HashSet<(String, String)>>()
+    };
+    let edges_a = to_set(scope_a);
+    let edges_b = to_set(scope_b);
+    let edges_unscoped = to_set(unscoped);
+
+    assert_eq!(
+        edges_a,
+        [("PEND20F_AA".into(), "PEND20F_AB".into())]
+            .iter()
+            .cloned()
+            .collect(),
+        "PEND-20 F: scoped A must yield exactly the within-A edge after CTE refactor",
+    );
+    assert_eq!(
+        edges_b,
+        [("PEND20F_BA".into(), "PEND20F_BB".into())]
+            .iter()
+            .cloned()
+            .collect(),
+        "PEND-20 F: scoped B must yield exactly the within-B edge after CTE refactor",
+    );
+    // The unscoped query (which never enters the CTE branch) should
+    // see all four edges, including the two cross-space ones.
+    assert_eq!(
+        edges_unscoped.len(),
+        4,
+        "PEND-20 F: unscoped query must surface every edge regardless of space",
+    );
+}

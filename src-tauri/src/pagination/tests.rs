@@ -2306,6 +2306,13 @@ async fn insert_block_link(pool: &SqlitePool, source_id: &str, target_id: &str) 
 }
 
 /// Insert an op_log entry directly for history tests.
+///
+/// PEND-20 B.2 — `list_block_history` now queries the native `block_id`
+/// column (migration 0030) instead of `json_extract(payload, '$.block_id')`,
+/// so test inserts must populate `block_id` from the payload to match
+/// production rows. Production-side this happens automatically in
+/// `op_log::append_local_op_in_tx`; tests that bypass that path use
+/// this helper.
 async fn insert_op_log_entry(
     pool: &SqlitePool,
     device_id: &str,
@@ -2315,8 +2322,8 @@ async fn insert_op_log_entry(
     created_at: &str,
 ) {
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, ?, ?, ?, ?, json_extract(?, '$.block_id'))",
     )
     .bind(device_id)
     .bind(seq)
@@ -2324,6 +2331,7 @@ async fn insert_op_log_entry(
     .bind(op_type)
     .bind(payload)
     .bind(created_at)
+    .bind(payload)
     .execute(pool)
     .await
     .unwrap();
@@ -2762,6 +2770,55 @@ async fn test_list_block_history_all_op_types() {
     assert!(
         op_types.contains(&"move_block"),
         "move_block op should appear"
+    );
+}
+
+/// PEND-20 B.2 parity: rows whose `block_id` column is unset must NOT
+/// surface in `list_block_history` after the rewrite to native column
+/// lookups, even if their JSON payload contains the right block_id.
+/// This anchors the contract that the index is the source of truth and
+/// `json_extract` is no longer consulted.
+#[tokio::test]
+async fn test_list_block_history_uses_native_block_id_column() {
+    let (pool, _dir) = test_pool().await;
+
+    // Row A: block_id column populated (matches the search) — should appear.
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        r#"{"block_id":"PEND20B2","content":"hello"}"#,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+
+    // Row B: payload contains block_id but column is NULL — must NOT appear.
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, ?, ?, ?, ?, NULL)",
+    )
+    .bind("device-1")
+    .bind(2_i64)
+    .bind("test-hash-payload-only")
+    .bind("edit_block")
+    .bind(r#"{"block_id":"PEND20B2","to_text":"updated"}"#)
+    .bind("2025-01-01T01:00:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_block_history(&pool, "PEND20B2", &page).await.unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "PEND-20 B.2: only the row with native block_id set should match"
+    );
+    assert_eq!(
+        resp.items[0].seq, 1,
+        "PEND-20 B.2: row A (block_id populated) is the match"
     );
 }
 

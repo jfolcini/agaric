@@ -2354,3 +2354,39 @@ async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
     drop(reader);
     let _ = accept_task.await;
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// L-12 (PEND-25): `truncate_chars` must not panic on multi-byte chars
+// and must produce the same prefix `&s[..byte_idx]` indexing would
+// produce on the same scalar boundary.
+// ──────────────────────────────────────────────────────────────────────
+#[test]
+fn truncate_chars_handles_ascii_under_cap() {
+    let s = "abcdef";
+    assert_eq!(truncate_chars(s, 200), "abcdef");
+    assert_eq!(truncate_chars(s, 4), "abcd");
+}
+
+#[test]
+fn truncate_chars_handles_multibyte_at_boundary() {
+    // Each "é" is 2 bytes; the 4-char clip must land on the boundary
+    // between the 4th and 5th scalar (byte index 8) — *not* split a
+    // multibyte char (which would `panic!` if we naively byte-indexed).
+    let s = "éééééé";
+    let out = truncate_chars(s, 4);
+    assert_eq!(out, "éééé");
+    assert_eq!(out.chars().count(), 4);
+}
+
+#[test]
+fn truncate_chars_returns_full_input_when_under_cap() {
+    let s = "héllo";
+    // 5 scalars ≤ cap of 200 — return the whole string verbatim.
+    assert_eq!(truncate_chars(s, 200), s);
+}
+
+#[test]
+fn truncate_chars_empty_input_is_empty() {
+    assert_eq!(truncate_chars("", 200), "");
+    assert_eq!(truncate_chars("", 0), "");
+}

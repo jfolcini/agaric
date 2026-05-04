@@ -353,19 +353,30 @@ pub async fn apply_remote_ops(
     //   is strictly better than the pre-L-68 behaviour, which lost
     //   the entire batch on any in-batch FK violation.
     if !to_materialize.is_empty() {
+        use std::collections::hash_map::Entry;
         use std::collections::HashMap;
         // `groups` owns the records; `group_order` records first-encounter
         // order so iteration order is deterministic AND preserves the input's
         // group-level temporal ordering (see the comment above for why this
         // matters vs. BTreeMap's ULID-lex order).
+        //
+        // L-3 (PEND-25): use `Entry` so we clone `block_id` once per
+        // *first* occurrence (Vacant arm pushes a clone into
+        // `group_order`, the original moves into the map). Repeats hit
+        // the Occupied arm and reuse the existing key without any
+        // additional allocation.
         let mut groups: HashMap<Option<String>, Vec<OpRecord>> = HashMap::new();
         let mut group_order: Vec<Option<String>> = Vec::new();
         for record in to_materialize {
-            let key = record.block_id.clone();
-            if !groups.contains_key(&key) {
-                group_order.push(key.clone());
+            match groups.entry(record.block_id.clone()) {
+                Entry::Vacant(slot) => {
+                    group_order.push(slot.key().clone());
+                    slot.insert(vec![record]);
+                }
+                Entry::Occupied(mut slot) => {
+                    slot.get_mut().push(record);
+                }
             }
-            groups.entry(key).or_default().push(record);
         }
         for key in group_order {
             // Safe to expect: every key in `group_order` was inserted
@@ -473,21 +484,24 @@ pub async fn merge_diverged_blocks(
             )
             .await?;
 
+            // L-4 (PEND-25): destructure by value so the `OpRecord`
+            // moves directly into the `Arc::new(...)` without an
+            // intermediate `record.clone()`. The two arms are still
+            // cold (only on conflict resolution), but the prior
+            // `ref record` + `record.clone()` shape was a redundant
+            // deep clone of the (~5 owned `String`s + payload) record.
             match outcome {
-                merge::MergeOutcome::Merged(ref record) => {
+                merge::MergeOutcome::Merged(record) => {
                     materializer
-                        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record.clone())))
+                        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record)))
                         .await?;
                     results.clean_merges += 1;
                 }
                 merge::MergeOutcome::ConflictCopy {
-                    ref conflict_block_op,
-                    ..
+                    conflict_block_op, ..
                 } => {
                     materializer
-                        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(
-                            conflict_block_op.clone(),
-                        )))
+                        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(conflict_block_op)))
                         .await?;
                     results.conflicts += 1;
                 }

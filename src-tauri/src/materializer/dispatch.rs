@@ -8,6 +8,27 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// L-1: shared shape of [`Materializer::fg_sender`] /
+/// [`Materializer::bg_sender`].
+///
+/// The senders live in `OnceLock`s and are populated once during
+/// construction. Reads are lock-free; the `shutdown_flag` short-circuit
+/// preserves the prior `Channel("…queue closed")` error semantics so
+/// callers (notably `try_enqueue_background`) keep behaving as before
+/// the L-1 refactor.
+fn sender_or_closed(
+    cell: &std::sync::OnceLock<mpsc::Sender<MaterializeTask>>,
+    is_shutdown: bool,
+    closed_msg: &'static str,
+) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
+    if is_shutdown {
+        return Err(AppError::Channel(closed_msg.into()));
+    }
+    cell.get()
+        .cloned()
+        .ok_or_else(|| AppError::Channel(closed_msg.into()))
+}
+
 /// Fixed set of rebuild tasks enqueued after any `delete_block` /
 /// `restore_block` / `purge_block` op, in their canonical order.
 ///
@@ -58,19 +79,19 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
 
 impl Materializer {
     pub(super) fn fg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
-        self.fg_tx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-            .ok_or_else(|| AppError::Channel("foreground queue closed".into()))
+        sender_or_closed(
+            &self.fg_tx,
+            self.shutdown_flag.load(Ordering::Acquire),
+            "foreground queue closed",
+        )
     }
 
     pub(super) fn bg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
-        self.bg_tx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-            .ok_or_else(|| AppError::Channel("background queue closed".into()))
+        sender_or_closed(
+            &self.bg_tx,
+            self.shutdown_flag.load(Ordering::Acquire),
+            "background queue closed",
+        )
     }
 
     pub fn dispatch_background(&self, record: &OpRecord) -> Result<(), AppError> {

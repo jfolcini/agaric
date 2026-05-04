@@ -17,7 +17,7 @@
 //! 5. **Fetch** — load full `BlockRow` data for the page.
 
 use futures_util::future::try_join_all;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 
 use super::filters::resolve_filter_with_candidates;
@@ -218,7 +218,9 @@ pub async fn eval_backlink_query(
     let fetched: Vec<BlockRow> = fetch_block_rows_by_ids(pool, &actual_ids).await?;
 
     // Reorder fetched rows to match the sorted order
-    let id_order: std::collections::HashMap<&str, usize> = actual_ids
+    // L-5 (PEND-25): `FxHashMap` for the small `&str -> usize` lookup —
+    // mechanical swap, no behavioural change.
+    let id_order: FxHashMap<&str, usize> = actual_ids
         .iter()
         .enumerate()
         .map(|(i, id)| (*id, i))
@@ -253,14 +255,19 @@ pub async fn eval_backlink_query(
 
 /// Resolve each block's root page using the denormalized `page_id` column.
 ///
-/// Returns HashMap<block_id, (root_page_id, root_page_title)>.
+/// Returns FxHashMap<block_id, (root_page_id, root_page_title)>.
 /// Blocks whose `page_id` is NULL (orphans / tags) are omitted.
+///
+/// L-5 (PEND-25): FxHashMap is used for return / construction so the
+/// post-resolve `.get(&id)` lookups in the grouping pass run on the
+/// faster Fx hash. Callers were already on Fx-flavoured sets, so this
+/// keeps the family aligned.
 pub(super) async fn resolve_root_pages(
     pool: &SqlitePool,
     block_ids: &FxHashSet<String>,
-) -> Result<std::collections::HashMap<String, (String, Option<String>)>, AppError> {
+) -> Result<FxHashMap<String, (String, Option<String>)>, AppError> {
     if block_ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(FxHashMap::default());
     }
 
     let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
@@ -287,7 +294,7 @@ pub(super) async fn resolve_root_pages(
     }
     let rows = query.fetch_all(pool).await?;
 
-    let mut map = std::collections::HashMap::new();
+    let mut map: FxHashMap<String, (String, Option<String>)> = FxHashMap::default();
     for row in rows {
         map.insert(row.block_id, (row.root_id, row.root_title));
     }
@@ -352,9 +359,9 @@ pub(super) async fn fetch_block_rows_by_ids(
 pub(super) async fn resolve_root_pages_cte(
     pool: &SqlitePool,
     block_ids: &FxHashSet<String>,
-) -> Result<std::collections::HashMap<String, (String, Option<String>)>, AppError> {
+) -> Result<FxHashMap<String, (String, Option<String>)>, AppError> {
     if block_ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(FxHashMap::default());
     }
 
     let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
@@ -392,7 +399,7 @@ pub(super) async fn resolve_root_pages_cte(
     }
     let rows = query.fetch_all(pool).await?;
 
-    let mut map = std::collections::HashMap::new();
+    let mut map: FxHashMap<String, (String, Option<String>)> = FxHashMap::default();
     for row in rows {
         map.insert(row.block_id, (row.root_id, row.root_title));
     }

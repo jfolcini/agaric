@@ -1,5 +1,7 @@
 # PEND-26 — Rust robustness review (second pass, post-validation)
 
+> **Status (session 661):** N1 + N2 + N4 closed in the commit landing this session. **N3 (recurrence `++` arm `?` propagation overflow)** intentionally deferred — should land bundled with **PEND-24 H2** (the same `shift_date` loop in `recurrence/{parser,compute}.rs`; N3 + H2 are distinct bugs that share a fix surface, per the README's "Mid-tier" sequencing note). **Implementation deviations from the original plan, all documented inline in code:** N2 helper uses `descendants_cte_standard!()` (not `_active!()` — the active variant filters `b.deleted_at IS NULL` so post-cascade walk would find nothing and the warn would never fire). N2 helper SQL form is `sqlx::query_scalar(...)` (not `query_scalar!` macro — the macro rejects `concat!(macro!(), ...)`; the dynamic form mirrors `move_ops.rs:180,193`). N2 threshold `>= 99` is a hair conservative (a legitimate 99-deep tree saturating MAX(depth)=99 trips the warn) but matches the plan; documented as "deserves operator attention" boundary. N2 purge cascade returns `Err(AppError::Validation)` BEFORE the physical delete (warn-only would orphan rows).
+
 ## Origin
 
 Two-pass review run 2026-05-04 (afternoon, separate from the

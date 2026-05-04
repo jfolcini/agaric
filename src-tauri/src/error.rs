@@ -166,6 +166,13 @@ impl Serialize for AppError {
 
         let mut state = serializer.serialize_struct("AppError", 2)?;
         state.serialize_field("kind", kind)?;
+        // L-17 (PEND-25): kept as-is. `self.to_string()` always
+        // allocates the formatted message, but `Serialize` for
+        // `AppError` only fires on the IPC error boundary (cold path),
+        // and serde lacks a "borrowed Display" adapter that would let
+        // us avoid the intermediate `String`. Documented as the
+        // boundary cost of the `AppError` pattern; if `AppError` ever
+        // gains a `Cow<'static, str>` variant the saving is automatic.
         state.serialize_field("message", &self.to_string())?;
         state.end()
     }

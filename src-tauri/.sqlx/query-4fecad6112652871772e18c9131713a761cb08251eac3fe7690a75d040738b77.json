@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT device_id, seq, op_type, payload, created_at FROM op_log WHERE payload LIKE '%\"block_id\":\"' || ?1 || '\"%' AND json_extract(payload, '$.block_id') = ?1 AND (?2 IS NULL OR (seq < ?3 OR (seq = ?3 AND device_id < ?5))) ORDER BY seq DESC, device_id DESC LIMIT ?4",
+  "query": "SELECT device_id, seq, op_type, payload, created_at FROM op_log WHERE block_id = ?1 AND (?2 IS NULL OR (seq < ?3 OR (seq = ?3 AND device_id < ?5))) ORDER BY seq DESC, device_id DESC LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -40,5 +40,5 @@
       false
     ]
   },
-  "hash": "54849f89ec514f407b30b32f9dabaa444d6eff2cf76855901cbc180c05c16308"
+  "hash": "4fecad6112652871772e18c9131713a761cb08251eac3fe7690a75d040738b77"
 }

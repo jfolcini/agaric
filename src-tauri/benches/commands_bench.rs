@@ -645,6 +645,7 @@ fn bench_batch_properties(c: &mut Criterion) {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -657,6 +658,7 @@ fn bench_batch_properties(c: &mut Criterion) {
                 id.clone(),
                 "status".into(),
                 Some("active".into()),
+                None,
                 None,
                 None,
                 None,

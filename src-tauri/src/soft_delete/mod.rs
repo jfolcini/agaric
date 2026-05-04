@@ -823,4 +823,164 @@ mod tests {
         }
         assert_eq!(get_deleted_at(&pool, "CPAR01").await, None);
     }
+
+    // ======================================================================
+    // PEND-26 N2 — cascade-depth saturation detection
+    // ======================================================================
+
+    /// Capture-into-`Vec<u8>` writer used to assert that a `tracing::warn!`
+    /// fires during a cascade. Mirrors the `LogBufWriter` pattern from
+    /// `materializer/tests.rs`.
+    #[derive(Clone, Default)]
+    struct LogBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl LogBufWriter {
+        fn contents(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    impl std::io::Write for LogBufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBufWriter {
+        type Writer = LogBufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// PEND-26 N2: a 105-level tree saturates the depth-100 cap on the
+    /// soft-delete cascade. The helper must report `true` AND
+    /// `cascade_soft_delete` must emit the operator-visible warn.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cascade_soft_delete_warns_on_depth_saturated_subtree_pend26n2() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let (pool, _dir) = test_pool().await;
+
+        // Build 105-block linear chain rooted at PEND26N2_DEEP_R.
+        insert_block(&pool, "PEND26N2_DEEP_R", "page", "root", None, Some(1)).await;
+        for i in 1..=104 {
+            let id = format!("PEND26N2_DEEP_{i}");
+            let parent = if i == 1 {
+                "PEND26N2_DEEP_R".to_string()
+            } else {
+                format!("PEND26N2_DEEP_{}", i - 1)
+            };
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("level {i}"),
+                Some(&parent),
+                Some(1),
+            )
+            .await;
+        }
+
+        let writer = LogBufWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false)
+                .with_level(true)
+                .with_target(false),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let (_ts, _count) = cascade_soft_delete(&pool, TEST_DEVICE, "PEND26N2_DEEP_R")
+            .await
+            .unwrap();
+
+        // Drop the guard before reading so any buffered output flushes.
+        drop(_guard);
+
+        // The helper itself agrees on the saturation status.
+        let saturated = crate::block_descendants::cascade_depth_saturated(&pool, "PEND26N2_DEEP_R")
+            .await
+            .unwrap();
+        assert!(
+            saturated,
+            "PEND-26 N2: helper must report saturation on a 105-block chain"
+        );
+
+        // The warn message must have been written by `cascade_soft_delete`.
+        let logs = writer.contents();
+        assert!(
+            logs.contains("PEND-26 N2"),
+            "PEND-26 N2: cascade_soft_delete must emit the saturation warn; got log buffer: {logs}",
+        );
+        assert!(
+            logs.contains("WARN"),
+            "PEND-26 N2: emitted log entry must be at WARN level; got: {logs}",
+        );
+    }
+
+    /// PEND-26 N2: a 99-level tree (max depth 98) does NOT saturate.
+    /// `cascade_soft_delete` must complete normally with no warn.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cascade_soft_delete_does_not_warn_under_threshold_pend26n2() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let (pool, _dir) = test_pool().await;
+
+        // Build 99-block linear chain (depths 0..98).
+        insert_block(&pool, "PEND26N2_OK_R", "page", "root", None, Some(1)).await;
+        for i in 1..=98 {
+            let id = format!("PEND26N2_OK_{i}");
+            let parent = if i == 1 {
+                "PEND26N2_OK_R".to_string()
+            } else {
+                format!("PEND26N2_OK_{}", i - 1)
+            };
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("level {i}"),
+                Some(&parent),
+                Some(1),
+            )
+            .await;
+        }
+
+        let writer = LogBufWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false)
+                .with_level(true)
+                .with_target(false),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let _ = cascade_soft_delete(&pool, TEST_DEVICE, "PEND26N2_OK_R")
+            .await
+            .unwrap();
+
+        drop(_guard);
+
+        let saturated = crate::block_descendants::cascade_depth_saturated(&pool, "PEND26N2_OK_R")
+            .await
+            .unwrap();
+        assert!(
+            !saturated,
+            "PEND-26 N2: helper must NOT report saturation on a 99-block chain"
+        );
+
+        let logs = writer.contents();
+        assert!(
+            !logs.contains("PEND-26 N2"),
+            "PEND-26 N2: cascade_soft_delete must NOT emit the saturation \
+             warn on a 99-block chain; got log buffer: {logs}",
+        );
+    }
 }

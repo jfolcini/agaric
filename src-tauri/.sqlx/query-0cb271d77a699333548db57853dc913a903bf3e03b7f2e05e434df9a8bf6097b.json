@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT device_id, seq FROM op_log WHERE json_extract(payload, '$.block_id') = ? AND op_type IN ('edit_block', 'create_block') ORDER BY created_at DESC LIMIT 1",
+  "query": "SELECT device_id, seq FROM op_log WHERE block_id = ?1 AND op_type IN ('edit_block', 'create_block') ORDER BY seq DESC, device_id DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "25a413084a18aeb8b3eab9e10a65902defb0dccf2c753006712658ff045e22db"
+  "hash": "0cb271d77a699333548db57853dc913a903bf3e03b7f2e05e434df9a8bf6097b"
 }

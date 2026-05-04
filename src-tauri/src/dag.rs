@@ -150,7 +150,7 @@ async fn walk_edit_chain<F>(
     mut stop_at: F,
 ) -> Result<WalkOutcome, AppError>
 where
-    F: FnMut(&(String, i64)) -> bool,
+    F: FnMut(&str, i64) -> bool,
 {
     let rows = fetch_edit_chain_rows(pool, start).await?;
 
@@ -175,19 +175,27 @@ where
         }
     }
 
-    let mut visited: HashSet<(String, i64)> = HashSet::new();
-    visited.insert((start.0.clone(), start.1));
+    // L-10 (PEND-25): borrow `device_id` from `rows` for the visited
+    // set so we no longer materialise an owned `String` per visited
+    // entry. The hot-path LCA in `find_lca` already uses
+    // `HashSet<(&str, i64)>`; this aligns the cold-path walker with the
+    // same shape. The owned `(String, i64)` only escapes when we push
+    // into `chain` (unavoidable — callers consume the chain) or when
+    // `stop_at` matches and we surface the matched key.
+    let mut visited: HashSet<(&str, i64)> = HashSet::with_capacity(rows.len());
+    visited.insert((start.0.as_str(), start.1));
 
     let mut chain: Vec<(String, i64)> = Vec::new();
     let mut steps: usize = 0;
 
     // Iterate rows beyond the anchor (the anchor IS `start`).
     for row in rows.iter().skip(1) {
-        let key = (row.device_id.clone(), row.seq);
-        if stop_at(&key) {
-            return Ok(WalkOutcome::Stopped(key));
+        let dev: &str = row.device_id.as_str();
+        let seq = row.seq;
+        if stop_at(dev, seq) {
+            return Ok(WalkOutcome::Stopped((row.device_id.clone(), seq)));
         }
-        if visited.contains(&key) {
+        if visited.contains(&(dev, seq)) {
             // Cycle detected — matches the old `break` semantics: stop
             // walking, return the partial chain, let the caller search
             // elsewhere.  Tests:
@@ -200,8 +208,8 @@ where
                 "find_lca exceeded max steps ({MAX_LCA_STEPS}) walking chain"
             )));
         }
-        visited.insert(key.clone());
-        chain.push(key);
+        visited.insert((dev, seq));
+        chain.push((row.device_id.clone(), seq));
     }
 
     // The CTE walked to a natural end.  If the last row's `prev_*` is
@@ -287,8 +295,14 @@ async fn walk_edit_chain_oracle<F>(
     mut stop_at: F,
 ) -> Result<WalkOutcome, AppError>
 where
-    F: FnMut(&(String, i64)) -> bool,
+    F: FnMut(&str, i64) -> bool,
 {
+    // L-10 (PEND-25): mirror the production walker's `(&str, i64)`
+    // predicate signature. The oracle still walks one step at a time
+    // (no batched CTE), so it cannot share the borrowed-`&str` visited
+    // set without a lifetime headache for the per-iteration owned
+    // payload — the `String` clones here are bounded by the oracle
+    // being `#[cfg(test)]` only.
     let mut chain: Vec<(String, i64)> = Vec::new();
     let mut visited: HashSet<(String, i64)> = HashSet::new();
     visited.insert((start.0.clone(), start.1));
@@ -297,7 +311,7 @@ where
         fetch_prev_edit_oracle(pool, &start.0, start.1, has_snapshots).await?;
     let mut steps: usize = 0;
     while let Some(key) = next.take() {
-        if stop_at(&key) {
+        if stop_at(&key.0, key.1) {
             return Ok(WalkOutcome::Stopped(key));
         }
         if visited.contains(&key) {
@@ -525,7 +539,7 @@ pub async fn find_lca(
 
     // Walk chain A to its root (or local cycle) and collect every key.
     // Chain A has no early-exit predicate.
-    let chain_a = match walk_edit_chain(pool, op_a, has_snapshots, |_| false).await? {
+    let chain_a = match walk_edit_chain(pool, op_a, has_snapshots, |_, _| false).await? {
         WalkOutcome::Completed(c) => c,
         // Unreachable: predicate is constant `false`.
         WalkOutcome::Stopped(_) => unreachable!("chain A predicate never matches"),
@@ -546,8 +560,8 @@ pub async fn find_lca(
 
     // Walk chain B with an early-exit predicate that fires on the first
     // ancestor present in chain A's visited set — that ancestor is the LCA.
-    match walk_edit_chain(pool, op_b, has_snapshots, |key| {
-        visited.contains(&(key.0.as_str(), key.1))
+    match walk_edit_chain(pool, op_b, has_snapshots, |dev, seq| {
+        visited.contains(&(dev, seq))
     })
     .await?
     {
@@ -577,7 +591,7 @@ pub async fn find_lca_oracle(
             .await?;
     let has_snapshots = has_snapshots > 0;
 
-    let chain_a = match walk_edit_chain_oracle(pool, op_a, has_snapshots, |_| false).await? {
+    let chain_a = match walk_edit_chain_oracle(pool, op_a, has_snapshots, |_, _| false).await? {
         WalkOutcome::Completed(c) => c,
         WalkOutcome::Stopped(_) => unreachable!("chain A predicate never matches"),
     };
@@ -592,8 +606,8 @@ pub async fn find_lca_oracle(
         return Ok(Some(op_b.clone()));
     }
 
-    match walk_edit_chain_oracle(pool, op_b, has_snapshots, |key| {
-        visited.contains(&(key.0.as_str(), key.1))
+    match walk_edit_chain_oracle(pool, op_b, has_snapshots, |dev, seq| {
+        visited.contains(&(dev, seq))
     })
     .await?
     {

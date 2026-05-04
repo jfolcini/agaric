@@ -10,6 +10,23 @@ use crate::op_log;
 
 use super::types::MergeResult;
 
+/// L-11 (PEND-25): truncate a 64-char blake3 hex digest to its 16-char
+/// prefix.
+///
+/// blake3's `to_hex()` returns an `arrayvec::ArrayString<64>` of pure
+/// ASCII characters, so byte-slicing `[..16]` is sound and yields the
+/// same string a `chars().take(16)` walk would produce — without the
+/// intermediate full-length `String` allocation. Returns a borrowed
+/// `&str` so callers decide whether to materialise the owned `String`.
+fn truncate_blake3_hex(hex: &str) -> &str {
+    debug_assert!(
+        hex.len() >= 16 && hex.is_ascii(),
+        "blake3 hex digest must be ≥16 ASCII chars; got len={}",
+        hex.len()
+    );
+    &hex[..16]
+}
+
 /// Maximum number of iterations when walking prev_edit chains.
 /// Prevents infinite loops on corrupted cyclic data.           (F07)
 ///
@@ -158,12 +175,15 @@ pub async fn merge_text(
             // 16-char hex prefix of the blake3 digest is plenty for
             // telemetry triage without being an exact fingerprint of
             // the underlying user text.
-            let conflict_digest: String = blake3::hash(conflict_text.as_bytes())
-                .to_hex()
-                .to_string()
-                .chars()
-                .take(16)
-                .collect();
+            //
+            // L-11 (PEND-25): the previous shape (`.to_string().chars()
+            // .take(16).collect()`) allocated twice — once for the full
+            // 64-char hex `String`, once for the truncated `String` via
+            // a UTF-8-safe `chars()` walk. blake3's `to_hex()` returns
+            // an `ArrayString<64>` of pure ASCII, so byte-slicing the
+            // first 16 chars is sound and gives us a single allocation.
+            let hex = blake3::hash(conflict_text.as_bytes()).to_hex();
+            let conflict_digest: String = truncate_blake3_hex(hex.as_str()).to_owned();
             tracing::info!(
                 block_id,
                 clean = false,
@@ -548,5 +568,37 @@ mod tests_m72 {
             msg.contains("B1"),
             "error message should mention the offending block_id, got: {msg}"
         );
+    }
+}
+
+#[cfg(test)]
+mod truncate_blake3_hex_tests {
+    //! L-11 (PEND-25): the helper must hand back the same first 16
+    //! chars `&input[..16]` would and must not allocate.
+    use super::truncate_blake3_hex;
+
+    #[test]
+    fn truncate_matches_byte_slice_for_blake3_hex_digest() {
+        let digest = blake3::hash(b"PEND-25 fixture payload");
+        let hex = digest.to_hex();
+        let full = hex.as_str();
+        // The helper returns a borrowed slice over the input, identical
+        // to a direct `[..16]` byte index — that is the property we
+        // care about. Anchoring the test to a fresh blake3 digest
+        // (rather than a hardcoded literal) keeps the test in sync if
+        // the upstream blake3 hex format ever changes.
+        assert_eq!(truncate_blake3_hex(full), &full[..16]);
+        assert_eq!(truncate_blake3_hex(full).len(), 16);
+    }
+
+    #[test]
+    fn truncate_borrows_from_input() {
+        // Because we return `&str` from `&hex[..16]`, the slice must
+        // share the input's allocation — verifiable via pointer
+        // identity on the start address.
+        let hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let truncated = truncate_blake3_hex(hex);
+        assert_eq!(truncated, "0123456789abcdef");
+        assert_eq!(truncated.as_ptr(), hex.as_ptr());
     }
 }

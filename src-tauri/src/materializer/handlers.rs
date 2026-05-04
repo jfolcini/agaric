@@ -892,11 +892,30 @@ pub(super) async fn handle_background_task(
             .await
         }
         MaterializeTask::UpdateFtsBlock { ref block_id } => {
+            // PEND-20 E: load tag/page reference maps once at the call site
+            // (the materializer's per-task entry into the FTS update path)
+            // and feed them into `_with_maps` variants. The previous
+            // implementation called the convenience wrappers, which loaded
+            // the maps internally on every block via the per-ref `IN(…)`
+            // queries embedded in `strip_for_fts`. Pulling the load out to
+            // the call site lays the groundwork for batch-level reuse and
+            // makes the data-flow explicit (the strip path is now sync —
+            // no DB round-trip).
+            let read_pool_for_maps = read_pool.unwrap_or(pool);
+            let (tag_names, page_titles) = fts::load_ref_maps(read_pool_for_maps).await?;
             dispatch_split_or_single(
                 pool,
                 read_pool,
-                |w, r| fts::update_fts_for_block_split(w, r, block_id),
-                |p| fts::update_fts_for_block(p, block_id),
+                |w, r| {
+                    fts::update_fts_for_block_split_with_maps(
+                        w,
+                        r,
+                        block_id,
+                        &tag_names,
+                        &page_titles,
+                    )
+                },
+                |p| fts::update_fts_for_block_with_maps(p, block_id, &tag_names, &page_titles),
             )
             .await
         }

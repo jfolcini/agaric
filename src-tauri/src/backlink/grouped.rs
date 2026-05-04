@@ -1,7 +1,7 @@
 //! Grouped backlink queries and unlinked reference detection.
 
 use futures_util::future::try_join_all;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 
 use super::filters::resolve_filter_with_candidates;
@@ -181,8 +181,10 @@ pub async fn eval_backlink_query_grouped(
     // 4. Group blocks by root page. After step 1b every survivor has a
     //    valid root-page entry, so the `if let Some(...)` here is now
     //    purely defensive against a race between resolve and group.
-    let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
-        std::collections::HashMap::new();
+    // L-5 (PEND-25): `FxHashMap` for the by-page bucket — keys are
+    // owned `String` page-ids; the FNV hash matters here because this
+    // map is built per query.
+    let mut page_groups: FxHashMap<String, (Option<String>, Vec<String>)> = FxHashMap::default();
     for block_id_item in &filtered_ids {
         if let Some((page_id, page_title)) = root_map.get(block_id_item) {
             page_groups
@@ -258,11 +260,14 @@ pub async fn eval_backlink_query_grouped(
     let fetched_rows = fetch_block_rows_by_ids(pool, &all_ids_vec).await?;
 
     // Build a lookup map from id -> BlockRow
-    let row_map: std::collections::HashMap<&str, &BlockRow> =
+    // L-5 (PEND-25): both lookup tables are short-lived per-query maps
+    // keyed on borrowed `&str`s — `FxHashMap` skips SipHash setup with
+    // no behavioural change.
+    let row_map: FxHashMap<&str, &BlockRow> =
         fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
     // Build a position map from sorted order
-    let sort_order: std::collections::HashMap<&str, usize> = sorted_all
+    let sort_order: FxHashMap<&str, usize> = sorted_all
         .iter()
         .enumerate()
         .map(|(i, id)| (id.as_str(), i))
@@ -536,8 +541,9 @@ pub async fn eval_unlinked_references(
     // 7a. Group filtered blocks by root page, excluding blocks whose root
     //     page is the target page. `root_map` covers `matching_ids ⊇
     //     filtered_matching` from step #4, so no second resolve is needed.
-    let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
-        std::collections::HashMap::new();
+    // L-5 (PEND-25): mirror the `eval_backlink_query_grouped` flavour
+    // and use `FxHashMap` for the by-page bucket.
+    let mut page_groups: FxHashMap<String, (Option<String>, Vec<String>)> = FxHashMap::default();
     for block_id_item in &filtered_matching {
         if let Some((root_page_id, page_title)) = root_map.get(block_id_item) {
             // Exclude self-references
@@ -625,11 +631,13 @@ pub async fn eval_unlinked_references(
     let fetched_rows = fetch_block_rows_by_ids(pool, &all_ids_vec).await?;
 
     // Build a lookup map from id -> BlockRow
-    let row_map: std::collections::HashMap<&str, &BlockRow> =
+    // L-5 (PEND-25): same `FxHashMap` swap as the sister
+    // `eval_backlink_query_grouped` block-row lookup.
+    let row_map: FxHashMap<&str, &BlockRow> =
         fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
     // Build a position map from sorted order
-    let sort_order: std::collections::HashMap<&str, usize> = sorted_all
+    let sort_order: FxHashMap<&str, usize> = sorted_all
         .iter()
         .enumerate()
         .map(|(i, id)| (id.as_str(), i))

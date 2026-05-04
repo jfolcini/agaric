@@ -1,21 +1,28 @@
 use super::MaterializeTask;
-use std::collections::HashSet;
+use rustc_hash::{FxHashSet, FxHasher};
 use std::mem;
 
 pub(super) fn hash_id(s: &str) -> u64 {
+    // L-5 (PEND-25): SipHash via `DefaultHasher` is overkill for a
+    // dedup-only fingerprint. `FxHasher` is ~3× faster on small string
+    // keys and the hash is never persisted, so the choice is a pure
+    // throughput win.
     use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut h = FxHasher::default();
     s.hash(&mut h);
     h.finish()
 }
 
 pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
-    let mut seen_d: HashSet<mem::Discriminant<MaterializeTask>> = HashSet::new();
-    let mut seen_bl: HashSet<u64> = HashSet::new();
-    let mut seen_btr: HashSet<u64> = HashSet::new();
-    let mut seen_fu: HashSet<u64> = HashSet::new();
-    let mut seen_fr: HashSet<u64> = HashSet::new();
-    let mut seen_frr: HashSet<u64> = HashSet::new();
+    // L-5 (PEND-25): swap to `FxHashSet`. `u64` and `Discriminant` keys
+    // hash trivially under FxHasher (no SipHash setup cost), and the
+    // sets are short-lived (one drain).
+    let mut seen_d: FxHashSet<mem::Discriminant<MaterializeTask>> = FxHashSet::default();
+    let mut seen_bl: FxHashSet<u64> = FxHashSet::default();
+    let mut seen_btr: FxHashSet<u64> = FxHashSet::default();
+    let mut seen_fu: FxHashSet<u64> = FxHashSet::default();
+    let mut seen_fr: FxHashSet<u64> = FxHashSet::default();
+    let mut seen_frr: FxHashSet<u64> = FxHashSet::default();
     let mut result = Vec::with_capacity(tasks.len());
     for task in tasks {
         match &task {

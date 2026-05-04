@@ -922,6 +922,26 @@ async fn journal_for_date_happy_path_creates_page() {
     );
 }
 
+/// PEND-26 N4 — the `journal_for_date` tool lives in the read-only
+/// group but emits a `CreateBlock` op on first read-of-the-day. Pin
+/// the wire-visible description so it leads with that side-effect
+/// and names the op type, so MCP agents skimming descriptions for
+/// rollback / transactional purposes do not classify it as a pure
+/// read.
+#[test]
+fn journal_for_date_description_advertises_create_side_effect() {
+    let desc = tool_desc_journal_for_date();
+    let text = &desc.description;
+    assert!(
+        text.starts_with("Creates the page"),
+        "description must lead with the create side-effect, got {text:?}",
+    );
+    assert!(
+        text.contains("CreateBlock"),
+        "description must name the op type so agents recognise the write, got {text:?}",
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn journal_for_date_invalid_date_validation() {
     let (tools, _mat, _dir) = mk_tools().await;

@@ -181,6 +181,69 @@ pub const ANCESTORS_CTE_STANDARD: &str = ancestors_cte_standard!();
 /// String form of [`ancestors_cte_active`]. See [`DESCENDANTS_CTE_STANDARD`].
 pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
 
+/// PEND-26 N2: did the depth-100 cap on the recursive descendants walk
+/// actually fire for this `root_id`?
+///
+/// AGENTS.md invariant #9 caps every `descendants_cte_*!()` walk at
+/// `d.depth < 100` to prevent runaway recursion on corrupted
+/// `parent_id` chains. This is correct as a guard, but cascade callers
+/// (`delete_block_inner`, `restore_block_inner`, `purge_block_inner`,
+/// `cascade_soft_delete`, `restore_block`) silently miss any descendants
+/// below depth 100 on legitimately deep trees.
+///
+/// This helper re-walks the non-conflict subtree under `root_id` and
+/// reports whether `MAX(depth)` reached the cap region. Callers should
+/// invoke it and either:
+/// * `tracing::warn!` (default — best-effort cascades like soft-delete
+///   and restore should not break on a pathological tree).
+/// * `Err(AppError::Validation(...))` (purge — hard delete should be
+///   all-or-nothing; a saturating cascade leaves orphans behind).
+///
+/// # Variant choice
+///
+/// The PEND-26 plan body suggested `descendants_cte_active!()`, but
+/// that variant filters `b.deleted_at IS NULL` in the recursive arm —
+/// which means **after** a soft-delete cascade the recursive walk
+/// finds nothing (every descendant now has `deleted_at = now`) and the
+/// helper would erroneously report "not saturated". The standard
+/// variant (`descendants_cte_standard!()`) filters only
+/// `b.is_conflict = 0 AND d.depth < 100` and is invariant to whether
+/// the cascade has run — callers can place the check pre- or
+/// post-cascade as appropriate without changing the result.
+///
+/// For purge cascades the standard variant under-detects conflict
+/// copies (purge sweeps conflicts; standard prunes them). That is
+/// acceptable: this helper is a safety net for an extreme corner
+/// case (>100-level deep tree), not a primary correctness check.
+///
+/// # Threshold
+///
+/// `>= 99` per the PEND-26 plan: the recursive arm's `d.depth < 100`
+/// filter allows the walk to step from `d.depth=99` to
+/// `d.depth+1=100`, so MAX(depth) can be 100 when saturation occurs.
+/// The slightly conservative `>= 99` boundary catches both the genuine
+/// 100-level saturation and the boundary case of a tree exactly at the
+/// cap leaf level — both deserve operator attention.
+pub async fn cascade_depth_saturated<'e, E>(executor: E, root_id: &str) -> Result<bool, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    // `sqlx::query_scalar!` rejects `concat!(macro!(), "...")` even
+    // though that expands to a string literal at compile time — it
+    // wants a bare literal token. Use the dynamic-string `query_scalar`
+    // form instead, mirroring the established idiom in this crate
+    // (see `move_ops.rs:180,193` and the `ancestor_db_tests` here at
+    // lines 408+).
+    let max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(concat!(
+        descendants_cte_standard!(),
+        "SELECT MAX(depth) FROM descendants",
+    ))
+    .bind(root_id)
+    .fetch_one(executor)
+    .await?;
+    Ok(max_depth.unwrap_or(0) >= 99)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +486,59 @@ mod ancestor_db_tests {
         assert_eq!(
             count, 101,
             "ancestor walk must be bounded at depth < 100 (seed + 100 ancestors), got {count}",
+        );
+    }
+
+    /// PEND-26 N2: a 105-block linear chain saturates the depth-100
+    /// cap. `cascade_depth_saturated` must report `true`.
+    #[tokio::test]
+    async fn cascade_depth_saturated_fires_on_pathological_chain() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "PEND26N2_R", None, false).await;
+        for i in 1..=104 {
+            let id = format!("PEND26N2_{i}");
+            let parent = if i == 1 {
+                "PEND26N2_R".to_string()
+            } else {
+                format!("PEND26N2_{}", i - 1)
+            };
+            insert_block(&pool, &id, Some(parent.as_str()), false).await;
+        }
+
+        let saturated = super::cascade_depth_saturated(&pool, "PEND26N2_R")
+            .await
+            .unwrap();
+        assert!(
+            saturated,
+            "PEND-26 N2: a 105-block chain MUST trip the saturation flag; \
+             the recursive CTE caps at depth 100 and the helper detects it"
+        );
+    }
+
+    /// PEND-26 N2: a 99-level tree (depths 0..98 — 99 blocks) does NOT
+    /// reach the depth-100 cap. `cascade_depth_saturated` must report
+    /// `false` so the warn does not fire on legitimate trees.
+    #[tokio::test]
+    async fn cascade_depth_saturated_does_not_fire_under_threshold() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "PEND26N2_OK_R", None, false).await;
+        for i in 1..=98 {
+            let id = format!("PEND26N2_OK_{i}");
+            let parent = if i == 1 {
+                "PEND26N2_OK_R".to_string()
+            } else {
+                format!("PEND26N2_OK_{}", i - 1)
+            };
+            insert_block(&pool, &id, Some(parent.as_str()), false).await;
+        }
+
+        let saturated = super::cascade_depth_saturated(&pool, "PEND26N2_OK_R")
+            .await
+            .unwrap();
+        assert!(
+            !saturated,
+            "PEND-26 N2: a 99-block chain (max depth 98) MUST NOT \
+             trip the saturation flag — that is below the >=99 threshold"
         );
     }
 }
