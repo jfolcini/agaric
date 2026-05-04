@@ -22,6 +22,7 @@
 //! Resolves REVIEW-LATER MAINT-135.
 
 use serde_json::Value;
+use sqlx::SqlitePool;
 
 use crate::error::AppError;
 
@@ -88,6 +89,71 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
         s.to_ascii_uppercase()
     } else {
         s.to_owned()
+    }
+}
+
+/// PEND-24 C2 — validate that `block_id`'s owning page lives in
+/// `space_id`, rejecting cross-space writes at the MCP boundary.
+///
+/// The owning page is `b.id` if `b` is itself a page block (where
+/// `page_id` is set to `id` by `create_block_in_tx`), else `b.page_id`
+/// (an inherited reference to the page block at the top of the parent
+/// chain). The page's space comes from
+/// `block_properties(key = 'space', value_ref)`. Conflict copies are
+/// excluded via `is_conflict = 0` per AGENTS.md invariant #9 — a
+/// conflict copy must not satisfy a space-scope check.
+///
+/// # Returns
+///
+/// - `Ok(())` if the block does not exist (lets the downstream
+///   `*_inner` surface [`AppError::NotFound`] with a tool-specific
+///   message — duplicating the error here would just add a second
+///   variant to the agent-visible error chain), or if the owning
+///   page's space matches `space_id`.
+/// - [`AppError::Validation`] if the owning page exists in a different
+///   space, or has no `space` property at all (e.g. the caller passed
+///   a tag block ID, or a corrupted page that escaped the BUG-1 / H-3a
+///   IPC tightening).
+pub(crate) async fn validate_block_in_space(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: &str,
+) -> Result<(), AppError> {
+    // `query_scalar` (non-macro) is used here because the LEFT JOIN
+    // result distinguishes three cases — no row vs. row-with-NULL vs.
+    // row-with-value — that the `query_scalar!` macro's `Option<T>`
+    // collapse would erase. The bound is one-row, indexed (the FK on
+    // `block_properties.block_id` and the PK on `blocks.id`), no scan.
+    let row: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT bp.value_ref \
+         FROM blocks b \
+         LEFT JOIN block_properties bp \
+           ON bp.block_id = COALESCE(b.page_id, b.id) \
+          AND bp.key = 'space' \
+         WHERE b.id = ? AND b.is_conflict = 0",
+    )
+    .bind(block_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        // Block doesn't exist (or only as a conflict copy) — defer to
+        // the downstream `*_inner` to surface NotFound with a
+        // tool-specific message.
+        None => Ok(()),
+        // Block exists but has no `space` property on its owning page —
+        // either a tag block (global, no owning page) or a corrupted
+        // page. Refuse: a space-scoped write cannot be authorised
+        // against an unscoped target.
+        Some(None) => Err(AppError::Validation(format!(
+            "block '{block_id}' does not belong to any space; \
+             cross-space writes are denied"
+        ))),
+        Some(Some(found)) if found == space_id => Ok(()),
+        Some(Some(found)) => Err(AppError::Validation(format!(
+            "block '{block_id}' belongs to space '{found}'; \
+             cross-space write to space '{space_id}' is denied"
+        ))),
     }
 }
 

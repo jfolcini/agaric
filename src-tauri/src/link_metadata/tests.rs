@@ -5,8 +5,8 @@ use super::html_parser::{
     extract_domain, extract_meta_refresh_url, extract_origin, resolve_url, truncate_str,
 };
 use super::{
-    cleanup_stale, clear_auth_flag, get_cached, read_body_limited, upsert, LinkMetadata,
-    MAX_BODY_SIZE,
+    cleanup_stale, clear_auth_flag, fetch_metadata, get_cached, read_body_limited, upsert,
+    LinkMetadata, MAX_BODY_SIZE,
 };
 use crate::db::init_pool;
 use crate::now_rfc3339;
@@ -950,4 +950,139 @@ async fn read_body_limited_returns_full_small_body() {
         100 * 1024,
         "100 KiB body should round-trip in full"
     );
+}
+
+// ======================================================================
+// PEND-24 M4 — non-2xx short-circuit
+//
+// Regression: a 404 page with `<title>Page not found</title>` (or any
+// other 4xx/5xx HTML body) used to be parsed as if it were the target
+// page's metadata, then cached. After M4, `fetch_metadata` returns
+// minimal metadata (no title, no description, no favicon) immediately
+// when the HTTP status is non-2xx — only `auth_required` is computed
+// (401/403) so the existing reauth UX keeps working.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_metadata_404_returns_minimal_metadata_without_parsing_body() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    // 404 with an HTML body that, before M4, would have been parsed and
+    // its `<title>` cached as the target page's title.
+    Mock::given(method("GET"))
+        .and(path("/missing"))
+        .respond_with(ResponseTemplate::new(404).set_body_string(
+            "<html><head><title>Page not found</title>\
+             <meta name=\"description\" content=\"This page does not exist\"></head>\
+             <body>404</body></html>",
+        ))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/missing", server.uri());
+    let meta = fetch_metadata(&url)
+        .await
+        .expect("fetch_metadata must not error on 404");
+
+    assert_eq!(meta.title, None, "404 body title must NOT be parsed");
+    assert_eq!(
+        meta.description, None,
+        "404 body description must NOT be parsed"
+    );
+    assert_eq!(
+        meta.favicon_url, None,
+        "404 body favicon must NOT be parsed"
+    );
+    assert!(
+        !meta.auth_required,
+        "404 must not set auth_required (only 401/403 do)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_metadata_401_marks_auth_required_without_parsing_body() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            "<html><head><title>Sign in</title></head><body>auth required</body></html>",
+        ))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/login", server.uri());
+    let meta = fetch_metadata(&url)
+        .await
+        .expect("fetch_metadata must not error on 401");
+
+    assert_eq!(
+        meta.title, None,
+        "401 body title must NOT be parsed (auth-card UX is driven by the flag, not the title)"
+    );
+    assert!(
+        meta.auth_required,
+        "401 must set auth_required so the reauth card surfaces"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_metadata_500_returns_minimal_metadata() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/server-error"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_string("<html><head><title>Server Error</title></head></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/server-error", server.uri());
+    let meta = fetch_metadata(&url)
+        .await
+        .expect("fetch_metadata must not error on 500");
+
+    assert_eq!(meta.title, None, "5xx body title must NOT be parsed");
+    assert!(
+        !meta.auth_required,
+        "5xx must not set auth_required (only 401/403 do)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_metadata_200_still_parses_body() {
+    // Regression guard: the M4 short-circuit must NOT affect 2xx.
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/ok"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                "<html><head><title>Real Page</title>\
+                 <meta name=\"description\" content=\"Real description\"></head></html>"
+                    .as_bytes()
+                    .to_vec(),
+                "text/html; charset=utf-8",
+            ),
+        )
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/ok", server.uri());
+    let meta = fetch_metadata(&url)
+        .await
+        .expect("fetch_metadata must succeed on 200");
+
+    assert_eq!(meta.title.as_deref(), Some("Real Page"));
+    assert_eq!(meta.description.as_deref(), Some("Real description"));
 }

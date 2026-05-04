@@ -1,5 +1,7 @@
 use super::*;
-use crate::commands::{create_block_inner, restore_block_inner};
+use crate::commands::{
+    create_block_inner, create_block_inner_with_space, create_space_inner, restore_block_inner,
+};
 use crate::db::init_pool;
 use crate::materializer::Materializer;
 use crate::mcp::actor::Actor;
@@ -25,11 +27,28 @@ fn test_ctx_agent() -> ActorContext {
     }
 }
 
-async fn mk_tools() -> (ReadWriteTools, Materializer, SqlitePool, TempDir) {
+/// PEND-24 C1+C2: create a fresh space and return its ULID. Every rw
+/// tool now requires a `space_id` argument, so the per-test fixture
+/// seeds at least one real space block (with `is_space = 'true'`) so
+/// the helper's `validate_block_in_space` lookup has something to
+/// match.
+async fn mk_space(pool: &SqlitePool, name: &str) -> String {
+    let materializer = Materializer::new(pool.clone());
+    create_space_inner(pool, DEV, &materializer, name.into(), None)
+        .await
+        .expect("create_space must succeed")
+        .into_string()
+}
+
+/// PEND-24: shorthand for the per-test fixture. Returns
+/// `(tools, materializer, pool, space_id, tempdir)` so every test
+/// can thread a real space ULID through the rw tool calls.
+async fn mk_tools() -> (ReadWriteTools, Materializer, SqlitePool, String, TempDir) {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string());
-    (tools, mat, pool, dir)
+    let space_id = mk_space(&pool, "PEND-24 test space").await;
+    (tools, mat, pool, space_id, dir)
 }
 
 async fn settle(mat: &Materializer) {
@@ -42,7 +61,7 @@ async fn settle(mat: &Materializer) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_tools_advertises_six_tools() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
     let descs = tools.list_tools();
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(
@@ -66,7 +85,7 @@ async fn list_tools_advertises_six_tools() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn snapshot_tool_descriptions() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
     let descs = tools.list_tools();
     let wire: Value = serde_json::to_value(&descs).unwrap();
     insta::assert_yaml_snapshot!("tool_descriptions_rw", wire);
@@ -78,8 +97,8 @@ async fn snapshot_tool_descriptions() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_block_happy_path() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let parent = create_block_inner(
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let parent = create_block_inner_with_space(
         &pool,
         DEV,
         &mat,
@@ -87,6 +106,7 @@ async fn append_block_happy_path() {
         "Parent".into(),
         None,
         Some(1),
+        Some(space.clone()),
     )
     .await
     .unwrap();
@@ -95,7 +115,7 @@ async fn append_block_happy_path() {
     let result = tools
         .call_tool(
             "append_block",
-            json!({"parent_id": parent.id.clone(), "content": "hello"}),
+            json!({"parent_id": parent.id.clone(), "content": "hello", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -107,7 +127,7 @@ async fn append_block_happy_path() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_block_rejects_unknown_field() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
     let err = tools
         .call_tool("append_block", json!({"bogus": 1}), &test_ctx_agent())
         .await
@@ -120,11 +140,11 @@ async fn append_block_rejects_unknown_field() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_block_missing_parent_id_returns_not_found() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
     let err = tools
         .call_tool(
             "append_block",
-            json!({"parent_id": "NONEXISTENT_PARENT_ULID", "content": "x"}),
+            json!({"parent_id": "NONEXISTENT_PARENT_ULID", "content": "x", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -141,14 +161,28 @@ async fn append_block_missing_parent_id_returns_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_block_content_happy_path() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    // Edited block lives under a page in the test space so its
+    // owning page carries `space = <space>` per validate_block_in_space.
+    let parent = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "ParentPage".into(),
+        None,
+        Some(1),
+        Some(space.clone()),
+    )
+    .await
+    .unwrap();
     let block = create_block_inner(
         &pool,
         DEV,
         &mat,
         "content".into(),
         "before".into(),
-        None,
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
@@ -158,7 +192,7 @@ async fn update_block_content_happy_path() {
     let result = tools
         .call_tool(
             "update_block_content",
-            json!({"block_id": block.id.clone(), "content": "after"}),
+            json!({"block_id": block.id.clone(), "content": "after", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -169,11 +203,11 @@ async fn update_block_content_happy_path() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_block_content_missing_block_returns_not_found() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
     let err = tools
         .call_tool(
             "update_block_content",
-            json!({"block_id": "NOPE", "content": "x"}),
+            json!({"block_id": "NOPE", "content": "x", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -183,11 +217,11 @@ async fn update_block_content_missing_block_returns_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_block_content_rejects_unknown_field() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
     let err = tools
         .call_tool(
             "update_block_content",
-            json!({"block_id": "A", "content": "b", "extra": true}),
+            json!({"block_id": "A", "content": "b", "space_id": space, "extra": true}),
             &test_ctx_agent(),
         )
         .await
@@ -199,20 +233,44 @@ async fn update_block_content_rejects_unknown_field() {
 // set_property
 // -------------------------------------------------------------------
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn set_property_happy_path() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
+/// PEND-24: helper that creates a parent page in `space` and a content
+/// block under it, returning the content block's row. Used by every
+/// set_property / delete_block test that needs an in-space target.
+async fn mk_in_space_content_block(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    space: &str,
+    content: &str,
+) -> crate::pagination::BlockRow {
+    let parent = create_block_inner_with_space(
+        pool,
         DEV,
-        &mat,
-        "content".into(),
-        "task".into(),
+        mat,
+        "page".into(),
+        "ParentPage".into(),
         None,
         Some(1),
+        Some(space.to_string()),
     )
     .await
     .unwrap();
+    create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        content.into(),
+        Some(parent.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_happy_path() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
     settle(&mat).await;
 
     // `assignee` is a text-typed built-in property (migration 0014)
@@ -225,6 +283,7 @@ async fn set_property_happy_path() {
                 "block_id": block.id.clone(),
                 "key": "assignee",
                 "value_text": "alice",
+                "space_id": space,
             }),
             &test_ctx_agent(),
         )
@@ -235,11 +294,11 @@ async fn set_property_happy_path() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_missing_block_returns_not_found() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
     let err = tools
         .call_tool(
             "set_property",
-            json!({"block_id": "NOPE", "key": "assignee", "value_text": "alice"}),
+            json!({"block_id": "NOPE", "key": "assignee", "value_text": "alice", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -249,18 +308,8 @@ async fn set_property_missing_block_returns_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_rejects_multiple_value_fields() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "task".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
     settle(&mat).await;
 
     let err = tools
@@ -271,6 +320,7 @@ async fn set_property_rejects_multiple_value_fields() {
                 "key": "assignee",
                 "value_text": "alice",
                 "value_num": 3.0,
+                "space_id": space,
             }),
             &test_ctx_agent(),
         )
@@ -284,24 +334,14 @@ async fn set_property_rejects_multiple_value_fields() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_rejects_zero_value_fields() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "task".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
     settle(&mat).await;
 
     let err = tools
         .call_tool(
             "set_property",
-            json!({"block_id": block.id, "key": "assignee"}),
+            json!({"block_id": block.id, "key": "assignee", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -315,18 +355,8 @@ async fn set_property_rejects_zero_value_fields() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_tag_happy_path() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "c".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "c").await;
     let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "work".into(), None, None)
         .await
         .unwrap();
@@ -335,7 +365,7 @@ async fn add_tag_happy_path() {
     let result = tools
         .call_tool(
             "add_tag",
-            json!({"block_id": block.id.clone(), "tag_id": tag.id.clone()}),
+            json!({"block_id": block.id.clone(), "tag_id": tag.id.clone(), "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -346,24 +376,14 @@ async fn add_tag_happy_path() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_tag_missing_tag_returns_not_found() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "c".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "c").await;
     settle(&mat).await;
 
     let err = tools
         .call_tool(
             "add_tag",
-            json!({"block_id": block.id, "tag_id": "NONEXISTENT_TAG"}),
+            json!({"block_id": block.id, "tag_id": "NONEXISTENT_TAG", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -375,14 +395,26 @@ async fn add_tag_missing_tag_returns_not_found() {
 async fn add_tag_non_tag_target_is_invalid_operation() {
     // Pass a content block as tag_id — must surface InvalidOperation,
     // confirming the tool does NOT create tags.
-    let (tools, mat, pool, _dir) = mk_tools().await;
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let parent = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "ParentPage".into(),
+        None,
+        Some(1),
+        Some(space.clone()),
+    )
+    .await
+    .unwrap();
     let block = create_block_inner(
         &pool,
         DEV,
         &mat,
         "content".into(),
         "c".into(),
-        None,
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
@@ -393,7 +425,7 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
         &mat,
         "content".into(),
         "not-a-tag".into(),
-        None,
+        Some(parent.id),
         Some(2),
     )
     .await
@@ -403,7 +435,7 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
     let err = tools
         .call_tool(
             "add_tag",
-            json!({"block_id": block.id, "tag_id": other.id}),
+            json!({"block_id": block.id, "tag_id": other.id, "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -420,11 +452,11 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_page_happy_path_sets_block_type_page() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
     let result = tools
         .call_tool(
             "create_page",
-            json!({"title": "My New Page"}),
+            json!({"title": "My New Page", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -442,11 +474,11 @@ async fn create_page_happy_path_sets_block_type_page() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_page_rejects_unknown_field() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
     let err = tools
         .call_tool(
             "create_page",
-            json!({"title": "X", "parent_id": "Y"}),
+            json!({"title": "X", "space_id": space, "parent_id": "Y"}),
             &test_ctx_agent(),
         )
         .await
@@ -455,29 +487,76 @@ async fn create_page_rejects_unknown_field() {
 }
 
 // -------------------------------------------------------------------
+// PEND-24 C1 — create_page enforces space_id
+// -------------------------------------------------------------------
+
+/// PEND-24 C1: invoking `create_page` with no `space_id` argument must
+/// fail at parse_args (`-32602 invalid params`) — `space_id` is a
+/// required field on the wire schema.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_page_without_space_rejected() {
+    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool(
+            "create_page",
+            json!({"title": "Spaceless"}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("missing space_id must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "missing space_id must surface as Validation (→ -32602), got {err:?}",
+    );
+}
+
+/// PEND-24 C1: the page row must carry `space = <space_id>` after a
+/// successful create_page call. The bug this regression-tests for is
+/// the MCP path bypassing `create_block_inner_with_space` so the page
+/// landed without its `space` property and dropped out of every
+/// space-scoped query downstream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_page_writes_space_property() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let result = tools
+        .call_tool(
+            "create_page",
+            json!({"title": "Stamped", "space_id": &space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    let page_id = result["id"].as_str().expect("id in response").to_string();
+    let stamped: Option<String> = sqlx::query_scalar(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+    )
+    .bind(&page_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stamped.as_deref(),
+        Some(space.as_str()),
+        "create_page must stamp the page with `space = <space_id>` (BUG-1 / H-3a)",
+    );
+}
+
+// -------------------------------------------------------------------
 // delete_block
 // -------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_block_happy_path() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "doomed".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "doomed").await;
     settle(&mat).await;
 
     let result = tools
         .call_tool(
             "delete_block",
-            json!({"block_id": block.id.clone()}),
+            json!({"block_id": block.id.clone(), "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -491,11 +570,11 @@ async fn delete_block_happy_path() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_block_missing_returns_not_found() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
     let err = tools
         .call_tool(
             "delete_block",
-            json!({"block_id": "NOPE"}),
+            json!({"block_id": "NOPE", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -505,24 +584,14 @@ async fn delete_block_missing_returns_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_block_already_deleted_is_invalid_operation() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "doomed".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "doomed").await;
     settle(&mat).await;
     // First delete — should succeed.
     tools
         .call_tool(
             "delete_block",
-            json!({"block_id": block.id.clone()}),
+            json!({"block_id": block.id.clone(), "space_id": &space}),
             &test_ctx_agent(),
         )
         .await
@@ -531,7 +600,7 @@ async fn delete_block_already_deleted_is_invalid_operation() {
     let err = tools
         .call_tool(
             "delete_block",
-            json!({"block_id": block.id}),
+            json!({"block_id": block.id, "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -548,24 +617,14 @@ async fn delete_block_is_reversible_via_restore() {
     // reversible ops" — pin that every delete_block output can be
     // fed straight back to `restore_block_inner` to recover the
     // block.
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "recoverable".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "recoverable").await;
     settle(&mat).await;
 
     let deleted = tools
         .call_tool(
             "delete_block",
-            json!({"block_id": block.id.clone()}),
+            json!({"block_id": block.id.clone(), "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -588,7 +647,7 @@ async fn delete_block_is_reversible_via_restore() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_tool_returns_not_found() {
-    let (tools, _mat, _pool, _dir) = mk_tools().await;
+    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
     let err = tools
         .call_tool("no_such_tool", json!({}), &test_ctx_agent())
         .await
@@ -606,10 +665,10 @@ async fn unknown_tool_returns_not_found() {
 /// the floor.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_block_stamps_origin_agent_in_op_log() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
     // Seed a parent page via the direct backend path — writes
     // origin='user' for that op.
-    let parent = create_block_inner(
+    let parent = create_block_inner_with_space(
         &pool,
         DEV,
         &mat,
@@ -617,6 +676,7 @@ async fn append_block_stamps_origin_agent_in_op_log() {
         "ParentPage".into(),
         None,
         Some(1),
+        Some(space.clone()),
     )
     .await
     .unwrap();
@@ -626,7 +686,7 @@ async fn append_block_stamps_origin_agent_in_op_log() {
     tools
         .call_tool(
             "append_block",
-            json!({"parent_id": parent.id, "content": "agent-authored"}),
+            json!({"parent_id": parent.id, "content": "agent-authored", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -651,24 +711,14 @@ async fn append_block_stamps_origin_agent_in_op_log() {
 /// stamp agent origin so activity-feed Undo can filter by it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_block_stamps_origin_agent_in_op_log() {
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "doomed".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "doomed").await;
     settle(&mat).await;
 
     tools
         .call_tool(
             "delete_block",
-            json!({"block_id": block.id.clone()}),
+            json!({"block_id": block.id.clone(), "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -702,8 +752,8 @@ async fn append_block_populates_last_append_inside_scope() {
     use crate::task_locals::{take_appends, LAST_APPEND};
     use std::cell::RefCell;
 
-    let (tools, mat, pool, _dir) = mk_tools().await;
-    let parent = create_block_inner(
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let parent = create_block_inner_with_space(
         &pool,
         DEV,
         &mat,
@@ -711,6 +761,7 @@ async fn append_block_populates_last_append_inside_scope() {
         "Parent".into(),
         None,
         Some(1),
+        Some(space.clone()),
     )
     .await
     .unwrap();
@@ -721,7 +772,7 @@ async fn append_block_populates_last_append_inside_scope() {
             tools
                 .call_tool(
                     "append_block",
-                    json!({"parent_id": parent.id.clone(), "content": "hello"}),
+                    json!({"parent_id": parent.id.clone(), "content": "hello", "space_id": space}),
                     &test_ctx_agent(),
                 )
                 .await
@@ -771,10 +822,12 @@ async fn append_block_populates_last_append_inside_scope() {
 async fn concurrent_rw_clients_serialize_correctly_l124() {
     use std::sync::Arc;
 
-    let (tools, mat, pool, _dir) = mk_tools().await;
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
 
-    // Seed: one page (parent_id for every append) + one tag.
-    let page = create_block_inner(
+    // Seed: one page (parent_id for every append) + one tag. The page
+    // must live in the test space so the per-agent `append_block`
+    // calls pass `validate_block_in_space`.
+    let page = create_block_inner_with_space(
         &pool,
         DEV,
         &mat,
@@ -782,6 +835,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         "L-124 stress page".into(),
         None,
         Some(1),
+        Some(space.clone()),
     )
     .await
     .unwrap();
@@ -809,6 +863,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         let tools = tools.clone();
         let parent_id = page.id.clone();
         let tag_id = tag.id.clone();
+        let space_id = space.clone();
         agent_handles.push(tokio::spawn(async move {
             for iter in 0..ITERS_PER_AGENT {
                 let ctx = ActorContext {
@@ -823,6 +878,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
                         json!({
                             "parent_id": parent_id,
                             "content": format!("agent {agent_idx} block {iter}"),
+                            "space_id": space_id,
                         }),
                         &ctx,
                     )
@@ -834,7 +890,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
                 tools
                     .call_tool(
                         "add_tag",
-                        json!({"block_id": block_id, "tag_id": tag_id}),
+                        json!({"block_id": block_id, "tag_id": tag_id, "space_id": space_id}),
                         &ctx,
                     )
                     .await
@@ -875,18 +931,19 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
     frontend_handle.await.expect("frontend task joined");
     settle(&mat).await;
 
-    // Assert exact final block count: 1 page + 1 tag + 4×6 agent blocks
-    // + 12 frontend blocks = 38.
+    // Assert exact final block count: 1 space + 1 page + 1 tag + 4×6
+    // agent blocks + 12 frontend blocks = 39. The space block comes
+    // from `mk_space` (PEND-24 fixture seed).
     let total_blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
         .unwrap();
-    let expected = 2 + AGENTS * ITERS_PER_AGENT + FRONTEND_ITERS;
+    let expected = 3 + AGENTS * ITERS_PER_AGENT + FRONTEND_ITERS;
     assert_eq!(
         usize::try_from(total_blocks).expect("test row count is non-negative and fits usize"),
         expected,
         "concurrent agent + frontend writes must produce exact block count \
-         (1 page + 1 tag + {AGENTS}×{ITERS_PER_AGENT} agent + {FRONTEND_ITERS} frontend = {expected})",
+         (1 space + 1 page + 1 tag + {AGENTS}×{ITERS_PER_AGENT} agent + {FRONTEND_ITERS} frontend = {expected})",
     );
 
     // Assert every agent-created block has the seeded tag — proves
@@ -936,5 +993,156 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
     assert_eq!(
         dup_ops, 0,
         "op_log must contain no duplicate (device_id, seq) pairs under contention"
+    );
+}
+
+// -------------------------------------------------------------------
+// PEND-24 C2 — cross-space write rejection
+//
+// One regression test per rw tool that takes a block ID input. Each
+// test seeds two spaces (A and B), creates a target block in space B,
+// then asks the tool to mutate it under `space_id = A`. Every call
+// must surface `AppError::Validation` from the
+// `validate_block_in_space` helper, BEFORE the inner reaches the op
+// log. (`add_tag` doubles as the witness that the block_id arm
+// fires; `tag_id` is intentionally not validated because tags are
+// global.)
+// -------------------------------------------------------------------
+
+/// PEND-24 C2: an agent scoped to space A must not be able to append
+/// content under a parent block whose owning page lives in space B.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_block_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    // Parent page lives in space B.
+    let parent_b = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "ParentB".into(),
+        None,
+        Some(1),
+        Some(space_b.clone()),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "append_block",
+            // Agent claims to be in space A; parent lives in space B.
+            json!({"parent_id": parent_b.id, "content": "x", "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("cross-space append must be denied");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "cross-space append must surface as Validation (→ -32602), got {err:?}",
+    );
+}
+
+/// PEND-24 C2: agent in space A, target block in space B → reject.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_block_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-block").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "update_block_content",
+            json!({"block_id": block_b.id, "content": "hijack", "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("cross-space update must be denied");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "cross-space update must surface as Validation, got {err:?}",
+    );
+}
+
+/// PEND-24 C2: agent in space A, target block in space B → reject.
+/// Pinned: validation must fire BEFORE the exactly-one-value check
+/// inside `set_property_inner` (the latter would otherwise leak a
+/// false-negative path where the cross-space write succeeded
+/// silently).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-block").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": block_b.id,
+                "key": "assignee",
+                "value_text": "alice",
+                "space_id": space_a,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("cross-space set_property must be denied");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "cross-space set_property must surface as Validation, got {err:?}",
+    );
+}
+
+/// PEND-24 C2: agent in space A, target block in space B, tag is
+/// global → reject. Verifies the helper checks the *target* block
+/// (`block_id`) and not the global `tag_id`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-block").await;
+    let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "global".into(), None, None)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "add_tag",
+            json!({"block_id": block_b.id, "tag_id": tag.id, "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("cross-space add_tag must be denied");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "cross-space add_tag must surface as Validation, got {err:?}",
+    );
+}
+
+/// PEND-24 C2: agent in space A, target block in space B → reject.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-doomed").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "delete_block",
+            json!({"block_id": block_b.id, "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("cross-space delete must be denied");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "cross-space delete must surface as Validation, got {err:?}",
     );
 }

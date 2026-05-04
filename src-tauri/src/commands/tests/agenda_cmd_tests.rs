@@ -3167,3 +3167,137 @@ async fn projected_agenda_cached_equals_on_the_fly() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// PEND-24 M3 — agenda projection silently skips malformed dates
+// ======================================================================
+
+/// Inject a block whose `due_date` column carries a malformed value (not
+/// `YYYY-MM-DD`) directly via SQL — bypasses `set_property_in_tx`'s
+/// `is_valid_iso_date` guard so the parse-failure path in
+/// `list_projected_agenda_on_the_fly` is reachable.
+///
+/// Asserts the block is dropped from the projection (entries.len() == 0)
+/// rather than crashing the projector or surfacing as a phantom entry.
+///
+/// Best-effort warn-emission: this crate has no `tracing_test` /
+/// `TestSubscriber` fixtures wired up (verified by grep prior to landing
+/// PEND-24 M3 — see the comment in `commands/logging.rs` near the M-40
+/// dispatch tests), so we cannot assert on `tracing::warn!` output here.
+/// The warn is emitted by `list_projected_agenda_on_the_fly` immediately
+/// before each `continue` in the date-parse-failure paths; manual verify
+/// with `RUST_LOG=warn` if you ever need to confirm it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn malformed_date_is_warned_and_skipped() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert a repeating task with a *malformed* due_date directly via
+    // SQL. The schema permits arbitrary text in `due_date` (only the
+    // command layer's `is_valid_iso_date` enforces the format), so this
+    // simulates DB corruption / a hand-edited database / a hypothetical
+    // sync-protocol bug that admitted a bad value.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, due_date, todo_state) \
+         VALUES (?, 'content', 'broken task', ?, 'TODO')",
+    )
+    .bind("BAD_DATE_BLOCK")
+    .bind("not-a-date")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         VALUES (?, 'repeat', 'daily')",
+    )
+    .bind("BAD_DATE_BLOCK")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Pin `today` to keep the assertion deterministic. The on-the-fly
+    // path is what we want to exercise (the cache hasn't been built;
+    // `test_pool` doesn't run the materializer).
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 4, 6).unwrap();
+    let range_start = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+    let range_end = chrono::NaiveDate::from_ymd_opt(2026, 4, 30).unwrap();
+    let entries = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        200,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .expect("malformed date must be skipped, not propagated as an error")
+    .items;
+
+    assert!(
+        entries.is_empty(),
+        "block with malformed due_date must be skipped (not crashed-on, \
+         not silently included); got {} entries",
+        entries.len()
+    );
+}
+
+/// Companion test: malformed `repeat-until` triggers the same
+/// warn-and-skip path. Same SQL-injection pattern as
+/// `malformed_date_is_warned_and_skipped`, but the corruption lives in
+/// `block_properties.value_date` for the `repeat-until` key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn malformed_repeat_until_is_warned_and_skipped() {
+    let (pool, _dir) = test_pool().await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, due_date, todo_state) \
+         VALUES (?, 'content', 'broken task', ?, 'TODO')",
+    )
+    .bind("BAD_UNTIL_BLOCK")
+    .bind("2026-04-07")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         VALUES (?, 'repeat', 'daily')",
+    )
+    .bind("BAD_UNTIL_BLOCK")
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Inject a malformed `repeat-until` via raw SQL. `value_date` is the
+    // typed slot the materializer reads, and there is no CHECK constraint
+    // — only the command-layer validator gates writes.
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_date) \
+         VALUES (?, 'repeat-until', ?)",
+    )
+    .bind("BAD_UNTIL_BLOCK")
+    .bind("garbage")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 4, 6).unwrap();
+    let range_start = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+    let range_end = chrono::NaiveDate::from_ymd_opt(2026, 4, 30).unwrap();
+    let entries = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        200,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .expect("malformed repeat-until must be skipped, not propagated")
+    .items;
+
+    assert!(
+        entries.is_empty(),
+        "block with malformed repeat-until must be skipped; got {} entries",
+        entries.len()
+    );
+}

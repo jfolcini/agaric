@@ -442,9 +442,26 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         let repeat_count = block.repeat_count;
         let repeat_seq = block.repeat_seq;
 
-        let until_date = repeat_until
-            .as_deref()
-            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+        // PEND-24 M3 — surface DB-level corruption: write-time validation
+        // (`set_property_in_tx`'s `is_valid_iso_date`) should make this
+        // unreachable. A miss means either the DB was hand-edited or a
+        // sync-protocol bug let through a bad value; either way we warn
+        // before falling through, so the silent skip is observable.
+        let until_date = match repeat_until.as_deref() {
+            Some(d) => match chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                Ok(parsed) => Some(parsed),
+                Err(_) => {
+                    tracing::warn!(
+                        block_id = %block.id,
+                        source = "repeat-until",
+                        date_str = d,
+                        "agenda projection: skipping block with malformed date"
+                    );
+                    continue;
+                }
+            },
+            None => None,
+        };
 
         // f64 → usize has no `TryFrom` in std; the cast is safe because
         // repeat_count and repeat_seq are non-negative f64 (whole numbers)
@@ -483,6 +500,16 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
 
         for (source_name, date_str) in sources {
             let Ok(base) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+                // PEND-24 M3 — write-time validation
+                // (`set_property_in_tx`'s `is_valid_iso_date`) should make
+                // this unreachable. Surface the corruption instead of
+                // skipping silently.
+                tracing::warn!(
+                    block_id = %block.id,
+                    source = source_name,
+                    date_str,
+                    "agenda projection: skipping block with malformed date"
+                );
                 continue;
             };
 

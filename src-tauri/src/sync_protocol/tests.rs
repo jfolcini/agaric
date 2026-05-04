@@ -304,6 +304,128 @@ async fn complete_sync_updates_peer_refs() {
     );
 }
 
+// ── PEND-24 M2: bookkeeping pair atomicity ──────────────────────────
+
+/// PEND-24 M2: the post-session bookkeeping pair —
+/// `peer_refs::upsert_peer_ref_in_tx` followed by `complete_sync_in_tx`
+/// — must commit atomically. Both writes share a single
+/// `BEGIN IMMEDIATE` transaction so a crash or error between them
+/// cannot leave a peer row whose `last_hash` is stale relative to the
+/// ops actually applied.
+///
+/// This test verifies the success path: when the transaction commits,
+/// both writes are visible together — the peer row exists AND its
+/// `last_hash` / `last_sent_hash` / `synced_at` reflect the recorded
+/// sync.
+#[tokio::test]
+async fn upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically() {
+    let (pool, _dir) = test_pool().await;
+
+    // Pre-condition: peer does not exist.
+    assert!(
+        crate::peer_refs::get_peer_ref(&pool, "peer-tx-success")
+            .await
+            .unwrap()
+            .is_none(),
+        "peer must not exist before the bookkeeping pair runs"
+    );
+
+    // Run the bookkeeping pair inside a single BEGIN IMMEDIATE tx —
+    // exactly mirroring the orchestrator's `SyncComplete` arm.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    crate::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-success")
+        .await
+        .unwrap();
+    complete_sync_in_tx(&mut tx, "peer-tx-success", "hash-rx", "hash-tx")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    // Post-condition: both writes visible together.
+    let peer = crate::peer_refs::get_peer_ref(&pool, "peer-tx-success")
+        .await
+        .unwrap()
+        .expect("peer row must exist after committed bookkeeping pair");
+    assert_eq!(
+        peer.last_hash.as_deref(),
+        Some("hash-rx"),
+        "last_hash must be populated by complete_sync_in_tx"
+    );
+    assert_eq!(
+        peer.last_sent_hash.as_deref(),
+        Some("hash-tx"),
+        "last_sent_hash must be populated by complete_sync_in_tx"
+    );
+    assert!(
+        peer.synced_at.is_some(),
+        "synced_at must be populated by complete_sync_in_tx"
+    );
+}
+
+/// PEND-24 M2: when the inner write fails, the whole transaction must
+/// roll back — including the preceding `upsert_peer_ref_in_tx`. The
+/// peer row must NOT exist after the failure so the next session
+/// retries from a clean state instead of seeing a stranded row whose
+/// `last_hash` is `NULL` while the ops were already applied.
+///
+/// The failure is forced with a SQLite trigger that calls
+/// `RAISE(ABORT)` on `UPDATE peer_refs` — the same pattern used by
+/// `set_page_aliases_in_transaction` (M-21) elsewhere in the suite.
+#[tokio::test]
+async fn upsert_peer_ref_and_complete_sync_share_tx_rolls_back_on_inner_failure() {
+    let (pool, _dir) = test_pool().await;
+
+    // Install a trigger that aborts any UPDATE to peer_refs. This
+    // simulates the second-write-of-the-pair failing for any reason
+    // (disk error, concurrent constraint violation, etc.).
+    sqlx::query(
+        "CREATE TRIGGER test_pend24_m2_fail_update \
+         BEFORE UPDATE ON peer_refs \
+         BEGIN \
+            SELECT RAISE(ABORT, 'simulated mid-bookkeeping failure'); \
+         END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Run the bookkeeping pair. The upsert succeeds (INSERT OR IGNORE
+    // for a fresh peer), but the UPDATE inside complete_sync_in_tx
+    // hits the trigger and aborts.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    crate::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-rollback")
+        .await
+        .unwrap();
+    let inner = complete_sync_in_tx(&mut tx, "peer-tx-rollback", "hash-rx", "hash-tx").await;
+    assert!(
+        inner.is_err(),
+        "complete_sync_in_tx must propagate the trigger abort, got: {:?}",
+        inner.as_ref().ok()
+    );
+
+    // Drop tx without committing — sqlx's Transaction Drop rolls back.
+    drop(tx);
+
+    // Drop the trigger so the post-condition query is unaffected.
+    sqlx::query("DROP TRIGGER test_pend24_m2_fail_update")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Post-condition: the peer row must NOT exist. If the upsert had
+    // committed independently, this `get` would return `Some(_)` with
+    // a NULL `last_hash`, leaving the next session with a stranded
+    // peer-ref row — exactly the regression PEND-24 M2 prevents.
+    let peer = crate::peer_refs::get_peer_ref(&pool, "peer-tx-rollback")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_none(),
+        "rollback of the bookkeeping tx must un-do the upsert too; \
+         got stranded peer row: {peer:?}"
+    );
+}
+
 // ── OpTransfer roundtrip ────────────────────────────────────────────
 
 #[tokio::test]

@@ -437,15 +437,22 @@ pub async fn append_merge_op(
     op_payload: OpPayload,
     parent_entries: Vec<(String, i64)>,
 ) -> Result<OpRecord, AppError> {
-    if parent_entries.len() < 2 {
-        return Err(AppError::InvalidOperation(
-            "merge op requires at least 2 parent entries".into(),
-        ));
-    }
-
-    // Sort lexicographically for deterministic hashing
+    // Sort lexicographically for deterministic hashing, then dedup.
+    // PEND-24 M5 — `parent_entries` is caller-supplied and we have seen
+    // no contract preventing duplicate `(device_id, seq)` pairs from
+    // reaching here. A duplicate parent collapses to a single distinct
+    // entry post-dedup, so we re-check `< 2` after the dedup as well —
+    // a degenerate input like `[(A, 1), (A, 1)]` must be rejected even
+    // though `parent_entries.len() == 2` pre-dedup.
     let mut sorted_parents = parent_entries;
     sorted_parents.sort();
+    sorted_parents.dedup();
+
+    if sorted_parents.len() < 2 {
+        return Err(AppError::InvalidOperation(
+            "merge op requires at least 2 distinct parent entries".into(),
+        ));
+    }
 
     let parent_seqs_json = serde_json::to_string(&sorted_parents)?;
     let op_type = op_payload.op_type_str().to_owned();

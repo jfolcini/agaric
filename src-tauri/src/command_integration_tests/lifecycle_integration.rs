@@ -95,6 +95,149 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     );
 }
 
+/// PEND-24 M6: `restore_block_inner` must refresh the denormalized
+/// `page_id` column synchronously inside its own tx, mirroring
+/// `move_block_inner`. Pre-fix the column was only rewritten by the
+/// async `RebuildPageIds` materializer task, leaving an observable
+/// staleness window after the restore tx committed.
+///
+/// Scenario:
+///
+/// 1. Build a tree under `page_a`: `page_a → parent → leaf`. The
+///    leaf's denormalised `page_id` is `page_a`.
+/// 2. Soft-delete the leaf.
+/// 3. Shut the materialiser down so subsequent commands cannot rely
+///    on async catch-up — `RebuildPageIds` won't run, and any sync
+///    column update has to come from the command tx itself.
+/// 4. Move `parent` under `page_b`. `move_block_inner`'s recursive
+///    UPDATE filters `b.deleted_at IS NULL`, so it skips the
+///    soft-deleted leaf — `leaf.page_id` stays at `page_a` (verified
+///    inline as the test setup precondition).
+/// 5. Restore the leaf. With the M6 fix this synchronously rewrites
+///    `leaf.page_id = page_b` inside the restore tx. Without M6 the
+///    leaf would stay at `page_a` (no sync update; async path is
+///    blocked by the shutdown).
+///
+/// The shutdown is what makes the test deterministic: it removes the
+/// only async catch-up path so the assertion at step 5 isolates the
+/// synchronous-tx behaviour the M6 fix introduces.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_block_synchronously_refreshes_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Two pages.
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "Page B".into(), None, None)
+        .await
+        .unwrap();
+
+    // Parent (non-page) block under page_a — this is what we move
+    // cross-page while the leaf is in the trash.
+    let parent = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "parent".into(),
+        Some(page_a.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    // Leaf block under parent. Initial page_id = page_a (inherited
+    // via parent at create time).
+    let leaf = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "leaf".into(),
+        Some(parent.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        leaf.page_id.as_deref(),
+        Some(page_a.id.as_str()),
+        "sanity: leaf inherits page_a as its initial page_id"
+    );
+
+    // Soft-delete the leaf. Its parent stays alive.
+    let del = delete_block_inner(&pool, DEV, &mat, leaf.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Shut down the materialiser BEFORE the move/restore pair so any
+    // bg tasks they dispatch (RebuildPageIds in particular) cannot
+    // mask the sync-update behaviour we are testing. After shutdown
+    // `dispatch_background` returns Err and the `_or_warn` wrapper in
+    // `commit_and_dispatch` swallows it — the command tx still
+    // commits, only the async catch-up is blocked.
+    mat.shutdown();
+
+    // Move parent under page_b. `move_block_inner`'s recursive UPDATE
+    // filters `b.deleted_at IS NULL`, so the soft-deleted leaf's
+    // page_id is NOT touched by the move's sync path — the only path
+    // that would catch it is the async RebuildPageIds, now blocked.
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        parent.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    // Test setup precondition: leaf.page_id is still page_a (stale).
+    // If this ever fails, either move_block_inner started rewriting
+    // deleted descendants too, or the materialiser shutdown stopped
+    // working — both invalidate the test's setup.
+    let leaf_page_after_move: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&leaf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        leaf_page_after_move.as_deref(),
+        Some(page_a.id.as_str()),
+        "setup precondition: deleted leaf must still point at page_a \
+         after parent moves to page_b — move_block_inner skips \
+         soft-deleted descendants and async RebuildPageIds is blocked \
+         by the materialiser shutdown"
+    );
+
+    // Restore the leaf. With the M6 sync refresh in place, this
+    // rewrites leaf.page_id = page_b inside the restore tx itself.
+    // Without M6, the sync path leaves it at page_a (the async
+    // RebuildPageIds catch-up is blocked by the shutdown).
+    restore_block_inner(&pool, DEV, &mat, leaf.id.clone(), del.deleted_at)
+        .await
+        .unwrap();
+
+    let leaf_page_after_restore: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&leaf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        leaf_page_after_restore.as_deref(),
+        Some(page_b.id.as_str()),
+        "PEND-24 M6: restore_block_inner must synchronously refresh \
+         page_id to the new ancestor (page_b), not the stale page_a"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_creates_from_multiple_devices_no_conflicts() {
     let (pool, _dir) = test_pool().await;

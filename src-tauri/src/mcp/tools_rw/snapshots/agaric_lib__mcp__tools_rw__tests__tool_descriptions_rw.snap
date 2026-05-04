@@ -17,9 +17,13 @@ expression: wire
         description: Optional 1-based sibling position. Defaults to append (end).
         minimum: 1
         type: integer
+      space_id:
+        description: "PEND-24 — ULID of the space the agent is operating in. The append is rejected with a Validation error if `parent_id`'s owning page lives in a different space."
+        type: string
     required:
       - parent_id
       - content
+      - space_id
     type: object
   name: append_block
 - description: Replace the content of an existing block. Reversible via page history.
@@ -32,9 +36,13 @@ expression: wire
       content:
         description: New Markdown content.
         type: string
+      space_id:
+        description: "PEND-24 — ULID of the space the agent is operating in. The edit is rejected with a Validation error if `block_id`'s owning page lives in a different space."
+        type: string
     required:
       - block_id
       - content
+      - space_id
     type: object
   name: update_block_content
 - description: Set (upsert) a typed property on a block. Exactly one of value_text / value_num / value_date / value_ref must be provided.
@@ -46,6 +54,9 @@ expression: wire
         type: string
       key:
         description: Property key (see list_property_defs).
+        type: string
+      space_id:
+        description: "PEND-24 — ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space."
         type: string
       value_date:
         description: ISO-8601 date (exactly one value_* must be set).
@@ -62,6 +73,7 @@ expression: wire
     required:
       - block_id
       - key
+      - space_id
     type: object
   name: set_property
 - description: Apply an existing tag to a block. Does NOT create tags — the tag block must already exist (create tags from the UI).
@@ -71,23 +83,31 @@ expression: wire
       block_id:
         description: ULID of the block to tag.
         type: string
+      space_id:
+        description: "PEND-24 — ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. (Tags themselves are global — `tag_id` is not space-scoped.)"
+        type: string
       tag_id:
         description: ULID of an existing tag block.
         type: string
     required:
       - block_id
       - tag_id
+      - space_id
     type: object
   name: add_tag
-- description: "Create a new top-level page with the given title. The page has no parent (pages are always top-level in Agaric's model)."
+- description: "Create a new top-level page with the given title in the given space. The page has no parent (pages are always top-level in Agaric's model) and lands with its `space` property set in a single transaction."
   inputSchema:
     additionalProperties: false
     properties:
+      space_id:
+        description: "PEND-24 / BUG-1 — ULID of the space the new page belongs to. Required: every page lives in exactly one space; a page created without a `space_id` would be invisible to every space-scoped query."
+        type: string
       title:
         description: "Page title (becomes the page's content)."
         type: string
     required:
       - title
+      - space_id
     type: object
   name: create_page
 - description: Soft-delete a block and its descendants. Reversible via page history (agents never get the non-reversible purge path).
@@ -97,7 +117,11 @@ expression: wire
       block_id:
         description: ULID of the block to soft-delete.
         type: string
+      space_id:
+        description: "PEND-24 — ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space."
+        type: string
     required:
       - block_id
+      - space_id
     type: object
   name: delete_block
