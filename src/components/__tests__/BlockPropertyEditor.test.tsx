@@ -412,6 +412,42 @@ describe('BlockPropertyEditor', () => {
       })
       expect(setEditingProp).toHaveBeenCalledWith(null)
     })
+
+    // PEND-23 H1 — regression: the popover wrapper must expose listbox
+    // semantics, each option must carry `role="option"` + `aria-selected`,
+    // and the listbox's `aria-activedescendant` must point at the selected
+    // option's id. Mirrors the in-repo reference in
+    // `TagValuePicker.tsx:172–199`.
+    it('exposes ARIA listbox semantics on the select-options dropdown', async () => {
+      const { container } = render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'status', value: 'closed' },
+            selectOptions: ['open', 'closed', 'review'],
+          })}
+        />,
+      )
+
+      const listbox = screen.getByTestId('select-options-dropdown')
+      expect(listbox).toHaveAttribute('role', 'listbox')
+
+      const options = screen.getAllByRole('option')
+      expect(options).toHaveLength(3)
+
+      // 'closed' is selected (matches editingProp.value).
+      const [openOpt, closedOpt, reviewOpt] = options
+      expect(openOpt).toHaveAttribute('aria-selected', 'false')
+      expect(closedOpt).toHaveAttribute('aria-selected', 'true')
+      expect(reviewOpt).toHaveAttribute('aria-selected', 'false')
+
+      // aria-activedescendant must reference the selected option's id.
+      const activeId = listbox.getAttribute('aria-activedescendant')
+      expect(activeId).toBeTruthy()
+      expect(closedOpt?.id).toBe(activeId)
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   describe('ref picker', () => {

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { listTagsByPrefix } from '../lib/tauri'
@@ -49,7 +50,11 @@ export function TagValuePicker({
       )
       setActiveIndex(-1)
       setOpen(true)
-    } catch {
+    } catch (err) {
+      // PEND-23 M2: surface the failure rather than swallowing it. Matches the
+      // logger pattern used elsewhere for fire-and-forget IPC failures (see
+      // LinkEditPopover.tsx — `logger.warn(...)`).
+      logger.warn('TagValuePicker', 'failed to search tags', { prefix }, err)
       setResults([])
       setActiveIndex(-1)
     }

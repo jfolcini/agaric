@@ -11,7 +11,7 @@
 
 import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom'
 import type React from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -60,6 +60,9 @@ export function BlockPropertyEditor({
   const propPopupRef = useRef<HTMLDivElement | null>(null)
   const keyAnchorRef = useRef<HTMLSpanElement | null>(null)
   const keyPopupRef = useRef<HTMLDivElement | null>(null)
+  // PEND-23 H1 — stable id base for select-options listbox so each option
+  // can carry a unique `id` referenced by `aria-activedescendant`.
+  const selectListboxId = useId()
 
   // ── Position + autoUpdate for the value popup ──────────────────────────
   useEffect(() => {
@@ -219,31 +222,50 @@ export function BlockPropertyEditor({
       aria-label={t('block.editProperty')}
     >
       {selectOptions ? (
-        <div className="flex flex-col gap-0.5" data-testid="select-options-dropdown">
-          {selectOptions.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              className={cn(
-                'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors',
-                opt === editingProp.value && 'bg-accent font-medium',
-              )}
-              onClick={async () => {
-                try {
-                  await setProperty({ blockId, key: editingProp.key, valueText: opt })
-                } catch (err) {
-                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
-                    blockId,
-                    key: editingProp.key,
-                  })
-                }
-                setEditingProp(null)
-              }}
+        // PEND-23 H1 — listbox semantics so screen-reader / keyboard users
+        // see a navigable list rather than a stack of generic buttons.
+        // Mirrors the in-repo pattern in `TagValuePicker.tsx:172–199`.
+        (() => {
+          const selectedIdx = selectOptions.findIndex((opt) => opt === editingProp.value)
+          const optionId = (i: number) => `${selectListboxId}-option-${i}`
+          return (
+            <div
+              className="flex flex-col gap-0.5"
+              data-testid="select-options-dropdown"
+              role="listbox"
+              aria-label={t('block.editProperty')}
+              aria-activedescendant={selectedIdx >= 0 ? optionId(selectedIdx) : undefined}
+              tabIndex={0}
             >
-              {opt}
-            </button>
-          ))}
-        </div>
+              {selectOptions.map((opt, i) => (
+                <button
+                  key={opt}
+                  id={optionId(i)}
+                  type="button"
+                  role="option"
+                  aria-selected={i === selectedIdx}
+                  className={cn(
+                    'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors',
+                    i === selectedIdx && 'bg-accent font-medium',
+                  )}
+                  onClick={async () => {
+                    try {
+                      await setProperty({ blockId, key: editingProp.key, valueText: opt })
+                    } catch (err) {
+                      reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                        blockId,
+                        key: editingProp.key,
+                      })
+                    }
+                    setEditingProp(null)
+                  }}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )
+        })()
       ) : isRefProp ? (
         <fieldset
           className="flex flex-col gap-0.5 w-56 border-none p-0 m-0"

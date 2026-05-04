@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { useBootStore } from '../stores/boot'
 
@@ -110,9 +111,11 @@ export function BootGate({ children }: { children: React.ReactNode }) {
               className="mt-2 w-full max-w-md flex flex-col gap-2"
               data-testid="boot-diagnostics"
             >
-              <pre className="text-xs bg-background border rounded-md p-3 overflow-x-auto whitespace-pre-wrap font-mono text-foreground/80">
-                {diagnostics}
-              </pre>
+              <ScrollArea orientation="horizontal" className="bg-background border rounded-md">
+                <pre className="text-xs p-3 whitespace-pre-wrap font-mono text-foreground/80">
+                  {diagnostics}
+                </pre>
+              </ScrollArea>
               <Button
                 variant="ghost"
                 size="sm"

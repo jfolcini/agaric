@@ -235,6 +235,13 @@ describe('BootGate', () => {
     const pre = panel.querySelector('pre')
     expect(pre).not.toBeNull()
     expect(pre?.textContent).toContain('Error: DB connection failed')
+    // PEND-23 H2 — diagnostic surface uses `ScrollArea` (not bare
+    // `overflow-x-auto`) per AGENTS.md "ScrollArea for any scrollable
+    // container". The viewport wraps the <pre> so long User-Agent
+    // strings can scroll horizontally without leaking overflow into
+    // the parent layout.
+    expect(panel.querySelector('[data-slot="scroll-area-viewport"]')).not.toBeNull()
+    expect(panel.querySelector('[data-slot="scroll-area-viewport"] pre')).toBe(pre)
     // Toggle label flips to Hide.
     expect(screen.getByTestId('boot-show-details')).toHaveTextContent('Hide details')
   })

@@ -90,6 +90,21 @@ describe('DateChipEditor', () => {
     expect(screen.getByTestId('quick-clear')).toHaveTextContent('Clear')
   })
 
+  // PEND-23 M1: opening the editor on a block that already has a date
+  // pre-fills the input with that ISO value so the user can edit (not
+  // re-enter from scratch).
+  it('pre-fills the input with currentDate', () => {
+    render(<DateChipEditor blockId="B1" dateType="due" currentDate="2026-05-04" />)
+
+    expect(screen.getByRole('textbox')).toHaveValue('2026-05-04')
+  })
+
+  it('starts with an empty input when currentDate is null', () => {
+    render(<DateChipEditor blockId="B1" dateType="due" currentDate={null} />)
+
+    expect(screen.getByRole('textbox')).toHaveValue('')
+  })
+
   // 2. Clicking "Today" calls setDueDate with today's date
   it('clicking "Today" calls setDueDate with today\'s date', async () => {
     const user = userEvent.setup()

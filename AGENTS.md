@@ -46,7 +46,7 @@ See **[BUILD.md](BUILD.md)** for the full build guide (prerequisites, platform-s
 # Quick reference
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
-npm run test                 # Vitest (7300+ tests)
+npm run test                 # Vitest (9300+ tests)
 cd src-tauri && cargo nextest run   # Rust tests (3000+ tests)
 npx playwright test          # E2E tests (29 spec files)
 cargo tauri android build --target aarch64 --debug   # Android debug APK

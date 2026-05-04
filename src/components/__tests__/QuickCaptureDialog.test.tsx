@@ -162,4 +162,26 @@ describe('QuickCaptureDialog', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // PEND-23 M4: the dialog must have exactly one accessible label source —
+  // Radix derives it from <DialogTitle>, so the explicit aria-label on
+  // DialogContent was redundant. The textarea must carry its own label
+  // (not the dialog title) so screen readers don't mislabel the input.
+  it('does not duplicate the dialog title as an aria-label on DialogContent', () => {
+    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+
+    const dialog = screen.getByRole('dialog')
+    // Radix wires the dialog's accessible name via aria-labelledby pointing
+    // at <DialogTitle>; a redundant aria-label would override that and
+    // mask future title changes.
+    expect(dialog).not.toHaveAttribute('aria-label', t('quickCapture.dialogTitle'))
+  })
+
+  it('labels the textarea with its own distinct aria-label (not the dialog title)', () => {
+    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+
+    const textarea = screen.getByTestId('quick-capture-textarea')
+    expect(textarea).toHaveAttribute('aria-label', t('quickCapture.captureInputLabel'))
+    expect(textarea.getAttribute('aria-label')).not.toBe(t('quickCapture.dialogTitle'))
+  })
 })

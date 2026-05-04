@@ -39,14 +39,18 @@ export interface DateChipEditorProps {
 export function DateChipEditor({
   blockId,
   dateType,
-  currentDate: _currentDate,
+  currentDate,
   onSuccess,
 }: DateChipEditorProps): React.ReactElement {
   const { t } = useTranslation()
   const { setDueDate, setScheduledDate } = useBlockReschedule()
 
-  // Date input hook (M-29) — manages input state + NL preview
-  const { dateInput, datePreview, handleChange } = useDateInput()
+  // Date input hook (M-29) — manages input state + NL preview.
+  // Seed with currentDate so opening the editor on a block that already
+  // has a due/scheduled date pre-fills the input (PEND-23 M1).
+  const { dateInput, datePreview, handleChange } = useDateInput({
+    initialValue: currentDate ?? '',
+  })
 
   // Parse-fail flag — drives aria-invalid + border-destructive on the input.
   // datePreview is null while typing (debounced parse) and the visible error

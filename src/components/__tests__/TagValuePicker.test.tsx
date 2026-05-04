@@ -16,6 +16,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { logger } from '../../lib/logger'
 import { TagValuePicker } from '../TagValuePicker'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -194,6 +195,32 @@ describe('TagValuePicker', () => {
     await waitFor(() => {
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     })
+  })
+
+  // PEND-23 M2: failed `listTagsByPrefix` IPC must log a warn (no silent
+  // catch). Mirrors LinkEditPopover's prefetch-failure logging pattern.
+  it('logs a warn when listTagsByPrefix rejects', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const boom = new Error('boom')
+    mockedInvoke.mockRejectedValueOnce(boom)
+    const user = userEvent.setup()
+    renderPicker()
+
+    await user.type(screen.getByLabelText('Tag name'), 'wor')
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        'TagValuePicker',
+        'failed to search tags',
+        { prefix: 'wor' },
+        boom,
+      )
+    })
+
+    // Results stay cleared (dropdown not rendered) when the search fails.
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+
+    warnSpy.mockRestore()
   })
 
   it('displays usage count next to tag names', async () => {
