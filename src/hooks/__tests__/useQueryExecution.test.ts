@@ -311,6 +311,75 @@ describe('useQueryExecution', () => {
     expect(result.current.error).toBe('Backlinks query requires target:ULID parameter')
     expect(result.current.results).toHaveLength(0)
   })
+
+  // PEND-22: stale-fetch guard. When `expression` changes before the previous
+  // IPC resolves, the older (slower) fetch must NOT clobber the newer
+  // (faster) fetch's results. The hook uses a monotonic `reqIdRef` counter:
+  // each `fetchResults` call captures `myReqId = ++reqIdRef.current` and
+  // bails out at every await boundary if the counter has advanced.
+  it('discards stale results when an older fetch resolves after a newer fetch', async () => {
+    let resolveAlpha: ((value: unknown) => void) | undefined
+    let resolveBeta: ((value: unknown) => void) | undefined
+    let tagCallCount = 0
+
+    mockedInvoke.mockImplementation(((cmd: string): Promise<unknown> => {
+      if (cmd === 'query_by_tags') {
+        tagCallCount++
+        if (tagCallCount === 1) {
+          return new Promise((resolve) => {
+            resolveAlpha = resolve
+          })
+        }
+        return new Promise((resolve) => {
+          resolveBeta = resolve
+        })
+      }
+      if (cmd === 'batch_resolve') return Promise.resolve([])
+      return Promise.resolve(null)
+    }) as never)
+
+    const { result, rerender } = renderHook(({ expression }) => useQueryExecution({ expression }), {
+      initialProps: { expression: 'type:tag expr:alpha' },
+    })
+
+    // First fetch (alpha) is in flight.
+    expect(result.current.loading).toBe(true)
+
+    // Re-render with beta BEFORE alpha resolves: this triggers fetch #2.
+    rerender({ expression: 'type:tag expr:beta' })
+
+    // Beta resolves FIRST (the "newer, faster" fetch).
+    await act(async () => {
+      resolveBeta?.({
+        items: [makeBlock({ id: 'B1', content: 'beta-result' })],
+        next_cursor: null,
+        has_more: false,
+      })
+    })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.results).toHaveLength(1)
+    expect(result.current.results[0]?.content).toBe('beta-result')
+
+    // Now alpha (the "older, slower" fetch) finally resolves. Without the
+    // stale-fetch guard, this would call applyQueryResult and overwrite
+    // beta's payload. With the guard it must be a no-op.
+    await act(async () => {
+      resolveAlpha?.({
+        items: [makeBlock({ id: 'A1', content: 'alpha-result' })],
+        next_cursor: null,
+        has_more: false,
+      })
+      await Promise.resolve()
+    })
+
+    // Results should still be beta — alpha's late resolution was discarded.
+    expect(result.current.results).toHaveLength(1)
+    expect(result.current.results[0]?.id).toBe('B1')
+    expect(result.current.results[0]?.content).toBe('beta-result')
+  })
 })
 
 describe('fetchTagQuery', () => {

@@ -472,6 +472,13 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
       updateNodePositions(ctx.nodeById, msg.positions)
       resolveEdgeEndpoints(ctx.simEdges, ctx.nodeById)
       ctx.applyPositions()
+    } else if (msg.type === 'error') {
+      // PEND-22: structured error from the worker dispatcher's try/catch (or
+      // the worker's global error/unhandledrejection handlers). Route through
+      // the same `reportFailure` path as boundary `error` events so the
+      // orchestrator falls back to the main-thread simulation.
+      reportFailure('worker-reported', new Error(msg.message))
+      worker.terminate()
     }
   }
 

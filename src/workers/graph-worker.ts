@@ -19,7 +19,7 @@ import {
   type SimulationNodeDatum,
 } from 'd3-force'
 
-import type { NodePosition, WorkerInboundMessage } from './graph-worker-types'
+import type { NodePosition, WorkerErrorMessage, WorkerInboundMessage } from './graph-worker-types'
 
 // ── Internal node / edge types (d3-mutated) ──────────────────────────
 
@@ -52,76 +52,105 @@ function collectPositions(): NodePosition[] {
 // ── Message handler ──────────────────────────────────────────────────
 
 self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => {
-  const msg = event.data
+  try {
+    const msg = event.data
 
-  switch (msg.type) {
-    case 'start': {
-      // Tear down any previous simulation
-      if (simulation) {
-        simulation.stop()
-        simulation = null
+    switch (msg.type) {
+      case 'start': {
+        // Tear down any previous simulation
+        if (simulation) {
+          simulation.stop()
+          simulation = null
+        }
+
+        const { nodes, edges, width, height } = msg
+
+        simNodes = nodes.map((n) => ({ ...n }))
+        const simEdges: SimEdge[] = edges.map((e) => ({ ...e }))
+
+        simulation = forceSimulation<SimNode, SimEdge>(simNodes)
+          .force(
+            'link',
+            forceLink<SimNode, SimEdge>(simEdges)
+              .id((d) => d.id)
+              .distance(60),
+          )
+          .force('charge', forceManyBody().strength(-100))
+          .force('center', forceCenter(width / 2, height / 2))
+          .force('collide', forceCollide(20))
+          .force('x', forceX(width / 2).strength(0.05))
+          .force('y', forceY(height / 2).strength(0.05))
+
+        simulation.on('tick', () => {
+          self.postMessage({ type: 'tick', positions: collectPositions() })
+        })
+
+        simulation.on('end', () => {
+          self.postMessage({ type: 'done', positions: collectPositions() })
+        })
+
+        break
       }
 
-      const { nodes, edges, width, height } = msg
-
-      simNodes = nodes.map((n) => ({ ...n }))
-      const simEdges: SimEdge[] = edges.map((e) => ({ ...e }))
-
-      simulation = forceSimulation<SimNode, SimEdge>(simNodes)
-        .force(
-          'link',
-          forceLink<SimNode, SimEdge>(simEdges)
-            .id((d) => d.id)
-            .distance(60),
-        )
-        .force('charge', forceManyBody().strength(-100))
-        .force('center', forceCenter(width / 2, height / 2))
-        .force('collide', forceCollide(20))
-        .force('x', forceX(width / 2).strength(0.05))
-        .force('y', forceY(height / 2).strength(0.05))
-
-      simulation.on('tick', () => {
-        self.postMessage({ type: 'tick', positions: collectPositions() })
-      })
-
-      simulation.on('end', () => {
-        self.postMessage({ type: 'done', positions: collectPositions() })
-      })
-
-      break
-    }
-
-    case 'stop': {
-      if (simulation) {
-        simulation.stop()
-        simulation = null
+      case 'stop': {
+        if (simulation) {
+          simulation.stop()
+          simulation = null
+        }
+        break
       }
-      break
-    }
 
-    case 'drag': {
-      if (!simulation) break
+      case 'drag': {
+        if (!simulation) break
 
-      const node = simNodes.find((n) => n.id === msg.nodeId)
-      if (!node) break
+        const node = simNodes.find((n) => n.id === msg.nodeId)
+        if (!node) break
 
-      switch (msg.phase) {
-        case 'start':
-          simulation.alphaTarget(0.3).restart()
-          node.fx = msg.x
-          node.fy = msg.y
-          break
-        case 'drag':
-          node.fx = msg.x
-          node.fy = msg.y
-          break
-        case 'end':
-          simulation.alphaTarget(0)
-          node.fx = null
-          node.fy = null
-          break
+        switch (msg.phase) {
+          case 'start':
+            simulation.alphaTarget(0.3).restart()
+            node.fx = msg.x
+            node.fy = msg.y
+            break
+          case 'drag':
+            node.fx = msg.x
+            node.fy = msg.y
+            break
+          case 'end':
+            simulation.alphaTarget(0)
+            node.fx = null
+            node.fy = null
+            break
+        }
+        break
       }
-      break
     }
+  } catch (err) {
+    // PEND-22: post a structured error message back so the main thread gets a
+    // richer signal than "unknown failure", then re-throw so the worker
+    // boundary `error` event still fires (preserves the existing
+    // `onWorkerFailed` fallback path in `runWorkerSimulation`).
+    self.postMessage({
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    } satisfies WorkerErrorMessage)
+    throw err
   }
+})
+
+// PEND-22: belt-and-braces global handlers for failures that escape the
+// dispatcher (e.g., unhandled rejections from a future async path).
+self.addEventListener('error', (e) => {
+  self.postMessage({
+    type: 'error',
+    message: e.message ?? 'worker error',
+  } satisfies WorkerErrorMessage)
+})
+
+self.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason
+  self.postMessage({
+    type: 'error',
+    message: reason instanceof Error ? reason.message : String(reason),
+  } satisfies WorkerErrorMessage)
 })
