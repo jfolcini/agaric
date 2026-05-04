@@ -2,6 +2,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Sqlite, SqlitePool};
 use std::path::Path;
+use std::sync::Arc;
 
 /// Threshold (ms) above which [`acquire_logged`] emits a `warn` log.
 ///
@@ -150,15 +151,24 @@ pub async fn begin_immediate_logged(
 /// follow the `_or_warn` convention — logged via
 /// `dispatch_background_or_warn` / a direct `logger.warn` path for the
 /// `Edit` variant, never propagated to the caller.
+///
+/// PEND-25 L2 + L9: the inner `OpRecord` is held as `Arc<OpRecord>` so
+/// command sites that need both the dispatch queue and a post-commit
+/// `notify_gcal_for_op` borrow can share one record via refcount
+/// instead of deep-cloning. The enqueue methods accept
+/// `impl Into<Arc<OpRecord>>` so the existing call sites that hand off
+/// a freshly-built `OpRecord` by value continue to compile unchanged
+/// (the blanket `impl<T> From<T> for Arc<T>` makes the conversion
+/// transparent).
 enum PendingDispatch {
     /// Plain op dispatch — invokes [`Materializer::dispatch_background_or_warn`].
-    Background(crate::op_log::OpRecord),
+    Background(Arc<crate::op_log::OpRecord>),
     /// Edit-op dispatch with a `block_type` hint — invokes
     /// [`Materializer::dispatch_edit_background`] and warns on error.
     /// The materializer uses the hint to pick a narrower cache-rebuild
     /// fan-out for content vs. tag vs. page edits.
     EditBackground {
-        record: crate::op_log::OpRecord,
+        record: Arc<crate::op_log::OpRecord>,
         block_type: String,
     },
 }
@@ -207,8 +217,15 @@ impl CommandTx {
     ///
     /// Multiple records may be enqueued from the same transaction —
     /// typical for batch operations such as [`crate::commands::history::revert_ops_inner`].
-    pub fn enqueue_background(&mut self, record: crate::op_log::OpRecord) {
-        self.pending.push(PendingDispatch::Background(record));
+    ///
+    /// PEND-25 L9: accepts `impl Into<Arc<OpRecord>>` so callers can pass
+    /// either a fresh `OpRecord` by value (Rust's blanket
+    /// `impl<T> From<T> for Arc<T>` does the wrap) or an existing
+    /// `Arc<OpRecord>` they need to share with a post-commit borrow
+    /// (e.g. `materializer.notify_gcal_for_op(&op_record, ...)`).
+    pub fn enqueue_background(&mut self, record: impl Into<Arc<crate::op_log::OpRecord>>) {
+        self.pending
+            .push(PendingDispatch::Background(record.into()));
     }
 
     /// Queue an `edit_block` op record with a `block_type` hint for
@@ -223,13 +240,17 @@ impl CommandTx {
     ///
     /// `block_type` is the post-edit type ("content" / "page" / "tag")
     /// the materializer uses to pick a narrower rebuild fan-out.
+    ///
+    /// PEND-25 L9: see [`Self::enqueue_background`] — same `Into<Arc<…>>`
+    /// shape so the callsite reads identically regardless of whether the
+    /// record is owned or already shared.
     pub fn enqueue_edit_background(
         &mut self,
-        record: crate::op_log::OpRecord,
+        record: impl Into<Arc<crate::op_log::OpRecord>>,
         block_type: impl Into<String>,
     ) {
         self.pending.push(PendingDispatch::EditBackground {
-            record,
+            record: record.into(),
             block_type: block_type.into(),
         });
     }

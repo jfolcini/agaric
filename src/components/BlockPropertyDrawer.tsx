@@ -65,7 +65,7 @@ export function BlockPropertyDrawer({
   // updates reactively when dates are set via toolbar (H-12).
   const pageStore = usePageBlockStoreApi()
   const blockSelector = useCallback(
-    (s: PageBlockState) => (blockId ? s.blocks.find((b) => b.id === blockId) : undefined),
+    (s: PageBlockState) => (blockId ? s.blocksById.get(blockId) : undefined),
     [blockId],
   )
   const block = usePageBlockStore(blockSelector)

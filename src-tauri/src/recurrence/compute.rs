@@ -108,15 +108,31 @@ pub(crate) async fn handle_recurrence_in_tx(
     let original =
         original.ok_or_else(|| crate::error::AppError::NotFound(format!("block '{block_id}'")))?;
 
-    // Pre-compute shifted dates for end-condition checks
-    let shifted_due = original
-        .due_date
-        .as_ref()
-        .and_then(|d| shift_date(d, &rule));
-    let shifted_sched = original
-        .scheduled_date
-        .as_ref()
-        .and_then(|d| shift_date(d, &rule));
+    // Pre-compute shifted dates for end-condition checks.
+    //
+    // PEND-26 N3 / PEND-24 H2: `shift_date` now returns
+    // `Result<Option<String>, AppError>` so the caller can distinguish
+    // "rule could not be parsed" (`Ok(None)` — keep silent, mirrors the
+    // pre-fix `None` channel) from the two `++`-arm dead-ends that
+    // previously returned silent garbage:
+    //
+    // * single-step `NaiveDate` arithmetic overflow inside the `++` loop
+    //   (PEND-26 N3 — pre-fix the `?` propagation flushed this through
+    //   as `None`, and this caller created a sibling with no due date).
+    // * 10 000-iteration cap exhausted without `current > today` (PEND-24
+    //   H2 — pre-fix the loop returned a stale past date silently).
+    //
+    // Both are `Err(AppError::Validation)` and propagate via `?` here so
+    // the IMMEDIATE tx rolls back cleanly — same shape as the M-77
+    // `set_property_in_tx` propagation below, no half-formed sibling.
+    let shifted_due = match original.due_date.as_ref() {
+        Some(d) => shift_date(d, &rule)?,
+        None => None,
+    };
+    let shifted_sched = match original.scheduled_date.as_ref() {
+        Some(d) => shift_date(d, &rule)?,
+        None => None,
+    };
 
     // The "reference" shifted date used for end-condition comparison:
     // prefer due_date, fall back to scheduled_date.

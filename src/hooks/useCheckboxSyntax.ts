@@ -37,8 +37,7 @@ export function useCheckboxSyntax({
       if (!focusedBlockId) return
       // FE-H-7: snapshot prior todo_state so the optimistic mutation can be
       // reverted if `setTodoStateCmd` rejects.
-      const priorTodoState =
-        pageStore.getState().blocks.find((b) => b.id === focusedBlockId)?.todo_state ?? null
+      const priorTodoState = pageStore.getState().blocksById.get(focusedBlockId)?.todo_state ?? null
       setTodoStateCmd(focusedBlockId, state)
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)

@@ -62,6 +62,7 @@ function PageEditorInner({
 }: PageEditorProps): React.ReactElement {
   const { t } = useTranslation()
   const blocks = usePageBlockStore((s) => s.blocks)
+  const blocksById = usePageBlockStore((s) => s.blocksById)
   const createBelow = usePageBlockStore((s) => s.createBelow)
   const setFocused = useBlockStore((s) => s.setFocused)
   const pageStore = usePageBlockStoreApi()
@@ -75,7 +76,7 @@ function PageEditorInner({
   useLayoutEffect(() => {
     if (!selectedBlockId || blocks.length === 0) return
     // Focus the target block if it exists in this page's block tree
-    const target = blocks.find((b) => b.id === selectedBlockId)
+    const target = blocksById.get(selectedBlockId)
     if (target) {
       setFocused(selectedBlockId)
       document
@@ -83,7 +84,7 @@ function PageEditorInner({
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       clearSelection()
     }
-  }, [selectedBlockId, blocks, setFocused, clearSelection])
+  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(() => {

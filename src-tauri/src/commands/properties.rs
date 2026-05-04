@@ -1,6 +1,7 @@
 //! Properties command handlers.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use sqlx::SqlitePool;
 use tauri::State;
@@ -154,9 +155,13 @@ pub async fn set_property_inner(
         value_bool,
     )
     .await?;
-    // Clone `op_record` for the dispatch queue so the post-commit
-    // `notify_gcal_for_op` call below still has the original.
-    tx.enqueue_background(op_record.clone());
+    // PEND-25 L9: wrap once in `Arc` so the dispatch queue and the
+    // post-commit `notify_gcal_for_op` borrow share the record by
+    // refcount (one atomic increment) instead of deep-cloning the
+    // owned `String` payloads. Pairs with PEND-25 L2 on
+    // `DeferredNotification`.
+    let op_record = Arc::new(op_record);
+    tx.enqueue_background(Arc::clone(&op_record));
     tx.commit_and_dispatch(materializer).await?;
     if let Some(snapshot) = gcal_snapshot {
         materializer.notify_gcal_for_op(&op_record, &snapshot);
@@ -423,9 +428,11 @@ pub async fn set_priority_inner(
         &mut tx, device_id, block_id, "priority", level, None, None, None, None,
     )
     .await?;
-    // Clone `op_record` for the dispatch queue so the post-commit
-    // `notify_gcal_for_op` call below still has the original.
-    tx.enqueue_background(op_record.clone());
+    // PEND-25 L9: same Arc-share pattern as `set_property_inner`. The
+    // dispatch queue and the post-commit GCal notify borrow the same
+    // record via refcount.
+    let op_record = Arc::new(op_record);
+    tx.enqueue_background(Arc::clone(&op_record));
     tx.commit_and_dispatch(materializer).await?;
     if let Some(snapshot) = gcal_snapshot {
         materializer.notify_gcal_for_op(&op_record, &snapshot);

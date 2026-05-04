@@ -1,15 +1,18 @@
 import { invoke } from '@tauri-apps/api/core'
-import { render } from '@testing-library/react'
-import { createElement, type ReactElement, type ReactNode } from 'react'
+import { act, render } from '@testing-library/react'
+import { createElement, type ReactElement, type ReactNode, useRef } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../__tests__/fixtures'
 import {
   createPageBlockStore,
+  type FlatBlock,
+  PageBlockContext,
   type PageBlockState,
   PageBlockStoreProvider,
   pageBlockRegistry,
+  usePageBlockStore,
 } from '../page-blocks'
 import { useSpaceStore } from '../space'
 
@@ -1654,6 +1657,266 @@ describe('PageBlockStore', () => {
 
       b.unmount()
       expect(pageBlockRegistry.has(pageId)).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // PEND-20 G — blocksById Map invariant
+  // ---------------------------------------------------------------------------
+  describe('blocksById Map invariant', () => {
+    it('seeds an empty Map on a freshly created store', () => {
+      const fresh = createPageBlockStore('PAGE_FRESH')
+      const { blocks, blocksById } = fresh.getState()
+      expect(blocks).toEqual([])
+      expect(blocksById).toBeInstanceOf(Map)
+      expect(blocksById.size).toBe(0)
+    })
+
+    it('load() populates blocksById from the loaded blocks', async () => {
+      const items = [
+        makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
+      ]
+      mockedInvoke.mockResolvedValueOnce({ items, next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await store.getState().load()
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocksById.size).toBe(2)
+      expect(blocksById.get('A')).toBe(blocks[0])
+      expect(blocksById.get('B')).toBe(blocks[1])
+    })
+
+    it('createBelow keeps blocksById in sync', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'NEW',
+        block_type: 'text',
+        content: 'new',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await store.getState().createBelow('A', 'new')
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocksById.size).toBe(blocks.length)
+      expect(blocksById.get('NEW')?.content).toBe('new')
+      expect(blocksById.get('A')?.id).toBe('A')
+    })
+
+    it('edit keeps blocksById in sync', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
+      mockedInvoke.mockResolvedValueOnce({})
+
+      await store.getState().edit('A', 'new')
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocksById.get('A')?.content).toBe('new')
+      expect(blocksById.get('A')).toBe(blocks[0])
+    })
+
+    it('remove keeps blocksById in sync', async () => {
+      store.setState({
+        blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })],
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        deleted_at: '2025-01-01T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+      await store.getState().remove('A')
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocks).toHaveLength(1)
+      expect(blocksById.size).toBe(1)
+      expect(blocksById.has('A')).toBe(false)
+      expect(blocksById.get('B')?.id).toBe('B')
+    })
+
+    it('reorder keeps blocksById in sync', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+      mockedInvoke.mockResolvedValueOnce(undefined)
+
+      await store.getState().reorder('A', 1)
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocks.map((b) => b.id)).toEqual(['B', 'A'])
+      expect(blocksById.size).toBe(2)
+      // Map points to the new array entries (after reorder).
+      expect(blocksById.get('A')).toBe(blocks[1])
+      expect(blocksById.get('B')).toBe(blocks[0])
+    })
+
+    it('indent keeps blocksById in sync', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+      mockedInvoke.mockResolvedValueOnce(undefined)
+
+      await store.getState().indent('B')
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocksById.size).toBe(blocks.length)
+      // Indented block's depth/parent updated and the Map entry reflects that.
+      const indented = blocksById.get('B')
+      expect(indented?.parent_id).toBe('A')
+      expect(indented?.depth).toBe(1)
+    })
+
+    it('dedent keeps blocksById in sync', async () => {
+      const parent = makeBlock({ id: 'P', position: 0, parent_id: null, depth: 0 })
+      const child = makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 })
+      store.setState({ blocks: [parent, child] })
+      mockedInvoke.mockResolvedValueOnce(undefined)
+
+      await store.getState().dedent('C')
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocksById.size).toBe(blocks.length)
+      const dedented = blocksById.get('C')
+      expect(dedented?.parent_id).toBe(null)
+      expect(dedented?.depth).toBe(0)
+    })
+
+    it('edit rollback on backend error restores both blocks and blocksById', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
+      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+      await store.getState().edit('A', 'new')
+
+      const { blocks, blocksById } = store.getState()
+      expect(blocks[0]?.content).toBe('old')
+      expect(blocksById.get('A')?.content).toBe('old')
+      expect(blocksById.get('A')).toBe(blocks[0])
+    })
+
+    it('produces a fresh Map reference on every blocks-touching mutation', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
+      const map1 = store.getState().blocksById
+
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('A', 'new')
+      const map2 = store.getState().blocksById
+      expect(map2).not.toBe(map1)
+
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'NEW',
+        block_type: 'text',
+        content: '',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      await store.getState().createBelow('A')
+      const map3 = store.getState().blocksById
+      expect(map3).not.toBe(map2)
+    })
+
+    it('subscribe listeners fire when blocksById changes', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
+      const seen: Map<string, FlatBlock>[] = []
+      const unsub = store.subscribe((state, prev) => {
+        if (state.blocksById !== prev.blocksById) seen.push(state.blocksById)
+      })
+
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('A', 'new')
+
+      expect(seen).toHaveLength(1)
+      expect(seen[0]?.get('A')?.content).toBe('new')
+      unsub()
+    })
+
+    it('getBlockById returns the matching block or undefined', () => {
+      const a = makeBlock({ id: 'A' })
+      const b = makeBlock({ id: 'B' })
+      store.setState({ blocks: [a, b] })
+
+      expect(store.getState().getBlockById('A')?.id).toBe('A')
+      expect(store.getState().getBlockById('B')?.id).toBe('B')
+      expect(store.getState().getBlockById('NOPE')).toBeUndefined()
+    })
+
+    it('external setState({ blocks }) auto-derives blocksById', () => {
+      store.setState({ blocks: [makeBlock({ id: 'X' }), makeBlock({ id: 'Y' })] })
+
+      const { blocksById } = store.getState()
+      expect(blocksById.size).toBe(2)
+      expect(blocksById.get('X')?.id).toBe('X')
+      expect(blocksById.get('Y')?.id).toBe('Y')
+    })
+
+    it('external setState honours an explicitly provided blocksById', () => {
+      const explicit = new Map<string, ReturnType<typeof makeBlock>>([
+        // Intentionally drop one entry so we can prove the explicit Map wins
+        // over the would-be auto-derived one.
+        ['A', makeBlock({ id: 'A' })],
+      ])
+      store.setState({
+        blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })],
+        blocksById: explicit,
+      })
+
+      expect(store.getState().blocksById).toBe(explicit)
+      expect(store.getState().blocksById.size).toBe(1)
+    })
+
+    it('setState that does not touch blocks leaves blocksById identity intact', () => {
+      store.setState({ blocks: [makeBlock({ id: 'A' })] })
+      const before = store.getState().blocksById
+
+      store.setState({ loading: false })
+
+      expect(store.getState().blocksById).toBe(before)
+    })
+
+    it('Probe component subscribed to blocksById re-renders on every mutation', async () => {
+      let renderCount = 0
+
+      function Probe(): ReactElement {
+        const map = usePageBlockStore((s) => s.blocksById)
+        const renderedRef = useRef(0)
+        renderedRef.current++
+        renderCount = renderedRef.current
+        return createElement('span', { 'data-testid': 'probe' }, `size=${map.size}`)
+      }
+
+      const { getByTestId } = render(
+        createElement(PageBlockContext.Provider, { value: store }, createElement(Probe)),
+      )
+
+      const initialRenders = renderCount
+      expect(getByTestId('probe').textContent).toBe('size=0')
+
+      // Mutation 1: setState with new blocks → derives new Map → re-render.
+      act(() => {
+        store.setState({ blocks: [makeBlock({ id: 'A' })] })
+      })
+      expect(renderCount).toBeGreaterThan(initialRenders)
+      expect(getByTestId('probe').textContent).toBe('size=1')
+
+      // Mutation 2: edit() → new Map → re-render.
+      const beforeEdit = renderCount
+      mockedInvoke.mockResolvedValueOnce({})
+      await act(async () => {
+        await store.getState().edit('A', 'new content')
+      })
+      expect(renderCount).toBeGreaterThan(beforeEdit)
+
+      // Non-blocks mutation should NOT re-render.
+      const beforeIdle = renderCount
+      act(() => {
+        store.setState({ loading: false })
+      })
+      expect(renderCount).toBe(beforeIdle)
     })
   })
 })

@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-04 (Session 661 — Rust backend triple: PEND-20 partial (A index hygiene migration 0045 + B.1/B.2 json_extract retirement + D FTS chunked rebuild + E load_ref_maps lifted to materializer batch + F MATERIALIZED CTE + H async metadata; remaining: C, G, L1-L10), PEND-25 partial (L1 OnceLock + L3/L4 sync_protocol clones + L5 FxHashMap + L6 combined regex + L7 multi-row INSERT + L10 walk_edit_chain &str + L11 truncate_blake3_hex + L12 truncate_chars + L14 EventPatch by-value + L17 doc-only; deferred: L2+L9 paired, L8 blocked on MAINT-196, L15+L16 speculative, M1 Android-conditional, M2 MAINT-91, L13 excluded), PEND-26 partial (N1 uppercase-normalize space_id + N2 cascade_depth_saturated helper + N4 MCP description; N3 deferred to bundle with PEND-24 H2). ~18 new Rust tests; 3478/3478 nextest pass; `prek run --all-files` clean.)
+> **Last updated:** 2026-05-04 (Session 662 — finished PEND-20 / PEND-25 / PEND-26: PEND-20 C (materializer descendants temp-table) + G (`blocksById` Map in `PageBlockStore` for O(1) lookups, ~9 consumers converted) + PEND-25 L2+L9 (paired `Arc<OpRecord>` shift through `enqueue_*_background` + `PendingDispatch`) + PEND-26 N3 + PEND-24 H2 (recurrence `++` overflow + cap-exceeded both surface as `Err(AppError::Validation)`). Deleted PEND-20, PEND-25, PEND-26 plan files; remaining PEND-25 conditional/blocked items (M1 Android, L15+L16 speculative, M2 oauth2) re-tracked here as MAINT-91 / MAINT-208 / MAINT-209. ~25 new tests (≈11 Rust + 14 frontend); 3485/3485 nextest + 9343/9343 vitest pass; `prek run --all-files` clean.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -46,6 +46,9 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-205 | MAINT | `src/lib/i18n/index.ts:35-49` merges 14 namespace files via spread into one flat `translation: Record<string, string>`. A duplicate dotted key across two namespaces is silently overwritten (last-spread-wins). No current collisions, but no test guards it. Fix: tiny vitest asserting merged-key count equals the sum of namespace key counts (or pairwise `assertNoOverlap`). | S | — |
 | MAINT-206 | MAINT | No automated parity check between `src/lib/tauri-mock/handlers.ts` `HANDLERS` map and the specta-generated commands in `src/lib/bindings.ts`. Adding a backend command without a matching handler silently returns `null` from the mock dispatcher, which masks real test failures. Mirrors PEND-08's `tauri.ts ↔ bindings.ts` parity hook for the test mock. | S | — |
 | MAINT-207 | MAINT | Frontend hygiene bundle (5 low-impact items): (a) `Input` and `Textarea` duplicate identical focus-visible + aria-invalid class strings — extract a shared base. (b) `MonthlyView` accepts `onNavigateToPage` and `onAddBlock` only to ignore them via `_`-prefixed renames — drop both from the API + caller. (c) `limit: 50` literal repeated in 11+ production sites (SearchPanel, LinkedReferences, TrashView, DonePanel, ConflictList, HistoryPanel, TagFilterPanel, PageBrowser, HistoryView, useDuePanelData) — define `PAGINATION_LIMIT` in `src/lib/constants.ts`. (d) `SearchPanel.tsx:99-130` carries ~22 useState slices — collapse filter/popover state into a `useReducer` or two extracted hooks. (e) `SearchInput.tsx:69-72` synthesizes a partial `ChangeEvent` via `as unknown as` for the clear-button — expose an explicit `onClear` callback instead, or construct a fuller event. | S-M | — |
+| MAINT-91 | MAINT | `oauth2` v5.0 still pins `reqwest ^0.12` while the repo pins `reqwest 0.13.2` (rustls everywhere). Drop the `reqwest` feature on the `oauth2` dependency and write a custom `AsyncHttpClient` adapter over reqwest 0.13. Adapter requires re-typing `OAuthClient::http_client` and `classify_refresh_error`'s generic error parameter. Revisit when `oauth2` tracks `reqwest 0.13`, or as a standalone refactor. Cited in `src-tauri/Cargo.toml:158-166` (oauth2 declaration) and `:137` (FEAT-5c / MAINT-91 reqwest pin block). Deferred from PEND-25 M2 (Rust perf review, session 661); the deeper duplicate-`reqwest 0.12` pull is the perf concern that justifies the refactor. | M | — |
+| MAINT-208 | MAINT | PEND-25 M1 deferred — three deferrable `block_on` calls in `src-tauri/src/lib.rs:637, 741, 1083` (link cleanup, space migration, gcal migration) at startup. Per the PEND-25 plan body, only act if Android boot profile shows >100 ms cumulative cost; on desktop the headroom is irrelevant. Profile `adb shell am start -W` with `tracing::info!` instrumentation before refactoring; if confirmed, defer to a post-window-show task. Conditional. | M (4-7h) | Android boot profile data |
+| MAINT-209 | MAINT | PEND-25 L15 + L16 deferred — gcal connector channel + agenda fetch hygiene. (L15) `mpsc::UnboundedSender<DirtyEvent>` in `src-tauri/src/gcal_push/connector.rs:255` is unbounded; defensive bounded channel + `try_send` only matters if a fast producer overruns the consumer (no observed instance today). (L16) `connector.rs:486, 589-595` makes per-date agenda fetches in a loop instead of one `list_projected_agenda_inner(min_date, max_date)` call; only matters when the gcal push window grows beyond a handful of days. Both are speculative — only pursue if profiling shows a concrete need. | S-M (~3h together) | Profiling data showing gcal contention |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
@@ -587,6 +590,43 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low — additive or refactor-only; covered by existing tests.
 - **Impact:** Low-medium — readability + a guard against the synthetic-event NPE for any future consumer that reads `e.bubbles` / calls `e.preventDefault()`.
 - **Status:** Open. Filed during JS/TS code review (session 660).
+
+### MAINT-91 — `oauth2` v5 still pins `reqwest 0.12`; need adapter over reqwest 0.13
+
+- **Domain:** Backend / dependency hygiene
+- **Locations:** `src-tauri/Cargo.toml:158-166` (oauth2 declaration), `:137` (FEAT-5c / MAINT-91 reqwest pin block).
+- **What:** `oauth2 v5.0` pins `reqwest ^0.12` via its built-in `reqwest` feature, while the rest of the repo pins `reqwest 0.13.2` (rustls everywhere). This drags a duplicate `reqwest 0.12` slice into the dep graph. The repo selects `rustls-tls` so both reqwest slices use the same TLS stack at link time, but the duplicate compile cost + binary size is real.
+- **Why it matters:** Single-TLS-stack posture is preserved (good), but every `cargo build` recompiles two `reqwest` slices and the resulting binary carries both. Not a correctness issue.
+- **Fix:** Drop the `reqwest` feature on the `oauth2` dep and write a custom `AsyncHttpClient` adapter over `reqwest 0.13`. Adapter requires re-typing `OAuthClient::http_client` and `classify_refresh_error`'s generic error parameter.
+- **Cost:** M.
+- **Risk:** Medium — touches `commands/oauth.rs` + `gcal_oauth/*` end-to-end; the type-parameter expansion ripples.
+- **Impact:** Medium (perf — single reqwest slice instead of two; smaller binary).
+- **Status:** Open. FEAT-5c declined to take it on (out of scope). Re-evaluate when `oauth2` tracks `reqwest 0.13`, or as a standalone refactor. Surfaced as PEND-25 M2 (session 661 confirmed it's still open as MAINT-91).
+
+### MAINT-208 — PEND-25 M1: defer 3 `block_on` startup calls (Android boot perf)
+
+- **Domain:** Backend / startup performance (Android-conditional)
+- **Locations:** `src-tauri/src/lib.rs:637, 741, 1083` — 3 deferrable `block_on` calls (link cleanup, space migration, gcal migration).
+- **What:** Three startup tasks run synchronously via `block_on` inside the Tauri builder, blocking window-paint until they complete. Per the PEND-25 plan body, only 3 of 11 `block_on` calls are deferrable; the rest are correctness-critical (db pool init, materializer warm).
+- **Why it matters:** On Android the cumulative cost may exceed 100 ms, delaying first-paint perceptibly. On desktop the headroom is irrelevant — startup is fast enough that the user doesn't see it.
+- **Fix:** Defer the 3 deferrable calls to a post-window-show task (spawn after `app.handle().get_webview_window("main")` is up; signal via a `tokio::sync::Notify`). Materializer must remain initialized before any IPC handler can run.
+- **Cost:** M (4-7h) — only worth doing if profiling confirms the >100 ms claim.
+- **Risk:** Medium — startup ordering is fragile (gcal migration depends on space migration).
+- **Impact:** Medium on Android, none on desktop. **Conditional on Android boot profile data.**
+- **Status:** Open, conditional. Profile `adb shell am start -W` with `tracing::info!` instrumentation around each call before refactoring. If cumulative cost <100 ms, close as won't-fix.
+
+### MAINT-209 — PEND-25 L15 + L16: gcal connector channel + agenda fetch hygiene (speculative)
+
+- **Domain:** Backend / gcal push connector
+- **Locations:** `src-tauri/src/gcal_push/connector.rs:255` (L15), `:486, :589-595` (L16).
+- **What — L15:** `mpsc::UnboundedSender<DirtyEvent>` is unbounded today; defensive bounded channel + `try_send` would prevent a runaway producer from OOM'ing the consumer. No observed instance of producer overrun today; speculative-only.
+- **What — L16:** `connector.rs:486, 589-595` makes per-date agenda fetches in a loop instead of a single `list_projected_agenda_inner(min_date, max_date)` call. Only matters when the gcal push window grows beyond a handful of days.
+- **Why it matters:** Both are speculative perf wins. Worth doing if profiling shows real contention; not worth doing pre-emptively.
+- **Fix:** L15 — switch to `mpsc::channel(N)` + `try_send` with overflow-warn-and-drop. L16 — batch the per-date calls into a single range query.
+- **Cost:** S-M (~3h together if pursued; ~0 if not).
+- **Risk:** Low (defensive changes).
+- **Impact:** Low today; medium if gcal push usage grows.
+- **Status:** Open, speculative. Surface concrete profiling data showing gcal contention before pursuing. Filed from PEND-25 (session 661).
 
 ## TEST — Backend test improvements
 

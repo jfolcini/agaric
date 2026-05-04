@@ -114,7 +114,7 @@ function EditableBlockInner({
   const edit = usePageBlockStore((s) => s.edit)
   const splitBlock = usePageBlockStore((s) => s.splitBlock)
   const prioritySelector = useCallback(
-    (s: PageBlockState) => s.blocks.find((b) => b.id === blockId)?.priority ?? null,
+    (s: PageBlockState) => s.blocksById.get(blockId)?.priority ?? null,
     [blockId],
   )
   const currentPriority = usePageBlockStore(prioritySelector)

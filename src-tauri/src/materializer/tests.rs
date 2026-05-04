@@ -3557,6 +3557,250 @@ async fn purge_handler_cleans_projected_agenda_cache() {
 }
 
 // ======================================================================
+// PEND-20 C: cascade-purge materialises descendants once into a TEMP
+// table and DROPs it at the end of the handler. The 15 DELETE / UPDATE
+// statements then read from the temp table instead of re-evaluating the
+// recursive `descendants_cte_purge!()` CTE 15× per cascade.
+//
+// Regression contract:
+//   1. Final DB state matches the pre-refactor handler (every row in
+//      the subtree — including conflict copies — is gone).
+//   2. The temp namespace is clean afterwards (no leaked
+//      `_purge_descendants` row in `sqlite_temp_master`).
+//   3. Purge intentionally walks conflict copies (invariant #9's
+//      documented exception) — verified by including a conflict-copy
+//      child in the tree and asserting it is purged with the rest.
+// ======================================================================
+
+/// Build a tree of 100+ blocks rooted at `root_id`, with one
+/// `is_conflict = 1` copy mixed in to confirm the purge variant
+/// intentionally walks conflicts.
+async fn seed_purge_tree(pool: &SqlitePool, root_id: &str) -> usize {
+    insert_block_direct(pool, root_id, "page", "purge-root").await;
+    // Build a deliberately-bushy tree: 10 first-level children, each
+    // with 10 grandchildren -> 1 root + 10 + 100 = 111 blocks total.
+    for i in 0..10 {
+        let child_id = format!("{root_id}_C{i:02}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, ?)",
+        )
+        .bind(&child_id)
+        .bind(format!("child-{i}"))
+        .bind(root_id)
+        .bind(i)
+        .execute(pool)
+        .await
+        .unwrap();
+        for j in 0..10 {
+            let leaf_id = format!("{root_id}_C{i:02}_L{j:02}");
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', ?, ?, ?)",
+            )
+            .bind(&leaf_id)
+            .bind(format!("leaf-{i}-{j}"))
+            .bind(&child_id)
+            .bind(j)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+    // Pin one conflict-copy child onto the root so the purge sweep
+    // proves it walks conflicts (invariant #9 exception).
+    let conflict_id = format!("{root_id}_CONFLICT");
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+         VALUES (?, 'content', 'conflict-copy', ?, 99, 1)",
+    )
+    .bind(&conflict_id)
+    .bind(root_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    1 + 10 + 100 + 1 // = 112
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_handler_cascades_through_100_block_tree_and_cleans_temp_table() {
+    let (pool, _dir) = test_pool().await;
+
+    let root_id = "PURGE_BIG";
+    let total = seed_purge_tree(&pool, root_id).await;
+    assert!(
+        total >= 100,
+        "test seed must place 100+ blocks under the purge root (got {total})"
+    );
+    soft_delete_block_direct(&pool, root_id).await;
+
+    // Pre-purge sanity — the tree is fully populated.
+    let pre_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id LIKE 'PURGE_BIG%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        usize::try_from(pre_count).unwrap(),
+        total,
+        "tree should be fully populated before the purge"
+    );
+
+    // Drive a purge through the materializer foreground handler — this
+    // exercises the `OpType::PurgeBlock` arm that was refactored under
+    // PEND-20 C to use the `_purge_descendants` TEMP table.
+    let r = make_op_record(
+        &pool,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id(root_id),
+        }),
+    )
+    .await;
+    let task = MaterializeTask::ApplyOp(StdArc::new(r));
+    handle_foreground_task(&pool, &task, &empty_gcal_handle())
+        .await
+        .unwrap();
+
+    // 1. Every block in the subtree (including the conflict copy) is
+    //    physically gone.
+    let post_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id LIKE 'PURGE_BIG%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        post_count, 0,
+        "every block in the purged subtree (including the conflict copy) must be gone"
+    );
+
+    // 2. The conflict-copy child specifically — invariant #9's
+    //    documented exception means purge intentionally walks it.
+    let conflict_exists: Option<String> =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE id = 'PURGE_BIG_CONFLICT'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        conflict_exists.is_none(),
+        "conflict copy must be purged alongside the rest of the subtree (invariant #9 exception)"
+    );
+
+    // 3. The TEMP table must NOT leak across handler invocations. The
+    //    explicit `DROP TABLE _purge_descendants` at the bottom of the
+    //    handler keeps the connection's temp namespace empty.
+    //
+    //    `sqlite_temp_master` is per-connection; we query through the
+    //    pool so this matches what the next caller would observe. Note
+    //    that pool connection identity is not deterministic, so we
+    //    aggregate across whichever connection responds — any leaked
+    //    temp table on any pooled connection would be a defect.
+    let leaked: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_temp_master WHERE name = '_purge_descendants'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        leaked.is_none(),
+        "PEND-20 C: the _purge_descendants temp table must be dropped at the end of the handler"
+    );
+}
+
+/// Repeated invocations of the purge handler share connections from the
+/// pool. The defensive `DROP TABLE IF EXISTS` at the top of the handler
+/// guards against a prior crash leaking the table; verify by running
+/// the cascade twice on independently-seeded subtrees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_handler_runs_cleanly_when_invoked_consecutively() {
+    let (pool, _dir) = test_pool().await;
+
+    for n in 0..2 {
+        let root_id = format!("PURGE_REP_{n}");
+        seed_purge_tree(&pool, &root_id).await;
+        soft_delete_block_direct(&pool, &root_id).await;
+        let r = make_op_record(
+            &pool,
+            OpPayload::PurgeBlock(PurgeBlockPayload {
+                block_id: BlockId::test_id(&root_id),
+            }),
+        )
+        .await;
+        let task = MaterializeTask::ApplyOp(StdArc::new(r));
+        handle_foreground_task(&pool, &task, &empty_gcal_handle())
+            .await
+            .unwrap();
+        let after: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM blocks WHERE id LIKE '{root_id}%'"
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, 0, "purge {n} must clear its subtree");
+    }
+}
+
+// ======================================================================
+// PEND-25 L2 + L9: `DeferredNotification.record` is `Arc<OpRecord>` and
+// the `enqueue_*_background` family on `CommandTx` accepts
+// `impl Into<Arc<OpRecord>>`. Together these let the producer wrap
+// once and the dispatch + post-commit borrow share the record by
+// refcount.
+//
+// This regression test exercises the `Arc<OpRecord>` shift on the
+// `MaterializeTask::ApplyOp(Arc<OpRecord>)` path: the foreground
+// handler calls `apply_op(record: &Arc<OpRecord>, ...)` which builds a
+// `DeferredNotification` via `Arc::clone(record)`. We assert the
+// post-call refcount goes down to 1 (the test's local handle), proving
+// the dispatcher dropped its clone after firing the notification.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_op_arc_record_does_not_leak_strong_count() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_direct(&pool, "ARC_OP_1", "content", "block-content").await;
+
+    // Build the op record, then wrap in `Arc`. The dispatcher will
+    // `Arc::clone` it inside `MaterializeTask::ApplyOp` and again inside
+    // `DeferredNotification`; both clones must drop before the call
+    // returns.
+    let raw = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("ARC_OP_1"),
+            to_text: "edited-content".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+    let record = StdArc::new(raw);
+    assert_eq!(
+        StdArc::strong_count(&record),
+        1,
+        "freshly-wrapped Arc starts at strong_count 1"
+    );
+
+    // Drive the ApplyOp through the foreground handler. The Arc inside
+    // the task is cloned from our local handle, so the strong_count
+    // observed by the handler is 2; the handler in turn `Arc::clone`s
+    // for its `DeferredNotification` push (refcount 3 inside the call)
+    // and drops both back when the handler returns.
+    let task = MaterializeTask::ApplyOp(StdArc::clone(&record));
+    handle_foreground_task(&pool, &task, &empty_gcal_handle())
+        .await
+        .unwrap();
+    drop(task);
+
+    // After the handler returns and the task is dropped, only our
+    // local handle remains.
+    assert_eq!(
+        StdArc::strong_count(&record),
+        1,
+        "PEND-25 L2/L9: ApplyOp dispatch must not leak Arc<OpRecord> clones \
+         beyond the handler invocation (got strong_count = {})",
+        StdArc::strong_count(&record)
+    );
+}
+
+// ======================================================================
 // M-15: RemoveTag runs under transaction (via apply_op)
 // ======================================================================
 

@@ -6,6 +6,8 @@
 
 use chrono::Datelike;
 
+use crate::error::AppError;
+
 /// MAINT-152(b) — calendar-range bound for `+Nm` / `+Ny` shifts.
 ///
 /// Shifts that resolve to a year outside `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR`
@@ -126,16 +128,46 @@ pub(crate) fn shift_date_once(
 /// - `+Nw` / `Nw` — every N weeks
 /// - `+Nm` / `Nm` — every N months
 /// - `+Ny` / `Ny` — every N years (clamped on Feb 29 → Feb 28)
-pub(crate) fn shift_date(date: &str, rule: &str) -> Option<String> {
+///
+/// # Return type
+///
+/// Returns `Result<Option<String>, AppError>` so the three failure modes
+/// stay distinguishable at the call site:
+///
+/// * `Ok(Some(date))` — shift succeeded.
+/// * `Ok(None)` — input could not be parsed (malformed `date`, malformed
+///   `rule`, zero/negative count, unknown unit). These are user-input
+///   shape errors that the caller already treats as "skip the shift
+///   silently"; preserving the `None` channel keeps that contract.
+/// * `Err(AppError::Validation)` — the `++` arm hit one of two
+///   distinct dead-ends that previously returned silent garbage:
+///   - **PEND-26 N3:** `shift_date_once` returned `None` mid-loop
+///     (i.e. a `NaiveDate` arithmetic overflow on a single shift).
+///     The pre-fix `?` propagation surfaced as `Ok(None)`, which the
+///     compute caller treated as "no recurrence requested" and created
+///     a sibling with no due date.
+///   - **PEND-24 H2:** the 10 000-iteration safety budget elapsed
+///     without `current > today` (e.g. `+1d` against an `original` ~30
+///     years in the past). The pre-fix loop returned the stale past
+///     date silently.
+pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppError> {
     let parts: Vec<&str> = date.split('-').collect();
     if parts.len() != 3 {
-        return None;
+        return Ok(None);
     }
-    let year: i32 = parts[0].parse().ok()?;
-    let month: u32 = parts[1].parse().ok()?;
-    let day: u32 = parts[2].parse().ok()?;
+    let Ok(year) = parts[0].parse::<i32>() else {
+        return Ok(None);
+    };
+    let Ok(month) = parts[1].parse::<u32>() else {
+        return Ok(None);
+    };
+    let Ok(day) = parts[2].parse::<u32>() else {
+        return Ok(None);
+    };
 
-    let original = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    let Some(original) = chrono::NaiveDate::from_ymd_opt(year, month, day) else {
+        return Ok(None);
+    };
     let today = chrono::Local::now().date_naive();
 
     let trimmed = rule.trim().to_lowercase();
@@ -152,28 +184,72 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Option<String> {
 
     let shifted = match mode {
         "dot_plus" => {
-            // Shift from today, not from the original date
-            shift_date_once(today, interval)?
+            // Shift from today, not from the original date.
+            // Parse failures stay on the `Ok(None)` channel (existing
+            // contract); the compute caller treats this as "no shift".
+            let Some(s) = shift_date_once(today, interval) else {
+                return Ok(None);
+            };
+            s
         }
         "plus_plus" => {
-            // Keep shifting from original until result > today
+            // Keep shifting from original until result > today.
+            //
+            // Two dead-ends that previously returned silent garbage now
+            // surface as `Err(AppError::Validation)`:
+            //
+            // * PEND-26 N3 — `shift_date_once` returns `None` mid-loop
+            //   (single-step `NaiveDate` arithmetic overflow). The
+            //   pre-fix `?` propagated `None` out of `shift_date`,
+            //   which the compute caller treated as "no recurrence"
+            //   and created a sibling with no due date.
+            // * PEND-24 H2 — the 10 000-iteration safety budget
+            //   elapses without `current > today` (e.g. `+1d` from an
+            //   `original` ~30 years in the past). The pre-fix loop
+            //   returned the stale past date silently.
+            //
+            // Both errors carry `original`/`interval`/`today` so the
+            // operator can reproduce the input that tripped the guard
+            // without spelunking through the op log. `AppError::Validation`
+            // matches the surrounding date-shape rejections in
+            // `commands/properties.rs` (`due_date`/`scheduled_date`
+            // ISO-format checks both raise `Validation`).
             let mut current = original;
-            // Safety limit to avoid infinite loops on bad data
+            let mut hit_cap = true;
             for _ in 0..10_000 {
-                current = shift_date_once(current, interval)?;
+                let Some(next) = shift_date_once(current, interval) else {
+                    // PEND-26 N3: explicit overflow signal instead of
+                    // silently returning `Ok(None)` from the parent.
+                    return Err(AppError::Validation(format!(
+                        "recurrence ++ arithmetic overflow: original={original} interval={interval}"
+                    )));
+                };
+                current = next;
                 if current > today {
+                    hit_cap = false;
                     break;
                 }
+            }
+            if hit_cap {
+                // PEND-24 H2: cap exhausted without catching up to
+                // today; previously returned a stale past date.
+                return Err(AppError::Validation(format!(
+                    "recurrence ++ cap exceeded: original={original} interval={interval} today={today}"
+                )));
             }
             current
         }
         _ => {
-            // Default: shift from original date once
-            shift_date_once(original, interval)?
+            // Default: shift from original date once. Parse failures
+            // stay on the `Ok(None)` channel (existing contract).
+            let Some(s) = shift_date_once(original, interval) else {
+                return Ok(None);
+            };
+            s
         }
     };
 
-    Some(shifted.format("%Y-%m-%d").to_string())
+    Ok(Some(shifted.format("%Y-%m-%d").to_string()))
 }
 
 #[cfg(test)]
@@ -240,7 +316,12 @@ mod tests_m80 {
         ];
 
         for (date, rule, expected, desc) in cases {
-            let actual = shift_date(date, rule);
+            // PEND-26 N3 / PEND-24 H2: `shift_date` returns
+            // `Result<Option<String>, AppError>`. None of these table
+            // cases exercise the `++` arm, so all rows expect `Ok(_)`;
+            // the `Option` then captures the parse-success vs
+            // parse-failure split that the table was designed around.
+            let actual = shift_date(date, rule).expect("non-`++` rules never return Err");
             let expected_owned = expected.map(std::string::ToString::to_string);
             assert_eq!(actual, expected_owned, "{desc}");
         }

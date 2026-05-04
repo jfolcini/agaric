@@ -4,6 +4,7 @@ use crate::op::{
     validate_set_property, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload,
     EditBlockPayload, PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
 };
+use std::sync::Arc;
 
 use tracing::instrument;
 
@@ -499,9 +500,12 @@ pub async fn edit_block_inner(
     //    The `block_type` hint restricts the rebuild fan-out so content
     //    blocks skip tags/pages cache work.
     //
-    //    Clone `op_record` for the dispatch queue so the post-commit
-    //    `notify_gcal_for_op` call still has the original.
-    tx.enqueue_edit_background(op_record.clone(), block_type.clone());
+    //    PEND-25 L9: wrap once in `Arc` so the dispatch queue and the
+    //    post-commit `notify_gcal_for_op` borrow share the record by
+    //    refcount (atomic increment) rather than deep-cloning the owned
+    //    `String` payloads.
+    let op_record = Arc::new(op_record);
+    tx.enqueue_edit_background(Arc::clone(&op_record), block_type.clone());
     tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.
@@ -678,9 +682,10 @@ pub async fn delete_block_inner(
     crate::tag_inheritance::remove_subtree_inherited(&mut tx, &block_id).await?;
 
     // Commit + fire-and-forget background cache dispatch.
-    // Clone op_record for the queue so the post-commit
-    // `notify_gcal_for_op` call still has the original.
-    tx.enqueue_background(op_record.clone());
+    // PEND-25 L9: wrap in `Arc` once so the queue and the post-commit
+    // `notify_gcal_for_op` borrow share the record by refcount.
+    let op_record = Arc::new(op_record);
+    tx.enqueue_background(Arc::clone(&op_record));
     tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.
@@ -809,10 +814,11 @@ pub async fn restore_block_inner(
     // P-4: Recompute inherited tags for restored subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 
-    // Commit + fire-and-forget background cache dispatch. Clone
-    // op_record for the queue so the post-commit `notify_gcal_for_op`
-    // call still has the original.
-    tx.enqueue_background(op_record.clone());
+    // Commit + fire-and-forget background cache dispatch.
+    // PEND-25 L9: wrap in `Arc` once so the queue and the post-commit
+    // `notify_gcal_for_op` borrow share the record by refcount.
+    let op_record = Arc::new(op_record);
+    tx.enqueue_background(Arc::clone(&op_record));
     tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.
@@ -1091,11 +1097,15 @@ pub async fn restore_all_deleted_inner(
         }
     }
 
-    let mut op_records = Vec::new();
+    let mut op_records: Vec<Arc<crate::op_log::OpRecord>> = Vec::new();
     // Append one RestoreBlock op per root for sync compatibility.
     // Each op_record is both enqueued for post-commit background
-    // dispatch AND retained (via clone) for the post-commit GCal
+    // dispatch AND retained (via Arc::clone) for the post-commit GCal
     // notify loop.
+    //
+    // PEND-25 L9: each record is wrapped once in `Arc` so the dispatch
+    // queue and the `op_records` retention vec share the record by
+    // refcount instead of deep-cloning.
     for root in &roots {
         let deleted_at_ref = root
             .deleted_at
@@ -1107,7 +1117,8 @@ pub async fn restore_all_deleted_inner(
         });
         let op_record =
             op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
-        tx.enqueue_background(op_record.clone());
+        let op_record = Arc::new(op_record);
+        tx.enqueue_background(Arc::clone(&op_record));
         op_records.push(op_record);
     }
 
