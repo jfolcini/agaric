@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) VALUES (?, 'space', NULL, NULL, NULL, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "acdf6ed1c5816296b4f5c303c18c2f510f789705aeede95e37cd26f82527f093"
+}
