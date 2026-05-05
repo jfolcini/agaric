@@ -2,11 +2,66 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 675 (Tier-2 follow-up batch closing PEND-17 Part B + PEND-33 Layer B — both plans fully closed and deleted; 9 plan files left in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1161+ items.
+**Sessions:** 1 – 676 (review pass over session 675; 3 critical fixes applied (1 P0 race + 1 P0 touch-target + 1 P1 aria-haspopup) + 6 MAINT entries filed; 9 plan files in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1161+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 676 — review fixes for session 675 work (2026-05-05)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-05 |
+| **Subagents** | 4 review (2 technical + 2 UX, all parallel) — applied PROMPT.md Phase 4 review pass that was skipped on session 675's PEND-17 Part B + PEND-33 Layer B work. No build subagents in this session. |
+| **Items closed** | — (review-only session; no plan items closed). 3 critical fixes applied to session 675's work + 6 MAINT entries filed. |
+| **Items modified** | PEND-17 Part B (3 fixes: race + touch-target + sticky `comparedFailed` cleanup) + PEND-33 Layer B (1 fix: `aria-haspopup` mismatch). |
+| **Tests added** | +2 frontend (`HistoryPanel.compare-diff-async.test.tsx` — 1 race-condition regression guard + 1 a11y audit). 0 backend tests. |
+| **Files touched** | 4 source/test (HistoryListItem.tsx, FormattingToolbar.tsx, FormattingToolbar.test.tsx, ui/toggle-group.tsx) + 1 NEW test file (HistoryPanel.compare-diff-async.test.tsx) + 3 docs (REVIEW-LATER.md, SESSION-LOG.md, FEATURE-MAP.md). |
+
+**Summary:** Followed PROMPT.md Phase 4 (REVIEW pipelined with BUILD) which had been skipped on session 675's two big Tier-2 features. 4 parallel review subagents (2 technical + 2 UX) found and fixed 3 critical issues:
+1. **P0 (PEND-17 Part B technical reviewer):** `BlockHistoryItem` "Compared to current" `useEffect` self-cancellation race. The dep array included three values that the effect itself sets (`comparedDiff` / `comparedLoading` / `comparedFailed`), so `setComparedLoading(true)` re-ran the effect, fired the cleanup (`cancelled = true`), and the resolving fetch's `.finally` skipped `setComparedLoading(false)` — leaving the spinner stuck forever in production. Synchronous test mocks resolved before the cleanup could win the race, masking the bug entirely. Reviewer wrote a `setTimeout`-backed regression test that reproduced + verified the fix; the fix was: remove the self-set state from deps, add `biome-ignore`, add `setComparedLoading(false)` to cleanup as a defensive reset.
+2. **P0 (PEND-17 Part B UX reviewer):** `ToggleGroupItem` had `px-3 py-1 text-xs` ⇒ ~22 px tall, well under the AGENTS.md 44 px floor for `pointer: coarse`. Added `[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-4` (desktop layout unchanged).
+3. **P1 (PEND-33 Layer B UX reviewer):** `aria-haspopup="menu"` on the FormattingToolbar overflow trigger was a semantic mismatch — the Radix Popover content has `role="dialog"` (the default), and the children are plain `<Button>` elements, NOT `role="menuitem"` inside `role="menu"`. Every other Radix-Popover trigger in the codebase uses `aria-haspopup="dialog"`. Updated trigger + matching test assertion.
+
+6 MAINT entries filed (217-222) for deferred items: diff direction inversion in the "Compared to current" view (P1 cognition trap, plan flagged it but shipped anyway), multi-device correctness in `compute_block_vs_current_diff_inner` (`seq` alone is not unique across devices), keyboard nav focus management double-fire bug, missing Lock icon affordance for non-restorable rows, nested-popover integration tests, redundant ScrollArea around the FormattingToolbar post-Layer-B.
+
+Orchestrator follow-up: the new `HistoryPanel.compare-diff-async.test.tsx` regression guard was missing the `axe(container)` audit required by the `axe-presence` prek hook (every file in `src/components/__tests__/*.test.tsx` must have one). Added a second test case covering the same flow with a synchronous mock + axe audit.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 37 → 43 (added MAINT-217..222; 6 deferred items)
+- **Previously resolved:** 1161+ → 1161+ (review-only session; nothing newly resolved)
+
+**Files touched (this session):**
+
+PEND-17 Part B fixes:
+- `src/components/HistoryListItem.tsx` (+33/−12): removed self-set state from `useEffect` deps; added `biome-ignore` directive with multi-paragraph explanation of the race; added `setComparedLoading(false)` to cleanup as defensive reset.
+- `src/components/ui/toggle-group.tsx` (+5): added `[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-4` to `ToggleGroupItem` className for AGENTS.md touch-target compliance.
+- `src/components/__tests__/HistoryPanel.compare-diff-async.test.tsx` (NEW, ~94 LOC): 2 tests — race-condition regression guard using `setTimeout`-backed async mock + axe audit (orchestrator-added per `axe-presence` hook).
+
+PEND-33 Layer B fixes:
+- `src/components/FormattingToolbar.tsx` (+1/−1): `aria-haspopup="menu"` → `aria-haspopup="dialog"` on the overflow trigger.
+- `src/components/__tests__/FormattingToolbar.test.tsx` (+1/−1): matching assertion update.
+
+Docs:
+- `pending/REVIEW-LATER.md`: header line updated for session 676; 6 new MAINT entries (217-222).
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: no changes (review-only; no new features).
+
+**Verification:**
+- `npx vitest run --no-coverage HistoryPanel.compare-diff-async HistoryListItem HistoryPanel FormattingToolbar useToolbarOverflow` → all green
+- `cd src-tauri && cargo nextest run --no-fail-fast` → 3556/3556 pass
+- `prek run --all-files` → green (after orchestrator added the missing axe audit)
+
+**Process notes:**
+- Session 675 should have run the review pass at the time. Skipping Phase 4 introduced the P0 race condition (production-only because sync test mocks won the race against effect re-runs). User's "do reviews per PROMPT.md" instruction caught this.
+- The reviewer's test was a model of how to surface async-IPC race conditions: `setTimeout(0)` on the IPC mock instead of synchronous `Promise.resolve(value)`. Worth promoting as the default test pattern in `src/__tests__/AGENTS.md` — filed informally as part of the technical reviewer's report, not yet a MAINT.
+
+**Lessons learned (for future sessions):**
+- ALWAYS run PROMPT.md Phase 4 (REVIEW) on user-facing UI changes. The race condition shipped because no reviewer saw the dep-array bug — and the test infrastructure happened to mask it.
+- Synchronous IPC test mocks are a systemic blind spot. The `setupInvokeRouter` pattern in HistoryPanel.test.tsx returns `Promise.resolve(value)` for all commands, which lets effects' cleanup-vs-resolve race resolve in the wrong order vs production. Future MAINT could add a `setupAsyncInvokeRouter` variant that wraps every response in `setTimeout(resolve, 0)`.
+
+**Commit plan:** single commit `fix: review pass for session 675 work — 3 critical fixes + 6 MAINT entries`.
 
 ## Session 675 — closed PEND-17 Part B + PEND-33 Layer B (2026-05-05)
 

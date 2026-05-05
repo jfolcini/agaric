@@ -43,6 +43,11 @@ function ToggleGroupItem({
       data-slot="toggle-group-item"
       className={cn(
         'inline-flex items-center justify-center rounded-sm px-3 py-1 text-xs font-medium',
+        // Touch-target compliance (AGENTS.md: ≥44px on coarse pointers).
+        // Desktop keeps the compact inline-pill height; coarse pointers
+        // get a 44px minimum tap area without affecting the visual height
+        // of the surrounding segmented control on desktop.
+        '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-4',
         'text-muted-foreground transition-colors',
         'hover:bg-accent hover:text-accent-foreground',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
