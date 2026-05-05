@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 
 mod agenda;
+pub(crate) mod block_row_columns;
 mod hierarchy;
 mod history;
 mod links;

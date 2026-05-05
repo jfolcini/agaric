@@ -2,11 +2,66 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 676 (review pass over session 675; 3 critical fixes applied (1 P0 race + 1 P0 touch-target + 1 P1 aria-haspopup) + 6 MAINT entries filed; 9 plan files in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1161+ items.
+**Sessions:** 1 – 677 (closed PEND-28a H1 Option 2 — accept duplication + add parity test; PEND-28a fully closed and plan deleted; 8 plan files in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1162+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 677 — closed PEND-28a H1 Option 2 (2026-05-05)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-05 |
+| **Subagents** | 1 build (PEND-28a H1 Option 2 parity test) + 1 technical reviewer. UX dimension N/A (pure backend test infra). |
+| **Items closed** | 1 sub-item: PEND-28a H1 (Option 2 — accept duplication, add parity test). **PEND-28a fully closed — plan file deleted.** Pending folder: 9 → 8 plan files. |
+| **Items modified** | — |
+| **Tests added** | +2 backend (parity Tests A and B in new `block_row_columns.rs`). 0 frontend tests. |
+| **Files touched** | 2 source (`src-tauri/src/pagination/block_row_columns.rs` NEW + `src-tauri/src/pagination/mod.rs` +1 line) + 1 deleted (PEND-28a plan) + 4 docs (REVIEW-LATER, SESSION-LOG, FEATURE-MAP, README). |
+
+**Summary:** Closed PEND-28a H1 by Option 2 (accept duplication, add parity test) per user's explicit decision. Session 672 had attempted Option 1 (extract a SQL macro analogous to `descendants_cte_purge!()`) but reverted because `sqlx::query_as!` is a proc-macro that doesn't expand `concat!(macro!(), ...)` arguments — the existing macro precedents apply only to the dynamic `sqlx::query()` API. Option 2 keeps the canonical 13-column SELECT clause duplicated at all 18 production sites and adds a `#[cfg(test)]`-gated module with two `pub(crate) const`s (`BLOCK_ROW_CANONICAL_SELECT` string + `BLOCK_ROW_CANONICAL_FIELDS` field-list) and two parity tests. Test A asserts the SELECT string ↔ field list agreement (catches drift between the two consts). Test B uses `include_str!` to load each of the 11 production source files containing `query_as!(BlockRow, ...)`, regex-matches every site, normalizes whitespace + strips `b.` table-alias prefix, and asserts each match equals the canonical SELECT — also asserts the total hit count is exactly 18 (catches "you added a `query_as!(BlockRow, ...)` site without updating the test"). Drift detection rigor was verified end-to-end by both the build subagent AND the reviewer: temporary edits to the canonical OR to a production site produce informative error output with file paths + actual-vs-expected diffs. The audit also corrected the plan's site list — PEND-28a's H1 body listed `backlink/query.rs`, `tag_query/query.rs`, and `snapshot/create.rs` as canonical sites (they're not — the first two use the runtime `query_as::<_, BlockRow>(&sql)` form, and `snapshot/create.rs` uses `query_as!(BlockSnapshot, …)` which is a different row type with `conflict_source` and no `page_id`). The plan also missed 4 real canonical sites: `commands/journal.rs`, `pagination/agenda.rs`, `pagination/tags.rs`, `pagination/undated.rs`. Net: still 18 sites, but in 11 files (plan said 10). The runtime-`query_as` sites are an uncovered drift surface tracked as MAINT-223. Reviewer found a `clippy::unnecessary_map_or` polish in the new test file (`map_or(true, ...)` → `is_none_or(...)`) and fixed inline. Followed PROMPT.md Phase 4 strictly (technical review pipelined behind the build) — no UX reviewer needed for pure backend test infra.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 43 → 46 (added MAINT-223..225; 3 deferred items)
+- **Previously resolved:** 1161+ → 1162+ across 676 → 677 sessions
+
+**Plan files closed (and deleted):**
+- `pending/PEND-28-rust-maintainability-review-findings.md` (all 6 items now done: M1+M3 sess 671, H2+M4 sess 672, M2 sess 673, H1 this session)
+
+**Files touched (this session):**
+
+PEND-28a H1 Option 2 (parity test):
+- `src-tauri/src/pagination/block_row_columns.rs` (NEW, 273 LOC, `#[cfg(test)]`-gated):
+  - `BLOCK_ROW_CANONICAL_SELECT: &str` — the canonical 13-column SELECT clause.
+  - `BLOCK_ROW_CANONICAL_FIELDS: &[&str]` — the 13 field names in struct-declaration order.
+  - `normalize_whitespace`, `strip_blocks_alias` — private helpers for tests.
+  - Test A: `block_row_canonical_select_matches_canonical_fields`.
+  - Test B: `block_row_canonical_query_as_sites_match_canonical_columns`.
+  - Module-level doc-comment explaining the Option 2 trade-off (Option 1 macro extraction can't compile through `sqlx::query_as!` proc-macro — references session 672's failed attempt).
+  - Reviewer-applied polish: `map_or(true, ...)` → `is_none_or(...)` at line 123.
+- `src-tauri/src/pagination/mod.rs` (+1 LOC): added `pub(crate) mod block_row_columns;`.
+
+Docs:
+- `pending/PEND-28-rust-maintainability-review-findings.md` (DELETED, 565 LOC): all 6 items (C1+C2 elsewhere, H1 this session, H2+M4 sess 672, M1+M3 sess 671, M2 sess 673) shipped.
+- `pending/README.md`: removed PEND-28a row + mid-tier bullet.
+- `pending/REVIEW-LATER.md`: header line updated for session 677; 3 new MAINT entries (223-225).
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: new "Backend Maintainability Misc (session 677, PEND-28a H1 Option 2 — parity test)" subsection in Section 10.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run -E 'test(block_row_canonical)'` — 2/2 pass.
+- `cd src-tauri && cargo nextest run --no-fail-fast` — 3558/3558 pass (3556 baseline + 2 new).
+- `prek run --all-files` — green.
+
+**Process notes:**
+- This session strictly followed PROMPT.md Phase 4: technical reviewer launched immediately after build subagent finished, no UX reviewer (pure backend test infra). No fixes-during-review needed beyond the 1-line clippy polish.
+- The reviewer's audit caught 4 plan-listed sites that don't exist in the macro form + 4 real canonical sites the plan missed — useful illustration of why audits matter even when the plan looks authoritative.
+
+**Lessons learned (for future sessions):**
+- Plan-body site lists drift over time as code evolves. When the plan is more than a few weeks old, audit the actual source before trusting the count.
+- For `cfg(test)`-only test infrastructure, `pub(crate)` visibility is the right floor — visible to other test modules in the crate, no `dead_code` warnings.
+
+**Commit plan:** single commit `feat: close PEND-28a H1 Option 2 — accept duplication, add parity test (PEND-28a plan fully deleted)`.
 
 ## Session 676 — review fixes for session 675 work (2026-05-05)
 

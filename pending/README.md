@@ -14,7 +14,6 @@
 | PEND-12 | build.rs codegen for space-filter SQL fragment (unblocks MAINT-172) | M (7-11h) | ready — **must land AFTER PEND-18** to avoid merge conflicts in shared `_inner` files |
 | PEND-15 | Hard space separation — no cross-space links | L (7-12 weeks) | ready — **Phase 1 MUST land before PEND-09 Phase 2 cutover** (avoids CRDT engine producing fresh cross-space refs that one-shot severance would never see) |
 | PEND-18 | `SpaceId` newtype + `SpaceScope` enum (lift Spaces enforcement into the type system) | M-L (9-15h) | ready — Phase 0 specta+sqlx spike before main implementation |
-| PEND-28a | Rust maintainability review findings (post-validation) | mostly S | partial — file: `PEND-28-rust-maintainability-review-findings.md`. **5 of 6 done (M1+M3 sess 671, H2+M4 sess 672, M2 sess 673); H1 deferred (sqlx::query_as! proc-macro doesn't expand `concat!()` arguments — needs migration strategy).** PEND-28b shipped sessions 667-669. |
 | PEND-29 | Frontend robustness review — second pass | trivial (B-1 only remaining) | partial — **B-1 (BulletList Option A) needs product decision** (Option A remove vs Option B implement) before it can land |
 | PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
 
@@ -27,7 +26,6 @@
 **Mid-tier** — useful but more invasive:
 
 - PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first, Tier 2 file transfer later
-- PEND-28a (Rust maintainability) — 1 item left (H1 deferred pending migration strategy)
 - PEND-30 (D-1..D-4 decomposition) — opportunistic, low priority
 
 **Spaces enforcement bundle** — sequential, NOT parallel (touch the same `_inner` signatures):
