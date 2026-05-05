@@ -86,7 +86,7 @@ export function HistoryFilterBar({
   const { t } = useTranslation()
 
   return (
-    <div className="history-filter-bar flex items-center gap-3">
+    <div className="history-filter-bar flex flex-col sm:flex-row sm:items-center gap-3">
       <label htmlFor="op-type-filter" className="text-sm font-medium text-muted-foreground">
         {t('history.filterLabel')}
       </label>
@@ -167,7 +167,7 @@ export function HistoryFilterBar({
           either prop is omitted (e.g., per-page HistoryPanel mode). */}
       {showAllSpaces !== undefined && onShowAllSpacesChange !== undefined && (
         <div
-          className="history-filter-bar-all-spaces ml-auto flex items-center gap-2"
+          className="history-filter-bar-all-spaces sm:ml-auto flex items-center gap-2"
           title={t('history.allSpacesTooltip')}
         >
           <Label

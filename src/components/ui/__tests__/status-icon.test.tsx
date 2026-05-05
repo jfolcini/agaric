@@ -112,4 +112,40 @@ describe('StatusIcon', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // PEND-23 L17: size variants modeled after Spinner.
+  describe('size variants (PEND-23 L17)', () => {
+    it('renders default md variant with h-4 w-4', () => {
+      render(<StatusIcon state="TODO" />)
+      const el = screen.getByTestId('icon-todo')
+      const cls = el.getAttribute('class') ?? ''
+      expect(cls).toContain('h-4')
+      expect(cls).toContain('w-4')
+    })
+
+    it('renders sm variant with h-3 w-3', () => {
+      render(<StatusIcon state="TODO" size="sm" />)
+      const el = screen.getByTestId('icon-todo')
+      const cls = el.getAttribute('class') ?? ''
+      expect(cls).toContain('h-3')
+      expect(cls).toContain('w-3')
+      expect(cls).not.toContain('h-4')
+    })
+
+    it('renders lg variant with h-5 w-5', () => {
+      render(<StatusIcon state="DOING" size="lg" />)
+      const el = screen.getByTestId('icon-doing')
+      const cls = el.getAttribute('class') ?? ''
+      expect(cls).toContain('h-5')
+      expect(cls).toContain('w-5')
+      expect(cls).not.toContain('h-4')
+    })
+
+    it('preserves state-specific text colour across sizes', () => {
+      render(<StatusIcon state="CANCELLED" size="lg" />)
+      const cls = screen.getByTestId('icon-cancelled').getAttribute('class') ?? ''
+      expect(cls).toContain('text-task-cancelled')
+      expect(cls).toContain('h-5')
+    })
+  })
 })

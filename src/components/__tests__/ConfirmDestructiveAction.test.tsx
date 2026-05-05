@@ -321,6 +321,46 @@ describe('ConfirmDestructiveAction', () => {
     resolveConfirm()
   })
 
+  it('renders a Spinner inside the confirm button while onConfirm is pending (PEND-23 L15)', async () => {
+    const user = userEvent.setup()
+    let resolveConfirm: () => void = () => {}
+    const onConfirm = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfirm = resolve
+        }),
+    )
+
+    render(
+      <ConfirmDestructiveAction
+        {...baseProps}
+        onOpenChange={vi.fn()}
+        onConfirm={onConfirm}
+        confirmTestId="confirm-action"
+      />,
+    )
+
+    const confirmBtn = screen.getByTestId('confirm-action')
+
+    // No spinner before click — only the static label.
+    expect(confirmBtn.querySelector('[data-slot="spinner"]')).toBeNull()
+
+    await user.click(confirmBtn)
+
+    // Spinner appears alongside the label while pending — UX parity with
+    // ConfirmDialog's loading indicator.
+    await waitFor(() => {
+      expect(confirmBtn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    })
+
+    resolveConfirm()
+
+    // Spinner is gone once the promise resolves.
+    await waitFor(() => {
+      expect(confirmBtn.querySelector('[data-slot="spinner"]')).toBeNull()
+    })
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(
       <ConfirmDestructiveAction {...baseProps} onOpenChange={vi.fn()} onConfirm={vi.fn()} />,

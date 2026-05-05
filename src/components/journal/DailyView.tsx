@@ -3,7 +3,8 @@
  */
 
 import type React from 'react'
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
+import { useScrollToFocus } from '../../hooks/useScrollToFocus'
 import type { DayEntry } from '../../lib/date-utils'
 import { getTodayString } from '../../lib/date-utils'
 import { useBlockStore } from '../../stores/blocks'
@@ -32,20 +33,18 @@ export function DailyView({
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
   const clearSelection = useNavigationStore((s) => s.clearSelection)
 
-  useEffect(() => {
-    if (!selectedBlockId) return
-    const blockId = selectedBlockId
-    const rafId = requestAnimationFrame(() => {
-      document.querySelector(`[data-block-id="${blockId}"]`)?.scrollIntoView({ block: 'nearest' })
-      useBlockStore.getState().setFocused(blockId)
-      // Clear the navigation marker after the work is done. Doing this inside
-      // the rAF (rather than synchronously after scheduling it) means the
-      // cleanup-side `cancelAnimationFrame` only fires on a true unmount —
-      // not on the re-run triggered by the very state change we just made.
+  useScrollToFocus(selectedBlockId, {
+    block: 'nearest',
+    resolveElement: (id) => document.querySelector(`[data-block-id="${id}"]`),
+    // Run inside the hook's rAF callback — restoring focus + clearing the
+    // navigation marker AFTER the scroll keeps the cancel-on-unmount logic
+    // tight: only a true unmount cancels the rAF, not the state change we
+    // make ourselves here.
+    onComplete: (id) => {
+      useBlockStore.getState().setFocused(id)
       clearSelection()
-    })
-    return () => cancelAnimationFrame(rafId)
-  }, [selectedBlockId, clearSelection])
+    },
+  })
 
   return (
     <div key={entry.dateStr} className="space-y-4 animate-in fade-in-0 duration-150">

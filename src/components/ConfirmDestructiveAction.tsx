@@ -35,6 +35,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { buttonVariants } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 
 export interface ConfirmDestructiveActionProps {
@@ -131,6 +132,7 @@ export function ConfirmDestructiveAction({
             disabled={pending}
             data-testid={confirmTestId}
           >
+            {pending && <Spinner />}
             {t(confirmKey)}
           </AlertDialogAction>
         </AlertDialogFooter>

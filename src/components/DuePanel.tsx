@@ -12,14 +12,14 @@
 
 import { Repeat } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
-import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useKeyboardNavigableList } from '../hooks/useKeyboardNavigableList'
 import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -121,7 +121,6 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   }, [visibleBlocks, date])
 
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
-  const listRef = useRef<HTMLDivElement>(null)
 
   // Group blocks for display (computed early so flatItems can be derived).
   // FE-H-19: memoized to keep reference-stable across renders — otherwise the
@@ -166,31 +165,21 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
 
   const {
     focusedIndex,
-    setFocusedIndex,
     handleKeyDown: navHandleKeyDown,
-  } = useListKeyboardNavigation({
-    itemCount: flatItems.length,
-    homeEnd: true,
-    pageUpDown: true,
-    onSelect: (idx) => {
+    listRef,
+  } = useKeyboardNavigableList<HTMLDivElement>(
+    flatItems.length,
+    (idx) => {
       const block = flatItems[idx]
       if (block) handleBlockClick(block)
     },
-  })
-
-  // Reset focused index when filters / date change
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [sourceFilter, hideBeforeScheduled, date, setFocusedIndex])
-
-  // Scroll focused item into view
-  useEffect(() => {
-    if (!listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-block-list-item]')
-    const el = items[focusedIndex] as HTMLElement | undefined
-    el?.scrollIntoView?.({ block: 'nearest' })
-  }, [focusedIndex])
+    {
+      homeEnd: true,
+      pageUpDown: true,
+      // Composite signature so any of the three filter/date inputs reset focus.
+      resetKey: `${sourceFilter ?? ''}|${hideBeforeScheduled}|${date}`,
+    },
+  )
 
   // UX-152: Don't render when ALL sources are empty (not loading).
   // When a source filter is active, always keep the panel visible so the

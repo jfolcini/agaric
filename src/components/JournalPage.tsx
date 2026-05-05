@@ -14,7 +14,7 @@
 
 import { Settings2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,7 @@ import { useCalendarPageDates } from '../hooks/useCalendarPageDates'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
 import { useJournalBlockCreation } from '../hooks/useJournalBlockCreation'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
+import { useScrollToFocus } from '../hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { DayEntry } from '../lib/date-utils'
 import { formatDate, formatDateDisplay } from '../lib/date-utils'
@@ -79,30 +80,18 @@ export function JournalPage({
   })
 
   // Scroll to a specific day section when requested (e.g., Today button in weekly/monthly)
-  useEffect(() => {
-    if (!scrollToDate) return
-    const id = requestAnimationFrame(() => {
-      const el = document.getElementById(`journal-${scrollToDate}`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-      clearScrollTarget()
-    })
-    return () => cancelAnimationFrame(id)
-  }, [scrollToDate, clearScrollTarget])
+  useScrollToFocus(scrollToDate ? `journal-${scrollToDate}` : null, {
+    behavior: 'smooth',
+    block: 'start',
+    onComplete: clearScrollTarget,
+  })
 
   // Scroll to a specific panel (due/references/done) when requested from badges
-  useEffect(() => {
-    if (!scrollToPanel) return
-    const id = requestAnimationFrame(() => {
-      const el = document.getElementById(`journal-${scrollToPanel}-panel`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-      clearScrollTarget()
-    })
-    return () => cancelAnimationFrame(id)
-  }, [scrollToPanel, clearScrollTarget])
+  useScrollToFocus(scrollToPanel ? `journal-${scrollToPanel}-panel` : null, {
+    behavior: 'smooth',
+    block: 'start',
+    onComplete: clearScrollTarget,
+  })
 
   /** Build a DayEntry from a Date. */
   const makeDayEntry = useCallback(
@@ -144,7 +133,11 @@ export function JournalPage({
   // ── Main render ─────────────────────────────────────────────────────
 
   return (
-    <div ref={journalRef} tabIndex={-1} className="space-y-4 focus:outline-none">
+    <div
+      ref={journalRef}
+      tabIndex={-1}
+      className="space-y-4 focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50"
+    >
       {/* Loading indicator on initial fetch */}
       {loading && (
         <div aria-busy="true">

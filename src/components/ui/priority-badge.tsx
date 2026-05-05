@@ -1,3 +1,4 @@
+import { cva, type VariantProps } from 'class-variance-authority'
 import type * as React from 'react'
 import { priorityColor } from '@/lib/priority-color'
 import { cn } from '@/lib/utils'
@@ -12,23 +13,39 @@ import { cn } from '@/lib/utils'
  *
  * Layout matches the original CVA base: a compact inline-flex pill with
  * bold text and `focus-visible:ring-*` parity with Button/Input.
+ *
+ * `size` (`sm` | `md` | `lg`, default `md`) scales the badge for dense list
+ * rows or larger header chips. Modeled after `Spinner`'s CVA size variants.
  */
 
-const BASE_CLASSES =
-  'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-xs font-bold leading-none'
+const priorityBadgeVariants = cva(
+  'inline-flex items-center justify-center rounded font-bold leading-none',
+  {
+    variants: {
+      size: {
+        sm: 'h-3.5 min-w-3.5 px-0.5 text-[10px]',
+        md: 'h-4 min-w-4 px-1 text-xs',
+        lg: 'h-6 min-w-6 px-2 text-sm',
+      },
+    },
+    defaultVariants: {
+      size: 'md',
+    },
+  },
+)
 
-interface PriorityBadgeProps {
+interface PriorityBadgeProps extends VariantProps<typeof priorityBadgeVariants> {
   priority: string
   className?: string
   ref?: React.Ref<HTMLSpanElement>
 }
 
-const PriorityBadge = ({ ref, priority, className }: PriorityBadgeProps) => {
+const PriorityBadge = ({ ref, priority, size, className }: PriorityBadgeProps) => {
   return (
     <span
       ref={ref}
       data-slot="priority-badge"
-      className={cn(BASE_CLASSES, priorityColor(priority), className)}
+      className={cn(priorityBadgeVariants({ size }), priorityColor(priority), className)}
     >
       P{priority}
     </span>
@@ -36,4 +53,4 @@ const PriorityBadge = ({ ref, priority, className }: PriorityBadgeProps) => {
 }
 PriorityBadge.displayName = 'PriorityBadge'
 
-export { PriorityBadge }
+export { PriorityBadge, priorityBadgeVariants }

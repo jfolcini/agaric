@@ -134,7 +134,14 @@
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(0.929 0.013 255.508);
   --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.55 0.188 28.71);
+  /* PEND-23 L10 — focus ring is consumed at /50 opacity (`focus-visible:ring-ring/50`),
+   * which composites the ring colour against the background. On light mode the L=0.55
+   * red-orange at 50% alpha against L=1.0 white perceives at roughly L≈0.78, well below
+   * the WCAG 2.4.7 3:1 non-text minimum if chroma is also middling. Lift chroma from
+   * 0.188 → 0.25 (matching the `prefers-contrast: more` precedent at lines 1112-1121,
+   * e.g. accent-rose `0.55 0.25 12`) so the saturated red carries the indicator even
+   * after the alpha blend. Lightness stays at 0.55 to keep the brand hue. */
+  --ring: oklch(0.55 0.25 28.71);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.714);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -279,7 +286,14 @@
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(0.279 0.041 260.031);
   --input: oklch(0.279 0.041 260.031);
-  --ring: oklch(0.55 0.188 28.71);
+  /* PEND-23 L10 — dark theme background is `oklch(0.171 0.027 264.71)` (deep navy);
+   * the original L=0.55 ring at /50 alpha composites toward L≈0.36 against it, leaving
+   * the focus indicator visually muddy. Lift lightness to 0.68 (still red-orange, well
+   * clear of the navy bg lightness) and chroma to 0.22 so the ring stays bright and
+   * saturated post-blend. Diverges from `:root --ring` deliberately — the same token
+   * needs different values in each theme to clear the 3:1 non-text contrast threshold
+   * once the /50 alpha is applied. */
+  --ring: oklch(0.68 0.22 28.71);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -816,6 +830,17 @@
 @media (pointer: coarse) {
   :root {
     --indent-width: 16px;
+  }
+}
+/* PEND-28b M6 — narrow-desktop / split-screen tablet windows in fine-pointer
+ * mode never trip the `pointer: coarse` query, so a 360 px responsive-mode
+ * window keeps 24 px indent and a depth-5 block consumes 120 px before any
+ * content. Catch viewport width independently from pointer type. Both queries
+ * can apply on a narrow phone (coarse + ≤640px); last-declared wins, and
+ * 12 px ≤ 16 px so the phone case still tightens, not loosens. */
+@media (max-width: 640px) {
+  :root {
+    --indent-width: 12px;
   }
 }
 

@@ -20,8 +20,7 @@
 | PEND-21 | Structural breadcrumb — icon-button affordance + drop redundant exit-zoom button | S (1-2h) | ready (out-of-band UX track on `Breadcrumb` + `BlockZoomBar`) |
 | PEND-23 | UX review findings (post-validation) | mostly S; M for H3 / M6 | ready — 4 HIGH + 10 MEDIUM + 17 LOW; cherry-pickable per item |
 | PEND-24 | Rust robustness review findings (post-validation) | mostly S, two trivial, one M (H1) | ready — 2 CRITICAL + 3 HIGH + 6 MEDIUM remaining (LOW nits noted but not bundled) |
-| PEND-28a | Rust maintainability review findings (post-validation) | mostly S | ready — file: `PEND-28-rust-maintainability-review-findings.md` (shares ID with PEND-28b) |
-| PEND-28b | UX responsiveness review (mobile / tablet, 2026-05-04) | mostly S | ready — file: `PEND-28-ux-responsiveness-review-findings.md` (shares ID with PEND-28a) |
+| PEND-28a | Rust maintainability review findings (post-validation) | mostly S | ready — file: `PEND-28-rust-maintainability-review-findings.md` (no longer shares ID; PEND-28b shipped sessions 667-669) |
 | PEND-29 | Frontend robustness review — second pass | trivial (B-1 only remaining) | partial — **B-1 (BulletList Option A) needs product decision** (Option A remove vs Option B implement) before it can land |
 | PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
 | PEND-33 | `FormattingToolbar` overflow handling: BubbleMenu + priority overflow popover | M-L (10-16h split: Layer A ≈ 3-5h, Layer B ≈ 7-11h) | ready — Layer A and Layer B independently approve-able |
@@ -39,7 +38,6 @@
 - PEND-23 (UX review findings) — pick HIGH items first; rest cherry-pickable
 - PEND-24 (Rust robustness review) — 2 CRITICAL + 3 HIGH + 6 MEDIUM
 - PEND-28a (Rust maintainability)
-- PEND-28b (UX responsiveness — mobile / tablet)
 - PEND-30 (D-1..D-4 decomposition) — opportunistic, low priority
 - PEND-33 (FormattingToolbar overflow) — Layer A first, Layer B optional follow-up
 

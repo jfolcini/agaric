@@ -9,12 +9,31 @@
  *
  * When `showDone` is false, returns null for DONE state
  * (used by UnfinishedTasks which only shows TODO/DOING).
+ *
+ * `size` (`sm` | `md` | `lg`, default `md`) scales the icon for dense list
+ * rows or larger header chips. Modeled after `Spinner`'s CVA size variants.
  */
 
+import { cva, type VariantProps } from 'class-variance-authority'
 import { CheckCircle2, Circle, Clock, XCircle } from 'lucide-react'
 import type React from 'react'
 
-export interface StatusIconProps {
+import { cn } from '@/lib/utils'
+
+const statusIconVariants = cva('shrink-0', {
+  variants: {
+    size: {
+      sm: 'h-3 w-3',
+      md: 'h-4 w-4',
+      lg: 'h-5 w-5',
+    },
+  },
+  defaultVariants: {
+    size: 'md',
+  },
+})
+
+export interface StatusIconProps extends VariantProps<typeof statusIconVariants> {
   /** The todo state to render an icon for. */
   state: string | null
   /** Whether to show the DONE icon. Defaults to true. Set to false to hide DONE state. */
@@ -22,13 +41,19 @@ export interface StatusIconProps {
 }
 
 /** Return the appropriate status icon component for a todo_state. */
-export function StatusIcon({ state, showDone = true }: StatusIconProps): React.ReactElement | null {
+export function StatusIcon({
+  state,
+  showDone = true,
+  size,
+}: StatusIconProps): React.ReactElement | null {
   if (state === 'DONE' && !showDone) return null
+
+  const sizeClass = statusIconVariants({ size })
 
   if (state === 'DOING')
     return (
       <Clock
-        className="h-4 w-4 shrink-0 text-task-doing"
+        className={cn(sizeClass, 'text-task-doing')}
         aria-hidden="true"
         data-testid="icon-doing"
       />
@@ -36,7 +61,7 @@ export function StatusIcon({ state, showDone = true }: StatusIconProps): React.R
   if (state === 'DONE')
     return (
       <CheckCircle2
-        className="h-4 w-4 shrink-0 text-task-done"
+        className={cn(sizeClass, 'text-task-done')}
         aria-hidden="true"
         data-testid="icon-done"
       />
@@ -44,7 +69,7 @@ export function StatusIcon({ state, showDone = true }: StatusIconProps): React.R
   if (state === 'CANCELLED')
     return (
       <XCircle
-        className="h-4 w-4 shrink-0 text-task-cancelled"
+        className={cn(sizeClass, 'text-task-cancelled')}
         aria-hidden="true"
         data-testid="icon-cancelled"
       />
@@ -52,9 +77,11 @@ export function StatusIcon({ state, showDone = true }: StatusIconProps): React.R
   // Default: TODO or unknown
   return (
     <Circle
-      className="h-4 w-4 shrink-0 text-muted-foreground"
+      className={cn(sizeClass, 'text-muted-foreground')}
       aria-hidden="true"
       data-testid="icon-todo"
     />
   )
 }
+
+export { statusIconVariants }
