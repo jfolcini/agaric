@@ -68,19 +68,27 @@ test.describe('BUG-1 — page creation routes through create_page_in_space', () 
     await expect(sampleBtn).not.toBeVisible()
 
     // Both onboarding pages must show up in the active space's PageBrowser.
+    // Under heavy parallel load, the page-creation IPC → materializer →
+    // PageBrowser refresh chain can lag behind the modal-dismiss assert;
+    // waitFor with a 10s timeout absorbs that gap (TEST-3 flake, session
+    // 679 verification pass).
     await openPagesView(page)
-    await expect(
-      page
-        .locator('[data-page-item]')
-        .filter({ hasText: /Getting Started/ })
-        .first(),
-    ).toBeVisible()
-    await expect(
-      page
-        .locator('[data-page-item]')
-        .filter({ hasText: /Quick Tips/ })
-        .first(),
-    ).toBeVisible()
+    await expect(async () => {
+      await expect(
+        page
+          .locator('[data-page-item]')
+          .filter({ hasText: /Getting Started/ })
+          .first(),
+      ).toBeVisible()
+    }).toPass({ timeout: 10000 })
+    await expect(async () => {
+      await expect(
+        page
+          .locator('[data-page-item]')
+          .filter({ hasText: /Quick Tips/ })
+          .first(),
+      ).toBeVisible()
+    }).toPass({ timeout: 10000 })
   })
 
   test('Journal "Add block to today" page lands in the active space PageBrowser list', async ({

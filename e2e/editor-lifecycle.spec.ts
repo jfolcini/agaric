@@ -13,7 +13,10 @@ import { expect, test } from './helpers'
 
 async function openGettingStarted(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Pages', exact: true }).click()
-  await page.getByText('Getting Started').click()
+  // Scope to the page list so we don't match the page-title textbox or a
+  // block-link-chip that also renders "Getting Started" (strict-mode
+  // violation under parallel load — TEST-3 flake, session 679).
+  await page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }).first().click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
 }
 
@@ -169,9 +172,15 @@ test.describe('Editor lifecycle', () => {
 
     await addBlock(page, 'Session block')
 
-    // Reload the page — mock state resets
+    // Reload the page — mock state resets.
+    // Under heavy parallel load the dev server can still be serving stale
+    // bundles when reload resolves; wait for the network to settle so the
+    // app shell is fully hydrated before asserting (TEST-3 flake).
     await page.reload()
-    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible({
+      timeout: 10000,
+    })
 
     // Navigate back to Getting Started
     await openGettingStarted(page)
