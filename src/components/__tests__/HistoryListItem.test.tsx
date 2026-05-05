@@ -780,6 +780,18 @@ describe('HistoryListItem', () => {
   })
 })
 
+// ===========================================================================
+// BlockHistoryItem (PEND-17 Part B redesign)
+// ===========================================================================
+//
+// The component changed shape:
+//   - Whole row is the click target (no per-row Diff / Reset buttons).
+//   - Expanded panel has: primary "Restore this version" button, a
+//     read-only RichContentRenderer preview, and a ToggleGroup
+//     switching between "Just this change" / "Compared to current"
+//     (default: comparedToCurrent).
+//   - In-panel Restore is dialog-free; the parent's toast-with-Undo
+//     is the safety net.
 describe('BlockHistoryItem', () => {
   function makeEntry(
     seq: number,
@@ -801,12 +813,13 @@ describe('BlockHistoryItem', () => {
     overrides: Partial<BlockHistoryItemProps> = {},
   ): BlockHistoryItemProps {
     return {
+      blockId: 'BLOCK01',
       entry: makeEntry(1, 'edit_block', { to_text: 'Hello world' }),
       index: 0,
       isExpanded: false,
       isLoadingDiff: false,
       diffSpans: undefined,
-      onToggleDiff: vi.fn(),
+      onExpandToggle: vi.fn(),
       onRestore: vi.fn(),
       ...overrides,
     }
@@ -838,68 +851,115 @@ describe('BlockHistoryItem', () => {
     expect(li).not.toHaveClass('rounded-lg')
   })
 
-  it('shows restore button only for edit_block with rawContent', () => {
-    renderInList(blockDefaultProps({ entry: makeEntry(1, 'edit_block', { to_text: 'content' }) }))
-    expect(screen.getByRole('button', { name: /reset to this point/i })).toBeInTheDocument()
-  })
-
-  it('does not show restore button for edit_block without rawContent', () => {
-    renderInList(blockDefaultProps({ entry: makeEntry(1, 'edit_block', { some_field: 'val' }) }))
+  it('does not render the legacy Reset / Diff per-row buttons', () => {
+    // PEND-17 Part B: those affordances were folded into the expanded
+    // panel (Restore button) and the row click (expansion). Their
+    // presence would mean the redesign regressed to the dual-button
+    // layout.
+    renderInList(blockDefaultProps())
     expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Diff$/ })).not.toBeInTheDocument()
   })
 
-  it('does not show restore button for create_block', () => {
+  it('exposes the row as an expandable button when restorable', () => {
+    renderInList(blockDefaultProps())
+    const trigger = screen.getByRole('button', { expanded: false })
+    expect(trigger).toBeInTheDocument()
+  })
+
+  it('does not expose the row as a button for non-edit_block entries', () => {
     renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
-    expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
+    // No `aria-expanded` button means the row is non-restorable; only
+    // the parent <ul> remains in the a11y tree.
+    expect(screen.queryByRole('button', { expanded: false })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { expanded: true })).not.toBeInTheDocument()
   })
 
-  it('does not show restore button for delete_block', () => {
-    renderInList(blockDefaultProps({ entry: makeEntry(1, 'delete_block', { block_id: 'B1' }) }))
-    expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
+  it('row click calls onExpandToggle(entry, true) when collapsed', async () => {
+    const user = userEvent.setup()
+    const onExpandToggle = vi.fn()
+    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    renderInList(blockDefaultProps({ entry, onExpandToggle }))
+    await user.click(screen.getByRole('button', { expanded: false }))
+    expect(onExpandToggle).toHaveBeenCalledWith(entry, true)
   })
 
-  it('calls onRestore when restore button is clicked', async () => {
+  it('row click calls onExpandToggle(entry, false) when already expanded', async () => {
+    const user = userEvent.setup()
+    const onExpandToggle = vi.fn()
+    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    renderInList(blockDefaultProps({ entry, isExpanded: true, onExpandToggle }))
+    // Click on the row header (the aria-expanded button) — clicks
+    // inside the panel itself shouldn't double-toggle (regression
+    // guard for the closest('[data-history-panel-content]') check).
+    await user.click(screen.getByRole('button', { expanded: true }))
+    expect(onExpandToggle).toHaveBeenCalledWith(entry, false)
+  })
+
+  it('renders the expanded panel only when isExpanded=true', () => {
+    const { rerender } = renderInList(blockDefaultProps({ isExpanded: false }))
+    expect(screen.queryByTestId('block-history-panel-0')).not.toBeInTheDocument()
+    rerender(
+      <ul aria-label="Block history">
+        <BlockHistoryItem {...blockDefaultProps({ isExpanded: true })} />
+      </ul>,
+    )
+    expect(screen.getByTestId('block-history-panel-0')).toBeInTheDocument()
+  })
+
+  it('expanded panel shows the primary "Restore this version" button at the top', () => {
+    renderInList(blockDefaultProps({ isExpanded: true }))
+    const btn = screen.getByTestId('block-history-restore-0')
+    expect(btn).toHaveTextContent(/Restore this version/i)
+  })
+
+  it('clicking "Restore this version" triggers onRestore directly (no ConfirmDialog)', async () => {
     const user = userEvent.setup()
     const onRestore = vi.fn()
-    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
-    renderInList(blockDefaultProps({ entry, onRestore }))
-    await user.click(screen.getByRole('button', { name: /reset to this point/i }))
+    const entry = makeEntry(1, 'edit_block', { to_text: 'historical' })
+    renderInList(blockDefaultProps({ entry, isExpanded: true, onRestore }))
+    await user.click(screen.getByTestId('block-history-restore-0'))
     expect(onRestore).toHaveBeenCalledWith(entry)
+    // Hard regression guard: the restore must NOT open a confirmation
+    // dialog from this component (the parent's toast-with-Undo is the
+    // safety net).
+    expect(screen.queryByText(/Restore to this version\?/i)).not.toBeInTheDocument()
   })
 
-  it('shows diff toggle for edit_block entries', () => {
-    renderInList(blockDefaultProps())
-    expect(screen.getByRole('button', { name: /Diff/ })).toBeInTheDocument()
+  it('expanded panel renders the historical content preview', () => {
+    renderInList(
+      blockDefaultProps({
+        entry: makeEntry(1, 'edit_block', { to_text: 'historical content' }),
+        isExpanded: true,
+      }),
+    )
+    const preview = screen.getByTestId('block-history-preview-0')
+    expect(preview).toHaveTextContent('historical content')
   })
 
-  it('does not show diff toggle for non-edit_block', () => {
-    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
-    expect(screen.queryByRole('button', { name: /Diff/ })).not.toBeInTheDocument()
+  it('default diff mode in the panel is "Compared to current"', () => {
+    renderInList(blockDefaultProps({ isExpanded: true }))
+    // Radix ToggleGroup type="single" exposes the active item via
+    // `data-state="on"`. Asserting on this is more stable than role
+    // probing because Radix maps single-mode items to role="radio"
+    // (not aria-pressed) — see @radix-ui/react-toggle-group.
+    const currentBtn = screen.getByTestId('block-history-diff-mode-current-0')
+    const justBtn = screen.getByTestId('block-history-diff-mode-just-0')
+    expect(currentBtn).toHaveAttribute('data-state', 'on')
+    expect(justBtn).toHaveAttribute('data-state', 'off')
   })
 
-  it('calls onToggleDiff when diff button is clicked', async () => {
+  it('clicking "Just this change" switches to the single-step diff', async () => {
     const user = userEvent.setup()
-    const onToggleDiff = vi.fn()
-    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
-    renderInList(blockDefaultProps({ entry, onToggleDiff }))
-    await user.click(screen.getByRole('button', { name: /Diff/ }))
-    expect(onToggleDiff).toHaveBeenCalledWith(entry)
-  })
-
-  it('renders diff display when expanded', () => {
     const diffSpans = [
       { tag: 'Equal' as const, value: 'Hello' },
-      { tag: 'Delete' as const, value: 'old' },
-      { tag: 'Insert' as const, value: 'new' },
+      { tag: 'Insert' as const, value: ' world' },
     ]
     renderInList(blockDefaultProps({ isExpanded: true, diffSpans }))
+    await user.click(screen.getByTestId('block-history-diff-mode-just-0'))
+    expect(screen.getByTestId('block-history-diff-mode-just-0')).toHaveAttribute('data-state', 'on')
+    // The single-step diff data is now what's rendered.
     expect(document.querySelector('.diff-container')).toBeInTheDocument()
-  })
-
-  it('does not render diff display when not expanded', () => {
-    const diffSpans = [{ tag: 'Equal' as const, value: 'Hello' }]
-    renderInList(blockDefaultProps({ isExpanded: false, diffSpans }))
-    expect(document.querySelector('.diff-container')).not.toBeInTheDocument()
   })
 
   it('shows device_id with full opacity (not /60)', () => {
@@ -911,12 +971,11 @@ describe('BlockHistoryItem', () => {
 
   it('renders relative timestamp', () => {
     renderInList(blockDefaultProps())
-    // formatTimestamp with 'relative' is called — check the time element exists
     const timeEl = document.querySelector('.history-item-time')
     expect(timeEl).toBeInTheDocument()
   })
 
-  it('renders content preview with line-clamp-2', () => {
+  it('renders content preview with line-clamp-2 in collapsed state', () => {
     renderInList(
       blockDefaultProps({ entry: makeEntry(1, 'edit_block', { to_text: 'Hello world' }) }),
     )
@@ -939,7 +998,7 @@ describe('BlockHistoryItem', () => {
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   })
 
-  it('has no a11y violations', async () => {
+  it('has no a11y violations collapsed', async () => {
     const { container } = renderInList(blockDefaultProps())
     await waitFor(async () => {
       const results = await axe(container)
@@ -947,7 +1006,7 @@ describe('BlockHistoryItem', () => {
     })
   })
 
-  it('has no a11y violations with diff expanded', async () => {
+  it('has no a11y violations expanded', async () => {
     const diffSpans = [
       { tag: 'Equal' as const, value: 'Hello' },
       { tag: 'Insert' as const, value: 'world' },

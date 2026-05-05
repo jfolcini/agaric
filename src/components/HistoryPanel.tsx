@@ -1,20 +1,28 @@
 /**
- * HistoryPanel — shows the edit history of a block from the op log (p2-t6, p2-t7, p2-t8).
+ * HistoryPanel — shows the edit history of a block from the op log.
  *
  * Per-block panel: receives a blockId prop and displays paginated history entries.
- * Supports restoring a block to a previous state via the op log payload.
+ *
+ * PEND-17 Part B redesign:
+ *   - In-panel restore is dialog-free; toast-with-Undo is the safety net
+ *     (the existing UX-275 sub-fix 4 snapshot+Undo flow still owns the
+ *     "second chance" guarantee).
+ *   - Keyboard browse: ↓/↑ move between rows, focused row auto-expands
+ *     and the previously-focused row collapses, Enter triggers the
+ *     focused row's restore, Escape collapses and clears focus.
+ *   - The legacy ConfirmDialog has been removed; non-preview entry
+ *     points (BlockContextMenu, gutter shortcut) keep their dialogs in
+ *     place — they don't route through this component.
  */
 
 import { Clock } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { logger } from '@/lib/logger'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
-import { formatTimestamp } from '../lib/format'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -34,11 +42,16 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
-  const [confirmEntry, setConfirmEntry] = useState<HistoryEntry | null>(null)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
+  // PEND-17 Part B — only one row is expanded at a time. `null` ⇒
+  // collapsed/idle. Tracked by `seq` (stable per device) instead of
+  // index so cursor pagination doesn't shuffle expansion to the wrong
+  // row when new entries are loaded.
+  const [expandedSeq, setExpandedSeq] = useState<number | null>(null)
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<number>(
     (entry) => entry.seq,
   )
+  const listRef = useRef<HTMLUListElement | null>(null)
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -71,6 +84,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     setEntries([])
     setNextCursor(null)
     setHasMore(false)
+    setExpandedSeq(null)
     loadHistory()
   }, [blockId, loadHistory])
 
@@ -78,7 +92,10 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     if (nextCursor) loadHistory(nextCursor)
   }, [nextCursor, loadHistory])
 
-  const filteredEntries = opTypeFilter ? entries.filter((e) => e.op_type === opTypeFilter) : entries
+  const filteredEntries = useMemo(
+    () => (opTypeFilter ? entries.filter((e) => e.op_type === opTypeFilter) : entries),
+    [entries, opTypeFilter],
+  )
 
   // UX-275 sub-fix 4: restore is reversible — capture the current block
   // content BEFORE applying the historical version so the success toast can
@@ -147,6 +164,86 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     [blockId, t, handleUndoRestore],
   )
 
+  // PEND-17 Part B keyboard browse — ↓/↑ navigate restorable rows
+  // (focused row auto-expands), Enter restores the focused row, Esc
+  // collapses. Skips non-restorable rows so the keyboard cursor never
+  // gets "stuck" on a non-actionable entry.
+  const restorableEntries = useMemo(() => {
+    return filteredEntries.filter((e) => {
+      if (e.op_type !== 'edit_block') return false
+      try {
+        const p = JSON.parse(e.payload) as Record<string, unknown>
+        return typeof p['to_text'] === 'string'
+      } catch {
+        return false
+      }
+    })
+  }, [filteredEntries])
+
+  const handlePanelKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLUListElement>) => {
+      if (restorableEntries.length === 0) return
+      const currentIdx = restorableEntries.findIndex((entry) => entry.seq === expandedSeq)
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        const next = currentIdx < 0 ? 0 : Math.min(restorableEntries.length - 1, currentIdx + 1)
+        const target = restorableEntries[next]
+        if (target) setExpandedSeq(target.seq)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        const prev = currentIdx <= 0 ? 0 : currentIdx - 1
+        const target = restorableEntries[prev]
+        if (target) setExpandedSeq(target.seq)
+        return
+      }
+      if (e.key === 'Enter' && currentIdx >= 0) {
+        e.preventDefault()
+        const target = restorableEntries[currentIdx]
+        if (target) handleRestore(target)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setExpandedSeq(null)
+      }
+    },
+    [restorableEntries, expandedSeq, handleRestore],
+  )
+
+  // Scroll the expanded row into view when it changes via keyboard.
+  // Intentional reset on `expandedSeq` change.
+  useEffect(() => {
+    if (expandedSeq == null || !listRef.current) return
+    if (!listRef.current.contains(document.activeElement)) return
+    const el = listRef.current.querySelector(
+      `[data-block-history-item][data-seq="${expandedSeq}"]`,
+    ) as HTMLElement | null
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest' })
+    }
+  }, [expandedSeq])
+
+  const handleExpandToggle = useCallback(
+    (entry: HistoryEntry, opening: boolean) => {
+      // Single-expansion model: opening row N collapses any other,
+      // and clicking the active row again collapses it. Also lazily
+      // hydrate the "Just this change" diff when expanding so the
+      // bottom toggle has data ready when the user switches modes.
+      if (opening) {
+        setExpandedSeq(entry.seq)
+        if (entry.op_type === 'edit_block' && !expandedKeys.has(entry.seq)) {
+          void handleToggleDiff(entry)
+        }
+      } else {
+        setExpandedSeq((cur) => (cur === entry.seq ? null : cur))
+      }
+    },
+    [expandedKeys, handleToggleDiff],
+  )
+
   if (!blockId) {
     return <EmptyState message={t('history.selectBlockEmpty')} compact />
   }
@@ -162,17 +259,27 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         empty={<EmptyState icon={Clock} message={t('history.noHistoryEmpty')} />}
       >
         {(items) => (
-          <ul className="history-list space-y-0 list-none p-0 m-0">
+          <ul
+            ref={listRef}
+            className="history-list space-y-0 list-none p-0 m-0 focus:outline-none"
+            // PEND-17 Part B — list-level keydown handler; tabIndex=-1
+            // keeps the list itself outside the tab order while still
+            // accepting key events delegated up from focused rows.
+            tabIndex={-1}
+            onKeyDown={handlePanelKeyDown}
+            data-testid="history-panel-list"
+          >
             {items.map((entry, i) => (
               <BlockHistoryItem
                 key={entry.seq}
+                blockId={blockId}
                 entry={entry}
                 index={i}
-                isExpanded={expandedKeys.has(entry.seq)}
+                isExpanded={expandedSeq === entry.seq}
                 isLoadingDiff={loadingDiffs.has(entry.seq)}
                 diffSpans={diffCache.get(entry.seq)}
-                onToggleDiff={handleToggleDiff}
-                onRestore={(e) => setConfirmEntry(e)}
+                onExpandToggle={handleExpandToggle}
+                onRestore={handleRestore}
               />
             ))}
           </ul>
@@ -184,23 +291,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         loading={loading}
         onLoadMore={loadMore}
         className="history-load-more"
-      />
-
-      <ConfirmDialog
-        open={confirmEntry !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirmEntry(null)
-        }}
-        title={t('history.restoreConfirmTitle')}
-        description={t('history.restoreConfirmDescription', {
-          timestamp: confirmEntry ? formatTimestamp(confirmEntry.created_at) : '',
-        })}
-        cancelLabel={t('dialog.cancel')}
-        actionLabel={t('history.restoreConfirmAction')}
-        onAction={() => {
-          if (confirmEntry) handleRestore(confirmEntry)
-          setConfirmEntry(null)
-        }}
       />
     </div>
   )

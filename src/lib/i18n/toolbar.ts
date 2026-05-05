@@ -69,4 +69,6 @@ export const toolbar: Record<string, string> = {
   'toolbar.codeBlockLanguageTip': 'Code block language',
   'toolbar.codeBlockLanguage': 'Code block language',
   'toolbar.plainText': 'Plain text',
+  'toolbar.more': 'More',
+  'toolbar.moreTip': 'More toolbar actions',
 }

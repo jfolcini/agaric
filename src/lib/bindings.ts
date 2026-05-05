@@ -128,6 +128,12 @@ export const commands = {
 	 *  Delegates to [`compute_edit_diff_inner`].
 	 */
 	computeEditDiff: (deviceId: string, seq: number) => typedError<DiffSpan[] | null, AppErrorSchema>(__TAURI_INVOKE("compute_edit_diff", { deviceId, seq })),
+	/**
+	 *  Tauri command: compute word-level diff between a block's historical
+	 *  content (as of `historical_seq`) and its current live content.
+	 *  Delegates to [`compute_block_vs_current_diff_inner`].
+	 */
+	computeBlockVsCurrentDiff: (blockId: string, historicalSeq: number) => typedError<DiffSpan[], AppErrorSchema>(__TAURI_INVOKE("compute_block_vs_current_diff", { blockId, historicalSeq })),
 	// Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
 	queryBacklinksFiltered: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<BacklinkQueryResponse, AppErrorSchema>(__TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit, spaceId })),
 	// Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].

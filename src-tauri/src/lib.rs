@@ -93,6 +93,7 @@ macro_rules! agaric_commands {
             $crate::commands::undo_page_op,
             $crate::commands::redo_page_op,
             $crate::commands::compute_edit_diff,
+            $crate::commands::compute_block_vs_current_diff,
             $crate::commands::query_backlinks_filtered,
             $crate::commands::list_backlinks_grouped,
             $crate::commands::list_unlinked_references,

@@ -2,11 +2,70 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 674 (Tier-2 features batch closing PEND-11 + PEND-17 Part A + PEND-33 Layer A — PEND-11 fully closed, plan file deleted; PEND-17 + PEND-33 partial with status notes; 11 plan files left in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1159+ items.
+**Sessions:** 1 – 675 (Tier-2 follow-up batch closing PEND-17 Part B + PEND-33 Layer B — both plans fully closed and deleted; 9 plan files left in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1161+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 675 — closed PEND-17 Part B + PEND-33 Layer B (2026-05-05)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-05 |
+| **Subagents** | 2 build (A=PEND-17 Part B restore-with-preview redesign + new backend Tauri command, B=PEND-33 Layer B priority + overflow popover) + 0 reviewers (subagents self-validated). 1 mixed Rust/frontend + 1 frontend. Non-overlapping file scopes; explicit no-stash-no-checkout guidance. User had explicitly approved both via the gating questions in session 674 (PEND-17 Part B answers: backend Tauri command for diff, keep ConfirmDialog for non-preview entries — moot per finding #3 below, default mode "Compared to current"; PEND-33 Layer B: approved). |
+| **Items closed** | 2 sub-items: PEND-17 Part B (block history restore-with-preview); PEND-33 Layer B (priority + overflow popover). **Both plans fully closed — files deleted.** Pending folder: 11 → 9 plan files. |
+| **Items modified** | — |
+| **Tests added** | +3 backend (compute_block_vs_current_diff matrix incl. soft-deleted edge case); +23 frontend (15 useToolbarOverflow + 8 FormattingToolbar overflow integration); +17 BlockHistoryItem redesigned tests (replaced ~14 legacy); +31 HistoryPanel redesigned tests (full rewrite using command-name-routed IPC mock pattern). |
+| **Files touched** | 19 source/test (history.rs, mod.rs, history_cmd_tests.rs, lib.rs, HistoryListItem.tsx, HistoryPanel.tsx, HistoryListItem.test.tsx, HistoryPanel.test.tsx, FormattingToolbar.tsx, FormattingToolbar.test.tsx, useToolbarOverflow.ts NEW, useToolbarOverflow.test.ts NEW, ui/toggle-group.tsx NEW, lib/i18n/conflicts.ts, lib/i18n/toolbar.ts, lib/tauri-mock/handlers.ts, lib/tauri.ts, lib/toolbar-config.ts, lib/bindings.ts) + 4 docs (PEND-17 deleted, PEND-33 deleted, README, REVIEW-LATER, FEATURE-MAP, SESSION-LOG). |
+
+**Summary:** Tier-2 follow-up batch — finished what session 674's "Stop here for review" gates left unresolved. Both subagents shipped cleanly. PEND-17 Part B redesigned `BlockHistoryItem` so the row click expands a panel with primary "Restore this version" button + read-only RichContentRenderer of historical content + ToggleGroup defaulting to "Compared to current"; new backend Tauri command `compute_block_vs_current_diff` returns `Vec<DiffSpan>` (graceful `NotFound` for soft-deleted blocks); in-panel restore drops the ConfirmDialog (toast-with-Undo is the safety net); keyboard browse via ↓/↑/Enter/Esc; new `ToggleGroup` UI primitive added. PEND-33 Layer B added the `useToolbarOverflow` hook + priority-driven flatten-and-pop pipeline: ResizeObserver-driven re-measurement, off-screen sentinel pre-rendering for per-button widths (each item has a 3-mode renderer: inline / sentinel / overflow), greedy fill by descending priority, MenuPopoverContent for the overflow popover, group separators only render when both adjacent groups have visible buttons. Three subagent findings worth noting: (1) the plan-named `BlockContextMenu` / gutter restore entry points DON'T EXIST in this codebase — they only open the History sheet (the panel I just redesigned), so the plan's "kept ConfirmDialog for non-preview entries" guard was moot (subagent A confirmed by `grep`); the `HistoryView` page-level history is a different flow with its own `HistoryRestoreDialog` and was not touched. (2) Subagent A had to add a new `ToggleGroup` UI primitive (no existing one in the codebase). (3) Subagent B's `FormattingToolbar` 3-mode renderer is heavier than the plan anticipated (476 LOC change vs ~50 LOC estimate) — sentinel mode has to strip the Popover wrapper around heading/code-block triggers (otherwise `popover-content` testids duplicate in jsdom). After-tree summary: 9577 vitest, 3556/3556 nextest (was 3553 — +3 from compute_block_vs_current_diff), `prek run --all-files` green after `cargo fmt` + biome `--write` (auto-fixable nits) + 4 manual a11y fixes: replaced `<div role="region">` with `<section>` for the preview area, consolidated 3 biome-ignore comments down to 1 on the row-as-button pattern (the conditional `role` flatten makes the others moot), added a `useExhaustiveDependencies` ignore on the `items`-as-trigger pattern in the hook, and removed a stale unused-suppression comment in HistoryPanel. AGENTS.md NOT modified.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 37 → 37 (no items added or removed)
+- **Previously resolved:** 1159+ → 1161+ across 674 → 675 sessions
+
+**Plan files closed (and deleted):**
+- `pending/PEND-17-block-history-restore-and-diff-nav.md` (Part A done sess 674; Part B done this session)
+- `pending/PEND-33-formatting-toolbar-overflow-handling.md` (Layer A done sess 674; Layer B done this session)
+
+**Files touched (this session):**
+
+PEND-17 Part B (block history restore-with-preview):
+- `src-tauri/src/commands/history.rs` (+121): new `compute_block_vs_current_diff_inner` + `compute_block_vs_current_diff` Tauri command. Soft-deleted blocks return `AppError::NotFound` (graceful — the in-panel preview is meaningless for trashed blocks; the existing trash-restore flow handles that case).
+- `src-tauri/src/commands/mod.rs` (+9/−7): re-exports for new command (`pub use`, `__specta__fn__`, `__cmd__`).
+- `src-tauri/src/commands/tests/history_cmd_tests.rs` (+178): 3 new tests (returns spans for modified, returns no spans for unmodified, returns NotFound for soft-deleted).
+- `src-tauri/src/lib.rs` (+1): `agaric_commands!` registration for the new command.
+- `src/lib/bindings.ts` (regenerated): contains `computeBlockVsCurrentDiff` entry.
+- `src/components/HistoryListItem.tsx` (+191/−65): `BlockHistoryItem` redesigned with row-click expansion. Conditional `role="button"` div (real `<button>` would nest the existing Tooltip + Badge interactives) with biome-ignore comment explaining the shadcn pattern. Preview region uses `<section>` semantic element + `aria-label`. ToggleGroup default `comparedToCurrent`.
+- `src/components/HistoryPanel.tsx` (+97/−50): keyboard nav (↓/↑/Enter/Esc) auto-expands the focused row + collapses any other; in-panel restore goes straight to `editBlock` + toast-with-Undo (no dialog). The non-preview entry-point `ConfirmDialog` doesn't actually exist in this codebase — `BlockContextMenu` and gutter only open the sheet.
+- `src/components/__tests__/HistoryListItem.test.tsx` (+148): 17 new tests for the redesigned `BlockHistoryItem`.
+- `src/components/__tests__/HistoryPanel.test.tsx` (+423/−369): full rewrite with `setupInvokeRouter` (command-name-routed IPC mock pattern, more robust than the chain-of-`mockResolvedValueOnce` pattern); 31 tests covering dialog-drop guard + keyboard nav + restore flow.
+- `src/components/ui/toggle-group.tsx` (NEW, +59): Radix-backed thin wrapper.
+- `src/lib/i18n/conflicts.ts` (+7): 5 new history keys (`history.diffMode.justThisChange`, `history.diffMode.comparedToCurrent`, `history.diffMode.label`, `history.restoreThisVersion`, `history.previewLabel`).
+- `src/lib/tauri-mock/handlers.ts` (+50): `compute_block_vs_current_diff` mock handler.
+- `src/lib/tauri.ts` (+23): `computeBlockVsCurrentDiff` wrapper function.
+
+PEND-33 Layer B (priority + overflow popover):
+- `src/hooks/useToolbarOverflow.ts` (NEW, +234): the hook + a pure-function `computeOverflow` helper + sentinel measurement helper. `ResizeObserver` on the container's `clientWidth`. `MockResizeObserver` test pattern documented inline.
+- `src/hooks/__tests__/useToolbarOverflow.test.ts` (NEW, +479): 15 tests (8 pure-function + 7 hook integration via `Harness`).
+- `src/components/FormattingToolbar.tsx` (+476/−161): 3-mode renderer per item (inline / sentinel / overflow), MenuPopoverContent for the overflow popover, group separators conditional on adjacent groups having visible items.
+- `src/components/__tests__/FormattingToolbar.test.tsx` (+186/−5): 8 new tests in 2 new describe blocks.
+- `src/lib/toolbar-config.ts` (+22): new `priority?: number` field on `ToolbarButtonConfig` + new `isPopoverTrigger?: boolean` flag for the +24 px reserve. Priority assignments per the plan's table.
+- `src/lib/i18n/toolbar.ts` (+2): `toolbar.more`, `toolbar.moreTip` keys.
+
+Orchestrator a11y fixes (post-subagent):
+- `src/components/HistoryListItem.tsx` — consolidated 3 biome-ignore comments to 1, replaced `<div role="region">` with `<section>`, simplified the conditional row-as-button pattern.
+- `src/components/HistoryPanel.tsx` — removed a stale `useExhaustiveDependencies` suppression comment that no longer applied.
+- `src/hooks/useToolbarOverflow.ts` — added a `useExhaustiveDependencies` ignore on the `items`-as-re-run-trigger pattern (the function body reads from the DOM via sentinelRef, but `items` is the legitimate re-run signal).
+
+Docs:
+- `pending/PEND-17-block-history-restore-and-diff-nav.md` (DELETED): both Part A (sess 674) + Part B (this sess) shipped.
+- `pending/PEND-33-formatting-toolbar-overflow-handling.md` (DELETED): both Layer A (sess 674) + Layer B (this sess) shipped.
+- `pending/README.md`: removed PEND-17 + PEND-33 rows; updated mid-tier and out-of-band UX bullets.
+- `pending/REVIEW-LATER.md`: header line updated for session 675.
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: new "Frontend Tier-2 Features Follow-up Batch (session 675, PEND-17 Part B + PEND-33 Layer B)" subsection in Section 10.
 
 ## Session 674 — closed PEND-11 + PEND-17 Part A + PEND-33 Layer A (2026-05-05)
 

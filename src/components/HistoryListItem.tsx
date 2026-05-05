@@ -20,18 +20,23 @@ import {
   Tag,
   Trash2,
 } from 'lucide-react'
-import type React from 'react'
+import * as React from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
+import { Spinner } from '@/components/ui/spinner'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
 import { getPayloadRawContent, getPropertyPayload } from '../lib/history-utils'
+import { logger } from '../lib/logger'
 import { formatPropertyName } from '../lib/property-utils'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
+import { computeBlockVsCurrentDiff } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { renderRichContent } from './RichContentRenderer'
 
@@ -88,9 +93,11 @@ export function opIcon(opType: string): LucideIcon {
 
 export interface HistoryItemCoreProps {
   entry: HistoryEntry
-  isExpanded: boolean
-  isLoadingDiff: boolean
-  onToggleDiff: (entry: HistoryEntry) => void
+  /** When omitted, the diff-toggle button is hidden (PEND-17 Part B —
+   *  `BlockHistoryItem` drives expansion from the row click instead). */
+  isExpanded?: boolean
+  isLoadingDiff?: boolean
+  onToggleDiff?: (entry: HistoryEntry) => void
 }
 
 export function HistoryItemCore({
@@ -158,8 +165,10 @@ export function HistoryItemCore({
           </span>
         )}
       </div>
-      {/* Diff toggle */}
-      {entry.op_type === 'edit_block' && (
+      {/* Diff toggle — only when the parent supplies an `onToggleDiff`
+          handler. PEND-17 Part B `BlockHistoryItem` omits it and drives
+          expansion from the whole-row click target instead. */}
+      {entry.op_type === 'edit_block' && onToggleDiff && (
         <Button
           variant="ghost"
           size="sm"
@@ -169,7 +178,11 @@ export function HistoryItemCore({
             onToggleDiff(entry)
           }}
         >
-          <ChevronToggle isExpanded={isExpanded} loading={isLoadingDiff} size="md" />
+          <ChevronToggle
+            isExpanded={isExpanded ?? false}
+            loading={isLoadingDiff ?? false}
+            size="md"
+          />
           {t('history.diffButton')}
         </Button>
       )}
@@ -347,68 +360,242 @@ export function HistoryListItem({
 }
 
 // ---------------------------------------------------------------------------
-// BlockHistoryItem — compact row for per-block history sheet
+// BlockHistoryItem — per-block history row with restore-with-preview panel
 // ---------------------------------------------------------------------------
+//
+// PEND-17 Part B: restore-with-preview redesign.
+//
+// Collapsed: timestamp + relative-age click target on the whole row.
+// Expanded (only `edit_block` ops with extractable content qualify):
+//
+//   1. Top    — primary `Restore this version (timestamp)` button.
+//               Click triggers `onRestore(entry)` directly. No
+//               ConfirmDialog: HistoryPanel snapshots + offers
+//               Undo on the success toast (`UX-275 sub-fix 4`).
+//   2. Middle — read-only `RichContentRenderer` showing the historical
+//               content as it would appear if restored.
+//   3. Bottom — segmented `ToggleGroup` switching between:
+//                 • `justThisChange`   — single-step diff (op vs. immediately
+//                                        previous version), reuses
+//                                        `useHistoryDiffToggle`'s cache.
+//                 • `comparedToCurrent` — `compute_block_vs_current_diff`
+//                                        IPC fetched lazily on first expand;
+//                                        DEFAULT mode (the panel exists to
+//                                        support the restore decision).
+
+const DIFF_MODE_DEFAULT: BlockHistoryDiffMode = 'comparedToCurrent'
+
+export type BlockHistoryDiffMode = 'justThisChange' | 'comparedToCurrent'
 
 export interface BlockHistoryItemProps {
+  /** Block whose history is being shown. Required for `compute_block_vs_current_diff`. */
+  blockId: string
   entry: HistoryEntry
   index: number
+  /** Whether the row is expanded. Owned by the parent so keyboard nav can drive it. */
   isExpanded: boolean
+  /** Loading state for the "Just this change" diff (single-step). */
   isLoadingDiff: boolean
+  /** "Just this change" diff spans (op vs. immediately previous version). */
   diffSpans: DiffSpan[] | undefined
-  onToggleDiff: (entry: HistoryEntry) => void
+  /** Click on the whole row toggles expansion (only on restorable rows). */
+  onExpandToggle: (entry: HistoryEntry, opening: boolean) => void
+  /** Direct restore action — toast-with-Undo is the safety net (no ConfirmDialog). */
   onRestore: (entry: HistoryEntry) => void
 }
 
 export function BlockHistoryItem({
+  blockId,
   entry,
   index,
   isExpanded,
   isLoadingDiff,
   diffSpans,
-  onToggleDiff,
+  onExpandToggle,
   onRestore,
 }: BlockHistoryItemProps): React.ReactElement {
   const { t } = useTranslation()
   const rawContent = getPayloadRawContent(entry)
   const isRestorable = entry.op_type === 'edit_block' && rawContent != null
+  const richCallbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
+
+  // Diff mode is local to this row — switching mode never re-collapses
+  // the panel and its default (`comparedToCurrent`) was selected
+  // because the panel exists to support the restore decision.
+  const [diffMode, setDiffMode] = React.useState<BlockHistoryDiffMode>(DIFF_MODE_DEFAULT)
+  const [comparedDiff, setComparedDiff] = React.useState<DiffSpan[] | null>(null)
+  const [comparedLoading, setComparedLoading] = React.useState(false)
+  const [comparedFailed, setComparedFailed] = React.useState(false)
+
+  // Lazy-fetch the compared-to-current diff on first expand. Refetch
+  // when the entry's seq changes (e.g. parent renders a different row
+  // into this slot under the same React key — defensive, not expected).
+  React.useEffect(() => {
+    if (!isExpanded || !isRestorable) return
+    if (comparedDiff != null || comparedLoading || comparedFailed) return
+    let cancelled = false
+    setComparedLoading(true)
+    computeBlockVsCurrentDiff({ blockId, historicalSeq: entry.seq })
+      .then((spans) => {
+        if (cancelled) return
+        setComparedDiff(spans)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        // Mirrors the `useHistoryDiffToggle` toast policy so the two diff
+        // modes behave consistently when a load fails — a single failure
+        // doesn't keep retrying every render.
+        logger.warn(
+          'BlockHistoryItem',
+          'computeBlockVsCurrentDiff failed',
+          { blockId, seq: entry.seq },
+          err,
+        )
+        toast.error(t('history.loadDiffFailed'))
+        setComparedFailed(true)
+      })
+      .finally(() => {
+        if (!cancelled) setComparedLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    isExpanded,
+    isRestorable,
+    blockId,
+    entry.seq,
+    comparedDiff,
+    comparedLoading,
+    comparedFailed,
+    t,
+  ])
+
+  const handleRowClick = (e: React.MouseEvent) => {
+    if (!isRestorable) return
+    // Don't double-toggle when the click originated inside the expanded
+    // panel (Restore button, ToggleGroup, RichContentRenderer link).
+    if ((e.target as HTMLElement).closest('[data-history-panel-content]')) return
+    onExpandToggle(entry, !isExpanded)
+  }
+
+  const handleRowKeyDown = (e: React.KeyboardEvent) => {
+    if (!isRestorable) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onExpandToggle(entry, !isExpanded)
+    }
+  }
+
+  const activeSpans = diffMode === 'comparedToCurrent' ? (comparedDiff ?? undefined) : diffSpans
+  const activeLoading = diffMode === 'comparedToCurrent' ? comparedLoading : isLoadingDiff
 
   return (
     <li
       data-testid={`block-history-item-${index}`}
-      className="flex flex-col gap-1.5 px-2 py-2 border-b border-border/20 hover:bg-accent/20"
+      data-block-history-item
+      data-seq={entry.seq}
+      className={cn(
+        'flex flex-col gap-1.5 px-2 py-2 border-b border-border/20',
+        isRestorable && 'hover:bg-accent/20',
+        isExpanded && 'bg-accent/30',
+      )}
     >
-      <div className="flex items-center gap-2 w-full">
-        <HistoryItemCore
-          entry={entry}
-          isExpanded={isExpanded}
-          isLoadingDiff={isLoadingDiff}
-          onToggleDiff={onToggleDiff}
-        />
-        {isRestorable && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 px-1.5"
-                  onClick={() => onRestore(entry)}
-                  aria-label={t('history.restoreToHereLabel')}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('history.restoreToHereTooltip')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
-      </div>
-      {isExpanded && diffSpans != null && (
-        <div className="diff-container w-full">
-          <DiffDisplay spans={diffSpans} />
+      {/* Collapsed-state click target — the whole row. We use a div with
+          conditional role="button" rather than a real <button> because the
+          row already contains nested interactive elements (Tooltip-wrapped
+          timestamp, Badge with potential popover). Non-restorable rows
+          render no role at all (just a static div). */}
+      {isRestorable ? (
+        // biome-ignore lint/a11y/useSemanticElements: row already contains nested interactive elements (Tooltip-wrapped timestamp, Badge); a real <button> would nest interactives. The keyboard handler + role="button" + aria-expanded is the standard shadcn pattern for this case.
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={isExpanded}
+          aria-controls={isExpanded ? `block-history-panel-${index}` : undefined}
+          data-testid={`block-history-row-${index}`}
+          className="flex items-center gap-2 w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+          onClick={handleRowClick}
+          onKeyDown={handleRowKeyDown}
+        >
+          <HistoryItemCore entry={entry} />
+        </div>
+      ) : (
+        <div data-testid={`block-history-row-${index}`} className="flex items-center gap-2 w-full">
+          <HistoryItemCore entry={entry} />
+        </div>
+      )}
+      {isExpanded && isRestorable && rawContent != null && (
+        <div
+          id={`block-history-panel-${index}`}
+          data-history-panel-content
+          data-testid={`block-history-panel-${index}`}
+          className="block-history-panel mt-1 flex flex-col gap-3 rounded-md border border-border/40 bg-background p-3"
+        >
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            data-testid={`block-history-restore-${index}`}
+            className="self-start"
+            onClick={() => onRestore(entry)}
+          >
+            <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+            {t('history.restoreThisVersion', {
+              timestamp: formatTimestamp(entry.created_at, 'relative'),
+            })}
+          </Button>
+          {/* The preview is a labelled region — using a real <section>
+              gives the aria-label semantic meaning for AT users without
+              the `role="region"` ⇒ `<section>` lint rewrite. */}
+          <section
+            data-testid={`block-history-preview-${index}`}
+            aria-label={t('history.previewLabel')}
+            className="block-history-preview rounded-md border border-border/30 bg-muted/30 p-2 text-sm"
+          >
+            {renderRichContent(rawContent, {
+              interactive: false,
+              onTagClick,
+              ...richCallbacks,
+            })}
+          </section>
+          <div className="flex items-center justify-between gap-2">
+            <ToggleGroup
+              type="single"
+              value={diffMode}
+              onValueChange={(v: string) => {
+                // Radix emits '' when the user clicks the active item.
+                // Ignore that — keep the current mode pinned (the diff
+                // pane below would otherwise have nothing to render).
+                if (v === 'justThisChange' || v === 'comparedToCurrent') {
+                  setDiffMode(v)
+                }
+              }}
+              aria-label={t('history.diffMode.label')}
+              data-testid={`block-history-diff-mode-${index}`}
+            >
+              <ToggleGroupItem
+                value="justThisChange"
+                data-testid={`block-history-diff-mode-just-${index}`}
+              >
+                {t('history.diffMode.justThisChange')}
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="comparedToCurrent"
+                data-testid={`block-history-diff-mode-current-${index}`}
+              >
+                {t('history.diffMode.comparedToCurrent')}
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+          <div className="diff-container w-full">
+            {activeLoading ? (
+              <Spinner className="h-4 w-4" />
+            ) : activeSpans != null ? (
+              <DiffDisplay spans={activeSpans} />
+            ) : null}
+          </div>
         </div>
       )}
     </li>

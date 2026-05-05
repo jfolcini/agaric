@@ -253,6 +253,13 @@ export const conflicts: Record<string, string> = {
   'history.revertedSuccessfully': 'Reverted successfully',
   'history.revertPanelFailed': 'Failed to revert',
   'history.loadDiffFailed': 'Failed to load diff',
+  // PEND-17 Part B — segmented control + primary button in the per-block
+  // history panel's expanded preview state.
+  'history.diffMode.justThisChange': 'Just this change',
+  'history.diffMode.comparedToCurrent': 'Compared to current',
+  'history.diffMode.label': 'Diff mode',
+  'history.restoreThisVersion': 'Restore this version ({{timestamp}})',
+  'history.previewLabel': 'Preview of historical content',
   'history.filterByTypeLabel': 'Filter by operation type',
   'history.entriesLabel': 'History entries',
   'history.nonReversibleLabel': 'Non-reversible action',
