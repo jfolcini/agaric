@@ -22,6 +22,7 @@ export const toolbar: Record<string, string> = {
   'toolbar.heading': 'Heading',
   'toolbar.discard': 'Discard changes',
   'toolbar.formatting': 'Formatting',
+  'toolbar.selectionFormatting': 'Selection formatting',
   'toolbar.internalLink': 'Internal link',
   'toolbar.insertTag': 'Insert tag',
   'toolbar.headingLevel': 'Heading level',

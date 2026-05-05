@@ -26,7 +26,6 @@ import type { PeerInfo, SyncState } from '../stores/sync'
 import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { NAV_ITEMS } from './nav-items'
 import { SpaceAccentBadge } from './SpaceAccentBadge'
-import { SpaceStatusChip } from './SpaceStatusChip'
 import { SpaceSwitcher } from './SpaceSwitcher'
 import {
   Sidebar,
@@ -266,18 +265,6 @@ export function AppSidebar({
                 ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
                 : t('sidebar.lastSyncedNever')}
             </span>
-            {/*
-             * FEAT-3p10 — visual identity status chip. Sits next to
-             * the sync chip so the sidebar footer carries one
-             * cohesive "what is active" surface. Click forwards
-             * focus to the SpaceSwitcher trigger so the user can
-             * pick a different space without hunting for the
-             * dropdown. Auto-hides when no space is active (boot
-             * pre-bootstrap edge case).
-             */}
-            <div className="px-2 pt-1 group-data-[collapsible=icon]:hidden">
-              <SpaceStatusChip />
-            </div>
           </SidebarMenuItem>
           <SidebarMenuItem>
             {/*

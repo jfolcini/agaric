@@ -304,17 +304,21 @@ describe('DiffDisplay', () => {
     })
 
     it('groups consecutive Insert/Delete spans into a single hunk', () => {
-      // Insert directly followed by Delete (no Equal between) is one hunk.
+      // Insert directly followed by Delete (no Equal between) coalesces
+      // into one hunk; the trailing Insert (after an Equal) is a second
+      // hunk. Total: 2 hunks — proves the grouping logic without tripping
+      // PEND-17's hide-nav-when-only-one-hunk rule.
       const spans: DiffSpan[] = [
         makeSpan('Equal', 'before '),
         makeSpan('Insert', 'inserted'),
         makeSpan('Delete', 'deleted'),
-        makeSpan('Equal', ' after'),
+        makeSpan('Equal', ' middle '),
+        makeSpan('Insert', 'tail'),
       ]
 
       render(<DiffDisplay spans={spans} />)
 
-      expect(screen.getByTestId('diff-hunk-counter')).toHaveTextContent(/1\s+of\s+1\s+changes/i)
+      expect(screen.getByTestId('diff-hunk-counter')).toHaveTextContent(/1\s+of\s+2\s+changes/i)
     })
 
     it('disables prev at first hunk and next at last hunk', async () => {
@@ -408,10 +412,14 @@ describe('DiffDisplay', () => {
 
     // PEND-28b M7: hunk-nav row must wrap on narrow viewports so long file
     //              paths / counter text don't overflow horizontally on phones.
+    //              Needs ≥ 2 hunks for the nav to render at all
+    //              (PEND-17 hides nav for trivial diffs).
     it('PEND-28b M7: hunk-nav row has flex-wrap', () => {
       const spans: DiffSpan[] = [
         makeSpan('Equal', 'before '),
         makeSpan('Insert', 'changed'),
+        makeSpan('Equal', ' middle '),
+        makeSpan('Delete', 'removed'),
         makeSpan('Equal', ' after'),
       ]
 
@@ -440,6 +448,175 @@ describe('DiffDisplay', () => {
       const counter = screen.getByTestId('diff-hunk-counter')
       expect(counter).toHaveAttribute('aria-live', 'polite')
       expect(counter).toHaveAttribute('aria-atomic', 'true')
+    })
+
+    // -- PEND-17 Part A: visible / honest hunk-nav --------------------------
+
+    it('PEND-17: active hunk receives data-hunk-active and a ring; previous active hunk loses it', async () => {
+      const user = userEvent.setup()
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'a '),
+        makeSpan('Insert', 'one'), // hunk 0
+        makeSpan('Equal', ' b '),
+        makeSpan('Delete', 'two'), // hunk 1
+        makeSpan('Equal', ' c'),
+      ]
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+      const ins = container.querySelector('ins') as HTMLElement
+      const del = container.querySelector('del') as HTMLElement
+
+      // Initially: hunk 0 (the <ins>) is active, hunk 1 (the <del>) is not.
+      expect(ins.getAttribute('data-hunk-active')).toBe('true')
+      expect(del.getAttribute('data-hunk-active')).toBeNull()
+      expect(ins.className).toContain('ring-2')
+      expect(del.className).not.toContain('ring-2')
+
+      await user.click(screen.getByTestId('diff-next-hunk-btn'))
+
+      // After Next: hunk 1 (<del>) is active, hunk 0 (<ins>) is not.
+      expect(ins.getAttribute('data-hunk-active')).toBeNull()
+      expect(del.getAttribute('data-hunk-active')).toBe('true')
+      expect(ins.className).not.toContain('ring-2')
+      expect(del.className).toContain('ring-2')
+    })
+
+    it('PEND-17: single-hunk diff renders no nav', () => {
+      // Exactly one hunk — there is nothing to navigate, so the prev/next
+      // buttons and the counter must all be hidden.
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'before '),
+        makeSpan('Insert', 'changed'),
+        makeSpan('Equal', ' after'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      expect(screen.queryByTestId('diff-prev-hunk-btn')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('diff-next-hunk-btn')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('diff-hunk-counter')).not.toBeInTheDocument()
+    })
+
+    it('PEND-17: scrollIntoView is NOT called when target is fully visible in scrollable ancestor', async () => {
+      const user = userEvent.setup()
+      const scrollSpy = vi
+        .spyOn(HTMLElement.prototype, 'scrollIntoView')
+        .mockImplementation(() => {})
+
+      // Mark every ancestor as scrollable so findScrollableAncestor stops
+      // at the first parent (the <p>).
+      const computedSpy = vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+        overflow: 'visible',
+        overflowY: 'auto',
+        overflowX: 'visible',
+      } as unknown as CSSStyleDeclaration)
+
+      // target rect (ins/del) sits fully inside ancestor rect → in view.
+      const targetRect = {
+        top: 100,
+        bottom: 120,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 20,
+        x: 0,
+        y: 100,
+        toJSON: () => ({}),
+      } as DOMRect
+      const ancestorRect = {
+        top: 0,
+        bottom: 200,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 200,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect
+      const rectSpy = vi
+        .spyOn(Element.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: Element) {
+          return this.tagName === 'INS' || this.tagName === 'DEL' ? targetRect : ancestorRect
+        })
+
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'a '),
+        makeSpan('Insert', 'one'),
+        makeSpan('Equal', ' b '),
+        makeSpan('Delete', 'two'),
+        makeSpan('Equal', ' c'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      await user.click(screen.getByTestId('diff-next-hunk-btn'))
+
+      expect(scrollSpy).not.toHaveBeenCalled()
+
+      scrollSpy.mockRestore()
+      computedSpy.mockRestore()
+      rectSpy.mockRestore()
+    })
+
+    it('PEND-17: scrollIntoView IS called when target is below the scrollable ancestor', async () => {
+      const user = userEvent.setup()
+      const scrollSpy = vi
+        .spyOn(HTMLElement.prototype, 'scrollIntoView')
+        .mockImplementation(() => {})
+
+      const computedSpy = vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+        overflow: 'visible',
+        overflowY: 'auto',
+        overflowX: 'visible',
+      } as unknown as CSSStyleDeclaration)
+
+      // target rect sits below the ancestor's bottom edge → offscreen.
+      const targetRect = {
+        top: 250,
+        bottom: 270,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 20,
+        x: 0,
+        y: 250,
+        toJSON: () => ({}),
+      } as DOMRect
+      const ancestorRect = {
+        top: 0,
+        bottom: 200,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 200,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect
+      const rectSpy = vi
+        .spyOn(Element.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: Element) {
+          return this.tagName === 'INS' || this.tagName === 'DEL' ? targetRect : ancestorRect
+        })
+
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'a '),
+        makeSpan('Insert', 'one'),
+        makeSpan('Equal', ' b '),
+        makeSpan('Delete', 'two'),
+        makeSpan('Equal', ' c'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      await user.click(screen.getByTestId('diff-next-hunk-btn'))
+
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' })
+
+      scrollSpy.mockRestore()
+      computedSpy.mockRestore()
+      rectSpy.mockRestore()
     })
   })
 })

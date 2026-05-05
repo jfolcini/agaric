@@ -1,30 +1,33 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons: Bold, Italic, Code, Strikethrough, Highlight | External Link, Code Block, Heading | Cycle Priority, Date, Due Date, Scheduled Date, TODO | Undo, Redo.
- * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
- * Active marks are highlighted via aria-pressed + bg-accent.
+ * Buttons (post PEND-33 Layer A): Internal Link, Tag, Blockquote | Code Block,
+ * Heading | Ordered List, Divider, Callout | Cycle Priority, Date, Due Date,
+ * Scheduled Date, TODO, Properties | Undo, Redo, Discard.
  *
- * The External Link button opens a LinkEditPopover (shadcn Popover) instead
- * of the old `window.prompt()`. The popover is also opened by the Ctrl+K
- * keyboard shortcut (dispatched from the ExternalLink TipTap extension).
+ * The 5 mark toggles (Bold, Italic, Code, Strike, Highlight) and the External
+ * Link button were hoisted to `SelectionBubbleMenu` — they only do useful work
+ * on a non-empty selection, and a contextual hover bar matches every other
+ * modern web editor.
+ *
+ * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
+ * Active states (codeBlock, blockquote, heading, priority) are highlighted via
+ * aria-pressed + bg-accent.
  *
  * Priority and Date buttons dispatch custom events that BlockTree listens for.
  */
 
-import { getMarkRange } from '@tiptap/core'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { FileCode2, Heading, Link2 } from 'lucide-react'
+import { FileCode2, Heading } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
 import {
   createHistoryButtons,
-  createMarkToggles,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
@@ -34,7 +37,6 @@ import {
 import { cn } from '@/lib/utils'
 import { CodeLanguageSelector } from './CodeLanguageSelector'
 import { HeadingLevelSelector } from './HeadingLevelSelector'
-import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { ScrollArea } from './ui/scroll-area'
@@ -49,18 +51,6 @@ interface FormattingToolbarProps {
   currentPriority?: string | null
 }
 
-/** Resolve the link mark range around the cursor, or undefined if not inside a link. */
-function getLinkMarkRange(editor: Editor): { from: number; to: number } | undefined {
-  try {
-    const $from = editor.state.doc.resolve(editor.state.selection.from)
-    const linkMark = editor.schema.marks['link']
-    if (linkMark) return getMarkRange($from, linkMark) ?? undefined
-  } catch {
-    // Cursor at document boundary
-  }
-  return undefined
-}
-
 function getHeadingLevel(editor: Editor): number {
   for (let lvl = 1; lvl <= 6; lvl++) {
     if (editor.isActive('heading', { level: lvl })) return lvl
@@ -72,16 +62,9 @@ function getHeadingLevel(editor: Editor): number {
  * Map of toolbar button label keys to keyboard-config shortcut ids (UX-301).
  * Buttons listed here get their tooltip rebuilt as `${label} (${binding})`
  * via `tooltipWithShortcut`, picking up any user customisation. Buttons
- * absent from this map keep their existing `tip` i18n string. Bold and
- * italic intentionally have no entry — they use TipTap's StarterKit
- * defaults and are not part of the keyboard-config catalog, so their
- * pre-existing tip strings already encode the shortcut.
+ * absent from this map keep their existing `tip` i18n string.
  */
-const TOOLBAR_SHORTCUT_IDS: Record<string, string> = {
-  'toolbar.code': 'inlineCode',
-  'toolbar.strikethrough': 'strikethrough',
-  'toolbar.highlight': 'highlight',
-}
+const TOOLBAR_SHORTCUT_IDS: Record<string, string> = {}
 
 /**
  * Append the current keyboard binding for `shortcutId` to `label` so the
@@ -159,20 +142,12 @@ export function FormattingToolbar({
   currentPriority,
 }: FormattingToolbarProps): React.ReactElement {
   const { t } = useTranslation()
-  const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
-  const [savedSelection, setSavedSelection] = useState<{ from: number; to: number } | null>(null)
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
   const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
 
   const state = useEditorState({
     editor,
     selector: (ctx) => ({
-      bold: ctx.editor.isActive('bold'),
-      italic: ctx.editor.isActive('italic'),
-      code: ctx.editor.isActive('code'),
-      strike: ctx.editor.isActive('strike'),
-      highlight: ctx.editor.isActive('highlight'),
-      link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
       codeBlockLanguage: ctx.editor.isActive('codeBlock')
         ? ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
@@ -184,62 +159,8 @@ export function FormattingToolbar({
     }),
   })
 
-  // Listen for Ctrl+K custom event dispatched by the ExternalLink extension
-  useEffect(() => {
-    const dom = editor.view?.dom
-    if (!dom) return
-
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ from: number; to: number }>).detail
-
-      if (editor.isActive('link')) {
-        const range = getLinkMarkRange(editor)
-        if (range) {
-          setSavedSelection(range)
-          setLinkPopoverOpen(true)
-          return
-        }
-      }
-
-      if (detail && detail.from !== detail.to) {
-        setSavedSelection(detail)
-      } else {
-        setSavedSelection(null)
-      }
-      setLinkPopoverOpen(true)
-    }
-    dom.addEventListener('open-link-popover', handler)
-    return () => dom.removeEventListener('open-link-popover', handler)
-  }, [editor])
-
-  const currentUrl = state.link ? ((editor.getAttributes('link')['href'] as string) ?? '') : ''
-
-  let currentLabel = ''
-  if (state.link) {
-    const range = getLinkMarkRange(editor)
-    if (range) {
-      try {
-        currentLabel = editor.state.doc.textBetween(range.from, range.to)
-      } catch {
-        // Document boundary
-      }
-    }
-  } else if (savedSelection && savedSelection.from !== savedSelection.to) {
-    try {
-      currentLabel = editor.state.doc.textBetween(savedSelection.from, savedSelection.to)
-    } catch {
-      // Stale selection range
-    }
-  }
-
-  const handleLinkPopoverClose = useCallback(() => {
-    setSavedSelection(null)
-    setLinkPopoverOpen(false)
-  }, [])
-
   // ── Button config groups ─────────────────────────────────────────────
 
-  const markToggles = useMemo(() => createMarkToggles(editor), [editor])
   const refsAndBlocks = useMemo(() => createRefsAndBlocks(editor), [editor])
   const structureButtons = useMemo(() => createStructureButtons(), [])
   const metadataButtons = useMemo(() => createMetadataButtons(), [])
@@ -255,52 +176,6 @@ export function FormattingToolbar({
           className="flex items-center gap-0.5 px-2 py-px"
           data-testid="formatting-toolbar"
         >
-          <ToolbarButtonGroup
-            buttons={markToggles}
-            state={state as Record<string, unknown>}
-            t={t}
-          />
-
-          <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
-
-          <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-            <PopoverAnchor asChild>
-              <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('toolbar.link')}
-                  aria-pressed={state.link}
-                  className={cn(state.link && toolbarActiveClass)}
-                  onPointerDown={(e) => {
-                    e.preventDefault()
-                    if (!linkPopoverOpen && state.link) {
-                      const range = getLinkMarkRange(editor)
-                      if (range) setSavedSelection(range)
-                    }
-                    setLinkPopoverOpen((prev) => !prev)
-                  }}
-                >
-                  <Link2 className="h-3.5 w-3.5" />
-                </Button>
-              </Tip>
-            </PopoverAnchor>
-            <PopoverContent
-              align="start"
-              className="w-72 max-w-[calc(100vw-2rem)] p-3"
-              data-editor-portal
-            >
-              <LinkEditPopover
-                editor={editor}
-                isEditing={state.link}
-                initialUrl={currentUrl}
-                initialLabel={currentLabel}
-                onClose={handleLinkPopoverClose}
-                savedSelection={savedSelection}
-              />
-            </PopoverContent>
-          </Popover>
-
           <ToolbarButtonGroup
             buttons={refsAndBlocks}
             state={state as Record<string, unknown>}

@@ -40,6 +40,13 @@ vi.mock('../FormattingToolbar', () => ({
   ),
 }))
 
+// Mock SelectionBubbleMenu — tested separately in SelectionBubbleMenu.test.tsx
+vi.mock('../SelectionBubbleMenu', () => ({
+  SelectionBubbleMenu: ({ blockId }: { blockId?: string }) => (
+    <div data-testid="selection-bubble-menu" data-block-id={blockId} />
+  ),
+}))
+
 // Mock LinkPreviewTooltip — tested separately in LinkPreviewTooltip.test.tsx (UX-165)
 vi.mock('../LinkPreviewTooltip', () => ({
   LinkPreviewTooltip: () => <div data-testid="link-preview-tooltip-mock" />,

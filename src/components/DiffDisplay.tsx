@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import type { DiffSpan } from '../lib/tauri'
+import { cn } from '../lib/utils'
 import { EmptyState } from './EmptyState'
 import { renderRichContent } from './RichContentRenderer'
 
@@ -16,6 +17,25 @@ interface DiffDisplayProps {
 const LARGE_DIFF_THRESHOLD = 500
 /** Number of spans shown when the diff is collapsed. */
 const COLLAPSED_SPAN_COUNT = 100
+
+/**
+ * Walk up from `el`'s parent chain looking for the nearest scrollable
+ * ancestor (overflow: auto | scroll | overlay on either axis). Returns
+ * `null` if none is found. Used by the hunk-nav scroll-skip heuristic so
+ * `scrollIntoView` is only called when the target is actually offscreen.
+ */
+function findScrollableAncestor(el: HTMLElement | null): HTMLElement | null {
+  let cur: HTMLElement | null = el?.parentElement ?? null
+  while (cur) {
+    const style = window.getComputedStyle(cur)
+    const overflow = `${style.overflow} ${style.overflowY} ${style.overflowX}`
+    if (/auto|scroll|overlay/.test(overflow)) {
+      return cur
+    }
+    cur = cur.parentElement
+  }
+  return null
+}
 
 /**
  * Renders a word-level diff as inline colored spans.
@@ -33,6 +53,12 @@ const COLLAPSED_SPAN_COUNT = 100
  * unchanged context. Buttons step through hunks and `scrollIntoView` the
  * first span of the active hunk so large diffs are no longer one
  * impenetrable paragraph for keyboard / SR users.
+ *
+ * PEND-17 Part A: the active hunk receives a visible ring so prev/next have
+ * obvious feedback; `scrollIntoView` is skipped when the target is already
+ * fully visible in its scrollable ancestor; the nav is hidden entirely for
+ * single-hunk diffs (nothing to navigate); the counter sits to the left of
+ * the buttons so it reads as a label rather than a trailing footnote.
  */
 export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
   const { t } = useTranslation()
@@ -45,26 +71,34 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
   const visibleSpans = isLarge && !expanded ? spans.slice(0, COLLAPSED_SPAN_COUNT) : spans
   const hiddenCount = spans.length - visibleSpans.length
 
-  // Group consecutive non-Equal spans into hunks. Each hunk is the index of
-  // its first span in `visibleSpans`. Recomputed when the visible slice
-  // changes (collapse / expand toggles can shift hunk membership).
-  const hunkStarts = useMemo(() => {
+  // Group consecutive non-Equal spans into hunks. `hunkStarts[i]` is the
+  // index of the first span of hunk `i` in `visibleSpans`. `hunkOfSpan[j]`
+  // is the hunk index a given span belongs to (`null` for Equal spans).
+  // Tracking every span's hunk membership (not just the first span) is what
+  // lets us highlight the contiguous run for the active hunk.
+  const { hunkStarts, hunkOfSpan } = useMemo(() => {
     const starts: number[] = []
+    const ofSpan: (number | null)[] = new Array(visibleSpans.length).fill(null)
     let inHunk = false
+    let currentHunkIdx = -1
     for (let i = 0; i < visibleSpans.length; i++) {
       const span = visibleSpans[i]
       const isChange = span?.tag === 'Insert' || span?.tag === 'Delete'
-      if (isChange && !inHunk) {
-        starts.push(i)
-        inHunk = true
-      } else if (!isChange) {
+      if (isChange) {
+        if (!inHunk) {
+          starts.push(i)
+          currentHunkIdx++
+          inHunk = true
+        }
+        ofSpan[i] = currentHunkIdx
+      } else {
         inHunk = false
       }
     }
-    return starts
+    return { hunkStarts: starts, hunkOfSpan: ofSpan }
   }, [visibleSpans])
 
-  const hasHunks = hunkStarts.length > 0
+  const hasNav = hunkStarts.length > 1
   const atFirstHunk = currentHunk <= 0
   const atLastHunk = currentHunk >= hunkStarts.length - 1
 
@@ -75,9 +109,17 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
       const spanIndex = hunkStarts[clamped]
       if (spanIndex == null) return
       const el = spanRefs.current.get(spanIndex)
-      if (el && typeof el.scrollIntoView === 'function') {
-        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      if (!el || typeof el.scrollIntoView !== 'function') return
+      // Skip the scroll if the target is already fully visible in its
+      // nearest scrollable ancestor — avoids the "I clicked but nothing
+      // moved" feedback gap on short diffs that already fit on screen.
+      const ancestor = findScrollableAncestor(el)
+      if (ancestor) {
+        const t = el.getBoundingClientRect()
+        const a = ancestor.getBoundingClientRect()
+        if (t.top >= a.top && t.bottom <= a.bottom) return
       }
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     },
     [hunkStarts],
   )
@@ -106,7 +148,9 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                 interactive: false,
                 ...richCallbacks,
               }) ?? span.value
-            const isHunkStart = hunkStarts.includes(i)
+            const hunkIdx = hunkOfSpan[i]
+            const isHunkStart = hunkIdx != null && hunkStarts[hunkIdx] === i
+            const isActiveHunk = hunkIdx != null && hunkIdx === currentHunk && hasNav
             const refCallback = (el: HTMLElement | null) => {
               if (el) spanRefs.current.set(i, el)
               else spanRefs.current.delete(i)
@@ -118,7 +162,11 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     key={key}
                     ref={refCallback}
                     data-hunk-start={isHunkStart || undefined}
-                    className="bg-destructive/15 text-destructive no-underline line-through"
+                    data-hunk-active={isActiveHunk || undefined}
+                    className={cn(
+                      'bg-destructive/15 text-destructive no-underline line-through',
+                      isActiveHunk && 'ring-2 ring-ring/60 rounded-sm',
+                    )}
                   >
                     {content}
                   </del>
@@ -129,7 +177,11 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     key={key}
                     ref={refCallback}
                     data-hunk-start={isHunkStart || undefined}
-                    className="bg-status-done text-status-done-foreground no-underline"
+                    data-hunk-active={isActiveHunk || undefined}
+                    className={cn(
+                      'bg-status-done text-status-done-foreground no-underline',
+                      isActiveHunk && 'ring-2 ring-ring/60 rounded-sm',
+                    )}
                   >
                     {content}
                   </ins>
@@ -144,8 +196,19 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
           })}
         </p>
       </div>
-      {hasHunks && (
+      {hasNav && (
         <div className="diff-hunk-nav mt-2 flex flex-wrap items-center gap-2">
+          <span
+            className="text-xs text-muted-foreground"
+            data-testid="diff-hunk-counter"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {t('diff.hunkCounter', {
+              current: currentHunk + 1,
+              total: hunkStarts.length,
+            })}
+          </span>
           <Button
             type="button"
             variant="ghost"
@@ -172,17 +235,6 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             <ChevronDown className="h-3.5 w-3.5" />
             {t('diff.nextHunk')}
           </Button>
-          <span
-            className="text-xs text-muted-foreground"
-            data-testid="diff-hunk-counter"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            {t('diff.hunkCounter', {
-              current: currentHunk + 1,
-              total: hunkStarts.length,
-            })}
-          </span>
         </div>
       )}
       {isLarge && (

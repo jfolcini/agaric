@@ -11,15 +11,14 @@
 | PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | ready (Tier 1 sync progress first ~6-10h, Tier 2 file transfer later ~6-9h) |
 | PEND-09 | CRDT migration (Loro), merge-layer only | L (11-15 weeks) | ready as a **planned spike + multi-phase migration** |
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
-| PEND-11 | Space indicator redesign (thin top stripe + sidebar picker only) | — | (out-of-band UX track) |
 | PEND-12 | build.rs codegen for space-filter SQL fragment (unblocks MAINT-172) | M (7-11h) | ready — **must land AFTER PEND-18** to avoid merge conflicts in shared `_inner` files |
 | PEND-15 | Hard space separation — no cross-space links | L (7-12 weeks) | ready — **Phase 1 MUST land before PEND-09 Phase 2 cutover** (avoids CRDT engine producing fresh cross-space refs that one-shot severance would never see) |
-| PEND-17 | Block history sheet — visible diff-nav + restore-with-preview | — | (out-of-band UX track) |
+| PEND-17 | Block history sheet — visible diff-nav + restore-with-preview | — | partial — **Part A (diff-nav fix) ✅ done sess 674; Part B (restore-with-preview) needs user answers to 3 open questions** before implementing |
 | PEND-18 | `SpaceId` newtype + `SpaceScope` enum (lift Spaces enforcement into the type system) | M-L (9-15h) | ready — Phase 0 specta+sqlx spike before main implementation |
 | PEND-28a | Rust maintainability review findings (post-validation) | mostly S | partial — file: `PEND-28-rust-maintainability-review-findings.md`. **5 of 6 done (M1+M3 sess 671, H2+M4 sess 672, M2 sess 673); H1 deferred (sqlx::query_as! proc-macro doesn't expand `concat!()` arguments — needs migration strategy).** PEND-28b shipped sessions 667-669. |
 | PEND-29 | Frontend robustness review — second pass | trivial (B-1 only remaining) | partial — **B-1 (BulletList Option A) needs product decision** (Option A remove vs Option B implement) before it can land |
 | PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
-| PEND-33 | `FormattingToolbar` overflow handling: BubbleMenu + priority overflow popover | M-L (10-16h split: Layer A ≈ 3-5h, Layer B ≈ 7-11h) | ready — Layer A and Layer B independently approve-able |
+| PEND-33 | `FormattingToolbar` overflow handling: BubbleMenu + priority overflow popover | M-L (10-16h split: Layer A ≈ 3-5h, Layer B ≈ 7-11h) | partial — **Layer A (BubbleMenu) ✅ done sess 674; Layer B (priority + overflow popover) needs explicit user approval per the plan's "Stop here for review" gate** |
 
 ## Recommended order
 
@@ -32,7 +31,7 @@
 - PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first, Tier 2 file transfer later
 - PEND-28a (Rust maintainability) — 1 item left (H1 deferred pending migration strategy)
 - PEND-30 (D-1..D-4 decomposition) — opportunistic, low priority
-- PEND-33 (FormattingToolbar overflow) — Layer A first, Layer B optional follow-up
+- PEND-33 Layer B (FormattingToolbar overflow popover) — needs explicit user approval per "Stop here for review" gate
 
 **Spaces enforcement bundle** — sequential, NOT parallel (touch the same `_inner` signatures):
 
@@ -41,7 +40,7 @@
 
 **Out-of-band UX tracks** — independent, low / no dependencies on the bundle:
 
-- PEND-11 (space indicator UI redesign), PEND-17 (block-history diff-nav + restore-with-preview).
+- PEND-17 Part B (block-history restore-with-preview) — needs user answers to 3 open questions in the plan body.
 
 **Strategic** — independent decisions with multi-phase timelines:
 
