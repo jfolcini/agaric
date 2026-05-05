@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content FROM blocks WHERE id = ?1 AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "content",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "74fc80bd5c467014b3b739123d02f90b892429d1caefd39a6fae416d677366ab"
+}

@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bl.source_id AS \"source_id!\", bl.target_id AS \"target_id!\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS \"source_space?\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space') AS \"target_space?\"\n           FROM block_links bl\n           JOIN blocks bs ON bs.id = bl.source_id AND bs.is_conflict = 0 AND bs.deleted_at IS NULL\n           JOIN blocks bt ON bt.id = bl.target_id AND bt.is_conflict = 0 AND bt.deleted_at IS NULL\n           WHERE (SELECT bp.value_ref FROM block_properties bp\n                  WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space')\n              IS NOT\n                 (SELECT bp.value_ref FROM block_properties bp\n                  WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space')",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "target_id!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_space?",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "target_space?",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "fa81797e440bc5a41287f20470a1ece0152b5723f0777e0acb0263a1b881d3e8"
+}

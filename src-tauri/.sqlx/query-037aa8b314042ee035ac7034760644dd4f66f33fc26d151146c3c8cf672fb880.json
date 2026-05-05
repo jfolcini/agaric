@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND op_type IN ('edit_block', 'create_block') AND seq <= ?2 ORDER BY seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "037aa8b314042ee035ac7034760644dd4f66f33fc26d151146c3c8cf672fb880"
+}
