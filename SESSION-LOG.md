@@ -2,11 +2,50 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 671 (closed PEND-23 M6 + L2 + L9 + PEND-28a M1 + M3 — PEND-23 is now FULLY CLOSED, plan file deleted; 13 plan files left in `pending/`) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1152+ items.
+**Sessions:** 1 – 672 (closed PEND-28a H2 + M4 in one batch; H1 attempted and reverted due to `sqlx::query_as!` proc-macro constraint, M2 deferred; 13 plan files left in `pending/`) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1154+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 672 — closed PEND-28a H2 + M4 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 3 build (A=PEND-28a H1+M2 bundled, B=PEND-28a H2 apply_op_tx split, C=PEND-28a M4 enqueue_background_tasks dispatch table) + 0 reviewers (subagents self-validated). All 3 Rust; non-overlapping file scopes; explicit no-stash-no-checkout guidance. Subagent A's H1 work (`BlockRow` SELECT macro extraction) **failed compile** due to `sqlx::query_as!()` being a proc-macro that doesn't expand `concat!(macro!(), "…")` arguments before parsing — the plan's "analogous to `descendants_cte_purge!()`" guidance turned out to apply only to the dynamic `sqlx::query()` API, not the compile-time `query_as!` family used at all 18 production sites. Orchestrator reverted A's H1 work (the 18 site rewrites + the new `sql_macros.rs` file + the `mod sql_macros;` decl in `lib.rs`); A's M2 work was bundled with H1 in the same subagent and was **never started** because H1's failure consumed the slot. M2 stays "ready". |
+| **Items closed** | 2 sub-items: PEND-28a H2 (`apply_op_tx` 387-line dispatcher split into 12 per-variant helpers); PEND-28a M4 (`enqueue_background_tasks` matrix as `invalidations_for_op`). PEND-28a now down to 2 items: M2 ready, **H1 deferred** with a migration-strategy note in the plan body. Pending folder: 13 → 13 plan files (no plan deleted). |
+| **Items modified** | — |
+| **Tests added** | +20 backend (in `materializer/dispatch.rs::tests`: per-op-type fan-out matrix pins, content-hint vs typed-hint branching cases, serde-error propagation, Arc sharing on block_id). 0 tests removed. H2 added zero new tests by design (pure cut-and-paste; the existing 3000+ materializer / integration tests are the regression net). |
+| **Files touched** | 2 source (`materializer/handlers.rs`, `materializer/dispatch.rs`) + 4 docs (PEND-28a plan, README, REVIEW-LATER, SESSION-LOG, FEATURE-MAP). |
+
+**Summary:** PEND-28a's two big structural refactors landed cleanly. H2 split the `apply_op_tx` materializer dispatcher (387 lines, 12 deeply-nested arms — the largest single barrier to "what does CreateBlock actually do?" exploration) into one focused private async helper per op variant; the dispatcher is now ~30 lines of `match op_type { … }` pure routing. The 100-line `PurgeBlock` body — the highest-risk arm with 13 separate DELETE/UPDATE statements — now owns its own `apply_purge_block_tx` helper, validated by spot-check that statement order is preserved. M4 lifted the `enqueue_background_tasks` 174-line imperative cache-invalidation match into a focused `invalidations_for_op(record, hint) -> Result<Vec<MaterializeTask>, AppError>` data-shaped helper; the new tests pin "which op types touch which caches" as data, finally answering the "audit + test the matrix" pain-point the plan described. **H1 (BlockRow SELECT macro extraction across 18 sites) was attempted by subagent A and reverted** — `sqlx::query_as!()` is a proc-macro that requires its 2nd argument to be a `LitStr` token, which `concat!(macro!(), "…")` is not (the inner `concat!` invocation is just tokens to `query_as!`'s parser, not an evaluated literal); the compile errors were unambiguous (`expected string literal` × 14 sites). Subagent A's docstring on the new `sql_macros.rs` made the wrong claim that `query_as!` accepts `concat!(...)` — the existing precedent macros (`descendants_cte_purge!`, `tag_inh_subtree_active!`, `ancestors_cte_standard!`) are used inside dynamic `sqlx::query(...)` calls, not `query_as!`. Plan body updated with the migration-strategy note for re-opening H1: closing it properly requires either (a) migrating all 18 sites to the dynamic `sqlx::query_as::<_, BlockRow>(format!(…))` API (loses compile-time SQL checking) or (b) accepting the duplication trade-off favors compile-time safety. M2 (`set_property_in_tx` validation extraction) was bundled with H1 in the same subagent and was never started because H1's failure consumed the slot — stays "ready" for a future batch. After-tree summary: 3538/3538 cargo nextest (was 3518 — +20 from M4's tests), `prek run --all-files` green after one `cargo fmt` auto-fix. AGENTS.md NOT modified.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 37 → 37 (no items added or removed)
+- **Previously resolved:** 1152+ → 1154+ across 671 → 672 sessions
+
+**Plan files closed (and deleted):** none. PEND-28a remains open with 2 items (M2 ready, H1 deferred).
+
+**Files touched (this session):**
+
+Rust (PEND-28a H2):
+- `src-tauri/src/materializer/handlers.rs`: `apply_op_tx` body shrunk to a thin dispatch (~30 lines, was 387); 12 new private `async fn apply_*_tx` helpers extracted in the same module (`apply_create_block_tx`, `apply_edit_block_tx`, `apply_delete_block_tx`, `apply_restore_block_tx`, `apply_purge_block_tx`, `apply_move_block_tx`, `apply_add_tag_tx`, `apply_remove_tag_tx`, `apply_set_property_tx`, `apply_delete_property_tx`, `apply_add_attachment_tx`, `apply_delete_attachment_tx`). Each helper takes `(conn: &mut SqliteConnection, payload: <PayloadStruct>) -> Result<(), AppError>`. The deserialization line (`let p: <Payload> = serde_json::from_str(...)?;`) stays in the dispatcher per a single consistent pattern across all 12 arms. Tag-inheritance / FTS / page-id side-effects untouched (already lived in their own helpers).
+
+Rust (PEND-28a M4):
+- `src-tauri/src/materializer/dispatch.rs`: new `fn invalidations_for_op(record: &OpRecord, hint: Option<&str>) -> Result<Vec<MaterializeTask>, AppError>` data-shaped helper; `enqueue_background_tasks` body shrunk to a thin loop over the returned Vec. 20 new unit tests inline in `mod tests` block: `invalidations_for_op_create_block_with_tag_hint_includes_tags_cache`, `..._create_block_with_page_hint_includes_pages_cache`, `..._create_block_with_content_hint_skips_typed_caches`, `..._create_block_propagates_serde_error`, `..._edit_block_with_tag_hint_...`, `..._edit_block_with_page_hint_...`, `..._edit_block_with_content_hint_skips_global_caches`, `..._edit_block_without_hint_falls_back_to_full_fan_out`, `..._delete_block_includes_full_cache_rebuild`, `..._restore_block_includes_full_cache_rebuild`, `..._purge_block_includes_full_cache_rebuild`, `..._add_tag_includes_tags_and_agenda_caches`, `..._remove_tag_matches_add_tag`, `..._set_property_includes_agenda_caches`, `..._delete_property_matches_set_property`, `..._move_block_includes_inheritance_and_page_ids`, `..._add_attachment_returns_empty`, `..._delete_attachment_returns_empty`, `..._unknown_op_returns_empty`, `..._create_block_shares_block_id_arc`.
+
+Reverted (PEND-28a H1 attempt — does not appear in commit):
+- New `src-tauri/src/sql_macros.rs` (deleted): the `block_row_select_columns!()` macro + `BLOCK_ROW_SELECT_COLUMNS_PLAIN` const + parity test.
+- 9 production sites' `query_as!` calls rewritten to `concat!(block_row_select_columns!(), …)`: reverted via `git checkout HEAD --` on `commands/blocks/crud.rs`, `commands/blocks/queries.rs`, `commands/pages.rs`, `commands/properties.rs`, `pagination/hierarchy.rs`, `pagination/trash.rs`, `backlink/query.rs`, `recurrence/compute.rs`, `tag_query/query.rs`, `lib.rs`.
+- Compile error proof: `expected string literal` × 14 distinct sqlx call sites.
+
+Docs:
+- `pending/PEND-28-rust-maintainability-review-findings.md`: H2 + M4 marked done; H1 marked ⚠ deferred with the sqlx proc-macro constraint explained inline; M2 stays "ready".
+- `pending/README.md`: updated PEND-28a status to "4 of 6 done; 2 remaining (M2 ready, H1 deferred pending migration strategy)"; mid-tier bullet updated.
+- `pending/REVIEW-LATER.md`: header line updated for session 672.
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: new "Backend Maintainability Misc (session 672, PEND-28a H2 + M4)" subsection in Section 10.
 
 ## Session 671 — closed PEND-23 M6 + L2 + L9 + PEND-28a M1 + M3 (2026-05-04)
 
