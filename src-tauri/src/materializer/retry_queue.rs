@@ -44,6 +44,7 @@
 use crate::error::AppError;
 use crate::materializer::MaterializeTask;
 use sqlx::SqlitePool;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Sentinel literal stored in the `block_id` column for global cache
@@ -54,9 +55,18 @@ use std::sync::Arc;
 /// + underscores).
 pub(crate) const GLOBAL_TASK_SENTINEL: &str = "__GLOBAL__";
 
+/// Sentinel literal stored in the `block_id` column for foreground
+/// `ApplyOp` failure rows (PEND-24 H1). Mirrors [`GLOBAL_TASK_SENTINEL`]:
+/// the composite key for an apply-op failure is
+/// `(device_id, seq)`, packed into the `task_kind` column as
+/// `"ApplyOp:<seq>:<device_id>"`. The sentinel cannot collide with a
+/// real ULID block id (ULIDs are 26-char Crockford base32 uppercase;
+/// the sentinel is lowercase + underscores).
+pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
+
 /// Task kinds that may be persisted to the retry queue.
 ///
-/// Two families:
+/// Three families:
 /// - **Per-block** idempotent tasks (`UpdateFtsBlock`,
 ///   `ReindexBlockLinks`, `ReindexBlockTagRefs`) — keyed by their
 ///   real block id.
@@ -64,7 +74,15 @@ pub(crate) const GLOBAL_TASK_SENTINEL: &str = "__GLOBAL__";
 ///   [`GLOBAL_TASK_SENTINEL`] literal so the composite primary key
 ///   `(block_id, task_kind)` enforces dedup naturally without
 ///   requiring a NULL column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// - **Foreground apply-op** failures (PEND-24 H1) — keyed by the
+///   composite `(device_id, seq)` packed into the `task_kind` column
+///   as `"ApplyOp:<seq>:<device_id>"`, with `block_id` set to
+///   [`APPLY_OP_TASK_SENTINEL`]. Reconstruction requires a fresh
+///   `OpRecord` lookup against `op_log` (handled in [`sweep_once`]).
+///
+/// The enum carries owned data on the apply-op variant, so
+/// `RetryKind` is no longer `Copy`. Methods take `&self`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RetryKind {
     // --- Per-block ---
     UpdateFtsBlock,
@@ -86,36 +104,70 @@ pub(crate) enum RetryKind {
     RebuildPageIds,
     /// Mirror of [`MaterializeTask::RebuildBlockTagRefsCache`].
     RebuildBlockTagRefsCache,
+    // --- Foreground apply-op (PEND-24 H1) ---
+    /// Mirror of a failed [`MaterializeTask::ApplyOp`] task whose
+    /// foreground retry budget was exhausted. Identifies the op by
+    /// its `(device_id, seq)` coordinates so the sweeper can re-load
+    /// the `OpRecord` from `op_log` and re-enqueue onto the
+    /// foreground queue. `BatchApplyOps` failures persist one
+    /// `ApplyOp` row per record in the batch.
+    ApplyOp {
+        device_id: String,
+        seq: i64,
+    },
 }
 
 impl RetryKind {
-    pub(crate) fn as_str(self) -> &'static str {
+    /// String form of the kind suitable for binding to the
+    /// `task_kind` column of `materializer_retry_queue`.
+    ///
+    /// For unit variants this is a static `&'static str`; for
+    /// [`Self::ApplyOp`] this is the dynamic
+    /// `"ApplyOp:<seq>:<device_id>"` packing, returned as
+    /// [`Cow::Owned`].
+    pub(crate) fn task_kind_str(&self) -> Cow<'static, str> {
         match self {
-            Self::UpdateFtsBlock => "UpdateFtsBlock",
-            Self::ReindexBlockLinks => "ReindexBlockLinks",
-            Self::ReindexBlockTagRefs => "ReindexBlockTagRefs",
-            Self::RebuildTagsCache => "RebuildTagsCache",
-            Self::RebuildPagesCache => "RebuildPagesCache",
-            Self::RebuildAgendaCache => "RebuildAgendaCache",
-            Self::RebuildProjectedAgendaCache => "RebuildProjectedAgendaCache",
-            Self::RebuildTagInheritanceCache => "RebuildTagInheritanceCache",
-            Self::RebuildPageIds => "RebuildPageIds",
-            Self::RebuildBlockTagRefsCache => "RebuildBlockTagRefsCache",
+            Self::UpdateFtsBlock => Cow::Borrowed("UpdateFtsBlock"),
+            Self::ReindexBlockLinks => Cow::Borrowed("ReindexBlockLinks"),
+            Self::ReindexBlockTagRefs => Cow::Borrowed("ReindexBlockTagRefs"),
+            Self::RebuildTagsCache => Cow::Borrowed("RebuildTagsCache"),
+            Self::RebuildPagesCache => Cow::Borrowed("RebuildPagesCache"),
+            Self::RebuildAgendaCache => Cow::Borrowed("RebuildAgendaCache"),
+            Self::RebuildProjectedAgendaCache => Cow::Borrowed("RebuildProjectedAgendaCache"),
+            Self::RebuildTagInheritanceCache => Cow::Borrowed("RebuildTagInheritanceCache"),
+            Self::RebuildPageIds => Cow::Borrowed("RebuildPageIds"),
+            Self::RebuildBlockTagRefsCache => Cow::Borrowed("RebuildBlockTagRefsCache"),
+            Self::ApplyOp { device_id, seq } => Cow::Owned(format!("ApplyOp:{seq}:{device_id}")),
         }
     }
 
     fn from_str(s: &str) -> Option<Self> {
+        // Static-name fast path (covers per-block + global variants).
         match s {
-            "UpdateFtsBlock" => Some(Self::UpdateFtsBlock),
-            "ReindexBlockLinks" => Some(Self::ReindexBlockLinks),
-            "ReindexBlockTagRefs" => Some(Self::ReindexBlockTagRefs),
-            "RebuildTagsCache" => Some(Self::RebuildTagsCache),
-            "RebuildPagesCache" => Some(Self::RebuildPagesCache),
-            "RebuildAgendaCache" => Some(Self::RebuildAgendaCache),
-            "RebuildProjectedAgendaCache" => Some(Self::RebuildProjectedAgendaCache),
-            "RebuildTagInheritanceCache" => Some(Self::RebuildTagInheritanceCache),
-            "RebuildPageIds" => Some(Self::RebuildPageIds),
-            "RebuildBlockTagRefsCache" => Some(Self::RebuildBlockTagRefsCache),
+            "UpdateFtsBlock" => return Some(Self::UpdateFtsBlock),
+            "ReindexBlockLinks" => return Some(Self::ReindexBlockLinks),
+            "ReindexBlockTagRefs" => return Some(Self::ReindexBlockTagRefs),
+            "RebuildTagsCache" => return Some(Self::RebuildTagsCache),
+            "RebuildPagesCache" => return Some(Self::RebuildPagesCache),
+            "RebuildAgendaCache" => return Some(Self::RebuildAgendaCache),
+            "RebuildProjectedAgendaCache" => return Some(Self::RebuildProjectedAgendaCache),
+            "RebuildTagInheritanceCache" => return Some(Self::RebuildTagInheritanceCache),
+            "RebuildPageIds" => return Some(Self::RebuildPageIds),
+            "RebuildBlockTagRefsCache" => return Some(Self::RebuildBlockTagRefsCache),
+            _ => {}
+        }
+        // Composite-key path: PEND-24 H1 apply-op failures encoded as
+        // `"ApplyOp:<seq>:<device_id>"`. `splitn(3, ':')` keeps the
+        // device_id intact even if it contains further `:` chars.
+        let mut parts = s.splitn(3, ':');
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some("ApplyOp"), Some(seq_str), Some(device_id)) if !device_id.is_empty() => {
+                let seq: i64 = seq_str.parse().ok()?;
+                Some(Self::ApplyOp {
+                    device_id: device_id.to_string(),
+                    seq,
+                })
+            }
             _ => None,
         }
     }
@@ -123,7 +175,7 @@ impl RetryKind {
     /// True for global cache rebuilds — they ignore the row's
     /// `block_id` column (which holds [`GLOBAL_TASK_SENTINEL`]) when
     /// reconstructing the [`MaterializeTask`].
-    pub(crate) fn is_global(self) -> bool {
+    pub(crate) fn is_global(&self) -> bool {
         matches!(
             self,
             Self::RebuildTagsCache
@@ -136,37 +188,44 @@ impl RetryKind {
         )
     }
 
-    /// Reconstruct a [`MaterializeTask`] from the persisted row.
+    /// Reconstruct a [`MaterializeTask`] from the persisted row,
+    /// when the variant carries enough information on its own.
     ///
     /// For per-block kinds, `block_id` is the real block id read off
     /// the row. For global kinds, callers pass [`GLOBAL_TASK_SENTINEL`]
-    /// (or any string — the value is ignored).
-    pub(crate) fn to_task(self, block_id: String) -> MaterializeTask {
+    /// (or any string — the value is ignored). For
+    /// [`Self::ApplyOp`], reconstruction requires loading the
+    /// `OpRecord` from `op_log` (sweep-side concern), so this method
+    /// returns `None` for that arm — callers must dispatch on the
+    /// variant before invoking [`Self::to_task`].
+    pub(crate) fn to_task(&self, block_id: String) -> Option<MaterializeTask> {
         match self {
-            Self::UpdateFtsBlock => MaterializeTask::UpdateFtsBlock {
+            Self::UpdateFtsBlock => Some(MaterializeTask::UpdateFtsBlock {
                 block_id: Arc::from(block_id),
-            },
-            Self::ReindexBlockLinks => MaterializeTask::ReindexBlockLinks {
+            }),
+            Self::ReindexBlockLinks => Some(MaterializeTask::ReindexBlockLinks {
                 block_id: Arc::from(block_id),
-            },
-            Self::ReindexBlockTagRefs => MaterializeTask::ReindexBlockTagRefs {
+            }),
+            Self::ReindexBlockTagRefs => Some(MaterializeTask::ReindexBlockTagRefs {
                 block_id: Arc::from(block_id),
-            },
+            }),
             // Global rebuilds carry no block id; the row's sentinel is
             // discarded on reconstruction.
-            Self::RebuildTagsCache => MaterializeTask::RebuildTagsCache,
-            Self::RebuildPagesCache => MaterializeTask::RebuildPagesCache,
-            Self::RebuildAgendaCache => MaterializeTask::RebuildAgendaCache,
-            Self::RebuildProjectedAgendaCache => MaterializeTask::RebuildProjectedAgendaCache,
-            Self::RebuildTagInheritanceCache => MaterializeTask::RebuildTagInheritanceCache,
-            Self::RebuildPageIds => MaterializeTask::RebuildPageIds,
-            Self::RebuildBlockTagRefsCache => MaterializeTask::RebuildBlockTagRefsCache,
+            Self::RebuildTagsCache => Some(MaterializeTask::RebuildTagsCache),
+            Self::RebuildPagesCache => Some(MaterializeTask::RebuildPagesCache),
+            Self::RebuildAgendaCache => Some(MaterializeTask::RebuildAgendaCache),
+            Self::RebuildProjectedAgendaCache => Some(MaterializeTask::RebuildProjectedAgendaCache),
+            Self::RebuildTagInheritanceCache => Some(MaterializeTask::RebuildTagInheritanceCache),
+            Self::RebuildPageIds => Some(MaterializeTask::RebuildPageIds),
+            Self::RebuildBlockTagRefsCache => Some(MaterializeTask::RebuildBlockTagRefsCache),
+            // ApplyOp requires `OpRecord` lookup from `op_log`.
+            Self::ApplyOp { .. } => None,
         }
     }
 
     /// Extract retry kind + persistable `block_id` from a
     /// [`MaterializeTask`] if it is retryable. Returns `None` for
-    /// non-retryable tasks (`ApplyOp`, `BatchApplyOps`, `Barrier`,
+    /// non-retryable tasks (`BatchApplyOps`, `Barrier`,
     /// `RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`,
     /// `ReindexFtsReferences`, `RemoveFtsBlock`).
     ///
@@ -176,7 +235,15 @@ impl RetryKind {
     /// keeping the hot in-memory task-clone path Arc-only. For global
     /// variants, returns the [`GLOBAL_TASK_SENTINEL`] literal so the
     /// composite PK `(block_id, task_kind)` dedups failures of the
-    /// same global task without ambiguity.
+    /// same global task without ambiguity. For foreground apply-op
+    /// variants (PEND-24 H1), returns the [`APPLY_OP_TASK_SENTINEL`]
+    /// literal — the per-op identity is encoded in the kind itself
+    /// (`device_id` + `seq`) and surfaces via [`Self::task_kind_str`].
+    ///
+    /// `BatchApplyOps` returns `None` here because a batch failure
+    /// must persist *one row per record*, not a single composite —
+    /// callers iterate the batch and call [`record_failure`] per
+    /// record wrapped as [`MaterializeTask::ApplyOp`].
     pub(crate) fn from_task(task: &MaterializeTask) -> Option<(Self, String)> {
         match task {
             MaterializeTask::UpdateFtsBlock { block_id } => {
@@ -211,6 +278,13 @@ impl RetryKind {
             MaterializeTask::RebuildBlockTagRefsCache => Some((
                 Self::RebuildBlockTagRefsCache,
                 GLOBAL_TASK_SENTINEL.to_string(),
+            )),
+            MaterializeTask::ApplyOp(record) => Some((
+                Self::ApplyOp {
+                    device_id: record.device_id.clone(),
+                    seq: record.seq,
+                },
+                APPLY_OP_TASK_SENTINEL.to_string(),
             )),
             _ => None,
         }
@@ -259,7 +333,8 @@ pub(crate) async fn record_failure(
     let Some((kind, block_id)) = RetryKind::from_task(task) else {
         return Ok(());
     };
-    let kind_str = kind.as_str();
+    let kind_string = kind.task_kind_str();
+    let kind_str: &str = kind_string.as_ref();
 
     // Optimistic next_attempt_at for the INSERT (first-failure) case.
     // The DO UPDATE side reuses this value verbatim; if the SQL-side
@@ -381,14 +456,17 @@ pub(crate) async fn clear_entry(
 }
 
 /// Build a [`MaterializeTask`] from a persisted row. Returns `None` for
-/// unknown task_kind strings (migration-forward safety).
+/// unknown `task_kind` strings (migration-forward safety) **and** for
+/// PEND-24 H1 [`RetryKind::ApplyOp`] rows (which need an additional
+/// `OpRecord` lookup against `op_log` — handled inside [`sweep_once`]).
 ///
 /// PEND-03: for global rebuild kinds (`RebuildTagsCache`, etc.), the
 /// row's `block_id` (which holds [`GLOBAL_TASK_SENTINEL`]) is passed
 /// through to `to_task` and ignored on reconstruction. Per-block kinds
 /// use the row's real block id.
 pub(crate) fn task_from_row(row: &DueRow) -> Option<MaterializeTask> {
-    RetryKind::from_str(&row.task_kind).map(|kind| kind.to_task(row.block_id.clone()))
+    let kind = RetryKind::from_str(&row.task_kind)?;
+    kind.to_task(row.block_id.clone())
 }
 
 /// Scan the retry queue once: fetch due rows, re-enqueue each via the
@@ -411,6 +489,30 @@ pub async fn sweep_once(
     let due = fetch_due(read_pool, SWEEP_BATCH_LIMIT).await?;
     let mut re_enqueued = 0usize;
     for row in &due {
+        // PEND-24 H1: ApplyOp rows are dispatched to the foreground
+        // queue (matching the original task's routing). They need a
+        // separate path because (a) `task_from_row` cannot reconstruct
+        // them from the row alone — the `OpRecord` must be re-loaded
+        // from `op_log` — and (b) `try_enqueue_background` would route
+        // to the wrong consumer.
+        if let Some(RetryKind::ApplyOp { device_id, seq }) = RetryKind::from_str(&row.task_kind) {
+            match try_reenqueue_apply_op(read_pool, materializer, &device_id, seq).await {
+                Ok(()) => {
+                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                    re_enqueued += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        block_id = %row.block_id,
+                        task_kind = %row.task_kind,
+                        error = %e,
+                        "failed to re-enqueue PEND-24 H1 ApplyOp row — will try again next sweep"
+                    );
+                }
+            }
+            continue;
+        }
+
         let Some(task) = task_from_row(row) else {
             // Unknown task_kind — drop the row so the table doesn't grow
             // unbounded with orphaned entries from a future version.
@@ -443,6 +545,44 @@ pub async fn sweep_once(
         tracing::info!(re_enqueued, "materializer retry queue sweep");
     }
     Ok(re_enqueued)
+}
+
+/// PEND-24 H1: re-enqueue a previously-persisted [`MaterializeTask::ApplyOp`]
+/// failure onto the foreground queue.
+///
+/// Steps:
+///   1. Load the `OpRecord` from `op_log` by `(device_id, seq)`.
+///   2. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
+///
+/// If the op_log row is missing (e.g. compacted / corrupted), the row
+/// is treated as orphaned by the caller (via the unknown-task_kind
+/// drop path) — but in practice op_log compaction never deletes rows,
+/// so a missing row indicates a deeper corruption that needs operator
+/// attention. We surface it as a hard error here so the sweeper logs
+/// it at warn level instead of silently dropping the retry row.
+async fn try_reenqueue_apply_op(
+    read_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    device_id: &str,
+    seq: i64,
+) -> Result<(), AppError> {
+    let record = sqlx::query_as!(
+        crate::op_log::OpRecord,
+        "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
+         FROM op_log WHERE device_id = ? AND seq = ?",
+        device_id,
+        seq,
+    )
+    .fetch_optional(read_pool)
+    .await?
+    .ok_or_else(|| {
+        AppError::NotFound(format!(
+            "op_log row missing for ApplyOp retry ({device_id}, {seq})"
+        ))
+    })?;
+    materializer
+        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record)))
+        .await
 }
 
 /// Spawn a long-lived task that sweeps the retry queue every 60 seconds
@@ -589,13 +729,64 @@ mod tests {
     #[test]
     fn retry_kind_reindex_block_tag_refs_roundtrip() {
         let kind = RetryKind::ReindexBlockTagRefs;
-        assert_eq!(kind.as_str(), "ReindexBlockTagRefs");
-        assert_eq!(RetryKind::from_str("ReindexBlockTagRefs"), Some(kind));
-        let task = kind.to_task("BLK_RTR".into());
+        assert_eq!(kind.task_kind_str(), "ReindexBlockTagRefs");
+        assert_eq!(
+            RetryKind::from_str("ReindexBlockTagRefs"),
+            Some(kind.clone())
+        );
+        let task = kind.to_task("BLK_RTR".into()).unwrap();
         assert!(matches!(
             task,
             MaterializeTask::ReindexBlockTagRefs { ref block_id } if block_id.as_ref() == "BLK_RTR"
         ));
+    }
+
+    /// PEND-24 H1: round-trip a foreground apply-op failure through
+    /// `from_task` → row → `from_str`, asserting the composite-key
+    /// packing into `task_kind` is reversible.
+    #[test]
+    fn retry_kind_apply_op_roundtrip() {
+        use crate::op_log::OpRecord;
+        let record = OpRecord {
+            device_id: "dev-mat-A".into(),
+            seq: 42,
+            parent_seqs: None,
+            hash: "deadbeef".into(),
+            op_type: "create_block".into(),
+            payload: "{}".into(),
+            created_at: "2025-01-15T12:00:00Z".into(),
+            block_id: None,
+        };
+        let task = MaterializeTask::ApplyOp(Arc::new(record));
+        let (kind, sentinel) = RetryKind::from_task(&task).expect("ApplyOp is retryable");
+        assert_eq!(sentinel, APPLY_OP_TASK_SENTINEL);
+        let kind_str = kind.task_kind_str();
+        assert_eq!(kind_str.as_ref(), "ApplyOp:42:dev-mat-A");
+
+        let parsed = RetryKind::from_str(kind_str.as_ref()).unwrap();
+        assert_eq!(parsed, kind);
+        // ApplyOp cannot reconstruct a task without an op_log lookup.
+        assert!(parsed.to_task(sentinel.clone()).is_none());
+    }
+
+    /// PEND-24 H1: malformed apply-op `task_kind` strings (extra
+    /// segments, missing seq, non-numeric seq) must not panic and
+    /// must yield `None` so the sweeper drops the row as unknown.
+    #[test]
+    fn retry_kind_from_str_rejects_malformed_apply_op() {
+        assert!(RetryKind::from_str("ApplyOp:").is_none());
+        assert!(RetryKind::from_str("ApplyOp:notanumber:dev").is_none());
+        assert!(RetryKind::from_str("ApplyOp:42:").is_none());
+        // Round-trip preserves device_ids that contain `:` because we
+        // splitn(3, ':') so the third segment captures everything.
+        let kind = RetryKind::from_str("ApplyOp:7:dev:A:B").unwrap();
+        assert_eq!(
+            kind,
+            RetryKind::ApplyOp {
+                device_id: "dev:A:B".into(),
+                seq: 7
+            }
+        );
     }
 
     #[tokio::test]

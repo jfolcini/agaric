@@ -602,7 +602,16 @@ where
                     error = %e,
                     "refresh token revoked — emitting reauth_required",
                 );
-                emitter.emit(GcalEvent::ReauthRequired);
+                // PEND-24 H3: this is the OAuth-layer recovery path
+                // and has no `&SqlitePool` access, so the email
+                // payload is left blank. The connector-layer emit
+                // site (run_cycle's DateFailure::Unauthorized arm)
+                // does have pool access and supplies the email when
+                // the same revocation surfaces through the per-date
+                // push pipeline.
+                emitter.emit(GcalEvent::ReauthRequired {
+                    account_email: None,
+                });
                 // Clear-errors are logged but swallowed: the reauth
                 // flow will overwrite on reconnect anyway, and we do
                 // not want to mask the more important Validation error.
@@ -630,7 +639,13 @@ where
                 target: "gcal",
                 "second 401 after refresh — emitting reauth_required",
             );
-            emitter.emit(GcalEvent::ReauthRequired);
+            // PEND-24 H3: same caveat as the revoked-refresh branch
+            // above — no pool access at this layer; the connector
+            // supplies the email when the same condition reappears
+            // on the next cycle.
+            emitter.emit(GcalEvent::ReauthRequired {
+                account_email: None,
+            });
             if let Err(clear_err) = token_store.clear().await {
                 tracing::warn!(
                     target: "gcal",
@@ -658,14 +673,35 @@ where
 /// user-visible display; do NOT route it into authorization or
 /// account-binding code paths.
 ///
+/// PEND-24 H3: this is the canonical "successful re-auth completion"
+/// hook (the OAuth flow has no dedicated `gcal_connect` Tauri
+/// command yet — `exchange_code` + this function is the closest thing
+/// to one), so we also clear `gcal_settings.reauth_required` here.
+/// A failure to clear is logged but does not fail the connect — the
+/// email persistence is the user-visible part; the flag clear is a
+/// best-effort follow-up that the next successful cycle would
+/// effectively unblock anyway. (If the row is missing the connector
+/// reads default `false`, so a subsequent re-auth without the seed
+/// row would not pause indefinitely.)
+///
 /// # Errors
 /// [`AppError::Database`] / [`AppError::NotFound`] forwarded from the
-/// underlying [`models::set_setting`] call.
+/// underlying [`models::set_setting`] call (only on the email write —
+/// the flag clear is best-effort).
 pub async fn persist_oauth_account_email(
     pool: &SqlitePool,
     unverified_email: &str,
 ) -> Result<(), AppError> {
-    models::set_setting(pool, GcalSettingKey::OauthAccountEmail, unverified_email).await
+    models::set_setting(pool, GcalSettingKey::OauthAccountEmail, unverified_email).await?;
+    if let Err(e) = models::set_reauth_required(pool, false).await {
+        tracing::warn!(
+            target: "gcal",
+            error = %e,
+            "failed to clear reauth_required flag after successful re-auth; \
+             connector will retry on next cycle and clear it lazily",
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1220,6 +1256,35 @@ mod tests {
         );
     }
 
+    /// PEND-24 H3 — successful re-auth must clear the
+    /// `reauth_required` pause flag so the connector resumes.
+    /// `persist_oauth_account_email` is the canonical post-connect
+    /// hook (the OAuth flow has no dedicated `gcal_connect` Tauri
+    /// command yet), so the clear lives there.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn persist_oauth_account_email_clears_reauth_required_flag() {
+        let (pool, _dir) = test_pool().await;
+        // Pre-set the flag, simulating an earlier terminal 401.
+        models::set_reauth_required(&pool, true).await.unwrap();
+
+        persist_oauth_account_email(&pool, "user@example.com")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("user@example.com"),
+            "email must persist regardless"
+        );
+        assert!(
+            !models::get_reauth_required(&pool).await.unwrap(),
+            "reauth_required must be cleared after a successful re-auth"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn exchange_code_rejects_unknown_state_with_invalid_state_error() {
         let mock = MockServer::start().await;
@@ -1689,7 +1754,9 @@ mod tests {
         );
         assert_eq!(
             recorder.events(),
-            vec![GcalEvent::ReauthRequired],
+            vec![GcalEvent::ReauthRequired {
+                account_email: None
+            }],
             "GcalEvent::ReauthRequired must be emitted exactly once on second 401"
         );
         assert!(
@@ -1731,7 +1798,9 @@ mod tests {
         );
         assert_eq!(
             recorder.events(),
-            vec![GcalEvent::ReauthRequired],
+            vec![GcalEvent::ReauthRequired {
+                account_email: None
+            }],
             "revoked refresh must emit ReauthRequired exactly once"
         );
         assert!(

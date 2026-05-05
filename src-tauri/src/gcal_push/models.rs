@@ -96,12 +96,22 @@ pub enum GcalSettingKey {
     /// authoritative identity for authorization or account-binding
     /// decisions.
     OauthAccountEmail,
+    /// PEND-24 H3 — `'true'` when the refresh token has been revoked
+    /// and the connector must pause until the user re-authorizes.
+    /// `'false'` (the default seed) means the connector runs normally.
+    /// Flipped to `'true'` from
+    /// [`super::connector::run_cycle`] on a terminal `Unauthorized`
+    /// (after the bounded refresh attempt has failed); cleared back to
+    /// `'false'` from [`super::oauth::persist_oauth_account_email`] on
+    /// successful re-auth. Seeded by `0046_gcal_reauth_flag.sql`.
+    ReauthRequired,
 }
 
 impl GcalSettingKey {
     /// Return the exact string used as the `key` column in
     /// `gcal_settings`.  The strings here MUST match the seed
-    /// statements in `migrations/0032_gcal_agenda.sql`.
+    /// statements in `migrations/0032_gcal_agenda.sql` and
+    /// `migrations/0046_gcal_reauth_flag.sql`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -111,12 +121,13 @@ impl GcalSettingKey {
             GcalSettingKey::PushLeaseDeviceId => "push_lease_device_id",
             GcalSettingKey::PushLeaseExpiresAt => "push_lease_expires_at",
             GcalSettingKey::OauthAccountEmail => "oauth_account_email",
+            GcalSettingKey::ReauthRequired => "reauth_required",
         }
     }
 
-    /// The six keys seeded by the migration, in declaration order.
+    /// Every key seeded by the migrations, in declaration order.
     #[must_use]
-    pub const fn all() -> [GcalSettingKey; 6] {
+    pub const fn all() -> [GcalSettingKey; 7] {
         [
             GcalSettingKey::CalendarId,
             GcalSettingKey::PrivacyMode,
@@ -124,6 +135,7 @@ impl GcalSettingKey {
             GcalSettingKey::PushLeaseDeviceId,
             GcalSettingKey::PushLeaseExpiresAt,
             GcalSettingKey::OauthAccountEmail,
+            GcalSettingKey::ReauthRequired,
         ]
     }
 }
@@ -255,6 +267,34 @@ pub async fn set_setting(
     value: &str,
 ) -> Result<(), AppError> {
     set_setting_in_tx(pool, key.as_str(), value).await
+}
+
+/// PEND-24 H3 — read the `reauth_required` flag, defaulting to
+/// `false` if the seed row is missing (treated as "connector runs
+/// normally").  This is the canonical accessor used by
+/// [`super::connector::run_cycle`]'s top-of-loop short-circuit so
+/// callers don't have to remember the `'true'` / `'false'` string
+/// shape stored in the KV row.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn get_reauth_required(pool: &SqlitePool) -> Result<bool, AppError> {
+    let raw = get_setting(pool, GcalSettingKey::ReauthRequired).await?;
+    Ok(raw.as_deref() == Some("true"))
+}
+
+/// PEND-24 H3 — write the `reauth_required` flag.  Stores the
+/// canonical `'true'` / `'false'` string shape and forwards the
+/// `NotFound` error from [`set_setting`] when the seeded row is
+/// missing (which would indicate a corrupted database — every fresh
+/// install seeds the row via `0046_gcal_reauth_flag.sql`).
+///
+/// # Errors
+/// * [`AppError::NotFound`] — the seeded row is missing.
+/// * [`AppError::Database`] — SQL error.
+pub async fn set_reauth_required(pool: &SqlitePool, value: bool) -> Result<(), AppError> {
+    let raw = if value { "true" } else { "false" };
+    set_setting(pool, GcalSettingKey::ReauthRequired, raw).await
 }
 
 // ---------------------------------------------------------------------------
@@ -633,13 +673,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migration_seeds_exactly_six_gcal_settings_rows() {
+    async fn migration_seeds_every_known_gcal_settings_row() {
         let (pool, _dir) = test_pool().await;
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_settings")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 6, "migration must seed all six known keys");
+        assert_eq!(
+            count.0,
+            GcalSettingKey::all().len() as i64,
+            "migration must seed every known key"
+        );
     }
 
     #[tokio::test]
@@ -652,6 +696,8 @@ mod tests {
             (GcalSettingKey::PushLeaseDeviceId, ""),
             (GcalSettingKey::PushLeaseExpiresAt, ""),
             (GcalSettingKey::OauthAccountEmail, ""),
+            // PEND-24 H3 — seeded by migration 0046_gcal_reauth_flag.sql.
+            (GcalSettingKey::ReauthRequired, "false"),
         ];
         for (key, want) in expected {
             let got = get_setting(&pool, *key).await.unwrap();
@@ -683,12 +729,16 @@ mod tests {
             GcalSettingKey::OauthAccountEmail.as_str(),
             "oauth_account_email"
         );
+        assert_eq!(GcalSettingKey::ReauthRequired.as_str(), "reauth_required");
     }
 
     #[test]
-    fn setting_key_all_has_no_duplicates_and_lists_six() {
+    fn setting_key_all_has_no_duplicates() {
         let keys = GcalSettingKey::all();
-        assert_eq!(keys.len(), 6);
+        // Length is implicit in the const-array signature; the
+        // important invariant is the dedup property and the
+        // migration-seed correspondence (covered by
+        // migration_seeds_every_known_gcal_settings_row).
         let mut strs: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
         strs.sort_unstable();
         let mut dedup = strs.clone();

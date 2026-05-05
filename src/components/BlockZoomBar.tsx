@@ -13,12 +13,10 @@
  * Keyboard navigation (UX-215) and overflow handling live in the primitive.
  */
 
-import { X } from 'lucide-react'
 import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
-import { Button } from '@/components/ui/button'
 import type { BreadcrumbItem } from '../hooks/useBlockZoom'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 
@@ -98,22 +96,14 @@ export function BlockZoomBar({
         ariaLabel={t('blockZoom.breadcrumbs')}
         home={{
           onClick: onZoomToRoot,
-          ariaLabel: t('block.zoomToRoot'),
+          // PEND-21 — Use the explicit "Exit zoom" wording on the Home icon so
+          // touch users (who lost the dedicated "<X /> Exit zoom" button) still
+          // get the verbal affordance via screen readers / long-press tooltip.
+          ariaLabel: t('blockZoom.exitZoom'),
           testId: 'home',
           dataAttributes: { 'data-zoom-crumb': 'home' },
         }}
       />
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onZoomToRoot}
-        className="hidden [@media(pointer:coarse)]:inline-flex shrink-0 mr-2"
-        aria-label={t('blockZoom.exitZoom')}
-        data-testid="exit-zoom-btn"
-      >
-        <X className="h-3.5 w-3.5 mr-1" />
-        {t('blockZoom.exitZoom')}
-      </Button>
     </div>
   )
 }

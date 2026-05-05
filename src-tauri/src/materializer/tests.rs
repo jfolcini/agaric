@@ -2936,6 +2936,209 @@ async fn fg_apply_dropped_stays_zero_for_non_apply_task() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// PEND-24 M1 — `record_failure` persistence-failure path is metered.
+//
+// When the consumer's drop path calls `record_failure` and the SQLite
+// write itself returns Err (e.g. table missing during a hot
+// migration, WAL contention exceeding our retry budget), the task
+// must NOT be silently leaked. The fix wraps every persistence call
+// in `record_failure_with_retry` which:
+//   1. Retries once after a 100 ms delay.
+//   2. Bumps `retry_queue_persist_errors` on every failed attempt
+//      (so 2 increments if both fail).
+//   3. Returns `false` on total failure so the caller can preserve
+//      the surrounding metric semantics — `bg_dropped` /
+//      `fg_apply_dropped` continue to bump regardless of persist
+//      outcome (M1's "tasks gone total" must stay accurate).
+//
+// To simulate a deterministic persistence failure we drop the
+// `materializer_retry_queue` table from under the running
+// consumer, then submit a foreground ApplyOp that deterministically
+// fails its retry budget (`{}` payload → deserialize Err). The
+// consumer's drop path then exercises `record_failure_with_retry`
+// against a missing table — both attempts fail, both increment.
+// ──────────────────────────────────────────────────────────────────────
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn record_failure_persist_error_is_metered_pend24_m1() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Drop the retry queue table so every record_failure() call
+    // returns Err. (`PRAGMA foreign_keys = ON` is per-connection but
+    // does not protect a DROP TABLE without dependent FKs.)
+    sqlx::query("DROP TABLE materializer_retry_queue")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Submit an ApplyOp that deterministically exhausts the
+    // foreground retry budget (`{}` fails CreateBlockPayload deserialize
+    // inside apply_op_tx — see the existing
+    // `fg_apply_dropped_bumps_when_apply_op_retry_exhausts` test).
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
+        "create_block",
+        "{}",
+    ))))
+    .await
+    .unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    let m = mat.metrics();
+    // Both record_failure attempts (first + 100 ms retry) failed
+    // because the table is gone → +2 on retry_queue_persist_errors.
+    assert!(
+        m.retry_queue_persist_errors.load(AtomicOrdering::Relaxed) >= 2,
+        "PEND-24 M1: both record_failure attempts must bump retry_queue_persist_errors \
+         (got {})",
+        m.retry_queue_persist_errors.load(AtomicOrdering::Relaxed),
+    );
+    // fg_apply_dropped MUST still bump (semantic: drop event happened),
+    // and fg_apply_dropped_persisted MUST NOT bump (persist failed).
+    assert!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
+        "fg_apply_dropped must still bump on persist-failure path",
+    );
+    assert_eq!(
+        m.fg_apply_dropped_persisted.load(AtomicOrdering::Relaxed),
+        0,
+        "PEND-24 H1+M1: persist-failure path must NOT bump fg_apply_dropped_persisted",
+    );
+
+    mat.shutdown();
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// PEND-24 H1 — Foreground `ApplyOp` retry exhaustion now persists the
+// failure to `materializer_retry_queue` (replacing the previous
+// silent drop). The boot-time / periodic sweeper re-loads the
+// `OpRecord` from `op_log` and re-enqueues onto the foreground
+// queue.
+//
+// Persistence shape (mirrors PEND-03's `__GLOBAL__` sentinel):
+//   block_id = '__APPLY_OP__'
+//   task_kind = "ApplyOp:<seq>:<device_id>"
+//
+// The composite primary key `(block_id, task_kind)` dedups failures
+// of the same op across multiple retries naturally — the SQL-side
+// `attempts + 1` increment in `record_failure` accumulates.
+//
+// This regression test exercises the full round trip in one
+// scenario:
+//   1. Submit an ApplyOp that deterministically fails (`{}` payload
+//      → `serde_json::from_str::<CreateBlockPayload>` returns Err
+//      inside `apply_op_tx`). Both the first attempt and the 100ms
+//      retry fail, the consumer's drop path persists the failure.
+//   2. Assert `fg_apply_dropped` and `fg_apply_dropped_persisted`
+//      both bumped, and the retry-queue row exists with the
+//      expected sentinel + composite-key shape.
+//   3. Plant a *valid* op in op_log + matching retry-queue row, then
+//      call `sweep_once` — the row must be deleted and the
+//      foreground consumer applies the op successfully.
+// ──────────────────────────────────────────────────────────────────────
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
+    use crate::materializer::retry_queue;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // ── Phase 1: deterministic foreground retry exhaust → persistence.
+    let bad_record = fake_op_record("create_block", "{}");
+    let bad_seq = bad_record.seq;
+    let bad_device = bad_record.device_id.clone();
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(bad_record)))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    let m = mat.metrics();
+    assert!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
+        "fg_apply_dropped must bump on foreground retry exhaustion",
+    );
+    assert!(
+        m.fg_apply_dropped_persisted.load(AtomicOrdering::Relaxed) >= 1,
+        "PEND-24 H1: fg_apply_dropped_persisted must bump after retry-queue write succeeds",
+    );
+
+    let expected_kind = format!("ApplyOp:{bad_seq}:{bad_device}");
+    let row = sqlx::query!(
+        "SELECT block_id, task_kind FROM materializer_retry_queue \
+         WHERE task_kind = ?",
+        expected_kind,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("retry-queue row must exist for the persisted ApplyOp failure");
+    assert_eq!(
+        row.block_id, "__APPLY_OP__",
+        "PEND-24 H1: failed ApplyOp rows live under the __APPLY_OP__ sentinel"
+    );
+    assert_eq!(row.task_kind, expected_kind);
+
+    // Cleanup: the bad_record was constructed via `fake_op_record` and never
+    // appended to op_log. Sweeping it now would log a NotFound warn — drop
+    // the row before phase 2 to keep the test log clean.
+    sqlx::query!("DELETE FROM materializer_retry_queue")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // ── Phase 2: sweep_once replays a persisted ApplyOp by re-loading
+    //    from op_log. Append a valid op so the lookup succeeds.
+    let valid_record = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BLK-H1-RECOVER"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "recovered content".into(),
+        }),
+    )
+    .await;
+    let task_kind = format!("ApplyOp:{}:{}", valid_record.seq, valid_record.device_id);
+    let past = (chrono::Utc::now() - chrono::Duration::minutes(2))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    sqlx::query!(
+        "INSERT INTO materializer_retry_queue \
+             (block_id, task_kind, attempts, next_attempt_at) \
+         VALUES (?, ?, ?, ?)",
+        "__APPLY_OP__",
+        task_kind,
+        1_i64,
+        past,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let n = retry_queue::sweep_once(&pool, &pool, &mat).await.unwrap();
+    assert_eq!(
+        n, 1,
+        "PEND-24 H1: the planted ApplyOp retry row must be re-enqueued onto the foreground queue"
+    );
+    let remaining: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) AS \"n!: i64\" FROM materializer_retry_queue",)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "PEND-24 H1: swept ApplyOp row must be deleted after successful re-enqueue"
+    );
+
+    // The re-enqueue routed the task to the foreground queue; flushing
+    // confirms the foreground consumer drained it (the apply itself
+    // succeeds because the op is valid). We don't assert on the
+    // resulting `blocks` row to keep this test focused on the
+    // persist + sweep contract — the subsequent
+    // `dispatch_op_create_block_*` tests already cover that path.
+    mat.flush_foreground().await.unwrap();
+
+    mat.shutdown();
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // REVIEW-LATER L-16 — Foreground retry: ordering of error log vs.
 // retry attempt.
 //

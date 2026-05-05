@@ -857,10 +857,18 @@ impl Materializer {
             fg_panics: self.metrics.fg_panics.load(Ordering::Relaxed),
             bg_panics: self.metrics.bg_panics.load(Ordering::Relaxed),
             fg_apply_dropped: self.metrics.fg_apply_dropped.load(Ordering::Relaxed),
+            fg_apply_dropped_persisted: self
+                .metrics
+                .fg_apply_dropped_persisted
+                .load(Ordering::Relaxed),
             bg_dropped: self.metrics.bg_dropped.load(Ordering::Relaxed),
             bg_dropped_global: self.metrics.bg_dropped_global.load(Ordering::Relaxed),
             bg_deduped: self.metrics.bg_deduped.load(Ordering::Relaxed),
             fg_full_waits: self.metrics.fg_full_waits.load(Ordering::Relaxed),
+            retry_queue_persist_errors: self
+                .metrics
+                .retry_queue_persist_errors
+                .load(Ordering::Relaxed),
             last_materialize_at,
             time_since_last_materialize_secs,
             total_ops_in_log,

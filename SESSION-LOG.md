@@ -2,11 +2,67 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 669 (closed 10 long-tail PEND-23 + PEND-28b items — PEND-28b is now FULLY CLOSED, plan file deleted; PEND-23 down to 1 MEDIUM M6 + 2 LOW remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1142+ items.
+**Sessions:** 1 – 670 (closed PEND-21 (both items) + PEND-24 H1 + H3 + M1 — both PEND-21 and PEND-24 are now FULLY CLOSED, plan files deleted; 12 plan files left in `pending/`) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1147+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 670 — closed PEND-21 (both items) + PEND-24 H1 + H3 + M1 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 3 build (A=PEND-24 H1+M1 materializer ApplyOp persistence, B=PEND-24 H3 GCal reauth backend, C=PEND-21 breadcrumb icon affordance + exit-zoom dedup) + 0 reviewers (subagents self-validated). Mixed Rust + frontend; non-overlapping file scopes; explicit no-stash-no-checkout guidance avoided session-664 chaos. |
+| **Items closed** | 5 sub-items: PEND-21 item 1 (icon-button affordance) + item 2 (touch exit-zoom dedup); PEND-24 H1 (foreground ApplyOp retry-exhausted persistence) + H3 (GCal revoked-token reauth event, backend only) + M1 (`record_failure` retry semantics + `retry_queue_persist_errors` counter). **PEND-21 fully closed — plan file deleted. PEND-24 fully closed — plan file deleted.** Pending folder: 14 → 12 plan files. |
+| **Items modified** | — |
+| **Tests added** | +5 backend (`materializer_tests::foreground_applyop_exhausted_persists_and_re_enqueues_on_boot`, `record_failure_persist_error_is_metered_pend24_m1`; `retry_queue::retry_kind_apply_op_roundtrip` + `retry_kind_from_str_rejects_malformed_apply_op`; `gcal_push::connector::clearing_reauth_flag_lets_connector_resume`; `gcal_push::oauth::persist_oauth_account_email_clears_reauth_required_flag`). +12 flipped frontend assertions in 2 existing breadcrumb cases (`home icon button`, `overflow trigger`); −1 deleted frontend test (`exit-zoom-btn`). |
+| **Files touched** | 16 source + 3 new `.sqlx/` query JSON + 1 new migration (`0046_gcal_reauth_flag.sql`) + 4 docs (PEND-21 deleted, PEND-24 deleted, README index, REVIEW-LATER, SESSION-LOG, FEATURE-MAP). |
+
+**Summary:** Mixed-stack closing batch. 3 parallel subagents on non-overlapping file scopes (frontend `breadcrumb.tsx`/`BlockZoomBar.tsx` + Rust `materializer/*` + Rust `gcal_push/*`); explicit no-stash-no-checkout guidance kept the working tree clean throughout (lesson from session 664). PEND-24's last 3 items shipped — H1 makes foreground ApplyOp drops durable via a new `RetryKind::ApplyOp{device_id, seq}` variant under the `__APPLY_OP__` sentinel (mirrors PEND-03's `__GLOBAL__` pattern), with `BatchApplyOps` failures fanning out into per-record retry rows so a single bad op cannot poison batch replay. M1 wraps `record_failure` in a 100 ms one-shot retry helper, adds a `retry_queue_persist_errors` counter, and bumps `bg_dropped`/`fg_apply_dropped` regardless of persist outcome. H3 adds a `gcal_settings.reauth_required` boolean key (no column-add, just a key in the existing k/v table) with a typed `gcal:reauth_required` Tauri event payload `ReauthRequiredPayload { account_email: Option<String> }`; the connector loop short-circuits when the flag is set and `persist_oauth_account_email` clears it on successful re-auth. Frontend banner explicitly deferred to MAINT-216 per the plan's split. PEND-21 polished the structural breadcrumb's icon-only triggers (`BreadcrumbHome`, `OverflowPopover`) — they now use a hover-chip + standard 3 px focus-visible ring instead of FEAT-13's `hover:underline` (which decorated nothing on a single icon glyph), plus dropped the redundant touch-only `<X /> Exit zoom` button (Home icon now carries the explicit `blockZoom.exitZoom` aria-label as the touch-mitigation). After-tree summary: 3517/3517 cargo nextest green, 9489+ vitest green, `prek run --all-files` green after one cargo-fmt auto-fix on the new ApplyOp variant body + bindings.ts trailing-whitespace fix. AGENTS.md NOT modified per the always-on rule (suggested bullets retained in the subagent reports if needed later).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 36 → 37 (added MAINT-216, no items removed)
+- **Previously resolved:** 1142+ → 1147+ across 669 → 670 sessions
+
+**Plan files closed (and deleted):**
+- `pending/PEND-21-breadcrumb-icon-affordance-and-exit-zoom-redundancy.md` (both items)
+- `pending/PEND-24-rust-robustness-review-findings.md` (all 11 items: C1, C2, H1, H2, H3, M1, M2, M3, M4, M5, M6)
+
+**Files touched (this session):**
+
+Rust (PEND-24 H1 + M1, materializer):
+- `src-tauri/src/materializer/retry_queue.rs` (+283/−56): new `RetryKind::ApplyOp { device_id: String, seq: i64 }` variant, `pub(crate) const APPLY_OP_TASK_SENTINEL = "__APPLY_OP__"`, `task_kind_str` returns `Cow<'static, str>` for the composite key encoding, `splitn(3, ':')` parser keeps colons intact in device_ids, new `try_reenqueue_apply_op` helper for sweep-time `OpRecord` lookup, `RetryKind` is no longer `Copy` (variant carries `String`). +2 unit tests (`retry_kind_apply_op_roundtrip`, `retry_kind_from_str_rejects_malformed_apply_op`).
+- `src-tauri/src/materializer/consumer.rs` (+149/−28): new private `record_failure_with_retry` helper (100 ms retry + `retry_queue_persist_errors` bump per failed attempt). Foreground drop path now calls it for both `ApplyOp` and `BatchApplyOps` (one row per record on batch fan-out); background drop path wraps the existing persist call in the helper and bumps `bg_dropped` regardless of outcome.
+- `src-tauri/src/materializer/coordinator.rs` (+8): surfaces `fg_apply_dropped_persisted` and `retry_queue_persist_errors` in `StatusInfo`.
+- `src-tauri/src/materializer/metrics.rs` (+46): new `fg_apply_dropped_persisted: AtomicU64` and `retry_queue_persist_errors: AtomicU64` fields on both `QueueMetrics` and `StatusInfo`.
+- `src-tauri/src/materializer/tests.rs` (+207): +2 new tests (the H1 round-trip + M1 metering).
+- `src-tauri/src/commands/tests/snapshots/agaric_lib__commands__tests__snapshot_tests__snapshot_status_info_response.snap` (+2): adds `fg_apply_dropped_persisted` and `retry_queue_persist_errors` rows.
+- `src/lib/bindings.ts` (+44/−8): regenerated via `cargo test -- specta_tests::regenerate_ts_bindings --ignored`.
+- `src-tauri/.sqlx/query-{79706c0f,96e7d618,99184714}*.json` (3 new): cache for new SQL macro sites.
+
+Rust (PEND-24 H3, GCal):
+- `src-tauri/migrations/0046_gcal_reauth_flag.sql` (NEW, +16): seeds `'reauth_required' = 'false'` into the existing `gcal_settings` k/v table via `INSERT OR IGNORE`.
+- `src-tauri/src/gcal_push/models.rs` (+64/−9): added `GcalSettingKey::ReauthRequired` variant + `get_reauth_required` / `set_reauth_required` helpers; updated `all()` from `[..; 6]` to `[..; 7]`; updated migration-seed tests.
+- `src-tauri/src/gcal_push/keyring_store.rs` (+57/−16): `GcalEvent::ReauthRequired` now carries `account_email: Option<String>`; added `ReauthRequiredPayload` for typed Tauri emit; `TauriGcalEventEmitter::emit` sends the typed payload; `GcalEvent` no longer `Copy` (variant carries `Option<String>`).
+- `src-tauri/src/gcal_push/connector.rs` (+254/−9): pause-gate at top of `run_cycle`; new `handle_terminal_unauthorized` helper; routed both 401 paths (`DateFailure::Unauthorized` + `classify_cycle_failure`) through it; made `classify_cycle_failure` async + pool-aware; +2 new tests (`revoked_refresh_token_emits_reauth_event_and_pauses` + `clearing_reauth_flag_lets_connector_resume`).
+- `src-tauri/src/gcal_push/oauth.rs` (+63/−3): updated 2 emit sites for new variant shape (`account_email: None` at OAuth layer — no pool access); extended `persist_oauth_account_email` to clear flag on successful re-auth (best-effort with warn-log on failure); +1 test (`persist_oauth_account_email_clears_reauth_required_flag`).
+
+Frontend (PEND-21):
+- `src/components/ui/breadcrumb.tsx` (+25/−5): `homeButtonClass` + `overflowTriggerClass` now use `rounded-sm p-1 hover:bg-accent/40 hover:text-foreground focus-visible:bg-accent/60 focus-visible:text-foreground focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50` instead of FEAT-13's `hover:underline focus-visible:underline focus-visible:outline-hidden`. Top-of-file doc comment updated to record the icon-vs-text-link split.
+- `src/components/BlockZoomBar.tsx` (+4/−14): deleted the touch-only `<X /> Exit zoom` `<Button>`; removed orphaned `X` and `Button` imports; Home icon's `aria-label` changed from `t('block.zoomToRoot')` to `t('blockZoom.exitZoom')` (existing key, no i18n addition) so touch users still get the explicit "Exit zoom" wording.
+- `src/components/ui/__tests__/breadcrumb.test.tsx` (+21/−9): flipped FEAT-13 negative assertions on home + overflow icon buttons to positive assertions for `rounded-sm`, `hover:bg-accent/40`, `focus-visible:ring-[3px]`, `focus-visible:ring-ring/50`; kept negative assertions (now flipped to assert *absence* of underline classes on the icon buttons specifically).
+- `src/components/__tests__/BlockZoomBar.test.tsx` (+1/−19): deleted `exit-zoom-btn` test case + its UX-362 comment block; cleaned the now-stale `within()` scope in the `End jumps focus` test back to a simple `screen.getAllByRole('button')`.
+
+Docs:
+- `pending/PEND-21-...md` (DELETED): 226-line plan, both items shipped.
+- `pending/PEND-24-rust-robustness-review-findings.md` (DELETED): all 11 items shipped (C1+C2 session 663, H1 + H3 + M1 session 670, H2 session 662, M2-M6 session 663).
+- `pending/README.md`: removed PEND-21 + PEND-24 rows from the index, removed quick-wins / mid-tier / out-of-band UX bullets.
+- `pending/REVIEW-LATER.md`: header line updated for session 670; new MAINT-216 entry (frontend GCal reauth banner follow-up).
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: new "Backend Robustness Misc (session 670, PEND-24 H1 + H3 + M1)" subsection in Section 10 documenting the three closures.
+
+
 
 ## Session 669 — closed PEND-23 M10 + L10 + L12 + L13 + L14 + L15 + L17 + PEND-28b M6 + M9 + L1 (2026-05-04)
 

@@ -14,10 +14,12 @@ bg_errors: 0
 fg_panics: 0
 bg_panics: 0
 fg_apply_dropped: 0
+fg_apply_dropped_persisted: 0
 bg_dropped: 0
 bg_dropped_global: 0
 bg_deduped: 0
 fg_full_waits: 0
+retry_queue_persist_errors: 0
 last_materialize_at: "[TIMESTAMP]"
 time_since_last_materialize_secs: "[SECS]"
 total_ops_in_log: 0

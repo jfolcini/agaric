@@ -226,7 +226,12 @@ describe('Breadcrumb', () => {
       expect(btn.className).not.toContain('px-1')
     })
 
-    it('home icon button uses the same text-link treatment (no rounded-sm, no ring)', () => {
+    // PEND-21 — Icon-only triggers (Home, overflow `…`) get the standard 3 px
+    // form-control focus ring + a hover-chip instead of `hover:underline` /
+    // `focus-visible:underline`. The underline rule has no visible effect on a
+    // single icon glyph, so hover/focus state would otherwise be invisible.
+    // Text-link crumb segments above keep the FEAT-13 underline treatment.
+    it('home icon button uses the icon-button treatment (rounded-sm hover-chip + 3 px focus ring)', () => {
       render(
         <Breadcrumb
           items={baseItems}
@@ -235,13 +240,16 @@ describe('Breadcrumb', () => {
         />,
       )
       const homeBtn = screen.getByRole('button', { name: 'Home' })
-      expect(homeBtn.className).toContain('hover:underline')
-      expect(homeBtn.className).toContain('focus-visible:underline')
-      expect(homeBtn.className).not.toContain('rounded-sm')
-      expect(homeBtn.className).not.toContain('focus-visible:ring-[3px]')
+      expect(homeBtn.className).toContain('rounded-sm')
+      expect(homeBtn.className).toContain('hover:bg-accent/40')
+      expect(homeBtn.className).toContain('focus-visible:ring-[3px]')
+      expect(homeBtn.className).toContain('focus-visible:ring-ring/50')
+      // The text-link styling that has no effect on a single icon must be gone.
+      expect(homeBtn.className).not.toContain('hover:underline')
+      expect(homeBtn.className).not.toContain('focus-visible:underline')
     })
 
-    it('overflow trigger uses the same text-link treatment', () => {
+    it('overflow trigger uses the icon-button treatment (rounded-sm hover-chip + 3 px focus ring)', () => {
       const items = Array.from({ length: 7 }, (_, i) => ({
         id: `id-${i}`,
         label: `Crumb${i}`,
@@ -249,10 +257,12 @@ describe('Breadcrumb', () => {
       }))
       render(<Breadcrumb items={items} ariaLabel="Trail" />)
       const trigger = screen.getByRole('button', { name: /show hidden breadcrumbs/i })
-      expect(trigger.className).toContain('hover:underline')
-      expect(trigger.className).toContain('focus-visible:underline')
-      expect(trigger.className).not.toContain('rounded-sm')
-      expect(trigger.className).not.toContain('focus-visible:ring-[3px]')
+      expect(trigger.className).toContain('rounded-sm')
+      expect(trigger.className).toContain('hover:bg-accent/40')
+      expect(trigger.className).toContain('focus-visible:ring-[3px]')
+      expect(trigger.className).toContain('focus-visible:ring-ring/50')
+      expect(trigger.className).not.toContain('hover:underline')
+      expect(trigger.className).not.toContain('focus-visible:underline')
     })
 
     it('toolbar uses min-h-6 density (FEAT-13)', () => {
