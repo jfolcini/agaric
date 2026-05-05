@@ -451,6 +451,8 @@ export const commands = {
 	 *  journal page in `space_id`. Delegates to [`quick_capture_block_inner`].
 	 */
 	quickCaptureBlock: (content: string, spaceId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("quick_capture_block", { content, spaceId })),
+	// PEND-18 Phase 0 spike — removed in Phase 1.
+	pend18SpikeProbe: (scope: SpaceScope) => __TAURI_INVOKE<SpaceScope>("pend18_spike_probe", { scope }),
 };
 
 /* Types */
@@ -963,6 +965,30 @@ export type SetPropertyArgs = {
 export type SortDir = "Asc" | "Desc";
 
 /**
+ *  Newtype wrapper around a space ULID for type-safety + IPC bindings.
+ *
+ *  Mirrors [`crate::ulid::ActiveBlockId`] (the strict MAINT-113 newtype):
+ *  transparent serde + transparent sqlx + `specta::Type` so the wire / DB
+ *  layers see a plain string while Rust call sites get the named type.
+ *
+ *  # Normalisation
+ *
+ *  Stored value is the canonical uppercase Crockford base32 representation —
+ *  AGENTS.md invariant #8. Both `from_string`, `from_trusted`, and the
+ *  `Deserialize` impl uppercase via `to_ascii_uppercase` so every path
+ *  produces byte-identical output for non-ASCII inputs (e.g. "ß" stays "SS"
+ *  is *not* what we want; `to_ascii_uppercase` is the only normaliser that
+ *  keeps blake3 hash determinism).
+ *
+ *  # Wire format
+ *
+ *  `serde(transparent)` + `sqlx(transparent)` → JSON / SQLite see a bare
+ *  string. Specta emits `export type SpaceId = string;`. The newtype is
+ *  purely a Rust-side type-safety gate.
+ */
+export type SpaceId = string;
+
+/**
  *  A space row returned by [`list_spaces_inner`] — the pieces the
  *  frontend needs to render the switcher (ULID + display name) plus
  *  the FEAT-3p10 visual-identity surface (`accent_color`).
@@ -980,6 +1006,27 @@ export type SpaceRow = {
 	// FEAT-3p10 — accent palette token, or `None` if unset.
 	accent_color: string | null,
 };
+
+/**
+ *  The space scope a list / search query runs under.
+ *
+ *  `Global` — no `block_properties.space` filter is applied (pre-FEAT-3
+ *  behaviour, plus journal / settings views that intentionally span all
+ *  spaces). `Active(SpaceId)` — restrict results to blocks belonging to
+ *  the given space.
+ *
+ *  # Wire format
+ *
+ *  Adjacently-tagged via `#[serde(tag = "kind", content = "space_id")]`:
+ *
+ *  - `SpaceScope::Global`              → `{"kind":"global"}`
+ *  - `SpaceScope::Active(SpaceId(id))` → `{"kind":"active","space_id":"<ULID>"}`
+ *
+ *  PEND-18 Phase 0 confirmed specta 2.0.0-rc.24 emits this as a TS
+ *  discriminated union (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`)
+ *  — the ergonomic shape we want on the frontend.
+ */
+export type SpaceScope = { kind: "global" } | { kind: "active"; space_id: SpaceId };
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the

@@ -2,11 +2,69 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 677 (closed PEND-28a H1 Option 2 — accept duplication + add parity test; PEND-28a fully closed and plan deleted; 8 plan files in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1162+ items.
+**Sessions:** 1 – 678 (PEND-18 Phase 0 spike — `SpaceId` newtype + `SpaceScope` tagged enum validate clean against specta + sqlx; PEND-18 plan stays open across phases; 8 plan files in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1162+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 678 — PEND-18 Phase 0 spike: `SpaceId` + `SpaceScope` (2026-05-05)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-05 |
+| **Subagents** | 1 build (Phase 0 spike: types + tests + IPC probe) + 1 technical reviewer. UX dimension N/A (pure backend type module + auto-regenerated bindings). |
+| **Items closed** | 0 — Phase 0 spike on PEND-18 (long-running multi-phase plan; stays open). PEND-18 plan annotated with Session-678 status note. |
+| **Items modified** | PEND-18 (Phase 0 LANDED; Phases 1/2/2.5/3 next). |
+| **Tests added** | +14 backend (all in new `src-tauri/src/space.rs`: from_string accept/reject/normalise, from_trusted, serde round-trip × 4, as_filter_param × 2, sqlx column-cast × 2). 0 frontend tests (probe is a temp Tauri stub). |
+| **Files touched** | 1 NEW source (`src-tauri/src/space.rs`, 320 LOC) + 1 modified source (`src-tauri/src/lib.rs` +3 LOC) + 1 auto-regenerated binding (`src/lib/bindings.ts`) + 4 docs (PEND-18 plan, REVIEW-LATER, SESSION-LOG, this entry). |
+
+**Summary:** Landed PEND-18's mandatory Phase 0 spike — the validation gate that confirms specta 2.0.0-rc.24 emits an ergonomic discriminated-union TS shape for `#[serde(tag = "kind", content = "space_id")]` enums (no in-codebase precedent before this) AND that `#[sqlx(transparent)]` works in `query_as!` / `query_scalar!` column-cast position (`SELECT … as "x: SpaceId"`, mirroring the MAINT-113 `ActiveBlockId` pattern). Both gates returned green on first attempt — no serde gymnastics, no extra specta hints, no manual `Type` impl needed. The emitted TS is exactly the desired shape: `export type SpaceScope = { kind: "global" } | { kind: "active"; space_id: SpaceId };` and `export type SpaceId = string;`. A throwaway `pend18_spike_probe` Tauri command (round-trips a `SpaceScope` through the IPC boundary, no DB / state) is registered in `agaric_commands!` with a `// PEND-18 Phase 0 spike — removed in Phase 1` comment so Phase 1's first sub-step is the obvious delete target.
+
+Reviewer pipelined behind the build per PROMPT.md Phase 4. Two P1 findings:
+1. **Applied:** `SpaceId::from_string` was using `s.to_ascii_uppercase()` (matching the plan-body literal) but the `BlockId::from_string` precedent uses `parsed.to_string()` ("Store the canonical uppercase form, not the original input"). For ASCII Crockford base32 the two coincide, but `parsed.to_string()` tracks the `ulid` crate's canonical encoding rather than trusting caller casing. Fixed inline.
+2. **Deferred to Phase 1:** the 6 `PartialEq<&str>/<str>/<String>` and reverse impls that `ActiveBlockId` carries. The plan body's spec only listed `Display`, `AsRef<str>`, `From<SpaceId> for String` with `/* ... */` placeholders, so this is a precedent-vs-spec ambiguity. Phase 0's role is the specta+sqlx validation gate, which passed; Phase 1 was always going to add the full impl surface + comprehensive tests, so adding the PartialEq variants then keeps the Phase 0/1 seam clean.
+
+PEND-18 plan file kept in `pending/` with a Session-678 status note (the plan covers 4 phases over 9-15h; it stays open until all phases ship, then gets deleted per `pending/README.md` convention).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 46 → 46 (no change — spike was orthogonal to existing tracked items).
+- **Previously resolved:** 1162+ → 1162+ across 677 → 678 sessions (no items resolved).
+
+**Files touched (this session):**
+
+PEND-18 Phase 0 spike:
+- `src-tauri/src/space.rs` (NEW, 320 LOC):
+  - `SpaceId(String)` newtype: `Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, sqlx::Type, specta::Type` + lenient `Deserialize` (uppercase-normalise, no DB check) + strict `from_string` (ULID-validates via `ulid::Ulid::from_str`, returns `parsed.to_string()` canonical form) + `from_trusted` + `as_str` / `into_string` + `Display` / `AsRef<str>` / `From<SpaceId> for String`.
+  - `SpaceScope` tagged enum (`#[serde(tag = "kind", content = "space_id")]`) with `Global` / `Active(SpaceId)` variants + `specta::Type` + `as_filter_param() -> Option<&str>` adapter for the SQL bind site.
+  - `pend18_spike_probe` Tauri command (`#[cfg(not(tarpaulin_include))]` per the codebase's thin-wrapper convention) — round-trips a `SpaceScope`, no DB / state. Phase 1 deletes this.
+  - 14 inline `#[cfg(test)]` tests: from_string accepts/rejects/normalises, from_trusted, serde round-trip + serialised shape × 4, as_filter_param × 2, sqlx column-cast via `query_scalar!` AND `query_as!` (both use `test_pool()` for the real schema).
+- `src-tauri/src/lib.rs` (+3 LOC): `pub mod space;` near the other top-level modules + `// PEND-18 Phase 0 spike — removed in Phase 1` comment + `$crate::space::pend18_spike_probe,` in the `agaric_commands!` macro list.
+- `src/lib/bindings.ts` (auto-regenerated, +85 / −37): adds `export type SpaceId = string`, `export type SpaceScope = { kind: "global" } | { kind: "active"; space_id: SpaceId }`, and the `pend18SpikeProbe` command stub. Auto-emitted via `cargo test --lib -- specta_tests --ignored`.
+
+Docs:
+- `pending/PEND-18-spaceid-newtype-spacescope-enum.md`: added Session-678 status note at the top noting Phase 0 LANDED, Phase 1's first deliverable (probe removal + PartialEq impls), and that Phases 2/2.5/3 are unchanged.
+- `pending/REVIEW-LATER.md`: header line updated for session 678.
+- `SESSION-LOG.md`: this entry + Quick Reference banner updated.
+- `scripts/check-tauri-bindings-parity.mjs` (+4 LOC): added `'pend18SpikeProbe'` to `KNOWN_UNWRAPPED` with a (c) "spike probe deleted in Phase 1" comment so the `tauri-bindings-parity` prek hook stays green for the spike commit. Phase 1 removes the entry alongside the probe + macro registration.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run --lib space::tests` — 14/14 pass after the canonical-form fix.
+- `cd src-tauri && cargo nextest run --no-fail-fast` (build subagent) — 3572/3572 pass, 4 skipped, 1 expected stale-bindings failure cleared once `cargo test --lib -- specta_tests --ignored` regenerated `src/lib/bindings.ts`. Pre-existing flake on `sync_files::…run_file_transfer_initiator_breaks_on_cancel_m47` (unrelated to this change) cleared on retry.
+- `prek run --all-files` — green.
+
+**Process notes:**
+- Followed PROMPT.md Phase 4 strictly (technical reviewer pipelined behind the build subagent, no UX reviewer for pure backend type module). Reviewer findings triaged P0/P1/defer per the plan's Phase 0/1 seam — apply now if it closes a precedent gap; defer to Phase 1 if it's polish that fits naturally with the next phase's "comprehensive tests + remove probe" scope.
+- The spike used `as "id!: SpaceId"` (with the `!` non-null override) in the sqlx column-cast tests because string literal columns are inferred as nullable by sqlx; the `!` is the standard pattern used throughout the codebase. Real schema columns already declare nullability so Phase 2's migration will not need the `!`.
+- The spike's tarpaulin-include exclusion on `pend18_spike_probe` matches the existing convention for thin Tauri command wrappers (`tarpaulin_include` appears in 32 source files for the same reason).
+
+**Lessons learned (for future sessions):**
+- Specta 2.0.0-rc.24 supports `#[serde(tag, content)]` enums + `specta::Type` cleanly out of the box, even though the pattern has no in-codebase precedent. Future tagged-enum IPC types can use this pattern without a dedicated spike.
+- The `BlockId::from_string` "store canonical via `parsed.to_string()`" pattern is the right default for any new ULID-backed newtype in this codebase. The plan-body stub (`s.to_ascii_uppercase()` for valid Crockford base32) coincides byte-for-byte but loses the "track upstream's canonical encoding" guarantee — easy to miss if the reviewer doesn't compare against the precedent.
+
+**Commit plan:** single commit `feat(space): PEND-18 Phase 0 spike — SpaceId newtype + SpaceScope tagged enum (specta + sqlx round-trip green)`.
+
+---
 
 ## Session 677 — closed PEND-28a H1 Option 2 (2026-05-05)
 

@@ -28,6 +28,7 @@ pub mod recurrence;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
+pub mod space;
 pub mod spaces;
 pub mod sql_utils;
 pub mod sync_cert;
@@ -186,6 +187,8 @@ macro_rules! agaric_commands {
             $crate::commands::create_space,
             // Quick capture (FEAT-12) — desktop global-shortcut entry point
             $crate::commands::quick_capture_block,
+            // PEND-18 Phase 0 spike — removed in Phase 1
+            $crate::space::pend18_spike_probe,
         ]
     };
 }
