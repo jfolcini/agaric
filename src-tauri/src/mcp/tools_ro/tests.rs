@@ -733,6 +733,82 @@ async fn list_backlinks_missing_block_id_validation() {
     assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
 }
 
+/// PEND-18 Phase 2 parity test: the post-migration handler builds
+/// [`SpaceScope::Global`] from the JSON-side `space_id: null` (or omitted).
+/// Asserts that calling the MCP `list_backlinks` tool with that input
+/// returns the same `GroupedBacklinkResponse` envelope as a direct call to
+/// the migrated [`list_backlinks_grouped_inner`] passing
+/// [`SpaceScope::Global`] explicitly. Pre-migration the handler passed
+/// `None` for the `Option<String>` parameter; post-migration it passes
+/// `&SpaceScope::Global`. Both encode "no space filter" — this test
+/// pins behavioural parity across the migration boundary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_global_scope_parity() {
+    use crate::commands::list_backlinks_grouped_inner;
+    use crate::space::SpaceScope;
+
+    let (tools, mat, _dir) = mk_tools().await;
+    let target = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Path A: through the MCP handler with `space_id: null` — the
+    // handler builds `SpaceScope::Global` internally.
+    let via_handler = tools
+        .call_tool(
+            "list_backlinks",
+            json!({"block_id": target.id, "space_id": null}),
+            &test_ctx(),
+        )
+        .await
+        .expect("handler call must succeed");
+
+    // Path B: direct call to the migrated `_inner` with the same scope.
+    let via_inner = list_backlinks_grouped_inner(
+        &tools.pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .expect("inner call must succeed");
+    let via_inner_json = serde_json::to_value(&via_inner).expect("inner serialises");
+
+    assert_eq!(
+        via_handler, via_inner_json,
+        "handler `space_id: null` must produce the same envelope as a direct \
+         `&SpaceScope::Global` call to `list_backlinks_grouped_inner`"
+    );
+
+    // Path C: omitted `space_id` defaults to `None` → `SpaceScope::Global`
+    // by the same handler match. Re-checks the parity for the "field absent"
+    // wire shape.
+    let via_handler_omitted = tools
+        .call_tool(
+            "list_backlinks",
+            json!({"block_id": target.id}),
+            &test_ctx(),
+        )
+        .await
+        .expect("handler call must succeed (space_id omitted)");
+    assert_eq!(
+        via_handler_omitted, via_inner_json,
+        "handler with omitted `space_id` must match `&SpaceScope::Global` parity"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_tags_happy_path() {
     let (tools, mat, _dir) = mk_tools().await;

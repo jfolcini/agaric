@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use super::super::*;
 use super::common::*;
+use crate::space::{SpaceId, SpaceScope};
 use chrono::Datelike;
 
 // ======================================================================
@@ -445,7 +446,9 @@ async fn list_blocks_date_range_with_source_filter() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_empty_dates_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = count_agenda_batch_inner(&pool, vec![], None).await.unwrap();
+    let result = count_agenda_batch_inner(&pool, vec![], &SpaceScope::Global)
+        .await
+        .unwrap();
     assert!(
         result.is_empty(),
         "empty dates input should return empty map"
@@ -491,7 +494,7 @@ async fn count_agenda_batch_returns_correct_counts() {
             "2025-06-02".into(),
             "2025-06-03".into(),
         ],
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -543,7 +546,7 @@ async fn count_agenda_batch_excludes_deleted_blocks() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_inner(&pool, vec!["2025-07-01".into()], None)
+    let result = count_agenda_batch_inner(&pool, vec!["2025-07-01".into()], &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -561,7 +564,7 @@ async fn count_agenda_batch_excludes_deleted_blocks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = count_agenda_batch_by_source_inner(&pool, vec![], None)
+    let result = count_agenda_batch_by_source_inner(&pool, vec![], &SpaceScope::Global)
         .await
         .unwrap();
     assert!(
@@ -600,9 +603,10 @@ async fn count_agenda_batch_by_source_returns_correct_breakdown() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-01".into()], None)
-        .await
-        .unwrap();
+    let result =
+        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-01".into()], &SpaceScope::Global)
+            .await
+            .unwrap();
 
     let day = result.get("2025-09-01").expect("date should be present");
     assert_eq!(
@@ -649,9 +653,10 @@ async fn count_agenda_batch_by_source_excludes_deleted() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-02".into()], None)
-        .await
-        .unwrap();
+    let result =
+        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-02".into()], &SpaceScope::Global)
+            .await
+            .unwrap();
 
     let day = result.get("2025-09-02").expect("date should be present");
     assert_eq!(
@@ -684,9 +689,10 @@ async fn count_agenda_batch_by_source_single_date_returns_expected_counts() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-10-01".into()], None)
-        .await
-        .unwrap();
+    let result =
+        count_agenda_batch_by_source_inner(&pool, vec!["2025-10-01".into()], &SpaceScope::Global)
+            .await
+            .unwrap();
 
     assert_eq!(result.len(), 1, "result contains exactly one date");
     let day = result.get("2025-10-01").expect("date should be present");
@@ -719,7 +725,7 @@ async fn count_agenda_batch_by_source_missing_dates_not_in_result() {
             "2025-11-02".into(),
             "2025-11-03".into(),
         ],
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -774,7 +780,7 @@ async fn count_agenda_batch_by_source_large_input_beyond_sqlite_param_limit() {
     dates.push("2025-12-25".into());
     dates.push("2025-12-26".into());
 
-    let result = count_agenda_batch_by_source_inner(&pool, dates, None)
+    let result = count_agenda_batch_by_source_inner(&pool, dates, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -858,7 +864,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     let end = (today + chrono::Duration::days(28))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
         .await
         .unwrap()
         .items;
@@ -986,7 +992,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     let end = (today + chrono::Duration::days(60))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
         .await
         .unwrap()
         .items;
@@ -1185,7 +1191,7 @@ async fn projected_agenda_skips_done_blocks() {
         "2026-05-04".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1213,7 +1219,7 @@ async fn projected_agenda_validates_date_range() {
         "2026-04-30".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await;
     assert!(
@@ -1228,7 +1234,7 @@ async fn projected_agenda_validates_date_range() {
         "2026-04-01".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await;
     assert!(
@@ -1247,7 +1253,7 @@ async fn projected_agenda_empty_when_no_repeating_blocks() {
         "2026-04-30".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1313,7 +1319,7 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
         .await
         .unwrap()
         .items;
@@ -1388,7 +1394,7 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
         .await
         .unwrap()
         .items;
@@ -1468,7 +1474,7 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
         "2026-04-20".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1575,7 +1581,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         "2026-04-30".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1642,7 +1648,7 @@ async fn projected_agenda_limit_caps_results() {
         "2027-04-06".into(),
         None,
         Some(5),
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1748,7 +1754,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         "2026-04-14".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1771,7 +1777,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         "2026-04-14".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1864,7 +1870,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         "2026-04-10".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1889,7 +1895,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         "2026-04-10".into(),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap()
@@ -1942,7 +1948,7 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
         .await
         .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None, None)
+    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(
@@ -1987,7 +1993,7 @@ async fn list_undated_tasks_excludes_dated_tasks() {
         .await
         .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None, None)
+    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
         .await
         .unwrap();
     assert!(
@@ -2021,7 +2027,7 @@ async fn list_undated_tasks_excludes_deleted() {
         .await
         .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None, None)
+    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
         .await
         .unwrap();
     assert!(resp.items.is_empty(), "deleted blocks should be excluded");
@@ -2053,7 +2059,7 @@ async fn list_undated_tasks_pagination() {
     }
 
     // Page 1: limit = 2
-    let page1 = list_undated_tasks_inner(&pool, None, Some(2), None)
+    let page1 = list_undated_tasks_inner(&pool, None, Some(2), &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(page1.items.len(), 2, "first page should contain 2 items");
@@ -2067,7 +2073,7 @@ async fn list_undated_tasks_pagination() {
     );
 
     // Page 2: use cursor
-    let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2), None)
+    let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2), &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(
@@ -2169,7 +2175,7 @@ async fn list_projected_agenda_returns_next_cursor_when_capped_m25() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let page1 = list_projected_agenda_inner(&pool, start, end, None, Some(5), None)
+    let page1 = list_projected_agenda_inner(&pool, start, end, None, Some(5), &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(
@@ -2221,7 +2227,7 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
             end.clone(),
             cursor,
             Some(page_size),
-            None,
+            &SpaceScope::Global,
         )
         .await
         .unwrap();
@@ -2334,9 +2340,14 @@ async fn list_undated_tasks_returns_only_current_space_blocks_feat3p4() {
     })
     .await;
 
-    let resp = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_ID.into()))
-        .await
-        .unwrap();
+    let resp = list_undated_tasks_inner(
+        &pool,
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
     let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -2358,7 +2369,7 @@ async fn list_undated_tasks_with_none_space_id_returns_all_feat3p4() {
     })
     .await;
 
-    let resp = list_undated_tasks_inner(&pool, None, None, None)
+    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
         .await
         .unwrap();
     let ids: std::collections::HashSet<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
@@ -2385,9 +2396,14 @@ async fn list_undated_tasks_with_nonexistent_space_id_returns_empty_feat3p4() {
     })
     .await;
 
-    let resp = list_undated_tasks_inner(&pool, None, None, Some("DOES_NOT_EXIST".into()))
-        .await
-        .unwrap();
+    let resp = list_undated_tasks_inner(
+        &pool,
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST")),
+    )
+    .await
+    .unwrap();
     assert!(
         resp.items.is_empty(),
         "nonexistent space must return zero rows, not error; got {} items",
@@ -2414,12 +2430,22 @@ async fn list_undated_tasks_disjointness_feat3p4() {
     )
     .await;
 
-    let a = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_ID.into()))
-        .await
-        .unwrap();
-    let b = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_B_ID.into()))
-        .await
-        .unwrap();
+    let a = list_undated_tasks_inner(
+        &pool,
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    let b = list_undated_tasks_inner(
+        &pool,
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
     let a_ids: std::collections::HashSet<&str> = a.items.iter().map(|b| b.id.as_str()).collect();
     let b_ids: std::collections::HashSet<&str> = b.items.iter().map(|b| b.id.as_str()).collect();
     assert!(
@@ -2480,7 +2506,7 @@ async fn list_projected_agenda_returns_only_current_space_blocks_feat3p4() {
         "2026-04-09".into(),
         None,
         Some(50),
-        Some(TEST_SPACE_ID.into()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -2510,7 +2536,7 @@ async fn list_projected_agenda_with_none_space_id_returns_all_feat3p4() {
         "2026-04-09".into(),
         None,
         Some(50),
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -2534,7 +2560,7 @@ async fn list_projected_agenda_with_nonexistent_space_id_returns_empty_feat3p4()
         "2026-04-09".into(),
         None,
         Some(50),
-        Some("DOES_NOT_EXIST".into()),
+        &SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST")),
     )
     .await
     .unwrap();
@@ -2559,7 +2585,7 @@ async fn list_projected_agenda_disjointness_feat3p4() {
         "2026-04-08".into(),
         None,
         Some(50),
-        Some(TEST_SPACE_ID.into()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -2569,7 +2595,7 @@ async fn list_projected_agenda_disjointness_feat3p4() {
         "2026-04-08".into(),
         None,
         Some(50),
-        Some(TEST_SPACE_B_ID.into()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
     )
     .await
     .unwrap();
@@ -2617,10 +2643,13 @@ async fn count_agenda_batch_returns_only_current_space_blocks_feat3p4() {
     })
     .await;
 
-    let result =
-        count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], Some(TEST_SPACE_ID.into()))
-            .await
-            .unwrap();
+    let result = count_agenda_batch_inner(
+        &pool,
+        vec!["2025-08-01".into()],
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result.get("2025-08-01"),
         Some(&1),
@@ -2637,7 +2666,7 @@ async fn count_agenda_batch_with_none_space_id_returns_all_feat3p4() {
     })
     .await;
 
-    let result = count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], None)
+    let result = count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(
@@ -2659,7 +2688,7 @@ async fn count_agenda_batch_with_nonexistent_space_id_returns_empty_feat3p4() {
     let result = count_agenda_batch_inner(
         &pool,
         vec!["2025-08-01".into()],
-        Some("01NONEXISTENT0000000000000".into()),
+        &SpaceScope::Active(SpaceId::from_trusted("01NONEXISTENT0000000000000")),
     )
     .await
     .unwrap();
@@ -2684,16 +2713,102 @@ async fn count_agenda_batch_disjointness_feat3p4() {
     .await;
 
     let dates = vec!["2025-08-02".into()];
-    let a = count_agenda_batch_inner(&pool, dates.clone(), Some(TEST_SPACE_ID.into()))
+    let a = count_agenda_batch_inner(
+        &pool,
+        dates.clone(),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    let b = count_agenda_batch_inner(
+        &pool,
+        dates.clone(),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    let unscoped = count_agenda_batch_inner(&pool, dates, &SpaceScope::Global)
         .await
         .unwrap();
-    let b = count_agenda_batch_inner(&pool, dates.clone(), Some(TEST_SPACE_B_ID.into()))
-        .await
-        .unwrap();
-    let unscoped = count_agenda_batch_inner(&pool, dates, None).await.unwrap();
     assert_eq!(a.get("2025-08-02"), Some(&3));
     assert_eq!(b.get("2025-08-02"), Some(&2));
     assert_eq!(unscoped.get("2025-08-02"), Some(&5));
+}
+
+// ======================================================================
+// PEND-18 Phase 2 — parity: SpaceScope::Global ≡ pre-migration None-shape
+// ======================================================================
+//
+// `count_agenda_batch_inner` migrated from `space_id: Option<String>` to
+// `scope: &SpaceScope` in PEND-18 Phase 2. The bind site uses
+// `scope.as_filter_param()` which returns `Option<&str>` — the same
+// shape the pre-migration code passed to the SQL `?N IS NULL OR ...`
+// idiom. This test pins that equivalence: with the count fn now
+// taking `&SpaceScope`, `Global` must include rows from BOTH spaces
+// (matching the old `None` semantics) while `Active(SpaceId)` returns
+// only the in-scope subset. If `Global` ever stops behaving like the
+// pre-migration `None`, this test fails — the contract for "delete
+// the old shape only when parity holds" (plan body, Phase 2 strategy).
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_inner_global_equals_pre_migration_none() {
+    let (pool, _dir) = test_pool().await;
+    // Seed two blocks on the same date, one per space.
+    seed_two_space_blocks(&pool, &["PAR_A1"], &["PAR_B1"], async |pool, id| {
+        insert_block(pool, id, "content", "x", None, None).await;
+        insert_agenda_cache_row(pool, "2025-10-15", id).await;
+    })
+    .await;
+
+    let dates = vec!["2025-10-15".into()];
+
+    // Global: must include both spaces (parity with pre-migration None).
+    let counts_global = count_agenda_batch_inner(&pool, dates.clone(), &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        counts_global.get("2025-10-15"),
+        Some(&2),
+        "Global must count both space-A and space-B blocks (parity with pre-migration `None`); got {counts_global:?}"
+    );
+
+    // Active(A): must include only space A.
+    let counts_a = count_agenda_batch_inner(
+        &pool,
+        dates.clone(),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        counts_a.get("2025-10-15"),
+        Some(&1),
+        "Active(A) must count only space-A blocks; got {counts_a:?}"
+    );
+
+    // Active(B): must include only space B.
+    let counts_b = count_agenda_batch_inner(
+        &pool,
+        dates,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        counts_b.get("2025-10-15"),
+        Some(&1),
+        "Active(B) must count only space-B blocks; got {counts_b:?}"
+    );
+
+    // The union of disjoint Active scopes equals the Global count —
+    // the algebraic identity that justifies dropping the old
+    // `Option<String>` shape.
+    assert_eq!(
+        counts_a.get("2025-10-15").copied().unwrap_or(0)
+            + counts_b.get("2025-10-15").copied().unwrap_or(0),
+        counts_global.get("2025-10-15").copied().unwrap_or(0),
+        "Active(A) + Active(B) must equal Global (disjoint-union identity)"
+    );
 }
 
 // ======================================================================
@@ -2729,7 +2844,7 @@ async fn count_agenda_batch_by_source_returns_only_current_space_blocks_feat3p4(
     let result = count_agenda_batch_by_source_inner(
         &pool,
         vec!["2025-09-15".into()],
-        Some(TEST_SPACE_ID.into()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -2748,9 +2863,10 @@ async fn count_agenda_batch_by_source_with_none_space_id_returns_all_feat3p4() {
     })
     .await;
 
-    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-15".into()], None)
-        .await
-        .unwrap();
+    let result =
+        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-15".into()], &SpaceScope::Global)
+            .await
+            .unwrap();
     let inner = result.get("2025-09-15").unwrap();
     assert_eq!(inner.get("property:due_date"), Some(&2));
 }
@@ -2767,7 +2883,7 @@ async fn count_agenda_batch_by_source_with_nonexistent_space_id_returns_empty_fe
     let result = count_agenda_batch_by_source_inner(
         &pool,
         vec!["2025-09-15".into()],
-        Some("01NONEXISTENT0000000000000".into()),
+        &SpaceScope::Active(SpaceId::from_trusted("01NONEXISTENT0000000000000")),
     )
     .await
     .unwrap();
@@ -2789,13 +2905,21 @@ async fn count_agenda_batch_by_source_disjointness_feat3p4() {
     .await;
 
     let dates = vec!["2025-09-16".into()];
-    let a = count_agenda_batch_by_source_inner(&pool, dates.clone(), Some(TEST_SPACE_ID.into()))
-        .await
-        .unwrap();
-    let b = count_agenda_batch_by_source_inner(&pool, dates.clone(), Some(TEST_SPACE_B_ID.into()))
-        .await
-        .unwrap();
-    let unscoped = count_agenda_batch_by_source_inner(&pool, dates, None)
+    let a = count_agenda_batch_by_source_inner(
+        &pool,
+        dates.clone(),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    let b = count_agenda_batch_by_source_inner(
+        &pool,
+        dates.clone(),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    let unscoped = count_agenda_batch_by_source_inner(&pool, dates, &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(a["2025-09-16"]["property:due_date"], 3);
@@ -3095,7 +3219,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
             "2051-05-01".into(),
             cursor.clone(),
             Some(500),
-            None,
+            &SpaceScope::Global,
         )
         .await
         .unwrap();
@@ -3299,5 +3423,65 @@ async fn malformed_repeat_until_is_warned_and_skipped() {
         entries.is_empty(),
         "block with malformed repeat-until must be skipped; got {} entries",
         entries.len()
+    );
+}
+
+// ======================================================================
+// PEND-18 Phase 2 — SpaceScope parity test
+// ======================================================================
+//
+// Asserts that `count_agenda_batch_inner` honours the `&SpaceScope`
+// boundary correctly: `Global` returns the union across spaces, while
+// `Active(SpaceId)` returns only the named space's subset. Mirror of the
+// pre-migration `space_id: None` / `Some(...)` semantics — same SQL, the
+// type-system gate moved to the call site.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pend18_count_agenda_batch_scope_parity() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two distinct spaces, one block each, both on the same date so the
+    // per-date count surfaces the cross-space union vs. one-space slice.
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "P18_AG_A", "content", "task A", None, None).await;
+    insert_block(&pool, "P18_AG_B", "content", "task B", None, None).await;
+    assign_to_space(&pool, "P18_AG_A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "P18_AG_B", TEST_SPACE_B_ID).await;
+
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2026-09-01")
+        .bind("P18_AG_A")
+        .bind("column:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2026-09-01")
+        .bind("P18_AG_B")
+        .bind("column:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let global = count_agenda_batch_inner(&pool, vec!["2026-09-01".into()], &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global.get("2026-09-01"),
+        Some(&2),
+        "Global must return the union of both spaces"
+    );
+
+    let active_a = count_agenda_batch_inner(
+        &pool,
+        vec!["2026-09-01".into()],
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_a.get("2026-09-01"),
+        Some(&1),
+        "Active(TEST_SPACE_ID) must return only space A's subset"
     );
 }

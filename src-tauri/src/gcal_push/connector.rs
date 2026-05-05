@@ -661,10 +661,10 @@ async fn push_date(
             date_str.clone(),
             None,
             Some(AGENDA_FETCH_LIMIT),
-            // FEAT-3p4 — `None` keeps the current cross-space behaviour for
-            // the single-calendar GCal push. FEAT-3p9 will branch by space
-            // and pass the per-space `space_id` here.
-            None,
+            // FEAT-3p4 — `SpaceScope::Global` keeps the current cross-space
+            // behaviour for the single-calendar GCal push. FEAT-3p9 will
+            // branch by space and pass `SpaceScope::Active(space_id)` here.
+            &crate::space::SpaceScope::Global,
         )
         .await
         .map_err(DateFailure::Other)?

@@ -413,7 +413,7 @@ async fn create_block_rejects_page_without_space_id() {
         .await
         .unwrap();
 
-    // `block_type = "page"` AND `space_id is None` → Validation error.
+    // `block_type = "page"` AND `scope == Global` → Validation error.
     // The page must NEVER be created, never appended to op_log.
     let result = create_block_inner_with_space(
         &pool,
@@ -423,7 +423,7 @@ async fn create_block_rejects_page_without_space_id() {
         "Untitled leak".into(),
         None,
         None,
-        None, // <-- no space_id
+        &SpaceScope::Global, // <-- no space_id
     )
     .await;
 
@@ -474,7 +474,9 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
         "Hello space".into(),
         None,
         None,
-        Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID.to_owned()),
+        &SpaceScope::Active(SpaceId::from_trusted(
+            crate::spaces::bootstrap::SPACE_PERSONAL_ULID,
+        )),
     )
     .await
     .expect("create_block(page, spaceId=Personal) must succeed");
@@ -567,13 +569,15 @@ async fn create_block_non_page_ignores_space_id() {
         "Parent".into(),
         None,
         None,
-        Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID.into()),
+        &SpaceScope::Active(SpaceId::from_trusted(
+            crate::spaces::bootstrap::SPACE_PERSONAL_ULID,
+        )),
     )
     .await
     .unwrap();
 
-    // Content blocks are unaffected by the `space_id` parameter — pass
-    // None or Some, behavior is identical.
+    // Content blocks are unaffected by the `scope` parameter — pass
+    // Global or Active, behavior is identical.
     let block = create_block_inner_with_space(
         &pool,
         DEV,
@@ -582,7 +586,7 @@ async fn create_block_non_page_ignores_space_id() {
         "child".into(),
         Some(page.id.clone()),
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .expect("content block create must succeed without space_id");
@@ -4144,4 +4148,51 @@ async fn move_block_cycle_detection_ignores_conflict_copies_i_commandscrud_13() 
          must NOT be flagged as a cycle; the is_conflict = 0 filter on the \
          recursive CTE must prune the walk at the conflict copy. Got: {move_under_cc_chain:?}"
     );
+}
+
+// ======================================================================
+// PEND-18 Phase 2 — SpaceScope parity test (blocks/queries.rs)
+// ======================================================================
+//
+// Asserts that `batch_resolve_inner` honours the `&SpaceScope` boundary:
+// `Global` returns the union across spaces (FEAT-3p4 cross-space behaviour),
+// while `Active(SpaceId)` drops foreign-space targets so the frontend's
+// resolve store renders them via the broken-link branch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pend18_batch_resolve_scope_parity() {
+    let (pool, _dir) = test_pool().await;
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "P18_BR_A", "page", "Page A", None, None).await;
+    insert_block(&pool, "P18_BR_B", "page", "Page B", None, None).await;
+    assign_to_space(&pool, "P18_BR_A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "P18_BR_B", TEST_SPACE_B_ID).await;
+
+    let global = batch_resolve_inner(
+        &pool,
+        vec!["P18_BR_A".into(), "P18_BR_B".into()],
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        global.len(),
+        2,
+        "Global must resolve both spaces' pages; got {global:?}"
+    );
+
+    let active_a = batch_resolve_inner(
+        &pool,
+        vec!["P18_BR_A".into(), "P18_BR_B".into()],
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_a.len(),
+        1,
+        "Active(TEST_SPACE_ID) must drop the foreign-space target; got {active_a:?}"
+    );
+    assert_eq!(active_a[0].id, "P18_BR_A");
 }

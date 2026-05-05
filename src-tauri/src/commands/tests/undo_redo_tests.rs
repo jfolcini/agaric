@@ -98,9 +98,16 @@ async fn list_page_history_returns_ops_for_page_descendants() {
     .await
     .unwrap();
 
-    let result = list_page_history_inner(&pool, page_id.clone(), None, None, None, None)
-        .await
-        .unwrap();
+    let result = list_page_history_inner(
+        &pool,
+        page_id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // Should include: create_block (page), create_block (child1), create_block (child2), edit_block (child1)
     assert_eq!(
@@ -139,7 +146,7 @@ async fn list_page_history_with_op_type_filter() {
         &pool,
         page_id.clone(),
         Some("edit_block".into()),
-        None,
+        &SpaceScope::Global,
         None,
         None,
     )
@@ -166,9 +173,16 @@ async fn list_page_history_pagination_works() {
         .unwrap();
 
     // Page 1: limit 2
-    let page1 = list_page_history_inner(&pool, page_id.clone(), None, None, None, Some(2))
-        .await
-        .unwrap();
+    let page1 = list_page_history_inner(
+        &pool,
+        page_id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
     assert_eq!(page1.items.len(), 2, "first page should have 2 items");
     assert!(page1.has_more, "should have more items");
     assert!(page1.next_cursor.is_some(), "should have a cursor");
@@ -178,7 +192,7 @@ async fn list_page_history_pagination_works() {
         &pool,
         page_id.clone(),
         None,
-        None,
+        &SpaceScope::Global,
         page1.next_cursor,
         Some(2),
     )
@@ -222,9 +236,16 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
     mat.flush_background().await.unwrap();
 
     // __all__ should return ops from both pages
-    let result = list_page_history_inner(&pool, "__all__".to_string(), None, None, None, None)
-        .await
-        .unwrap();
+    let result = list_page_history_inner(
+        &pool,
+        "__all__".to_string(),
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // page_a (1 create) + 2 children + page_b (1 create) + child_b (1 create) = 5
     assert_eq!(
@@ -254,9 +275,16 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
     );
 
     // Pagination: limit=2
-    let page1 = list_page_history_inner(&pool, "__all__".to_string(), None, None, None, Some(2))
-        .await
-        .unwrap();
+    let page1 = list_page_history_inner(
+        &pool,
+        "__all__".to_string(),
+        None,
+        &SpaceScope::Global,
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
     assert_eq!(page1.items.len(), 2, "first page should have 2 items");
     assert!(page1.has_more, "should have more items");
     assert!(page1.next_cursor.is_some(), "should have a cursor");
@@ -265,7 +293,7 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
         &pool,
         "__all__".to_string(),
         None,
-        None,
+        &SpaceScope::Global,
         page1.next_cursor,
         Some(2),
     )
@@ -278,7 +306,7 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
         &pool,
         "__all__".to_string(),
         None,
-        None,
+        &SpaceScope::Global,
         page2.next_cursor,
         Some(2),
     )
@@ -2718,9 +2746,16 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
     .await
     .unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
-        .await
-        .unwrap();
+    let result = list_page_history_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // 4 creates + 3 edits = 7 ops
     assert_eq!(
@@ -2790,9 +2825,16 @@ async fn list_page_history_includes_ops_for_deleted_blocks() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
-        .await
-        .unwrap();
+    let result = list_page_history_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // Ops: create page + create child + edit child + delete child = 4
     assert_eq!(
@@ -2834,9 +2876,16 @@ async fn list_page_history_empty_page_returns_only_create() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
-        .await
-        .unwrap();
+    let result = list_page_history_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.items.len(),
@@ -3115,14 +3164,28 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
     mat.flush_background().await.unwrap();
 
     // Query page A history — child is no longer under A
-    let history_a = list_page_history_inner(&pool, page_a.id.clone(), None, None, None, Some(50))
-        .await
-        .unwrap();
+    let history_a = list_page_history_inner(
+        &pool,
+        page_a.id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
 
     // Query page B history — child is now under B
-    let history_b = list_page_history_inner(&pool, page_b.id.clone(), None, None, None, Some(50))
-        .await
-        .unwrap();
+    let history_b = list_page_history_inner(
+        &pool,
+        page_b.id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
 
     // Verify page B contains the child's ops (create, edit, move)
     let child_ops_in_b: Vec<_> = history_b
@@ -3773,9 +3836,16 @@ async fn list_page_history_excludes_ops_on_conflict_copy_descendants() {
     });
     op_log::append_local_op(&pool, DEV, payload).await.unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
-        .await
-        .unwrap();
+    let result = list_page_history_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // Expected: create_block(page) + create_block(real_child) = 2 ops.
     assert_eq!(
@@ -3969,4 +4039,86 @@ async fn restore_page_to_op_ignores_ops_on_conflict_copy_descendants() {
         Some("original".into()),
         "real child must revert to original"
     );
+}
+
+// ======================================================================
+// PEND-18 Phase 2 — SpaceScope parity test (commands/history.rs)
+// ======================================================================
+//
+// Asserts that `list_page_history_inner` honours the `&SpaceScope`
+// boundary in `__all__` (cross-page) mode: `Global` returns the union
+// across spaces, `Active(SpaceId)` narrows to the named space.
+// Per-page mode is space-bound by `page_id` already, so the scope is a
+// no-op there (ignored at the SQL bind site).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pend18_list_page_history_scope_parity() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two pages, one per space — each `create_block_inner` appends one
+    // CreateBlock op so the cross-page history surfaces both.
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    let page_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page A".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let page_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page B".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assign_to_space(&pool, &page_a.id, TEST_SPACE_ID).await;
+    assign_to_space(&pool, &page_b.id, TEST_SPACE_B_ID).await;
+
+    let global = list_page_history_inner(
+        &pool,
+        "__all__".into(),
+        None,
+        &SpaceScope::Global,
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
+    assert!(
+        global.items.len() >= 2,
+        "Global must include ops from both spaces; got {} items",
+        global.items.len()
+    );
+
+    let active_a = list_page_history_inner(
+        &pool,
+        "__all__".into(),
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
+    assert!(
+        active_a.items.iter().all(|e| {
+            let payload: serde_json::Value = serde_json::from_str(&e.payload).unwrap();
+            payload["block_id"].as_str() == Some(page_a.id.as_str())
+        }),
+        "Active(TEST_SPACE_ID) must restrict ops to space A's blocks; got {} items",
+        active_a.items.len()
+    );
+
+    mat.shutdown();
 }

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tracing::instrument;
 
 use super::super::*;
+use crate::space::{SpaceId, SpaceScope};
 
 /// MAINT-147 (a): collapse the ~10 near-identical
 /// `DELETE FROM <table> WHERE <col> IN (SELECT id FROM descendants)`
@@ -301,13 +302,13 @@ pub async fn create_block_inner(
 /// Wraps [`create_block_inner`] with the FEAT-3 invariant
 /// "every page belongs to a space". When `block_type == "page"`:
 ///
-/// * `space_id is None` → return [`AppError::Validation`]; the caller
-///   must use [`create_page_in_space_inner`] semantics or pass the
-///   active space's ULID through this IPC. No op is appended, the
-///   page is rejected at the IPC boundary so a misbehaving frontend
+/// * `scope == SpaceScope::Global` → return [`AppError::Validation`];
+///   the caller must use [`create_page_in_space_inner`] semantics or
+///   pass the active space's ULID through this IPC. No op is appended,
+///   the page is rejected at the IPC boundary so a misbehaving frontend
 ///   (e.g. a stale `createBlock({ blockType: 'page' })` callsite)
 ///   cannot leak unscoped pages into the materialized state.
-/// * `space_id is Some(sid)` → delegates to
+/// * `scope == SpaceScope::Active(sid)` → delegates to
 ///   [`crate::commands::spaces::create_page_in_space_inner`] which
 ///   emits `CreateBlock` + `SetProperty(space=<sid>)` inside a single
 ///   `BEGIN IMMEDIATE` transaction.
@@ -322,11 +323,12 @@ pub async fn create_block_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `block_type == "page"` AND
-///   `space_id is None`, or `space_id` does not refer to a live space
-///   block (propagated from `create_page_in_space_inner`).
+///   `scope == SpaceScope::Global`, or the wrapped [`SpaceId`] does
+///   not refer to a live space block (propagated from
+///   `create_page_in_space_inner`).
 /// - All errors from [`create_block_inner`] propagate unchanged for
 ///   non-page block types.
-// 8 args (one over the clippy threshold of 7) — adding `space_id` to the
+// 8 args (one over the clippy threshold of 7) — adding `scope` to the
 // existing 7-arg `create_block_inner` shape is the cleanest way to satisfy
 // the BUG-1 invariant without forcing every non-page caller to flip to a
 // builder pattern. Restructuring into an args struct would touch hundreds
@@ -341,10 +343,10 @@ pub async fn create_block_inner_with_space(
     content: String,
     parent_id: Option<String>,
     position: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<BlockRow, AppError> {
     if block_type == "page" {
-        let Some(sid) = space_id else {
+        let SpaceScope::Active(sid) = scope else {
             return Err(AppError::Validation(
                 "page blocks require space_id (BUG-1 / H-3a): \
                  use createPageInSpace or pass the active space's ULID"
@@ -373,7 +375,7 @@ pub async fn create_block_inner_with_space(
             materializer,
             parent_id,
             content,
-            sid,
+            sid.as_str().to_owned(),
         )
         .await?;
 
@@ -390,9 +392,9 @@ pub async fn create_block_inner_with_space(
         return get_active_block_inner(pool, new_page_id.into_string()).await;
     }
 
-    // Non-page block types ignore `space_id` and follow the legacy
-    // path — `content`, `tag` blocks have no space invariant.
-    let _ignore_space_id = space_id;
+    // Non-page block types ignore `scope` and follow the legacy path —
+    // `content`, `tag` blocks have no space invariant.
+    let _ignore_scope = scope;
     create_block_inner(
         pool,
         device_id,
@@ -1918,6 +1920,10 @@ pub async fn create_block(
     position: Option<i64>,
     space_id: Option<String>,
 ) -> Result<BlockRow, AppError> {
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
     create_block_inner_with_space(
         &pool.0,
         device_id.as_str(),
@@ -1926,7 +1932,7 @@ pub async fn create_block(
         content,
         parent_id,
         position,
-        space_id,
+        &scope,
     )
     .await
     .map_err(sanitize_internal_error)

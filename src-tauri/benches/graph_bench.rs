@@ -8,6 +8,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 
 use agaric_lib::commands::list_page_links_inner;
 use agaric_lib::db::init_pool;
+use agaric_lib::space::SpaceScope;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -102,7 +103,11 @@ fn bench_list_page_links(c: &mut Criterion) {
             |b, _| {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
-                    async move { list_page_links_inner(&pool, None).await.unwrap() }
+                    async move {
+                        list_page_links_inner(&pool, &SpaceScope::Global)
+                            .await
+                            .unwrap()
+                    }
                 })
             },
         );

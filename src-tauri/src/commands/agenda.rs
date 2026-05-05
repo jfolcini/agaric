@@ -10,6 +10,7 @@ use tauri::State;
 use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::pagination::{ActiveBlockRow, ActiveProjectedAgendaEntry, Cursor};
+use crate::space::{SpaceId, SpaceScope};
 
 use super::*;
 
@@ -18,10 +19,10 @@ use super::*;
 /// Returns a `HashMap<date, count>` for dates that have at least one matching
 /// agenda entry whose owning block is not soft-deleted.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the count to blocks
-/// whose owning page carries `space = ?space_id`. `None` is the
-/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
-/// not migrated.
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the count to
+/// blocks whose owning page carries `space = ?space_id`.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// preserved for callsites that span every space.
 ///
 /// # Errors
 ///
@@ -30,7 +31,7 @@ use super::*;
 pub async fn count_agenda_batch_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
     if dates.is_empty() {
         return Ok(HashMap::new());
@@ -45,13 +46,14 @@ pub async fn count_agenda_batch_inner(
     // through `sqlx::query!` for compile-time SQL verification (AGENTS.md
     // invariant #6). Mirrors the sibling `count_agenda_batch_by_source_inner`.
     //
-    // FEAT-3p4 — ?2 (space_id) drives the shared space-filter clause.
+    // FEAT-3p4 — ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors `crate::space_filter_clause!` — kept inline
     // here because `sqlx::query!` requires a string literal and does
     // not accept `concat!()`. Resolves the agenda-cached block to its
     // owning page via `COALESCE(b.page_id, b.id)` and intersects
     // against `block_properties(key = 'space').value_ref`.
     let dates_json = serde_json::to_string(&dates)?;
+    let space_filter = scope.as_filter_param();
     let rows = sqlx::query!(
         r#"SELECT ac.date, COUNT(*) AS "cnt!: i64"
          FROM agenda_cache ac
@@ -63,7 +65,7 @@ pub async fn count_agenda_batch_inner(
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))
          GROUP BY ac.date"#,
         dates_json,
-        space_id,
+        space_filter,
     )
     .fetch_all(pool)
     .await?;
@@ -85,10 +87,10 @@ pub async fn count_agenda_batch_inner(
 /// Returns a nested map: `date -> source -> count`. Only includes entries
 /// whose owning block is not soft-deleted.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the count to blocks
-/// whose owning page carries `space = ?space_id`. `None` is the
-/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
-/// not migrated.
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the count to
+/// blocks whose owning page carries `space = ?space_id`.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// preserved for callsites that span every space.
 ///
 /// # Errors
 ///
@@ -97,7 +99,7 @@ pub async fn count_agenda_batch_inner(
 pub async fn count_agenda_batch_by_source_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {
     if dates.is_empty() {
         return Ok(HashMap::new());
@@ -106,7 +108,7 @@ pub async fn count_agenda_batch_by_source_inner(
         validate_date_format(d)?;
     }
     let dates_json = serde_json::to_string(&dates)?;
-    // FEAT-3p4 — ?2 (space_id) drives the shared space-filter clause.
+    // FEAT-3p4 — ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors `crate::space_filter_clause!` — kept inline
     // here because this is dynamic SQL (`sqlx::query_as`) which cannot
     // reuse the macro form. Resolves the agenda-cached block to its
@@ -123,7 +125,7 @@ pub async fn count_agenda_batch_by_source_inner(
          GROUP BY ac.date, ac.source";
     let rows = sqlx::query_as::<_, (String, String, i64)>(sql)
         .bind(dates_json)
-        .bind(space_id.as_deref())
+        .bind(scope.as_filter_param())
         .fetch_all(pool)
         .await?;
     let mut result: HashMap<String, HashMap<String, usize>> = HashMap::new();
@@ -170,7 +172,7 @@ pub async fn list_projected_agenda_inner(
     end_date: String,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
     let today = chrono::Local::now().date_naive();
     validate_date_format(&start_date)?;
@@ -270,7 +272,7 @@ pub async fn list_projected_agenda_inner(
     .bind(cursor_date)
     .bind(cursor_id)
     .bind(fetch_limit)
-    .bind(space_id.as_deref())
+    .bind(scope.as_filter_param())
     .fetch_all(pool)
     .await?;
 
@@ -286,7 +288,7 @@ pub async fn list_projected_agenda_inner(
             limit_i64,
             today,
             after.as_ref(),
-            space_id.as_deref(),
+            scope.as_filter_param(),
         )
         .await;
     }
@@ -662,7 +664,11 @@ pub async fn count_agenda_batch(
     dates: Vec<String>,
     space_id: Option<String>,
 ) -> Result<HashMap<String, usize>, AppError> {
-    count_agenda_batch_inner(&read_pool.0, dates, space_id)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    count_agenda_batch_inner(&read_pool.0, dates, &scope)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -676,7 +682,11 @@ pub async fn count_agenda_batch_by_source(
     dates: Vec<String>,
     space_id: Option<String>,
 ) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {
-    count_agenda_batch_by_source_inner(&read_pool.0, dates, space_id)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    count_agenda_batch_by_source_inner(&read_pool.0, dates, &scope)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -697,7 +707,11 @@ pub async fn list_projected_agenda(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
-    list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit, space_id)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -705,19 +719,20 @@ pub async fn list_projected_agenda(
 /// List undated tasks: blocks with todo_state but no due_date and no scheduled_date.
 /// Cursor-paginated.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
-/// whose owning page carries `space = ?space_id`. `None` is the unscoped
-/// (pre-FEAT-3) behaviour preserved for callsites that have not migrated.
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// to blocks whose owning page carries `space = ?space_id`.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// preserved for callsites that span every space.
 #[instrument(skip(pool), err)]
 pub async fn list_undated_tasks_inner(
     pool: &SqlitePool,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     use crate::pagination;
     let page_req = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_undated_tasks(pool, &page_req, space_id.as_deref()).await
+    pagination::list_undated_tasks(pool, &page_req, scope.as_filter_param()).await
 }
 
 /// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
@@ -730,7 +745,11 @@ pub async fn list_undated_tasks(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    list_undated_tasks_inner(&pool.0, cursor, limit, space_id)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    list_undated_tasks_inner(&pool.0, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -787,7 +806,7 @@ mod tests_m24 {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn count_agenda_batch_with_empty_input() {
         let (pool, _dir) = test_pool().await;
-        let result = count_agenda_batch_inner(&pool, vec![], None)
+        let result = count_agenda_batch_inner(&pool, vec![], &SpaceScope::Global)
             .await
             .expect("empty input must succeed");
         assert!(
@@ -820,10 +839,13 @@ mod tests_m24 {
         insert_agenda_row(&pool, "2025-03-03", "M24_BLK_C").await;
 
         // Query a subset: only the first two dates.
-        let result =
-            count_agenda_batch_inner(&pool, vec!["2025-03-01".into(), "2025-03-02".into()], None)
-                .await
-                .expect("count_agenda_batch_inner must succeed on valid dates");
+        let result = count_agenda_batch_inner(
+            &pool,
+            vec!["2025-03-01".into(), "2025-03-02".into()],
+            &SpaceScope::Global,
+        )
+        .await
+        .expect("count_agenda_batch_inner must succeed on valid dates");
 
         assert_eq!(
             result.get("2025-03-01"),
@@ -861,10 +883,13 @@ mod tests_m24 {
         // semantics (`GROUP BY ac.date` over the join), dates with no rows
         // are simply absent from the returned map — they do NOT show up
         // with a count of 0.
-        let result =
-            count_agenda_batch_inner(&pool, vec!["2025-05-01".into(), "2025-05-02".into()], None)
-                .await
-                .expect("unknown dates must not error");
+        let result = count_agenda_batch_inner(
+            &pool,
+            vec!["2025-05-01".into(), "2025-05-02".into()],
+            &SpaceScope::Global,
+        )
+        .await
+        .expect("unknown dates must not error");
 
         assert!(
             !result.contains_key("2025-05-01"),
@@ -882,10 +907,13 @@ mod tests_m24 {
         // Mixed query: one known date (with rows) + one unknown date.
         // Confirms the unknown date is silently omitted while the known
         // one still produces the correct count.
-        let mixed =
-            count_agenda_batch_inner(&pool, vec!["2025-04-01".into(), "2025-05-01".into()], None)
-                .await
-                .expect("mixed known+unknown dates must succeed");
+        let mixed = count_agenda_batch_inner(
+            &pool,
+            vec!["2025-04-01".into(), "2025-05-01".into()],
+            &SpaceScope::Global,
+        )
+        .await
+        .expect("mixed known+unknown dates must succeed");
         assert_eq!(
             mixed.get("2025-04-01"),
             Some(&1),

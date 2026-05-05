@@ -57,6 +57,7 @@ use crate::commands::{
 };
 use crate::error::AppError;
 use crate::materializer::Materializer;
+use crate::space::{SpaceId, SpaceScope};
 
 // ---------------------------------------------------------------------------
 // Typed argument structs (one per tool)
@@ -492,6 +493,7 @@ async fn handle_create_page(
     // `BEGIN IMMEDIATE` transaction so the page never exists in the
     // op log without its space stamp.
     let space_id = normalize_ulid_arg(&args.space_id);
+    let scope = SpaceScope::Active(SpaceId::from_string(space_id)?);
     let resp = create_block_inner_with_space(
         pool,
         device_id,
@@ -500,7 +502,7 @@ async fn handle_create_page(
         args.title,
         None,
         None,
-        Some(space_id),
+        &scope,
     )
     .await?;
     to_tool_result(&resp)

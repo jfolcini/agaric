@@ -493,3 +493,75 @@ async fn list_tags_empty_result_returns_no_cursor_m85() {
     assert!(page.next_cursor.is_none(), "empty result must not paginate");
     assert!(!page.has_more, "empty result must report has_more=false");
 }
+
+// ======================================================================
+// PEND-18 Phase 2 — SpaceScope parity test
+// ======================================================================
+//
+// Asserts that `query_by_tags_inner` honours the `&SpaceScope` boundary:
+// `Global` returns the union across spaces, `Active(SpaceId)` returns
+// only the named space's subset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pend18_query_by_tags_scope_parity() {
+    use crate::space::{SpaceId, SpaceScope};
+    let (pool, _dir) = test_pool().await;
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "P18_TG_T", "tag", "shared", None, None).await;
+    insert_block(&pool, "P18_TG_A", "content", "block A", None, None).await;
+    insert_block(&pool, "P18_TG_B", "content", "block B", None, None).await;
+
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind("P18_TG_A")
+        .bind("P18_TG_T")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind("P18_TG_B")
+        .bind("P18_TG_T")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assign_to_space(&pool, "P18_TG_A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "P18_TG_B", TEST_SPACE_B_ID).await;
+
+    let global = query_by_tags_inner(
+        &pool,
+        vec!["P18_TG_T".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        global.items.len(),
+        2,
+        "Global must surface both spaces' blocks; got {global:?}"
+    );
+
+    let active_a = query_by_tags_inner(
+        &pool,
+        vec!["P18_TG_T".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_a.items.len(),
+        1,
+        "Active(TEST_SPACE_ID) must surface only space A's block; got {active_a:?}"
+    );
+    assert_eq!(active_a.items[0].id, "P18_TG_A");
+}

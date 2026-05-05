@@ -2758,7 +2758,7 @@ async fn projected_agenda_cache_oracle_matches_on_the_fly() {
         end.clone(),
         None,
         Some(500),
-        None,
+        &crate::space::SpaceScope::Global,
     )
     .await
     .unwrap();
