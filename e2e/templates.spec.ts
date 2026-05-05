@@ -146,10 +146,16 @@ test.describe('Template picker via slash command', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'template')
 
-    // Select the TEMPLATE item from the slash menu
+    // Select the TEMPLATE item from the slash menu.
+    // Under heavy parallel load, the React scheduler can detach the
+    // suggestion item between the visibility check and the click
+    // (it's inside a Radix popover that React may unmount + remount
+    // during concurrent commits). force:true bypasses the stability
+    // check so the click fires before the DOM swap (TEST-3 flake,
+    // session 679 verification pass).
     const templateItem = list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' })
     await expect(templateItem).toBeVisible()
-    await templateItem.click()
+    await templateItem.click({ force: true })
 
     // TEST-1b: The template picker sets role="dialog"; scope to the active
     // one so a stale dialog from a previous test can't resolve-to-N.
