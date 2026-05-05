@@ -681,7 +681,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             count.0,
-            GcalSettingKey::all().len() as i64,
+            i64::try_from(GcalSettingKey::all().len()).expect("key count fits in i64"),
             "migration must seed every known key"
         );
     }
