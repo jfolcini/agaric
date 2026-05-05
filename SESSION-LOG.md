@@ -125,7 +125,11 @@ One-file fix in `src/components/HistoryListItem.tsx` (lines ~540-562, inside the
 
 2 vitest cases added in `src/components/__tests__/HistoryListItem.test.tsx` (lines ~878-893, inside the existing `describe('BlockHistoryItem', …)` block): (a) `'shows lock affordance + non-reversible label on non-restorable rows (MAINT-220)'` renders a `create_block` entry (non-restorable per the operation_type allowlist) and asserts `screen.getByText('Non-reversible action')` is in the document; (b) `'does not show the lock affordance on restorable rows'` renders the default `edit_block` entry and asserts `screen.queryByText('Non-reversible action')` is null. Test text uses the actual translated string "Non-reversible action" (matching the i18n setup's behaviour for these keys), not the raw key — verified by inspecting other working `BlockHistoryItem` tests in the same file.
 
-Suite: 104/104 in `HistoryListItem.test.tsx` (was 102 — +2 from the new tests). 9581/9581 vitest overall.
+Reviewers (post-build, pipelined per PROMPT.md Phase 4 — 2 parallel background subagents):
+- **Technical reviewer (`subagent_explore`):** APPROVED CLEAN. Verified correctness (Lock+Tooltip placement at lines 549-561 inside `!isRestorable` branch matches legacy lines 330-344 byte-for-byte: same `h-3.5 w-3.5`, same wrapping span class `inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0`, same `aria-hidden="true"` SVG attr, same `TooltipContent` shape `<p>{t(...)}</p>`); test coverage (both branches, both tests would fail without the production change); conventions (reuses primitives from `ui/tooltip.tsx`, semantic `text-muted-foreground` token); architectural stability (component-internal, no new exports); surgical scope (only the strict MAINT-220 lines + 2 test additions, no adjacent improvements, no import rearrangement). i18n keys confirmed present at `src/lib/i18n/conflicts.ts:138` ("Non-reversible action") + `:265` ("Purges cannot be undone") — no new translations needed.
+- **UX reviewer (`subagent_explore`):** APPROVED CLEAN. Discoverability (clear icon + visible label + supplementary tooltip); consistency (pixel-perfect parity with legacy `HistoryListItem`); mobile parity (visible label is sufficient on its own per UX-351 "two cues" rationale, so the hover-only tooltip is a desktop-bonus, not a touch-blocker); visual coherence (`shrink-0` ensures no overflow on 320px viewports, `HistoryItemCore` has `min-w-0 flex-1` to absorb squeeze first, `text-muted-foreground` matches adjacent timestamp+device-id styling); edge cases (non-restorable rows aren't focusable so keyboard tooltip access is a minor non-blocker — the visible label compensates). One minor non-blocking observation: keyboard users on AT can't trigger the tooltip via Tab since the trigger is a `<span>` not a button — but the visible label is always rendered so tooltip is purely supplementary.
+
+Suite: 104/104 in `HistoryListItem.test.tsx` (was 102 — +2 from the new tests). 9581/9581 vitest overall (was 9579 — +2).
 
 **Files touched (this session):**
 
@@ -232,8 +236,9 @@ MAINT-223:
 
 MAINT-220:
 - `npx vitest run src/components/__tests__/HistoryListItem.test.tsx` — 104/104 pass (was 102 — +2 new BlockHistoryItem cases).
-- Frontend overall vitest run unchanged otherwise (no global state touched, no other test files affected).
-- `prek run` — green.
+- `npx vitest run` (full frontend suite) — 9581/9581 pass across 385 files (was 9579 — +2). Confirms no incidental regressions in adjacent components.
+- `prek run` — green at commit time.
+- Post-commit pipelined review (2 parallel `subagent_explore` background subagents): both APPROVED CLEAN — see MAINT-220 sub-section above for the verbatim review-dimension breakdown.
 
 **Process notes:**
 - The build subagent followed PROMPT.md's "kill-criteria" guidance correctly: stopped immediately, reported with definitive evidence (compiler error verbatim + sqlx source-line citations), and reverted the spike artifacts to leave a clean working tree. No reviewer needed because no code shipped.
