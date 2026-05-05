@@ -1,5 +1,7 @@
 # PEND-18 — `SpaceId` newtype + `SpaceScope` enum
 
+> **Status (Session 678):** Phase 0 spike LANDED. `SpaceId` newtype + `SpaceScope` tagged enum live in `src-tauri/src/space.rs`; specta emits the desired discriminated-union TS shape (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`); sqlx accepts `SpaceId` in column-cast position. A throwaway `pend18_spike_probe` Tauri command is registered in `agaric_commands!` — Phase 1's first deliverable is to remove it (probe + macro entry) and add the remaining `PartialEq<&str>/<str>/<String>` impls (mirroring `ActiveBlockId`) plus comprehensive tests. Phases 2/2.5/3 unchanged from the plan body below.
+
 ## Problem
 
 The Spaces architectural review verdict was **data model A, enforcement C+**. The enforcement gap: `space_id: Option<String>` is the contract across the codebase. Reviewer-corrected counts:

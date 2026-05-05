@@ -76,6 +76,10 @@ const KNOWN_UNWRAPPED = new Set([
   // body for the corresponding `commands.*` call.
   'compactOpLogCmd', // wrapped as `compactOpLog`
   'listAttachmentsBatch', // wrapped as `getBatchAttachments`
+  // (c) PEND-18 Phase 0 spike — throwaway IPC probe that round-trips a
+  // `SpaceScope` to validate specta + sqlx; deleted in Phase 1 alongside
+  // its registration in `agaric_commands!`. No wrapper needed.
+  'pend18SpikeProbe',
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')
