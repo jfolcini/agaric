@@ -239,6 +239,34 @@ describe('SpaceManageDialog', () => {
     expect(icon.getAttribute('aria-hidden')).toBe('true')
   })
 
+  // PEND-23 L3 — swatches paint via the CSS custom property tied to the
+  // accent token, not a hardcoded Tailwind `bg-*-500` class. This keeps
+  // theme switching (Solarized, Dracula, OneDarkPro) honest: the fill
+  // follows the active theme's `--accent-*` value automatically.
+  it('renders accent swatches with CSS-var inline backgroundColor (PEND-23 L3)', async () => {
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    const groups = await screen.findAllByRole('group', {
+      name: t('space.accentColorLabel'),
+    })
+    const personalGroup = groups[0] as HTMLElement
+    const swatches = within(personalGroup).getAllByRole('button', {
+      name: /accent/i,
+    })
+
+    expect(swatches.length).toBeGreaterThan(0)
+    for (const btn of swatches) {
+      const token = btn.getAttribute('data-accent-token') ?? ''
+      expect(token).toMatch(/^accent-/)
+      // Inline style drives the swatch fill from the CSS custom property.
+      // Read the raw `style` attribute because jsdom does not resolve
+      // `var(...)` through the CSSOM `style.backgroundColor` accessor.
+      expect(btn.getAttribute('style') ?? '').toContain(`background-color: var(--${token})`)
+      // No hardcoded Tailwind `bg-*-500` escape hatch on the className.
+      expect(btn.className).not.toMatch(/\bbg-[a-z]+-500\b/)
+    }
+  })
+
   it('disables the delete button when the space has at least one page', async () => {
     // Probe returns a non-empty page → Delete must be disabled.
     mockedInvoke.mockImplementation(async (cmd: string) => {

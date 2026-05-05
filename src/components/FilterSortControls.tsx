@@ -65,7 +65,7 @@ export function FilterSortControls({
       <Button
         variant="ghost"
         size="xs"
-        className="h-7 px-1 text-xs [@media(pointer:coarse)]:min-h-[44px]"
+        className="h-7 px-1 text-xs [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-2"
         onClick={onSortDirToggle}
         disabled={!sort}
         aria-label={

@@ -172,7 +172,12 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             <ChevronDown className="h-3.5 w-3.5" />
             {t('diff.nextHunk')}
           </Button>
-          <span className="text-xs text-muted-foreground" data-testid="diff-hunk-counter">
+          <span
+            className="text-xs text-muted-foreground"
+            data-testid="diff-hunk-counter"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             {t('diff.hunkCounter', {
               current: currentHunk + 1,
               total: hunkStarts.length,

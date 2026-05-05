@@ -396,6 +396,16 @@ describe('KeyboardSettingsTab', () => {
     })
   })
 
+  // PEND-28 M10 — uses `dvh` (dynamic viewport height) so the scroll area
+  // does not flicker as the mobile address bar collapses/expands.
+  it('PEND-28 M10: scroll area uses 60dvh, not 60vh', () => {
+    const { container } = render(<KeyboardSettingsTab />)
+    const scrollArea = container.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
+    expect(scrollArea).not.toBeNull()
+    expect(scrollArea?.className).toContain('max-h-[60dvh]')
+    expect(scrollArea?.className).not.toContain('max-h-[60vh]')
+  })
+
   it('UX-223: renders the Ctrl token as ⌘ on macOS', async () => {
     vi.resetModules()
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform')

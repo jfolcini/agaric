@@ -140,7 +140,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
         <p className="text-sm text-muted-foreground">{t('keyboard.settings.description')}</p>
       </div>
 
-      <ScrollArea className="max-h-[60vh]">
+      <ScrollArea className="max-h-[60dvh]">
         {[...grouped.entries()].map(([category, items]) => (
           <div key={category} className="mb-6">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">

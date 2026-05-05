@@ -421,5 +421,25 @@ describe('DiffDisplay', () => {
       expect(nav).not.toBeNull()
       expect(nav?.className).toContain('flex-wrap')
     })
+
+    // PEND-23 L5: SR users navigating with prev/next must hear the
+    // counter update. The counter span is wrapped in a polite live region
+    // with aria-atomic so the whole "X of Y" string is re-announced on
+    // every step, not just the changed digit.
+    it('PEND-23 L5: hunk counter has aria-live=polite and aria-atomic=true', () => {
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'a '),
+        makeSpan('Insert', 'one'),
+        makeSpan('Equal', ' b '),
+        makeSpan('Delete', 'two'),
+        makeSpan('Equal', ' c'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      const counter = screen.getByTestId('diff-hunk-counter')
+      expect(counter).toHaveAttribute('aria-live', 'polite')
+      expect(counter).toHaveAttribute('aria-atomic', 'true')
+    })
   })
 })

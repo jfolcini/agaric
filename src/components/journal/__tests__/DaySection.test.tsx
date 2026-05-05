@@ -617,6 +617,19 @@ describe('DaySection', () => {
     expect(section.className).not.toContain('border-accent')
   })
 
+  // 27. PEND-28 M8: heading row uses flex-wrap so badges + open-in-editor
+  // button don't run off the right edge on narrow phones.
+  it('heading row uses flex-wrap to prevent overflow on phones', () => {
+    const entry = makeDayEntry({ displayDate: 'Sun, Jun 15, 2025' })
+
+    render(<DaySection entry={entry} mode="weekly" onAddBlock={noop} />)
+
+    const heading = screen.getByText('Sun, Jun 15, 2025')
+    const row = heading.closest('div.flex')
+    expect(row).not.toBeNull()
+    expect(row?.className).toContain('flex-wrap')
+  })
+
   // A11y: no violations (with content)
   it('a11y: no violations with content', async () => {
     const entry = makeDayEntry({

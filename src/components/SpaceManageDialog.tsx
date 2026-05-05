@@ -84,12 +84,12 @@ const LOG_MODULE = 'components/SpaceManageDialog'
  * so tests can import the same source of truth without duplication.
  */
 export const ACCENT_SWATCHES = [
-  { token: 'accent-emerald', label: 'emerald', className: 'bg-emerald-500' },
-  { token: 'accent-blue', label: 'blue', className: 'bg-blue-500' },
-  { token: 'accent-violet', label: 'violet', className: 'bg-violet-500' },
-  { token: 'accent-amber', label: 'amber', className: 'bg-amber-500' },
-  { token: 'accent-rose', label: 'rose', className: 'bg-rose-500' },
-  { token: 'accent-slate', label: 'slate', className: 'bg-slate-500' },
+  { token: 'accent-emerald', label: 'emerald' },
+  { token: 'accent-blue', label: 'blue' },
+  { token: 'accent-violet', label: 'violet' },
+  { token: 'accent-amber', label: 'amber' },
+  { token: 'accent-rose', label: 'rose' },
+  { token: 'accent-slate', label: 'slate' },
 ] as const
 
 type AccentToken = (typeof ACCENT_SWATCHES)[number]['token']
@@ -401,8 +401,8 @@ function SpaceRowEditor({
                 'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 'disabled:opacity-50 disabled:cursor-not-allowed',
                 accent === swatch.token && 'ring-2 ring-ring ring-offset-2',
-                swatch.className,
               )}
+              style={{ backgroundColor: `var(--${swatch.token})` }}
               data-accent-token={swatch.token}
             >
               {/* UX-6 — surface selection with an icon, not just a ring,
@@ -583,8 +583,8 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
                 'h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
                 'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 accent === swatch.token && 'ring-2 ring-ring ring-offset-2',
-                swatch.className,
               )}
+              style={{ backgroundColor: `var(--${swatch.token})` }}
               data-accent-token={swatch.token}
             >
               {/* UX-6 — same icon-overlay rationale as the per-row

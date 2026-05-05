@@ -403,4 +403,23 @@ describe('PeerListItem', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // PEND-23 L6: the IP-address Input inside the popover is placeholder-only
+  // by default. Placeholders disappear on focus and are not exposed as the
+  // accessible name in every SR. The Input must carry a non-empty
+  // aria-label sourced from i18n.
+  describe('address input aria-label (PEND-23 L6)', () => {
+    it('labels the IP-address input with device.addressInputLabel', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+
+      const input = await screen.findByRole('textbox', { name: 'Address (host:port)' })
+      expect(input).toBeInTheDocument()
+      expect(input.getAttribute('aria-label')).toBeTruthy()
+    })
+  })
 })

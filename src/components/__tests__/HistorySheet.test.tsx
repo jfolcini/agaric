@@ -68,11 +68,20 @@ describe('HistorySheet', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it('has w-80 width class on SheetContent for desktop', () => {
+  // PEND-28 M12: the override `w-3/4 sm:w-80` locked the sheet to 320 px on
+  // sm+ and produced a 270 px-wide drawer on a 360 px phone (75 %). Dropping
+  // the override falls back to the Sheet primitive's baseline (`w-3/4`
+  // mobile, `sm:max-w-sm` = 384 px on sm+), which gives more room for the
+  // history list.
+  it('SheetContent uses the Sheet primitive baseline width (no w-80 override)', () => {
     render(<HistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
     // SheetContent renders with role="dialog"
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveClass('sm:w-80')
+    // Baseline mobile width comes from the Sheet primitive (w-3/4)…
+    expect(dialog).toHaveClass('w-3/4')
+    // …and the sm+ cap is `sm:max-w-sm` (384 px) — not the old `sm:w-80` override.
+    expect(dialog).toHaveClass('sm:max-w-sm')
+    expect(dialog.className).not.toContain('sm:w-80')
   })
 
   it('has padding wrapper inside ScrollArea', () => {
