@@ -87,10 +87,8 @@ describe('Textarea', () => {
     render(<Textarea aria-label="Notes" />)
 
     const ta = screen.getByRole('textbox', { name: 'Notes' })
-    expect(ta.className).toContain('focus-visible:ring-[3px]')
-    expect(ta.className).toContain('focus-visible:ring-ring/50')
+    expect(ta.className).toContain('focus-ring-visible')
     expect(ta.className).toContain('focus-visible:border-ring')
-    expect(ta.className).toContain('focus-visible:outline-hidden')
   })
 
   // -- Touch-friendly native height ------------------------------------------

@@ -230,9 +230,7 @@ describe('PageTreeItem', () => {
 
   describe('touch-target classes on Plus buttons', () => {
     const touchClasses = [
-      'focus-visible:ring-[3px]',
-      'focus-visible:ring-ring/50',
-      'focus-visible:outline-hidden',
+      'focus-ring-visible',
       '[@media(pointer:coarse)]:opacity-100',
       '[@media(pointer:coarse)]:h-[44px]',
       '[@media(pointer:coarse)]:w-[44px]',
@@ -286,11 +284,7 @@ describe('PageTreeItem', () => {
   })
 
   describe('UX-1 — focus-visible ring + aria-labels on hand-rolled buttons', () => {
-    const ringClasses = [
-      'focus-visible:ring-[3px]',
-      'focus-visible:ring-ring/50',
-      'focus-visible:outline-hidden',
-    ]
+    const ringClasses = ['focus-ring-visible']
 
     it('leaf page button has focus-visible ring tokens', () => {
       const node = makeLeaf('Leaf Page', 'Leaf Page', 'P1')

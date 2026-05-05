@@ -15,7 +15,8 @@ import {
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
@@ -154,16 +155,12 @@ export function PageHeaderMenu({
             <MoreVertical className="h-3.5 w-3.5" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent
-          align="end"
-          className="w-56 p-1 max-w-[calc(100vw-2rem)]"
-          aria-label={t('pageHeader.pageActions')}
-        >
+        <MenuPopoverContent align="end" className="p-1" aria-label={t('pageHeader.pageActions')}>
           {onOpenInNewTab != null && !isMobile && (
             <>
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
                 onClick={onOpenInNewTab}
               >
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -174,7 +171,7 @@ export function PageHeaderMenu({
           )}
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddAlias}
           >
             <Link className="h-3.5 w-3.5" />
@@ -182,7 +179,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddTag}
           >
             <Tag className="h-3.5 w-3.5" />
@@ -190,7 +187,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddProperty}
           >
             <Settings2 className="h-3.5 w-3.5" />
@@ -199,7 +196,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onToggleTemplate}
           >
             <LayoutTemplate className="h-3.5 w-3.5" />
@@ -207,7 +204,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onToggleJournalTemplate}
           >
             <BookTemplate className="h-3.5 w-3.5" />
@@ -218,7 +215,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onExport}
           >
             <Download className="h-3.5 w-3.5" />
@@ -232,7 +229,7 @@ export function PageHeaderMenu({
               <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
                 aria-haspopup="menu"
                 aria-expanded={moveSubmenuOpen}
                 onClick={() => setMoveSubmenuOpen((open) => !open)}
@@ -255,7 +252,7 @@ export function PageHeaderMenu({
                       type="button"
                       role="menuitem"
                       title={target.name}
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
                       onClick={() => {
                         setMoveSubmenuOpen(false)
                         onMoveToSpace?.(target.id)
@@ -279,7 +276,7 @@ export function PageHeaderMenu({
               {t('pageHeader.deletePage')}
             </button>
           </div>
-        </PopoverContent>
+        </MenuPopoverContent>
       </Popover>
     </div>
   )

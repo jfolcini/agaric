@@ -1219,6 +1219,18 @@
   }
 }
 
+/* PEND-23 M6: form-control / interactive-element focus ring. Replaces the
+ * verbatim three-class string `focus-visible:outline-hidden
+ * focus-visible:ring-[3px] focus-visible:ring-ring/50` that was previously
+ * inlined across ~50 files. Consumers add this as a single `focus-ring-visible`
+ * class. Folds in L12 (a few `outline-none` callsites that lacked a
+ * focus-visible replacement). */
+@utility focus-ring-visible {
+  &:focus-visible {
+    @apply outline-hidden ring-[3px] ring-ring/50;
+  }
+}
+
 @utility focus-outline {
   &:focus-visible {
     @apply outline-2 outline-ring;

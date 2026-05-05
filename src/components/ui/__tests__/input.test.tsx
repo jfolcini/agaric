@@ -210,9 +210,7 @@ describe('Input', () => {
 
     const el = screen.getByRole('textbox', { name: 'Field' })
     expect(el.className).toContain('focus-visible:border-ring')
-    expect(el.className).toContain('focus-visible:ring-[3px]')
-    expect(el.className).toContain('focus-visible:ring-ring/50')
-    expect(el.className).toContain('focus-visible:outline-hidden')
+    expect(el.className).toContain('focus-ring-visible')
   })
 
   // -- Ref forwarding ---------------------------------------------------------

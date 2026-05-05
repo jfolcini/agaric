@@ -16,7 +16,7 @@ const CardButton = ({ ref, className, ...props }: React.ComponentProps<'button'>
       type="button"
       data-slot="card-button"
       className={cn(
-        'w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 [@media(pointer:coarse)]:min-h-11 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+        'w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 [@media(pointer:coarse)]:min-h-11 focus-ring-visible',
         className,
       )}
       {...props}

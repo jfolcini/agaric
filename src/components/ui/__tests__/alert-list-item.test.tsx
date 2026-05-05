@@ -149,9 +149,7 @@ describe('AlertListItem', () => {
       </ul>,
     )
     const el = screen.getByTestId('item')
-    expect(el.className).toContain('focus-visible:outline-none')
-    expect(el.className).toContain('focus-visible:ring-[3px]')
-    expect(el.className).toContain('focus-visible:ring-ring/50')
+    expect(el.className).toContain('focus-ring-visible')
   })
 
   it('forwards ref', () => {

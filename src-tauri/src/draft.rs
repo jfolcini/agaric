@@ -124,11 +124,16 @@ pub async fn draft_count(pool: &SqlitePool) -> Result<i64, AppError> {
 /// L-135: Delete `block_drafts` rows whose `block_id` no longer maps to a
 /// live (non-soft-deleted) block. Returns the count of orphan drafts removed.
 ///
-/// `block_drafts.block_id` has no FK to `blocks.id` (M-93), so drafts for
-/// hard-deleted blocks survive purges and produce noise on next boot. This
-/// function is the load-bearing fix; periodic invocation (e.g. from a
-/// background task every N minutes) is left as a follow-up — the function
-/// being available is what enables the cleanup.
+/// Migration 0038 (M-93) added a FK from `block_drafts.block_id` to
+/// `blocks(id) ON DELETE CASCADE`, so drafts whose parent block has been
+/// hard-deleted are now removed by the cascade. This function remains
+/// load-bearing for the **soft-deleted** branch: the FK references the
+/// `blocks` row itself, not its `deleted_at` column, so a draft for a
+/// soft-deleted block survives until this sweeper runs.
+///
+/// Wired into [`spawn_orphan_drafts_sweeper`], which is invoked from
+/// `lib::run` at boot (one-shot) and then every hour for the lifetime
+/// of the process.
 ///
 /// The query uses plain `sqlx::query` (not the `query!` macro) because the
 /// subquery makes type inference flaky in the macro path.
@@ -140,6 +145,70 @@ pub async fn sweep_orphan_drafts(pool: &SqlitePool) -> Result<u64, AppError> {
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+/// PEND-28a M1: Default cadence for the orphan-drafts sweeper after the
+/// boot one-shot. Drafts are user-typed, so the rate of orphan creation
+/// is bounded by user clicks; an hourly sweep is more than sufficient.
+pub const ORPHAN_DRAFTS_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// PEND-28a M1: Spawn a long-lived task that runs [`sweep_orphan_drafts`]
+/// once at boot and then every `interval` until `shutdown_flag` is set.
+///
+/// Mirrors the shape of
+/// [`crate::materializer::retry_queue::spawn_sweeper`]:
+/// fire-and-forget, polls the shared shutdown flag on each tick, and
+/// uses `tauri::async_runtime::spawn` in production builds (so the
+/// task is owned by Tauri's runtime) and `tokio::spawn` in tests.
+///
+/// Logs `rows_affected` at `debug!` when the sweep is a no-op and at
+/// `info!` when it removed at least one row — orphans being swept is
+/// observable evidence of the schema-edge case (soft-deleted parent
+/// block) the function exists to handle.
+#[cfg(not(tarpaulin_include))]
+pub fn spawn_orphan_drafts_sweeper(
+    pool: SqlitePool,
+    interval: std::time::Duration,
+    shutdown_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    #[cfg(not(test))]
+    let spawn_fn = tauri::async_runtime::spawn;
+    #[cfg(test)]
+    let spawn_fn = tokio::spawn;
+    // Fire-and-forget: the sweeper runs for the app's lifetime. We
+    // intentionally discard the JoinHandle — the task stops when
+    // `shutdown_flag` flips.
+    let _handle = spawn_fn(async move {
+        // Boot one-shot — drains any orphan drafts left by a previous
+        // session before the user can encounter "phantom drafts" in the UI.
+        run_sweep_once(&pool, "boot").await;
+
+        let mut ticker = tokio::time::interval(interval);
+        // skip immediate first tick (we just ran the boot one-shot)
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            if shutdown_flag.load(std::sync::atomic::Ordering::Acquire) {
+                break;
+            }
+            run_sweep_once(&pool, "periodic").await;
+        }
+    });
+}
+
+/// Helper for [`spawn_orphan_drafts_sweeper`]: run one sweep and log
+/// the outcome at the appropriate level. Errors are logged at `warn!`
+/// and otherwise swallowed — the next tick will retry.
+async fn run_sweep_once(pool: &SqlitePool, phase: &'static str) {
+    match sweep_orphan_drafts(pool).await {
+        Ok(0) => tracing::debug!(phase, "orphan-drafts sweep: no rows affected"),
+        Ok(rows_affected) => tracing::info!(
+            phase,
+            rows_affected,
+            "orphan-drafts sweep removed soft-deleted-parent drafts"
+        ),
+        Err(e) => tracing::warn!(phase, error = %e, "orphan-drafts sweep failed"),
+    }
 }
 
 /// Flush a draft: write an `edit_block` op and then delete the draft row,

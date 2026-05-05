@@ -100,7 +100,7 @@ const Calendar = ({
                     <th {...thProps}>
                       <button
                         type="button"
-                        className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                        className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-ring-visible"
                         onClick={() => onWeekNumberClick(weekNum, dates)}
                         aria-label={i18n.t('journal.goToWeek', { weekNum })}
                       >
@@ -117,7 +117,7 @@ const Calendar = ({
                   return (
                     <button
                       type="button"
-                      className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                      className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors focus-ring-visible"
                       onClick={() => onMonthClick(props.defaultMonth ?? new Date())}
                       aria-label={i18n.t('journal.monthlyViewButtonLabel')}
                     >

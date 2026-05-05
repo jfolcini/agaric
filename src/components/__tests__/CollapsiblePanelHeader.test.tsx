@@ -121,9 +121,7 @@ describe('CollapsiblePanelHeader', () => {
       </CollapsiblePanelHeader>,
     )
     const button = screen.getByRole('button')
-    expect(button.className).toContain('focus-visible:ring-[3px]')
-    expect(button.className).toContain('focus-visible:ring-ring/50')
-    expect(button.className).toContain('focus-visible:outline-hidden')
+    expect(button.className).toContain('focus-ring-visible')
   })
 
   // UX-240: header button must allow shrinking inside a narrow flex parent so

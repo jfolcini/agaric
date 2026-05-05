@@ -92,7 +92,7 @@ const SearchInput = ({
           className={cn(
             'absolute top-1/2 right-1 -translate-y-1/2 inline-flex items-center justify-center rounded-sm text-muted-foreground transition-colors',
             'hover:text-foreground hover:bg-accent/50',
-            'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+            'focus-ring-visible',
             'h-7 w-7 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
           )}
         >

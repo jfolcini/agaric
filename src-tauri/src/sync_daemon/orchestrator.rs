@@ -222,21 +222,19 @@ pub(crate) async fn daemon_loop(
                     event, &device_id, &mut discovered, &refs,
                 ) {
                     tracing::info!(peer_id = %peer.device_id, "discovered new peer via mDNS");
+                    let ctx = SyncSessionContext {
+                        pool: &pool,
+                        device_id: &device_id,
+                        materializer: &materializer,
+                        scheduler: &scheduler,
+                        event_sink: &event_sink,
+                        cancel: &cancel,
+                        cert: &cert,
+                    };
                     // M-46: Branch A is single-shot (one peer per discovery
                     // event), so the bool return is informational only — no
                     // for-loop to break out of. Discard explicitly.
-                    let _cancelled = try_sync_with_peer(
-                        &pool,
-                        &device_id,
-                        &materializer,
-                        &scheduler,
-                        &event_sink,
-                        &peer,
-                        &refs,
-                        &cancel,
-                        &cert,
-                    )
-                    .await;
+                    let _cancelled = try_sync_with_peer(&ctx, &peer, &refs).await;
                 }
             }
 
@@ -272,18 +270,17 @@ pub(crate) async fn daemon_loop(
                     let cert = cert.clone();
                     let refs_for_task = refs.clone();
                     join_set.spawn(async move {
-                        let was_cancelled = try_sync_with_peer(
-                            &pool,
-                            &device_id,
-                            &materializer,
-                            &scheduler,
-                            &event_sink,
-                            &peer,
-                            &refs_for_task,
-                            &cancel,
-                            &cert,
-                        )
-                        .await;
+                        let ctx = SyncSessionContext {
+                            pool: &pool,
+                            device_id: &device_id,
+                            materializer: &materializer,
+                            scheduler: &scheduler,
+                            event_sink: &event_sink,
+                            cancel: &cancel,
+                            cert: &cert,
+                        };
+                        let was_cancelled =
+                            try_sync_with_peer(&ctx, &peer, &refs_for_task).await;
                         (peer.device_id, was_cancelled)
                     });
                 }
@@ -343,21 +340,19 @@ pub(crate) async fn daemon_loop(
                 let due = scheduler.peers_due_for_resync(&refs);
                 let refs_by_id: std::collections::HashMap<&str, &peer_refs::PeerRef> =
                     refs.iter().map(|r| (r.peer_id.as_str(), r)).collect();
+                let ctx = SyncSessionContext {
+                    pool: &pool,
+                    device_id: &device_id,
+                    materializer: &materializer,
+                    scheduler: &scheduler,
+                    event_sink: &event_sink,
+                    cancel: &cancel,
+                    cert: &cert,
+                };
                 for pid in due {
                     let last_addr = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.as_deref());
                     if let Some(peer) = resolve_peer_address(&pid, last_addr, &discovered) {
-                        let cancelled = try_sync_with_peer(
-                            &pool,
-                            &device_id,
-                            &materializer,
-                            &scheduler,
-                            &event_sink,
-                            &peer,
-                            &refs,
-                            &cancel,
-                            &cert,
-                        )
-                        .await;
+                        let cancelled = try_sync_with_peer(&ctx, &peer, &refs).await;
                         // M-46: see Branch B comment — break the round, not
                         // just the current peer, when the user cancels.
                         if cancelled {
@@ -499,6 +494,33 @@ async fn try_connect_each_address(
 }
 
 // ---------------------------------------------------------------------------
+// SyncSessionContext — bundle of session-wide state shared across calls
+// ---------------------------------------------------------------------------
+
+/// Bundle of references to the session-wide state threaded through every
+/// [`try_sync_with_peer`] invocation.
+///
+/// `daemon_loop` calls `try_sync_with_peer` from three branches (mDNS
+/// discovery, debounced change, periodic resync) with identical
+/// references for everything *except* the peer and the per-cycle
+/// `peer_refs` snapshot. Lifting the shared state into a single struct
+/// keeps the call sites in lockstep — the previous 9-arg positional
+/// signature was suppressed by `#[allow(clippy::too_many_arguments)]`
+/// and had drifted between call sites historically.
+///
+/// Per-peer / per-cycle inputs (`peer`, `peer_refs`) stay positional on
+/// the function — they are not session-wide.
+pub(crate) struct SyncSessionContext<'a> {
+    pub pool: &'a SqlitePool,
+    pub device_id: &'a str,
+    pub materializer: &'a Materializer,
+    pub scheduler: &'a SyncScheduler,
+    pub event_sink: &'a Arc<dyn SyncEventSink>,
+    pub cancel: &'a AtomicBool,
+    pub cert: &'a SyncCert,
+}
+
+// ---------------------------------------------------------------------------
 // try_sync_with_peer — single sync session with backoff
 // ---------------------------------------------------------------------------
 
@@ -535,22 +557,15 @@ async fn try_connect_each_address(
 /// every exit path — but the `was_cancelled` capture happens *before*
 /// the guard's Drop fires, so the returned bool reflects the live state
 /// at session end.
-#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     skip_all,
     fields(peer = %peer.device_id),
     name = "sync",
 )]
 pub(crate) async fn try_sync_with_peer(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-    scheduler: &SyncScheduler,
-    event_sink: &Arc<dyn SyncEventSink>,
+    ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
     peer_refs: &[PeerRef],
-    cancel: &AtomicBool,
-    cert: &SyncCert,
 ) -> bool {
     let peer_id = &peer.device_id;
 
@@ -564,16 +579,16 @@ pub(crate) async fn try_sync_with_peer(
             self.0.store(false, Ordering::Release);
         }
     }
-    let _cancel_guard = CancelGuard(cancel);
+    let _cancel_guard = CancelGuard(ctx.cancel);
 
     // 1. Backoff gate
-    if !scheduler.may_retry(peer_id) {
+    if !ctx.scheduler.may_retry(peer_id) {
         // M-46: no real session ran, cancellation is moot for this peer.
         return false;
     }
 
     // 2. Per-peer mutex (prevents concurrent syncs to the same peer)
-    let Some(_guard) = scheduler.try_lock_peer(peer_id) else {
+    let Some(_guard) = ctx.scheduler.try_lock_peer(peer_id) else {
         // M-46: already syncing with this peer; no real session ran here.
         return false;
     };
@@ -591,7 +606,7 @@ pub(crate) async fn try_sync_with_peer(
     let cert_hash = get_peer_cert_hash(peer_id, peer_refs);
 
     // 5. Emit "connecting" progress event
-    event_sink.on_sync_event(SyncEvent::Progress {
+    ctx.event_sink.on_sync_event(SyncEvent::Progress {
         state: "connecting".into(),
         remote_device_id: peer_id.clone(),
         ops_received: 0,
@@ -604,7 +619,7 @@ pub(crate) async fn try_sync_with_peer(
     //    user can see exactly which addresses were attempted instead of
     //    wondering why a dual-stacked peer entered backoff.
     let (mut conn, addr) =
-        match try_connect_each_address(&addrs, cert_hash.as_deref(), cert, peer_id).await {
+        match try_connect_each_address(&addrs, cert_hash.as_deref(), ctx.cert, peer_id).await {
             Ok((conn, addr)) => (conn, addr),
             Err(combined) => {
                 tracing::warn!(
@@ -613,8 +628,8 @@ pub(crate) async fn try_sync_with_peer(
                     error = %combined,
                     "failed to connect to peer at any advertised address"
                 );
-                scheduler.record_failure(peer_id);
-                event_sink.on_sync_event(SyncEvent::Error {
+                ctx.scheduler.record_failure(peer_id);
+                ctx.event_sink.on_sync_event(SyncEvent::Error {
                     message: format!("Connection failed: {combined}"),
                     remote_device_id: peer_id.clone(),
                 });
@@ -624,23 +639,37 @@ pub(crate) async fn try_sync_with_peer(
         };
 
     // 7. Run sync protocol through the orchestrator
-    let event_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(Arc::clone(event_sink)));
-    let mut orch = SyncOrchestrator::new(pool.clone(), device_id.to_string(), materializer.clone())
-        .with_event_sink(event_sink_box)
-        .with_expected_remote_id(peer_id.to_string());
+    let event_sink_box: Box<dyn SyncEventSink> =
+        Box::new(SharedEventSink(Arc::clone(ctx.event_sink)));
+    let mut orch = SyncOrchestrator::new(
+        ctx.pool.clone(),
+        ctx.device_id.to_string(),
+        ctx.materializer.clone(),
+    )
+    .with_event_sink(event_sink_box)
+    .with_expected_remote_id(peer_id.to_string());
 
-    match run_sync_session(&mut orch, &mut conn, cancel, pool, materializer, event_sink).await {
+    match run_sync_session(
+        &mut orch,
+        &mut conn,
+        ctx.cancel,
+        ctx.pool,
+        ctx.materializer,
+        ctx.event_sink,
+    )
+    .await
+    {
         Ok(()) => {
-            scheduler.record_success(peer_id);
+            ctx.scheduler.record_success(peer_id);
             // Save the peer's address for future direct connections
-            if let Err(e) = peer_refs::update_last_address(pool, peer_id, &addr).await {
+            if let Err(e) = peer_refs::update_last_address(ctx.pool, peer_id, &addr).await {
                 tracing::warn!(peer_id, error = %e, "failed to save peer address");
             }
             // TOFU: Store observed cert hash if none was stored (initiator side)
             if should_store_cert_hash(cert_hash.as_deref(), conn.peer_cert_hash().as_deref()) {
                 if let Some(ref observed) = conn.peer_cert_hash() {
                     if let Err(e) =
-                        peer_refs::upsert_peer_ref_with_cert(pool, peer_id, observed).await
+                        peer_refs::upsert_peer_ref_with_cert(ctx.pool, peer_id, observed).await
                     {
                         tracing::warn!(
                             peer_id,
@@ -651,7 +680,7 @@ pub(crate) async fn try_sync_with_peer(
                 }
             }
             let session = orch.session();
-            event_sink.on_sync_event(SyncEvent::Complete {
+            ctx.event_sink.on_sync_event(SyncEvent::Complete {
                 remote_device_id: peer_id.clone(),
                 ops_received: session.ops_received,
                 ops_sent: session.ops_sent,
@@ -664,8 +693,8 @@ pub(crate) async fn try_sync_with_peer(
             );
         }
         Err(e) => {
-            scheduler.record_failure(peer_id);
-            event_sink.on_sync_event(SyncEvent::Error {
+            ctx.scheduler.record_failure(peer_id);
+            ctx.event_sink.on_sync_event(SyncEvent::Error {
                 message: format!("Sync failed: {e}"),
                 remote_device_id: peer_id.clone(),
             });
@@ -680,7 +709,7 @@ pub(crate) async fn try_sync_with_peer(
     // the still-set flag. The returned bool tells the daemon-loop caller
     // whether the user cancelled mid-session so it can break out of the
     // current peer round (see Branch B / Branch C in `daemon_loop`).
-    let was_cancelled = cancel.load(Ordering::Acquire);
+    let was_cancelled = ctx.cancel.load(Ordering::Acquire);
 
     // Cancel flag is cleared by `_cancel_guard` (Drop) on all exit paths.
 

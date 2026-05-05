@@ -186,9 +186,7 @@ describe('SearchablePopover', () => {
 
     const itemButton = screen.getByText('Alpha').closest('button') as HTMLButtonElement
     expect(itemButton).not.toBeNull()
-    expect(itemButton.className).toContain('focus-visible:ring-[3px]')
-    expect(itemButton.className).toContain('focus-visible:ring-ring/50')
-    expect(itemButton.className).toContain('focus-visible:outline-hidden')
+    expect(itemButton.className).toContain('focus-ring-visible')
   })
 
   it('calls onOpenChange when trigger is clicked', async () => {

@@ -39,8 +39,9 @@ pub(super) async fn recover_single_draft(
     // instead of a per-draft SELECT COUNT(*) — avoids the N+1 problem.
     //
     // Logged at warn level (not info) because an orphan draft for a
-    // missing/deleted block usually means a draft outlived a hard purge
-    // (`block_drafts.block_id` has no FK — M-93) — worth a breadcrumb.
+    // missing/deleted block usually means the parent was soft-deleted
+    // before the periodic `spawn_orphan_drafts_sweeper` (PEND-28a M1,
+    // wired session 671) ran — worth a breadcrumb.
     if !existing_block_ids.contains(&draft.block_id) {
         tracing::warn!(block_id = %draft.block_id, "skipping draft for missing/deleted block");
         return Ok(false);

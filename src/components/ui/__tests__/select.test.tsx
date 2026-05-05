@@ -168,9 +168,7 @@ describe('Select', () => {
   it('includes focus-visible ring classes', () => {
     renderSelect()
     const trigger = screen.getByRole('combobox')
-    expect(trigger.className).toContain('focus-visible:outline-hidden')
-    expect(trigger.className).toContain('focus-visible:ring-[3px]')
-    expect(trigger.className).toContain('focus-visible:ring-ring/50')
+    expect(trigger.className).toContain('focus-ring-visible')
   })
 
   // -- endContent slot --------------------------------------------------------

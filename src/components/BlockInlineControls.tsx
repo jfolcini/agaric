@@ -190,7 +190,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+              className="collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="collapse-toggle"
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
@@ -213,7 +213,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
         <TooltipTrigger asChild>
           <button
             type="button"
-            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
             data-testid="task-marker"
             onClick={(e) => {
               e.stopPropagation()
@@ -234,7 +234,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="priority-badge"
               aria-label={t('block.priorityCycle', { level: priorityLabel(priority) })}
               onClick={(e) => {
@@ -318,7 +318,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="property-overflow inline-flex items-center flex-shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 max-sm:px-2.5 max-sm:py-1"
+                  className="property-overflow inline-flex items-center flex-shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
                   data-testid="property-overflow"
                   aria-label={t('block.showAllProperties', {
                     count: filteredProperties.length,

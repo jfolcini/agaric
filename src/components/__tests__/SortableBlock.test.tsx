@@ -1981,9 +1981,7 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
-    expect(collapseBtn.className).toContain('focus-visible:ring-[3px]')
-    expect(collapseBtn.className).toContain('focus-visible:ring-ring/50')
-    expect(collapseBtn.className).toContain('focus-visible:outline-hidden')
+    expect(collapseBtn.className).toContain('focus-ring-visible')
   })
 
   it('checkbox has focus-visible ring classes', () => {
@@ -1997,9 +1995,7 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const marker = screen.getByRole('button', { name: /set as todo/i })
-    expect(marker.className).toContain('focus-visible:ring-[3px]')
-    expect(marker.className).toContain('focus-visible:ring-ring/50')
-    expect(marker.className).toContain('focus-visible:outline-hidden')
+    expect(marker.className).toContain('focus-ring-visible')
   })
 
   it('all buttons have active:scale-95 class', () => {

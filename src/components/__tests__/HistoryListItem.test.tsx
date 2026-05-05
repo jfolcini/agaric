@@ -694,9 +694,8 @@ describe('HistoryListItem', () => {
     it('checkbox carries visible focus-ring utilities', () => {
       renderInListbox(defaultProps())
       const checkbox = screen.getByRole('checkbox')
-      // focus-visible:* utilities are present so keyboard focus is surfaced.
-      expect(checkbox.className).toContain('focus-visible:ring-[3px]')
-      expect(checkbox.className).toContain('focus-visible:ring-ring/50')
+      // focus-ring-visible utility is present so keyboard focus is surfaced.
+      expect(checkbox.className).toContain('focus-ring-visible')
     })
 
     it('checkbox click still toggles selection without triggering row click', async () => {

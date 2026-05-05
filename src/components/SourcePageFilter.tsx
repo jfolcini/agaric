@@ -12,7 +12,8 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
@@ -127,7 +128,7 @@ export function SourcePageFilter({
           <Filter className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-2 max-w-[calc(100vw-2rem)]" align="start">
+      <MenuPopoverContent className="p-2" align="start">
         <div className="source-page-filter-content space-y-2">
           <Input
             placeholder={t('sourceFilter.searchPlaceholder')}
@@ -175,7 +176,7 @@ export function SourcePageFilter({
             </Button>
           )}
         </div>
-      </PopoverContent>
+      </MenuPopoverContent>
     </Popover>
   )
 }

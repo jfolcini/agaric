@@ -17,7 +17,8 @@ import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -143,7 +144,7 @@ export function SearchablePopover<T>({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{wrappedTrigger}</PopoverTrigger>
-      <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2" align="start">
+      <MenuPopoverContent className="p-2" align="start">
         <Input
           value={searchValue}
           onChange={(e) => onSearchChange(e.target.value)}
@@ -176,7 +177,7 @@ export function SearchablePopover<T>({
                   }}
                   type="button"
                   tabIndex={idx === focusedIndex ? 0 : -1}
-                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate focus-ring-visible"
                   onClick={() => onSelect(item)}
                   disabled={isItemDisabled?.(item)}
                 >
@@ -186,7 +187,7 @@ export function SearchablePopover<T>({
             ))}
           </ul>
         </ScrollArea>
-      </PopoverContent>
+      </MenuPopoverContent>
     </Popover>
   )
 }

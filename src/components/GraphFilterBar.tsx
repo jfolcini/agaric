@@ -471,7 +471,7 @@ export function GraphFilterBar({
           </Button>
         </PopoverTrigger>
         <PopoverContent
-          className="w-72 p-3"
+          className="w-72 max-w-[calc(100vw-2rem)] p-3"
           align="start"
           aria-label={t('graph.filter.addFilterPopoverLabel')}
         >

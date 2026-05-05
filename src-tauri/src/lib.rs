@@ -314,6 +314,16 @@ pub struct SyncCancelFlag(pub Arc<AtomicBool>);
 /// it cleanly; the flag is a no-op in most graceful-exit paths.
 pub struct RetryQueueSweeperShutdown(pub Arc<AtomicBool>);
 
+/// Shutdown flag for the `draft::spawn_orphan_drafts_sweeper` task
+/// (PEND-28a M1).
+///
+/// The sweeper runs once at boot and then every
+/// [`draft::ORPHAN_DRAFTS_SWEEP_INTERVAL`] (1 hour) and polls this flag
+/// on each tick. Stored in Tauri managed state for the rare case a
+/// shutdown handler wants to stop it cleanly; the flag is a no-op in
+/// most graceful-exit paths.
+pub struct OrphanDraftsSweeperShutdown(pub Arc<AtomicBool>);
+
 /// Keeps the tracing-appender non-blocking worker alive for the
 /// application lifetime.
 ///
@@ -787,6 +797,22 @@ pub fn run() {
                 retry_shutdown.clone(),
             );
             app.manage(RetryQueueSweeperShutdown(retry_shutdown));
+
+            // PEND-28a M1: Spawn the orphan-drafts sweeper. Drafts whose
+            // parent block has been *soft-deleted* survive the M-93 FK
+            // (which references the row, not its `deleted_at` column),
+            // so without this periodic sweep they would accumulate and
+            // surface as phantom drafts in the UI on next boot. The
+            // task runs once at boot and then every hour for the
+            // process lifetime; cancellation is via the managed
+            // shutdown flag, mirroring the retry-queue sweeper above.
+            let orphan_drafts_shutdown = Arc::new(AtomicBool::new(false));
+            draft::spawn_orphan_drafts_sweeper(
+                pools.write.clone(),
+                draft::ORPHAN_DRAFTS_SWEEP_INTERVAL,
+                orphan_drafts_shutdown.clone(),
+            );
+            app.manage(OrphanDraftsSweeperShutdown(orphan_drafts_shutdown));
 
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
             let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
