@@ -1,18 +1,17 @@
-//! `SpaceId` newtype + `SpaceScope` tagged enum (PEND-18 Phase 0 spike).
+//! `SpaceId` newtype + `SpaceScope` tagged enum, used by space-scoped queries.
 //!
-//! Phase 0 lands the type module *and* a throwaway probe Tauri command so the
-//! orchestrator can verify that:
+//! Mirrors [`crate::ulid::ActiveBlockId`]: transparent serde + sqlx so the
+//! wire / DB layers see a plain string while Rust call sites get the named
+//! type.
 //!
-//! 1. specta 2.0.0-rc.24 emits an ergonomic TS shape for an adjacently-tagged
-//!    `#[serde(tag, content)]` enum (no in-codebase precedent before this).
-//! 2. `sqlx::query_as!` / `query_scalar!` accept `SpaceId` in column-cast
-//!    position (`SELECT … as "x: SpaceId"`), mirroring the `ActiveBlockId`
-//!    pattern from MAINT-113.
+//! [`SpaceScope::Global`] applies no `block_properties.space` filter at the
+//! SQL level — results span every space (pre-FEAT-3 behaviour, plus journal
+//! / settings views that intentionally span all spaces).
+//! [`SpaceScope::Active`] restricts results to blocks belonging to the
+//! wrapped [`SpaceId`].
 //!
-//! The probe command and its registration in `agaric_commands!` are removed
-//! in Phase 1. Everything else here (the `SpaceId` newtype, the `SpaceScope`
-//! enum, and the unit tests) is the permanent module that subsequent phases
-//! migrate callsites onto.
+//! Wire format: specta emits `SpaceScope` as the discriminated union
+//! `{ kind: "global" } | { kind: "active"; space_id: SpaceId }`.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -120,6 +119,42 @@ impl From<SpaceId> for String {
     }
 }
 
+impl PartialEq<&str> for SpaceId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<str> for SpaceId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<String> for SpaceId {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<SpaceId> for String {
+    fn eq(&self, other: &SpaceId) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<SpaceId> for str {
+    fn eq(&self, other: &SpaceId) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<SpaceId> for &str {
+    fn eq(&self, other: &SpaceId) -> bool {
+        *self == other.0
+    }
+}
+
 /// The space scope a list / search query runs under.
 ///
 /// `Global` — no `block_properties.space` filter is applied (pre-FEAT-3
@@ -134,9 +169,8 @@ impl From<SpaceId> for String {
 /// - `SpaceScope::Global`              → `{"kind":"global"}`
 /// - `SpaceScope::Active(SpaceId(id))` → `{"kind":"active","space_id":"<ULID>"}`
 ///
-/// PEND-18 Phase 0 confirmed specta 2.0.0-rc.24 emits this as a TS
-/// discriminated union (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`)
-/// — the ergonomic shape we want on the frontend.
+/// Specta emits this as a TS discriminated union
+/// (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "kind", content = "space_id")]
 pub enum SpaceScope {
@@ -159,28 +193,6 @@ impl SpaceScope {
             SpaceScope::Active(id) => Some(id.as_str()),
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// PEND-18 Phase 0 spike — removed in Phase 1.
-// ---------------------------------------------------------------------------
-//
-// The probe is purely a round-trip — it lets the orchestrator confirm:
-//
-// (a) `tauri::command` + `specta::specta` accept a `SpaceScope` parameter
-//     *and* return value (both directions through the IPC boundary), and
-// (b) the regenerated `bindings.ts` exposes a usable discriminated-union
-//     type for `SpaceScope` (not a flat shape that loses the discriminant).
-//
-// No DB access, no state — Phase 1 deletes this command and its entry in
-// `agaric_commands!`.
-
-/// PEND-18 Phase 0 spike — removed in Phase 1.
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn pend18_spike_probe(scope: SpaceScope) -> SpaceScope {
-    scope
 }
 
 #[cfg(test)]
@@ -226,6 +238,29 @@ mod tests {
         // Not a valid ULID, but `from_trusted` doesn't check.
         let id = SpaceId::from_trusted("01testspace000000000000001");
         assert_eq!(id.as_str(), "01TESTSPACE000000000000001");
+    }
+
+    // --- SpaceId PartialEq with str / String ---
+
+    #[test]
+    fn space_id_eq_str_borrow_and_owned() {
+        let id = SpaceId::from_trusted(FIXTURE_ULID);
+        assert_eq!(id, FIXTURE_ULID);
+        assert_eq!(id, String::from(FIXTURE_ULID));
+        assert_eq!(id, *FIXTURE_ULID);
+    }
+
+    #[test]
+    fn str_and_string_eq_space_id() {
+        let id = SpaceId::from_trusted(FIXTURE_ULID);
+        assert_eq!(*FIXTURE_ULID, id);
+        assert_eq!(String::from(FIXTURE_ULID), id);
+    }
+
+    #[test]
+    fn str_ref_eq_space_id() {
+        let id = SpaceId::from_trusted(FIXTURE_ULID);
+        assert_eq!(FIXTURE_ULID, id);
     }
 
     // --- SpaceScope serde round-trip ---
