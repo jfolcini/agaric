@@ -324,10 +324,8 @@ pub(super) async fn fetch_block_rows_by_ids(
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_type, \
-             todo_state, priority, due_date, scheduled_date, page_id \
-             FROM blocks WHERE id IN ({placeholders})"
+            "SELECT {} FROM blocks WHERE id IN ({placeholders})",
+            crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
         );
         let mut query = sqlx::query_as::<_, BlockRow>(&sql);
         for id in ids {
@@ -336,15 +334,14 @@ pub(super) async fn fetch_block_rows_by_ids(
         Ok(query.fetch_all(pool).await?)
     } else {
         let json_ids = serde_json::to_string(&ids)?;
-        let rows = sqlx::query_as::<_, BlockRow>(
-            "SELECT id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_type, \
-             todo_state, priority, due_date, scheduled_date, page_id \
-             FROM blocks WHERE id IN (SELECT value FROM json_each(?))",
-        )
-        .bind(&json_ids)
-        .fetch_all(pool)
-        .await?;
+        let sql = format!(
+            "SELECT {} FROM blocks WHERE id IN (SELECT value FROM json_each(?))",
+            crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
+        );
+        let rows = sqlx::query_as::<_, BlockRow>(&sql)
+            .bind(&json_ids)
+            .fetch_all(pool)
+            .await?;
         Ok(rows)
     }
 }

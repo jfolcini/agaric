@@ -2,7 +2,7 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 679 (PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 — six distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs`; PEND-15 Phase 2 ships the `resolve_block_space` helper as foundation for future enforcement-point wiring (no callers yet — Path A/B decision still gates Phase 1+2 wiring). PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388. MAINT-227 closed via one-line fix to the existing `sqlx-prepare-check` pre-push hook. MAINT-172 closed via drift-detection parity test mirroring PEND-28a H1 Option 2's pattern. Pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1167+ items.
+**Sessions:** 1 – 679 (PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223 — eight distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs`; PEND-15 Phase 2 ships the `resolve_block_space` helper as foundation for future enforcement-point wiring (no callers yet — Path A/B decision still gates Phase 1+2 wiring). PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388. MAINT-227 closed via one-line fix to the existing `sqlx-prepare-check` pre-push hook. MAINT-172 closed via drift-detection parity test mirroring PEND-28a H1 Option 2's pattern. Pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1167+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
@@ -101,6 +101,22 @@ The two untracked files (`pending/PEND-31-...`, `pending/README.md` modification
 
 Pre-existing `clippy::cast_possible_wrap` warning at `src-tauri/src/gcal_push/models.rs:684` — surfaced during PEND-28a H1 Option 2 review (session 677) but never landed because it was orthogonal to that work. The warning fires only under `cargo clippy --tests -- -D warnings` (the `--tests` form, like the sqlx prepare gap MAINT-227 fixed earlier in this session); prek's standard `cargo clippy -- -D warnings` doesn't catch it. One-line orchestrator-direct fix: `GcalSettingKey::all().len() as i64` → `i64::try_from(GcalSettingKey::all().len()).expect("key count fits in i64")`. Verified `cargo clippy --tests -- -D warnings` clean post-fix; 35/35 `gcal_push::models::tests` pass. MAINT-225 entry removed from REVIEW-LATER.md.
 
+**MAINT-223 closed (eighth commit, post-FEATURE-MAP-catch-up):**
+
+PEND-28a H1 follow-up: 3 runtime `sqlx::query_as::<_, BlockRow>(&sql)` sites (`backlink/query.rs:323-336` small-IN-list, `backlink/query.rs:339-348` large-IN-list, `tag_query/query.rs:76-87` FEAT-3p4 space-filter version) embedded the canonical 13-column SELECT inline but were not parity-checked by PEND-28a H1's test (session 677), which covered only the 18 compile-time `query_as!(BlockRow, ...)` macro sites. The runtime sites use sqlx's `FromRow` for type mapping (no compile-time `as "x: T"` cast needed because the type is resolved at runtime, not at proc-macro expansion time), so they require a parallel canonical const without the cast.
+
+The build subagent shipped option (b) from MAINT-223's fix-options list (extract a shared const + reference from all 3 sites + extend the parity test):
+- `BLOCK_ROW_RUNTIME_SELECT` added to `pagination/block_row_columns.rs` as a sibling `pub(crate) const` to the existing `BLOCK_ROW_CANONICAL_SELECT`. Same 13 columns, no `as "is_conflict: bool"` cast suffix.
+- `#[cfg(test)]` gates dropped on the 2 pre-existing canonical consts; both now `#[allow(dead_code)] pub(crate)` so they coexist with the runtime const in production builds. Well-bounded `#[allow(dead_code)]` with comment explaining the consts are "drift-detection scaffolding consumed only by parity tests" (the macro form has no production consumer, only the parity test reads it).
+- The 3 runtime sites converted from inline SELECT-clause string literals to `format!("SELECT {} FROM blocks…", BLOCK_ROW_RUNTIME_SELECT)`. Sites' WHERE / ORDER BY / surrounding clauses unchanged. Allocation lifetimes verified safe (each `format!` result outlives its `query_as::<_, BlockRow>(&sql)` borrow).
+- Test C (`block_row_canonical_runtime_sites_match_canonical_columns`) added to the existing `tests` mod, mirroring Test B's pattern but for the runtime sites: allowlist of 2 source files + tightened regex `format!\(\s*r?#?"SELECT[\s\\]+(\{\})[\s\\]+FROM[\s\\]+blocks` matching ONLY the `format!("SELECT {} FROM blocks…")` placeholder shape (rejects `format!("SELECT b.id as block_id, … FROM blocks b JOIN …")` false positives at `backlink/query.rs:278`/RootPageRow site) + secondary const-reference verification (within 500-char window after the regex match) catching wrong-const substitution + hit count assertion `EXPECTED_HITS = 3`. Drift coverage on three axes: site removal (count drops), site addition (count rises), wrong-const substitution (secondary check fails). Inline column drift (replacing the `{}` placeholder with hardcoded columns) also caught because the regex no longer matches.
+
+Drift-detection sensitivity verified: temporarily inlining columns minus `page_id` at `backlink/query.rs:326` failed Test C with informative error message naming the file + count delta. Reverted; full suite green.
+
+Reviewer (post-build): APPROVED CLEAN. Verified mirror-fidelity to the precedent (PEND-28a H1 Option 2 / session 677), const correctness (`BLOCK_ROW_RUNTIME_SELECT` differs from canonical only by the cast), Test C correctness (regex correctly identifies the 3 sites + rejects 2 known false-positives), production-site-change correctness (3 sites correctly replaced, allocation lifetimes safe, surrounding clauses preserved), surgical scope (only 3 files modified). Reviewer flagged 2 additional runtime BlockRow sites in `pagination/properties.rs:117-146` + `:149-167` that are NOT covered by `BLOCK_ROW_RUNTIME_SELECT` (they use `b.`-aliased columns + `{sql_op}` interpolation); orchestrator filed MAINT-229 for that follow-up.
+
+Suite: 3608/3608 nextest (was 3607 — +1 from Test C). `cargo sqlx prepare --check -- --tests` clean (no new compile-time queries; the runtime form is dynamic SQL).
+
 **Files touched (this session):**
 
 PEND-12 commit (closeout, no source changes):
@@ -138,6 +154,16 @@ MAINT-225 commit (clippy cast-possible-wrap fix):
 - `src-tauri/src/gcal_push/models.rs` (1-line change): `GcalSettingKey::all().len() as i64` → `i64::try_from(GcalSettingKey::all().len()).expect("key count fits in i64")`.
 - `pending/REVIEW-LATER.md`: MAINT-225 entry removed (closed); header line updated to record the closure.
 - `SESSION-LOG.md`: MAINT-225 sub-section added.
+
+FEATURE-MAP catch-up commit (sessions 678 + 679 entries + stale-line fix):
+- `FEATURE-MAP.md` (+15 / -1): added "Spaces Enforcement Type-Safety Lift (session 678, PEND-18 Phases 0 + 1 + 2 + 3)" entry covering the full PEND-18 narrative; added "Backend Spaces Enforcement Bundle Continuation (session 679, PEND-12 KILL + PEND-15 Phase 0 + Phase 2 foundation + MAINT-227 + MAINT-172 + MAINT-225)" entry covering this session's work; updated stale "PEND-18 will sweep them up later" reference at the MCP rw Tools Space Enforcement entry (session 664) to reflect that PEND-18 has shipped.
+
+MAINT-223 commit (runtime BlockRow drift parity test):
+- `src-tauri/src/pagination/block_row_columns.rs` (+212 / -18, 466 LOC): module doc rewrite covering the new dual-canonical pattern (macro form vs runtime form); dropped `#[cfg(test)]` gates on `BLOCK_ROW_CANONICAL_SELECT` + `BLOCK_ROW_CANONICAL_FIELDS` (now `#[allow(dead_code)] pub(crate)` with well-bounded comment explaining the consts are "drift-detection scaffolding consumed only by parity tests"); added new `pub(crate) const BLOCK_ROW_RUNTIME_SELECT` (same 13 columns, no cast); added Test C `block_row_canonical_runtime_sites_match_canonical_columns` mirroring Test B with tightened regex + secondary const-reference verification.
+- `src-tauri/src/backlink/query.rs` (+10 / -13): 2 inline SELECT clauses replaced with `format!("SELECT {} FROM blocks…", BLOCK_ROW_RUNTIME_SELECT)` (small-IN-list path at line ~326, large-IN-list path at line ~337). Second site's previous direct `query_as::<_, BlockRow>(literal)` now goes through `let sql = format!(...); query_as::<_, BlockRow>(&sql)` per task instruction.
+- `src-tauri/src/tag_query/query.rs` (+3 / -4): inline SELECT clause replaced with `{}` placeholder + `BLOCK_ROW_RUNTIME_SELECT` format arg. WHERE clause + space-filter subquery + ORDER BY unchanged.
+- `pending/REVIEW-LATER.md`: MAINT-223 entry removed (closed); MAINT-229 added for the `pagination/properties.rs` follow-up; header line updated for the closure.
+- `SESSION-LOG.md`: MAINT-223 sub-section added.
 
 **Verification:**
 
@@ -180,6 +206,14 @@ MAINT-225:
 - `cargo nextest run --lib gcal_push::models` — 35/35 pass.
 - `prek run` — green.
 
+MAINT-223:
+- `cargo build --tests` — clean.
+- `cargo nextest run --lib pagination::block_row_columns` — 3/3 pass (Test A consts↔fields + Test B 18 macro sites + NEW Test C 3 runtime sites).
+- `cargo nextest run --no-fail-fast` — 3608/3608 pass + 4 skipped (was 3607 — +1 from Test C).
+- `cargo sqlx prepare --check -- --tests` — clean (no new compile-time queries; runtime form is dynamic SQL).
+- Drift-sensitivity verified: temporarily inlining columns minus `page_id` at `backlink/query.rs:326` failed Test C with informative count-drop error message. Reverted; full suite green.
+- `prek run` — green.
+
 **Process notes:**
 - The build subagent followed PROMPT.md's "kill-criteria" guidance correctly: stopped immediately, reported with definitive evidence (compiler error verbatim + sqlx source-line citations), and reverted the spike artifacts to leave a clean working tree. No reviewer needed because no code shipped.
 - The orchestrator's pre-spike call-graph check (verifying that `pagination/mod.rs:81` is just a doc-comment reference to the SQL pattern, not an actual query) was useful: it confirmed the canonical site count would be 16 production sites + 1 doc-comment reference if Phase 1 had proceeded, matching the plan body's claim.
@@ -190,7 +224,7 @@ MAINT-225:
 - **Per `pending/README.md` convention, rejected plans get DELETED, not archived.** The fallback work goes back into REVIEW-LATER as a MAINT-* item with the rejection record + new scoping. Git history + SESSION-LOG.md preserve the trail.
 - **`prek run --all-files` does NOT detect missing `.sqlx/` cache entries.** The audit binary's `cargo sqlx prepare -- --tests` discovered 5 drift entries that earlier sessions had introduced silently — production queries from `commands/history.rs:847` + `space.rs:337/352` (PEND-18 Phase 0 and Phase 2 work) compiled fine via online sqlx (DB connection at compile time) but were never cached because earlier `prepare` runs didn't pass `--tests`. Future sessions touching SQL queries in `#[cfg(test)]` paths should always run `cargo sqlx prepare -- --tests` (not just `prepare`) and verify the cache stays clean via `cargo sqlx prepare --check -- --tests`. Consider adding the `--check` form to prek as a follow-up to catch drift at commit time. (Filed as a future MAINT consideration, not a P0.)
 
-**Commit plan:** six commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests` (`7afcd880`); (4) `test(space): close MAINT-172 — drift-detection parity test for the space-filter SQL fragment (mirrors PEND-28a H1 Option 2)` (`7e0d5aa0`); (5) `feat(space): PEND-15 Phase 2 foundation — resolve_block_space helper (no callers yet)` (`b10270b5`); (6) `chore(clippy): close MAINT-225 — i64::try_from for cast-possible-wrap at gcal_push/models.rs:684`.
+**Commit plan:** eight commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests` (`7afcd880`); (4) `test(space): close MAINT-172 — drift-detection parity test for the space-filter SQL fragment (mirrors PEND-28a H1 Option 2)` (`7e0d5aa0`); (5) `feat(space): PEND-15 Phase 2 foundation — resolve_block_space helper (no callers yet)` (`b10270b5`); (6) `chore(clippy): close MAINT-225 — i64::try_from for cast-possible-wrap at gcal_push/models.rs:684` (`72e06092`); (7) `docs(feature-map): catch up FEATURE-MAP.md with sessions 678 + 679 work + fix stale PEND-18 reference` (`eefe356e`); (8) `test(blocks): close MAINT-223 — runtime BlockRow drift parity test + 3 production sites use BLOCK_ROW_RUNTIME_SELECT const`.
 
 ---
 
