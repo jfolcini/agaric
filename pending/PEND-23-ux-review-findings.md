@@ -24,7 +24,7 @@ What remains: **4 HIGH, 10 MEDIUM, 17 LOW** confirmed findings. None are
 critical bugs. Most are small per-site fixes; two (M6 focus-ring extraction,
 H3 Dialog→Sheet on mobile) are slightly more invasive but still narrow.
 
-> **Status (sessions 665 + 666 + 668):** all 4 actionable HIGH closed (H1, H2, H3, H4). MEDIUM done: M1, M2, M3, M4, M5, M7, M8, M9. LOW done: L1, L3, L4, L5, L6, L7, L8, L11, L16. **Remaining: 2 MEDIUM (M6 focus-ring extraction, M10 keyboard-nav hook extraction), 8 LOW (L2, L9, L10, L12, L13, L14, L15, L17).** Cherry-pick by severity in future sessions.
+> **Status (sessions 665 + 666 + 668 + 669):** all 4 actionable HIGH closed (H1, H2, H3, H4). MEDIUM done: M1, M2, M3, M4, M5, M7, M8, M9, M10. LOW done: L1, L3, L4, L5, L6, L7, L8, L10, L11, L12, L13, L14, L15, L16, L17. **Remaining: 1 MEDIUM (M6 focus-ring extraction — touches 50+ files, deserves its own dedicated session), 2 LOW (L2 URL validation extraction, L9 Popover widths inconsistent).**
 
 Cost: **S–M** if cherry-picked individually, **L** if all done in one bundle
 (estimated ~30–50 LOC per item × 31 items + ~2 new shared utilities).
@@ -251,7 +251,7 @@ an empty graph with no surfaced explanation.
 the equivalent inline error card pattern used in `HistoryView`). Cost:
 ~5–10 LOC + test. Risk: low.
 
-### M10 — `DonePanel` and `DuePanel` duplicate keyboard-nav setup
+### ~~M10 — `DonePanel` and `DuePanel` duplicate keyboard-nav setup~~ ✅ done session 669
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/DonePanel.tsx" lines="162-192" />
 
@@ -355,7 +355,7 @@ either codify it in a thin `MenuPopoverContent` wrapper or document it in
 `AGENTS.md` "Frontend Development Guidelines". Cost: ~30 LOC across 8–10
 files (or ~20 LOC for a wrapper).
 
-### L10 — `--ring` contrast is identical light/dark and consumed at `/50` opacity
+### ~~L10 — `--ring` contrast is identical light/dark and consumed at `/50` opacity~~ ✅ done session 669
 
 <ref_snippet file="/home/javier/dev/agaric/src/index.css" lines="135-140" />
 
@@ -376,7 +376,7 @@ Validated: `--task-done` and `--task-doing` are identical between the
 and `--task-custom` *do* differ. (Round 1 claimed all four were identical.)
 Adjust the two truly-duplicated tokens for dark backgrounds. Cost: ~2 lines.
 
-### L12 — A few `outline-none` usages lack a focus-visible replacement
+### ~~L12 — A few `outline-none` usages lack a focus-visible replacement~~ ✅ done session 669
 
 Verified offenders:
 
@@ -389,7 +389,7 @@ into M6 (focus-ring extraction) — applying the new utility to these three
 sites is the cheapest fix. Cost: ~6 LOC if rolled into M6, separate
 otherwise.
 
-### L13 — Scroll-to-focus pattern duplicated
+### ~~L13 — Scroll-to-focus pattern duplicated~~ ✅ done session 669
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/JournalPage.tsx" lines="84-90" />
 
@@ -399,7 +399,7 @@ Both use `requestAnimationFrame` + `scrollIntoView` with different selectors
 and options. Extract `useScrollToFocus(targetId, options?)` in `src/hooks/`.
 Cost: ~50 LOC (new hook + 2 callsite shrinks + tests). Risk: low.
 
-### L14 — `AttachmentList` delete-via-toast hardcodes a 3000 ms confirm window
+### ~~L14 — `AttachmentList` delete-via-toast hardcodes a 3000 ms confirm window~~ ✅ done session 669
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/AttachmentList.tsx" lines="50-80" />
 
@@ -409,7 +409,7 @@ two-click delete with a `ConfirmDestructiveAction` dialog (more aggressive
 UX change, brings the component in line with the rest of the destructive
 pattern). Cost: (a) ~5 LOC; (b) ~30 LOC + design call.
 
-### L15 — `ConfirmDestructiveAction` lacks a pending Spinner
+### ~~L15 — `ConfirmDestructiveAction` lacks a pending Spinner~~ ✅ done session 669
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/ConfirmDestructiveAction.tsx" lines="125-140" />
 
@@ -427,7 +427,7 @@ render to match. Cost: ~5 LOC + test.
 `[@media(pointer:coarse)]:px-2` or migrate to Button `size="icon-sm"` (which
 has square 44 × 44 sizing on coarse pointers). Cost: ~3 LOC.
 
-### L17 — `StatusIcon` and `PriorityBadge` hardcode their size
+### ~~L17 — `StatusIcon` and `PriorityBadge` hardcode their size~~ ✅ done session 669
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/ui/status-icon.tsx" lines="30-58" />
 

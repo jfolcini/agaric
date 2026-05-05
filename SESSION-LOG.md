@@ -2,11 +2,95 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 668 (closed 12 mixed PEND-28b + PEND-23 trivials — BugReportDialog body scroll, journal mobile layouts, primitive viewport unit, LoadingSkeleton variants, accent CSS-var swatches, etc.; PEND-28b now: 0 H / 2 M / 1 L remaining; PEND-23 now: 0 H / 2 M / 8 L remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1132+ items.
+**Sessions:** 1 – 669 (closed 10 long-tail PEND-23 + PEND-28b items — PEND-28b is now FULLY CLOSED, plan file deleted; PEND-23 down to 1 MEDIUM M6 + 2 LOW remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1142+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 669 — closed PEND-23 M10 + L10 + L12 + L13 + L14 + L15 + L17 + PEND-28b M6 + M9 + L1 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 6 build (A=L12+L13 JournalPage, B=L10+M6 index.css, C=L14+L15, D=L17 size variants, E=M9+L1, F=M10 keyboard-nav hook) + 0 reviewers (subagents self-validated). 6 is the PROMPT.md cap; first session this batch this cycle hit it. |
+| **Items closed** | 10 sub-items: PEND-23 M10 + L10 + L12 + L13 + L14 + L15 + L17 (7) and PEND-28b M6 + M9 + L1 (3). **PEND-28b is fully closed** (all 6 HIGH + all 13 MEDIUM + only LOW shipped); plan file `pending/PEND-28-ux-responsiveness-review-findings.md` deleted per the README's "delete on completion" convention. PEND-23 now: 1 MEDIUM (M6 focus-ring extraction across 50+ files — deserves its own dedicated session), 2 LOW (L2 URL validation extraction, L9 Popover widths consolidation). |
+| **Items modified** | — |
+| **Tests added** | +49 frontend across 11 test files. |
+| **Files touched** | 17 source + 2 new hooks (`useScrollToFocus`, `useKeyboardNavigableList`) + 5 docs (PEND-23 plan, README, REVIEW-LATER, SESSION-LOG, FEATURE-MAP). |
+
+**Summary:** Long-tail closing batch — 6 parallel subagents on non-overlapping files, all 6 finished cleanly. Two new hooks extracted (`useScrollToFocus` for the JournalPage / DailyView scroll pattern; `useKeyboardNavigableList` for the DonePanel / DuePanel keyboard nav). Two `cva()` size-variant migrations (StatusIcon, PriorityBadge — modeled after Spinner). One CSS contrast fix (`--ring` lifted per-theme). One mobile responsive sweep (HistoryFilterBar `flex-col sm:flex-row`, AlertSection `truncate`, narrow-desktop indent breakpoint). Pre-cleared `node_modules/.vite/vitest` before final prek (lesson from sessions 666-668). PEND-28b is the first plan file fully closed and deleted across this 4-session cycle (665-669). PEND-23 is one M6 focus-ring extraction away from done.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 36 → 36 (no new items)
+- **Previously resolved:** 1132+ → 1142+ across 668 → 669 sessions
+
+**Files touched (this session):**
+
+Frontend (TypeScript) — useScrollToFocus + L12 focus-ring:
+- `src/hooks/useScrollToFocus.ts` (NEW, +90): hook with `targetId`, optional `behavior`, `block`, `inline`, `resolveElement`, `onComplete`. `targetId == null` = noop. `prefers-reduced-motion: reduce` downgrades smooth → auto. `behavior` only injected when caller provides it (preserves existing DailyView call shape).
+- `src/hooks/__tests__/useScrollToFocus.test.ts` (NEW, +212): 10 tests covering all paths.
+- `src/components/JournalPage.tsx` (−5 net, +18/−23): two inline `useEffect` rAF blocks → two `useScrollToFocus(...)` calls. L12 focus-ring on the outer wrapper.
+- `src/components/journal/DailyView.tsx` (−3 net, +13/−16): inline UX-258 effect → single `useScrollToFocus(selectedBlockId, { resolveElement, onComplete })` call. `resolveElement` for the `[data-block-id="..."]` selector that DailyView uses (no `id` attribute on blocks).
+- `src/components/UnlinkedReferences.tsx` (+1/−1): bare `outline-none` → `focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50`.
+- `src/App.tsx` (+1/−1): same focus-ring fix.
+
+Frontend (CSS) — L10 + M6:
+- `src/index.css` `:root --ring`: `oklch(0.55 0.188 28.71)` → `oklch(0.55 0.25 28.71)` (chroma lifted from 0.188 to 0.25 to clear /50 alpha against white).
+- `src/index.css` `.dark --ring`: `oklch(0.55 0.188 28.71)` → `oklch(0.68 0.22 28.71)` (lightness lifted to clear /50 alpha against L=0.171 navy).
+- `src/index.css` new `@media (max-width: 640px) { :root { --indent-width: 12px; } }` block (M6) for narrow-desktop windows that don't trigger `pointer: coarse`.
+
+Frontend (TypeScript) — L14 + L15:
+- `src/components/AttachmentList.tsx` (+9/−2): `const TOAST_DELETE_CONFIRM_TIMEOUT_MS = 3000` extracted alongside the toast call site.
+- `src/components/ConfirmDestructiveAction.tsx` (+2/0): `<Spinner />` rendered inside `AlertDialogAction` when `pending`. Mirrors `ConfirmDialog.tsx:121`.
+- `src/components/__tests__/ConfirmDestructiveAction.test.tsx` (+39): regression test for the loading-Spinner.
+
+Frontend (TypeScript) — L17 size variants:
+- `src/components/ui/status-icon.tsx` (+27): `cva()` with `size: 'sm' | 'md' | 'lg'` mapped to `h-3 w-3` / `h-4 w-4` / `h-5 w-5`. Matches `Spinner` precedent.
+- `src/components/ui/priority-badge.tsx` (+17): same pattern. `sm`: `h-3.5 min-w-3.5 px-0.5 text-[10px]`; `md`: current shape; `lg`: `h-6 min-w-6 px-2 text-sm`.
+- `src/components/ui/__tests__/{status-icon,priority-badge}.test.tsx` (+73 across 2 files): 8 new variant tests (4 per primitive).
+- No caller migrations needed — none of the existing callers pass inline `h-3` or `h-5` overrides.
+
+Frontend (TypeScript) — useKeyboardNavigableList + DonePanel/DuePanel migration:
+- `src/hooks/useKeyboardNavigableList.ts` (NEW, +133): hook returning `{ focusedIndex, setFocusedIndex, handleKeyDown, listRef }`. Internally wraps `useListKeyboardNavigation` + scroll-into-view effect (opt-in `scrollBehavior` with reduced-motion downgrade) + reset-on-`resetKey` change. Generic over `T extends HTMLElement` so `listRef` typing is preserved at call sites. Uses `itemSelector` (default `[data-block-list-item]`) instead of per-item refs — matches DonePanel/DuePanel's existing `querySelectorAll` pattern.
+- `src/hooks/__tests__/useKeyboardNavigableList.test.ts` (NEW, +278): 10 tests covering shape, key delegation, reset-on-key, scrollIntoView, reduced-motion.
+- `src/components/DonePanel.tsx` (−27 net): inline ~30 LOC of keyboard-nav setup → one hook call. `resetKey: date`.
+- `src/components/DuePanel.tsx` (−26 net): same migration. `resetKey` is a stringified composite of `sourceFilter | hideBeforeScheduled | date`. All 50 existing tests pass unchanged.
+
+Frontend (TypeScript) — M9 + L1:
+- `src/components/HistoryFilterBar.tsx` (2 lines): row container `flex items-center gap-3` → `flex flex-col sm:flex-row sm:items-center gap-3`. All-spaces toggle wrapper `ml-auto` → `sm:ml-auto` to keep the mobile vertical stack.
+- `src/components/AlertSection.tsx` (1 line): date `<span>` className `shrink-0 text-xs` → `shrink-0 truncate text-xs`.
+- `src/components/__tests__/{HistoryFilterBar,AlertSection}.test.tsx` (+33 across 2 files): regression tests for both fixes.
+
+Plan files:
+- `pending/PEND-28-ux-responsiveness-review-findings.md` (DELETED): all 6 HIGH + all 13 MEDIUM + only LOW closed across sessions 667-669. Per README "delete on completion" convention.
+- `pending/PEND-23-ux-review-findings.md`: M10 + L10 + L12 + L13 + L14 + L15 + L17 sub-headers struck through with `~~...~~` + ✅ session-669 marker. Status line at top: "1 MEDIUM (M6 focus-ring extraction) + 2 LOW (L2, L9) remaining."
+- `pending/README.md`: PEND-28b row removed; "Mid-tier" list trimmed.
+
+Docs:
+- `pending/REVIEW-LATER.md`: header bumped to session 669 (no new MAINT items).
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: useScrollToFocus + useKeyboardNavigableList hooks documented.
+
+**Verification:**
+- `rm -rf node_modules/.vite/vitest` (sessions 666-668 lesson) → `npx vitest run` — 9489+ tests pass
+- `cd src-tauri && cargo nextest run` — 3510/3510 pass, 4 skipped (no Rust changes this session)
+- `prek run --all-files` — all hooks pass after biome auto-fix on 4 files
+
+**Process notes:**
+- **Hit the 6-subagent cap for the first time** — went smoothly. All 6 subagents finished cleanly without WIP-commit protection. Pure-frontend work + non-overlapping files = no coordination chaos.
+- **PEND-28b is the first plan file fully closed** across the recent cycle. The plan had ~150 LOC of detailed UX responsiveness findings; sessions 667-669 closed all 20 of them in 3 commits (11 + 12 + 3 = the M6 number is shared across both plans). Lesson: "trivials with a primitive-level headline win" (H1+H2 max-h on Dialog/Popover) is a high-ROI batch shape.
+- **Two hook extractions in one batch** (`useScrollToFocus` + `useKeyboardNavigableList`) is on the upper end of complexity for a parallel-subagent session, but they're independent enough to safely run in parallel. Both passed first-try with subagent-authored tests.
+- **PEND-23 M6 (focus-ring extraction across 50+ files) is the only "big" item left.** That deserves its own dedicated session — the surface is too wide for a 4-6 subagent split.
+
+**Lessons learned (for future sessions):**
+- **Hook extraction should preserve existing call shapes.** Both new hooks were extended beyond the plan's "literal signature" because the real call sites had behaviors (post-scroll cleanup, `[data-*]`-selector lookup, composite `resetKey`) that a minimal API couldn't capture. Subagents correctly identified and accommodated these — the right call. Pattern: extract a minimal hook + add the optional extension points that existing call sites need.
+- **`cva()` for primitive size variants is the right pattern** (matched Spinner's precedent in L17). For non-primitive components (e.g. session 668's LoadingSkeleton with one variant axis), a helper-map stays simpler. Rule of thumb: if it's a `ui/` primitive used 5+ places + has at least 2 variant axes, use `cva()`.
+- **PEND-28b's structure (1 LOW, ~13 MEDIUM, 6 HIGH all trivial) was ideal for the trivials-batch pattern.** Sessions 667-669 closed it in 3 commits with no follow-ups needed. PEND-23 has a similar structure but with one outlier (M6 focus-ring extraction) that legitimately warrants a dedicated session.
+
+**Commit plan:** single commit / not pushed.
+
+---
 
 ## Session 668 — closed PEND-28b M1 + M8 + M10 + M11 + M12 + M13 + PEND-23 L3 + L4 + L5 + L6 + L7 + L16 (2026-05-04)
 

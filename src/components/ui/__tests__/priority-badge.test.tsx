@@ -129,4 +129,41 @@ describe('PriorityBadge', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // PEND-23 L17: size variants modeled after Spinner.
+  describe('size variants (PEND-23 L17)', () => {
+    it('renders default md variant with h-4 and text-xs', () => {
+      render(<PriorityBadge priority="1" />)
+      const el = screen.getByText('P1')
+      expect(el.className).toContain('h-4')
+      expect(el.className).toContain('min-w-4')
+      expect(el.className).toContain('px-1')
+      expect(el.className).toContain('text-xs')
+    })
+
+    it('renders sm variant with smaller text and tighter padding', () => {
+      render(<PriorityBadge priority="1" size="sm" />)
+      const el = screen.getByText('P1')
+      expect(el.className).toContain('h-3.5')
+      expect(el.className).toContain('px-0.5')
+      expect(el.className).toContain('text-[10px]')
+      expect(el.className).not.toContain('text-xs')
+    })
+
+    it('renders lg variant with h-6 and larger text', () => {
+      render(<PriorityBadge priority="1" size="lg" />)
+      const el = screen.getByText('P1')
+      expect(el.className).toContain('h-6')
+      expect(el.className).toContain('min-w-6')
+      expect(el.className).toContain('px-2')
+      expect(el.className).toContain('text-sm')
+    })
+
+    it('preserves priority colour across sizes', () => {
+      render(<PriorityBadge priority="1" size="lg" />)
+      const el = screen.getByText('P1')
+      expect(el.className).toContain('bg-priority-urgent')
+      expect(el.className).toContain('h-6')
+    })
+  })
 })

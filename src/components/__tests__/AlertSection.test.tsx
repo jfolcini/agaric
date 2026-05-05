@@ -234,6 +234,24 @@ describe('AlertSection', () => {
     expect(screen.getByText('2025-01-15')).toBeInTheDocument()
   })
 
+  // PEND-28b L1: the date span has `shrink-0` so flex compression won't
+  // truncate long localized relative-date strings on phones — pair it with
+  // `truncate` so the span clips with an ellipsis instead of overflowing.
+  it('date span has truncate in its className', () => {
+    render(
+      <AlertSection
+        variant="destructive"
+        title="Overdue"
+        blocks={[makeBlock({ id: 'B1', due_date: '2025-01-15' })]}
+        pageTitles={defaultTitles}
+      />,
+    )
+
+    const dateSpan = screen.getByText('2025-01-15').parentElement
+    expect(dateSpan).not.toBeNull()
+    expect(dateSpan?.className).toContain('truncate')
+  })
+
   it('a11y: no violations with destructive variant', async () => {
     const { container } = render(
       <AlertSection

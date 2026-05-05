@@ -24,6 +24,14 @@ import { MimeIcon } from './MimeIcon'
 // Re-exported for back-compat with tests / consumers that imported it from here.
 export { formatSize }
 
+/**
+ * How long the "click again to confirm" toast stays visible AND how long the
+ * pending-delete state lingers before resetting. The two MUST stay in sync —
+ * if the toast disappears while pending state is still armed, a stray second
+ * click would silently delete with no visual confirmation.
+ */
+const TOAST_DELETE_CONFIRM_TIMEOUT_MS = 3000
+
 interface AttachmentListProps {
   blockId: string
 }
@@ -63,7 +71,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
         setPendingDeleteId(attachment.id)
         toast(t('attachments.confirmDelete', { name: attachment.filename }), {
           description: t('attachments.clickAgain'),
-          duration: 3000,
+          duration: TOAST_DELETE_CONFIRM_TIMEOUT_MS,
         })
         // Cancel any previous reset timer before scheduling a new one.
         if (pendingDeleteClearRef.current !== null) {
@@ -73,7 +81,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
         pendingDeleteClearRef.current = window.setTimeout(() => {
           pendingDeleteClearRef.current = null
           setPendingDeleteId((current) => (current === attachment.id ? null : current))
-        }, 3000)
+        }, TOAST_DELETE_CONFIRM_TIMEOUT_MS)
       }
     },
     [pendingDeleteId, handleDeleteAttachment, t],

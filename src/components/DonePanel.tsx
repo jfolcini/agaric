@@ -9,12 +9,12 @@
 
 import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
-import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useKeyboardNavigableList } from '../hooks/useKeyboardNavigableList'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
@@ -159,36 +159,20 @@ export function DonePanel({
   const grouped = groupBlocksByPage(blocks, pageTitles, t('donePanel.untitled'))
 
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
-  const listRef = useRef<HTMLDivElement>(null)
   const flatItems = grouped.flatMap((g) => g.items)
 
   const {
     focusedIndex,
-    setFocusedIndex,
     handleKeyDown: navHandleKeyDown,
-  } = useListKeyboardNavigation({
-    itemCount: flatItems.length,
-    homeEnd: true,
-    pageUpDown: true,
-    onSelect: (idx) => {
+    listRef,
+  } = useKeyboardNavigableList<HTMLDivElement>(
+    flatItems.length,
+    (idx) => {
       const block = flatItems[idx]
       if (block) handleBlockClick(block)
     },
-  })
-
-  // Reset focused index when date changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [date, setFocusedIndex])
-
-  // Scroll focused item into view
-  useEffect(() => {
-    if (!listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-block-list-item]')
-    const el = items[focusedIndex] as HTMLElement | undefined
-    el?.scrollIntoView?.({ block: 'nearest' })
-  }, [focusedIndex])
+    { homeEnd: true, pageUpDown: true, resetKey: date },
+  )
 
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })

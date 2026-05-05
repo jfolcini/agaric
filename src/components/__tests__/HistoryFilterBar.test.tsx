@@ -75,6 +75,21 @@ describe('HistoryFilterBar', () => {
     expect(screen.getByRole('combobox', { name: /Filter by operation type/ })).toBeInTheDocument()
   })
 
+  // PEND-28b M9: the row container stacks on phones and switches to a row
+  // at the `sm:` breakpoint so the "All spaces" toggle doesn't run off the
+  // right edge on a 360 px viewport.
+  it('row container stacks on mobile and switches to a row at sm:', () => {
+    const onFilterChange = vi.fn()
+    const { container } = render(
+      <HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} {...baseProps} />,
+    )
+
+    const row = container.querySelector('.history-filter-bar')
+    expect(row).not.toBeNull()
+    expect(row?.className).toContain('flex-col')
+    expect(row?.className).toContain('sm:flex-row')
+  })
+
   it('shows all op type options', () => {
     const onFilterChange = vi.fn()
     render(<HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} {...baseProps} />)
