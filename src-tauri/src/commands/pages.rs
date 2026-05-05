@@ -16,6 +16,7 @@ use crate::import;
 use crate::import::ImportResult;
 use crate::materializer::Materializer;
 use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL};
+use crate::space::{SpaceId, SpaceScope};
 use crate::ulid::BlockId;
 
 use super::*;
@@ -161,11 +162,12 @@ struct PageAliasPrefixRow {
 /// Bounded by [`MAX_PAGE_ALIASES_PREFIX`] to keep the popup responsive
 /// even if a user has hundreds of single-letter-prefixed aliases.
 ///
-/// `space_id` (FEAT-3p4 / PEND-34) — when `Some`, restricts the result
-/// set to aliases pointing at pages whose `space` property equals
-/// `space_id`. Mirrors the `(?N IS NULL OR ... IN (...))` short-circuit
-/// pattern used by `pagination::list_by_tag` and friends. `None` keeps
-/// the cross-space behaviour for callers that have not migrated.
+/// `scope` (FEAT-3p4 / PEND-34) — [`SpaceScope::Active`] restricts the
+/// result set to aliases pointing at pages whose `space` property
+/// equals the wrapped [`SpaceId`]. Mirrors the
+/// `(?N IS NULL OR ... IN (...))` short-circuit pattern used by
+/// `pagination::list_by_tag` and friends. [`SpaceScope::Global`] keeps
+/// the cross-space behaviour for callers that span every space.
 ///
 /// Ordering: `length(alias), alias` puts the exact match (typed in
 /// full) at the top, then alphabetical. SQLite cannot satisfy this
@@ -178,10 +180,11 @@ pub async fn list_page_aliases_by_prefix_inner(
     pool: &SqlitePool,
     prefix: &str,
     limit: Option<i64>,
-    space_id: Option<&str>,
+    scope: &SpaceScope,
 ) -> Result<Vec<(String, String, Option<String>)>, AppError> {
     let like_pattern = format!("{}%", crate::sql_utils::escape_like(prefix));
     let effective_limit = limit.unwrap_or(MAX_PAGE_ALIASES_PREFIX);
+    let space_filter = scope.as_filter_param();
     let rows = sqlx::query_as!(
         PageAliasPrefixRow,
         r#"SELECT pa.page_id AS "page_id!", pa.alias AS "alias!", b.content AS "title?"
@@ -196,7 +199,7 @@ pub async fn list_page_aliases_by_prefix_inner(
          LIMIT ?2"#,
         like_pattern,
         effective_limit,
-        space_id,
+        space_filter,
     )
     .fetch_all(pool)
     .await?;
@@ -581,18 +584,18 @@ pub async fn import_markdown_inner(
 /// Block-level links (where source is a content block) are rolled up to
 /// their parent page.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
-/// edges where **both** the source page (`COALESCE(sb.parent_id,
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// to edges where **both** the source page (`COALESCE(sb.parent_id,
 /// bl.source_id)`) and the target page (`bl.target_id`) carry
 /// `space = ?space_id`. This is the policy enforcement point for
 /// "no live links between spaces, ever" in the graph view: an edge
 /// crossing space boundaries must not surface in either space's
-/// graph. `None` keeps the pre-FEAT-3 cross-space behaviour for
-/// callers that have not migrated.
+/// graph. [`SpaceScope::Global`] keeps the pre-FEAT-3 cross-space
+/// behaviour for callers that span every space.
 #[instrument(skip(pool), err)]
 pub async fn list_page_links_inner(
     pool: &SqlitePool,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<Vec<PageLink>, AppError> {
     // For each block_link, find the parent page of the source block.
     // The target in block_links is already a page (since [[links]] point to pages).
@@ -651,7 +654,7 @@ pub async fn list_page_links_inner(
              ))
          GROUP BY 1, 2",
     )
-    .bind(space_id.as_deref())
+    .bind(scope.as_filter_param())
     .fetch_all(pool)
     .await?;
 
@@ -968,7 +971,11 @@ pub async fn list_page_aliases_by_prefix(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<Vec<(String, String, Option<String>)>, AppError> {
-    list_page_aliases_by_prefix_inner(&read_pool.0, &prefix, limit, space_id.as_deref())
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    list_page_aliases_by_prefix_inner(&read_pool.0, &prefix, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1017,7 +1024,11 @@ pub async fn list_page_links(
     pool: State<'_, ReadPool>,
     space_id: Option<String>,
 ) -> Result<Vec<PageLink>, AppError> {
-    list_page_links_inner(&pool.0, space_id)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    list_page_links_inner(&pool.0, &scope)
         .await
         .map_err(sanitize_internal_error)
 }

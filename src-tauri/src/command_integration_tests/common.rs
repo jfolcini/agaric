@@ -5,6 +5,7 @@ pub use crate::db::init_pool;
 pub use crate::db::ReadPool;
 pub use crate::error::AppError;
 pub use crate::materializer::Materializer;
+pub use crate::space::{SpaceId, SpaceScope};
 pub use sqlx::SqlitePool;
 pub use std::path::PathBuf;
 pub use tempfile::TempDir;

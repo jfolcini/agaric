@@ -16,26 +16,27 @@ use crate::fts;
 use crate::materializer::Materializer;
 use crate::materializer::StatusInfo;
 use crate::pagination::{self, ActiveBlockRow, BlockRow, PageResponse};
+use crate::space::{SpaceId, SpaceScope};
 use crate::sync_scheduler::SyncScheduler;
 
 use super::*;
 
 /// List blocks that link to the given block (backlinks), with cursor pagination.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
-/// source blocks whose owning page carries `space = ?space_id`. `None`
-/// is the unscoped (pre-FEAT-3) behaviour preserved for callsites that
-/// have not migrated.
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// to source blocks whose owning page carries `space = ?space_id`.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// preserved for callsites that span every space.
 #[instrument(skip(pool), err)]
 pub async fn get_backlinks_inner(
     pool: &SqlitePool,
     block_id: String,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_backlinks(pool, &block_id, &page, space_id.as_deref()).await
+    pagination::list_backlinks(pool, &block_id, &page, scope.as_filter_param()).await
 }
 
 /// List conflict-copy blocks (blocks with `is_conflict = true`), with cursor pagination.
@@ -103,10 +104,10 @@ pub async fn search_blocks_inner(
 /// When `value_text` is provided, only blocks whose property value matches are returned.
 /// Results are paginated using cursor-based pagination (by block_id).
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
-/// blocks whose owning page carries `space = ?space_id`. `None` is the
-/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
-/// not migrated.
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// to blocks whose owning page carries `space = ?space_id`.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// preserved for callsites that span every space.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `key` is empty
@@ -120,7 +121,7 @@ pub async fn query_by_property_inner(
     operator: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if key.trim().is_empty() {
         return Err(AppError::Validation(
@@ -136,7 +137,7 @@ pub async fn query_by_property_inner(
         value_date.as_deref(),
         op,
         &page,
-        space_id.as_deref(),
+        scope.as_filter_param(),
     )
     .await
 }
@@ -147,11 +148,11 @@ pub async fn query_by_property_inner(
 /// Filters use AND semantics at the top level; use `And`/`Or`/`Not` filter
 /// variants for compound boolean logic.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
-/// source blocks whose owning page carries `space = ?space_id`. The
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// to source blocks whose owning page carries `space = ?space_id`. The
 /// filter is applied at the base-set step so `total_count` and
-/// `filtered_count` reflect the post-space-filter universe. `None` is
-/// the unscoped (pre-FEAT-3) behaviour.
+/// `filtered_count` reflect the post-space-filter universe.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
@@ -163,22 +164,30 @@ pub async fn query_backlinks_filtered_inner(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<BacklinkQueryResponse, AppError> {
     if block_id.trim().is_empty() {
         return Err(AppError::Validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_backlink_query(pool, &block_id, filters, sort, &page, space_id.as_deref()).await
+    backlink::eval_backlink_query(
+        pool,
+        &block_id,
+        filters,
+        sort,
+        &page,
+        scope.as_filter_param(),
+    )
+    .await
 }
 
 /// Query backlinks grouped by source page.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
-/// source blocks whose owning page carries `space = ?space_id`. The
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// to source blocks whose owning page carries `space = ?space_id`. The
 /// filter is applied at the base-set step so `total_count` and
-/// `filtered_count` reflect the post-space-filter universe. `None` is
-/// the unscoped (pre-FEAT-3) behaviour.
+/// `filtered_count` reflect the post-space-filter universe.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
@@ -190,7 +199,7 @@ pub async fn list_backlinks_grouped_inner(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     if block_id.trim().is_empty() {
         return Err(AppError::Validation("block_id must not be empty".into()));
@@ -202,7 +211,7 @@ pub async fn list_backlinks_grouped_inner(
         filters,
         sort,
         &page,
-        space_id.as_deref(),
+        scope.as_filter_param(),
     )
     .await
 }
@@ -217,11 +226,11 @@ pub async fn list_backlinks_grouped_inner(
 /// `total_count` and `filtered_count` both reflect the post-filter,
 /// post-self-reference-exclusion block count (AGENTS.md pattern #4).
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts FTS-matched blocks to
-/// those whose owning page carries `space = ?space_id`. The filter is
-/// applied at the base-set step so `total_count` and `filtered_count`
-/// reflect the post-space-filter universe. `None` is the unscoped
-/// (pre-FEAT-3) behaviour.
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts FTS-matched
+/// blocks to those whose owning page carries `space = ?space_id`. The
+/// filter is applied at the base-set step so `total_count` and
+/// `filtered_count` reflect the post-space-filter universe.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
@@ -233,13 +242,13 @@ pub async fn list_unlinked_references_inner(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     if page_id.trim().is_empty() {
         return Err(AppError::Validation("page_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_unlinked_references(pool, page_id, filters, sort, &page, space_id.as_deref())
+    backlink::eval_unlinked_references(pool, page_id, filters, sort, &page, scope.as_filter_param())
         .await
 }
 
@@ -295,7 +304,11 @@ pub async fn get_backlinks(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
-    get_backlinks_inner(&pool.0, block_id, cursor, limit, space_id)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    get_backlinks_inner(&pool.0, block_id, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -359,8 +372,12 @@ pub async fn query_by_property(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
     query_by_property_inner(
-        &pool.0, key, value_text, value_date, operator, cursor, limit, space_id,
+        &pool.0, key, value_text, value_date, operator, cursor, limit, &scope,
     )
     .await
     .map_err(sanitize_internal_error)
@@ -380,17 +397,13 @@ pub async fn query_backlinks_filtered(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    query_backlinks_filtered_inner(
-        &read_pool.0,
-        block_id,
-        filters,
-        sort,
-        cursor,
-        limit,
-        space_id,
-    )
-    .await
-    .map_err(sanitize_internal_error)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    query_backlinks_filtered_inner(&read_pool.0, block_id, filters, sort, cursor, limit, &scope)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].
@@ -407,17 +420,13 @@ pub async fn list_backlinks_grouped(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    list_backlinks_grouped_inner(
-        &read_pool.0,
-        block_id,
-        filters,
-        sort,
-        cursor,
-        limit,
-        space_id,
-    )
-    .await
-    .map_err(sanitize_internal_error)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    list_backlinks_grouped_inner(&read_pool.0, block_id, filters, sort, cursor, limit, &scope)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
@@ -434,17 +443,13 @@ pub async fn list_unlinked_references(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    list_unlinked_references_inner(
-        &read_pool.0,
-        &page_id,
-        filters,
-        sort,
-        cursor,
-        limit,
-        space_id,
-    )
-    .await
-    .map_err(sanitize_internal_error)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    list_unlinked_references_inner(&read_pool.0, &page_id, filters, sort, cursor, limit, &scope)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].

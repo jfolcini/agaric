@@ -4423,6 +4423,7 @@ mod tests_p7 {
     };
     use crate::commands::{batch_resolve_inner, get_page_inner};
     use crate::error::AppError;
+    use crate::space::{SpaceId, SpaceScope};
 
     /// Synthetic third space — required by the property-style regression
     /// test below to model "more than two spaces" without depending on
@@ -4450,7 +4451,7 @@ mod tests_p7 {
         let resolved = batch_resolve_inner(
             &pool,
             vec!["PG_A".into(), "PG_B".into()],
-            Some(SPACE_A_ID.to_string()),
+            &SpaceScope::Active(SpaceId::from_trusted(SPACE_A_ID)),
         )
         .await
         .unwrap();
@@ -4623,7 +4624,7 @@ mod tests_p7 {
                     let resolved = batch_resolve_inner(
                         &pool,
                         vec![page_id.clone()],
-                        Some((*candidate_space).to_string()),
+                        &SpaceScope::Active(SpaceId::from_trusted(candidate_space)),
                     )
                     .await
                     .expect("same-space resolve must succeed");
@@ -4643,7 +4644,7 @@ mod tests_p7 {
                     let resolved = batch_resolve_inner(
                         &pool,
                         vec![page_id.clone()],
-                        Some((*candidate_space).to_string()),
+                        &SpaceScope::Active(SpaceId::from_trusted(candidate_space)),
                     )
                     .await
                     .expect("foreign-space resolve must not error, just drop the row");
@@ -4696,7 +4697,7 @@ mod tests_p7 {
         let resolved = batch_resolve_inner(
             &pool,
             vec!["PG_ORIG".into(), "PG_CONF".into()],
-            Some(SPACE_A_ID.to_string()),
+            &SpaceScope::Active(SpaceId::from_trusted(SPACE_A_ID)),
         )
         .await
         .unwrap();

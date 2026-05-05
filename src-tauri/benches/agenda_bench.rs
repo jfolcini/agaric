@@ -13,6 +13,7 @@ use agaric_lib::commands::{
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
+use agaric_lib::space::SpaceScope;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -136,7 +137,11 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     let dates = dates.clone();
-                    async move { count_agenda_batch_inner(&pool, dates, None).await.unwrap() }
+                    async move {
+                        count_agenda_batch_inner(&pool, dates, &SpaceScope::Global)
+                            .await
+                            .unwrap()
+                    }
                 })
             },
         );
@@ -177,7 +182,7 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
                     let pool = pool.clone();
                     let dates = dates.clone();
                     async move {
-                        count_agenda_batch_by_source_inner(&pool, dates, None)
+                        count_agenda_batch_by_source_inner(&pool, dates, &SpaceScope::Global)
                             .await
                             .unwrap()
                     }
@@ -218,7 +223,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
                             "2025-07-07".into(),
                             None,
                             Some(200),
-                            None,
+                            &SpaceScope::Global,
                         )
                         .await
                         .unwrap()

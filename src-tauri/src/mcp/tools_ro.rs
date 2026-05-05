@@ -70,6 +70,7 @@ use crate::commands::{
 };
 use crate::error::AppError;
 use crate::materializer::Materializer;
+use crate::space::{SpaceId, SpaceScope};
 
 // ---------------------------------------------------------------------------
 // Caps — enforced at the tool boundary (FEAT-4c decision)
@@ -700,16 +701,15 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
     // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    let resp = list_backlinks_grouped_inner(
-        pool,
-        block_id,
-        None,
-        None,
-        args.cursor,
-        limit,
-        args.space_id,
-    )
-    .await?;
+    // PEND-18 Phase 2 — translate the JSON-side `space_id: Option<String>`
+    // into a `SpaceScope` before crossing into `_inner`. The wire shape
+    // stays the same; the type-system gate moves to the call boundary.
+    let scope = match args.space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    let resp = list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope)
+        .await?;
     to_tool_result(&resp)
 }
 
@@ -730,13 +730,20 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
+    // PEND-18 Phase 2 — translate the JSON-side `space_id: Option<String>`
+    // into a `SpaceScope` before crossing into `_inner`. The wire shape
+    // stays the same; the type-system gate moves to the call boundary.
+    let scope = match args.space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
     let resp = list_projected_agenda_inner(
         pool,
         args.start_date,
         args.end_date,
         args.cursor,
         limit,
-        args.space_id,
+        &scope,
     )
     .await?;
     to_tool_result(&resp)

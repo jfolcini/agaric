@@ -867,7 +867,7 @@ async fn batch_resolve_returns_all_requested_blocks() {
     let result = batch_resolve_inner(
         &pool,
         vec!["BR01".into(), "BR02".into(), "BR03".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -906,7 +906,12 @@ async fn batch_resolve_returns_all_requested_blocks() {
 async fn batch_resolve_empty_ids_returns_validation_error() {
     let (pool, _dir) = test_pool().await;
 
-    let result = batch_resolve_inner(&pool, vec![], Some(TEST_SPACE_ID.to_string())).await;
+    let result = batch_resolve_inner(
+        &pool,
+        vec![],
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -929,7 +934,7 @@ async fn batch_resolve_includes_deleted_blocks() {
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_DEL".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -952,7 +957,7 @@ async fn batch_resolve_omits_nonexistent_ids() {
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_EXISTS".into(), "BR_MISSING".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -981,7 +986,7 @@ async fn batch_resolve_null_content_returns_none_title() {
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_NULL".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -1003,7 +1008,7 @@ async fn batch_resolve_single_id() {
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_SINGLE".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -1026,7 +1031,7 @@ async fn batch_resolve_duplicate_ids_deduped_by_db() {
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_DUP".into(), "BR_DUP".into(), "BR_DUP".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -1076,7 +1081,7 @@ async fn batch_resolve_mixed_block_types() {
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_PAGE".into(), "BR_TAG".into(), "BR_CONTENT".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();

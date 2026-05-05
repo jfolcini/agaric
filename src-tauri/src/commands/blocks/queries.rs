@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 use super::super::*;
+use crate::space::{SpaceId, SpaceScope};
 
 /// List blocks with pagination, applying at most one exclusive filter.
 ///
@@ -194,30 +195,34 @@ pub async fn get_active_block_inner(
 ///
 /// - [`AppError::Validation`] — `ids` is empty
 ///
-/// `space_id` is `Option<String>` — when `Some`, results are scoped to that
-/// space (FEAT-3p7's broken-chip rendering for foreign-space `[[ULID]]`
-/// targets); when `None`, the call is cross-space (used by legacy surfaces
-/// like trash, search, agenda views that have not yet been promoted to
-/// per-space scoping — tracked under FEAT-3p4). The transitional `Option`
-/// shape mirrors `list_page_history`'s FEAT-3p8 pattern.
+/// `scope` (FEAT-3p7) — [`SpaceScope::Active`] restricts the result set
+/// to the named space (FEAT-3p7's broken-chip rendering for foreign-space
+/// `[[ULID]]` targets). [`SpaceScope::Global`] keeps the cross-space
+/// behaviour used by legacy surfaces like trash / search / agenda views
+/// that have not yet been promoted to per-space scoping — tracked under
+/// FEAT-3p4. The `Option<String>` shape this replaces mirrored
+/// `list_page_history`'s FEAT-3p8 pattern; both migrated together in
+/// PEND-18 Phase 2.
 #[instrument(skip(pool, ids), err)]
 pub async fn batch_resolve_inner(
     pool: &SqlitePool,
     ids: Vec<String>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
     if ids.is_empty() {
         return Err(AppError::Validation("ids list cannot be empty".into()));
     }
 
     let ids_json = serde_json::to_string(&ids)?;
+    let space_filter = scope.as_filter_param();
 
     // FEAT-3 Phase 7: scope to the current space using the canonical
     // `COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp
     // WHERE bp.key = 'space' AND bp.value_ref = ?)` filter (matches the pattern
     // shipped in `pagination/{hierarchy,trash}.rs` and `fts/search.rs`).
-    // The `?2 IS NULL OR …` shape lets cross-space callers (None) bypass
-    // the filter entirely while space-scoped callers (Some) get the
+    // The `?2 IS NULL OR …` shape lets cross-space callers
+    // ([`SpaceScope::Global`]) bypass the filter entirely while
+    // space-scoped callers ([`SpaceScope::Active`]) get the
     // foreign-target-drops-out behaviour the spec demands.
     //
     // AGENTS.md invariant #9 — `is_conflict = 0` filter prevents conflict
@@ -243,7 +248,7 @@ pub async fn batch_resolve_inner(
                  WHERE bp.key = 'space' AND bp.value_ref = ?2
              ))"#,
         ids_json,
-        space_id,
+        space_filter,
     )
     .fetch_all(pool)
     .await?;
@@ -341,7 +346,11 @@ pub async fn batch_resolve(
     ids: Vec<String>,
     space_id: Option<String>,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
-    batch_resolve_inner(&pool.0, ids, space_id)
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
+    batch_resolve_inner(&pool.0, ids, &scope)
         .await
         .map_err(sanitize_internal_error)
 }

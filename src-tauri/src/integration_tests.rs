@@ -41,6 +41,7 @@ use crate::op_log;
 use crate::pagination::BlockRow;
 use crate::recovery;
 use crate::snapshot;
+use crate::space::SpaceScope;
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -1660,7 +1661,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1694,7 +1695,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();

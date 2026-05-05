@@ -14,6 +14,7 @@ use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload};
 use crate::op_log;
 use crate::pagination::ActiveBlockRow;
 use crate::pagination::PageResponse;
+use crate::space::{SpaceId, SpaceScope};
 use crate::tag_query::{self, TagCacheRow, TagExpr};
 use crate::ulid::BlockId;
 
@@ -233,10 +234,10 @@ pub async fn remove_tag_inner(
 /// `mode` is `"and"` for intersection, anything else defaults to `"or"` (union).
 /// Returns an empty page when no tag IDs or prefixes are supplied.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
-/// blocks whose owning page carries `space = ?space_id`. `None` is the
-/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
-/// not migrated.
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result
+/// set to blocks whose owning page carries `space = ?space_id`.
+/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// preserved for callsites that span every space.
 #[instrument(skip(pool, tag_ids), err)]
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_tags_inner(
@@ -247,7 +248,7 @@ pub async fn query_by_tags_inner(
     include_inherited: Option<bool>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: &SpaceScope,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let mut exprs = Vec::new();
     for tag_id in tag_ids {
@@ -277,7 +278,7 @@ pub async fn query_by_tags_inner(
         &expr,
         &page,
         include_inherited.unwrap_or(false),
-        space_id.as_deref(),
+        scope.as_filter_param(),
     )
     .await
 }
@@ -401,6 +402,10 @@ pub async fn query_by_tags(
     limit: Option<i64>,
     space_id: Option<String>,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    let scope = match space_id {
+        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
+        None => SpaceScope::Global,
+    };
     query_by_tags_inner(
         &pool.0,
         tag_ids,
@@ -409,7 +414,7 @@ pub async fn query_by_tags(
         include_inherited,
         cursor,
         limit,
-        space_id,
+        &scope,
     )
     .await
     .map_err(sanitize_internal_error)

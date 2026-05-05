@@ -1,5 +1,6 @@
 use super::common::*;
 use crate::backlink::{BacklinkFilter, BacklinkSort, CompareOp, SortDir};
+use crate::space::SpaceScope;
 use std::collections::HashSet;
 
 // ======================================================================
@@ -74,9 +75,17 @@ async fn backlinks_filtered_returns_linking_blocks() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     let ids: HashSet<String> = resp.items.iter().map(|b| b.id.clone().into()).collect();
     assert!(ids.contains(&b1.id), "b1 must be in backlinks");
@@ -104,9 +113,17 @@ async fn backlinks_filtered_empty_for_no_links() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert!(resp.items.is_empty(), "no backlinks expected");
     assert_eq!(resp.total_count, 0, "total_count must be 0");
@@ -158,9 +175,17 @@ async fn backlinks_filtered_excludes_deleted() {
     settle(&mat).await;
 
     // Verify backlink exists
-    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
     assert_eq!(resp.items.len(), 1, "one backlink before deletion");
 
     // Delete the linking block
@@ -169,9 +194,17 @@ async fn backlinks_filtered_excludes_deleted() {
         .unwrap();
     settle(&mat).await;
 
-    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        page.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert!(resp.items.is_empty(), "deleted backlink must be excluded");
     assert_eq!(resp.total_count, 0, "total_count must be 0 after deletion");
@@ -260,7 +293,7 @@ async fn backlinks_filtered_with_block_type_filter() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -345,7 +378,7 @@ async fn backlinks_filtered_with_contains_filter() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -466,7 +499,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -550,7 +583,7 @@ async fn backlinks_filtered_with_sort_created() {
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -573,7 +606,7 @@ async fn backlinks_filtered_with_sort_created() {
         Some(BacklinkSort::Created { dir: SortDir::Desc }),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -694,7 +727,7 @@ async fn backlinks_filtered_with_sort_property() {
         }),
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -760,7 +793,7 @@ async fn backlinks_filtered_pagination() {
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         None,
         Some(3),
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -782,7 +815,7 @@ async fn backlinks_filtered_pagination() {
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         resp1.next_cursor,
         Some(3),
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -799,7 +832,7 @@ async fn backlinks_filtered_pagination() {
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         resp2.next_cursor,
         Some(3),
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -855,10 +888,17 @@ async fn backlinks_filtered_total_count_matches() {
     }
 
     // Query with limit=2 — total_count should still be 5
-    let resp =
-        query_backlinks_filtered_inner(&pool, target.id.clone(), None, None, None, Some(2), None)
-            .await
-            .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        Some(2),
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 2, "page has 2 items");
     assert_eq!(
@@ -880,8 +920,16 @@ async fn backlinks_filtered_total_count_matches() {
 async fn backlinks_filtered_empty_block_id_returns_error() {
     let (pool, _dir) = test_pool().await;
 
-    let result =
-        query_backlinks_filtered_inner(&pool, "".into(), None, None, None, None, None).await;
+    let result = query_backlinks_filtered_inner(
+        &pool,
+        "".into(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -900,7 +948,7 @@ async fn backlinks_filtered_nonexistent_block_id_returns_empty() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1078,7 +1126,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1128,10 +1176,17 @@ async fn backlinks_filtered_unicode_content() {
         .unwrap();
     settle(&mat).await;
 
-    let resp =
-        query_backlinks_filtered_inner(&pool, target.id.clone(), None, None, None, None, None)
-            .await
-            .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 1, "unicode backlink must be returned");
     assert_eq!(
@@ -1175,9 +1230,17 @@ async fn backlinks_filtered_self_reference_excluded() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = query_backlinks_filtered_inner(&pool, b1.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        b1.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -1237,10 +1300,17 @@ async fn backlinks_filtered_multiple_refs_same_block() {
     .unwrap();
     settle(&mat).await;
 
-    let resp =
-        query_backlinks_filtered_inner(&pool, target.id.clone(), None, None, None, None, None)
-            .await
-            .unwrap();
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -1303,7 +1373,7 @@ async fn backlinks_filtered_created_in_range() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1322,7 +1392,7 @@ async fn backlinks_filtered_created_in_range() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1557,7 +1627,7 @@ async fn batch_resolve_returns_matching_blocks() {
     let resolved = batch_resolve_inner(
         &pool,
         vec![b1.id.clone(), b2.id.clone(), "NONEXISTENT".into()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -1596,7 +1666,7 @@ async fn batch_resolve_marks_deleted_block() {
     let resolved = batch_resolve_inner(
         &pool,
         vec![block.id.clone()],
-        Some(TEST_SPACE_ID.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
     .unwrap();
@@ -1648,7 +1718,7 @@ async fn get_backlinks_returns_linking_blocks() {
         .await
         .unwrap();
 
-    let resp = get_backlinks_inner(&pool, target.id.clone(), None, None, None)
+    let resp = get_backlinks_inner(&pool, target.id.clone(), None, None, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -1673,7 +1743,7 @@ async fn get_backlinks_empty_when_no_links() {
     )
     .await;
 
-    let resp = get_backlinks_inner(&pool, "BL_ORPHAN".into(), None, None, None)
+    let resp = get_backlinks_inner(&pool, "BL_ORPHAN".into(), None, None, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -1895,9 +1965,17 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         resp.groups.len(),
@@ -1936,9 +2014,17 @@ async fn grouped_backlinks_empty_for_no_links() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert!(
         resp.groups.is_empty(),
@@ -1954,7 +2040,16 @@ async fn grouped_backlinks_empty_for_no_links() {
 async fn grouped_backlinks_empty_block_id_returns_error() {
     let (pool, _dir) = test_pool().await;
 
-    let result = list_backlinks_grouped_inner(&pool, "".into(), None, None, None, None, None).await;
+    let result = list_backlinks_grouped_inner(
+        &pool,
+        "".into(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -2018,9 +2113,17 @@ async fn grouped_backlinks_single_block_page() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.groups.len(), 1, "exactly 1 group");
     assert_eq!(resp.groups[0].page_id, page1.id, "group page_id must match");
@@ -2078,9 +2181,17 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     // Orphan content blocks (no page ancestor) are omitted from grouped results
     assert!(
@@ -2152,10 +2263,17 @@ async fn grouped_backlinks_excludes_deleted() {
     settle(&mat).await;
 
     // Verify it appears before deletion
-    let before =
-        list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None, None)
-            .await
-            .unwrap();
+    let before = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
     assert_eq!(before.groups.len(), 1, "link present before delete");
 
     // Soft-delete the linking block
@@ -2164,10 +2282,17 @@ async fn grouped_backlinks_excludes_deleted() {
         .unwrap();
     settle(&mat).await;
 
-    let after =
-        list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None, None)
-            .await
-            .unwrap();
+    let after = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert!(
         after.groups.is_empty(),
@@ -2238,10 +2363,17 @@ async fn grouped_backlinks_pagination() {
     }
 
     // Request limit=1
-    let resp1 =
-        list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, Some(1), None)
-            .await
-            .unwrap();
+    let resp1 = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        Some(1),
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp1.groups.len(), 1, "first page must have 1 group");
     assert!(resp1.has_more, "must have more pages");
@@ -2255,7 +2387,7 @@ async fn grouped_backlinks_pagination() {
         None,
         resp1.next_cursor.clone(),
         Some(1),
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -2275,7 +2407,7 @@ async fn grouped_backlinks_pagination() {
         None,
         resp2.next_cursor.clone(),
         Some(1),
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -2391,9 +2523,17 @@ async fn grouped_backlinks_total_and_filtered_count() {
     settle(&mat).await;
 
     // Without filter
-    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
     assert_eq!(resp.total_count, 3, "total_count must be 3");
     assert_eq!(
         resp.filtered_count, 3,
@@ -2412,7 +2552,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -2504,7 +2644,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -2595,7 +2735,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -2694,7 +2834,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -2841,7 +2981,7 @@ async fn grouped_backlinks_with_contains_filter() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();

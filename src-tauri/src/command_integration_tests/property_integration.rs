@@ -909,9 +909,18 @@ async fn query_by_property_happy_path() {
     settle(&mat).await;
 
     // Query all blocks with 'todo' property (any value)
-    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None, None)
-        .await
-        .unwrap();
+    let result = query_by_property_inner(
+        &pool,
+        "todo".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.items.len(), 2, "two blocks have 'todo' property");
 
@@ -924,7 +933,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -941,7 +950,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1257,7 +1266,7 @@ async fn query_by_property_finds_reserved_key_in_blocks_column() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1355,7 +1364,7 @@ async fn set_todo_state_then_query_by_property_returns_match() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1406,7 +1415,7 @@ async fn set_due_date_then_query_by_property_returns_match() {
         None,
         None,
         None,
-        None,
+        &SpaceScope::Global,
     )
     .await
     .unwrap();

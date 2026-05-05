@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use super::super::*;
 use super::common::*;
+use crate::space::{SpaceId, SpaceScope};
 
 // ======================================================================
 // page_aliases (#598)
@@ -337,7 +338,7 @@ async fn list_page_aliases_by_prefix_inner_returns_matching() {
         .await
         .unwrap();
 
-    let result = list_page_aliases_by_prefix_inner(&pool, "work-", None, None)
+    let result = list_page_aliases_by_prefix_inner(&pool, "work-", None, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -361,7 +362,7 @@ async fn list_page_aliases_by_prefix_inner_case_insensitive() {
         .await
         .unwrap();
 
-    let result = list_page_aliases_by_prefix_inner(&pool, "myAL", None, None)
+    let result = list_page_aliases_by_prefix_inner(&pool, "myAL", None, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -391,7 +392,7 @@ async fn list_page_aliases_by_prefix_inner_excludes_deleted_pages() {
         .await
         .unwrap();
 
-    let result = list_page_aliases_by_prefix_inner(&pool, "zo", None, None)
+    let result = list_page_aliases_by_prefix_inner(&pool, "zo", None, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -418,7 +419,7 @@ async fn list_page_aliases_by_prefix_inner_respects_limit() {
             .unwrap();
     }
 
-    let result = list_page_aliases_by_prefix_inner(&pool, "limit-", Some(2), None)
+    let result = list_page_aliases_by_prefix_inner(&pool, "limit-", Some(2), &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(result.len(), 2, "limit=2 should return exactly 2 aliases");
@@ -444,7 +445,7 @@ async fn list_page_aliases_by_prefix_inner_orders_shortest_first() {
         .await
         .unwrap();
 
-    let result = list_page_aliases_by_prefix_inner(&pool, "pp", None, None)
+    let result = list_page_aliases_by_prefix_inner(&pool, "pp", None, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -475,7 +476,7 @@ async fn list_page_aliases_by_prefix_inner_escapes_like_metachars() {
         .await
         .unwrap();
 
-    let result = list_page_aliases_by_prefix_inner(&pool, "a_", None, None)
+    let result = list_page_aliases_by_prefix_inner(&pool, "a_", None, &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -511,15 +512,20 @@ async fn list_page_aliases_by_prefix_inner_scopes_to_active_space() {
     assign_to_space(&pool, "PAGE_SP_B", TEST_SPACE_B_ID).await;
 
     // Scoped to space A: only PAGE_SP_A's alias surfaces.
-    let scoped = list_page_aliases_by_prefix_inner(&pool, "alpha-", None, Some(TEST_SPACE_ID))
-        .await
-        .unwrap();
+    let scoped = list_page_aliases_by_prefix_inner(
+        &pool,
+        "alpha-",
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
     assert_eq!(scoped.len(), 1, "scoped query must filter to space A");
     assert_eq!(scoped[0].0, "PAGE_SP_A");
 
-    // Unscoped (None): both spaces' aliases surface — proves the filter
+    // Unscoped (Global): both spaces' aliases surface — proves the filter
     // is opt-in, not on by default.
-    let unscoped = list_page_aliases_by_prefix_inner(&pool, "alpha-", None, None)
+    let unscoped = list_page_aliases_by_prefix_inner(&pool, "alpha-", None, &SpaceScope::Global)
         .await
         .unwrap();
     assert_eq!(unscoped.len(), 2);
@@ -1458,7 +1464,9 @@ async fn list_page_links_returns_edges_between_pages() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, None).await.unwrap();
+    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
 
     // Should have at least one link: p1 → p2 (rolled up from b1 → p2)
     let p1_to_p2 = links
@@ -1529,7 +1537,9 @@ async fn list_page_links_excludes_deleted_pages() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let links = list_page_links_inner(&pool, None).await.unwrap();
+    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
     let has_deleted = links.iter().any(|l| l.target_id == p2.id);
     assert!(!has_deleted, "should not include links to deleted pages");
 
@@ -1576,7 +1586,9 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, None).await.unwrap();
+    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
     let self_link = links.iter().find(|l| l.source_id == l.target_id);
     assert!(
         self_link.is_none(),
@@ -1589,7 +1601,9 @@ async fn list_page_links_excludes_self_links() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_links_empty_when_no_links() {
     let (pool, _dir) = test_pool().await;
-    let links = list_page_links_inner(&pool, None).await.unwrap();
+    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
     assert!(links.is_empty(), "should return empty when no links exist");
 }
 
@@ -1665,7 +1679,9 @@ async fn list_page_links_deduplicates_multiple_content_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, None).await.unwrap();
+    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
 
     // Both b1 and b2 roll up to p1 → p2; GROUP BY should collapse to 1 edge
     let p1_to_p2_count = links
@@ -1739,7 +1755,9 @@ async fn list_page_links_single_link_has_ref_count_one() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, None).await.unwrap();
+    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
     let edge = links
         .iter()
         .find(|l| l.source_id == p1.id && l.target_id == p2.id)
@@ -1806,7 +1824,9 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
 
     // Verify link exists before deletion
-    let links_before = list_page_links_inner(&pool, None).await.unwrap();
+    let links_before = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
     let has_link = links_before
         .iter()
         .any(|l| l.source_id == p1.id && l.target_id == p2.id);
@@ -1818,7 +1838,9 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let links_after = list_page_links_inner(&pool, None).await.unwrap();
+    let links_after = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
     let has_deleted_source = links_after.iter().any(|l| l.source_id == p1.id);
     assert!(
         !has_deleted_source,
@@ -1996,7 +2018,9 @@ async fn list_page_links_optimized_matches_oracle() {
     }
 
     // -- Compare optimized vs oracle --
-    let mut optimized = list_page_links_inner(&pool, None).await.unwrap();
+    let mut optimized = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
     optimized.sort();
 
     let oracle = list_page_links_oracle(&pool).await;
@@ -2013,6 +2037,79 @@ async fn list_page_links_optimized_matches_oracle() {
     );
 
     mat.shutdown();
+}
+
+// PEND-18 Phase 2 — parity test: `&SpaceScope::Global` reproduces the
+// pre-migration `space_id: None` behaviour bit-for-bit. Fixtures span
+// two spaces with intra-space and cross-space links; the global query
+// must surface every edge regardless of where its endpoints live, which
+// is exactly the behaviour the old `None` parameter produced. The
+// `as_filter_param()` adapter returns `None` for `Global`, so the
+// `(?1 IS NULL OR ...)` short-circuit on the SQL side is identical.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_inner_global_matches_legacy_none_pend18() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Two source pages and two target pages, one per space.
+    insert_block(&pool, "LPL_PSA", "page", "Source A", None, None).await;
+    insert_block(&pool, "LPL_PSB", "page", "Source B", None, None).await;
+    insert_block(&pool, "LPL_PTA", "page", "Target A", None, None).await;
+    insert_block(&pool, "LPL_PTB", "page", "Target B", None, None).await;
+    assign_to_space(&pool, "LPL_PSA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PTA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PSB", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "LPL_PTB", TEST_SPACE_B_ID).await;
+
+    // Two within-space edges + two cross-space edges. The global view
+    // must surface ALL four — that's exactly what the legacy
+    // `space_id: None` did before the migration.
+    for (src, tgt) in [
+        ("LPL_PSA", "LPL_PTA"),
+        ("LPL_PSA", "LPL_PTB"),
+        ("LPL_PSB", "LPL_PTA"),
+        ("LPL_PSB", "LPL_PTB"),
+    ] {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(tgt)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let global = list_page_links_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
+    let global_edges: std::collections::HashSet<(String, String)> = global
+        .iter()
+        .map(|l| (l.source_id.clone().into(), l.target_id.clone().into()))
+        .collect();
+    assert_eq!(
+        global_edges.len(),
+        4,
+        "Global must surface all four edges (two within-space + two \
+         cross-space); confirms `as_filter_param()` on Global produces \
+         the same `NULL` SQL bind as legacy `None`"
+    );
+
+    // Confirm the active-space partition is strictly tighter — Global
+    // is a superset that includes the cross-space edges Active() drops.
+    let scope_a = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    let scope_b = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(scope_a.len(), 1, "Active(A) keeps the within-A edge only");
+    assert_eq!(scope_b.len(), 1, "Active(B) keeps the within-B edge only");
 }
 
 // ======================================================================
@@ -2234,4 +2331,53 @@ async fn rebuild_page_ids_restores_correct_values() {
     assert_eq!(fetched_child.page_id.as_deref(), Some(page.id.as_str()));
 
     mat.shutdown();
+}
+
+// ======================================================================
+// PEND-18 Phase 2 — SpaceScope parity test
+// ======================================================================
+//
+// Asserts that `list_page_aliases_by_prefix_inner` honours the
+// `&SpaceScope` boundary: `Global` returns the union across spaces,
+// `Active(SpaceId)` returns only the named space's subset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pend18_list_page_aliases_by_prefix_scope_parity() {
+    let (pool, _dir) = test_pool().await;
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "P18_PG_A", "page", "Page A", None, Some(0)).await;
+    insert_block(&pool, "P18_PG_B", "page", "Page B", None, Some(1)).await;
+    set_page_aliases_inner(&pool, "P18_PG_A", vec!["p18-alias-a".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "P18_PG_B", vec!["p18-alias-b".into()])
+        .await
+        .unwrap();
+    assign_to_space(&pool, "P18_PG_A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "P18_PG_B", TEST_SPACE_B_ID).await;
+
+    let global = list_page_aliases_by_prefix_inner(&pool, "p18-alias-", None, &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global.len(),
+        2,
+        "Global must surface both spaces' aliases; got {global:?}"
+    );
+
+    let active_a = list_page_aliases_by_prefix_inner(
+        &pool,
+        "p18-alias-",
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_a.len(),
+        1,
+        "Active(TEST_SPACE_ID) must surface only space A's alias; got {active_a:?}"
+    );
+    assert_eq!(active_a[0].0, "P18_PG_A");
 }

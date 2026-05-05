@@ -4,6 +4,7 @@ use super::*;
 use crate::db::init_pool;
 pub use crate::db::ReadPool;
 use crate::materializer::Materializer;
+pub use crate::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;

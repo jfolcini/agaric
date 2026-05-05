@@ -5,6 +5,7 @@ use crate::commands::{
 use crate::db::init_pool;
 use crate::materializer::Materializer;
 use crate::mcp::actor::Actor;
+use crate::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -106,7 +107,7 @@ async fn append_block_happy_path() {
         "Parent".into(),
         None,
         Some(1),
-        Some(space.clone()),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
     )
     .await
     .unwrap();
@@ -172,7 +173,7 @@ async fn update_block_content_happy_path() {
         "ParentPage".into(),
         None,
         Some(1),
-        Some(space.clone()),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
     )
     .await
     .unwrap();
@@ -250,7 +251,7 @@ async fn mk_in_space_content_block(
         "ParentPage".into(),
         None,
         Some(1),
-        Some(space.to_string()),
+        &SpaceScope::Active(SpaceId::from_trusted(space)),
     )
     .await
     .unwrap();
@@ -404,7 +405,7 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
         "ParentPage".into(),
         None,
         Some(1),
-        Some(space.clone()),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
     )
     .await
     .unwrap();
@@ -676,7 +677,7 @@ async fn append_block_stamps_origin_agent_in_op_log() {
         "ParentPage".into(),
         None,
         Some(1),
-        Some(space.clone()),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
     )
     .await
     .unwrap();
@@ -761,7 +762,7 @@ async fn append_block_populates_last_append_inside_scope() {
         "Parent".into(),
         None,
         Some(1),
-        Some(space.clone()),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
     )
     .await
     .unwrap();
@@ -835,7 +836,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         "L-124 stress page".into(),
         None,
         Some(1),
-        Some(space.clone()),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
     )
     .await
     .unwrap();
@@ -1024,7 +1025,7 @@ async fn append_block_cross_space_rejected() {
         "ParentB".into(),
         None,
         Some(1),
-        Some(space_b.clone()),
+        &SpaceScope::Active(SpaceId::from_trusted(&space_b)),
     )
     .await
     .unwrap();
