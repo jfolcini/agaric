@@ -74,9 +74,7 @@ pub async fn eval_tag_query(
     // when `space_id` is `Some`. The single `?` is bound after the
     // ID-list placeholders below.
     let query_str = format!(
-        "SELECT id, block_type, content, parent_id, position, \
-         deleted_at, is_conflict, conflict_type, \
-         todo_state, priority, due_date, scheduled_date, page_id \
+        "SELECT {} \
          FROM blocks b \
          WHERE id IN ({placeholders}) \
            AND deleted_at IS NULL \
@@ -84,7 +82,8 @@ pub async fn eval_tag_query(
            AND (? IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?)) \
-         ORDER BY id"
+         ORDER BY id",
+        crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     );
     // MAINT-113 M2 — query the rows as ActiveBlockRow directly. The SQL
     // above filters `deleted_at IS NULL AND is_conflict = 0` (lines
