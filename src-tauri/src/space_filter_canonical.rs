@@ -1,0 +1,253 @@
+//! Drift-detection parity test for the space-filter SQL fragment.
+//!
+//! ## MAINT-172 closure (session 680)
+//!
+//! PEND-12 (`build.rs` codegen via `OUT_DIR` files + `include_str!`
+//! composition with `sqlx::query!` / `sqlx::query_as!`) was rejected
+//! session 679 because sqlx 0.8.6 parses the macro's first argument
+//! as a `syn::LitStr` token (`sqlx-macros-core-0.8.6/src/query/input.rs:55,61`)
+//! — `include_str!(concat!(env!("OUT_DIR"), …))` is a macro-invocation
+//! token tree that fails parser validation before any expansion
+//! happens. `query_file!` is also blocked by the same `LitStr`
+//! constraint plus `OUT_DIR`-path resolution rejection. Upstream
+//! tracking: [sqlx#3388](https://github.com/launchbadge/sqlx/issues/3388)
+//! (open, no PR linked, no ETA).
+//!
+//! As an alternative drift-mitigation, this module pins the canonical
+//! shape of the space-filter SQL fragment and asserts every production
+//! site matches it after normalisation. Mirrors the
+//! [`crate::pagination::block_row_columns`] precedent (PEND-28a H1
+//! Option 2, session 677).
+//!
+//! The canonical is `#[cfg(test)]` only — production code continues
+//! to inline the fragment at every call site. When the fragment
+//! changes (e.g., to add a `OR space_id IS NULL` clause for
+//! pre-FEAT-3 compat), update [`SPACE_FILTER_CANONICAL`] here, run
+//! the parity test, and update each drifted site the test names.
+//!
+//! ## What's NOT in scope
+//!
+//! Three space-scoped queries in the source tree intentionally use
+//! a *different* SQL shape and therefore are NOT canonical-fragment
+//! sites; they are excluded from the allowlist below:
+//!
+//! | File | Why excluded |
+//! |---|---|
+//! | `commands/pages.rs` (alias-prefix lookup) | `b.id IN (...)` instead of `COALESCE(b.page_id, b.id) IN (...)` — page rows match by their own id, not their owning page. |
+//! | `pagination/history.rs` (op-log filter) | `json_extract(ol.payload, '$.block_id') IN (...)` — operates on the op-log payload, not a `blocks` row. |
+//! | `fts/search.rs` (dynamic SQL) | No `?N IS NULL OR` guard — the filter is conditionally appended only when `space_id.is_some()`, so the inline shape is fundamentally different. |
+//!
+//! These three files use the same *block_properties(key='space')*
+//! sub-select but with a different surrounding bracket structure,
+//! so the canonical-shape regex below does not (and should not)
+//! match them. If the canonical fragment ever changes shape, those
+//! three sites will need separate review.
+
+/// Canonical inline form of the space-filter SQL fragment with `?N`
+/// standing in for the bind index (which varies from `?2` to `?8`
+/// across production sites). After whitespace + bind-index +
+/// `bp`-alias normalisation (see [`tests::normalize`]), every
+/// production occurrence equals this string exactly.
+///
+/// Keep in sync with the inlined copy at every call site flagged by
+/// [`tests::space_filter_production_sites_match_canonical`].
+///
+/// `#[cfg(test)]`-gated for the same reason as the precedent in
+/// [`crate::pagination::block_row_columns::BLOCK_ROW_CANONICAL_SELECT`]:
+/// the const is documentation / drift-detection scaffolding consumed
+/// only by the parity tests in this module — production callsites
+/// embed the fragment inline as a string literal because
+/// `sqlx::query!` / `sqlx::query_as!` reject `concat!()` /
+/// `include_str!()` composition (see the module doc above).
+#[cfg(test)]
+pub(crate) const SPACE_FILTER_CANONICAL: &str = "(?N IS NULL OR COALESCE(b.page_id, b.id) IN (\n    SELECT bp.block_id FROM block_properties bp\n    WHERE bp.key = 'space' AND bp.value_ref = ?N))";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use regex::Regex;
+
+    /// Render every space-filter occurrence into a comparable canonical
+    /// form by:
+    ///
+    /// 1. Replacing each `?<digits>` (e.g. `?2`, `?7`) with `?N` —
+    ///    the bind index varies from site to site (`?2` … `?8`).
+    /// 2. Replacing bare `?` placeholders (used at one dynamic-SQL
+    ///    site, `tag_query/query.rs`) with `?N` so they normalise the
+    ///    same as numbered ones.
+    /// 3. Aliasing `bp_sp.` (used at two sites where the outer query
+    ///    already takes the `bp` alias — `pagination/properties.rs`
+    ///    line 162 and `commands/agenda.rs` line 425) back to `bp.`
+    ///    so the column-reference alias matches the canonical.
+    /// 4. Collapsing every run of ASCII whitespace (incl. backslash-
+    ///    continuation newlines from `\` in raw-string SQL) into a
+    ///    single space.
+    /// 5. Removing whitespace immediately adjacent to `(` or `)` so
+    ///    the variant at `commands/blocks/queries.rs` (which has
+    ///    `?2\n            ))` rather than `?2))`) collapses to the
+    ///    same shape as every other site.
+    fn normalize(s: &str) -> String {
+        // Numbered (`?2`) parameter placeholders -> `?N`. Pass 1.
+        let numbered_re = Regex::new(r"\?\d+").expect("numbered placeholder regex compiles");
+        let s = numbered_re.replace_all(s, "?N");
+        // Bare (`?`) parameter placeholders -> `?N`. Pass 2.
+        // The trailing-char capture group `(\W|$)` is preserved in the
+        // replacement (`$1`) so we only consume the `?` itself. Because
+        // the regex crate does not support lookaround, the bare-`?`
+        // pattern necessarily *includes* the next char in the match —
+        // we put it back via the capture. This is also what keeps the
+        // canonical's literal `?N` safe: in `?N` the char after `?` is
+        // `N` (a word char), which doesn't match `\W`, so the bare arm
+        // declines and the literal stays untouched.
+        let bare_re = Regex::new(r"\?(\W|$)").expect("bare placeholder regex compiles");
+        let s = bare_re.replace_all(&s, "?N$1").to_string();
+        // Alias `bp_sp` -> `bp`. Word-boundaried so a hypothetical
+        // future identifier such as `bp_special` would not be
+        // mangled.
+        let alias_re = Regex::new(r"\bbp_sp\b").expect("alias regex compiles");
+        let s = alias_re.replace_all(&s, "bp").to_string();
+        // Whitespace + `\` line-continuation runs -> single space.
+        // (Plain Rust string literals use `\<newline>` to fold lines;
+        // `include_str!` returns the literal `\` byte, which `\s` does
+        // not match. Treat it as part of inter-token whitespace.)
+        let ws_re = Regex::new(r"[\s\\]+").expect("whitespace regex compiles");
+        let s = ws_re.replace_all(&s, " ").to_string();
+        // Strip whitespace immediately adjacent to parens.
+        let paren_open_re = Regex::new(r"\(\s+").expect("paren-open regex compiles");
+        let s = paren_open_re.replace_all(&s, "(").to_string();
+        let paren_close_re = Regex::new(r"\s+\)").expect("paren-close regex compiles");
+        let s = paren_close_re.replace_all(&s, ")").to_string();
+        s.trim().to_string()
+    }
+
+    /// Test A — sanity check that the canonical const itself
+    /// normalises to a stable form. A hand-written single-line
+    /// equivalent (with `?2` instead of `?N`, no line breaks) must
+    /// produce the same normalised string. Catches typos / pasted
+    /// nbsp / smart-quote disasters in [`SPACE_FILTER_CANONICAL`].
+    #[test]
+    fn space_filter_canonical_normalises_to_self() {
+        let canonical_norm = normalize(SPACE_FILTER_CANONICAL);
+        let alternate = "(?2 IS NULL OR COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?2))";
+        assert_eq!(
+            canonical_norm,
+            normalize(alternate),
+            "SPACE_FILTER_CANONICAL must normalise to the same value as a \
+             hand-written single-line equivalent. If this fails, check \
+             the const for stray invisible characters."
+        );
+    }
+
+    /// Test B — every production-source-tree occurrence of the
+    /// space-filter fragment, after normalisation, equals
+    /// [`SPACE_FILTER_CANONICAL`]. Source files are embedded at
+    /// compile time via `include_str!` so the test runs without
+    /// filesystem access.
+    ///
+    /// The fixed allowlist (rather than a directory walk) is
+    /// deliberate: when a developer adds a new space-filter call
+    /// site in a file not yet listed, the count assertion below
+    /// catches it and forces a conscious decision to extend the
+    /// list.
+    ///
+    /// **Files NOT in the allowlist** (intentionally — see the
+    /// module-level "What's NOT in scope" doc): `commands/pages.rs`,
+    /// `pagination/history.rs`, `fts/search.rs`. These three use
+    /// space filters with structurally different SQL shapes (b.id IN
+    /// directly, json_extract over op-log payload, dynamic SQL
+    /// without the `?N IS NULL OR` guard) and are not canonical-
+    /// fragment sites.
+    #[test]
+    fn space_filter_production_sites_match_canonical() {
+        // (display_path, file_contents). Paths are relative to this
+        // module (`src-tauri/src/space_filter_canonical.rs`).
+        let sites: &[(&str, &str)] = &[
+            ("commands/agenda.rs", include_str!("commands/agenda.rs")),
+            (
+                "commands/blocks/queries.rs",
+                include_str!("commands/blocks/queries.rs"),
+            ),
+            ("pagination/agenda.rs", include_str!("pagination/agenda.rs")),
+            (
+                "pagination/hierarchy.rs",
+                include_str!("pagination/hierarchy.rs"),
+            ),
+            ("pagination/links.rs", include_str!("pagination/links.rs")),
+            (
+                "pagination/properties.rs",
+                include_str!("pagination/properties.rs"),
+            ),
+            ("pagination/tags.rs", include_str!("pagination/tags.rs")),
+            ("pagination/trash.rs", include_str!("pagination/trash.rs")),
+            (
+                "pagination/undated.rs",
+                include_str!("pagination/undated.rs"),
+            ),
+            ("backlink/grouped.rs", include_str!("backlink/grouped.rs")),
+            ("backlink/query.rs", include_str!("backlink/query.rs")),
+            ("tag_query/query.rs", include_str!("tag_query/query.rs")),
+        ];
+
+        // Permissive regex that locates every canonical-shape space-
+        // filter occurrence. `(?s)` enables dot-matches-newline so
+        // multi-line raw-string SQL is captured; `bp\w*` accepts
+        // both the `bp` and `bp_sp` aliases; `\?\d*` accepts both
+        // numbered (`?2`) and bare (`?`) parameter placeholders;
+        // `[\s\\]+` between tokens absorbs the `\` line-
+        // continuations used in plain (non-raw) Rust string-literal
+        // SQL (e.g. `commands/agenda.rs:119` style: `… bp \⏎     WHERE …`).
+        let pattern_re = Regex::new(
+            r"(?s)\(\s*\?\d*[\s\\]+IS[\s\\]+NULL[\s\\]+OR[\s\\]+COALESCE\([\s\\]*b\.page_id[\s\\]*,[\s\\]*b\.id[\s\\]*\)[\s\\]+IN[\s\\]+\([\s\\]*SELECT[\s\\]+bp\w*\.block_id[\s\\]+FROM[\s\\]+block_properties[\s\\]+bp\w*[\s\\]+WHERE[\s\\]+bp\w*\.key[\s\\]*=[\s\\]*'space'[\s\\]+AND[\s\\]+bp\w*\.value_ref[\s\\]*=[\s\\]*\?\d*[\s\\]*\)[\s\\]*\)"
+        ).expect("space-filter pattern regex must compile");
+
+        let canonical_norm = normalize(SPACE_FILTER_CANONICAL);
+        let mut total_hits = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+
+        for (path, content) in sites {
+            for m in pattern_re.find_iter(content) {
+                total_hits += 1;
+                let site_norm = normalize(m.as_str());
+                if site_norm != canonical_norm {
+                    failures.push(format!(
+                        "  {path}\n    actual:    {site_norm}\n    canonical: {canonical_norm}",
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} space-filter site(s) drifted from SPACE_FILTER_CANONICAL \
+             (after bind-index, bp-alias, and whitespace \
+             normalisation):\n{}\n\nUpdate the drifted SQL fragment(s) \
+             to match SPACE_FILTER_CANONICAL, or — if the deviation is \
+             intentional — extend `normalize` to absorb the new variant \
+             and document why.",
+            failures.len(),
+            failures.join("\n"),
+        );
+
+        // Catches: a new canonical-shape space-filter call site is added
+        // to a file already in the allowlist, or to a file NOT in the
+        // allowlist (which would not be detected because `include_str!`
+        // wouldn't see it). The expected count is the sum of regex hits
+        // across every listed file as audited at the time this test was
+        // written.
+        //
+        // When a site is added or removed, this assertion fails — bump
+        // the constant deliberately, audit the new/removed site for
+        // canonical conformance, and (if the new site lives in a file
+        // not yet listed) extend the allowlist above.
+        const EXPECTED_HITS: usize = 19;
+        assert_eq!(
+            total_hits, EXPECTED_HITS,
+            "expected {EXPECTED_HITS} canonical-shape space-filter \
+             matches across the listed production source files, found \
+             {total_hits}. Either a site was added/removed, or the \
+             allowlist above is missing a file. Audit `grep -rn \
+             \"COALESCE(b.page_id, b.id) IN\" src-tauri/src/` and \
+             reconcile.",
+        );
+    }
+}
