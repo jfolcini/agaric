@@ -1467,6 +1467,161 @@ pub async fn purge_all_deleted_inner(
     })
 }
 
+/// Snapshot of a `property_definitions` row's validation-relevant fields.
+///
+/// PEND-28a M2: pre-fetched by the caller of [`set_property_in_tx`] and
+/// passed to [`validate_property_value`] so the helper stays sync and
+/// trivially unit-testable. The full [`super::super::PropertyDefinition`]
+/// struct carries `key` and `created_at` fields that the validation logic
+/// does not need; this slimmer view keeps the helper signature minimal.
+struct PropertyDeclaration {
+    value_type: String,
+    options: Option<String>,
+}
+
+/// Validate a [`SetPropertyPayload`] against the reserved-key shape rules
+/// and (optionally) against a pre-fetched `property_definitions` row.
+///
+/// PEND-28a M2: structural extraction from [`set_property_in_tx`]. This
+/// function has no side effects — it never touches the DB and only reads
+/// from its inputs — so unit tests can exercise the full validation matrix
+/// without spinning up a pool.
+///
+/// Performs (in order):
+///   1. [`validate_set_property`] — key format (alphanumeric + `-_`,
+///      1–64 chars), exactly-one non-null value field (or all-null for
+///      reserved keys), finite numbers, non-empty string fields.
+///   2. ISO-8601 (`YYYY-MM-DD`) format check on `value_date` if present.
+///   3. Reserved-key field-shape check: `due_date`/`scheduled_date`
+///      require `value_date`; `todo_state`/`priority` require `value_text`.
+///      All-null payloads are treated as "clear" and skip the rest of the
+///      checks.
+///   4. Declared-type vs. payload-shape check (only for non-reserved
+///      keys — reserved-key shape is fixed by step 3 and the columns on
+///      `blocks` already constrain the type).
+///   5. BUG-20 select-options-membership: when the definition declares
+///      `value_type = "select"` with a non-NULL `options` JSON array, the
+///      supplied `value_text` must be one of the listed options.
+///
+/// `declaration` is `None` when no `property_definitions` row exists for
+/// the key — type/options checks are skipped (custom keys without a
+/// declaration are permissive).
+fn validate_property_value(
+    payload: &SetPropertyPayload,
+    declaration: Option<&PropertyDeclaration>,
+) -> Result<(), AppError> {
+    // 1. Key format + exactly-one-value invariants.
+    validate_set_property(payload)?;
+
+    // 2. ISO-date format check on `value_date`.
+    if let Some(ref date_str) = payload.value_date {
+        if !is_valid_iso_date(date_str) {
+            return Err(AppError::Validation(format!(
+                "Invalid date format: '{}'. Expected YYYY-MM-DD.",
+                date_str
+            )));
+        }
+    }
+
+    // "Clear" calls (all-null) are only valid for reserved keys —
+    // `validate_set_property` already enforced that — and they skip the
+    // shape/type/options checks below: the column-clear is performed by
+    // the caller's dual-write step.
+    let is_clear = payload.value_text.is_none()
+        && payload.value_num.is_none()
+        && payload.value_date.is_none()
+        && payload.value_ref.is_none()
+        && payload.value_bool.is_none();
+    if is_clear {
+        return Ok(());
+    }
+
+    // 3. Reserved-key field-shape: route the right typed field to the
+    //    right native column on `blocks`.
+    match payload.key.as_str() {
+        "due_date" | "scheduled_date" if payload.value_date.is_none() => {
+            return Err(AppError::Validation(format!(
+                "Property '{}' requires value_date, not value_text/value_num/value_ref/value_bool.",
+                payload.key
+            )));
+        }
+        "todo_state" | "priority" if payload.value_text.is_none() => {
+            return Err(AppError::Validation(format!(
+                "Property '{}' requires value_text, not value_date/value_num/value_ref/value_bool.",
+                payload.key
+            )));
+        }
+        _ => {}
+    }
+
+    // 4 + 5. Declared-type and select-options checks against
+    //        `property_definitions` (caller pre-fetched).
+    if let Some(decl) = declaration {
+        let expected_type = decl.value_type.as_str();
+        let options_json = decl.options.as_ref();
+
+        // Type validation — only for non-reserved keys. Reserved-key
+        // field-shape is enforced by step 3 above.
+        if !is_reserved_property_key(&payload.key) {
+            let type_matches = match expected_type {
+                "text" | "select" => payload.value_text.is_some() || payload.value_ref.is_some(),
+                "ref" => payload.value_ref.is_some(),
+                "number" => payload.value_num.is_some(),
+                "date" => payload.value_date.is_some(),
+                "boolean" => payload.value_bool.is_some(),
+                _ => true,
+            };
+            if !type_matches {
+                let actual_type = if payload.value_text.is_some() {
+                    "text"
+                } else if payload.value_num.is_some() {
+                    "number"
+                } else if payload.value_date.is_some() {
+                    "date"
+                } else if payload.value_ref.is_some() {
+                    "ref"
+                } else if payload.value_bool.is_some() {
+                    "boolean"
+                } else {
+                    "unknown"
+                };
+                return Err(AppError::Validation(format!(
+                    "Property '{}' expects type '{}', got '{}'.",
+                    payload.key, expected_type, actual_type
+                )));
+            }
+        }
+
+        // BUG-20: Options membership validation for select-type
+        // properties. When the definition declares a non-NULL options
+        // array, the supplied value_text must be one of the listed
+        // options. A NULL options column means "no restriction" — a
+        // select-type definition without options is treated permissively
+        // so custom keys stay flexible.
+        if expected_type == "select" {
+            if let Some(opts_json) = options_json {
+                if let Some(ref actual) = payload.value_text {
+                    let allowed: Vec<String> = serde_json::from_str(opts_json).map_err(|e| {
+                        AppError::Validation(format!(
+                            "Property '{}' has malformed options JSON: {e}",
+                            payload.key
+                        ))
+                    })?;
+                    if !allowed.iter().any(|a| a == actual) {
+                        return Err(AppError::Validation(format!(
+                            "Property '{}' value '{actual}' is not in allowed options: {}",
+                            payload.key,
+                            allowed.join(", ")
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Set (upsert) a property on a block inside an existing transaction.
 ///
 /// This is the core implementation shared by [`set_property_inner`] (which
@@ -1487,7 +1642,10 @@ pub(crate) async fn set_property_in_tx(
     value_ref: Option<String>,
     value_bool: Option<bool>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
-    // 1. Build and validate the payload before touching the DB
+    // 1. Build and validate the payload before touching the DB.
+    //    PEND-28a M2: validation logic lives in `validate_property_value`
+    //    above. The `property_definitions` row is pre-fetched here so the
+    //    helper stays sync and unit-testable.
     let prop_payload = SetPropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
         key: key.to_owned(),
@@ -1497,119 +1655,26 @@ pub(crate) async fn set_property_in_tx(
         value_ref: value_ref.clone(),
         value_bool,
     };
-    validate_set_property(&prop_payload)?;
-
-    // 1b. Date format validation
-    if let Some(ref date_str) = value_date {
-        if !is_valid_iso_date(date_str) {
-            return Err(AppError::Validation(format!(
-                "Invalid date format: '{}'. Expected YYYY-MM-DD.",
-                date_str
-            )));
-        }
-    }
-
-    // 1c. Reserved key field validation (skip for clear operations where all values are None)
     let is_clear = value_text.is_none()
         && value_num.is_none()
         && value_date.is_none()
         && value_ref.is_none()
         && value_bool.is_none();
-    if !is_clear {
-        match key {
-            "due_date" | "scheduled_date" if value_date.is_none() => {
-                return Err(AppError::Validation(format!(
-                    "Property '{}' requires value_date, not value_text/value_num/value_ref/value_bool.",
-                    key
-                )));
-            }
-            "todo_state" | "priority" if value_text.is_none() => {
-                return Err(AppError::Validation(format!(
-                    "Property '{}' requires value_text, not value_date/value_num/value_ref/value_bool.",
-                    key
-                )));
-            }
-            _ => {}
-        }
-    }
-
-    // 1d. Type + options validation against property_definitions.
-    //
-    // Applies to both reserved (todo_state, priority, due_date, scheduled_date)
-    // and non-reserved keys — the select/option check applies wherever a
-    // property_definition row exists. The type check is skipped for reserved
-    // keys because those values are mapped to fixed columns on `blocks` and
-    // their field shape is already constrained by 1c above.
-    if !is_clear {
-        let def_meta = sqlx::query!(
+    let declaration = if is_clear {
+        None
+    } else {
+        sqlx::query!(
             "SELECT value_type, options FROM property_definitions WHERE key = ?",
             key,
         )
         .fetch_optional(&mut **tx)
-        .await?;
-
-        if let Some(meta) = def_meta {
-            let expected_type = meta.value_type;
-            let options_json = meta.options;
-
-            // Type validation — only for non-reserved keys. Reserved-key
-            // field-shape is enforced by 1c above.
-            if !is_reserved_property_key(key) {
-                let type_matches = match expected_type.as_str() {
-                    "text" | "select" => value_text.is_some() || value_ref.is_some(),
-                    "ref" => value_ref.is_some(),
-                    "number" => value_num.is_some(),
-                    "date" => value_date.is_some(),
-                    "boolean" => value_bool.is_some(),
-                    _ => true,
-                };
-                if !type_matches {
-                    let actual_type = if value_text.is_some() {
-                        "text"
-                    } else if value_num.is_some() {
-                        "number"
-                    } else if value_date.is_some() {
-                        "date"
-                    } else if value_ref.is_some() {
-                        "ref"
-                    } else if value_bool.is_some() {
-                        "boolean"
-                    } else {
-                        "unknown"
-                    };
-                    return Err(AppError::Validation(format!(
-                        "Property '{}' expects type '{}', got '{}'.",
-                        key, expected_type, actual_type
-                    )));
-                }
-            }
-
-            // BUG-20: Options membership validation for select-type
-            // properties. When the definition declares a non-NULL options
-            // array, the supplied value_text must be one of the listed
-            // options. A NULL options column means "no restriction" — a
-            // select-type definition without options is treated permissively
-            // so custom keys stay flexible.
-            if expected_type == "select" {
-                if let Some(ref opts_json) = options_json {
-                    if let Some(ref actual) = value_text {
-                        let allowed: Vec<String> =
-                            serde_json::from_str(opts_json).map_err(|e| {
-                                AppError::Validation(format!(
-                                    "Property '{key}' has malformed options JSON: {e}"
-                                ))
-                            })?;
-                        if !allowed.iter().any(|a| a == actual) {
-                            return Err(AppError::Validation(format!(
-                                "Property '{key}' value '{actual}' is not in allowed options: {}",
-                                allowed.join(", ")
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-    }
+        .await?
+        .map(|row| PropertyDeclaration {
+            value_type: row.value_type,
+            options: row.options,
+        })
+    };
+    validate_property_value(&prop_payload, declaration.as_ref())?;
 
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -1999,4 +2064,243 @@ pub(crate) fn anonymize_attachment_path(path: &str) -> (String, String) {
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     (short_hash, extension)
+}
+
+// ===========================================================================
+// Tests — `validate_property_value` matrix
+// ===========================================================================
+//
+// PEND-28a M2: pin the pure-validation matrix extracted from
+// `set_property_in_tx`. Each test exercises one (declared type ×
+// payload shape) cell. The helper is sync and DB-free, so these tests
+// don't need a pool.
+#[cfg(test)]
+mod validate_property_value_tests {
+    use super::*;
+
+    /// Synthetic ULID for the payload's `block_id` — content is irrelevant
+    /// to validation, only the key + value fields are checked.
+    const TEST_BID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    /// Build a payload with all-None value fields and the given key.
+    /// Caller mutates the one field they want set.
+    fn empty_payload(key: &str) -> SetPropertyPayload {
+        SetPropertyPayload {
+            block_id: BlockId::test_id(TEST_BID),
+            key: key.to_string(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }
+    }
+
+    fn decl(value_type: &str, options: Option<&str>) -> PropertyDeclaration {
+        PropertyDeclaration {
+            value_type: value_type.to_string(),
+            options: options.map(str::to_string),
+        }
+    }
+
+    // --- text-typed declarations ------------------------------------------
+
+    #[test]
+    fn validate_property_value_text_with_text_payload_succeeds() {
+        let mut p = empty_payload("note");
+        p.value_text = Some("hello".into());
+        let d = decl("text", None);
+        validate_property_value(&p, Some(&d)).expect("text/text should pass");
+    }
+
+    #[test]
+    fn validate_property_value_text_with_number_payload_rejects() {
+        let mut p = empty_payload("note");
+        p.value_num = Some(42.0);
+        let d = decl("text", None);
+        let err = validate_property_value(&p, Some(&d))
+            .expect_err("text decl + number payload must reject");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("expects type 'text'") && msg.contains("got 'number'"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // --- number-typed declarations ----------------------------------------
+
+    #[test]
+    fn validate_property_value_number_with_number_payload_succeeds() {
+        let mut p = empty_payload("effort");
+        p.value_num = Some(3.5);
+        let d = decl("number", None);
+        validate_property_value(&p, Some(&d)).expect("number/number should pass");
+    }
+
+    #[test]
+    fn validate_property_value_number_with_text_payload_rejects() {
+        let mut p = empty_payload("effort");
+        p.value_text = Some("three".into());
+        let d = decl("number", None);
+        let err = validate_property_value(&p, Some(&d))
+            .expect_err("number decl + text payload must reject");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("expects type 'number'") && msg.contains("got 'text'"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // --- date-typed declarations ------------------------------------------
+
+    #[test]
+    fn validate_property_value_date_with_iso_date_succeeds() {
+        let mut p = empty_payload("deadline");
+        p.value_date = Some("2025-01-15".into());
+        let d = decl("date", None);
+        validate_property_value(&p, Some(&d)).expect("date/iso-date should pass");
+    }
+
+    #[test]
+    fn validate_property_value_date_with_malformed_string_rejects() {
+        let mut p = empty_payload("deadline");
+        p.value_date = Some("not-a-date".into());
+        let d = decl("date", None);
+        let err =
+            validate_property_value(&p, Some(&d)).expect_err("malformed value_date must reject");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("Invalid date format"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // --- ref-typed declarations -------------------------------------------
+
+    #[test]
+    fn validate_property_value_ref_with_ref_payload_succeeds() {
+        let mut p = empty_payload("assignee");
+        p.value_ref = Some("01HJK0000000000000000000AA".into());
+        let d = decl("ref", None);
+        validate_property_value(&p, Some(&d)).expect("ref/ref should pass");
+    }
+
+    #[test]
+    fn validate_property_value_ref_with_text_payload_rejects() {
+        let mut p = empty_payload("assignee");
+        p.value_text = Some("alice".into());
+        let d = decl("ref", None);
+        let err =
+            validate_property_value(&p, Some(&d)).expect_err("ref decl + text payload must reject");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("expects type 'ref'") && msg.contains("got 'text'"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // --- boolean-typed declarations ---------------------------------------
+
+    #[test]
+    fn validate_property_value_boolean_with_true_succeeds() {
+        let mut p = empty_payload("starred");
+        p.value_bool = Some(true);
+        let d = decl("boolean", None);
+        validate_property_value(&p, Some(&d)).expect("boolean/true should pass");
+    }
+
+    #[test]
+    fn validate_property_value_boolean_with_text_payload_rejects() {
+        let mut p = empty_payload("starred");
+        p.value_text = Some("yes".into());
+        let d = decl("boolean", None);
+        let err = validate_property_value(&p, Some(&d))
+            .expect_err("boolean decl + text payload must reject");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("expects type 'boolean'") && msg.contains("got 'text'"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // --- select-typed declarations (BUG-20 options membership) ------------
+
+    #[test]
+    fn validate_property_value_select_with_value_in_options_succeeds() {
+        let mut p = empty_payload("status");
+        p.value_text = Some("done".into());
+        let d = decl("select", Some(r#"["todo","doing","done"]"#));
+        validate_property_value(&p, Some(&d)).expect("select with allowed value should pass");
+    }
+
+    #[test]
+    fn validate_property_value_select_with_value_not_in_options_rejects() {
+        let mut p = empty_payload("status");
+        p.value_text = Some("blocked".into());
+        let d = decl("select", Some(r#"["todo","doing","done"]"#));
+        let err = validate_property_value(&p, Some(&d))
+            .expect_err("select rejects values not in options");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("not in allowed options"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // --- reserved-key field-shape checks (step 3) -------------------------
+    //
+    // Reserved keys (`todo_state`/`priority` ⇒ value_text;
+    // `due_date`/`scheduled_date` ⇒ value_date) are validated independently
+    // of any `property_definitions` row — pass `None` for the declaration.
+
+    #[test]
+    fn validate_property_value_reserved_due_date_with_text_payload_rejects() {
+        let mut p = empty_payload("due_date");
+        p.value_text = Some("2025-01-15".into());
+        let err = validate_property_value(&p, None)
+            .expect_err("due_date requires value_date, not value_text");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("requires value_date"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_property_value_reserved_todo_state_with_date_payload_rejects() {
+        let mut p = empty_payload("todo_state");
+        p.value_date = Some("2025-01-15".into());
+        let err = validate_property_value(&p, None)
+            .expect_err("todo_state requires value_text, not value_date");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("requires value_text"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    /// All-null payload on a reserved key is a "clear" — must succeed
+    /// without a declaration. Pins the early-return at step 3 of
+    /// [`validate_property_value`].
+    #[test]
+    fn validate_property_value_reserved_clear_succeeds() {
+        let p = empty_payload("todo_state");
+        validate_property_value(&p, None).expect("all-null reserved-key clear should pass");
+    }
 }

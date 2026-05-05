@@ -2,14 +2,20 @@
  * Tests for useJournalBlockCreation hook.
  *
  * Validates:
- *  - Creates a page via createPageInSpace + content block when no page exists
+ *  - Creates a page via createPageInSpace and defers seed-block creation
+ *    to BlockTree's autoCreateFirstBlock effect (PEND-16) when no template
+ *    is configured for the active space
  *  - Skips page creation when an entry already exists in pageMap
  *  - Skips page creation when an entry already exists in createdPages (local)
  *  - Loads per-space template when configured (FEAT-3p5b)
  *  - Falls back to legacy `journal-template` page when per-space is empty
- *  - Falls back to a blank content block when no template is configured
  *  - Surfaces a toast on errors and bails out gracefully
  *  - Refuses to create a page without an active space
+ *
+ * PEND-16 — the no-template branch no longer calls `createBlock` itself.
+ * `BlockTree.autoCreateFirstBlock` is the single owner of seed-block
+ * creation on a fresh daily page; firing a second `createBlock` here used
+ * to race that effect and produce two blocks for the same page.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -85,19 +91,14 @@ function setup(initialPageMap: Map<string, string> = new Map()): SetupResult {
 }
 
 describe('useJournalBlockCreation', () => {
-  it('creates a page + content block when no page exists for the date', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+  it('creates a page and defers seed-block creation when no template is configured', async () => {
+    // PEND-16 — when no journal template is configured for the active
+    // space, the hook MUST NOT call `create_block` for the fresh page.
+    // `BlockTree.autoCreateFirstBlock` is the single owner of that
+    // seed-block create; calling it here too raced and produced two
+    // blocks for the same page.
+    mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'create_page_in_space') return 'PNEW'
-      if (cmd === 'create_block') {
-        const params = args as { blockType: string; content?: string; parentId?: string }
-        return {
-          id: 'BNEW',
-          block_type: params.blockType,
-          content: params.content ?? '',
-          parent_id: params.parentId ?? null,
-          position: 0,
-        }
-      }
       return null
     })
 
@@ -113,15 +114,13 @@ describe('useJournalBlockCreation', () => {
       content: '2025-06-15',
       spaceId: 'SPACE_TEST',
     })
-    // Then a content block under it
-    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-      blockType: 'content',
-      content: '',
-      parentId: 'PNEW',
-      position: null,
-      spaceId: null,
-    })
-    // onPageCreated callback fired
+    // PEND-16 — NO `create_block` IPC: BlockTree owns seed-block creation
+    const createBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createBlockCalls).toHaveLength(0)
+    // onPageCreated callback fired AFTER the template branch resolved —
+    // see `useJournalBlockCreation.ts` PEND-16 ordering note. The
+    // observable contract for the caller (a single notification with the
+    // new page id) is unchanged.
     expect(pageCreatedCalls).toEqual([{ dateStr: '2025-06-15', pageId: 'PNEW' }])
     // createdPages map updated
     expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
@@ -227,38 +226,37 @@ describe('useJournalBlockCreation', () => {
     })
   })
 
-  it('creates a blank content block when no template is configured', async () => {
+  it('does not call createBlock when no template is configured (PEND-16)', async () => {
+    // PEND-16 — explicit regression: when both per-space and legacy
+    // template loaders return empty, the hook must not call
+    // `create_block`. Seed-block creation is delegated to
+    // `BlockTree.autoCreateFirstBlock`, which observes the empty page
+    // when DaySection mounts BlockTree after `setCreatedPages` fires.
     mockedLoadJournalTemplateForSpace.mockResolvedValue(null)
     mockedLoadJournalTemplate.mockResolvedValue({ template: null, duplicateWarning: null })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'create_page_in_space') return 'PNEW'
-      if (cmd === 'create_block') {
-        const params = args as { blockType: string; content?: string; parentId?: string }
-        return {
-          id: 'B1',
-          block_type: params.blockType,
-          content: params.content ?? '',
-          parent_id: params.parentId ?? null,
-          position: 0,
-        }
-      }
       return null
     })
 
-    const { result } = setup()
+    const { result, pageCreatedCalls } = setup()
 
     await act(async () => {
       await result.current.handleAddBlock('2025-06-15')
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-      blockType: 'content',
-      content: '',
-      parentId: 'PNEW',
-      position: null,
-      spaceId: null,
+    // Page was created
+    expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
+      parentId: null,
+      content: '2025-06-15',
+      spaceId: 'SPACE_TEST',
     })
+    // No `create_block` IPC fired by the hook in the no-template branch
+    const createBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createBlockCalls).toHaveLength(0)
+    // Page-render notification still fires so DaySection can mount BlockTree
+    expect(pageCreatedCalls).toEqual([{ dateStr: '2025-06-15', pageId: 'PNEW' }])
   })
 
   it('shows a toast and bails when there is no active space', async () => {

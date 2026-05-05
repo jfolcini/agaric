@@ -88,9 +88,14 @@ export function useJournalBlockCreation({
             throw new Error('createPageInSpace returned no page ULID')
           }
           pageId = newId
-          setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
-          onPageCreated(dateStr, pageId)
-          useResolveStore.getState().set(newId, dateStr, false)
+          // PEND-16 — page-render notification (`setCreatedPages` /
+          // `onPageCreated` / `useResolveStore.set`) is deferred to the
+          // bottom of the `if (isNewPage)` branch below. Firing it here
+          // would re-render JournalPage and mount BlockTree before this
+          // function has finished seeding (or intentionally not seeding)
+          // the page's first block. BlockTree's own `autoCreateFirstBlock`
+          // effect would then race us, producing two `create_block` IPCs
+          // for the same fresh page.
         }
 
         if (isNewPage) {
@@ -136,16 +141,29 @@ export function useJournalBlockCreation({
               if (ids.length > 0) {
                 useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
               }
-            } else {
-              const block = await createBlock({
-                blockType: 'content',
-                content: '',
-                parentId: pageId,
-              })
-              await pageBlockRegistry.get(pageId)?.getState().load()
-              useBlockStore.setState({ focusedBlockId: block.id })
             }
+            // PEND-16 — no `else` branch. When neither a per-space nor a
+            // legacy journal template is configured, BlockTree's
+            // `autoCreateFirstBlock` effect is the single owner of seed-
+            // block creation: on mount it observes `blocks.length === 0`
+            // and creates exactly one empty content block (and sets
+            // focus). A fallback `createBlock` here used to race that
+            // effect and produced two blocks for the same fresh page.
           }
+
+          // PEND-16 — fire page-render notifications now that the
+          // template branch has settled (either seeded blocks via
+          // `insertTemplateBlocks*` and reloaded the per-page store, or
+          // intentionally no-oped so BlockTree owns seeding). DaySection
+          // mounts BlockTree only after `createdPages` is updated, so
+          // BlockTree's `autoCreateFirstBlock` effect observes a
+          // consistent block list:
+          //   - template path: blocks.length > 0 → effect short-circuits;
+          //   - no-template path: blocks.length === 0 → effect creates
+          //     exactly one seed block.
+          setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
+          onPageCreated(dateStr, pageId)
+          useResolveStore.getState().set(pageId, dateStr, false)
         } else {
           const block = await createBlock({
             blockType: 'content',

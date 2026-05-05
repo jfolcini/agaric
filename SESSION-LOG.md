@@ -2,11 +2,50 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 672 (closed PEND-28a H2 + M4 in one batch; H1 attempted and reverted due to `sqlx::query_as!` proc-macro constraint, M2 deferred; 13 plan files left in `pending/`) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1154+ items.
+**Sessions:** 1 – 673 (cherry-pick batch closing PEND-16 + PEND-28a M2 — PEND-16 fully closed, plan file deleted; 12 plan files left in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1156+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 673 — closed PEND-16 + PEND-28a M2 (2026-05-05)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-05 |
+| **Subagents** | 2 build (A=PEND-16 daily-journal double-block race, B=PEND-28a M2 set_property_in_tx validation extraction) + 0 reviewers (subagents self-validated). 1 frontend + 1 Rust; non-overlapping file scopes; explicit no-stash-no-checkout guidance held cleanly. |
+| **Items closed** | 2 sub-items: PEND-16 (double-block race + focus-on-wrong-block — Option 1a fix making `BlockTree.autoCreateFirstBlock` the single owner); PEND-28a M2 (`validate_property_value` extraction). **PEND-16 fully closed — plan file deleted.** PEND-28a now down to 1 item (H1 deferred). Pending folder: 13 → 12 plan files. |
+| **Items modified** | — |
+| **Tests added** | +1 frontend integration test (`src/components/__tests__/JournalPage.integration.test.tsx` — uses the real `BlockTree`, asserts exactly 1 `create_block` call post-settle); +1 a11y audit (orchestrator-added per `axe-presence` hook); 2 existing `JournalPage.test.tsx` tests rewritten to assert the new contract (`createBlockCalls.toHaveLength(0)` since `BlockTree` is mocked there); +15 backend tests for `validate_property_value` matrix; +8 `useJournalBlockCreation.test.ts` tests rewritten for new ordering. 0 tests removed. |
+| **Files touched** | 4 source/test (`src/hooks/useJournalBlockCreation.ts`, `src/hooks/__tests__/useJournalBlockCreation.test.ts`, `src/components/__tests__/JournalPage.test.tsx`, `src-tauri/src/commands/blocks/crud.rs`) + 1 new test file (`src/components/__tests__/JournalPage.integration.test.tsx`) + 4 docs (PEND-16 deleted, PEND-28a updated, README, REVIEW-LATER, FEATURE-MAP, SESSION-LOG). |
+
+**Summary:** First cherry-pick batch after the user's "park the sweep cycle" decision (sessions 658-672 had been review-finding sweeps; session 672's H1 revert showed the diminishing returns). Two non-overlapping items: PEND-16 (a real bug — every fresh daily page produced two empty blocks instead of one) and PEND-28a M2 (a structural refactor making `set_property_in_tx`'s 130-line validation block testable in isolation). Both subagents shipped cleanly without coordination chaos; the Rust subagent finished first and the frontend subagent followed. The PEND-16 fix follows the plan's recommended Option 1a verbatim — drop the no-template fallback in `handleAddBlock`, reorder the page-render-notification triple so it fires AFTER template/no-template branch resolves, let `BlockTree.autoCreateFirstBlock` be the single owner. The new `JournalPage.integration.test.tsx` is the headline regression guard: it stubs the editor / DnD layers (matching `BlockTree.test.tsx`) while leaving the `autoCreateFirstBlock` `useEffect` untouched, then asserts exactly ONE `create_block` call after both auto-creators settle. PEND-28a M2 extracted a 5-step validation pipeline (`validate_set_property` → ISO-date format → reserved-key field-shape → declared-type vs payload-shape → BUG-20 select-options membership) into a private helper with 15 unit tests; the dispatcher body shrunk from 243 → 153 total lines. Subagent B chose `Result<(), AppError>` over `Result<ValidatedPropertyValue, AppError>` because the existing call site has no kind+value pair consumed downstream — a ceremonial struct would carry no information. After-tree summary: 9528+ vitest, 3553/3553 nextest (was 3538 — +15 from M2's tests), `prek run --all-files` green after one `cargo fmt` auto-fix on the new `validate_property_value` body and one `axe-presence` fix (orchestrator added the missing a11y audit to the new integration test file). AGENTS.md NOT modified.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 37 → 37 (no items added or removed)
+- **Previously resolved:** 1154+ → 1156+ across 672 → 673 sessions
+
+**Plan files closed (and deleted):**
+- `pending/PEND-16-daily-journal-double-block-race.md` (the bug fix shipped per the plan's recommended Option 1a)
+
+**Files touched (this session):**
+
+Frontend (PEND-16):
+- `src/hooks/useJournalBlockCreation.ts` (+29/−11): dropped the no-template `else { createBlock(...) }` fallback (was lines 139-147); moved the `setCreatedPages` / `onPageCreated` / `useResolveStore.set` triple from the `if (!pageId)` block to the bottom of the `if (isNewPage)` block so page-render notification fires only after the template/no-template branch settles.
+- `src/components/__tests__/JournalPage.integration.test.tsx` (NEW, ~261 LOC including the orchestrator-added a11y audit): real `BlockTree` integration test asserting exactly 1 `create_block` IPC call + parent-id check + focus-on-the-surviving-block check + a11y audit. The `autoCreateFirstBlock` `useEffect` runs end-to-end against the mocked Tauri IPC; only the editor / DnD / SortableBlock / viewport observer layers are stubbed (same pattern as `BlockTree.test.tsx`).
+- `src/hooks/__tests__/useJournalBlockCreation.test.ts` (+40/−42): docstring updated; "creates a page + content block when no page exists" and "creates a blank content block when no template is configured" tests rewritten to assert the new contract (no `create_block` IPC in the no-template branch). 8 tests, all passing.
+- `src/components/__tests__/JournalPage.test.tsx` (+37/−17): two tests rewritten to assert `createBlockCalls.toHaveLength(0)` because `BlockTree` is mocked there and the no-template fallback's `create_block` IPC no longer fires.
+
+Rust (PEND-28a M2):
+- `src-tauri/src/commands/blocks/crud.rs` (+409/−105): new `PropertyDeclaration` private struct (2 fields, lines 1477-1480); new `validate_property_value(payload, declaration) -> Result<(), AppError>` private fn (~115 LOC, lines 1509-1623, runs the 5-step validation pipeline); `set_property_in_tx` body shrunk from 243 → 153 total lines (132 code-only — 2 lines over the soft target ≤130 because the dual-write match + `BlockRow` return-construction stay inside per AGENTS.md hot-path-properties rule); new `mod validate_property_value_tests` (lines 2069-2306) with 15 unit tests covering the type × payload-shape matrix + reserved-key + BUG-20 cases.
+
+Docs:
+- `pending/PEND-16-daily-journal-double-block-race.md` (DELETED, 167 lines): bug fixed per Option 1a.
+- `pending/PEND-28-rust-maintainability-review-findings.md`: M2 marked done; H1 still ⚠ deferred.
+- `pending/README.md`: removed PEND-16 row; updated PEND-28a status to "5 of 6 done; 1 remaining (H1 deferred)"; mid-tier bullet updated.
+- `pending/REVIEW-LATER.md`: header line updated for session 673.
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: new "Frontend Bug Fix + Backend Maintainability Misc (session 673, PEND-16 + PEND-28a M2)" subsection in Section 10.
 
 ## Session 672 — closed PEND-28a H2 + M4 (2026-05-04)
 
