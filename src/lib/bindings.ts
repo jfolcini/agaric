@@ -1013,6 +1013,17 @@ export type StatusInfo = {
 	 */
 	fg_apply_dropped: number,
 	/**
+	 *  PEND-24 H1: subset of `fg_apply_dropped` whose retry row was
+	 *  successfully persisted to `materializer_retry_queue`. The
+	 *  boot-time / periodic sweeper re-enqueues these onto the
+	 *  foreground queue so the apply-op is eventually retried. A
+	 *  large gap between `fg_apply_dropped` and
+	 *  `fg_apply_dropped_persisted` (after `BatchApplyOps` fan-out)
+	 *  indicates the persistence write path is failing — pair with
+	 *  `retry_queue_persist_errors` for triage.
+	 */
+	fg_apply_dropped_persisted: number,
+	/**
 	 *  Number of background tasks that were either persisted to the retry
 	 *  queue or silently dropped after exhausting retries.
 	 */
@@ -1040,6 +1051,16 @@ export type StatusInfo = {
 	 *  a full channel. Non-zero indicates backpressure.
 	 */
 	fg_full_waits: number,
+	/**
+	 *  PEND-24 M1: count of failed `record_failure` calls (i.e. retry
+	 *  queue persistence writes that returned an error). Each
+	 *  dropped task that fails persistence twice contributes `+2`
+	 *  (first attempt + retry attempt). A non-zero value means the
+	 *  retry-queue write path itself is degraded; pair with
+	 *  `bg_dropped` and `fg_apply_dropped_persisted` to confirm
+	 *  whether tasks are being lost to persist failures.
+	 */
+	retry_queue_persist_errors: number,
 	// RFC 3339 timestamp of the most recent successful batch, if any.
 	last_materialize_at: string | null,
 	/**

@@ -449,6 +449,26 @@ pub async fn run_cycle(
     token: &Token,
     dirty: &DirtySet,
 ) -> Result<CycleOutcome, AppError> {
+    // PEND-24 H3 — Pause gate.  When the prior cycle saw a terminal
+    // `Unauthorized` (the refresh token has been revoked), it set
+    // `gcal_settings.reauth_required = 'true'`. Every subsequent cycle
+    // observes the flag here at the very top and short-circuits the
+    // entire fetch / lease / diff path until the user re-authorizes
+    // (which `persist_oauth_account_email` clears back to `'false'`).
+    // Returning `CycleOutcome::Ok` lets the outer task loop clear its
+    // dirty set and stay idle without the noise of a `HardFailure`
+    // log on every reconcile tick. This is "pause", not "stop": the
+    // loop keeps running so a clear flips us back to live without a
+    // restart.
+    if models::get_reauth_required(pool).await? {
+        tracing::debug!(
+            target: "gcal",
+            device = device_id,
+            "reauth_required flag set — connector paused; skipping cycle",
+        );
+        return Ok(CycleOutcome::Ok);
+    }
+
     let now = clock.now();
 
     // 1. Try to claim/renew the lease.  Without it, idle.
@@ -479,7 +499,7 @@ pub async fn run_cycle(
                 id
             }
             Err(e) => {
-                return classify_cycle_failure(emitter, &e);
+                return classify_cycle_failure(pool, emitter, &e).await;
             }
         }
     } else {
@@ -499,7 +519,12 @@ pub async fn run_cycle(
                 return Ok(CycleOutcome::Ok);
             }
             Err(DateFailure::Unauthorized) => {
-                emitter.emit(GcalEvent::ReauthRequired);
+                // PEND-24 H3 — terminal Unauthorized: persist the
+                // pause flag, attach the email to the event payload,
+                // and surface the HardFailure. The next cycle will
+                // observe the flag at the top of `run_cycle` and
+                // short-circuit until the user re-authorizes.
+                handle_terminal_unauthorized(pool, emitter).await?;
                 return Ok(CycleOutcome::HardFailure(GcalErrorKind::Unauthorized));
             }
             Err(DateFailure::Forbidden(msg)) => {
@@ -540,7 +565,8 @@ enum DateFailure {
     Other(AppError),
 }
 
-fn classify_cycle_failure(
+async fn classify_cycle_failure(
+    pool: &SqlitePool,
     emitter: &Arc<dyn GcalEventEmitter>,
     err: &AppError,
 ) -> Result<CycleOutcome, AppError> {
@@ -551,7 +577,13 @@ fn classify_cycle_failure(
         // invalid-request) are silent at the emitter level; the
         // tracing log line in [`spawn_connector`] still records them.
         match kind {
-            GcalErrorKind::Unauthorized => emitter.emit(GcalEvent::ReauthRequired),
+            // PEND-24 H3: route through the shared helper so the
+            // first-connect (`create_dedicated_calendar`) 401 path
+            // sets the pause flag + emits the email-bearing event,
+            // matching the per-date `DateFailure::Unauthorized` arm.
+            GcalErrorKind::Unauthorized => {
+                handle_terminal_unauthorized(pool, emitter).await?;
+            }
             GcalErrorKind::Forbidden(_) => emitter.emit(GcalEvent::PushDisabled),
             _ => {}
         }
@@ -570,6 +602,35 @@ fn classify_cycle_failure(
     Ok(CycleOutcome::HardFailure(GcalErrorKind::InvalidRequest(
         err.to_string(),
     )))
+}
+
+/// PEND-24 H3 — shared terminal-`Unauthorized` recovery path.  Called
+/// from both `run_cycle`'s per-date `DateFailure::Unauthorized` arm
+/// and `classify_cycle_failure`'s first-connect 401 arm so the same
+/// three side-effects fire regardless of which API call surfaced the
+/// 401:
+///
+/// 1. **Persist** `gcal_settings.reauth_required = 'true'` so the
+///    next `run_cycle` short-circuits at its pause gate.
+/// 2. **Read** the connected account email from
+///    `gcal_settings.oauth_account_email` (empty string → `None`).
+/// 3. **Emit** `GcalEvent::ReauthRequired { account_email }` so the
+///    frontend banner can render with the user's email.
+///
+/// Errors from the flag write are propagated; emitter calls are
+/// fire-and-forget per the [`GcalEventEmitter`] contract.
+async fn handle_terminal_unauthorized(
+    pool: &SqlitePool,
+    emitter: &Arc<dyn GcalEventEmitter>,
+) -> Result<(), AppError> {
+    models::set_reauth_required(pool, true).await?;
+    let email = models::get_setting(pool, GcalSettingKey::OauthAccountEmail)
+        .await?
+        .filter(|e| !e.is_empty());
+    emitter.emit(GcalEvent::ReauthRequired {
+        account_email: email,
+    });
+    Ok(())
 }
 
 /// Evaluate a single date: fetch agenda entries, compute digest, hash,
@@ -1847,9 +1908,221 @@ mod tests {
             "401 on first-connect must surface HardFailure(Unauthorized), got {outcome:?}"
         );
         assert!(
-            rec.events().contains(&GcalEvent::ReauthRequired),
+            rec.events()
+                .iter()
+                .any(|e| matches!(e, GcalEvent::ReauthRequired { .. })),
             "reauth_required must be emitted, got {:?}",
             rec.events()
+        );
+    }
+
+    /// PEND-24 H3 — terminal `Unauthorized` (refresh token revoked or
+    /// second 401 after refresh) must:
+    ///
+    /// 1. Surface a `HardFailure(Unauthorized)` from the cycle that
+    ///    detected it, with `GcalEvent::ReauthRequired { account_email }`
+    ///    on the recorder carrying the persisted account email.
+    /// 2. Persist `gcal_settings.reauth_required = 'true'` so the
+    ///    pause flag survives a process restart.
+    /// 3. Cause every subsequent `run_cycle` to short-circuit at the
+    ///    top-of-loop pause gate without issuing a single HTTP
+    ///    request — this is the wasted-quota / battery fix.
+    ///
+    /// The test simulates the connector path: 401 on
+    /// `create_dedicated_calendar`. The bounded refresh isn't wired
+    /// through the per-date `api.rs` calls today (REVIEW-LATER:
+    /// `fetch_with_auto_refresh` is only used at the OAuth layer),
+    /// so the 401 reaching `run_cycle` IS the terminal event from
+    /// the connector's point of view — semantically equivalent to
+    /// "Google rejected the access token AND the bounded refresh
+    /// failed". When `api.rs` adopts `fetch_with_auto_refresh` in a
+    /// future slice, this test will continue to exercise the same
+    /// connector contract because both paths funnel through
+    /// `DateFailure::Unauthorized` / `classify_cycle_failure`'s
+    /// `Unauthorized` arm.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revoked_refresh_token_emits_reauth_event_and_pauses() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+
+        // Seed the connected account email so the event payload
+        // assertion can pin it down. Production wires this in via
+        // `persist_oauth_account_email` after a successful
+        // `exchange_code`.
+        models::set_setting(
+            &pool,
+            GcalSettingKey::OauthAccountEmail,
+            "alice@example.com",
+        )
+        .await
+        .unwrap();
+
+        // Sanity: the migration seeded reauth_required = 'false'.
+        assert!(
+            !models::get_reauth_required(&pool).await.unwrap(),
+            "reauth_required must default to false on a fresh pool"
+        );
+
+        // 401 on first-connect — exactly one POST is expected; the
+        // second cycle must NOT reach the network thanks to the
+        // pause flag set after the first.
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, rec) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        // --- Cycle 1: terminal Unauthorized.
+        let outcome = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                outcome,
+                CycleOutcome::HardFailure(GcalErrorKind::Unauthorized)
+            ),
+            "first cycle's 401 must surface HardFailure(Unauthorized), got {outcome:?}"
+        );
+
+        // Event emitted exactly once with the seeded email payload.
+        let emitted = rec.events();
+        let reauth_events: Vec<&GcalEvent> = emitted
+            .iter()
+            .filter(|e| matches!(e, GcalEvent::ReauthRequired { .. }))
+            .collect();
+        assert_eq!(
+            reauth_events.len(),
+            1,
+            "ReauthRequired must be emitted exactly once, got {emitted:?}"
+        );
+        match reauth_events[0] {
+            GcalEvent::ReauthRequired { account_email } => assert_eq!(
+                account_email.as_deref(),
+                Some("alice@example.com"),
+                "ReauthRequired payload must carry the persisted account email"
+            ),
+            other => panic!("expected ReauthRequired, got {other:?}"),
+        }
+
+        // Flag persisted in gcal_settings.
+        assert!(
+            models::get_reauth_required(&pool).await.unwrap(),
+            "reauth_required must be set to true after terminal Unauthorized"
+        );
+
+        // --- Cycle 2: must short-circuit at the pause gate.  No new
+        // request should hit the wiremock server — the `expect(1)`
+        // on the 401 mock above will trip on drop if a second hits.
+        let request_count_before = count_requests(&server, "POST", "/calendars").await;
+        let outcome2 = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome2,
+            CycleOutcome::Ok,
+            "paused cycle must return Ok (no work) — got {outcome2:?}"
+        );
+        let request_count_after = count_requests(&server, "POST", "/calendars").await;
+        assert_eq!(
+            request_count_before, request_count_after,
+            "paused cycle must NOT issue any HTTP requests; before={request_count_before}, after={request_count_after}"
+        );
+
+        // Exactly one ReauthRequired across both cycles (the pause
+        // gate short-circuits BEFORE any side-effects fire).
+        let total_reauth = rec
+            .events()
+            .iter()
+            .filter(|e| matches!(e, GcalEvent::ReauthRequired { .. }))
+            .count();
+        assert_eq!(
+            total_reauth, 1,
+            "paused cycle must NOT re-emit ReauthRequired"
+        );
+    }
+
+    /// PEND-24 H3 — ergonomic seam pin: clearing the
+    /// `reauth_required` flag (which is what
+    /// `persist_oauth_account_email` does on successful re-auth)
+    /// must let the connector resume on the next cycle. Pinned
+    /// separately from the pause-gate test so a future change to
+    /// `persist_oauth_account_email` cannot silently break the
+    /// resume path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn clearing_reauth_flag_lets_connector_resume() {
+        let (pool, _dir) = test_pool().await;
+        // Pre-set the flag, simulating an earlier terminal 401.
+        models::set_reauth_required(&pool, true).await.unwrap();
+
+        let server = MockServer::start().await;
+        // 200 on first-connect: reachable iff the pause gate lets
+        // the cycle through.
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        let api = make_api(&server);
+        let (emitter, _rec) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        // While the flag is set: must short-circuit (no HTTP).
+        let outcome_paused = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome_paused, CycleOutcome::Ok);
+        assert_eq!(
+            count_requests(&server, "POST", "/calendars").await,
+            0,
+            "paused cycle must NOT issue any HTTP request"
+        );
+
+        // Re-auth completion path clears the flag.
+        models::set_reauth_required(&pool, false).await.unwrap();
+
+        let outcome_resumed = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome_resumed, CycleOutcome::Ok);
+        assert_eq!(
+            count_requests(&server, "POST", "/calendars").await,
+            1,
+            "resumed cycle must reach first-connect"
         );
     }
 

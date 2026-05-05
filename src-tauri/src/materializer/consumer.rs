@@ -289,6 +289,65 @@ fn record_last_materialize(metrics: &QueueMetrics) {
     metrics.last_materialize_ms.store(now_ms, Ordering::Relaxed);
 }
 
+/// Persist a failed task to `materializer_retry_queue`, retrying once
+/// after a short delay if the first attempt fails (PEND-24 M1).
+///
+/// **Why retry?** The persistence path itself is a SQLite write that
+/// can hit the same WAL-lock contention as the primary task. Without
+/// the retry, a transient lock encountered during persistence
+/// silently leaks the task — `record_failure` returns `Err`, the
+/// caller drops the task, and operators see no signal that the retry
+/// queue write itself failed.
+///
+/// **Counters bumped:**
+/// * Every failed [`super::retry_queue::record_failure`] call bumps
+///   [`QueueMetrics::retry_queue_persist_errors`] (so a 1-then-2
+///   pattern emerges as 1 → 2 increments). Both first-attempt and
+///   retry-attempt failures count.
+///
+/// **Return value:** `true` if the task is durably persisted (either
+/// first attempt or retry succeeded); `false` if both attempts
+/// failed. Callers use the bool to decide whether to also bump the
+/// "successfully queued for retry" sub-counters
+/// (e.g. `bg_dropped_global` semantic, `fg_apply_dropped_persisted`).
+async fn record_failure_with_retry(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+    last_error: &str,
+    metrics: &Arc<QueueMetrics>,
+) -> bool {
+    use super::retry_queue::record_failure;
+    match record_failure(pool, task, last_error).await {
+        Ok(()) => true,
+        Err(e1) => {
+            metrics
+                .retry_queue_persist_errors
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                error = %e1,
+                "PEND-24 M1: record_failure first attempt failed; retrying after 100ms"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            match record_failure(pool, task, last_error).await {
+                Ok(()) => {
+                    tracing::info!("PEND-24 M1: record_failure succeeded on retry");
+                    true
+                }
+                Err(e2) => {
+                    metrics
+                        .retry_queue_persist_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                    tracing::error!(
+                        error = %e2,
+                        "PEND-24 M1: record_failure failed on retry — task dropped without persistence"
+                    );
+                    false
+                }
+            }
+        }
+    }
+}
+
 async fn process_foreground_segment(
     pool: &SqlitePool,
     tasks: Vec<MaterializeTask>,
@@ -386,6 +445,17 @@ pub(super) async fn process_single_foreground_task(
         // which are routed through the foreground queue today, but
         // the match arm is exhaustive for safety) keep their
         // existing single-counter behavior.
+        //
+        // PEND-24 H1: in addition to the warn + `fg_apply_dropped`
+        // bump, persist the failure to `materializer_retry_queue` via
+        // [`record_failure_with_retry`] so the boot-time / periodic
+        // sweeper re-enqueues it on the same minute-to-hour backoff
+        // schedule used for background tasks. `BatchApplyOps`
+        // failures fan out into one persisted row per record so a
+        // single bad op cannot poison sweep-time replay of the rest
+        // of the batch — each record gets its own retry row keyed by
+        // `(device_id, seq)`. `fg_apply_dropped_persisted` counts
+        // per successfully-persisted retry row.
         let err_msg = outcome.last_error_msg.as_deref().unwrap_or("unknown error");
         match &task {
             MaterializeTask::ApplyOp(record) => {
@@ -397,6 +467,11 @@ pub(super) async fn process_single_foreground_task(
                     error = %err_msg,
                     "foreground apply-op dropped after retry exhausted — materializer divergence"
                 );
+                if record_failure_with_retry(pool, &task, err_msg, metrics).await {
+                    metrics
+                        .fg_apply_dropped_persisted
+                        .fetch_add(1, Ordering::Relaxed);
+                }
                 metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
             }
             MaterializeTask::BatchApplyOps(records) => {
@@ -417,6 +492,18 @@ pub(super) async fn process_single_foreground_task(
                         error = %err_msg,
                         "foreground batch-apply-ops dropped after retry exhausted — empty batch"
                     );
+                }
+                // PEND-24 H1: persist each record as an individual
+                // ApplyOp retry row. `record.clone()` is a cold-path
+                // deep clone of `OpRecord` (String fields) — acceptable
+                // since this only runs after retry exhaustion.
+                for record in records.iter() {
+                    let single = MaterializeTask::ApplyOp(Arc::new(record.clone()));
+                    if record_failure_with_retry(pool, &single, err_msg, metrics).await {
+                        metrics
+                            .fg_apply_dropped_persisted
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
             }
@@ -525,29 +612,53 @@ pub(super) async fn run_background(
                 // until the next user mutation re-dispatched it).
                 //
                 // The remaining truly-non-retryable tasks
-                // (`ApplyOp`, `BatchApplyOps`, `Barrier`, `RebuildFtsIndex`,
-                // `FtsOptimize`, `CleanupOrphanedAttachments`,
-                // `ReindexFtsReferences`, `RemoveFtsBlock`) hit the `else`
-                // arm and are silently counted without persistence.
+                // (`Barrier`, `RebuildFtsIndex`, `FtsOptimize`,
+                // `CleanupOrphanedAttachments`, `ReindexFtsReferences`,
+                // `RemoveFtsBlock`) hit the `else` arm and are silently
+                // counted without persistence. (`ApplyOp` /
+                // `BatchApplyOps` would be persisted by `from_task` after
+                // PEND-24 H1, but they are routed exclusively to the
+                // foreground queue and never reach this site.)
+                //
+                // PEND-24 M1: persistence itself can fail (transient WAL
+                // contention on the retry-queue write). Use
+                // `record_failure_with_retry` to retry once after 100ms
+                // and bump `retry_queue_persist_errors` on every failed
+                // attempt. `bg_dropped` is bumped on the persist-failure
+                // branch too so the "tasks gone" total stays accurate
+                // even when the retry queue write itself is leaking.
                 if !succeeded {
                     if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(&task) {
                         let err_msg = last_error_msg.as_deref().unwrap_or("unknown error");
-                        if let Err(persist_err) =
-                            super::retry_queue::record_failure(&pool, &task, err_msg).await
-                        {
-                            tracing::error!(
-                                error = %persist_err,
-                                "failed to persist task to materializer_retry_queue — task dropped"
-                            );
-                        } else {
-                            metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
-                            // PEND-03: surface global-cache drops separately
-                            // so operators can distinguish per-block reindex
-                            // backlog from global-cache freshness gaps.
-                            if kind.is_global() {
-                                metrics.bg_dropped_global.fetch_add(1, Ordering::Relaxed);
-                            }
+                        let persisted =
+                            record_failure_with_retry(&pool, &task, err_msg, &metrics).await;
+                        // PEND-24 M1: bump bg_dropped on BOTH the success
+                        // and the persist-failure branches. Operators
+                        // reading `bg_dropped` get an accurate "left the
+                        // primary materialization path" count regardless
+                        // of whether the retry queue write itself
+                        // succeeded.
+                        metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
+                        // PEND-03: surface global-cache drops separately
+                        // so operators can distinguish per-block reindex
+                        // backlog from global-cache freshness gaps. We
+                        // bump regardless of `persisted` so this
+                        // sub-counter stays a proper subset of
+                        // `bg_dropped` — persist-failure cases land in
+                        // both `bg_dropped` and `bg_dropped_global` for
+                        // global tasks, with `retry_queue_persist_errors`
+                        // capturing the persistence failure separately.
+                        if kind.is_global() {
+                            metrics.bg_dropped_global.fetch_add(1, Ordering::Relaxed);
                         }
+                        // Suppress unused-variable warning when the
+                        // sub-counters are only consulted via
+                        // `kind.is_global()` above. `persisted` is the
+                        // structured signal but currently has no
+                        // additional consumer on the bg path; keeping
+                        // the variable bind documents the M1 retry
+                        // outcome at the call site for future readers.
+                        let _ = persisted;
                     } else {
                         // Truly non-retryable task: silent count, no persist.
                         metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);

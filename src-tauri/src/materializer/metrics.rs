@@ -43,6 +43,18 @@ pub struct QueueMetrics {
     /// Each `BatchApplyOps` drop is counted once regardless of batch
     /// size; the rest of the batch is implicitly dropped together.
     pub fg_apply_dropped: AtomicU64,
+    /// PEND-24 H1: subset of [`Self::fg_apply_dropped`] whose retry
+    /// row was successfully written to `materializer_retry_queue` so
+    /// the boot-time / periodic sweeper can re-enqueue the op.
+    /// `BatchApplyOps` drops fan out into one persisted row per
+    /// record, so this counter increments per-record rather than
+    /// per-batch (in contrast to `fg_apply_dropped`, which is a
+    /// per-drop-event counter). A divergence between
+    /// `fg_apply_dropped` and `fg_apply_dropped_persisted` (after
+    /// accounting for batch fan-out) indicates that the persistence
+    /// path itself is failing — pair with
+    /// [`Self::retry_queue_persist_errors`] for triage.
+    pub fg_apply_dropped_persisted: AtomicU64,
     /// Background tasks that exhausted all in-memory retries (per-block
     /// tasks persisted to `materializer_retry_queue`, **and as of PEND-03
     /// global cache rebuilds also persisted to that queue under the
@@ -68,6 +80,21 @@ pub struct QueueMetrics {
     /// channel. A non-zero value indicates foreground backpressure.
     /// See MAINT-24.
     pub fg_full_waits: AtomicU64,
+    /// PEND-24 M1: count of failed
+    /// [`super::retry_queue::record_failure`] calls — i.e. the number
+    /// of times the retry-queue persistence write itself returned an
+    /// error.
+    ///
+    /// Each call into [`super::consumer::record_failure_with_retry`]
+    /// makes up to two `record_failure` attempts (separated by a
+    /// 100 ms backoff); both first-attempt and retry-attempt failures
+    /// bump this counter. So a single dropped task whose persistence
+    /// fails twice contributes `+2`. A non-zero value indicates that
+    /// the retry queue write path itself is degraded — operators see
+    /// `bg_dropped` / `fg_apply_dropped` continue to climb but the
+    /// task may not be in `materializer_retry_queue`, so the boot-time
+    /// sweeper cannot recover it.
+    pub retry_queue_persist_errors: AtomicU64,
     /// Milliseconds since Unix epoch of the most recent successfully
     /// processed materializer batch (foreground or background). Used to
     /// detect stalled consumers. 0 means the materializer has not yet
@@ -99,9 +126,11 @@ impl Default for QueueMetrics {
             fg_panics: AtomicU64::new(0),
             bg_panics: AtomicU64::new(0),
             fg_apply_dropped: AtomicU64::new(0),
+            fg_apply_dropped_persisted: AtomicU64::new(0),
             bg_dropped: AtomicU64::new(0),
             bg_dropped_global: AtomicU64::new(0),
             fg_full_waits: AtomicU64::new(0),
+            retry_queue_persist_errors: AtomicU64::new(0),
             last_materialize_ms: AtomicU64::new(0),
         }
     }
@@ -137,6 +166,15 @@ pub struct StatusInfo {
     /// (which carry `seq` / `device_id` / `op_type`) for triage.
     /// Each `BatchApplyOps` drop counts once regardless of batch size.
     pub fg_apply_dropped: u64,
+    /// PEND-24 H1: subset of `fg_apply_dropped` whose retry row was
+    /// successfully persisted to `materializer_retry_queue`. The
+    /// boot-time / periodic sweeper re-enqueues these onto the
+    /// foreground queue so the apply-op is eventually retried. A
+    /// large gap between `fg_apply_dropped` and
+    /// `fg_apply_dropped_persisted` (after `BatchApplyOps` fan-out)
+    /// indicates the persistence write path is failing — pair with
+    /// `retry_queue_persist_errors` for triage.
+    pub fg_apply_dropped_persisted: u64,
     // --- MAINT-24 additions ---
     /// Number of background tasks that were either persisted to the retry
     /// queue or silently dropped after exhausting retries.
@@ -158,6 +196,14 @@ pub struct StatusInfo {
     /// Number of times the foreground `enqueue_foreground` path awaited on
     /// a full channel. Non-zero indicates backpressure.
     pub fg_full_waits: u64,
+    /// PEND-24 M1: count of failed `record_failure` calls (i.e. retry
+    /// queue persistence writes that returned an error). Each
+    /// dropped task that fails persistence twice contributes `+2`
+    /// (first attempt + retry attempt). A non-zero value means the
+    /// retry-queue write path itself is degraded; pair with
+    /// `bg_dropped` and `fg_apply_dropped_persisted` to confirm
+    /// whether tasks are being lost to persist failures.
+    pub retry_queue_persist_errors: u64,
     /// RFC 3339 timestamp of the most recent successful batch, if any.
     pub last_materialize_at: Option<String>,
     /// Seconds elapsed since `last_materialize_at`. None when no batch has

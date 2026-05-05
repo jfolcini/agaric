@@ -44,10 +44,17 @@
  * crumbs are wayfinding text-links and the conventional focus indicator for a
  * text-link is an underline, not a 3 px ring. Pairing this with the underline
  * hover treatment makes the trail read as a path of links rather than a button
- * bar — see FEAT-13 in REVIEW-LATER.md. The overflow popover trigger and home
- * icon follow the same convention for visual consistency. The popover's
- * interior menu items keep the standard form-control ring (they are inside a
- * menu surface, not on the trail).
+ * bar — see FEAT-13 in REVIEW-LATER.md. The popover's interior menu items keep
+ * the standard form-control ring (they are inside a menu surface, not on the
+ * trail).
+ *
+ * Text-link crumb segments keep `focus-visible:underline` (FEAT-13).
+ * Icon-only triggers (`BreadcrumbHome`, `OverflowPopover`) use the standard
+ * `focus-visible:ring-[3px]` form-control treatment because the underline rule
+ * has no visible effect on a single icon glyph (no glyph baseline to decorate;
+ * hover- and focus-state would be invisible). Icon buttons additionally get a
+ * subtle hover-chip (`hover:bg-accent/40 rounded-sm`) consistent with other
+ * small icon-button conventions in the design system.
  */
 
 import { ChevronRight, Home, MoreHorizontal } from 'lucide-react'
@@ -109,12 +116,23 @@ const itemActiveClass = cn(
   'inline-flex max-w-[280px] items-center truncate font-medium text-foreground',
 )
 
+// Icon-only triggers (Home, overflow `…`) get the standard 3 px form-control
+// focus ring + a subtle hover-chip — see the file's top doc comment for the
+// icon-vs-text-link split rationale.
 const homeButtonClass = cn(
-  'inline-flex shrink-0 items-center text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden',
+  'inline-flex shrink-0 items-center justify-center rounded-sm p-1',
+  'text-muted-foreground transition-colors',
+  'hover:bg-accent/40 hover:text-foreground',
+  'focus-visible:bg-accent/60 focus-visible:text-foreground',
+  'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
 )
 
 const overflowTriggerClass = cn(
-  'inline-flex shrink-0 items-center text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden',
+  'inline-flex shrink-0 items-center justify-center rounded-sm p-1',
+  'text-muted-foreground transition-colors',
+  'hover:bg-accent/40 hover:text-foreground',
+  'focus-visible:bg-accent/60 focus-visible:text-foreground',
+  'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
 )
 
 export function BreadcrumbSeparator({

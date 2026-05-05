@@ -120,7 +120,13 @@ impl TokenBlob {
 /// state.  Kept deliberately small — only the events FEAT-5b / 5e
 /// actually raise are listed here; later sub-items can extend the
 /// variant set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// PEND-24 H3: `ReauthRequired` carries the connected account email
+/// (when available) so the frontend banner can render
+/// "Reconnect <email>". The variant is structured rather than
+/// flat-typed so future fields can land additively without churning
+/// every emit site.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GcalEvent {
     /// The OS keyring is unreachable — GCal push cannot persist or
     /// read tokens.  Frontend should show the keyring-unavailable
@@ -130,7 +136,12 @@ pub enum GcalEvent {
     /// row, or the `invalid_grant` / `unauthorized_client` OAuth
     /// error).  Frontend should clear the connected-account UI and
     /// prompt the user to re-authorize.
-    ReauthRequired,
+    ///
+    /// `account_email` is the unverified email previously persisted
+    /// to `gcal_settings.oauth_account_email`. `None` when the
+    /// connector has no record of the connected account (clean
+    /// install or oauth-layer revocation before the email landed).
+    ReauthRequired { account_email: Option<String> },
     /// The dedicated "Agaric Agenda" calendar was externally deleted
     /// by the user; the connector has cleared every
     /// `gcal_agenda_event_map` row and reset `calendar_id` so the
@@ -144,14 +155,25 @@ pub enum GcalEvent {
     PushDisabled,
 }
 
+/// PEND-24 H3 — typed payload carried over the Tauri bus on the
+/// `gcal:reauth_required` event.  Mirrors the
+/// [`GcalEvent::ReauthRequired`] variant fields. Defined here (rather
+/// than serialising the enum directly) so the wire shape stays a
+/// flat object the frontend listener can deserialise without
+/// pattern-matching the enum tag.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReauthRequiredPayload {
+    pub account_email: Option<String>,
+}
+
 impl GcalEvent {
     /// Tauri event name used on `AppHandle::emit(event, payload)`.
     /// Namespaced `gcal:` to match the rest of the feature family.
     #[must_use]
-    pub const fn event_name(self) -> &'static str {
+    pub fn event_name(&self) -> &'static str {
         match self {
             GcalEvent::KeyringUnavailable => "gcal:keyring_unavailable",
-            GcalEvent::ReauthRequired => "gcal:reauth_required",
+            GcalEvent::ReauthRequired { .. } => "gcal:reauth_required",
             GcalEvent::CalendarRecreated => "gcal:calendar_recreated",
             GcalEvent::PushDisabled => "gcal:push_disabled",
         }
@@ -212,10 +234,24 @@ impl<R: tauri::Runtime> std::fmt::Debug for TauriGcalEventEmitter<R> {
 impl<R: tauri::Runtime> GcalEventEmitter for TauriGcalEventEmitter<R> {
     fn emit(&self, event: GcalEvent) {
         use tauri::Emitter;
-        if let Err(e) = self.handle.emit(event.event_name(), ()) {
+        // PEND-24 H3: ReauthRequired carries an `account_email`
+        // payload so the frontend banner can render "Reconnect
+        // <email>" without an extra round-trip to `get_gcal_status`.
+        // Other variants stay payload-less to preserve the existing
+        // wire shape — the variant tag alone identifies them.
+        let event_name = event.event_name();
+        let result = match event {
+            GcalEvent::ReauthRequired { account_email } => self
+                .handle
+                .emit(event_name, ReauthRequiredPayload { account_email }),
+            GcalEvent::KeyringUnavailable
+            | GcalEvent::CalendarRecreated
+            | GcalEvent::PushDisabled => self.handle.emit(event_name, ()),
+        };
+        if let Err(e) = result {
             tracing::warn!(
                 target: "gcal",
-                event = event.event_name(),
+                event = event_name,
                 error = %e,
                 "failed to emit gcal event on Tauri bus",
             );
@@ -764,7 +800,10 @@ mod tests {
             "gcal:keyring_unavailable"
         );
         assert_eq!(
-            GcalEvent::ReauthRequired.event_name(),
+            GcalEvent::ReauthRequired {
+                account_email: None
+            }
+            .event_name(),
             "gcal:reauth_required"
         );
         assert_eq!(
@@ -778,7 +817,9 @@ mod tests {
     fn noop_event_emitter_does_not_record() {
         let emitter = NoopEventEmitter;
         emitter.emit(GcalEvent::KeyringUnavailable);
-        emitter.emit(GcalEvent::ReauthRequired);
+        emitter.emit(GcalEvent::ReauthRequired {
+            account_email: None,
+        });
         // If we got here without panicking, the noop worked.
     }
 
@@ -786,14 +827,22 @@ mod tests {
     fn recording_event_emitter_captures_in_order() {
         let rec = RecordingEventEmitter::new();
         rec.emit(GcalEvent::KeyringUnavailable);
-        rec.emit(GcalEvent::ReauthRequired);
-        rec.emit(GcalEvent::ReauthRequired);
+        rec.emit(GcalEvent::ReauthRequired {
+            account_email: None,
+        });
+        rec.emit(GcalEvent::ReauthRequired {
+            account_email: Some("alice@example.com".to_owned()),
+        });
         assert_eq!(
             rec.events(),
             vec![
                 GcalEvent::KeyringUnavailable,
-                GcalEvent::ReauthRequired,
-                GcalEvent::ReauthRequired,
+                GcalEvent::ReauthRequired {
+                    account_email: None
+                },
+                GcalEvent::ReauthRequired {
+                    account_email: Some("alice@example.com".to_owned())
+                },
             ],
             "emitter must preserve call order"
         );

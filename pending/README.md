@@ -17,9 +17,7 @@
 | PEND-16 | Daily-journal double-block render race | — | (out-of-band bug fix track) |
 | PEND-17 | Block history sheet — visible diff-nav + restore-with-preview | — | (out-of-band UX track) |
 | PEND-18 | `SpaceId` newtype + `SpaceScope` enum (lift Spaces enforcement into the type system) | M-L (9-15h) | ready — Phase 0 specta+sqlx spike before main implementation |
-| PEND-21 | Structural breadcrumb — icon-button affordance + drop redundant exit-zoom button | S (1-2h) | ready (out-of-band UX track on `Breadcrumb` + `BlockZoomBar`) |
 | PEND-23 | UX review findings (post-validation) | mostly S; M for H3 / M6 | ready — 4 HIGH + 10 MEDIUM + 17 LOW; cherry-pickable per item |
-| PEND-24 | Rust robustness review findings (post-validation) | mostly S, two trivial, one M (H1) | ready — 2 CRITICAL + 3 HIGH + 6 MEDIUM remaining (LOW nits noted but not bundled) |
 | PEND-28a | Rust maintainability review findings (post-validation) | mostly S | ready — file: `PEND-28-rust-maintainability-review-findings.md` (no longer shares ID; PEND-28b shipped sessions 667-669) |
 | PEND-29 | Frontend robustness review — second pass | trivial (B-1 only remaining) | partial — **B-1 (BulletList Option A) needs product decision** (Option A remove vs Option B implement) before it can land |
 | PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
@@ -29,14 +27,12 @@
 
 **Quick wins first** — schedule when convenient, low / no dependencies:
 
-- PEND-21 (breadcrumb icon-affordance + exit-zoom dedup)
 - PEND-29 B-1 — blocked on product decision
 
 **Mid-tier** — useful but more invasive:
 
 - PEND-06 (`Channel<T>` adoption) — Tier 1 sync progress first, Tier 2 file transfer later
 - PEND-23 (UX review findings) — pick HIGH items first; rest cherry-pickable
-- PEND-24 (Rust robustness review) — 2 CRITICAL + 3 HIGH + 6 MEDIUM
 - PEND-28a (Rust maintainability)
 - PEND-30 (D-1..D-4 decomposition) — opportunistic, low priority
 - PEND-33 (FormattingToolbar overflow) — Layer A first, Layer B optional follow-up
@@ -48,7 +44,7 @@
 
 **Out-of-band UX tracks** — independent, low / no dependencies on the bundle:
 
-- PEND-11 (space indicator UI redesign), PEND-16 (journal double-block race fix), PEND-17 (block-history diff-nav + restore-with-preview), PEND-21 (structural breadcrumb icon-affordance + exit-zoom dedup).
+- PEND-11 (space indicator UI redesign), PEND-16 (journal double-block race fix), PEND-17 (block-history diff-nav + restore-with-preview).
 
 **Strategic** — independent decisions with multi-phase timelines:
 
