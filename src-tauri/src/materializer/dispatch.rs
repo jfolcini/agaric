@@ -139,6 +139,15 @@ impl Materializer {
     ///
     /// Order is fixed by [`FULL_CACHE_REBUILD_TASKS`] so tests can assert
     /// the exact sequence against `BackgroundQueue::inspect()` / metrics.
+    ///
+    /// PEND-28a M4: production dispatch now reads
+    /// [`FULL_CACHE_REBUILD_TASKS`] directly from
+    /// [`invalidations_for_op`] instead of round-tripping through this
+    /// method, so the helper survives only as a test affordance for
+    /// `enqueue_full_cache_rebuild_*` cases in `materializer::tests`.
+    /// `#[cfg(test)]`-gated to keep release builds free of dead-code
+    /// warnings.
+    #[cfg(test)]
     pub(super) fn enqueue_full_cache_rebuild(&self) -> Result<(), AppError> {
         for task in FULL_CACHE_REBUILD_TASKS {
             self.try_enqueue_background(task.clone())?;
@@ -167,179 +176,624 @@ impl Materializer {
         self.enqueue_background_tasks(record, None)
     }
 
+    /// Enqueue the background fan-out for `record`, then drive any
+    /// metric-driven side effects (FTS optimize threshold) that aren't
+    /// captured by the pure dispatch table.
+    ///
+    /// PEND-28a M4: the per-op-type → required-task matrix lives in
+    /// [`invalidations_for_op`] as a focused, side-effect-free function
+    /// returning `Vec<MaterializeTask>` so tests can pin "every op of
+    /// kind X invalidates cache Y" without driving the full materializer.
+    /// This dispatcher is a thin loop over that vec plus the
+    /// metric-conditional FTS-optimize enqueue for `edit_block`.
     fn enqueue_background_tasks(
         &self,
         record: &OpRecord,
         block_type_hint: Option<&str>,
     ) -> Result<(), AppError> {
-        match record.op_type.as_str() {
-            "create_block" => {
-                let hint: CreateBlockHint = serde_json::from_str(&record.payload)?;
-                match hint.block_type.as_str() {
-                    "tag" => {
-                        self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                    }
-                    "page" => {
-                        self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                    }
-                    _ => {}
-                }
-                if !hint.block_id.is_empty() {
-                    let block_id: Arc<str> = Arc::from(hint.block_id.as_str());
-                    self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: Arc::clone(&block_id),
-                    })?;
-                    // UX-250: a freshly created block can already contain
-                    // inline `#[ULID]` tag refs if the creator passed
-                    // non-empty content (imports, paste, programmatic
-                    // creates). Scan for them.
-                    self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs { block_id })?;
-                }
-                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
-            }
-            "edit_block" => {
-                // L-13: use the cached `OpRecord::block_id` sidecar
-                // populated at append-time (or parsed once on the sync
-                // ingress in `From<OpTransfer> for OpRecord`) so this
-                // dispatch path no longer re-parses `record.payload`
-                // for the same value.
-                let block_id = record.block_id.as_deref().unwrap_or_default();
-                debug_assert!(
-                    !block_id.is_empty(),
-                    "edit_block payload has empty block_id"
-                );
-                if !block_id.is_empty() {
-                    self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
-                        block_id: Arc::from(block_id),
-                    })?;
-                    // UX-250: reindex inline tag refs regardless of
-                    // `block_type_hint` — every content edit may gain or
-                    // lose `#[ULID]` tokens. Tag/page blocks typically
-                    // don't contain inline refs themselves but the cost
-                    // of scanning an empty diff is negligible vs. the
-                    // correctness risk of skipping.
-                    self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs {
-                        block_id: Arc::from(block_id),
-                    })?;
-                }
-                match block_type_hint {
-                    Some("tag") => {
-                        self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                        if !block_id.is_empty() {
-                            self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
-                                block_id: Arc::from(block_id),
-                            })?;
-                        }
-                    }
-                    Some("page") => {
-                        self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                        if !block_id.is_empty() {
-                            self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
-                                block_id: Arc::from(block_id),
-                            })?;
-                        }
-                    }
-                    Some("content") => {}
-                    _ => {
-                        self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                        self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                        self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
-                    }
-                }
-                if !block_id.is_empty() {
-                    self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: Arc::from(block_id),
-                    })?;
-                }
-                let edits = self
-                    .metrics
-                    .fts_edits_since_optimize
-                    .fetch_add(1, Ordering::Relaxed)
-                    + 1;
-                // Millis since epoch fits in u64 for millions of years; saturate on overflow.
-                let now_ms = u64::try_from(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis(),
-                )
-                .unwrap_or(u64::MAX);
-                let last_ms = self.metrics.fts_last_optimize_ms.load(Ordering::Relaxed);
-                let elapsed_ms = now_ms.saturating_sub(last_ms);
-                let block_count = self.metrics.cached_block_count.load(Ordering::Relaxed);
-                let threshold = std::cmp::max(500, block_count / 10_000);
-                if (edits >= threshold || elapsed_ms >= 3_600_000)
-                    && self
-                        .metrics
-                        .fts_edits_since_optimize
-                        .compare_exchange(edits, 0, Ordering::AcqRel, Ordering::Relaxed)
-                        .is_ok()
-                {
-                    self.try_enqueue_background(MaterializeTask::FtsOptimize)?;
-                    self.metrics
-                        .fts_last_optimize_ms
-                        .store(now_ms, Ordering::Relaxed);
-                    self.refresh_block_count_cache();
-                }
-            }
-            "delete_block" => {
-                // L-13: use the cached sidecar instead of re-parsing
-                // `record.payload`.  Same rationale as the `edit_block`
-                // arm above.
-                let block_id = record.block_id.as_deref().unwrap_or_default();
-                self.enqueue_full_cache_rebuild()?;
-                if !block_id.is_empty() {
-                    self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
-                        block_id: Arc::from(block_id),
-                    })?;
-                }
-            }
-            "restore_block" => {
-                // L-13: cached sidecar — no JSON re-parse.
-                let block_id = record.block_id.as_deref().unwrap_or_default();
-                self.enqueue_full_cache_rebuild()?;
-                if !block_id.is_empty() {
-                    self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: Arc::from(block_id),
-                    })?;
-                }
-            }
-            "purge_block" => {
-                // L-13: cached sidecar — no JSON re-parse.
-                let block_id = record.block_id.as_deref().unwrap_or_default();
-                self.enqueue_full_cache_rebuild()?;
-                if !block_id.is_empty() {
-                    self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
-                        block_id: Arc::from(block_id),
-                    })?;
-                }
-            }
-            "add_tag" | "remove_tag" => {
-                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
-            }
-            "set_property" | "delete_property" => {
-                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
-            }
-            "move_block" => {
-                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
-            }
-            "add_attachment" | "delete_attachment" => {}
-            other => {
-                tracing::warn!(
-                    op_type = other,
-                    device_id = %record.device_id,
-                    seq = record.seq,
-                    "unknown op_type in dispatch_op"
-                );
-            }
+        for task in invalidations_for_op(record, block_type_hint)? {
+            self.try_enqueue_background(task)?;
+        }
+        if record.op_type == "edit_block" {
+            self.maybe_enqueue_fts_optimize()?;
         }
         Ok(())
+    }
+
+    /// Drive the FTS-optimize threshold counter and conditionally enqueue
+    /// [`MaterializeTask::FtsOptimize`].
+    ///
+    /// Extracted from the former inline `edit_block` arm of
+    /// [`Self::enqueue_background_tasks`] because it is the one piece of
+    /// the per-op fan-out that mutates `&self` state (atomic counter,
+    /// last-optimize timestamp, block-count cache refresh) rather than
+    /// just enqueueing tasks. Keeping it here, side-by-side with its sole
+    /// caller, preserves the original ordering guarantee that
+    /// `FtsOptimize` lands after every other `edit_block` task.
+    fn maybe_enqueue_fts_optimize(&self) -> Result<(), AppError> {
+        let edits = self
+            .metrics
+            .fts_edits_since_optimize
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        // Millis since epoch fits in u64 for millions of years; saturate on overflow.
+        let now_ms = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX);
+        let last_ms = self.metrics.fts_last_optimize_ms.load(Ordering::Relaxed);
+        let elapsed_ms = now_ms.saturating_sub(last_ms);
+        let block_count = self.metrics.cached_block_count.load(Ordering::Relaxed);
+        let threshold = std::cmp::max(500, block_count / 10_000);
+        if (edits >= threshold || elapsed_ms >= 3_600_000)
+            && self
+                .metrics
+                .fts_edits_since_optimize
+                .compare_exchange(edits, 0, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+        {
+            self.try_enqueue_background(MaterializeTask::FtsOptimize)?;
+            self.metrics
+                .fts_last_optimize_ms
+                .store(now_ms, Ordering::Relaxed);
+            self.refresh_block_count_cache();
+        }
+        Ok(())
+    }
+}
+
+/// Pure mapping from an [`OpRecord`] (and optional `block_type_hint`
+/// for `edit_block`) to the ordered list of background
+/// [`MaterializeTask`]s that should be enqueued for it.
+///
+/// PEND-28a M4: lifted out of the former imperative match in
+/// [`Materializer::enqueue_background_tasks`] so the per-op-type cache
+/// invalidation matrix is auditable and testable as data. Adding a new
+/// op type or changing which caches an existing op invalidates is a
+/// single arm edit here, with a matching pinning test next to the
+/// existing ones in `mod tests` below.
+///
+/// The function is side-effect-free with one carve-out: the unknown-op
+/// arm emits a `tracing::warn!` (preserving the prior behaviour) and
+/// the `create_block` arm propagates JSON parse failures via `?`. The
+/// metric-driven FTS-optimize threshold for `edit_block` is **not**
+/// captured here — it depends on `&Materializer` state and is driven
+/// by [`Materializer::maybe_enqueue_fts_optimize`] after the returned
+/// vec has been enqueued.
+fn invalidations_for_op(
+    record: &OpRecord,
+    block_type_hint: Option<&str>,
+) -> Result<Vec<MaterializeTask>, AppError> {
+    let mut tasks: Vec<MaterializeTask> = Vec::new();
+    match record.op_type.as_str() {
+        "create_block" => {
+            let hint: CreateBlockHint = serde_json::from_str(&record.payload)?;
+            match hint.block_type.as_str() {
+                "tag" => tasks.push(MaterializeTask::RebuildTagsCache),
+                "page" => tasks.push(MaterializeTask::RebuildPagesCache),
+                _ => {}
+            }
+            if !hint.block_id.is_empty() {
+                let block_id: Arc<str> = Arc::from(hint.block_id.as_str());
+                tasks.push(MaterializeTask::UpdateFtsBlock {
+                    block_id: Arc::clone(&block_id),
+                });
+                // UX-250: a freshly created block can already contain
+                // inline `#[ULID]` tag refs if the creator passed
+                // non-empty content (imports, paste, programmatic
+                // creates). Scan for them.
+                tasks.push(MaterializeTask::ReindexBlockTagRefs { block_id });
+            }
+            tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            tasks.push(MaterializeTask::RebuildPageIds);
+        }
+        "edit_block" => {
+            // L-13: use the cached `OpRecord::block_id` sidecar
+            // populated at append-time (or parsed once on the sync
+            // ingress in `From<OpTransfer> for OpRecord`) so this
+            // dispatch path no longer re-parses `record.payload`
+            // for the same value.
+            let block_id = record.block_id.as_deref().unwrap_or_default();
+            debug_assert!(
+                !block_id.is_empty(),
+                "edit_block payload has empty block_id"
+            );
+            if !block_id.is_empty() {
+                tasks.push(MaterializeTask::ReindexBlockLinks {
+                    block_id: Arc::from(block_id),
+                });
+                // UX-250: reindex inline tag refs regardless of
+                // `block_type_hint` — every content edit may gain or
+                // lose `#[ULID]` tokens. Tag/page blocks typically
+                // don't contain inline refs themselves but the cost
+                // of scanning an empty diff is negligible vs. the
+                // correctness risk of skipping.
+                tasks.push(MaterializeTask::ReindexBlockTagRefs {
+                    block_id: Arc::from(block_id),
+                });
+            }
+            match block_type_hint {
+                Some("tag") => {
+                    tasks.push(MaterializeTask::RebuildTagsCache);
+                    if !block_id.is_empty() {
+                        tasks.push(MaterializeTask::ReindexFtsReferences {
+                            block_id: Arc::from(block_id),
+                        });
+                    }
+                }
+                Some("page") => {
+                    tasks.push(MaterializeTask::RebuildPagesCache);
+                    if !block_id.is_empty() {
+                        tasks.push(MaterializeTask::ReindexFtsReferences {
+                            block_id: Arc::from(block_id),
+                        });
+                    }
+                }
+                Some("content") => {}
+                _ => {
+                    tasks.push(MaterializeTask::RebuildTagsCache);
+                    tasks.push(MaterializeTask::RebuildPagesCache);
+                    tasks.push(MaterializeTask::RebuildAgendaCache);
+                }
+            }
+            if !block_id.is_empty() {
+                tasks.push(MaterializeTask::UpdateFtsBlock {
+                    block_id: Arc::from(block_id),
+                });
+            }
+            // FTS-optimize threshold (metric-driven) is enqueued
+            // separately by `Materializer::maybe_enqueue_fts_optimize`
+            // after the caller has drained this vec.
+        }
+        "delete_block" => {
+            // L-13: use the cached sidecar instead of re-parsing
+            // `record.payload`.  Same rationale as the `edit_block`
+            // arm above.
+            let block_id = record.block_id.as_deref().unwrap_or_default();
+            tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
+            if !block_id.is_empty() {
+                tasks.push(MaterializeTask::RemoveFtsBlock {
+                    block_id: Arc::from(block_id),
+                });
+            }
+        }
+        "restore_block" => {
+            // L-13: cached sidecar — no JSON re-parse.
+            let block_id = record.block_id.as_deref().unwrap_or_default();
+            tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
+            if !block_id.is_empty() {
+                tasks.push(MaterializeTask::UpdateFtsBlock {
+                    block_id: Arc::from(block_id),
+                });
+            }
+        }
+        "purge_block" => {
+            // L-13: cached sidecar — no JSON re-parse.
+            let block_id = record.block_id.as_deref().unwrap_or_default();
+            tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
+            if !block_id.is_empty() {
+                tasks.push(MaterializeTask::RemoveFtsBlock {
+                    block_id: Arc::from(block_id),
+                });
+            }
+        }
+        "add_tag" | "remove_tag" => {
+            tasks.push(MaterializeTask::RebuildTagsCache);
+            tasks.push(MaterializeTask::RebuildAgendaCache);
+            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+        }
+        "set_property" | "delete_property" => {
+            tasks.push(MaterializeTask::RebuildAgendaCache);
+            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+        }
+        "move_block" => {
+            tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            tasks.push(MaterializeTask::RebuildPageIds);
+        }
+        "add_attachment" | "delete_attachment" => {}
+        other => {
+            tracing::warn!(
+                op_type = other,
+                device_id = %record.device_id,
+                seq = record.seq,
+                "unknown op_type in dispatch_op"
+            );
+        }
+    }
+    Ok(tasks)
+}
+
+#[cfg(test)]
+mod tests {
+    //! PEND-28a M4: pinning tests for the per-op-type cache invalidation
+    //! matrix. Each test asserts the exact ordered list of background
+    //! tasks that [`invalidations_for_op`] returns for a given op-type
+    //! (and `block_type_hint`, where applicable). These are the
+    //! regression-pinning sentinels for "every op that mutates X
+    //! invalidates Y" claims that were previously only auditable by
+    //! reading the imperative match arms.
+    //!
+    //! The metric-driven `FtsOptimize` enqueue in
+    //! [`Materializer::maybe_enqueue_fts_optimize`] is intentionally
+    //! out of scope here — these tests pin the structural matrix only.
+    //! End-to-end coverage of the FtsOptimize threshold lives in
+    //! `materializer::tests`.
+    use super::*;
+    use crate::op_log::OpRecord;
+    use std::mem::discriminant;
+    use std::sync::Arc;
+
+    const TEST_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    fn make_record(op_type: &str, payload: &str, block_id: Option<&str>) -> OpRecord {
+        OpRecord {
+            device_id: "test-dispatch".into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: TEST_HASH.into(),
+            op_type: op_type.into(),
+            payload: payload.into(),
+            created_at: "2025-01-01T00:00:00Z".into(),
+            block_id: block_id.map(str::to_owned),
+        }
+    }
+
+    /// Stable string label per [`MaterializeTask`] variant so test
+    /// assertions can compare ordered task lists without requiring
+    /// `MaterializeTask: PartialEq` (the type wraps `Arc<str>` /
+    /// `Arc<Notify>` payloads where pointer-equality is the wrong
+    /// comparison anyway).
+    fn task_label(t: &MaterializeTask) -> String {
+        match t {
+            MaterializeTask::ApplyOp(_) => "ApplyOp".into(),
+            MaterializeTask::BatchApplyOps(_) => "BatchApplyOps".into(),
+            MaterializeTask::RebuildTagsCache => "RebuildTagsCache".into(),
+            MaterializeTask::RebuildPagesCache => "RebuildPagesCache".into(),
+            MaterializeTask::RebuildAgendaCache => "RebuildAgendaCache".into(),
+            MaterializeTask::ReindexBlockLinks { block_id } => {
+                format!("ReindexBlockLinks({block_id})")
+            }
+            MaterializeTask::ReindexBlockTagRefs { block_id } => {
+                format!("ReindexBlockTagRefs({block_id})")
+            }
+            MaterializeTask::UpdateFtsBlock { block_id } => format!("UpdateFtsBlock({block_id})"),
+            MaterializeTask::ReindexFtsReferences { block_id } => {
+                format!("ReindexFtsReferences({block_id})")
+            }
+            MaterializeTask::RemoveFtsBlock { block_id } => format!("RemoveFtsBlock({block_id})"),
+            MaterializeTask::RebuildFtsIndex => "RebuildFtsIndex".into(),
+            MaterializeTask::FtsOptimize => "FtsOptimize".into(),
+            MaterializeTask::CleanupOrphanedAttachments => "CleanupOrphanedAttachments".into(),
+            MaterializeTask::RebuildTagInheritanceCache => "RebuildTagInheritanceCache".into(),
+            MaterializeTask::RebuildProjectedAgendaCache => "RebuildProjectedAgendaCache".into(),
+            MaterializeTask::RebuildPageIds => "RebuildPageIds".into(),
+            MaterializeTask::RebuildBlockTagRefsCache => "RebuildBlockTagRefsCache".into(),
+            MaterializeTask::Barrier(_) => "Barrier".into(),
+        }
+    }
+
+    fn labels(tasks: &[MaterializeTask]) -> Vec<String> {
+        tasks.iter().map(task_label).collect()
+    }
+
+    fn contains_kind(tasks: &[MaterializeTask], probe: &MaterializeTask) -> bool {
+        let want = discriminant(probe);
+        tasks.iter().any(|t| discriminant(t) == want)
+    }
+
+    // ── create_block ─────────────────────────────────────────────────
+
+    #[test]
+    fn invalidations_for_op_create_block_with_tag_hint_includes_tags_cache() {
+        let payload = r#"{"block_id":"BLK1","block_type":"tag"}"#;
+        let r = make_record("create_block", payload, Some("BLK1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "RebuildTagsCache",
+                "UpdateFtsBlock(BLK1)",
+                "ReindexBlockTagRefs(BLK1)",
+                "RebuildTagInheritanceCache",
+                "RebuildProjectedAgendaCache",
+                "RebuildPageIds",
+            ],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_create_block_with_page_hint_includes_pages_cache() {
+        let payload = r#"{"block_id":"PG1","block_type":"page"}"#;
+        let r = make_record("create_block", payload, Some("PG1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "RebuildPagesCache",
+                "UpdateFtsBlock(PG1)",
+                "ReindexBlockTagRefs(PG1)",
+                "RebuildTagInheritanceCache",
+                "RebuildProjectedAgendaCache",
+                "RebuildPageIds",
+            ],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_create_block_with_content_hint_skips_typed_caches() {
+        let payload = r#"{"block_id":"C1","block_type":"content"}"#;
+        let r = make_record("create_block", payload, Some("C1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        // No RebuildTagsCache / RebuildPagesCache for content blocks.
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "UpdateFtsBlock(C1)",
+                "ReindexBlockTagRefs(C1)",
+                "RebuildTagInheritanceCache",
+                "RebuildProjectedAgendaCache",
+                "RebuildPageIds",
+            ],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_create_block_propagates_serde_error() {
+        let r = make_record("create_block", "not-json", None);
+        let err = invalidations_for_op(&r, None).unwrap_err();
+        // Preserves the prior `?` propagation — exact variant comes
+        // from `From<serde_json::Error> for AppError`; we only need
+        // to confirm the error is surfaced, not swallowed.
+        let msg = format!("{err}");
+        assert!(!msg.is_empty(), "error must surface a non-empty message");
+    }
+
+    // ── edit_block (one test per `block_type_hint` branch) ──────────
+
+    #[test]
+    fn invalidations_for_op_edit_block_with_tag_hint_includes_tags_cache() {
+        let r = make_record("edit_block", r#"{"block_id":"E1"}"#, Some("E1"));
+        let tasks = invalidations_for_op(&r, Some("tag")).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "ReindexBlockLinks(E1)",
+                "ReindexBlockTagRefs(E1)",
+                "RebuildTagsCache",
+                "ReindexFtsReferences(E1)",
+                "UpdateFtsBlock(E1)",
+            ],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_edit_block_with_page_hint_includes_pages_cache() {
+        let r = make_record("edit_block", r#"{"block_id":"E2"}"#, Some("E2"));
+        let tasks = invalidations_for_op(&r, Some("page")).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "ReindexBlockLinks(E2)",
+                "ReindexBlockTagRefs(E2)",
+                "RebuildPagesCache",
+                "ReindexFtsReferences(E2)",
+                "UpdateFtsBlock(E2)",
+            ],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_edit_block_with_content_hint_skips_global_caches() {
+        let r = make_record("edit_block", r#"{"block_id":"E3"}"#, Some("E3"));
+        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        // Content edits never invalidate the tags/pages/agenda caches —
+        // this is the perf carve-out the hint exists for.
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "ReindexBlockLinks(E3)",
+                "ReindexBlockTagRefs(E3)",
+                "UpdateFtsBlock(E3)",
+            ],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_edit_block_without_hint_falls_back_to_full_fan_out() {
+        let r = make_record("edit_block", r#"{"block_id":"E4"}"#, Some("E4"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "ReindexBlockLinks(E4)",
+                "ReindexBlockTagRefs(E4)",
+                "RebuildTagsCache",
+                "RebuildPagesCache",
+                "RebuildAgendaCache",
+                "UpdateFtsBlock(E4)",
+            ],
+        );
+    }
+
+    // ── delete / restore / purge (full cache rebuild) ───────────────
+
+    fn full_rebuild_labels() -> Vec<String> {
+        FULL_CACHE_REBUILD_TASKS.iter().map(task_label).collect()
+    }
+
+    #[test]
+    fn invalidations_for_op_delete_block_includes_full_cache_rebuild() {
+        let r = make_record("delete_block", r#"{"block_id":"D1"}"#, Some("D1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        let mut want = full_rebuild_labels();
+        want.push("RemoveFtsBlock(D1)".into());
+        assert_eq!(labels(&tasks), want);
+    }
+
+    #[test]
+    fn invalidations_for_op_restore_block_includes_full_cache_rebuild() {
+        let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        let mut want = full_rebuild_labels();
+        // Restore re-adds to FTS rather than removing.
+        want.push("UpdateFtsBlock(R1)".into());
+        assert_eq!(labels(&tasks), want);
+    }
+
+    #[test]
+    fn invalidations_for_op_purge_block_includes_full_cache_rebuild() {
+        let r = make_record("purge_block", r#"{"block_id":"P1"}"#, Some("P1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        let mut want = full_rebuild_labels();
+        want.push("RemoveFtsBlock(P1)".into());
+        assert_eq!(labels(&tasks), want);
+    }
+
+    // ── tag mutations ────────────────────────────────────────────────
+
+    #[test]
+    fn invalidations_for_op_add_tag_includes_tags_and_agenda_caches() {
+        let r = make_record(
+            "add_tag",
+            r#"{"block_id":"BLK1","tag_id":"TAG1"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "RebuildTagsCache",
+                "RebuildAgendaCache",
+                "RebuildProjectedAgendaCache",
+                "RebuildTagInheritanceCache",
+            ],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_remove_tag_matches_add_tag() {
+        let r = make_record(
+            "remove_tag",
+            r#"{"block_id":"BLK1","tag_id":"TAG1"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        // remove_tag shares the add_tag arm — tags cache + agenda
+        // family. This is the "every op that mutates a tag relationship
+        // invalidates the tags cache" pinning test.
+        assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "RebuildTagsCache",
+                "RebuildAgendaCache",
+                "RebuildProjectedAgendaCache",
+                "RebuildTagInheritanceCache",
+            ],
+        );
+    }
+
+    // ── property mutations ───────────────────────────────────────────
+
+    #[test]
+    fn invalidations_for_op_set_property_includes_agenda_caches() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"due"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+        );
+    }
+
+    #[test]
+    fn invalidations_for_op_delete_property_matches_set_property() {
+        let r = make_record(
+            "delete_property",
+            r#"{"block_id":"BLK1","key":"due"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+        );
+    }
+
+    // ── move_block ───────────────────────────────────────────────────
+
+    #[test]
+    fn invalidations_for_op_move_block_includes_inheritance_and_page_ids() {
+        let r = make_record(
+            "move_block",
+            r#"{"block_id":"BLK1","new_position":0}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildTagInheritanceCache", "RebuildPageIds"],
+        );
+    }
+
+    // ── attachments (no fan-out) ─────────────────────────────────────
+
+    #[test]
+    fn invalidations_for_op_add_attachment_returns_empty() {
+        let r = make_record(
+            "add_attachment",
+            r#"{"attachment_id":"ATT1","block_id":"BLK1"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert!(tasks.is_empty(), "add_attachment must not enqueue tasks");
+    }
+
+    #[test]
+    fn invalidations_for_op_delete_attachment_returns_empty() {
+        let r = make_record("delete_attachment", r#"{"attachment_id":"ATT1"}"#, None);
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert!(tasks.is_empty(), "delete_attachment must not enqueue tasks");
+    }
+
+    // ── unknown op (warn-only) ───────────────────────────────────────
+
+    #[test]
+    fn invalidations_for_op_unknown_op_returns_empty() {
+        let r = make_record("future_unknown_op", "{}", None);
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert!(tasks.is_empty(), "unknown op_type must not enqueue tasks");
+    }
+
+    // ── Arc reuse pin: create_block reuses one Arc<str> for the
+    //    UpdateFtsBlock + ReindexBlockTagRefs pair (preserves the
+    //    refcount-bump optimisation from the imperative original). ───
+
+    #[test]
+    fn invalidations_for_op_create_block_shares_block_id_arc() {
+        let payload = r#"{"block_id":"BLKSHARE","block_type":"content"}"#;
+        let r = make_record("create_block", payload, Some("BLKSHARE"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        let fts_arc = tasks.iter().find_map(|t| match t {
+            MaterializeTask::UpdateFtsBlock { block_id } => Some(Arc::clone(block_id)),
+            _ => None,
+        });
+        let tag_ref_arc = tasks.iter().find_map(|t| match t {
+            MaterializeTask::ReindexBlockTagRefs { block_id } => Some(Arc::clone(block_id)),
+            _ => None,
+        });
+        let (fts_arc, tag_ref_arc) = (fts_arc.unwrap(), tag_ref_arc.unwrap());
+        assert!(
+            Arc::ptr_eq(&fts_arc, &tag_ref_arc),
+            "create_block must reuse a single Arc<str> for the FTS + tag-ref tasks",
+        );
     }
 }
