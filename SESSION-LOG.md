@@ -2,11 +2,61 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 678 (PEND-18 Phases 0 + 1 + 2 + 3 ALL LANDED — `SpaceId` newtype + `SpaceScope` tagged enum lift Spaces enforcement into the type system end-to-end across Rust + IPC boundary + frontend wrapper layer; PEND-18 fully closed and plan deleted; 8 → 7 plan files in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1163+ items.
+**Sessions:** 1 – 679 (PEND-12 Phase 0 spike returned KILL — sqlx 0.8.6 `query!()` rejects `include_str!(concat!(env!("OUT_DIR"), …))` per upstream issue #3388; plan rejected and deleted, fallback drift-test tracked under MAINT-172; pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1164+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 679 — PEND-12 Phase 0 spike returned KILL; plan rejected and deleted (2026-05-05)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-05 |
+| **Subagents** | 1 build (Phase 0 spike) — KILL verdict on first attempt; no reviewer needed since no code shipped (subagent reverted spike artifacts per its instructions). UX dimension N/A (no user-facing change). |
+| **Items closed** | PEND-12 plan REJECTED and DELETED per `pending/README.md` "rejected: also delete" convention. Pending folder: 7 → 6 plan files. |
+| **Items modified** | MAINT-172 (re-scoped from "PEND-12 unblocks" to "drift-detection parity test mirroring PEND-28a H1 Option 2's pattern"; cost stays M). |
+| **Tests added** | 0 (spike code reverted before any tests landed). |
+| **Files touched** | 0 source / 4 docs (`pending/PEND-12-space-filter-codegen.md` deleted, `pending/README.md` updated, `pending/REVIEW-LATER.md` updated, `SESSION-LOG.md` this entry). |
+
+**Summary:** PEND-12 (build.rs `OUT_DIR` codegen for the space-filter SQL fragment, planned 7-11h) was the next item in the Spaces enforcement bundle after PEND-18 shipped in session 678. The plan's Phase 0 spike was mandatory: verify that `sqlx::query!(include_str!(concat!(env!("OUT_DIR"), "/foo.sql")))` actually compiles in this codebase's sqlx version (no in-codebase precedent). The build subagent ran the spike and got a definitive KILL on the first attempt with the exact failure mode the plan body had documented. Per the plan's own kill criterion ("if any of (a)/(b)/(c) fails, fall back to MAINT-172 option 2... document the failure in this file and don't proceed"), the plan is rejected and deleted; the fallback (drift-detection parity test, mirroring PEND-28a H1 Option 2's pattern from session 677) is tracked under MAINT-172 in REVIEW-LATER.md for future scheduling.
+
+**Spike kill evidence (from the subagent's report, verified):**
+- `sqlx::query!()` parses its first argument as a `LitStr` token (not an arbitrary expression). Source: `sqlx-macros-core-0.8.6/src/query/input.rs:55,61` — `let lit_str = input.parse::<LitStr>()?`.
+- `include_str!(...)` is a macro-invocation token tree, not a `LitStr`. `syn` rejects it BEFORE any expansion happens; proc-macros cannot expand sibling macros in their inputs.
+- `query_file!` is also blocked: same `LitStr` constraint + the path-resolution layer (`sqlx-macros-core-0.8.6/src/common.rs:5-26`) explicitly rejects absolute paths and paths relative to the current source file. Only `CARGO_MANIFEST_DIR`-relative paths work, which excludes `OUT_DIR`.
+- Upstream tracking: [sqlx#3388](https://github.com/launchbadge/sqlx/issues/3388) — *"Replace `query_file*!()` variants with inherent support for `include_str!()` and other macros"* — opened by the sqlx maintainer 2024-07-27, status OPEN, no PR linked.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 47 → 47 (MAINT-172 re-scoped in place, not added/removed).
+- **Previously resolved:** 1163+ → 1164+ across 678 → 679 sessions (PEND-12 plan rejection counts as a closure — the question of "should we do build.rs codegen?" is now definitively answered NO).
+
+**Plan files closed (and deleted):**
+- `pending/PEND-12-space-filter-codegen.md` (REJECTED — main approach killed by sqlx 0.8.6 limitation; fallback tracked under MAINT-172).
+
+**Files touched (this session):**
+- `pending/PEND-12-space-filter-codegen.md` — DELETED.
+- `pending/README.md` — PEND-12 row removed from index; "Spaces enforcement bundle" section updated to record PEND-12 rejection + reference MAINT-172.
+- `pending/REVIEW-LATER.md` — header line updated for session 679; MAINT-172 detail expanded with the spike outcome + re-scoped fallback work + sqlx#3388 link.
+- `SESSION-LOG.md` — this entry + Quick Reference banner updated.
+
+**Verification:**
+- Spike subagent: `cargo build --tests` produced the documented `error: expected string literal` at `space_filter_spike.rs:39:19` — confirmed kill criterion fired.
+- After revert: `cargo build` clean (working tree empty before the bookkeeping commit).
+- `prek run --all-files` — green (orchestrator runs at commit time).
+
+**Process notes:**
+- The build subagent followed PROMPT.md's "kill-criteria" guidance correctly: stopped immediately, reported with definitive evidence (compiler error verbatim + sqlx source-line citations), and reverted the spike artifacts to leave a clean working tree. No reviewer needed because no code shipped.
+- The orchestrator's pre-spike call-graph check (verifying that `pagination/mod.rs:81` is just a doc-comment reference to the SQL pattern, not an actual query) was useful: it confirmed the canonical site count would be 16 production sites + 1 doc-comment reference if Phase 1 had proceeded, matching the plan body's claim.
+
+**Lessons learned (for future sessions):**
+- **`cargo build` alone is insufficient verification for sqlx-macro spikes in `#[cfg(test)]` modules.** The lib build is green; only `cargo build --tests` (or `cargo check --tests`) triggers macro expansion in test modules. Future spike specs that exercise `sqlx::query!`/`query_as!` inside test modules should mandate `cargo build --tests` in the verification recipe, not just `cargo build`.
+- **sqlx `query!` macros require a `LitStr` literal — `include_str!` and `concat!` are off-limits.** This is a hard limitation rooted in `sqlx-macros-core-0.8.6/src/query/input.rs`. Any future plan that proposes "build.rs codegen + `include_str!` composition" for sqlx queries should be marked DEAD-ON-ARRIVAL until upstream sqlx#3388 lands. The fallback (drift-detection parity tests in Rust source) is the right shape for source-level DRY in this codebase, mirroring the precedent set by PEND-28a H1 Option 2 (session 677).
+- **Per `pending/README.md` convention, rejected plans get DELETED, not archived.** The fallback work goes back into REVIEW-LATER as a MAINT-* item with the rejection record + new scoping. Git history + SESSION-LOG.md preserve the trail.
+
+**Commit plan:** single small commit `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test`.
+
+---
 
 ## Session 678 — PEND-18 ALL FOUR PHASES: `SpaceId` + `SpaceScope` end-to-end across Rust + IPC + frontend (2026-05-05)
 
