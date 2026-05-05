@@ -15,7 +15,7 @@ use crate::op_log;
 use crate::pagination;
 use crate::pagination::HistoryEntry;
 use crate::pagination::PageResponse;
-use crate::space::{SpaceId, SpaceScope};
+use crate::space::SpaceScope;
 use crate::ulid::BlockId;
 
 use super::*;
@@ -620,14 +620,10 @@ pub async fn list_page_history(
     pool: State<'_, ReadPool>,
     page_id: String,
     op_type_filter: Option<String>,
-    space_id: Option<String>,
+    scope: SpaceScope,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     list_page_history_inner(&pool.0, page_id, op_type_filter, &scope, cursor, limit)
         .await
         .map_err(sanitize_internal_error)

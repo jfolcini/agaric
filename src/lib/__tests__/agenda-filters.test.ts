@@ -271,7 +271,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: '',
+        scope: { kind: 'active', space_id: '' },
       })
     })
   })
@@ -313,7 +313,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: '',
+        scope: { kind: 'active', space_id: '' },
       })
     })
   })
@@ -631,7 +631,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: '',
+        scope: { kind: 'active', space_id: '' },
       })
     })
 
@@ -749,7 +749,7 @@ describe('executeAgendaFilters', () => {
         operator: null,
         cursor: null,
         limit: 500,
-        spaceId: '',
+        scope: { kind: 'active', space_id: '' },
       })
     })
   })
@@ -988,18 +988,25 @@ describe('executeAgendaFilters', () => {
       )
 
       // Every dispatched query_by_property / list_blocks / list_undated_tasks
-      // call must carry spaceId === '' (never null / undefined).
-      const dispatchedSpaceIdCmds = new Set([
-        'query_by_property',
-        'list_blocks',
-        'list_undated_tasks',
-      ])
-      const dispatched = mockedInvoke.mock.calls.filter(([cmd]) =>
-        dispatchedSpaceIdCmds.has(cmd as string),
-      )
+      // call must carry the empty-string fallback (never null / undefined).
+      // PEND-18 Phase 3: `query_by_property` and `list_undated_tasks` now
+      // take `scope: SpaceScope` on the IPC boundary, so the empty-string
+      // fallback rides through `{ kind: 'active', space_id: '' }`.
+      // `list_blocks` still takes the legacy `spaceId: string`.
+      const scopeCmds = new Set(['query_by_property', 'list_undated_tasks'])
+      const legacySpaceIdCmds = new Set(['list_blocks'])
+      const dispatched = mockedInvoke.mock.calls.filter(([cmd]) => {
+        const c = cmd as string
+        return scopeCmds.has(c) || legacySpaceIdCmds.has(c)
+      })
       expect(dispatched.length).toBeGreaterThan(0)
-      for (const [, args] of dispatched) {
-        expect((args as Record<string, unknown>)['spaceId']).toBe('')
+      for (const [cmd, args] of dispatched) {
+        const a = args as Record<string, unknown>
+        if (legacySpaceIdCmds.has(cmd as string)) {
+          expect(a['spaceId']).toBe('')
+        } else {
+          expect(a['scope']).toEqual({ kind: 'active', space_id: '' })
+        }
       }
     })
   })

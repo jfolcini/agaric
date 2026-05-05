@@ -828,7 +828,7 @@ describe('JournalPage', () => {
           content: '',
           parentId: 'DP1',
           position: null,
-          spaceId: null,
+          scope: { kind: 'global' },
         })
       })
 

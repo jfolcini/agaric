@@ -16,7 +16,7 @@ use crate::fts;
 use crate::materializer::Materializer;
 use crate::materializer::StatusInfo;
 use crate::pagination::{self, ActiveBlockRow, BlockRow, PageResponse};
-use crate::space::{SpaceId, SpaceScope};
+use crate::space::SpaceScope;
 use crate::sync_scheduler::SyncScheduler;
 
 use super::*;
@@ -302,12 +302,8 @@ pub async fn get_backlinks(
     block_id: String,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     get_backlinks_inner(&pool.0, block_id, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
@@ -370,12 +366,8 @@ pub async fn query_by_property(
     operator: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     query_by_property_inner(
         &pool.0, key, value_text, value_date, operator, cursor, limit, &scope,
     )
@@ -395,12 +387,8 @@ pub async fn query_backlinks_filtered(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     query_backlinks_filtered_inner(&read_pool.0, block_id, filters, sort, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
@@ -418,12 +406,8 @@ pub async fn list_backlinks_grouped(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     list_backlinks_grouped_inner(&read_pool.0, block_id, filters, sort, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
@@ -441,12 +425,8 @@ pub async fn list_unlinked_references(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     list_unlinked_references_inner(&read_pool.0, &page_id, filters, sort, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)

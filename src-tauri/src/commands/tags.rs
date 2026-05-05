@@ -14,7 +14,7 @@ use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload};
 use crate::op_log;
 use crate::pagination::ActiveBlockRow;
 use crate::pagination::PageResponse;
-use crate::space::{SpaceId, SpaceScope};
+use crate::space::SpaceScope;
 use crate::tag_query::{self, TagCacheRow, TagExpr};
 use crate::ulid::BlockId;
 
@@ -400,12 +400,8 @@ pub async fn query_by_tags(
     include_inherited: Option<bool>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     query_by_tags_inner(
         &pool.0,
         tag_ids,

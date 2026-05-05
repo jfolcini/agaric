@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 use super::super::*;
-use crate::space::{SpaceId, SpaceScope};
+use crate::space::SpaceScope;
 
 /// List blocks with pagination, applying at most one exclusive filter.
 ///
@@ -344,12 +344,8 @@ pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<Bl
 pub async fn batch_resolve(
     pool: State<'_, ReadPool>,
     ids: Vec<String>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     batch_resolve_inner(&pool.0, ids, &scope)
         .await
         .map_err(sanitize_internal_error)

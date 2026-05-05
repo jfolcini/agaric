@@ -21,7 +21,9 @@ export type {
   PurgeResponse,
   RestoreResponse,
   SortDir,
+  SpaceId,
   SpaceRow,
+  SpaceScope,
   StatusInfo,
   TagCacheRow,
   TagResponse,
@@ -44,10 +46,28 @@ import type {
   PurgeResponse,
   RestoreResponse,
   SpaceRow,
+  SpaceScope,
   StatusInfo,
   TagCacheRow,
   TagResponse,
 } from './bindings'
+
+/**
+ * PEND-18 Phase 3 — translate the JS-side `spaceId: string | null` shape
+ * into the new tagged-enum [`SpaceScope`] the IPC boundary now expects.
+ *
+ * `null` / `undefined` → `{ kind: 'global' }` (cross-space view, the
+ * pre-FEAT-3 behaviour for callsites that haven't promoted to per-space
+ * scoping yet). A non-empty ULID → `{ kind: 'active', space_id }`.
+ *
+ * The wrapper signatures in this file keep accepting the legacy
+ * `spaceId: string | null` for backward-compatibility with the rest of
+ * the frontend; the SpaceScope object is constructed here so the
+ * translation lives in one place.
+ */
+function toSpaceScope(spaceId: string | null | undefined): SpaceScope {
+  return spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId }
+}
 
 export interface ProjectedAgendaEntry {
   block: BlockRow
@@ -95,7 +115,7 @@ export async function createBlock(params: {
       params.content,
       params.parentId ?? null,
       params.position ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }
@@ -215,7 +235,7 @@ export async function listUndatedTasks(params?: {
     await commands.listUndatedTasks(
       params?.cursor ?? null,
       params?.limit ?? null,
-      params?.spaceId ?? null,
+      toSpaceScope(params?.spaceId),
     ),
   )
 }
@@ -243,7 +263,7 @@ export async function listProjectedAgenda(opts: {
       opts.endDate,
       opts.cursor ?? null,
       opts.limit ?? null,
-      opts.spaceId ?? null,
+      toSpaceScope(opts.spaceId),
     ),
   )
 }
@@ -284,7 +304,7 @@ export async function batchResolve(
   ids: string[],
   spaceId?: string | undefined,
 ): Promise<ResolvedBlock[]> {
-  return unwrap(await commands.batchResolve(ids, spaceId ?? null))
+  return unwrap(await commands.batchResolve(ids, toSpaceScope(spaceId)))
 }
 
 /** Move a block to a new parent and/or position. */
@@ -323,7 +343,7 @@ export async function getBacklinks(params: {
       params.blockId,
       params.cursor ?? null,
       params.limit ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }
@@ -404,7 +424,7 @@ export async function queryByTags(params: {
       params.includeInherited ?? null,
       params.cursor ?? null,
       params.limit ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }
@@ -487,7 +507,7 @@ export async function countAgendaBatch(params: {
   dates: string[]
   spaceId?: string | null | undefined
 }): Promise<Record<string, number>> {
-  return unwrap(await commands.countAgendaBatch(params.dates, params.spaceId ?? null))
+  return unwrap(await commands.countAgendaBatch(params.dates, toSpaceScope(params.spaceId)))
 }
 
 /** Batch-count agenda items per (date, source). Returns nested map: date -> source -> count.
@@ -500,7 +520,7 @@ export async function countAgendaBatchBySource(params: {
   dates: string[]
   spaceId?: string | null | undefined
 }): Promise<Record<string, Record<string, number>>> {
-  return unwrap(await commands.countAgendaBatchBySource(params.dates, params.spaceId ?? null))
+  return unwrap(await commands.countAgendaBatchBySource(params.dates, toSpaceScope(params.spaceId)))
 }
 
 /** Batch-count backlinks per target page. Returns a map of pageId -> count. */
@@ -552,7 +572,7 @@ export async function listPageHistory(params: {
     await commands.listPageHistory(
       params.pageId,
       params.opTypeFilter ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
       params.cursor ?? null,
       params.limit ?? null,
     ),
@@ -568,7 +588,7 @@ export async function listPageHistory(params: {
 export async function listPageLinks(
   spaceId?: string | null | undefined,
 ): Promise<Array<{ source_id: string; target_id: string; ref_count: number }>> {
-  return unwrap(await commands.listPageLinks(spaceId ?? null))
+  return unwrap(await commands.listPageLinks(toSpaceScope(spaceId)))
 }
 
 /** Revert a batch of operations (by device_id + seq pairs). */
@@ -612,7 +632,7 @@ export async function queryByProperty(params: {
       params.operator ?? null,
       params.cursor ?? null,
       params.limit ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }
@@ -708,7 +728,7 @@ export async function queryBacklinksFiltered(params: {
       params.sort ?? null,
       params.cursor ?? null,
       params.limit ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }
@@ -734,7 +754,7 @@ export async function listBacklinksGrouped(params: {
       params.sort ?? null,
       params.cursor ?? null,
       params.limit ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }
@@ -760,7 +780,7 @@ export async function listUnlinkedReferences(params: {
       params.sort ?? null,
       params.cursor ?? null,
       params.limit ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }
@@ -958,7 +978,7 @@ export async function listPageAliasesByPrefix(params: {
     await commands.listPageAliasesByPrefix(
       params.prefix,
       params.limit ?? null,
-      params.spaceId ?? null,
+      toSpaceScope(params.spaceId),
     ),
   )
 }

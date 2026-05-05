@@ -506,7 +506,7 @@ describe('PageHeader tag management', () => {
         content: 'newtag',
         parentId: null,
         position: null,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
   })

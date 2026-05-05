@@ -246,7 +246,7 @@ describe('PageEditor', () => {
         content: '',
         parentId: 'PAGE_1',
         position: 1,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
 
@@ -288,7 +288,7 @@ describe('PageEditor', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
   })
@@ -339,7 +339,7 @@ describe('PageEditor', () => {
         content: '',
         parentId: 'PAGE_1',
         position: 1,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
 
@@ -497,7 +497,7 @@ describe('PageEditor BlockTree auto-creation prop', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
 

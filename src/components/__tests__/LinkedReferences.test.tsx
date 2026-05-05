@@ -574,7 +574,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: 'cursor_page2',
         limit: 50,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
 
@@ -655,7 +655,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
 
@@ -682,7 +682,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
   })
@@ -787,7 +787,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
   })
@@ -967,7 +967,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
   })
