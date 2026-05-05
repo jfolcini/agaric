@@ -130,10 +130,19 @@ export function AppSidebar({
      */
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 pb-2">
+        {/* Agaric branding — restored at the top of the sidebar above the
+            SpaceSwitcher (BUG session 679). Originally removed in FEAT-3
+            Phase 1 (c1548cfb) when the SpaceSwitcher replaced it; the
+            user wants both visible: branding at the top for app identity,
+            space selector below for navigation context. */}
+        <div className="flex h-7 items-center gap-2 group-data-[collapsible=icon]:justify-center">
+          <img src="/agaric.svg" alt="Agaric" className="h-6 w-6 shrink-0" />
+          <span className="text-base font-semibold leading-none tracking-tight group-data-[collapsible=icon]:hidden">
+            Agaric
+          </span>
+        </div>
         {/*
-         * FEAT-3 Phase 1: replace static branding with the
-         * SpaceSwitcher. The switcher occupies the same vertical
-         * footprint so downstream sidebar height math stays valid.
+         * FEAT-3 Phase 1: the SpaceSwitcher sits below the branding.
          * It is hidden when the sidebar collapses to icon mode to
          * preserve the compact rail layout (the switcher
          * re-appears on expand).
@@ -145,13 +154,13 @@ export function AppSidebar({
          * first letter of the space name on top of the accent
          * color. Click cycles to the next space.
          */}
-        <div className="hidden justify-center group-data-[collapsible=icon]:flex">
+        <div className="mt-2 hidden justify-center group-data-[collapsible=icon]:flex">
           {(() => {
             const active = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
             return active != null ? <SpaceAccentBadge space={active} /> : null
           })()}
         </div>
-        <div className="group-data-[collapsible=icon]:hidden">
+        <div className="mt-2 group-data-[collapsible=icon]:hidden">
           <SpaceSwitcher />
         </div>
       </SidebarHeader>
