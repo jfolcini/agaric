@@ -1869,11 +1869,11 @@ describe('BlockTree resolve cache preload', () => {
     await waitFor(
       () => {
         // Preload should call batch_resolve for the uncached ULID.
-        // FEAT-3p7 — the wrapper now also threads `spaceId` (null when
-        // useSpaceStore is unhydrated under this test setup).
+        // FEAT-3p7 + PEND-18 Phase 3 — the wrapper now threads `scope`
+        // (a tagged enum) instead of `spaceId`.
         expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
           ids: [CONTENT_ULID],
-          spaceId: expect.anything(),
+          scope: expect.anything(),
         })
       },
       { timeout: 3000 },
@@ -4766,7 +4766,7 @@ describe('BlockTree Enter creates new sibling block', () => {
         content: '',
         parentId: null,
         position: 1,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
 
@@ -5754,7 +5754,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
   })
@@ -5924,7 +5924,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
   })
@@ -5948,7 +5948,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
-        spaceId: null,
+        scope: { kind: 'global' },
       })
     })
 

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tracing::instrument;
 
 use super::super::*;
-use crate::space::{SpaceId, SpaceScope};
+use crate::space::SpaceScope;
 
 /// MAINT-147 (a): collapse the ~10 near-identical
 /// `DELETE FROM <table> WHERE <col> IN (SELECT id FROM descendants)`
@@ -1918,12 +1918,8 @@ pub async fn create_block(
     content: String,
     parent_id: Option<String>,
     position: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<BlockRow, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     create_block_inner_with_space(
         &pool.0,
         device_id.as_str(),

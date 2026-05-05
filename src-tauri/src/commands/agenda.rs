@@ -10,7 +10,7 @@ use tauri::State;
 use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::pagination::{ActiveBlockRow, ActiveProjectedAgendaEntry, Cursor};
-use crate::space::{SpaceId, SpaceScope};
+use crate::space::SpaceScope;
 
 use super::*;
 
@@ -662,12 +662,8 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
 pub async fn count_agenda_batch(
     read_pool: State<'_, ReadPool>,
     dates: Vec<String>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     count_agenda_batch_inner(&read_pool.0, dates, &scope)
         .await
         .map_err(sanitize_internal_error)
@@ -680,12 +676,8 @@ pub async fn count_agenda_batch(
 pub async fn count_agenda_batch_by_source(
     read_pool: State<'_, ReadPool>,
     dates: Vec<String>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     count_agenda_batch_by_source_inner(&read_pool.0, dates, &scope)
         .await
         .map_err(sanitize_internal_error)
@@ -705,12 +697,8 @@ pub async fn list_projected_agenda(
     end_date: String,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
@@ -743,12 +731,8 @@ pub async fn list_undated_tasks(
     pool: State<'_, ReadPool>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     list_undated_tasks_inner(&pool.0, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)

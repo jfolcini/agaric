@@ -136,9 +136,10 @@ describe('createBlock', () => {
       content: 'hello',
       parentId: 'PARENT01',
       position: 3,
-      // BUG-1 / H-3a: every `create_block` IPC call carries `spaceId`.
-      // For non-page block types `null` is correct (the backend ignores it).
-      spaceId: null,
+      // BUG-1 / H-3a + PEND-18 Phase 3: every `create_block` IPC call
+      // carries the `scope` tagged-enum. For non-page block types
+      // `{ kind: 'global' }` is correct (the backend ignores it).
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(expected)
   })
@@ -160,12 +161,12 @@ describe('createBlock', () => {
       content: 'test',
       parentId: null,
       position: null,
-      // BUG-1 / H-3a: in production a page-typed `createBlock` MUST
-      // pass `spaceId`; this unit test exercises only the wrapper's
-      // payload shape, so `null` here documents that the wrapper
-      // forwards `undefined` → `null` (the backend will then surface
-      // `Validation` for a real call).
-      spaceId: null,
+      // BUG-1 / H-3a + PEND-18 Phase 3: in production a page-typed
+      // `createBlock` MUST pass an active scope; this unit test exercises
+      // only the wrapper's payload shape, so `{ kind: 'global' }` here
+      // documents that the wrapper forwards `undefined` → Global (the
+      // backend will then surface `Validation` for a real call).
+      scope: { kind: 'global' },
     })
   })
 
@@ -374,7 +375,8 @@ describe('listUndatedTasks', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_undated_tasks', {
       cursor: 'abc',
       limit: 10,
-      spaceId: null,
+      // PEND-18 Phase 3: omitted spaceId → `SpaceScope::Global`.
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(emptyPage)
   })
@@ -385,14 +387,14 @@ describe('listUndatedTasks', () => {
     const callArgs = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(callArgs['cursor']).toBeNull()
     expect(callArgs['limit']).toBeNull()
-    expect(callArgs['spaceId']).toBeNull()
+    expect(callArgs['scope']).toEqual({ kind: 'global' })
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await listUndatedTasks({ spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 
   it('propagates errors from invoke', async () => {
@@ -596,7 +598,8 @@ describe('queryByTags', () => {
       includeInherited: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      // PEND-18 Phase 3: omitted spaceId → `SpaceScope::Global`.
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(emptyPage)
   })
@@ -634,16 +637,16 @@ describe('queryByTags', () => {
       includeInherited: null,
       cursor: 'cursor123',
       limit: 25,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByTags({ tagIds: [], prefixes: [], mode: 'and', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 
   it('propagates errors from invoke', async () => {
@@ -699,7 +702,7 @@ describe('listTagsByPrefix', () => {
 // ---------------------------------------------------------------------------
 
 describe('batchResolve', () => {
-  it('invokes batch_resolve with ids and a null spaceId by default', async () => {
+  it('invokes batch_resolve with ids and a global scope by default', async () => {
     const expected = [
       { id: 'B1', title: 'Block 1', block_type: 'content', deleted: false },
       { id: 'B2', title: null, block_type: 'page', deleted: true },
@@ -709,22 +712,23 @@ describe('batchResolve', () => {
     const result = await batchResolve(['B1', 'B2'])
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // FEAT-3p7 — wrapper always forwards `spaceId`; null when omitted.
+    // FEAT-3p7 + PEND-18 Phase 3 — wrapper always forwards a `scope`;
+    // `{ kind: 'global' }` when the caller omits spaceId.
     expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
       ids: ['B1', 'B2'],
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(expected)
   })
 
-  it('forwards spaceId when provided (FEAT-3p7)', async () => {
+  it('forwards spaceId as an active scope when provided (FEAT-3p7 + PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
     await batchResolve(['B1'], 'SPACE_X')
 
     expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
       ids: ['B1'],
-      spaceId: 'SPACE_X',
+      scope: { kind: 'active', space_id: 'SPACE_X' },
     })
   })
 })
@@ -761,12 +765,12 @@ describe('getBacklinks', () => {
       blockId: 'TARGET',
       cursor: 'cur1',
       limit: 10,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('defaults optional cursor, limit, and spaceId to null', async () => {
+  it('defaults optional cursor, limit to null and scope to global', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     await getBacklinks({ blockId: 'TARGET' })
@@ -775,15 +779,15 @@ describe('getBacklinks', () => {
       blockId: 'TARGET',
       cursor: null,
       limit: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await getBacklinks({ blockId: 'TARGET', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -1063,9 +1067,10 @@ describe('listPageHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
       pageId: 'PAGE1',
       opTypeFilter: 'edit_block',
-      // FEAT-3p8: `spaceId` is threaded through every history call;
-      // `null` here means "all spaces" since this test doesn't pass one.
-      spaceId: null,
+      // FEAT-3p8 + PEND-18 Phase 3: `scope` is threaded through every
+      // history call; `{ kind: 'global' }` here means "all spaces"
+      // since this test doesn't pass a spaceId.
+      scope: { kind: 'global' },
       cursor: 'cur1',
       limit: 20,
     })
@@ -1080,9 +1085,10 @@ describe('listPageHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
       pageId: 'PAGE1',
       opTypeFilter: null,
-      // FEAT-3p8: `spaceId` defaults to `null` (= all spaces) when the
-      // caller omits it, matching the other optional knobs.
-      spaceId: null,
+      // FEAT-3p8 + PEND-18 Phase 3: `scope` defaults to
+      // `{ kind: 'global' }` (= all spaces) when the caller omits
+      // spaceId, matching the other optional knobs.
+      scope: { kind: 'global' },
       cursor: null,
       limit: null,
     })
@@ -1150,12 +1156,12 @@ describe('queryByProperty', () => {
       operator: null,
       cursor: 'cur1',
       limit: 10,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('defaults optional valueText, cursor, limit, and spaceId to null', async () => {
+  it('defaults optional valueText, cursor, limit to null and scope to global', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     await queryByProperty({ key: 'status' })
@@ -1167,15 +1173,15 @@ describe('queryByProperty', () => {
       operator: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByProperty({ key: 'status', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -1488,7 +1494,7 @@ describe('queryBacklinksFiltered', () => {
       sort: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
@@ -1507,15 +1513,15 @@ describe('queryBacklinksFiltered', () => {
       sort: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
     await queryBacklinksFiltered({ blockId: 'TARGET', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -1642,16 +1648,16 @@ describe('countAgendaBatch', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch', {
       dates: ['2025-01-15', '2025-01-16'],
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(expected)
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce({})
     await countAgendaBatch({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -1672,16 +1678,16 @@ describe('countAgendaBatchBySource', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch_by_source', {
       dates: ['2025-01-15', '2025-01-16'],
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(expected)
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce({})
     await countAgendaBatchBySource({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -1794,7 +1800,7 @@ describe('listBacklinksGrouped', () => {
       sort: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(emptyResponse)
   })
@@ -1812,15 +1818,15 @@ describe('listBacklinksGrouped', () => {
       sort,
       cursor: 'cur1',
       limit: 10,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
     await listBacklinksGrouped({ blockId: 'PAGE1', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -1850,7 +1856,7 @@ describe('listUnlinkedReferences', () => {
       sort: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(emptyResponse)
   })
@@ -1866,15 +1872,15 @@ describe('listUnlinkedReferences', () => {
       sort: null,
       cursor: 'cur1',
       limit: 20,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
     await listUnlinkedReferences({ pageId: 'PAGE1', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -2198,12 +2204,12 @@ describe('listProjectedAgenda', () => {
       endDate: '2025-02-15',
       cursor: null,
       limit: 50,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(expected)
   })
 
-  it('defaults optional cursor, limit, and spaceId to null', async () => {
+  it('defaults optional cursor, limit to null and scope to global', async () => {
     mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
 
     await listProjectedAgenda({ startDate: '2025-01-15', endDate: '2025-02-15' })
@@ -2213,7 +2219,7 @@ describe('listProjectedAgenda', () => {
       endDate: '2025-02-15',
       cursor: null,
       limit: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
@@ -2232,11 +2238,11 @@ describe('listProjectedAgenda', () => {
       endDate: '2025-02-15',
       cursor: 'OPAQUE_CURSOR',
       limit: 25,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
     await listProjectedAgenda({
       startDate: '2025-01-15',
@@ -2244,7 +2250,7 @@ describe('listProjectedAgenda', () => {
       spaceId: 'SPACE_42',
     })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -2263,7 +2269,7 @@ describe('listPageLinks', () => {
     const result = await listPageLinks()
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links', { spaceId: null })
+    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links', { scope: { kind: 'global' } })
     expect(result).toEqual(expected)
   })
 
@@ -2275,11 +2281,11 @@ describe('listPageLinks', () => {
     expect(result).toEqual([])
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
     await listPageLinks('SPACE_42')
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 

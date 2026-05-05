@@ -16,7 +16,7 @@ use crate::import;
 use crate::import::ImportResult;
 use crate::materializer::Materializer;
 use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL};
-use crate::space::{SpaceId, SpaceScope};
+use crate::space::SpaceScope;
 use crate::ulid::BlockId;
 
 use super::*;
@@ -969,12 +969,8 @@ pub async fn list_page_aliases_by_prefix(
     read_pool: State<'_, ReadPool>,
     prefix: String,
     limit: Option<i64>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<Vec<(String, String, Option<String>)>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     list_page_aliases_by_prefix_inner(&read_pool.0, &prefix, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
@@ -1022,12 +1018,8 @@ pub async fn import_markdown(
 #[specta::specta]
 pub async fn list_page_links(
     pool: State<'_, ReadPool>,
-    space_id: Option<String>,
+    scope: SpaceScope,
 ) -> Result<Vec<PageLink>, AppError> {
-    let scope = match space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
     list_page_links_inner(&pool.0, &scope)
         .await
         .map_err(sanitize_internal_error)

@@ -155,7 +155,7 @@ describe('TagList', () => {
       content: 'my-new-tag',
       parentId: null,
       position: null,
-      spaceId: null,
+      scope: { kind: 'global' },
     })
 
     // Input should be cleared

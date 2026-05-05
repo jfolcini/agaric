@@ -334,7 +334,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
-        spaceId: null,
+        scope: { kind: 'global' },
         cursor: 'cursor_page2',
         limit: 50,
       })
@@ -354,7 +354,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
-        spaceId: null,
+        scope: { kind: 'global' },
         cursor: null,
         limit: 50,
       })
@@ -368,7 +368,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: 'edit_block',
-        spaceId: null,
+        scope: { kind: 'global' },
         cursor: null,
         limit: 50,
       })
@@ -510,7 +510,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
-        spaceId: null,
+        scope: { kind: 'global' },
         cursor: null,
         limit: 50,
       })
@@ -1546,11 +1546,11 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
   // FEAT-3 Phase 8 — current-space scoping with "All spaces" toggle.
   //
   // The default behaviour is current-space-only: HistoryView reads
-  // `currentSpaceId` from `useSpaceStore` and passes it as `spaceId` on
-  // the IPC. Toggling "All spaces" drops the filter (passes `spaceId:
-  // null` so the backend returns ops from every space). UX-369 added
-  // localStorage persistence for the toggle — see the dedicated describe
-  // block below for that contract.
+  // `currentSpaceId` from `useSpaceStore` and passes it through `scope`
+  // (PEND-18 Phase 3) on the IPC. Toggling "All spaces" drops the
+  // filter (passes `scope: { kind: 'global' }` so the backend returns
+  // ops from every space). UX-369 added localStorage persistence for
+  // the toggle — see the dedicated describe block below for that contract.
   // ===========================================================================
   describe('FEAT-3 Phase 8 — space scoping', () => {
     afterEach(() => {
@@ -1581,14 +1581,14 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
           pageId: '__all__',
           opTypeFilter: null,
-          spaceId: 'SPACE_PERSONAL',
+          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
           cursor: null,
           limit: 50,
         })
       })
     })
 
-    it('toggling "All spaces" drops the space filter (passes spaceId: null)', async () => {
+    it('toggling "All spaces" drops the space filter (passes scope: global)', async () => {
       const user = userEvent.setup()
       useSpaceStore.setState({
         currentSpaceId: 'SPACE_PERSONAL',
@@ -1604,7 +1604,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
           pageId: '__all__',
           opTypeFilter: null,
-          spaceId: 'SPACE_PERSONAL',
+          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
           cursor: null,
           limit: 50,
         })
@@ -1615,12 +1615,12 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
       await user.click(toggle)
 
       // After the toggle the IPC must be re-issued WITHOUT the space
-      // filter (spaceId: null in the wire payload).
+      // filter (scope: { kind: 'global' } in the wire payload).
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
           pageId: '__all__',
           opTypeFilter: null,
-          spaceId: null,
+          scope: { kind: 'global' },
           cursor: null,
           limit: 50,
         })
