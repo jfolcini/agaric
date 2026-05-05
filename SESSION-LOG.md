@@ -2,7 +2,7 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 679 (PEND-15 Phase 0 audit binary LANDED + PEND-12 Phase 0 spike KILL + MAINT-227 closed — three distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs` (4 audit categories, 11 inline tests, read-only DB access); user runs it next to inform the gating tags Path A/B decision. PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388. MAINT-227 closed via one-line fix to the existing `sqlx-prepare-check` pre-push hook. Pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1165+ items.
+**Sessions:** 1 – 679 (PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 — four distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs` (user runs it next for the gating tags Path A/B decision). PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388. MAINT-227 closed via one-line fix to the existing `sqlx-prepare-check` pre-push hook. MAINT-172 closed via drift-detection parity test mirroring PEND-28a H1 Option 2's pattern (audited 19 production sites in 12 files; 3 sites excluded for structurally different SQL). Pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1166+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
@@ -56,6 +56,24 @@ Reviewer: APPROVED CLEAN. Verdict on each audit query's correctness: A1/A2/A3/A4
 
 While reviewing the existing `prek.toml` for the MAINT-227 fix, the orchestrator discovered that the `sqlx-prepare-check` pre-push hook ALREADY EXISTED at lines 510-519 — but it was running `cargo sqlx prepare --check` WITHOUT the `-- --tests` cargo-flag pass-through. That's the exact reason session 678's PEND-18 Phase 0/1/2 work introduced 5 silently-drifted cache entries (test-only queries from `space.rs` + `commands/history.rs:847`): the pre-push hook only validated production-source queries, not test-module queries. One-line fix: appended `-- --tests` to the entry's `bash -c` command, plus expanded the comment block to explain why the flag is non-negotiable. Verified the hook passes against the now-consistent cache via `prek run --hook-stage pre-push sqlx-prepare-check --all-files`. MAINT-227 removed from REVIEW-LATER.md (closed via direct fix, no follow-up needed).
 
+**MAINT-172 closed (fourth commit, post-MAINT-227):**
+
+PEND-12's REJECTED build.rs codegen approach (sqlx 0.8.6 forbids `include_str!(query!())` per upstream #3388) had been re-scoped under MAINT-172 as "drift-detection parity test mirroring PEND-28a H1 Option 2's pattern (session 677, `pagination/block_row_columns.rs`)". This commit closes that work. Single subagent + technical reviewer per PROMPT.md Phase 4 (UX dimension N/A — `#[cfg(test)]`-gated diagnostic, no user-facing behaviour change).
+
+The build subagent shipped `src-tauri/src/space_filter_canonical.rs` (259 LOC). The module pins the canonical space-filter SQL fragment as a `#[cfg(test)] pub(crate) const SPACE_FILTER_CANONICAL: &str` and runs two parity tests:
+- **Test A** (self-consistency): asserts the canonical const normalises to the same value as a hand-written equivalent — catches typos in the canonical itself.
+- **Test B** (drift detection): scans 12 production source files via `include_str!`, regex-matches every space-filter occurrence (`(?N IS NULL OR COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?N))` shape), normalises each, asserts byte-equality with `SPACE_FILTER_CANONICAL`, and asserts a total hit count of `EXPECTED_HITS = 19` (catches "new site added without updating the allowlist").
+
+Audit corrections vs the plan body's stale numbers: the plan body claimed "21 across 15 files"; actual count is **19 production sites in 12 files**. The 2-site delta: `commands/blocks/queries.rs:221` is a comment (orchestrator's pre-flight grep over-counted), and 3 sites in `commands/pages.rs:195`, `pagination/history.rs:136`, `fts/search.rs:343` use STRUCTURALLY DIFFERENT SQL (`b.id IN (...)` vs `COALESCE(b.page_id, b.id) IN (...)` for the first; `json_extract(ol.payload, '$.block_id')` against op-log payload for the second; no `?N IS NULL OR` guard / dynamic conditional append for the third). All three are deliberately excluded with explicit doc-comment rationale.
+
+The normaliser absorbs 4 site-variant kinds the audit surfaced: (1) bind index varies (`?2`..`?8`, plus a bare `?` in `tag_query/query.rs:84`) — regex `\?\d+` plus a capture-group pass for the bare-`?` form; (2) `bp_sp` alias variant at `commands/agenda.rs:425` and `pagination/properties.rs:162` (used because the outer query already binds `bp` to `block_properties`) — word-boundaried rewrite; (3) backslash line-continuations in non-raw string literals — `[\s\\]+` instead of `\s+`; (4) whitespace adjacent to `(` and `)` parens — final normalisation passes strip those.
+
+Drift-detection sensitivity verified: build subagent temporarily renamed `bp` → `bpx` in one site and confirmed the test produced an informative error with the offending file path + actual-vs-canonical normalised diff. Reverted; full suite green.
+
+Reviewer: APPROVED CLEAN. Verified mirror-fidelity to the precedent, audit completeness (independently grepped — 19 in 12 files matches), normalisation correctness (no false-positive / false-negative risks), surgical scope (only 2 files touched: the new module + `pub mod` declaration in `lib.rs`).
+
+The two untracked files in the working tree (`pending/PEND-31-unfinished-tasks-pagination-cap.md`, `pending/README.md` modifications) are concurrent-agent work (per PROMPT.md "Concurrent edits to markdown files in pending folder"). The orchestrator used selective `git add` to leave them untouched.
+
 **Files touched (this session):**
 
 PEND-12 commit (closeout, no source changes):
@@ -77,6 +95,12 @@ MAINT-227 commit (sqlx-prepare-check hook fix):
 - `pending/REVIEW-LATER.md`: MAINT-227 entry removed (closed); header line updated to record the closure.
 - `SESSION-LOG.md`: MAINT-227 sub-section added.
 
+MAINT-172 commit (drift-detection parity test):
+- `src-tauri/src/space_filter_canonical.rs` (NEW, 259 LOC): module-level doc explaining the rationale (PEND-12 rejected, drift-detection is the surviving fallback) + the 3 deliberate exclusions; `#[cfg(test)] pub(crate) const SPACE_FILTER_CANONICAL: &str` with the canonical fragment text; helper `normalize()` function absorbing 4 site-variant kinds (bind index / `bp_sp` alias / backslash line-continuations / paren-adjacent whitespace); `#[cfg(test)] mod tests { ... }` with Test A (self-consistency) + Test B (production sites match canonical, count == 19).
+- `src-tauri/src/lib.rs` (+1 LOC): `pub mod space_filter_canonical;` inserted alphabetically between `space` and `spaces`.
+- `pending/REVIEW-LATER.md`: MAINT-172 entry removed (closed); header line updated to record the closure.
+- `SESSION-LOG.md`: this MAINT-172 sub-section + extended Files touched + Verification block.
+
 **Verification:**
 
 PEND-12 spike (no source committed; revert verified):
@@ -97,6 +121,14 @@ MAINT-227:
 - `prek run --hook-stage pre-push sqlx-prepare-check --all-files` — passes against the now-consistent cache (validates the hook works correctly with `-- --tests`).
 - `prek run --all-files` — green (the hook is pre-push-only, so it doesn't appear in the default commit-stage run).
 
+MAINT-172:
+- `cargo build --tests` — clean.
+- `cargo nextest run --lib space_filter_canonical` — 2/2 pass (Test A self-consistency + Test B drift detection across 19 production sites in 12 files).
+- `cargo nextest run --no-fail-fast` — 3599/3599 pass + 4 skipped (was 3597 — +2 from the parity tests).
+- `cargo sqlx prepare --check -- --tests` — clean (no new sqlx queries; this is purely a Rust string-comparison test).
+- Drift-sensitivity verified: temporarily renaming `bp` → `bpx` in one production site fails Test B with an informative error message naming the file + actual-vs-canonical normalised diff. Reverted; full suite green.
+- `prek run --all-files` — green.
+
 **Process notes:**
 - The build subagent followed PROMPT.md's "kill-criteria" guidance correctly: stopped immediately, reported with definitive evidence (compiler error verbatim + sqlx source-line citations), and reverted the spike artifacts to leave a clean working tree. No reviewer needed because no code shipped.
 - The orchestrator's pre-spike call-graph check (verifying that `pagination/mod.rs:81` is just a doc-comment reference to the SQL pattern, not an actual query) was useful: it confirmed the canonical site count would be 16 production sites + 1 doc-comment reference if Phase 1 had proceeded, matching the plan body's claim.
@@ -107,7 +139,7 @@ MAINT-227:
 - **Per `pending/README.md` convention, rejected plans get DELETED, not archived.** The fallback work goes back into REVIEW-LATER as a MAINT-* item with the rejection record + new scoping. Git history + SESSION-LOG.md preserve the trail.
 - **`prek run --all-files` does NOT detect missing `.sqlx/` cache entries.** The audit binary's `cargo sqlx prepare -- --tests` discovered 5 drift entries that earlier sessions had introduced silently — production queries from `commands/history.rs:847` + `space.rs:337/352` (PEND-18 Phase 0 and Phase 2 work) compiled fine via online sqlx (DB connection at compile time) but were never cached because earlier `prepare` runs didn't pass `--tests`. Future sessions touching SQL queries in `#[cfg(test)]` paths should always run `cargo sqlx prepare -- --tests` (not just `prepare`) and verify the cache stays clean via `cargo sqlx prepare --check -- --tests`. Consider adding the `--check` form to prek as a follow-up to catch drift at commit time. (Filed as a future MAINT consideration, not a P0.)
 
-**Commit plan:** three commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests`.
+**Commit plan:** four commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests` (`7afcd880`); (4) `test(space): close MAINT-172 — drift-detection parity test for the space-filter SQL fragment (mirrors PEND-28a H1 Option 2)`.
 
 ---
 

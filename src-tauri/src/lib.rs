@@ -29,6 +29,7 @@ pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
 pub mod space;
+pub mod space_filter_canonical;
 pub mod spaces;
 pub mod sql_utils;
 pub mod sync_cert;
