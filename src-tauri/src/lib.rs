@@ -187,8 +187,6 @@ macro_rules! agaric_commands {
             $crate::commands::create_space,
             // Quick capture (FEAT-12) — desktop global-shortcut entry point
             $crate::commands::quick_capture_block,
-            // PEND-18 Phase 0 spike — removed in Phase 1
-            $crate::space::pend18_spike_probe,
         ]
     };
 }
