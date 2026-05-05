@@ -705,7 +705,14 @@ describe('JournalPage', () => {
   // ── Add block (shared across modes) ─────────────────────────────────
 
   describe('add block', () => {
-    it('creates daily page + block when no page exists for the day', async () => {
+    it('creates daily page when no page exists for the day', async () => {
+      // PEND-16 — when the user clicks "Add block" on a day with no page
+      // yet, `useJournalBlockCreation.handleAddBlock` creates the page
+      // but no longer creates the seed block itself in the no-template
+      // case. `BlockTree.autoCreateFirstBlock` owns that. BlockTree is
+      // mocked in this file, so we only verify the page-create IPC here;
+      // the integration test in `JournalPage.integration.test.tsx`
+      // exercises the BlockTree side end-to-end.
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
@@ -725,6 +732,10 @@ describe('JournalPage', () => {
         if (cmd === 'create_page_in_space') return 'DP1'
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'create_block') {
+          // Defensive: if a regression re-introduces the no-template
+          // fallback inside `handleAddBlock`, the mock still returns a
+          // sane row so the test fails on the assertion below rather
+          // than on a `params.find is not a function` cascade.
           const params = args as { blockType: string; content?: string; parentId?: string }
           return {
             id: 'B1',
@@ -767,13 +778,12 @@ describe('JournalPage', () => {
           spaceId: 'SPACE_TEST',
         })
       })
-      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'content',
-        content: '',
-        parentId: 'DP1',
-        position: null,
-        spaceId: null,
-      })
+      // PEND-16 — `handleAddBlock` no longer issues a `create_block` IPC
+      // for the fresh page. `BlockTree.autoCreateFirstBlock` is the
+      // single owner of seed-block creation; it's mocked out here, so we
+      // assert the absence of the IPC instead.
+      const createBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+      expect(createBlockCalls).toHaveLength(0)
     })
 
     it('creates block under existing page without creating new page', async () => {
@@ -2327,7 +2337,13 @@ describe('JournalPage', () => {
   // ── Auto-create today's page (#629) ─────────────────────────────────
 
   describe('auto-create today page (#629)', () => {
-    it("auto-creates today's page and focuses block on mount when no page exists", async () => {
+    it("auto-creates today's page on mount when no page exists", async () => {
+      // PEND-16 — `useJournalAutoCreate` triggers `handleAddBlock` on
+      // mount, which creates the daily page. The seed block is no
+      // longer created here; `BlockTree.autoCreateFirstBlock` owns that
+      // step. BlockTree is mocked in this file, so we assert just the
+      // page-create IPC. The end-to-end "exactly one create_block"
+      // contract is covered by `JournalPage.integration.test.tsx`.
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
@@ -2338,6 +2354,10 @@ describe('JournalPage', () => {
         // returning the new ULID as a string.
         if (cmd === 'create_page_in_space') return 'DP-AUTO'
         if (cmd === 'create_block') {
+          // Defensive — see PEND-16 note above. Returning a real row
+          // keeps the failure mode "explicit assertion below" rather
+          // than a downstream null-deref if a regression re-introduces
+          // the no-template fallback in `handleAddBlock`.
           const params = args as { blockType: string }
           if (params.blockType === 'content') {
             return {
@@ -2362,15 +2382,15 @@ describe('JournalPage', () => {
         })
       })
 
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'content',
-          content: '',
-          parentId: 'DP-AUTO',
-          position: null,
-          spaceId: null,
-        })
+      // PEND-16 — `handleAddBlock` no longer issues `create_block` for
+      // a fresh page in the no-template case; BlockTree owns that and
+      // is mocked here. Flush microtasks so a hypothetical mis-firing
+      // call would still be observable in the assertion below.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
       })
+      const createBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+      expect(createBlockCalls).toHaveLength(0)
     })
 
     it("does NOT auto-create when today's page already exists", async () => {
