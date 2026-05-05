@@ -662,6 +662,27 @@ export async function computeEditDiff(params: {
   return unwrap(await commands.computeEditDiff(params.deviceId, params.seq))
 }
 
+/**
+ * Compute a word-level diff between a block's historical content (as of
+ * `historicalSeq`) and its current live content. Powers the "Compared to
+ * current" mode in the per-block history panel (PEND-17 Part B).
+ *
+ * Direction is `historical → current`, so `Insert` spans = text added
+ * since the historical version (would be REMOVED on restore) and
+ * `Delete` spans = text removed since the historical version (would be
+ * RESTORED). Returns an empty array (or all-Equal spans) when the two
+ * snapshots are byte-identical.
+ *
+ * Throws on a soft-deleted / purged block — the in-panel preview is
+ * meaningless for trashed blocks.
+ */
+export async function computeBlockVsCurrentDiff(params: {
+  blockId: string
+  historicalSeq: number
+}): Promise<DiffSpan[]> {
+  return unwrap(await commands.computeBlockVsCurrentDiff(params.blockId, params.historicalSeq))
+}
+
 // ---------------------------------------------------------------------------
 // Filtered backlink query commands
 // ---------------------------------------------------------------------------

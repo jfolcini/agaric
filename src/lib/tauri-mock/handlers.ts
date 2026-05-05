@@ -1103,6 +1103,54 @@ export const HANDLERS: Record<string, Handler> = {
     return spans
   },
 
+  // PEND-17 Part B — diff between a block's historical content (as of
+  // `historicalSeq`) and its current live content. Mirrors the Rust
+  // command's contract: empty/all-Equal spans for unmodified blocks,
+  // throws on a soft-deleted block.
+  compute_block_vs_current_diff: (args) => {
+    const a = args as Record<string, unknown>
+    const blockId = (a['blockId'] as string).toUpperCase()
+    const historicalSeq = a['historicalSeq'] as number
+    const block = blocks.get(blockId)
+    if (!block || block['deleted_at']) {
+      throw new Error(`block '${blockId}' not found or soft-deleted (cannot diff against current)`)
+    }
+    const current = (block['content'] as string | null | undefined) ?? ''
+    // Walk the op log for the most recent edit_block / create_block at
+    // or before `historicalSeq` for this block.
+    const candidates = opLog.filter((o) => {
+      if (o.op_type !== 'edit_block' && o.op_type !== 'create_block') return false
+      if (o.seq > historicalSeq) return false
+      try {
+        const p = JSON.parse(o.payload) as Record<string, unknown>
+        const pid = (p['block_id'] as string | undefined)?.toUpperCase()
+        return pid === blockId
+      } catch {
+        return false
+      }
+    })
+    if (candidates.length === 0) {
+      throw new Error(
+        `no create_block or edit_block op for '${blockId}' at or before seq ${historicalSeq}`,
+      )
+    }
+    candidates.sort((x, y) => y.seq - x.seq)
+    const target = candidates[0] as MockOpLogEntry
+    const targetPayload = JSON.parse(target.payload) as Record<string, unknown>
+    const historical =
+      target.op_type === 'edit_block'
+        ? ((targetPayload['to_text'] as string) ?? '')
+        : ((targetPayload['content'] as string) ?? '')
+    if (historical === current) return []
+    // Same simplified word-diff as compute_edit_diff above — Delete the
+    // historical, Insert the current. Tests only assert the SHAPE
+    // (presence of Insert / Delete / Equal tags) so this is fine.
+    const spans: Array<Record<string, unknown>> = []
+    if (historical) spans.push({ tag: 'Delete', value: historical })
+    if (current) spans.push({ tag: 'Insert', value: current })
+    return spans
+  },
+
   // ---------------------------------------------------------------------------
   // Property definition commands
   // ---------------------------------------------------------------------------

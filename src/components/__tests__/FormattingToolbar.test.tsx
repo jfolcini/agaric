@@ -86,15 +86,24 @@ vi.mock('../ui/popover', () => ({
   PopoverContent: ({
     children,
     className,
+    ...rest
   }: {
     children: React.ReactNode
     align?: string
     className?: string
-  }) => (
-    <div data-testid="popover-content" className={className}>
-      {children}
-    </div>
-  ),
+    [key: string]: unknown
+  }) => {
+    // Forward unknown props (data-testid, data-editor-portal, id, …) so
+    // the overflow popover (which sets its own data-testid) keeps its
+    // identity. When no caller-supplied testid is present the mock
+    // defaults to 'popover-content' for parity with previous behaviour.
+    const callerTestId = (rest as Record<string, unknown>)['data-testid']
+    return (
+      <div className={className} {...rest} data-testid={callerTestId ?? 'popover-content'}>
+        {children}
+      </div>
+    )
+  },
 }))
 
 // ── Editor mock helpers ──────────────────────────────────────────────────
@@ -694,6 +703,178 @@ describe('FormattingToolbar', () => {
       const toolbar = screen.getByRole('toolbar', { name: t('toolbar.formatting') })
       const scrollArea = toolbar.closest('[data-slot="scroll-area"]')
       expect(scrollArea).toBeInTheDocument()
+    })
+
+    it('does not render the More overflow trigger when nothing overflows', () => {
+      // Default jsdom container width is 0 → hook returns all visible,
+      // no overflow trigger rendered (PEND-33 Layer B).
+      render(<FormattingToolbar editor={makeEditor()} />)
+      expect(screen.queryByRole('button', { name: t('toolbar.more') })).toBeNull()
+    })
+
+    it('renders an off-screen sentinel for ResizeObserver-driven measurement', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const sentinel = screen.getByTestId('toolbar-sentinel')
+      expect(sentinel).toBeInTheDocument()
+      expect(sentinel).toHaveAttribute('aria-hidden', 'true')
+      // Each item in the flattened list (17 buttons + 3 separators = 20)
+      // must have a measurable child carrying its data-toolbar-item-key.
+      const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
+      expect(measurableChildren.length).toBe(20)
+    })
+  })
+
+  // ── PEND-33 L9: Overflow popover (priority-driven) ────────────────────
+
+  describe('PEND-33 Layer B overflow popover', () => {
+    /**
+     * Force the `useToolbarOverflow` hook into the overflowed branch by
+     * injecting a non-no-op `ResizeObserver` that fires a tight content
+     * width at observe-time, plus a per-element width spy on the
+     * sentinel children. The spy reads from `data-toolbar-item-key`
+     * (set by the toolbar) and falls back to 30 px when not specified.
+     */
+    function withTightLayout(containerWidth: number, opts?: { itemWidth?: number }): () => void {
+      const itemWidth = opts?.itemWidth ?? 40
+      const Original = globalThis.ResizeObserver
+      class FiringRO {
+        cb: ResizeObserverCallback
+        constructor(cb: ResizeObserverCallback) {
+          this.cb = cb
+        }
+        observe(target: Element): void {
+          // Synthetic entry — fire on next microtask so the React render
+          // has settled.
+          queueMicrotask(() => {
+            this.cb(
+              [
+                {
+                  contentRect: { width: containerWidth, height: 0 },
+                  target,
+                } as unknown as ResizeObserverEntry,
+              ],
+              this as unknown as ResizeObserver,
+            )
+          })
+        }
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+      vi.stubGlobal('ResizeObserver', FiringRO)
+      const spy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          // Only return non-zero for sentinel item wrappers.
+          if (this.hasAttribute('data-toolbar-item-key')) {
+            return { width: itemWidth, height: 0 } as DOMRect
+          }
+          return { width: 0, height: 0 } as DOMRect
+        })
+      return () => {
+        vi.stubGlobal('ResizeObserver', Original)
+        spy.mockRestore()
+      }
+    }
+
+    it('renders the More trigger when items do not all fit', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        // Wait a microtask for the synthetic ResizeObserver fire + state update.
+        await new Promise((r) => setTimeout(r, 0))
+        const moreBtn = await screen.findByRole('button', { name: t('toolbar.more') })
+        expect(moreBtn).toBeInTheDocument()
+        expect(moreBtn).toHaveAttribute('aria-haspopup', 'menu')
+        expect(moreBtn).toHaveAttribute('aria-expanded', 'false')
+        expect(moreBtn).toHaveAttribute('aria-controls')
+      } finally {
+        restore()
+      }
+    })
+
+    it('More trigger flips aria-expanded after click', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        const moreBtn = await screen.findByRole('button', { name: t('toolbar.more') })
+        expect(moreBtn).toHaveAttribute('aria-expanded', 'false')
+        fireEvent.pointerDown(moreBtn)
+        expect(moreBtn).toHaveAttribute('aria-expanded', 'true')
+      } finally {
+        restore()
+      }
+    })
+
+    it('overflow popover surfaces the lowest-priority items first (Discard ahead of higher-priority buttons)', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
+        // Discard has priority 30 — the lowest of the 17-button set, so
+        // it must be present in the overflow.
+        const discardInOverflow = Array.from(overflowMenu.querySelectorAll('button')).find(
+          (b) => b.getAttribute('aria-label') === t('toolbar.discard'),
+        )
+        expect(discardInOverflow).toBeDefined()
+      } finally {
+        restore()
+      }
+    })
+
+    it('Undo/Redo (priority 100) NEVER move into the overflow popover', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
+        const overflowLabels = Array.from(overflowMenu.querySelectorAll('button')).map((b) =>
+          b.getAttribute('aria-label'),
+        )
+        expect(overflowLabels).not.toContain(t('toolbar.undo'))
+        expect(overflowLabels).not.toContain(t('toolbar.redo'))
+      } finally {
+        restore()
+      }
+    })
+
+    it('clicking an overflow row dispatches the underlying action', async () => {
+      const restore = withTightLayout(120)
+      try {
+        const spy = vi.fn()
+        document.addEventListener('insert-callout', spy)
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
+        const calloutRow = Array.from(overflowMenu.querySelectorAll('button')).find(
+          (b) => b.getAttribute('aria-label') === t('toolbar.callout'),
+        ) as HTMLElement | undefined
+        expect(calloutRow).toBeDefined()
+        if (calloutRow) {
+          fireEvent.pointerDown(calloutRow)
+        }
+        expect(spy).toHaveBeenCalled()
+        document.removeEventListener('insert-callout', spy)
+      } finally {
+        restore()
+      }
+    })
+
+    it('overflow popover uses MenuPopoverContent canonical width via data-editor-portal', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
+        // MenuPopoverContent emits the canonical menu width.
+        expect(overflowMenu.className).toContain('w-64')
+        // data-editor-portal lets the editor's click-outside detection
+        // treat the overflow popover the same as the existing
+        // heading / code-block popovers.
+        expect(overflowMenu).toHaveAttribute('data-editor-portal')
+      } finally {
+        restore()
+      }
     })
   })
 

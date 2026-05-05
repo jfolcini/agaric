@@ -180,3 +180,178 @@ async fn test_undo_page_op_inner_rejects_undo_depth_exceeding_max() {
         "should return Validation error for undo_depth > 1000, got: {result:?}"
     );
 }
+
+// ======================================================================
+// compute_block_vs_current_diff_inner (PEND-17 Part B)
+// ======================================================================
+//
+// The "block-vs-current" diff feeds the in-panel restore preview: given
+// `historical_seq` (the op the user is hovering on) and the live
+// `blocks.content`, it returns the word-level changes a restore would
+// undo. Direction is `historical → current`, so `Insert` spans = "would
+// be removed if you restore" and `Delete` spans = "would be brought back".
+
+/// Modified block: live content differs from the historical version
+/// produced by `historical_seq`. We must see at least one Delete + one
+/// Insert span (the change between the two snapshots) and the
+/// reconstructed live content (Equal + Insert spans) must equal the
+/// current `blocks.content`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // create + edit + edit — three ops, three snapshots.
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello world".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone(),
+        "hello universe".into(),
+    )
+    .await
+    .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone(),
+        "goodbye universe".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Pick the FIRST edit's seq as `historical_seq` so the diff is
+    // "hello universe" → "goodbye universe" (current).
+    let first_edit = sqlx::query!(
+        "SELECT seq FROM op_log WHERE op_type = 'edit_block' ORDER BY seq ASC LIMIT 1"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let spans =
+        compute_block_vs_current_diff_inner(&pool, created.id.as_str().to_string(), first_edit.seq)
+            .await
+            .unwrap();
+
+    use crate::word_diff::DiffTag;
+    assert!(
+        spans.iter().any(|s| s.tag == DiffTag::Delete),
+        "modified block must have a Delete span (text removed since historical), got: {spans:?}"
+    );
+    assert!(
+        spans.iter().any(|s| s.tag == DiffTag::Insert),
+        "modified block must have an Insert span (text added since historical), got: {spans:?}"
+    );
+
+    // Reconstruct the `current` side (Equal + Insert spans) and confirm
+    // it matches the live `blocks.content` — guards against the diff
+    // direction silently flipping.
+    let reconstructed: String = spans
+        .iter()
+        .filter(|s| s.tag != DiffTag::Delete)
+        .map(|s| s.value.as_str())
+        .collect();
+    assert_eq!(reconstructed, "goodbye universe");
+}
+
+/// Unmodified block: the live content is byte-identical to the
+/// historical version. The word-diff helper documents that identical
+/// inputs collapse to all-Equal spans (or empty when both are ""), so
+/// the response must contain zero Insert/Delete spans — what the UI
+/// reads as "no changes since this version".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_returns_no_spans_for_unmodified_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "stable text".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    // No further edits — current matches the create_block payload.
+    mat.flush_background().await.unwrap();
+
+    let create_op = sqlx::query!(
+        "SELECT seq FROM op_log WHERE op_type = 'create_block' ORDER BY seq DESC LIMIT 1"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let spans =
+        compute_block_vs_current_diff_inner(&pool, created.id.as_str().to_string(), create_op.seq)
+            .await
+            .unwrap();
+
+    use crate::word_diff::DiffTag;
+    assert!(
+        spans.iter().all(|s| s.tag == DiffTag::Equal),
+        "unmodified block must produce only Equal spans, got: {spans:?}"
+    );
+}
+
+/// Block deleted (soft-deleted) since `historical_seq`: the live row is
+/// excluded by the `deleted_at IS NULL` filter. We surface this as a
+/// `NotFound` error rather than fabricating an "all-removed" diff —
+/// the UI's preview is meaningless for trashed blocks (the restore
+/// flow there is "restore from trash", not "restore to historical
+/// version") and the existing single-step `compute_edit_diff` remains
+/// available as a fallback. This pins that contract.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_returns_not_found_for_soft_deleted_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "to be trashed".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    delete_block_inner(&pool, DEV, &mat, created.id.as_str().to_string())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let create_op = sqlx::query!(
+        "SELECT seq FROM op_log WHERE op_type = 'create_block' ORDER BY seq DESC LIMIT 1"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let result =
+        compute_block_vs_current_diff_inner(&pool, created.id.as_str().to_string(), create_op.seq)
+            .await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(ref msg)) if msg.contains("soft-deleted")),
+        "soft-deleted block must yield NotFound with a 'soft-deleted' diagnostic, got: {result:?}"
+    );
+}

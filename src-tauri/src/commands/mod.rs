@@ -90,9 +90,10 @@ pub use gcal::{
     GcalStatus, GcalTokenStoreState, LeaseHolder,
 };
 pub use history::{
-    apply_reverse_in_tx, compute_edit_diff, compute_edit_diff_inner, list_page_history,
-    list_page_history_inner, redo_page_op, redo_page_op_inner, restore_page_to_op,
-    restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_op, undo_page_op_inner,
+    apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
+    compute_edit_diff, compute_edit_diff_inner, list_page_history, list_page_history_inner,
+    redo_page_op, redo_page_op_inner, restore_page_to_op, restore_page_to_op_inner, revert_ops,
+    revert_ops_inner, undo_page_op, undo_page_op_inner,
 };
 pub use journal::{
     journal_for_date_inner, navigate_journal_inner, quick_capture_block, quick_capture_block_inner,
@@ -188,8 +189,9 @@ pub use gcal::{
 };
 #[doc(hidden)]
 pub use history::{
-    __specta__fn__compute_edit_diff, __specta__fn__list_page_history, __specta__fn__redo_page_op,
-    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_op,
+    __specta__fn__compute_block_vs_current_diff, __specta__fn__compute_edit_diff,
+    __specta__fn__list_page_history, __specta__fn__redo_page_op, __specta__fn__restore_page_to_op,
+    __specta__fn__revert_ops, __specta__fn__undo_page_op,
 };
 #[doc(hidden)]
 pub use journal::__specta__fn__quick_capture_block;
@@ -275,8 +277,8 @@ pub use gcal::{
 };
 #[doc(hidden)]
 pub use history::{
-    __cmd__compute_edit_diff, __cmd__list_page_history, __cmd__redo_page_op,
-    __cmd__restore_page_to_op, __cmd__revert_ops, __cmd__undo_page_op,
+    __cmd__compute_block_vs_current_diff, __cmd__compute_edit_diff, __cmd__list_page_history,
+    __cmd__redo_page_op, __cmd__restore_page_to_op, __cmd__revert_ops, __cmd__undo_page_op,
 };
 #[doc(hidden)]
 pub use journal::__cmd__quick_capture_block;

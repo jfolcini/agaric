@@ -777,6 +777,127 @@ pub async fn compute_edit_diff(
         .map_err(sanitize_internal_error)
 }
 
+/// Compute a word-level diff between a block's historical content (as of
+/// `historical_seq`) and its current live content.
+///
+/// The diff direction is `historical → current`, so:
+///
+/// * `Insert` spans = text added since the historical version → text that
+///   would be REMOVED if the user restores to that version.
+/// * `Delete` spans = text removed since the historical version → text that
+///   would be RESTORED.
+///
+/// Returns an empty `Vec` when the historical and current contents are
+/// byte-identical (the word-diff helper is documented to emit `Equal`
+/// spans in that case; the caller can treat empty / all-`Equal` as "no
+/// changes").
+///
+/// # Errors
+///
+/// * `AppError::NotFound` if the live block does not exist (purged) or
+///   has been soft-deleted, or if no `create_block` / `edit_block` op
+///   exists for the block at or before `historical_seq`.
+#[instrument(skip(pool), err)]
+pub async fn compute_block_vs_current_diff_inner(
+    pool: &SqlitePool,
+    block_id: String,
+    historical_seq: i64,
+) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
+    // AGENTS.md invariant #8: ULIDs are stored uppercase; mirror the
+    // `find_prior_text` normalization so a lowercase block_id from the
+    // frontend still hits the indexed column.
+    let block_id_upper = block_id.to_ascii_uppercase();
+
+    // 1. Live current content. We deliberately exclude soft-deleted
+    //    blocks: there is nothing meaningful to diff against if the
+    //    block has been moved to trash, and surfacing all-Insert spans
+    //    in that case would mislead the user into thinking restore
+    //    would just re-add the historical text. NotFound lets the UI
+    //    fall back to the existing `compute_edit_diff` (single-step)
+    //    view, which is still meaningful for the trash flow.
+    // The `content` column on `blocks` is nullable, so `query_scalar!`
+    // returns `Option<Option<String>>` — outer = row presence, inner =
+    // column nullability. Treat a NULL `content` the same as the empty
+    // string (matches the `payload.unwrap_or_default()` convention used
+    // by `compute_edit_diff_inner` for missing prior text).
+    let current_row: Option<Option<String>> = sqlx::query_scalar!(
+        "SELECT content FROM blocks WHERE id = ?1 AND deleted_at IS NULL",
+        block_id_upper,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(current_content_opt) = current_row else {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id_upper}' not found or soft-deleted (cannot diff against current)"
+        )));
+    };
+    let current = current_content_opt.unwrap_or_default();
+
+    // 2. Historical content as of `historical_seq` — the most recent
+    //    `edit_block` or `create_block` payload for this block whose
+    //    seq is `<=` the target. Mirrors `find_prior_text` (which uses
+    //    `<`); the inclusive bound is what makes this snap to the
+    //    state PRODUCED by `historical_seq` rather than the state
+    //    immediately before it.
+    let row = sqlx::query!(
+        "SELECT op_type, payload FROM op_log \
+         WHERE block_id = ?1 \
+           AND op_type IN ('edit_block', 'create_block') \
+           AND seq <= ?2 \
+         ORDER BY seq DESC \
+         LIMIT 1",
+        block_id_upper,
+        historical_seq,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Err(AppError::NotFound(format!(
+            "no create_block or edit_block op for '{block_id_upper}' at or before seq {historical_seq}"
+        )));
+    };
+
+    // Same `InvalidOperation` strategy as `compute_edit_diff_inner` (L-39):
+    // surface row identity through `sanitize_internal_error`'s pass-through
+    // set when the on-disk payload is corrupt.
+    let historical = if row.op_type == "edit_block" {
+        let p: crate::op::EditBlockPayload = serde_json::from_str(&row.payload).map_err(|e| {
+            AppError::InvalidOperation(format!(
+                "op for '{block_id_upper}' at seq <= {historical_seq} payload not parseable as EditBlockPayload: {e}"
+            ))
+        })?;
+        p.to_text
+    } else {
+        let p: crate::op::CreateBlockPayload =
+            serde_json::from_str(&row.payload).map_err(|e| {
+                AppError::InvalidOperation(format!(
+                    "op for '{block_id_upper}' at seq <= {historical_seq} payload not parseable as CreateBlockPayload: {e}"
+                ))
+            })?;
+        p.content
+    };
+
+    Ok(crate::word_diff::compute_word_diff(&historical, &current))
+}
+
+/// Tauri command: compute word-level diff between a block's historical
+/// content (as of `historical_seq`) and its current live content.
+/// Delegates to [`compute_block_vs_current_diff_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn compute_block_vs_current_diff(
+    pool: State<'_, ReadPool>,
+    block_id: String,
+    historical_seq: i64,
+) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
+    compute_block_vs_current_diff_inner(&pool.0, block_id, historical_seq)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 #[cfg(test)]
 mod tests {
     //! Inline unit tests for [`compute_edit_diff_inner`] focused on the L-39

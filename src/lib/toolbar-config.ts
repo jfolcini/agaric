@@ -88,6 +88,14 @@ export interface ToolbarButtonConfig {
   activeKey?: string
   disabledWhenFalse?: string
   action: () => void
+  /**
+   * Overflow priority used by `useToolbarOverflow` (PEND-33 Layer B).
+   * Higher = stays visible longer under width pressure. 100 = always visible,
+   * 30 = drops first. Optional; defaults to 0 (drops first) when unset.
+   * Applied only to buttons rendered inside the always-visible toolbar; the
+   * mark toggles fed into `SelectionBubbleMenu` ignore this field.
+   */
+  priority?: number
 }
 
 // ── Factory functions ───────────────────────────────────────────────────
@@ -138,6 +146,7 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       icon: FileSymlink,
       label: 'toolbar.internalLink',
       tip: 'toolbar.pageLinkTip',
+      priority: 60,
       action: () => {
         const { from, to } = editor.state.selection
         if (from !== to) {
@@ -151,6 +160,7 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       icon: AtSign,
       label: 'toolbar.insertTag',
       tip: 'toolbar.tagTip',
+      priority: 60,
       action: () => {
         // The AtTagPicker extension only opens the suggestion popup when
         // `@` is preceded by whitespace or is at the start of a block
@@ -175,6 +185,7 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       label: 'toolbar.blockquote',
       tip: 'toolbar.blockquoteTip',
       activeKey: 'blockquote',
+      priority: 50,
       action: () => editor.chain().focus().toggleBlockquote().run(),
     },
   ]
@@ -186,18 +197,21 @@ export function createStructureButtons(): ToolbarButtonConfig[] {
       icon: ListOrdered,
       label: 'toolbar.orderedList',
       tip: 'toolbar.orderedListTip',
+      priority: 50,
       action: () => dispatchBlockEvent('INSERT_ORDERED_LIST'),
     },
     {
       icon: Minus,
       label: 'toolbar.divider',
       tip: 'toolbar.dividerTip',
+      priority: 50,
       action: () => dispatchBlockEvent('INSERT_DIVIDER'),
     },
     {
       icon: Info,
       label: 'toolbar.callout',
       tip: 'toolbar.calloutTip',
+      priority: 40,
       action: () => dispatchBlockEvent('INSERT_CALLOUT'),
     },
   ]
@@ -209,30 +223,35 @@ export function createMetadataButtons(): ToolbarButtonConfig[] {
       icon: CalendarDays,
       label: 'toolbar.insertDate',
       tip: 'toolbar.insertDateTip',
+      priority: 70,
       action: () => dispatchBlockEvent('OPEN_DATE_PICKER'),
     },
     {
       icon: CalendarClock,
       label: 'toolbar.setDueDate',
       tip: 'toolbar.dueDateTip',
+      priority: 70,
       action: () => dispatchBlockEvent('OPEN_DUE_DATE_PICKER'),
     },
     {
       icon: CalendarCheck2,
       label: 'toolbar.setScheduledDate',
       tip: 'toolbar.scheduledDateTip',
+      priority: 70,
       action: () => dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER'),
     },
     {
       icon: CheckSquare,
       label: 'toolbar.todoToggle',
       tip: 'toolbar.todoToggleTip',
+      priority: 80,
       action: () => dispatchBlockEvent('TOGGLE_TODO_STATE'),
     },
     {
       icon: Settings2,
       label: 'toolbar.properties',
       tip: 'toolbar.propertiesTip',
+      priority: 40,
       action: () => dispatchBlockEvent('OPEN_BLOCK_PROPERTIES'),
     },
   ]
@@ -245,6 +264,7 @@ export function createHistoryButtons(editor: Editor): ToolbarButtonConfig[] {
       label: 'toolbar.undo',
       tip: 'toolbar.undoTip',
       disabledWhenFalse: 'canUndo',
+      priority: 100,
       action: () => editor.chain().focus().undo().run(),
     },
     {
@@ -252,12 +272,14 @@ export function createHistoryButtons(editor: Editor): ToolbarButtonConfig[] {
       label: 'toolbar.redo',
       tip: 'toolbar.redoTip',
       disabledWhenFalse: 'canRedo',
+      priority: 100,
       action: () => editor.chain().focus().redo().run(),
     },
     {
       icon: X,
       label: 'toolbar.discard',
       tip: 'toolbar.discardTip',
+      priority: 30,
       action: () => dispatchBlockEvent('DISCARD_BLOCK_EDIT'),
     },
   ]
