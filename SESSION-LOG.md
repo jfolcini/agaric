@@ -2,7 +2,7 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 679 (PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 — four distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs` (user runs it next for the gating tags Path A/B decision). PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388. MAINT-227 closed via one-line fix to the existing `sqlx-prepare-check` pre-push hook. MAINT-172 closed via drift-detection parity test mirroring PEND-28a H1 Option 2's pattern (audited 19 production sites in 12 files; 3 sites excluded for structurally different SQL). Pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1166+ items.
+**Sessions:** 1 – 679 (PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation — five distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs`; PEND-15 Phase 2 ships the `resolve_block_space` helper as foundation for future enforcement-point wiring (no callers yet — Path A/B decision still gates Phase 1+2 wiring). PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388. MAINT-227 closed via one-line fix to the existing `sqlx-prepare-check` pre-push hook. MAINT-172 closed via drift-detection parity test mirroring PEND-28a H1 Option 2's pattern. Pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1167+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
@@ -74,6 +74,29 @@ Reviewer: APPROVED CLEAN. Verified mirror-fidelity to the precedent, audit compl
 
 The two untracked files in the working tree (`pending/PEND-31-unfinished-tasks-pagination-cap.md`, `pending/README.md` modifications) are concurrent-agent work (per PROMPT.md "Concurrent edits to markdown files in pending folder"). The orchestrator used selective `git add` to leave them untouched.
 
+**PEND-15 Phase 2 foundation — `resolve_block_space` helper (fifth commit, post-MAINT-172):**
+
+After MAINT-172 closed, the user redirected to "continue without questions, focus on actionable, high certainty." Phase 1 of PEND-15 is gated on the user's tags Path A/B decision (an explicit STOP condition in the original prompt) — that decision can't be pre-empted. Phase 2's enforcement-point wiring is also Path-A/B-coupled in places (the `add_tag` enforcement is Path-A-specific). However, the **`resolve_block_space` helper** that the plan body refers to by name in the `set_property` validation pseudocode (lines 155-156: `let target_space = resolve_block_space(tx, target_id).await?`) is Path-A/B-AGNOSTIC and Phase-1-INDEPENDENT — it's a pure read query that returns `Option<SpaceId>` for any block. Future Phase 2 sub-tasks will wire it into each enforcement point (`set_property` ref-type validation, `edit_block` content-scan, sync-ingress rejection, bulk-import scan); landing the helper now means those sub-tasks just call it.
+
+The build subagent shipped the helper into `src-tauri/src/space.rs` (+327 LOC: ~95 LOC helper + ~80 LOC inline test seed helpers + ~145 LOC for 8 new tests + ~5 LOC imports / section header). Signature:
+
+```rust
+pub async fn resolve_block_space<'e, E>(
+    executor: E,
+    block_id: &BlockId,
+) -> Result<Option<SpaceId>, AppError>
+where
+    E: sqlx::SqliteExecutor<'e>,
+```
+
+Resolves a block's owning space via the canonical `COALESCE(b.page_id, b.id) → block_properties.value_ref WHERE bp.key = 'space'` lookup (matches the inlined pattern at the 19 production sites tracked by `space_filter_canonical.rs`). Takes `&BlockId` (pushes the type-safety gain from PEND-18 deeper into the codebase) and returns `Option<SpaceId>` (None = block has no owning space — tag block, space block itself, pre-FEAT-3 unmigrated, or orphaned content block). Generic `Executor` so it can run inside an existing `BEGIN IMMEDIATE` transaction (Phase 2 enforcement points all run inside the command's transaction).
+
+Tests (8 new): block in a space, content block inheriting page's space, block with no space, non-existent block, conflict-page in COALESCE chain, soft-deleted page in COALESCE chain, byte-for-byte trusted-form preservation, runs inside transaction.
+
+**Non-mechanical decision flagged: outer JOIN on the property-holding block.** The build subagent's SQL adds `JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.is_conflict = 0 AND tgt.deleted_at IS NULL` to filter the property-holding block (so a content block under a soft-deleted page returns `None` rather than the deleted page's space). This is **MORE AGGRESSIVE than the canonical inlined pattern at the 19 production sites** (those don't filter the property-holder; they'd return the soft-deleted page's space). The helper has no callers yet, so the divergence is not yet observable at runtime. Filed as MAINT-228 to revisit when Phase 2 wires the helper to enforcement points — at that point the choice is (a) keep the JOIN (orphans return `None`, cross-space enforcement treats them as "not in any space") vs (b) drop the JOIN (orphans resolve to their soft-deleted page's space, enforcement treats them as if the page were live). 1-line SQL change either way.
+
+The two untracked files (`pending/PEND-31-...`, `pending/README.md` modifications) remain in the working tree from earlier in the session — concurrent-agent work, untouched by this commit's selective `git add`.
+
 **Files touched (this session):**
 
 PEND-12 commit (closeout, no source changes):
@@ -100,6 +123,12 @@ MAINT-172 commit (drift-detection parity test):
 - `src-tauri/src/lib.rs` (+1 LOC): `pub mod space_filter_canonical;` inserted alphabetically between `space` and `spaces`.
 - `pending/REVIEW-LATER.md`: MAINT-172 entry removed (closed); header line updated to record the closure.
 - `SESSION-LOG.md`: this MAINT-172 sub-section + extended Files touched + Verification block.
+
+PEND-15 Phase 2 foundation commit (`resolve_block_space` helper):
+- `src-tauri/src/space.rs` (+327 LOC): added section `// Block-space resolution helper (PEND-15 Phase 2 foundation)`; new `pub async fn resolve_block_space<'e, E: sqlx::SqliteExecutor<'e>>(executor: E, block_id: &BlockId) -> Result<Option<SpaceId>, AppError>`; 4 inline test seed helpers (`seed_space_block`, `seed_page`, `seed_content_block`, `seed_tag_block`) for the new tests' DB setup; 8 new `#[tokio::test]` cases covering all documented edge cases (live block / content block / no-space / non-existent / conflict-page / soft-deleted-page / byte-for-byte preservation / inside-transaction).
+- `src-tauri/.sqlx/query-4cd85dbac12fead3994e7114ce38f32d6afa160a6dcc196cd053968e3d66d71a.json` (NEW): auto-regenerated entry for the new `query!` invocation. One nullable `TEXT` column, one parameter.
+- `pending/REVIEW-LATER.md`: header updated for the foundation commit; MAINT-228 added to flag the outer-JOIN deviation for future Phase 2 wiring.
+- `SESSION-LOG.md`: this Phase 2 foundation sub-section.
 
 **Verification:**
 
@@ -129,6 +158,14 @@ MAINT-172:
 - Drift-sensitivity verified: temporarily renaming `bp` → `bpx` in one production site fails Test B with an informative error message naming the file + actual-vs-canonical normalised diff. Reverted; full suite green.
 - `prek run --all-files` — green.
 
+PEND-15 Phase 2 foundation:
+- `cargo build --tests` — clean.
+- `cargo nextest run --lib space::tests` — 25/25 pass (17 pre-existing + 8 new `resolve_block_space` tests).
+- `cargo nextest run --no-fail-fast` — 3607/3607 pass + 4 skipped (was 3599 — +8 from the new helper tests).
+- `cargo sqlx prepare -- --tests` — adds exactly 1 new cache entry (the new `query!` invocation).
+- `cargo sqlx prepare --check -- --tests` — clean after the regen.
+- `prek run` — green.
+
 **Process notes:**
 - The build subagent followed PROMPT.md's "kill-criteria" guidance correctly: stopped immediately, reported with definitive evidence (compiler error verbatim + sqlx source-line citations), and reverted the spike artifacts to leave a clean working tree. No reviewer needed because no code shipped.
 - The orchestrator's pre-spike call-graph check (verifying that `pagination/mod.rs:81` is just a doc-comment reference to the SQL pattern, not an actual query) was useful: it confirmed the canonical site count would be 16 production sites + 1 doc-comment reference if Phase 1 had proceeded, matching the plan body's claim.
@@ -139,7 +176,7 @@ MAINT-172:
 - **Per `pending/README.md` convention, rejected plans get DELETED, not archived.** The fallback work goes back into REVIEW-LATER as a MAINT-* item with the rejection record + new scoping. Git history + SESSION-LOG.md preserve the trail.
 - **`prek run --all-files` does NOT detect missing `.sqlx/` cache entries.** The audit binary's `cargo sqlx prepare -- --tests` discovered 5 drift entries that earlier sessions had introduced silently — production queries from `commands/history.rs:847` + `space.rs:337/352` (PEND-18 Phase 0 and Phase 2 work) compiled fine via online sqlx (DB connection at compile time) but were never cached because earlier `prepare` runs didn't pass `--tests`. Future sessions touching SQL queries in `#[cfg(test)]` paths should always run `cargo sqlx prepare -- --tests` (not just `prepare`) and verify the cache stays clean via `cargo sqlx prepare --check -- --tests`. Consider adding the `--check` form to prek as a follow-up to catch drift at commit time. (Filed as a future MAINT consideration, not a P0.)
 
-**Commit plan:** four commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests` (`7afcd880`); (4) `test(space): close MAINT-172 — drift-detection parity test for the space-filter SQL fragment (mirrors PEND-28a H1 Option 2)`.
+**Commit plan:** five commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests` (`7afcd880`); (4) `test(space): close MAINT-172 — drift-detection parity test for the space-filter SQL fragment (mirrors PEND-28a H1 Option 2)` (`7e0d5aa0`); (5) `feat(space): PEND-15 Phase 2 foundation — resolve_block_space helper (no callers yet)`.
 
 ---
 
