@@ -21,7 +21,7 @@ Cost: **S–M** if cherry-picked individually (most are 1-line className changes
 
 > **These are findings, not commitments.** Each item is independently approve-able. The single highest-leverage win is **H1+H2** (add `max-h` to the dialog/popover primitives) — two lines that propagate through every dialog and popover in the app.
 >
-> **Status (session 667):** all 6 HIGH closed (H1, H2, H3, H4, H5, H6) + 5 MEDIUM closed (M2, M3, M4, M5, M7). **Remaining: 8 MEDIUM (M1 BugReportDialog body scroll, M6 narrow-desktop indent breakpoint, M8 DaySection wrap, M9 HistoryFilterBar mobile stack, M10 60vh→60dvh, M11 JournalControls min-w, M12 HistorySheet width, M13 QueryResultTable header-button touch-target), 1 LOW (L1 AlertSection truncate).** Cherry-pick by file/component in future sessions.
+> **Status (sessions 667 + 668):** all 6 HIGH closed (H1-H6) + 11 MEDIUM closed (M1-M5, M7-M8, M10-M13). **Remaining: 2 MEDIUM (M6 narrow-desktop indent breakpoint, M9 HistoryFilterBar mobile stack), 1 LOW (L1 AlertSection truncate).** PEND-28b is nearly done.
 
 ## Methodology
 
@@ -138,7 +138,7 @@ Cost: trivial (~2 LOC). Risk: low.
 
 ## MEDIUM — fix in a sweep
 
-### M1 — `BugReportDialog` form body and log preview escape the dialog frame
+### ~~M1 — `BugReportDialog` form body and log preview escape the dialog frame~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/BugReportDialog.tsx" lines="320-340" />
 <ref_snippet file="/home/javier/dev/agaric/src/components/BugReportDialog.tsx" lines="515-560" />
@@ -234,7 +234,7 @@ Cost: trivial (~5 LOC). Risk: low.
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### M8 — `journal/DaySection` heading row has no `flex-wrap`
+### ~~M8 — `journal/DaySection` heading row has no `flex-wrap`~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/journal/DaySection.tsx" lines="60-135" />
 
@@ -254,7 +254,7 @@ Cost: trivial (~1 LOC). Risk: low.
 
 Cost: S (~1 h, ~5–10 LOC + a screenshot or two to confirm spacing). Risk: low.
 
-### M10 — `KeyboardSettingsTab` uses `vh` instead of `dvh`
+### ~~M10 — `KeyboardSettingsTab` uses `vh` instead of `dvh`~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/KeyboardSettingsTab.tsx" lines="140-150" />
 
@@ -264,7 +264,7 @@ Cost: S (~1 h, ~5–10 LOC + a screenshot or two to confirm spacing). Risk: low.
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### M11 — `JournalControls` reserves 100 px on phones for the date readout
+### ~~M11 — `JournalControls` reserves 100 px on phones for the date readout~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/JournalControls.tsx" lines="155-170" />
 
@@ -274,7 +274,7 @@ Cost: trivial (~1 LOC). Risk: low.
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### M12 — `HistorySheet` is 270 px on a 360 px phone
+### ~~M12 — `HistorySheet` is 270 px on a 360 px phone~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/HistorySheet.tsx" lines="25-35" />
 
@@ -284,7 +284,7 @@ Cost: trivial (~1 LOC). Risk: low.
 
 Cost: trivial (~1 LOC). Risk: low.
 
-### M13 — `QueryResultTable` header sort buttons are ~28 px tall
+### ~~M13 — `QueryResultTable` header sort buttons are ~28 px tall~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/QueryResultTable.tsx" lines="55-85" />
 

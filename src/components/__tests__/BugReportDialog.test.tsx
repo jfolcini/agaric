@@ -750,6 +750,66 @@ describe('BugReportDialog', () => {
     })
   })
 
+  // ── PEND-28b M1: scrollable body keeps title and footer fixed ───────
+  describe('scrollable body layout (PEND-28b M1)', () => {
+    it('renders the form body inside a ScrollArea with title and footer outside', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await screen.findByText(/## Description/)
+
+      // The body wrapper carries the data-slot from the design-system
+      // ScrollArea primitive — guarantees future renames stay caught.
+      const body = screen.getByTestId('bug-report-body')
+      expect(body).toHaveAttribute('data-slot', 'scroll-area')
+
+      // Title is rendered as a sibling of the ScrollArea, not inside
+      // it, so it stays visible while the body scrolls.
+      const title = screen.getByText(t('bugReport.title'))
+      expect(body.contains(title)).toBe(false)
+
+      // Submit + Cancel buttons sit in the dialog footer, NOT inside
+      // the scroll body.
+      const cancelBtn = screen.getByRole('button', { name: t('bugReport.cancel') })
+      const openBtn = screen.getByRole('button', { name: t('bugReport.openIssue') })
+      expect(body.contains(cancelBtn)).toBe(false)
+      expect(body.contains(openBtn)).toBe(false)
+    })
+  })
+
+  // ── PEND-23 L7: nested log-preview dialog autofocuses close button ──
+  describe('log preview close button autoFocus (PEND-23 L7)', () => {
+    it('focuses the close button when the preview dialog opens', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') {
+          return [{ name: 'agaric.log', contents: 'tiny' }]
+        }
+        return null
+      })
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      await screen.findByText('agaric.log')
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      // Wait for the preview content to render so focus has settled
+      // after Radix's open transition.
+      await screen.findByTestId('bug-report-log-preview-content')
+
+      const closeBtn = screen.getByTestId('bug-report-log-preview-close')
+      await waitFor(() => {
+        expect(closeBtn).toHaveFocus()
+      })
+    })
+  })
+
   it('prefills title and description from props', async () => {
     render(
       <BugReportDialog

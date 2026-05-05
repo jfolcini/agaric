@@ -402,6 +402,32 @@ describe('QueryResultTable', () => {
     }
   })
 
+  // PEND-28 M13 — header sort buttons must hit the 44 px touch-target floor
+  // on coarse-pointer devices.
+  it('PEND-28 M13: header sort buttons carry the touch-target utility', () => {
+    render(
+      <QueryResultTable
+        results={[makeBlock({ todo_state: 'TODO' })]}
+        columns={defaultColumns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+      />,
+    )
+
+    const sortButtons = [
+      screen.getByRole('button', { name: 'Sort by Content' }),
+      screen.getByRole('button', { name: 'Sort by Status' }),
+    ]
+    for (const btn of sortButtons) {
+      const cls = btn.className
+      expect(cls.includes('touch-target') || cls.includes('[@media(pointer:coarse)]:h-11')).toBe(
+        true,
+      )
+    }
+  })
+
   it('has no a11y violations', async () => {
     const columns: TableColumn[] = [
       { key: 'content', label: 'Content' },

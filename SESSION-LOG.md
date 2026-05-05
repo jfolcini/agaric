@@ -2,11 +2,85 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 667 (closed PEND-28b H1-H6 + M2-M5 + M7 — all 6 HIGH + 5 MEDIUM; PEND-28b now: 0 HIGH / 8 MEDIUM / 1 LOW remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1120+ items.
+**Sessions:** 1 – 668 (closed 12 mixed PEND-28b + PEND-23 trivials — BugReportDialog body scroll, journal mobile layouts, primitive viewport unit, LoadingSkeleton variants, accent CSS-var swatches, etc.; PEND-28b now: 0 H / 2 M / 1 L remaining; PEND-23 now: 0 H / 2 M / 8 L remaining) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1132+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 668 — closed PEND-28b M1 + M8 + M10 + M11 + M12 + M13 + PEND-23 L3 + L4 + L5 + L6 + L7 + L16 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 4 build (BugReport M1+L7, Journal M8+M11+M12, independent trivials M10+M13+L4, PEND-23 LOWs L3+L5+L6+L16) + 0 reviewers (subagents self-validated; orchestrator only ran the cache-clear + biome auto-fix). |
+| **Items closed** | 12 sub-items mixed across two plans. PEND-28b M1 + M8 + M10 + M11 + M12 + M13 (6 MEDIUM). PEND-23 L3 + L4 + L5 + L6 + L7 + L16 (6 LOW; L6 was production-done in a prior session — added regression test only). PEND-28b now: 0 HIGH / 2 MEDIUM (M6 narrow-desktop indent, M9 HistoryFilterBar mobile stack) / 1 LOW remaining. PEND-23 now: 0 HIGH / 2 MEDIUM (M6 focus-ring extraction, M10 keyboard-nav hook) / 8 LOW remaining. |
+| **Items modified** | — |
+| **Tests added** | +28 frontend across 9 test files. |
+| **Files touched** | 17 source + 5 docs (PEND-28b plan, PEND-23 plan, REVIEW-LATER, SESSION-LOG, FEATURE-MAP). |
+
+**Summary:** Mixed-plan trivials batch — 4 parallel subagents on non-overlapping files, all 4 finished cleanly. Pre-cleared `node_modules/.vite/vitest` before final prek (session 666+667 lesson). PEND-28b is now down to 2 MEDIUM (the more invasive M6 + M9) + 1 LOW. PEND-23 is down to 2 MEDIUM + 8 LOW. The "all the trivial UX nits across two big review docs" work-stream is largely done across sessions 665-668 (35+ sub-items closed in 4 weekly-style sessions). One discovery: PEND-23 L6 (PeerListItem `aria-label`) was already implemented in a prior session — the subagent added the regression test as a no-op-on-production-code closure.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 36 → 36 (no new items)
+- **Previously resolved:** 1120+ → 1132+ across 667 → 668 sessions
+
+**Files touched (this session):**
+
+Frontend (TypeScript) — BugReportDialog (M1 + L7):
+- `src/components/BugReportDialog.tsx` (+22 net, +166/−144 with re-indent): wrapped form body in `<ScrollArea className="flex-1 min-h-0 -mx-6" viewportClassName="px-6">` so the dialog title and submit/cancel buttons stay visible while only the body scrolls. `<DialogContent>` now has `flex flex-col overflow-hidden` so the inner ScrollArea owns scrolling (the dialog frame already caps height via H1's `max-h-[calc(100dvh-2rem)]`). Pattern matches PairingDialog. Nested log-preview close button gains `autoFocus` + `data-testid="bug-report-log-preview-close"`.
+- `src/components/__tests__/BugReportDialog.test.tsx` (+60): 2 new tests — body inside ScrollArea + log-preview close-button autoFocus.
+
+Frontend (TypeScript) — Journal mobile (M8 + M11 + M12):
+- `src/components/journal/DaySection.tsx` (1 line): heading row `flex items-center gap-2 mb-2` → `flex flex-wrap items-center gap-2 mb-2`. Long day labels + many badges no longer push the open button off-screen on phones.
+- `src/components/JournalControls.tsx` (1 line): date-display `min-w-[100px] sm:min-w-[140px]` → `sm:min-w-[100px]`. Phones lose the 100 px reservation; sm+ goes from 140 to 100 px (still enough for typical date strings).
+- `src/components/HistorySheet.tsx` (1 line): drop the `className="w-3/4 sm:w-80"` override entirely — Sheet primitive's baseline `w-3/4 sm:max-w-sm` (384 px on sm+) takes over. Mobile width unchanged at 270 px (75% × 360 = 270); sm+ improves from 320 px lock to 384 px max.
+- `src/components/journal/__tests__/DaySection.test.tsx` (+12): 1 new test asserting `flex-wrap`.
+- `src/components/__tests__/JournalControls.test.tsx` (+12): 1 new test asserting `sm:min-w-[100px]`.
+- `src/components/__tests__/HistorySheet.test.tsx` (+10 net): replaced the existing `'has w-80 width class on SheetContent for desktop'` test with a stronger `'SheetContent uses the Sheet primitive baseline width'` test asserting `w-3/4 sm:max-w-sm` and the absence of `sm:w-80`.
+- `src/components/__tests__/JournalPage.test.tsx` (+5 net): cascade fix — existing `'date display uses responsive min-width'` test asserted the old `min-w-[100px] sm:min-w-[140px]` shape; updated to match M11's new shape. Discovered + fixed by the Journal subagent itself when running the full suite.
+
+Frontend (TypeScript) — Independent trivials (M10 + M13 + L4):
+- `src/components/KeyboardSettingsTab.tsx` (1 line): `max-h-[60vh]` → `max-h-[60dvh]`. Closes the iOS Safari URL-bar-collapse jitter.
+- `src/components/QueryResultTable.tsx` (1 line): header `<button>` className gains `touch-target` (the AGENTS.md-mandated min-44px-on-coarse helper from `index.css:1204`). Chose this over swapping to `<Button size="sm">` because the existing button has bespoke `flex w-full` layout the primitive wouldn't preserve.
+- `src/components/LoadingSkeleton.tsx` (+18/−3 — rewritten): added `LoadingSkeletonVariant` type + `VARIANT_HEIGHT` map + `variant?: 'text' | 'heading' | 'button' | 'list-row'` prop (defaults to `'text'` → `h-4`, the previous default). `height` prop still wins as escape hatch. Helper-map approach over `cva()` (single-axis lookup; AGENTS.md "Simplicity First").
+- `src/components/__tests__/{KeyboardSettingsTab,QueryResultTable,LoadingSkeleton}.test.tsx` (+58 across 3 files): 7 new tests (1 + 1 + 5).
+
+Frontend (TypeScript) — PEND-23 LOWs (L3 + L5 + L6 + L16):
+- `src/components/SpaceManageDialog.tsx` (+8 / −8): dropped `className: 'bg-*-500'` field from `ACCENT_SWATCHES`; added `style={{ backgroundColor: var(--${swatch.token}) }}` to both swatch grids (per-row picker + create-form picker). Theme switching (Solarized, Dracula, OneDarkPro) now correctly updates swatch colors.
+- `src/components/DiffDisplay.tsx` (+6 / −1): hunk counter `<span>` gains `aria-live="polite"` + `aria-atomic="true"`. SR users navigating with prev/next now hear the position change. Different lines from session 667's M7 hunk-nav `flex-wrap` — no conflict.
+- `src/components/FilterSortControls.tsx` (+1 / −1): direction-toggle Button gains `[@media(pointer:coarse)]:px-2`. Closes the touch-coarse `px-1` width-too-narrow gap.
+- L6 PeerListItem: production-side `aria-label={t('device.addressInputLabel')}` was ALREADY in place from a prior session. Subagent added the regression test only.
+- `src/components/__tests__/{SpaceManageDialog,DiffDisplay,FilterSortControls,PeerListItem}.test.tsx` (+78 across 4 files): 4 new tests.
+
+Plan files:
+- `pending/PEND-28-ux-responsiveness-review-findings.md`: M1 / M8 / M10 / M11 / M12 / M13 sub-headers struck through with `~~...~~` + ✅ session-668 marker. Status line at top: "0 HIGH + 2 MEDIUM + 1 LOW remaining".
+- `pending/PEND-23-ux-review-findings.md`: L3 / L4 / L5 / L6 / L7 / L16 sub-headers struck through. Status line at top: "0 HIGH + 2 MEDIUM + 8 LOW remaining".
+
+Docs:
+- `pending/REVIEW-LATER.md`: header bumped to session 668 (no new MAINT items).
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: LoadingSkeleton variant prop + dialog-body scroll pattern documented.
+
+**Verification:**
+- `rm -rf node_modules/.vite/vitest` (session 666+667 lesson) → `npx vitest run` — 9460+ tests pass
+- `cd src-tauri && cargo nextest run` — 3510/3510 pass, 4 skipped (no Rust changes this session)
+- `prek run --all-files` — all hooks pass after biome auto-fix on long-line wraps in `BugReportDialog.tsx` + `QueryResultTable.test.tsx`
+
+**Process notes:**
+- **All 4 subagents finished cleanly.** Three of them flagged "tests in OTHER subagents' files fail under full-suite parallelism" — confirmed pre-existing flakes by independently verifying isolated runs. Cache-clear before final prek resolved most of them.
+- **L6 was a no-op discovery** — production change was already implemented in a prior session. The subagent added the regression test as the only delta. Useful to flag up front when launching subagents on items from older review docs: check whether the change is already in place before spending budget on it.
+- **No coordination chaos this session** — pure-frontend with non-overlapping files works cleanly when subagents (a) don't run cargo, (b) don't `git stash`, and (c) target distinct files.
+- **Plan deviations were minor.** The Journal subagent's M11 change uses `sm:min-w-[100px]` (per literal task instruction) rather than the plan's `sm:min-w-[140px]` suggestion. Net: phones win, desktop slightly more compact. Date readouts fit in 100 px so no UX regression.
+
+**Lessons learned (for future sessions):**
+- **Pre-clearing the vitest cache before final prek is now battle-tested** — sessions 666, 667, 668 all benefited. Should be added to PROMPT.md as a hard step in the orchestrator's COMMIT phase when the batch has ≥3 concurrent frontend subagents.
+- **Always check whether older-review-doc items are already implemented** — L6 discovery shows that 6+ months of intervening sessions can silently close items the plan still lists as `ready`. A quick `grep` for the proposed code/className before launching a subagent saves budget.
+- **The "trivials batch" pattern works well** for closing many small items per session. 12 items in one batch is at the upper end of cognitively-trackable but executable in a single commit cycle.
+
+**Commit plan:** single commit / not pushed.
+
+---
 
 ## Session 667 — closed PEND-28b H1 + H2 + H3 + H4 + H5 + H6 + M2 + M3 + M4 + M5 + M7 (2026-05-04)
 

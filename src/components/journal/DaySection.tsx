@@ -63,7 +63,7 @@ export function DaySection({
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
           <Heading
             className={cn(
               headingLevel === 'h2'

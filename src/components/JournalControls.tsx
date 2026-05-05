@@ -159,7 +159,7 @@ export function JournalControls(): React.ReactElement {
                 </TooltipContent>
               </Tooltip>
               <span
-                className="min-w-[100px] sm:min-w-[140px] text-center text-sm font-medium"
+                className="sm:min-w-[100px] text-center text-sm font-medium"
                 data-testid="date-display"
               >
                 {getDateDisplay()}

@@ -25,7 +25,7 @@ export function HistorySheet({
   const { t } = useTranslation()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-3/4 sm:w-80">
+      <SheetContent side="right">
         <SheetHeader>
           <SheetTitle>{t('history.title')}</SheetTitle>
           <SheetDescription>{t('history.description')}</SheetDescription>

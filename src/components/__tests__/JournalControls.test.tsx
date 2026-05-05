@@ -129,6 +129,18 @@ describe('JournalControls', () => {
     expect(listBlocksCalls).toHaveLength(1)
   })
 
+  // PEND-28 M11: the date readout's min-width is gated on sm: so phones
+  // (e.g. 360 px wide) aren't penalized by a fixed 100 px reservation that
+  // wastes ~28 % of the viewport.
+  it('date display min-width is scoped to sm: breakpoint', () => {
+    render(<JournalControls />)
+
+    const dateDisplay = screen.getByTestId('date-display')
+    expect(dateDisplay.className).toContain('sm:min-w-[100px]')
+    // Must not have the unguarded min-w-[100px] reservation on phones.
+    expect(dateDisplay.className).not.toMatch(/(?:^|\s)min-w-\[100px\]/)
+  })
+
   it('hides the prev/next nav in agenda mode', () => {
     useJournalStore.setState({
       mode: 'agenda',

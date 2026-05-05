@@ -325,168 +325,184 @@ export function BugReportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      {/* PEND-28b M1: outer DialogContent uses flex flex-col + an inner
+          ScrollArea body so the title and footer (Cancel / Copy / Open in
+          GitHub) stay visible while only the form + log list scroll.
+          `overflow-hidden` overrides the primitive's `overflow-y-auto`
+          so scrolling is owned by the inner ScrollArea, not the dialog
+          frame. PairingDialog L452 has the canonical scrollable-body
+          precedent. H1 already caps the dialog frame at
+          `max-h-[calc(100dvh-2rem)]` via the primitive default. */}
+      <DialogContent className="max-w-2xl flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>{t('bugReport.title')}</DialogTitle>
           <DialogDescription>{t('bugReport.description')}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {/* Form */}
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="bug-report-title" muted={false}>
-                {t('bugReport.fieldTitleLabel')}
-              </Label>
-              <Input
-                id="bug-report-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder={t('bugReport.fieldTitlePlaceholder')}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="bug-report-description" muted={false}>
-                {t('bugReport.fieldDescriptionLabel')}
-              </Label>
-              <Textarea
-                id="bug-report-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={t('bugReport.fieldDescriptionPlaceholder')}
-                rows={5}
-              />
-            </div>
-
-            <div className="flex items-start gap-3">
-              <Switch
-                id="bug-report-include-logs"
-                checked={includeLogs}
-                onCheckedChange={setIncludeLogs}
-                aria-label={t('bugReport.includeLogsLabel')}
-              />
-              <div className="space-y-0.5">
-                <Label htmlFor="bug-report-include-logs" muted={false}>
-                  {t('bugReport.includeLogsLabel')}
+        <ScrollArea
+          className="flex-1 min-h-0 -mx-6"
+          viewportClassName="px-6"
+          data-testid="bug-report-body"
+        >
+          <div className="space-y-4">
+            {/* Form */}
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="bug-report-title" muted={false}>
+                  {t('bugReport.fieldTitleLabel')}
                 </Label>
-                <p className="text-xs text-muted-foreground">{t('bugReport.includeLogsHint')}</p>
+                <Input
+                  id="bug-report-title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder={t('bugReport.fieldTitlePlaceholder')}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="bug-report-description" muted={false}>
+                  {t('bugReport.fieldDescriptionLabel')}
+                </Label>
+                <Textarea
+                  id="bug-report-description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={t('bugReport.fieldDescriptionPlaceholder')}
+                  rows={5}
+                />
+              </div>
+
+              <div className="flex items-start gap-3">
+                <Switch
+                  id="bug-report-include-logs"
+                  checked={includeLogs}
+                  onCheckedChange={setIncludeLogs}
+                  aria-label={t('bugReport.includeLogsLabel')}
+                />
+                <div className="space-y-0.5">
+                  <Label htmlFor="bug-report-include-logs" muted={false}>
+                    {t('bugReport.includeLogsLabel')}
+                  </Label>
+                  <p className="text-xs text-muted-foreground">{t('bugReport.includeLogsHint')}</p>
+                </div>
+              </div>
+
+              {/* UX-383: Redact is a sibling row at the same indent as Include
+                  logs (not nested under it) so it's always visible. When
+                  Include logs is OFF the underlying Switch is disabled —
+                  Radix forwards `disabled` to the native disabled
+                  attribute and the Switch primitive applies
+                  `disabled:opacity-50 disabled:cursor-not-allowed`. We
+                  additionally mute the label + hint so the dependency on
+                  Include logs is obvious at a glance. */}
+              <div className="flex items-start gap-3">
+                <Switch
+                  id="bug-report-redact"
+                  checked={redact}
+                  onCheckedChange={setRedact}
+                  disabled={!includeLogs}
+                  aria-label={t('bugReport.redactLabel')}
+                />
+                <div className={cn('space-y-0.5', !includeLogs && 'opacity-50')}>
+                  <Label htmlFor="bug-report-redact" muted={false}>
+                    {t('bugReport.redactLabel')}
+                  </Label>
+                  <p className="text-xs text-muted-foreground">{t('bugReport.redactHint')}</p>
+                </div>
               </div>
             </div>
 
-            {/* UX-383: Redact is a sibling row at the same indent as Include
-                logs (not nested under it) so it's always visible. When
-                Include logs is OFF the underlying Switch is disabled —
-                Radix forwards `disabled` to the native disabled
-                attribute and the Switch primitive applies
-                `disabled:opacity-50 disabled:cursor-not-allowed`. We
-                additionally mute the label + hint so the dependency on
-                Include logs is obvious at a glance. */}
-            <div className="flex items-start gap-3">
-              <Switch
-                id="bug-report-redact"
-                checked={redact}
-                onCheckedChange={setRedact}
-                disabled={!includeLogs}
-                aria-label={t('bugReport.redactLabel')}
-              />
-              <div className={cn('space-y-0.5', !includeLogs && 'opacity-50')}>
-                <Label htmlFor="bug-report-redact" muted={false}>
-                  {t('bugReport.redactLabel')}
-                </Label>
-                <p className="text-xs text-muted-foreground">{t('bugReport.redactHint')}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Preview */}
-          <div className="space-y-1.5">
-            <Label htmlFor={previewSectionId} muted={false}>
-              {t('bugReport.previewTitle')}
-            </Label>
-            <p className="text-xs text-muted-foreground">{t('bugReport.previewHint')}</p>
-            <ScrollArea className="h-56 rounded-md border bg-muted/30" viewportClassName="p-3">
-              <pre
-                id={previewSectionId}
-                data-testid="bug-report-preview"
-                className="text-xs leading-5 whitespace-pre-wrap break-words font-mono"
-              >
-                {loadingMetadata ? <Spinner /> : body}
-              </pre>
-            </ScrollArea>
-          </div>
-
-          {/* Logs list (only when logs ON) */}
-          {includeLogs && (
+            {/* Preview */}
             <div className="space-y-1.5">
-              <Label htmlFor={logsSectionId} muted={false}>
-                {t('bugReport.logsListTitle')}
+              <Label htmlFor={previewSectionId} muted={false}>
+                {t('bugReport.previewTitle')}
               </Label>
-              <ScrollArea className="h-32 rounded-md border bg-muted/30" viewportClassName="p-3">
-                <ul
-                  id={logsSectionId}
-                  data-testid="bug-report-logs-list"
-                  className="text-xs space-y-1"
+              <p className="text-xs text-muted-foreground">{t('bugReport.previewHint')}</p>
+              <ScrollArea className="h-56 rounded-md border bg-muted/30" viewportClassName="p-3">
+                <pre
+                  id={previewSectionId}
+                  data-testid="bug-report-preview"
+                  className="text-xs leading-5 whitespace-pre-wrap break-words font-mono"
                 >
-                  {loadingLogs && (
-                    <li className="flex items-center gap-2 text-muted-foreground">
-                      <Spinner />
-                    </li>
-                  )}
-                  {!loadingLogs && logs.length === 0 && (
-                    <li className="text-muted-foreground italic">{t('bugReport.logsListEmpty')}</li>
-                  )}
-                  {!loadingLogs &&
-                    logs.map((entry) => (
-                      <li key={entry.name} className="flex items-center justify-between gap-3">
-                        <span className="font-mono break-all flex-1 min-w-0">{entry.name}</span>
-                        <span className="text-muted-foreground shrink-0">
-                          {t('bugReport.logsSize', { size: entry.contents.length })}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={t('bugReport.previewLabel', { filename: entry.name })}
-                          onClick={() => {
-                            void handleOpenPreview(entry.name)
-                          }}
-                        >
-                          <Eye />
-                        </Button>
-                      </li>
-                    ))}
-                </ul>
+                  {loadingMetadata ? <Spinner /> : body}
+                </pre>
               </ScrollArea>
             </div>
-          )}
 
-          {/* Confirmation */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="bug-report-confirm"
-              checked={confirmed}
-              onCheckedChange={(v) => {
-                if (typeof v === 'boolean') setConfirmed(v)
-              }}
-              // UX-12: aria-required surfaces the required state to assistive
-              // tech without bloating the visible label / accessible name.
-              aria-required="true"
-            />
-            <Label htmlFor="bug-report-confirm" muted={false}>
-              {t('bugReport.confirmCheckbox')}
-              {/* UX-12: visual asterisk marker. aria-hidden so it doesn't
-                  clutter the accessible name — aria-required on the
-                  checkbox already announces the required state. */}
-              <span
-                aria-hidden="true"
-                className="ml-1 text-destructive"
-                data-testid="bug-report-confirm-required-marker"
-              >
-                *
-              </span>
-            </Label>
+            {/* Logs list (only when logs ON) */}
+            {includeLogs && (
+              <div className="space-y-1.5">
+                <Label htmlFor={logsSectionId} muted={false}>
+                  {t('bugReport.logsListTitle')}
+                </Label>
+                <ScrollArea className="h-32 rounded-md border bg-muted/30" viewportClassName="p-3">
+                  <ul
+                    id={logsSectionId}
+                    data-testid="bug-report-logs-list"
+                    className="text-xs space-y-1"
+                  >
+                    {loadingLogs && (
+                      <li className="flex items-center gap-2 text-muted-foreground">
+                        <Spinner />
+                      </li>
+                    )}
+                    {!loadingLogs && logs.length === 0 && (
+                      <li className="text-muted-foreground italic">
+                        {t('bugReport.logsListEmpty')}
+                      </li>
+                    )}
+                    {!loadingLogs &&
+                      logs.map((entry) => (
+                        <li key={entry.name} className="flex items-center justify-between gap-3">
+                          <span className="font-mono break-all flex-1 min-w-0">{entry.name}</span>
+                          <span className="text-muted-foreground shrink-0">
+                            {t('bugReport.logsSize', { size: entry.contents.length })}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={t('bugReport.previewLabel', { filename: entry.name })}
+                            onClick={() => {
+                              void handleOpenPreview(entry.name)
+                            }}
+                          >
+                            <Eye />
+                          </Button>
+                        </li>
+                      ))}
+                  </ul>
+                </ScrollArea>
+              </div>
+            )}
+
+            {/* Confirmation */}
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="bug-report-confirm"
+                checked={confirmed}
+                onCheckedChange={(v) => {
+                  if (typeof v === 'boolean') setConfirmed(v)
+                }}
+                // UX-12: aria-required surfaces the required state to assistive
+                // tech without bloating the visible label / accessible name.
+                aria-required="true"
+              />
+              <Label htmlFor="bug-report-confirm" muted={false}>
+                {t('bugReport.confirmCheckbox')}
+                {/* UX-12: visual asterisk marker. aria-hidden so it doesn't
+                    clutter the accessible name — aria-required on the
+                    checkbox already announces the required state. */}
+                <span
+                  aria-hidden="true"
+                  className="ml-1 text-destructive"
+                  data-testid="bug-report-confirm-required-marker"
+                >
+                  *
+                </span>
+              </Label>
+            </div>
           </div>
-        </div>
+        </ScrollArea>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -591,6 +607,14 @@ export function BugReportDialog({
                 onClick={() => {
                   handlePreviewOpenChange(false)
                 }}
+                // PEND-23 L7: explicit autoFocus on the close button so
+                // the nested log-preview dialog lands focus on a known,
+                // dismissable target (rather than relying on Radix
+                // default focus-trap discovery, which previously left
+                // focus on the body when the preview opened in a
+                // truncated state).
+                autoFocus
+                data-testid="bug-report-log-preview-close"
               >
                 {t('bugReport.cancel')}
               </Button>

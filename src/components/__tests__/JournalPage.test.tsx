@@ -2735,7 +2735,11 @@ describe('JournalPage', () => {
       expect(parent.className).toContain('flex-wrap')
     })
 
-    it('date display uses responsive min-width', async () => {
+    // PEND-28 M11: the previous shape (`min-w-[100px] sm:min-w-[140px]`)
+    // reserved 100 px (~28 % of a 360 px viewport) on phones for the date
+    // readout. The min-width is now gated on `sm:` so phones let the date
+    // determine its own width, while sm+ still gets a 100 px floor.
+    it('date display min-width is scoped to sm: breakpoint', async () => {
       mockedInvoke.mockResolvedValue(emptyPage)
 
       renderJournal()
@@ -2745,8 +2749,9 @@ describe('JournalPage', () => {
       })
 
       const dateDisplay = screen.getByTestId('date-display')
-      expect(dateDisplay.className).toContain('min-w-[100px]')
-      expect(dateDisplay.className).toContain('sm:min-w-[140px]')
+      expect(dateDisplay.className).toContain('sm:min-w-[100px]')
+      // No unguarded `min-w-[100px]` reservation on phones.
+      expect(dateDisplay.className).not.toMatch(/(?:^|\s)min-w-\[100px\]/)
     })
   })
 

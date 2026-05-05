@@ -24,7 +24,7 @@ What remains: **4 HIGH, 10 MEDIUM, 17 LOW** confirmed findings. None are
 critical bugs. Most are small per-site fixes; two (M6 focus-ring extraction,
 H3 Dialog→Sheet on mobile) are slightly more invasive but still narrow.
 
-> **Status (sessions 665 + 666):** all 4 actionable HIGH closed (H1, H2, H3, H4). MEDIUM done: M1, M2, M3, M4, M5, M7, M8, M9. LOW done: L1, L8, L11. **Remaining: 2 MEDIUM (M6 focus-ring extraction, M10 keyboard-nav hook extraction), 14 LOW.** Cherry-pick by severity in future sessions.
+> **Status (sessions 665 + 666 + 668):** all 4 actionable HIGH closed (H1, H2, H3, H4). MEDIUM done: M1, M2, M3, M4, M5, M7, M8, M9. LOW done: L1, L3, L4, L5, L6, L7, L8, L11, L16. **Remaining: 2 MEDIUM (M6 focus-ring extraction, M10 keyboard-nav hook extraction), 8 LOW (L2, L9, L10, L12, L13, L14, L15, L17).** Cherry-pick by severity in future sessions.
 
 Cost: **S–M** if cherry-picked individually, **L** if all done in one bundle
 (estimated ~30–50 LOC per item × 31 items + ~2 new shared utilities).
@@ -287,7 +287,7 @@ with a unit-tested `normalizeUrl(raw)` and `isAllowedUrl(url)` API. Cost:
 ~60 LOC (new file + tests + 1 callsite). Risk: trivial. Light security
 benefit (centralizes the scheme list).
 
-### L3 — `SpaceManageDialog` accent swatches use hardcoded Tailwind colors
+### ~~L3 — `SpaceManageDialog` accent swatches use hardcoded Tailwind colors~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/SpaceManageDialog.tsx" lines="86-93" />
 
@@ -301,7 +301,7 @@ theme switching does not update the swatch colors.
 ~5 LOC. Risk: trivial. Resolves the same finding A1 surfaced for the
 design-token review.
 
-### L4 — `LoadingSkeleton` always defaults to `h-4`
+### ~~L4 — `LoadingSkeleton` always defaults to `h-4`~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/LoadingSkeleton.tsx" lines="12-29" />
 
@@ -310,7 +310,7 @@ heights. Add a `variant?: 'text' | 'heading' | 'button' | 'list-row'` enum
 that maps to sensible defaults (`h-4`, `h-6`, `h-9`, `h-11`). Keep `height`
 as an escape hatch. Cost: ~15 LOC + tests.
 
-### L5 — `DiffDisplay` hunk counter has no `aria-live`
+### ~~L5 — `DiffDisplay` hunk counter has no `aria-live`~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/DiffDisplay.tsx" lines="170-180" />
 
@@ -321,7 +321,7 @@ themselves correctly use native `disabled` — Round 1's claim that they need
 `aria-disabled` was misclassified; that part of the original finding is
 dropped.) Cost: ~3 LOC.
 
-### L6 — `PeerListItem` IP-address input is placeholder-only
+### ~~L6 — `PeerListItem` IP-address input is placeholder-only~~ ✅ done (`aria-label` was already in place from a prior session; session 668 added the regression test)
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/PeerListItem.tsx" lines="135-144" />
 
@@ -329,7 +329,7 @@ The popover has a small `<p>` title above the input but no `<Label>` or
 `aria-label` on the `<Input>` itself. Add `aria-label={t('device.peerAddress')}`
 (or equivalent). Cost: ~2 LOC + i18n key.
 
-### L7 — `BugReportDialog` nested log-preview Dialog has no `autoFocus`
+### ~~L7 — `BugReportDialog` nested log-preview Dialog has no `autoFocus`~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/BugReportDialog.tsx" lines="525-600" />
 
@@ -418,7 +418,7 @@ action button; `ConfirmDestructiveAction` only disables the button. UX
 inconsistency between the two confirm components. Add the same Spinner
 render to match. Cost: ~5 LOC + test.
 
-### L16 — `FilterSortControls` direction-toggle is narrow on touch
+### ~~L16 — `FilterSortControls` direction-toggle is narrow on touch~~ ✅ done session 668
 
 <ref_snippet file="/home/javier/dev/agaric/src/components/FilterSortControls.tsx" lines="60-80" />
 
