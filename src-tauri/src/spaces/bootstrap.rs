@@ -161,6 +161,13 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
     // chunked block_properties UPSERTs.
     migrate_pages_to_personal_space_batched(&mut tx, device_id, &pages_to_migrate).await?;
 
+    // PEND-15 Phase 1 — Path A tag-space bootstrap. Assign every
+    // orphan tag (no `space` property) to the space that most
+    // frequently references it, or Personal as fallback. Idempotent
+    // — the inner query filters to tags WITHOUT a `space` property,
+    // so steady-state boots see zero candidates.
+    let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id).await?;
+
     tx.commit().await?;
 
     let spaces_created = i32::from(personal_created) + i32::from(work_created);
@@ -171,6 +178,7 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
         is_space_props_set,
         accent_props_set,
         pages_migrated = migrated,
+        tags_migrated,
         seeded_blocks_already_done,
         "spaces bootstrap complete"
     );
@@ -670,4 +678,308 @@ async fn pages_to_migrate(
     .fetch_all(&mut **tx)
     .await?;
     Ok(rows.into_iter().map(|r| r.id).collect())
+}
+
+/// PEND-15 Phase 1 — Path A tag-space bootstrap.
+///
+/// Every tag block without a `space` property is assigned to the space
+/// that most frequently references it (via `block_tag_refs`). Tags with
+/// zero references fall back to Personal. The migration emits one
+/// `SetProperty` op per orphan tag via the normal op-log pipeline,
+/// preserving the append-only invariant.
+///
+/// This runs once on every boot (like `pages_without_space` above)
+/// but is naturally idempotent: the query filters to tags WITHOUT a
+/// `space` property, so steady-state boots see zero candidates.
+///
+/// # Path A sub-phase 1 of 3
+///
+/// The tag-block migration (assign every tag to a space) is the first
+/// of the three Path A sub-phases enumerated in the plan body. Phases
+/// 2 (enforcement wiring) and 3 (cross-space severance migration) are
+/// downstream of this step.
+pub async fn migrate_orphan_tags_to_space(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+) -> Result<usize, AppError> {
+    // Step 1 — find every live, non-conflict tag block that has no
+    // `space` property.
+    let orphan_tags = sqlx::query!(
+        r#"SELECT b.id as "id!: String" FROM blocks b
+           WHERE b.block_type = 'tag'
+             AND b.deleted_at IS NULL
+             AND b.is_conflict = 0
+             AND NOT EXISTS (
+                 SELECT 1 FROM block_properties
+                 WHERE block_id = b.id AND key = 'space'
+             )
+           ORDER BY b.id"#,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+    if orphan_tags.is_empty() {
+        return Ok(0);
+    }
+
+    // Step 2 — for each orphan tag, find the space that references it
+    // most frequently. Tags with zero references go to Personal.
+    //
+    // The query joins block_tag_refs → source blocks → their space
+    // property. A tag referenced by blocks in multiple spaces gets
+    // assigned to the majority space; ties are broken in favour of
+    // Personal (deterministic, matches the page-migration default).
+    let mut migrated = 0;
+    for row in &orphan_tags {
+        let tag_id = &row.id;
+
+        let space_counts = sqlx::query!(
+            r#"SELECT p.value_ref as "space_id!: String",
+                      COUNT(*) as "cnt!: i64"
+               FROM block_tag_refs r
+               INNER JOIN blocks b
+                   ON b.id = r.source_id
+                  AND b.deleted_at IS NULL
+                  AND b.is_conflict = 0
+               INNER JOIN block_properties p
+                   ON p.block_id = b.id
+                  AND p.key = 'space'
+                  AND p.value_ref IS NOT NULL
+               WHERE r.tag_id = ?
+               GROUP BY p.value_ref
+               ORDER BY COUNT(*) DESC
+               LIMIT 1"#,
+            tag_id,
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
+
+        let target_space = space_counts
+            .as_ref()
+            .map(|r| r.space_id.as_str())
+            .unwrap_or(SPACE_PERSONAL_ULID);
+
+        // Step 3 — emit a SetProperty op assigning this tag to the
+        // chosen space. The op flows through the normal pipeline so
+        // replay / sync / undo see it as a regular property mutation.
+        let payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(tag_id),
+            key: "space".to_owned(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(target_space.to_owned()),
+            value_bool: None,
+        });
+        op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+
+        // Materialize the property row immediately so downstream
+        // enforcement steps in the same transaction see it.
+        sqlx::query!(
+            "INSERT OR REPLACE INTO block_properties \
+             (block_id, key, value_text, value_num, value_date, value_ref) \
+             VALUES (?, 'space', NULL, NULL, NULL, ?)",
+            tag_id,
+            target_space,
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        migrated += 1;
+    }
+
+    Ok(migrated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::ulid::BlockId;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const DEV: &str = "test-device";
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db_path: PathBuf = tmp.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        // Seed the space blocks so value_ref FK constraints on
+        // block_properties are satisfied.
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        for (id, name) in [(SPACE_PERSONAL_ULID, "Personal"), (SPACE_WORK_ULID, "Work")] {
+            sqlx::query!(
+                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+                 VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+                id,
+                name,
+                id,
+            )
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+        (pool, tmp)
+    }
+
+    #[tokio::test]
+    async fn orphan_tag_assigned_to_personal_when_no_references() {
+        let (pool, _tmp) = fresh_pool().await;
+        let tag_id = BlockId::new().to_string();
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        // Seed inside the tx so FK checks see the row.
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'tag', 'lonely', NULL, 1, NULL, 0)",
+            tag_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(migrated, 1);
+        let space = sqlx::query_scalar!(
+            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+            tag_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(space, Some(SPACE_PERSONAL_ULID.to_string()));
+    }
+
+    #[tokio::test]
+    async fn orphan_tag_assigned_to_referencing_space() {
+        let (pool, _tmp) = fresh_pool().await;
+        let tag_id = BlockId::new().to_string();
+        let source_id = BlockId::new().to_string();
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'tag', 'work-tag', NULL, 1, NULL, 0)",
+            tag_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'page', 'Test', NULL, 1, ?, 0)",
+            source_id,
+            source_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+             VALUES (?, 'space', NULL, NULL, NULL, ?)",
+            source_id,
+            SPACE_WORK_ULID,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+            source_id,
+            tag_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(migrated, 1);
+        let space = sqlx::query_scalar!(
+            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+            tag_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
+    }
+
+    #[tokio::test]
+    async fn orphan_tag_idempotent_on_second_run() {
+        let (pool, _tmp) = fresh_pool().await;
+        let tag_id = BlockId::new().to_string();
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'tag', 'idem', NULL, 1, NULL, 0)",
+            tag_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let m1 = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(m1, 1);
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let m2 = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(m2, 0);
+    }
+
+    #[tokio::test]
+    async fn orphan_tag_ignores_deleted_and_conflict_blocks() {
+        let (pool, _tmp) = fresh_pool().await;
+        let deleted_id = BlockId::new().to_string();
+        let conflict_id = BlockId::new().to_string();
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'tag', 'del', NULL, 1, NULL, 0)",
+            deleted_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'tag', 'conf', NULL, 1, NULL, 0)",
+            conflict_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "UPDATE blocks SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?",
+            deleted_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "UPDATE blocks SET is_conflict = 1 WHERE id = ?",
+            conflict_id
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(migrated, 0);
+    }
+
+    #[tokio::test]
+    async fn empty_table_returns_zero() {
+        let (pool, _tmp) = fresh_pool().await;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(migrated, 0);
+    }
 }

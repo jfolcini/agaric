@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.value_ref as \"space_id!: String\",\n                      COUNT(*) as \"cnt!: i64\"\n               FROM block_tag_refs r\n               INNER JOIN blocks b\n                   ON b.id = r.source_id\n                  AND b.deleted_at IS NULL\n                  AND b.is_conflict = 0\n               INNER JOIN block_properties p\n                   ON p.block_id = b.id\n                  AND p.key = 'space'\n                  AND p.value_ref IS NOT NULL\n               WHERE r.tag_id = ?\n               GROUP BY p.value_ref\n               ORDER BY COUNT(*) DESC\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "cnt!: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "d6b31d079b9fe7d70df0ab70e37b0779d8a97c97d58525a79671020447fd5a7e"
+}
