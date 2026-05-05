@@ -190,9 +190,7 @@ describe('PageAliasSection UX-2 — touch target on remove button', () => {
     render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases={true} />)
 
     const btn = screen.getByRole('button', { name: /remove alias alias-a/i })
-    expect(btn.className).toContain('focus-visible:ring-[3px]')
-    expect(btn.className).toContain('focus-visible:ring-ring/50')
-    expect(btn.className).toContain('focus-visible:outline-hidden')
+    expect(btn.className).toContain('focus-ring-visible')
   })
 
   // PEND-28b M5: 96 px (w-24) is too cramped on narrow desktop viewports

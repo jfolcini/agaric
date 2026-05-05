@@ -133,11 +133,7 @@ export function JournalPage({
   // ── Main render ─────────────────────────────────────────────────────
 
   return (
-    <div
-      ref={journalRef}
-      tabIndex={-1}
-      className="space-y-4 focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50"
-    >
+    <div ref={journalRef} tabIndex={-1} className="space-y-4 focus-ring-visible">
       {/* Loading indicator on initial fetch */}
       {loading && (
         <div aria-busy="true">

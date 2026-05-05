@@ -1,8 +1,7 @@
 /**
- * Tests for LinkEditPopover component and normalizeUrl utility.
+ * Tests for LinkEditPopover component.
  *
  * Validates:
- *  - normalizeUrl: prepends https:// when no protocol, preserves http/ftp/mailto/tel
  *  - Renders URL input with autoFocus
  *  - Apply button calls editor.setLink with normalized URL
  *  - Remove button calls editor.unsetLink (only when isEditing)
@@ -10,6 +9,9 @@
  *  - Escape key closes the popover and refocuses editor
  *  - Empty/whitespace URL does not call setLink
  *  - a11y: axe audit
+ *
+ * `normalizeUrl` / `isAllowedUrl` unit tests live in
+ * `src/lib/__tests__/url-validation.test.ts` (PEND-23 L2).
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -17,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import { LinkEditPopover, normalizeUrl } from '../LinkEditPopover'
+import { LinkEditPopover } from '../LinkEditPopover'
 
 // ── Mock UI components ───────────────────────────────────────────────────
 // Input and Button render real <input> / <button> elements, but we mock them
@@ -96,97 +98,6 @@ function makeEditor() {
     view: { dispatch: mockDispatch },
   } as never
 }
-
-// ── normalizeUrl ─────────────────────────────────────────────────────────
-
-describe('normalizeUrl', () => {
-  it('returns empty string for empty input', () => {
-    expect(normalizeUrl('')).toBe('')
-  })
-
-  it('returns empty string for whitespace-only input', () => {
-    expect(normalizeUrl('   ')).toBe('')
-    expect(normalizeUrl('\t\n')).toBe('')
-  })
-
-  it('prepends https:// when no protocol is present', () => {
-    expect(normalizeUrl('example.com')).toBe('https://example.com')
-    expect(normalizeUrl('example.com/path?q=1')).toBe('https://example.com/path?q=1')
-  })
-
-  it('trims whitespace before normalizing', () => {
-    expect(normalizeUrl('  example.com  ')).toBe('https://example.com')
-  })
-
-  it('preserves https:// URLs', () => {
-    expect(normalizeUrl('https://example.com')).toBe('https://example.com')
-  })
-
-  it('preserves http:// URLs', () => {
-    expect(normalizeUrl('http://example.com')).toBe('http://example.com')
-  })
-
-  it('preserves ftp:// URLs', () => {
-    expect(normalizeUrl('ftp://files.example.com/readme.txt')).toBe(
-      'ftp://files.example.com/readme.txt',
-    )
-  })
-
-  it('preserves mailto: URLs (no authority component)', () => {
-    expect(normalizeUrl('mailto:user@example.com')).toBe('mailto:user@example.com')
-  })
-
-  it('preserves tel: URLs (no authority component)', () => {
-    expect(normalizeUrl('tel:+1234567890')).toBe('tel:+1234567890')
-  })
-
-  it('is case-insensitive for mailto/tel schemes', () => {
-    expect(normalizeUrl('MAILTO:user@example.com')).toBe('MAILTO:user@example.com')
-    expect(normalizeUrl('Tel:+1234567890')).toBe('Tel:+1234567890')
-  })
-
-  it('preserves custom scheme:// protocols', () => {
-    expect(normalizeUrl('custom-app://open')).toBe('custom-app://open')
-  })
-
-  it('blocks javascript: URLs', () => {
-    expect(normalizeUrl('javascript:alert("xss")')).toBe('')
-  })
-
-  it('blocks JavaScript: URLs (case-insensitive)', () => {
-    expect(normalizeUrl('JavaScript:alert("xss")')).toBe('')
-    expect(normalizeUrl('JAVASCRIPT:void(0)')).toBe('')
-  })
-
-  it('blocks data: URLs', () => {
-    expect(normalizeUrl('data:text/html,<script>alert(1)</script>')).toBe('')
-    expect(normalizeUrl('DATA:text/html,test')).toBe('')
-  })
-
-  // Hardening for CodeQL `js/incomplete-url-scheme-check`: the original
-  // denylist only covered `javascript:` + `data:`. The full list now
-  // includes `vbscript:`, `file:`, `blob:`, `about:` — schemes that
-  // could execute script, open local files, or surface native pages
-  // when the link is opened from a Tauri renderer.
-  it('blocks vbscript: URLs (legacy IE XSS vector)', () => {
-    expect(normalizeUrl('vbscript:msgbox(1)')).toBe('')
-    expect(normalizeUrl('VBScript:Execute("...")')).toBe('')
-  })
-
-  it('blocks file: URLs (would open host filesystem)', () => {
-    expect(normalizeUrl('file:///etc/passwd')).toBe('')
-    expect(normalizeUrl('FILE:///c:/Windows/System32')).toBe('')
-  })
-
-  it('blocks blob: URLs (can leak local data)', () => {
-    expect(normalizeUrl('blob:https://example.com/abc-def')).toBe('')
-  })
-
-  it('blocks about: URLs (browser-internal pages)', () => {
-    expect(normalizeUrl('about:blank')).toBe('')
-    expect(normalizeUrl('About:config')).toBe('')
-  })
-})
 
 // ── LinkEditPopover component ────────────────────────────────────────────
 

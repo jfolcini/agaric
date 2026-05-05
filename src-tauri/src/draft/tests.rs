@@ -630,6 +630,62 @@ async fn sweep_orphan_drafts_no_op_on_empty_table() {
     assert_eq!(removed, 0, "empty draft table sweeps nothing");
 }
 
+/// PEND-28a M1: the boot one-shot of [`spawn_orphan_drafts_sweeper`]
+/// must drain orphan drafts produced by a previous session before any
+/// periodic tick fires. Asserts the orphan row is gone shortly after
+/// the task is spawned, then sets the shutdown flag so the loop exits.
+#[tokio::test]
+async fn spawn_orphan_drafts_sweeper_runs_boot_one_shot() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+
+    // Seed an orphan draft: parent block exists but is soft-deleted, so
+    // the M-93 FK still holds (FK references the row, not its
+    // `deleted_at`) but the sweeper should remove the draft.
+    let soft_deleted = "01HZ0000000000000000SOFTDEL";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position, deleted_at) \
+         VALUES (?, 'content', ?, 0, '2024-01-01T00:00:00Z')",
+    )
+    .bind(soft_deleted)
+    .bind("trashed")
+    .execute(&pool)
+    .await
+    .unwrap();
+    save_draft(&pool, soft_deleted, "draft for trashed block")
+        .await
+        .unwrap();
+    assert_eq!(draft_count(&pool).await.unwrap(), 1, "orphan seeded");
+
+    // Use a 1-hour interval so only the boot one-shot fires during the
+    // test window — we are asserting the at-boot semantics, not the
+    // periodic loop frequency.
+    let shutdown = Arc::new(AtomicBool::new(false));
+    spawn_orphan_drafts_sweeper(
+        pool.clone(),
+        std::time::Duration::from_secs(3600),
+        shutdown.clone(),
+    );
+
+    // Poll for the orphan to be gone — the spawn task runs concurrently.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut swept = false;
+    while std::time::Instant::now() < deadline {
+        if draft_count(&pool).await.unwrap() == 0 {
+            swept = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    shutdown.store(true, Ordering::Release);
+    assert!(
+        swept,
+        "spawn_orphan_drafts_sweeper must drain orphans during the boot one-shot"
+    );
+}
+
 // ── block_id with LIKE wildcard characters ──────────────────────────
 
 /// Block IDs containing SQL LIKE metacharacters (`%`, `_`) must be

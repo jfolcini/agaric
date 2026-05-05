@@ -14,6 +14,7 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { logger } from '@/lib/logger'
+import { normalizeUrl } from '@/lib/url-validation'
 import { cn } from '@/lib/utils'
 import { useLinkMetadata } from '../hooks/useLinkMetadata'
 import { Button } from './ui/button'
@@ -32,47 +33,6 @@ export interface LinkEditPopoverProps {
   onClose: () => void
   /** Selection range saved before popover stole focus (B-70). */
   savedSelection?: { from: number; to: number } | null
-}
-
-/**
- * Schemes a user-entered link is never allowed to carry. These either
- * execute script in the renderer (`javascript:`, `vbscript:`, `data:`)
- * or open the host filesystem / native pages (`file:`, `blob:`,
- * `about:`) and are routinely abused for XSS / phishing payloads in
- * markdown link editors. Matched case-insensitively so the obvious
- * obfuscations (`JavaScript:`, `FILE:`) are caught too.
- */
-const BLOCKED_URL_SCHEMES: readonly string[] = [
-  'javascript:',
-  'vbscript:',
-  'data:',
-  'file:',
-  'blob:',
-  'about:',
-]
-
-/**
- * Normalise a user-entered URL: trim whitespace and prepend `https://`
- * when no protocol scheme is present.
- *
- * Recognises both `scheme://` protocols (http, ftp, …) and
- * schemeless protocols like `mailto:` and `tel:`. Returns `''` for any
- * URL using a scheme in `BLOCKED_URL_SCHEMES` so the caller can treat
- * "no value" and "rejected value" identically.
- */
-export function normalizeUrl(url: string): string {
-  const trimmed = url.trim()
-  if (!trimmed) return ''
-  // Block dangerous protocols (case-insensitive). The list mirrors the
-  // schemes that browser sanitisers and CodeQL's
-  // `js/incomplete-url-scheme-check` query care about.
-  const lower = trimmed.toLowerCase()
-  if (BLOCKED_URL_SCHEMES.some((scheme) => lower.startsWith(scheme))) return ''
-  // scheme://…  (http://, https://, ftp://, etc.)
-  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmed)) return trimmed
-  // mailto: and tel: — no authority component
-  if (/^(mailto|tel):/i.test(trimmed)) return trimmed
-  return `https://${trimmed}`
 }
 
 export function LinkEditPopover({

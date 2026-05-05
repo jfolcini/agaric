@@ -60,9 +60,7 @@ describe('PopoverMenuItem', () => {
   it('includes focus-visible ring classes', () => {
     render(<PopoverMenuItem>Focus item</PopoverMenuItem>)
     const btn = screen.getByRole('button', { name: 'Focus item' })
-    expect(btn.className).toContain('focus-visible:outline-none')
-    expect(btn.className).toContain('focus-visible:ring-[3px]')
-    expect(btn.className).toContain('focus-visible:ring-ring/50')
+    expect(btn.className).toContain('focus-ring-visible')
   })
 
   it('forwards ref', () => {

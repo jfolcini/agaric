@@ -45,7 +45,7 @@ export function PropertyChip({
       type="button"
       className={cn(
         'property-key-label opacity-60 hover:underline cursor-pointer rounded-sm',
-        'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden',
+        'focus-ring-visible',
         Icon && 'inline-flex items-center gap-0.5',
       )}
       onClick={onKeyClick}
@@ -68,7 +68,7 @@ export function PropertyChip({
       type="button"
       className={cn(
         'property-chip-value cursor-pointer hover:underline rounded-sm',
-        'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden',
+        'focus-ring-visible',
       )}
       onClick={onClick}
       aria-label={chipLabel}

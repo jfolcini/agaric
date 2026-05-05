@@ -112,9 +112,7 @@ describe('FilterPill', () => {
     render(<FilterPill {...defaultProps} />)
 
     const removeBtn = screen.getByRole('button', { name: 'Remove filter status = TODO' })
-    expect(removeBtn.className).toContain('focus-visible:ring-[3px]')
-    expect(removeBtn.className).toContain('focus-visible:ring-ring/50')
-    expect(removeBtn.className).toContain('focus-visible:outline-hidden')
+    expect(removeBtn.className).toContain('focus-ring-visible')
   })
 
   // UX-2: the visible X icon scales up on coarse pointers so the tap area

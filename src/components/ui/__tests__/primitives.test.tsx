@@ -115,8 +115,7 @@ describe('Spinner', () => {
 describe('CloseButtonIcon', () => {
   it('closeButtonClassName contains expected classes', () => {
     expect(closeButtonClassName).toContain('opacity-70')
-    expect(closeButtonClassName).toContain('focus-visible:ring-[3px]')
-    expect(closeButtonClassName).toContain('focus-visible:ring-ring/50')
+    expect(closeButtonClassName).toContain('focus-ring-visible')
     expect(closeButtonClassName).toContain('[@media(pointer:coarse)]')
   })
 
@@ -234,9 +233,7 @@ describe('CardButton', () => {
   it('includes focus-visible ring classes', () => {
     render(<CardButton>Focus</CardButton>)
     const btn = screen.getByRole('button', { name: 'Focus' })
-    expect(btn.className).toContain('focus-visible:outline-none')
-    expect(btn.className).toContain('focus-visible:ring-[3px]')
-    expect(btn.className).toContain('focus-visible:ring-ring/50')
+    expect(btn.className).toContain('focus-ring-visible')
   })
 
   it('forwards ref', () => {
@@ -405,9 +402,7 @@ describe('ListItem', () => {
       </ul>,
     )
     const li = q(container, 'li')
-    expect(li.className).toContain('focus-visible:outline-none')
-    expect(li.className).toContain('focus-visible:ring-[3px]')
-    expect(li.className).toContain('focus-visible:ring-ring/50')
+    expect(li.className).toContain('focus-ring-visible')
   })
 })
 
@@ -431,9 +426,7 @@ describe('Input', () => {
   it('includes focus-visible ring classes', () => {
     render(<Input data-testid="test-input" />)
     const el = screen.getByTestId('test-input')
-    expect(el.className).toContain('focus-visible:ring-[3px]')
-    expect(el.className).toContain('focus-visible:ring-ring/50')
-    expect(el.className).toContain('focus-visible:outline-hidden')
+    expect(el.className).toContain('focus-ring-visible')
   })
 
   it('forwards ref', () => {

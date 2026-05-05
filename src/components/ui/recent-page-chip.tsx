@@ -38,7 +38,7 @@ const chipClass = cn(
   // hover — clearer interactive state
   'hover:border-accent hover:bg-accent hover:text-accent-foreground',
   // focus — standard 3 px ring per AGENTS.md (this is a chip, not a link)
-  'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'focus-ring-visible',
   // UX-284 keyboard-traversal indicator
   'focus-visible:bg-accent/60',
 )

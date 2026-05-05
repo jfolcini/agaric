@@ -226,7 +226,7 @@ export function BlockPropertyEditor({
         // see a navigable list rather than a stack of generic buttons.
         // Mirrors the in-repo pattern in `TagValuePicker.tsx:172–199`.
         (() => {
-          const selectedIdx = selectOptions.findIndex((opt) => opt === editingProp.value)
+          const selectedIdx = selectOptions.indexOf(editingProp.value)
           const optionId = (i: number) => `${selectListboxId}-option-${i}`
           return (
             <div

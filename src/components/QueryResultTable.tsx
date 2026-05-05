@@ -59,7 +59,7 @@ export function QueryResultTable({
               >
                 <button
                   type="button"
-                  className="touch-target flex w-full items-center gap-1 px-3 py-1.5 text-left select-none hover:bg-muted/40 transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="touch-target flex w-full items-center gap-1 px-3 py-1.5 text-left select-none hover:bg-muted/40 transition-colors focus-ring-visible"
                   aria-label={t('queryResult.sortBy', { column: col.label })}
                   onClick={() => onColumnSort(col.key)}
                   onKeyDown={(e) => {

@@ -47,7 +47,7 @@ export function PageTreeItem({
       >
         <button
           type="button"
-          className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer rounded focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+          className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer rounded focus-ring-visible"
           onClick={() => onNavigate(leafId, node.fullPath)}
         >
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -84,14 +84,14 @@ export function PageTreeItem({
             type="button"
             onClick={() => !forceExpand && setExpanded(!expanded)}
             aria-label={t('pageTree.toggleNamespace', { path: node.fullPath })}
-            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center gap-1 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center gap-1 focus-ring-visible"
           >
             <ChevronToggle isExpanded={isExpanded} />
             <HighlightMatch text={node.name} filterText={filterText} />
           </button>
           <button
             type="button"
-            className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
+            className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
             aria-label={t('pageTree.createUnder', { path: node.fullPath })}
             onClick={(e) => {
               e.stopPropagation()
@@ -127,13 +127,13 @@ export function PageTreeItem({
           type="button"
           onClick={() => !forceExpand && setExpanded(!expanded)}
           aria-label={t('pageTree.toggleHybrid', { path: node.fullPath })}
-          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center focus-ring-visible"
         >
           <ChevronToggle isExpanded={isExpanded} />
         </button>
         <button
           type="button"
-          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate focus-ring-visible"
           onClick={() => onNavigate(hybridId, node.fullPath)}
           title={node.fullPath}
         >
@@ -141,7 +141,7 @@ export function PageTreeItem({
         </button>
         <button
           type="button"
-          className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
+          className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
           aria-label={t('pageTree.createUnder', { path: node.fullPath })}
           onClick={(e) => {
             e.stopPropagation()

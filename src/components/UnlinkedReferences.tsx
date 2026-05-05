@@ -349,7 +349,7 @@ export function UnlinkedReferences({
                   tabIndex={0}
                   onKeyDown={handleContainerKeyDown}
                   aria-label={t('unlinkedRefs.listLabel')}
-                  className="unlinked-references-list focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="unlinked-references-list focus-ring-visible"
                 >
                   <CollapsibleGroupList
                     groups={groups}

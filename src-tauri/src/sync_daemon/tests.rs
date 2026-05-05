@@ -775,18 +775,16 @@ async fn try_sync_with_peer_respects_backoff_gate() {
         "peer must be in backoff after failure"
     );
 
-    try_sync_with_peer(
-        &pool,
-        "LOCAL_DEV",
-        &materializer,
-        &scheduler,
-        &event_sink,
-        &peer,
-        &refs,
-        &cancel,
-        &cert,
-    )
-    .await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_DEV",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+    try_sync_with_peer(&ctx, &peer, &refs).await;
 
     // No events — backoff gate prevents any progress
     assert_eq!(
@@ -828,20 +826,19 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     };
     let refs = vec![make_peer_ref("PEER_UNREACHABLE")];
 
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_DEV",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
     // Wrap in timeout to prevent test from hanging if connect blocks
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        try_sync_with_peer(
-            &pool,
-            "LOCAL_DEV",
-            &materializer,
-            &scheduler,
-            &event_sink,
-            &peer,
-            &refs,
-            &cancel,
-            &cert,
-        ),
+        try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await;
 
@@ -1089,18 +1086,16 @@ async fn try_sync_with_peer_skips_peer_with_no_addresses() {
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
 
-    try_sync_with_peer(
-        &pool,
-        "LOCAL",
-        &materializer,
-        &scheduler,
-        &event_sink,
-        &peer,
-        &refs,
-        &cancel,
-        &cert,
-    )
-    .await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+    try_sync_with_peer(&ctx, &peer, &refs).await;
 
     // No events — address resolution fails before "connecting" event
     assert_eq!(
@@ -1139,18 +1134,16 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
     // Acquire the per-peer lock before calling try_sync_with_peer
     let _guard = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
 
-    try_sync_with_peer(
-        &pool,
-        "LOCAL",
-        &materializer,
-        &scheduler,
-        &event_sink,
-        &peer,
-        &refs,
-        &cancel,
-        &cert,
-    )
-    .await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+    try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert_eq!(
         sink.events().len(),
@@ -1264,19 +1257,18 @@ async fn try_sync_with_peer_clears_cancel_flag_after_connection_failure() {
     };
     let refs = vec![make_peer_ref("PEER_FAIL")];
 
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_DEV",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        try_sync_with_peer(
-            &pool,
-            "LOCAL_DEV",
-            &materializer,
-            &scheduler,
-            &event_sink,
-            &peer,
-            &refs,
-            &cancel,
-            &cert,
-        ),
+        try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await;
 
@@ -1325,18 +1317,16 @@ async fn s11_cancel_cleared_on_backoff_early_exit() {
         "peer must be in backoff"
     );
 
-    try_sync_with_peer(
-        &pool,
-        "LOCAL",
-        &materializer,
-        &scheduler,
-        &event_sink,
-        &peer,
-        &refs,
-        &cancel,
-        &cert,
-    )
-    .await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+    try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
         !cancel.load(Ordering::Acquire),
@@ -1368,18 +1358,16 @@ async fn s11_cancel_cleared_on_already_syncing_early_exit() {
     // Hold the per-peer lock so the function returns early
     let _lock = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
 
-    try_sync_with_peer(
-        &pool,
-        "LOCAL",
-        &materializer,
-        &scheduler,
-        &event_sink,
-        &peer,
-        &refs,
-        &cancel,
-        &cert,
-    )
-    .await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+    try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
         !cancel.load(Ordering::Acquire),
@@ -1408,18 +1396,16 @@ async fn s11_cancel_cleared_on_no_addresses_early_exit() {
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
 
-    try_sync_with_peer(
-        &pool,
-        "LOCAL",
-        &materializer,
-        &scheduler,
-        &event_sink,
-        &peer,
-        &refs,
-        &cancel,
-        &cert,
-    )
-    .await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+    try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
         !cancel.load(Ordering::Acquire),
@@ -3767,19 +3753,18 @@ async fn try_sync_with_peer_returns_true_when_cancel_observed_during_session_m46
     };
     let refs = vec![make_peer_ref("PEER_M46_FAIL")];
 
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_M46",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        try_sync_with_peer(
-            &pool,
-            "LOCAL_M46",
-            &materializer,
-            &scheduler,
-            &event_sink,
-            &peer,
-            &refs,
-            &cancel,
-            &cert,
-        ),
+        try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await
     .expect("must complete within timeout");
@@ -3819,18 +3804,16 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     scheduler.record_failure("PEER_M46_BACK");
     assert!(!scheduler.may_retry("PEER_M46_BACK"));
 
-    let result = try_sync_with_peer(
-        &pool,
-        "LOCAL_M46_B",
-        &materializer,
-        &scheduler,
-        &event_sink,
-        &peer,
-        &refs,
-        &cancel,
-        &cert,
-    )
-    .await;
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_M46_B",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+    let result = try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
         !result,

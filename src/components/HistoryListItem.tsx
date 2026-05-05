@@ -255,7 +255,7 @@ export function HistoryListItem({
           onClick={(e) => e.stopPropagation()}
           className={cn(
             'h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:size-11',
-            'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-offset-1',
+            'focus-ring-visible focus-visible:ring-offset-1',
           )}
           aria-label={t('history.selectOperationLabel', {
             opType: entry.op_type,

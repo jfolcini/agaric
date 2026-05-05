@@ -449,7 +449,7 @@ function App() {
               // under the iPhone home indicator / Android gesture bar.
               // `scroll-pb-[env(…)]` extends the scroll end so keyboard
               // scroll-into-view stops short of the inset as well.
-              viewportClassName="p-4 md:p-6 focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50 pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] scroll-pb-[env(safe-area-inset-bottom)]"
+              viewportClassName="p-4 md:p-6 focus-ring-visible pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] scroll-pb-[env(safe-area-inset-bottom)]"
               data-slot="main-content"
             >
               <div

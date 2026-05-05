@@ -211,8 +211,7 @@ describe('Breadcrumb', () => {
       const btn = screen.getByText('Alpha').closest('button') as HTMLButtonElement
       expect(btn.className).toContain('focus-visible:underline')
       expect(btn.className).toContain('focus-visible:outline-hidden')
-      expect(btn.className).not.toContain('focus-visible:ring-[3px]')
-      expect(btn.className).not.toContain('ring-ring/50')
+      expect(btn.className).not.toContain('focus-ring-visible')
     })
 
     it('non-active crumbs do NOT carry rounded-sm or px-1 padding (no button-bar look)', () => {
@@ -242,8 +241,7 @@ describe('Breadcrumb', () => {
       const homeBtn = screen.getByRole('button', { name: 'Home' })
       expect(homeBtn.className).toContain('rounded-sm')
       expect(homeBtn.className).toContain('hover:bg-accent/40')
-      expect(homeBtn.className).toContain('focus-visible:ring-[3px]')
-      expect(homeBtn.className).toContain('focus-visible:ring-ring/50')
+      expect(homeBtn.className).toContain('focus-ring-visible')
       // The text-link styling that has no effect on a single icon must be gone.
       expect(homeBtn.className).not.toContain('hover:underline')
       expect(homeBtn.className).not.toContain('focus-visible:underline')
@@ -259,8 +257,7 @@ describe('Breadcrumb', () => {
       const trigger = screen.getByRole('button', { name: /show hidden breadcrumbs/i })
       expect(trigger.className).toContain('rounded-sm')
       expect(trigger.className).toContain('hover:bg-accent/40')
-      expect(trigger.className).toContain('focus-visible:ring-[3px]')
-      expect(trigger.className).toContain('focus-visible:ring-ring/50')
+      expect(trigger.className).toContain('focus-ring-visible')
       expect(trigger.className).not.toContain('hover:underline')
       expect(trigger.className).not.toContain('focus-visible:underline')
     })

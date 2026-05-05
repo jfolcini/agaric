@@ -122,7 +122,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                 type="button"
                 aria-label={t('attachments.delete', { name: attachment.filename })}
                 className={cn(
-                  'shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
+                  'shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-ring-visible active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
                   pendingDeleteId === attachment.id
                     ? 'text-destructive opacity-100 bg-destructive/10'
                     : 'text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100',

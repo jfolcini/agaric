@@ -398,7 +398,7 @@ function SpaceRowEditor({
               className={cn(
                 'inline-flex items-center justify-center rounded-full ring-offset-background transition-all',
                 'h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
-                'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                'focus-ring-visible',
                 'disabled:opacity-50 disabled:cursor-not-allowed',
                 accent === swatch.token && 'ring-2 ring-ring ring-offset-2',
               )}
@@ -581,7 +581,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
               className={cn(
                 'inline-flex items-center justify-center rounded-full ring-offset-background transition-all',
                 'h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
-                'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                'focus-ring-visible',
                 accent === swatch.token && 'ring-2 ring-ring ring-offset-2',
               )}
               style={{ backgroundColor: `var(--${swatch.token})` }}

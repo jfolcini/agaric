@@ -135,7 +135,7 @@ export function QuickCaptureRow(): React.ReactElement | null {
               placeholder={defaultQuickCaptureShortcut()}
               aria-label={t('settings.quickCapture.label')}
               disabled={pending}
-              className="flex-1 rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+              className="flex-1 rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs focus-visible:border-ring focus-ring-visible"
               data-testid="quick-capture-shortcut-input"
             />
             <Button

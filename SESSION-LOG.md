@@ -2,11 +2,69 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 670 (closed PEND-21 (both items) + PEND-24 H1 + H3 + M1 — both PEND-21 and PEND-24 are now FULLY CLOSED, plan files deleted; 12 plan files left in `pending/`) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1147+ items.
+**Sessions:** 1 – 671 (closed PEND-23 M6 + L2 + L9 + PEND-28a M1 + M3 — PEND-23 is now FULLY CLOSED, plan file deleted; 13 plan files left in `pending/`) | **Latest entry:** 2026-05-04 | **Previously resolved counter:** 1152+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 671 — closed PEND-23 M6 + L2 + L9 + PEND-28a M1 + M3 (2026-05-04)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-04 |
+| **Subagents** | 4 build (A=PEND-23 M6+L9 frontend sweep, B=PEND-23 L2 URL validation extraction, C=PEND-28a M1 block_drafts orphan sweep wiring, D=PEND-28a M3 SyncSessionContext struct extraction) + 0 reviewers (subagents self-validated). 2 frontend + 2 Rust; non-overlapping file scopes; explicit no-stash-no-checkout guidance. Subagent C noted a transient mid-flight compile error from D's parallel signature change in `sync_daemon/orchestrator.rs`; waited and retried successfully (no working-tree damage). |
+| **Items closed** | 5 sub-items: PEND-23 M6 (focus-ring `@utility` extraction across 31 source files + 16 test files, includes L12 fold-in) + L9 (`MenuPopoverContent` wrapper, 6 menus migrated) + L2 (`src/lib/url-validation.ts` extraction with 40 tests); PEND-28a M1 (`spawn_orphan_drafts_sweeper` boot one-shot + hourly tick wired in `lib.rs::run`) + M3 (`SyncSessionContext<'a>` struct extracted, `try_sync_with_peer` from 9 args to 3). **PEND-23 fully closed — plan file deleted.** PEND-28a down to 4 items (H1, H2, M2, M4). Pending folder: 14 → 13 plan files. |
+| **Items modified** | — |
+| **Tests added** | +1 backend (`draft::tests::spawn_orphan_drafts_sweeper_runs_boot_one_shot`); +44 frontend (40 in `url-validation.test.ts` + 4 in `menu-popover-content.test.ts`); ~30 frontend assertions flipped across 16 existing test files (focus-ring class string → utility class). 0 tests removed. |
+| **Files touched** | 65 source/test + 1 inline comment edit (`recovery/draft_recovery.rs`, stale "no FK" comment from M-93) + 4 docs (PEND-23 deleted, PEND-28a updated, README, REVIEW-LATER, SESSION-LOG, FEATURE-MAP). |
+
+**Summary:** Mixed-stack closing batch. 4 parallel subagents on non-overlapping file scopes. **PEND-23 fully closed** — third plan file shipped + deleted in this 7-session cycle (665-671). M6's "deserves its own session" caveat from session 669 turned out to be conservative — the sweep was mechanical (sed-style replacement of 52 verbatim 3-class instances + 16 test-file assertion flips) and shipped cleanly in one subagent, with bespoke focus patterns (Button/Badge `border-ring`, Checkbox/Switch bare 2-class, destructive `ring-destructive/50`, `ring-offset-1` extras) explicitly skipped. L9's `MenuPopoverContent` wrapper introduces a single canonical width (`w-64 max-w-[calc(100vw-1.5rem)]`) for menu-style popovers; form-style popovers (calendars, link/code/heading editors, date pickers, IP input, JSON editor, color palettes) intentionally NOT migrated — the wrapper is for menus only. L2 extracted URL validation into a pure-TS module with 40 vitest cases (above the 10-15 plan target — the existing `LinkEditPopover.test.tsx` `describe('normalizeUrl')` block migrated faithfully). PEND-28a M1 wired the dormant `sweep_orphan_drafts` into a `tokio::spawn` periodic loop mirroring `materializer::retry_queue::spawn_sweeper`'s shape (boot one-shot + hourly tick + AtomicBool shutdown); the doc comment at `draft.rs:124-139` also got the stale "no FK — M-93" wording corrected (FK was added in migration 0038). PEND-28a M3 lifted 7 session-wide fields out of `try_sync_with_peer`'s 9-arg signature into a `pub(crate) struct SyncSessionContext<'a>`, dropping the function to 3 args and removing `#[allow(clippy::too_many_arguments)]`. After-tree summary: 9527/9527 vitest, 3518/3518 nextest, `prek run --all-files` green after `cargo fmt` auto-fix on a wrapped `Duration::from_secs(3600)` line, biome `--write` auto-fix on 4 multi-line JSX format issues introduced by the M6 sweep + L9 wrapper migration, and one biome `--unsafe --write` fix on a pre-existing `findIndex(opt => opt === value)` → `indexOf(value)` simplification in `BlockPropertyEditor.tsx` that biome's lint surfaced when checking files in this session's change-set. AGENTS.md NOT modified.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 37 → 37 (no items added, none removed)
+- **Previously resolved:** 1147+ → 1152+ across 670 → 671 sessions
+
+**Plan files closed (and deleted):**
+- `pending/PEND-23-ux-review-findings.md` (4 HIGH + 10 MEDIUM + 17 LOW total — fully shipped sessions 665-671 across 7 sessions)
+
+**Files touched (this session):**
+
+Frontend (PEND-23 M6 + L9):
+- `src/index.css` (+12): new `@utility focus-ring-visible { &:focus-visible { @apply outline-hidden ring-[3px] ring-ring/50; } }` next to existing `focus-ring` (untouched).
+- `src/components/ui/menu-popover-content.tsx` (NEW, ~40 LOC): `forwardRef`-based wrapper around `<PopoverContent>` locked to `w-64 max-w-[calc(100vw-1.5rem)]`, preserves `data-slot="popover-content"` for e2e selector compat.
+- `src/components/ui/__tests__/menu-popover-content.test.tsx` (NEW, ~67 LOC, 4 cases).
+- 31 source files getting M6 `focus-ring-visible` migration (52 occurrences swept): `App.tsx`, `AttachmentList`, `BlockInlineControls` (×4), `CollapsiblePanelHeader`, `HistoryListItem`, `JournalPage`, `PageAliasSection`, `PageHeaderMenu` (×9), `PageTagSection`, `PageTreeItem` (×6), `PropertyChip` (×2), `QueryResultTable`, `SearchPanel`, `SearchablePopover`, `SpaceManageDialog` (×2), `TabBar` (×2), `UnlinkedReferences`, `settings/QuickCaptureRow`, plus `ui/{alert-list-item, breadcrumb, calendar, card-button, close-button, filter-pill, input, list-item, popover-menu-item, recent-page-chip, search-input, select, textarea}`.
+- 16 test files getting assertion flips: `breadcrumb.test.tsx`, `PageAliasSection.test.tsx`, `textarea.test.tsx`, `input.test.tsx`, `SortableBlock.test.tsx`, `SearchablePopover.test.tsx`, `HistoryListItem.test.tsx`, `PageHeaderMenu.test.tsx`, `PageTreeItem.test.tsx`, `BlockInlineControls.test.tsx`, `select.test.tsx`, `primitives.test.tsx` (4 inline sites), `filter-pill.test.tsx`, `PropertyChip.test.tsx`, `PageTagSection.test.tsx`, `CollapsiblePanelHeader.test.tsx`, `popover-menu-item.test.tsx`, `alert-list-item.test.tsx`.
+- 6 menu-popover migrations to `MenuPopoverContent`: `TabBar.tsx:265`, `PageHeaderMenu.tsx:157` (note: width change `w-56`→`w-64`, deliberate per canonical), `SourcePageFilter.tsx:130`, `SearchablePopover.tsx:146`, `PageTagSection.tsx:65`, `AddPropertyPopover.tsx:141`. Plus `GraphFilterBar.tsx:473` got the missing `max-w-[calc(100vw-2rem)]` clamp added directly (form, not menu).
+
+Frontend (PEND-23 L2):
+- `src/lib/url-validation.ts` (NEW, 59 LOC): `normalizeUrl(raw): string | null` + `isAllowedUrl(url): boolean`. Blocked schemes: `javascript:`, `vbscript:`, `data:`, `file:`, `blob:`, `about:`.
+- `src/lib/__tests__/url-validation.test.ts` (NEW, 112 LOC, 40 cases via `it.each` matrices).
+- `src/components/LinkEditPopover.tsx` (−36 net): inline `BLOCKED_URL_SCHEMES` const + `normalizeUrl` function deleted; `import { normalizeUrl } from '@/lib/url-validation'` added; `handleApply()` body unchanged (existing `if (!normalized)` guard works for both `null` and `''`).
+- `src/components/__tests__/LinkEditPopover.test.tsx` (−93 net): orphaned `describe('normalizeUrl')` block deleted (40 cases moved to the new test file); top-of-file docstring pointer added.
+
+Frontend (orchestrator biome auto-fixes):
+- `src/components/BlockPropertyEditor.tsx` (1 LOC): `selectOptions.findIndex((opt) => opt === editingProp.value)` → `selectOptions.indexOf(editingProp.value)` (biome `--unsafe --write` fix on a pre-existing nit; behavior-equivalent).
+
+Rust (PEND-28a M1):
+- `src-tauri/src/draft.rs` (+75/−5): doc comment update at lines 124-139 (corrected stale "no FK" wording, references new caller); `pub const ORPHAN_DRAFTS_SWEEP_INTERVAL = Duration::from_secs(3600)`; `spawn_orphan_drafts_sweeper(pool, interval, shutdown_flag)` mirroring `materializer::retry_queue::spawn_sweeper`'s shape.
+- `src-tauri/src/lib.rs` (+26): `OrphanDraftsSweeperShutdown` managed-state newtype + `tauri::async_runtime::spawn(spawn_orphan_drafts_sweeper(...))` wired right after the existing `materializer::retry_queue::spawn_sweeper` invocation.
+- `src-tauri/src/draft/tests.rs` (+56): `spawn_orphan_drafts_sweeper_runs_boot_one_shot` test seeds an orphan, spawns the sweeper, polls until the boot one-shot drains the row, then sets the shutdown flag.
+- `src-tauri/src/recovery/draft_recovery.rs` (+3/−3, comment-only): orchestrator-applied 1-LOC stale comment fix flagged by the M1 subagent — "no FK" updated to reference the new sweeper.
+
+Rust (PEND-28a M3):
+- `src-tauri/src/sync_daemon/orchestrator.rs` (+50/−18 net): `pub(crate) struct SyncSessionContext<'a>` definition + `try_sync_with_peer` signature change (9 args → 3) + body refactored to read `ctx.field` + 3 `daemon_loop` call sites construct the context.
+- `src-tauri/src/sync_daemon/mod.rs` (+1/−1): `SyncSessionContext` added to `pub(crate) use` re-export so `tests.rs` (using `use super::*`) can name it.
+- `src-tauri/src/sync_daemon/tests.rs` (+90/−80 net): 10 test fixture call sites updated to construct + pass `&ctx`.
+
+Docs:
+- `pending/PEND-23-ux-review-findings.md` (DELETED, 509 lines): all 31 sub-items shipped sessions 665-671.
+- `pending/PEND-28-rust-maintainability-review-findings.md` (M1 + M3 marked done; 4 remaining: H1, H2, M2, M4).
+- `pending/README.md`: removed PEND-23 row + mid-tier bullet; updated PEND-28a status to "2 of 6 done session 671".
+- `pending/REVIEW-LATER.md`: header line updated for session 671.
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: new "Frontend Design-System Consolidation (session 671, PEND-23 M6 + L2 + L9)" + "Backend Maintainability Misc (session 671, PEND-28a M1 + M3)" subsections in Section 10. Also updated the L12 entry from "M6 still pending" to "Folded into M6 in session 671".
 
 ## Session 670 — closed PEND-21 (both items) + PEND-24 H1 + H3 + M1 (2026-05-04)
 

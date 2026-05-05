@@ -76,9 +76,9 @@ Everything else was either:
 | --- | --- | --- | --- | --- | --- |
 | **H1** — Canonical `BlockRow` SELECT clause repeated 34× across 15 files | HIGH | M (4-7 h) | low | medium-high | ready |
 | **H2** — `apply_op_tx` is a 387-line per-op dispatcher with deeply nested arms | HIGH | M (4-8 h) | low | medium | ready |
-| **M1** — `block_drafts` orphan sweep is documented as needing periodic invocation but no caller exists | MEDIUM | trivial-S (~1 h) | low | low-medium | ready |
+| **M1** — `block_drafts` orphan sweep is documented as needing periodic invocation but no caller exists | MEDIUM | trivial-S (~1 h) | low | low-medium | ✅ done session 671 — `spawn_orphan_drafts_sweeper` mirrors `materializer::retry_queue::spawn_sweeper` pattern (boot one-shot + hourly tick); wired in `lib.rs::run` next to the existing sweeper; `tracing::info!` on rows_affected ≥1; `OrphanDraftsSweeperShutdown` managed-state newtype for clean shutdown. Doc comment at `draft.rs:124-139` updated to reference the new caller and corrected the stale "no FK" wording (FK was added in migration 0038). |
 | **M2** — `set_property_in_tx` is ~258 lines mixing validation, op-log append, and materialization | MEDIUM | S (2-4 h) | low | medium | ready |
-| **M3** — `try_sync_with_peer` has 9 args with parallel call sites cloning identical state | MEDIUM | S (1-2 h) | low | low-medium | ready |
+| **M3** — `try_sync_with_peer` has 9 args with parallel call sites cloning identical state | MEDIUM | S (1-2 h) | low | low-medium | ✅ done session 671 — `pub(crate) struct SyncSessionContext<'a>` lifted 7 session-wide fields (pool, device_id, materializer, scheduler, event_sink, cancel, cert) out of the 9-arg signature; `try_sync_with_peer` now takes `(ctx: &SyncSessionContext<'_>, peer, peer_refs)` (3 args); `peer_refs` stayed positional (cycle-specific, not session-wide); `#[allow(clippy::too_many_arguments)]` removed; 10 test-fixture call sites updated. |
 | **M4** — `enqueue_background_tasks` is ~174 lines of imperative per-op cache-invalidation routing | MEDIUM | S (2-3 h) | low | low-medium | ready |
 
 H1 + H2 are the headline items. H1 is mechanical (introduce a

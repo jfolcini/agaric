@@ -13,7 +13,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -138,10 +139,7 @@ export function AddPropertyPopover({
           triggerButton
         )}
       </PopoverTrigger>
-      <PopoverContent
-        className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
-        aria-label={t('pageProperty.pickerLabel')}
-      >
+      <MenuPopoverContent className="space-y-2 p-3" aria-label={t('pageProperty.pickerLabel')}>
         <Input
           placeholder={t('pageProperty.searchPlaceholder')}
           value={defSearch}
@@ -212,7 +210,7 @@ export function AddPropertyPopover({
             </Button>
           </div>
         )}
-      </PopoverContent>
+      </MenuPopoverContent>
     </Popover>
   )
 }

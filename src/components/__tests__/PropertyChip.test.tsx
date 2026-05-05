@@ -265,13 +265,7 @@ describe('PropertyChip', () => {
 
     const keyButton = screen.getByRole('button', { name: /Edit property/ })
     const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
-    for (const cls of [
-      'focus-visible:ring-[3px]',
-      'focus-visible:ring-ring/50',
-      'focus-visible:outline-hidden',
-    ]) {
-      expect(keyButton.className).toContain(cls)
-      expect(valueButton.className).toContain(cls)
-    }
+    expect(keyButton.className).toContain('focus-ring-visible')
+    expect(valueButton.className).toContain('focus-ring-visible')
   })
 })

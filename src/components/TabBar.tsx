@@ -37,7 +37,8 @@ import { Check, ChevronDown, X } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
@@ -262,10 +263,10 @@ export function TabBar(): React.ReactElement | null {
               button
             )
           })}
-          <PopoverContent
+          <MenuPopoverContent
             align="start"
             sideOffset={4}
-            className="w-64 p-1 max-w-[calc(100vw-2rem)]"
+            className="p-1"
             role="menu"
             aria-label={t('tabs.tabList')}
             onKeyDown={handleDropdownKeyDown}
@@ -294,7 +295,7 @@ export function TabBar(): React.ReactElement | null {
                     aria-checked={isActive}
                     data-state={isActive ? 'checked' : 'unchecked'}
                     tabIndex={dropdownFocusedIndex === activateIdx ? 0 : -1}
-                    className="flex flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                    className="flex flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-ring-visible"
                     onClick={() => {
                       switchTab(i)
                       setDropdownOpen(false)
@@ -323,7 +324,7 @@ export function TabBar(): React.ReactElement | null {
                     data-tab-dropdown-close=""
                     tabIndex={dropdownFocusedIndex === closeIdx ? 0 : -1}
                     aria-label={t('tabs.closeTab', { label: displayTitle })}
-                    className="mr-1 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 cursor-pointer [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                    className="mr-1 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 cursor-pointer [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 focus-ring-visible"
                     onClick={(e) => {
                       // Keep the dropdown open when the close item fires —
                       // the user likely wants to prune several tabs in a row.
@@ -344,7 +345,7 @@ export function TabBar(): React.ReactElement | null {
                 </div>
               )
             })}
-          </PopoverContent>
+          </MenuPopoverContent>
         </Popover>
       </div>
     </ScrollArea>

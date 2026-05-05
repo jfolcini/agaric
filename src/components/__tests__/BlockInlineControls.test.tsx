@@ -522,8 +522,7 @@ describe('BlockInlineControls', () => {
     it('applies the shared focus-visible ring classes', () => {
       renderControls(makeProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
-      expect(overflow.className).toContain('focus-visible:ring-[3px]')
-      expect(overflow.className).toContain('focus-visible:ring-ring/50')
+      expect(overflow.className).toContain('focus-ring-visible')
     })
 
     it('applies max-sm: touch target padding', () => {

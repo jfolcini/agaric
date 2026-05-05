@@ -541,7 +541,7 @@ export function SearchPanel(): React.ReactElement {
           <button
             type="button"
             onClick={handleClearAllFilters}
-            className="text-xs text-muted-foreground hover:text-foreground underline ml-1 rounded-sm focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="text-xs text-muted-foreground hover:text-foreground underline ml-1 rounded-sm focus-ring-visible"
           >
             {t('search.clearAll')}
           </button>

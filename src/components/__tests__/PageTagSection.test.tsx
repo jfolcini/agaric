@@ -236,9 +236,7 @@ describe('PageTagSection UX-1 / UX-2', () => {
     render(<PageTagSection {...defaultProps} appliedTags={[TAG_1]} allTags={[TAG_1]} />)
 
     const removeBtn = screen.getByRole('button', { name: /remove tag urgent/i })
-    expect(removeBtn.className).toContain('focus-visible:ring-[3px]')
-    expect(removeBtn.className).toContain('focus-visible:ring-ring/50')
-    expect(removeBtn.className).toContain('focus-visible:outline-hidden')
+    expect(removeBtn.className).toContain('focus-ring-visible')
   })
 
   it('available-tag picker rows render via the Button primitive (focus ring inherited)', () => {

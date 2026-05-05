@@ -124,7 +124,7 @@ const homeButtonClass = cn(
   'text-muted-foreground transition-colors',
   'hover:bg-accent/40 hover:text-foreground',
   'focus-visible:bg-accent/60 focus-visible:text-foreground',
-  'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'focus-ring-visible',
 )
 
 const overflowTriggerClass = cn(
@@ -132,7 +132,7 @@ const overflowTriggerClass = cn(
   'text-muted-foreground transition-colors',
   'hover:bg-accent/40 hover:text-foreground',
   'focus-visible:bg-accent/60 focus-visible:text-foreground',
-  'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'focus-ring-visible',
 )
 
 export function BreadcrumbSeparator({
