@@ -875,6 +875,23 @@ describe('BlockHistoryItem', () => {
     expect(screen.queryByRole('button', { expanded: true })).not.toBeInTheDocument()
   })
 
+  it('shows lock affordance + non-reversible label on non-restorable rows (MAINT-220)', () => {
+    // Non-edit_block ops are non-restorable. Without a visible cue, the
+    // user has no explanation for why the row doesn't respond to clicks.
+    // The lock affordance + visible label mirrors the legacy
+    // `HistoryListItem` rendering at lines ~330-344.
+    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
+    expect(screen.getByText('Non-reversible action')).toBeInTheDocument()
+  })
+
+  it('does not show the lock affordance on restorable rows', () => {
+    // Restorable rows shouldn't carry the "non-reversible" label —
+    // that would be visually misleading (these rows DO respond to
+    // clicks).
+    renderInList(blockDefaultProps())
+    expect(screen.queryByText('Non-reversible action')).not.toBeInTheDocument()
+  })
+
   it('row click calls onExpandToggle(entry, true) when collapsed', async () => {
     const user = userEvent.setup()
     const onExpandToggle = vi.fn()
