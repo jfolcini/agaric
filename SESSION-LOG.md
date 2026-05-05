@@ -2,22 +2,22 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 679 (PEND-12 Phase 0 spike returned KILL — sqlx 0.8.6 `query!()` rejects `include_str!(concat!(env!("OUT_DIR"), …))` per upstream issue #3388; plan rejected and deleted, fallback drift-test tracked under MAINT-172; pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1164+ items.
+**Sessions:** 1 – 679 (PEND-15 Phase 0 audit binary LANDED + PEND-12 Phase 0 spike KILL — two distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs` (4 audit categories, 11 inline tests, read-only DB access); user runs it next to inform the gating tags Path A/B decision. PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388; pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1164+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
-## Session 679 — PEND-12 Phase 0 spike returned KILL; plan rejected and deleted (2026-05-05)
+## Session 679 — PEND-15 Phase 0 audit binary + PEND-12 Phase 0 spike KILL (2026-05-05)
 
 | Metadata | Value |
 |----------|-------|
 | **Date** | 2026-05-05 |
-| **Subagents** | 1 build (Phase 0 spike) — KILL verdict on first attempt; no reviewer needed since no code shipped (subagent reverted spike artifacts per its instructions). UX dimension N/A (no user-facing change). |
-| **Items closed** | PEND-12 plan REJECTED and DELETED per `pending/README.md` "rejected: also delete" convention. Pending folder: 7 → 6 plan files. |
-| **Items modified** | MAINT-172 (re-scoped from "PEND-12 unblocks" to "drift-detection parity test mirroring PEND-28a H1 Option 2's pattern"; cost stays M). |
-| **Tests added** | 0 (spike code reverted before any tests landed). |
-| **Files touched** | 0 source / 4 docs (`pending/PEND-12-space-filter-codegen.md` deleted, `pending/README.md` updated, `pending/REVIEW-LATER.md` updated, `SESSION-LOG.md` this entry). |
+| **Subagents** | 3 (1 build for PEND-12 Phase 0 spike → KILL verdict; 1 build for PEND-15 Phase 0 audit binary → GREEN; 1 technical reviewer for the audit binary → APPROVED CLEAN). UX dimension N/A both times (PEND-12 reverted no code; PEND-15 ships a CLI diagnostic, not user-facing UI). |
+| **Items closed** | PEND-12 plan REJECTED and DELETED per `pending/README.md` "rejected: also delete" convention. PEND-15 progress: Phase 0 LANDED (plan stays open with Phase 1 blocked on the user's Path A/B decision based on audit output). Pending folder: 7 → 6 plan files (PEND-12 deletion). |
+| **Items modified** | MAINT-172 (re-scoped from "PEND-12 unblocks" to "drift-detection parity test mirroring PEND-28a H1 Option 2's pattern"; cost stays M). PEND-15 plan annotated with Session-679 Phase 0 status note. |
+| **Tests added** | +11 backend (all in new `src-tauri/src/bin/audit_cross_space_refs.rs`: 4 CLI parsing + 6 audit-logic + 1 output-format smoke). 0 frontend tests (binary, no UI). |
+| **Files touched** | Two commits. PEND-12 commit: 0 source / 4 docs (plan deleted, README updated, REVIEW-LATER updated, SESSION-LOG entry). PEND-15 Phase 0 commit: 1 NEW source (`src-tauri/src/bin/audit_cross_space_refs.rs`, 916 LOC) + 1 modified config (`src-tauri/Cargo.toml`, +7 LOC) + 11 new sqlx cache files (6 from the audit binary's queries + 5 pre-existing drift absorbed for cleanup) + 4 docs (PEND-15 plan, REVIEW-LATER, SESSION-LOG, pending/README is unchanged since PEND-15 already in index). |
 
 **Summary:** PEND-12 (build.rs `OUT_DIR` codegen for the space-filter SQL fragment, planned 7-11h) was the next item in the Spaces enforcement bundle after PEND-18 shipped in session 678. The plan's Phase 0 spike was mandatory: verify that `sqlx::query!(include_str!(concat!(env!("OUT_DIR"), "/foo.sql")))` actually compiles in this codebase's sqlx version (no in-codebase precedent). The build subagent ran the spike and got a definitive KILL on the first attempt with the exact failure mode the plan body had documented. Per the plan's own kill criterion ("if any of (a)/(b)/(c) fails, fall back to MAINT-172 option 2... document the failure in this file and don't proceed"), the plan is rejected and deleted; the fallback (drift-detection parity test, mirroring PEND-28a H1 Option 2's pattern from session 677) is tracked under MAINT-172 in REVIEW-LATER.md for future scheduling.
 
@@ -34,16 +34,55 @@
 **Plan files closed (and deleted):**
 - `pending/PEND-12-space-filter-codegen.md` (REJECTED — main approach killed by sqlx 0.8.6 limitation; fallback tracked under MAINT-172).
 
+**PEND-15 Phase 0 — audit binary (second commit, post-PEND-12):**
+
+After closing PEND-12, the next bundle item is PEND-15 (Hard space separation, no cross-space links). The plan's Phase 0 is a one-day audit task: enumerate cross-space references in the user's local DB to inform the gating tags Path A vs Path B decision. The build subagent shipped `src-tauri/src/bin/audit_cross_space_refs.rs` (916 LOC) implementing all four audit categories from the plan body:
+- **A1**: cross-space `block_links` rows (source block's space ≠ target block's space).
+- **A2**: cross-space `block_tags` rows (block's space ≠ tag block's space; pre-Path-A all tags have NULL space, so this flags every tagged-non-global block — that's the intended diagnostic).
+- **A3**: cross-space `block_tag_refs` rows (the inline-tag-reference cache; same shape as A2).
+- **A4**: cross-space inline `[[ULID]]` / `((ULID))` / `#[ULID]` tokens in `blocks.content` — Rust-side regex scan over every non-deleted, non-conflict block, lookup each token's target space via an in-memory `FxHashMap<block_id, Option<space>>` join, count violations. Dangling targets (token points at a non-existent block) are silently skipped (per plan).
+
+CLI: `--db-path <PATH>` (default `~/.local/share/com.agaric.app/notes.db` on Linux, app-data dir on macOS, `./notes.db` fallback elsewhere), `--limit <N>` (default 10 examples per category; the COUNT is always full-fidelity, only the per-category sample is capped), `-h`/`--help`, `-V`/`--version`. Hand-rolled parser mirroring `agaric-mcp.rs` precedent — no new crate dependencies. Read-only at the SQLite engine level (`SqliteConnectOptions::new().read_only(true).pragma("foreign_keys", "ON")` + `max_connections(1)`) — safe to run on a live DB while the main app is running. Exit code 0 = no violations, 1 = violations found, 2 = real error (DB not found, schema mismatch).
+
+Tests: 11 inline (4 CLI parsing + 6 audit-logic + 1 output-format smoke). The audit-logic tests use a minimal `make_pool()` helper (re-implemented from `db::init_pool` + `tempfile::TempDir` + direct `sqlx::query` seeds because the lib's `commands::tests::common::test_pool` is `#[cfg(test) pub mod]`, NOT visible to a binary's tests). Coverage: empty-DB (all 0), all-in-one-space (all 0), 1 cross-space link (A1=1, others=0), 1 cross-space block_tag + tag_ref (A2=1, A3=1, others=0), 3 cross-space inline tokens (A4=3, others=0), deleted/conflict blocks correctly excluded.
+
+Reviewer: APPROVED CLEAN. Verdict on each audit query's correctness: A1/A2/A3/A4 all match the plan body's spec. SQLite `IS NOT` semantics (null-aware) are correct for the "Personal-block links to a global block (target_space = NULL)" case. Tag-block space resolution via `COALESCE(tag.page_id, tag.id) → bp.value_ref WHERE bp.key='space'` falls back to `tag.id` for top-level tags (page_id is NULL). Schema-mapping accuracy: `block_links(source_id, target_id)` from migration 0001, `block_tags(block_id, tag_id)` from migration 0001, `block_tag_refs(source_id, tag_id, ...)` from migration 0034. `block_tag_inherited` (migration 0021) is NOT audited because it's rebuilt-from-scratch on boot and would inherit any drift from `block_tag_refs`. Read-only safety verified. Surgical scope confirmed (no edits to `cache/mod.rs`, `space.rs`, migrations, or any production source path; regexes re-declared locally per task spec).
+
+**Sqlx cache hygiene:** the audit binary added 6 new entries (one per `sqlx::query!` invocation). The orchestrator additionally absorbed 5 pre-existing drift entries (queries from `commands/history.rs:847` + `space.rs:337/352` + similar) that earlier `cargo sqlx prepare` runs had silently missed because they didn't pass `--tests`. Verified via `cargo sqlx prepare --check -- --tests` (errored with "missing one or more queries" before the absorption; clean after). Total `.sqlx/` delta: +11 files. The drift entries are legitimate queries from PEND-18 Phase 0/1/2 work in session 678 — including them in this commit is per AGENTS.md "If a Rust change touches SQL queries, run `cargo sqlx prepare -- --tests`" guidance.
+
+**Next: USER must run `cargo run --bin audit_cross_space_refs` against their local DB and share the counts** so the orchestrator can surface the gating tags Path A/B decision (see `pending/PEND-15-hard-space-separation.md` "The tags-scoping question"). Phase 1 (op-emitting severance migration) is blocked on that decision.
+
 **Files touched (this session):**
+
+PEND-12 commit (closeout, no source changes):
 - `pending/PEND-12-space-filter-codegen.md` — DELETED.
 - `pending/README.md` — PEND-12 row removed from index; "Spaces enforcement bundle" section updated to record PEND-12 rejection + reference MAINT-172.
 - `pending/REVIEW-LATER.md` — header line updated for session 679; MAINT-172 detail expanded with the spike outcome + re-scoped fallback work + sqlx#3388 link.
-- `SESSION-LOG.md` — this entry + Quick Reference banner updated.
+- `SESSION-LOG.md` — initial Session 679 entry + Quick Reference banner.
+
+PEND-15 Phase 0 commit (audit binary):
+- `src-tauri/src/bin/audit_cross_space_refs.rs` (NEW, 916 LOC): production code (~580 LOC) covering CLI parsing + 4 audit-category queries + main + helpers, plus 11 inline `#[cfg(test)]` tests (~330 LOC) covering CLI parsing, audit logic for each category, deleted/conflict-block exclusion, and output format pinning.
+- `src-tauri/Cargo.toml` (+7 LOC): new `[[bin]] name = "audit_cross_space_refs" path = "src/bin/audit_cross_space_refs.rs"` entry mirroring the existing `agaric-mcp` `[[bin]]` block; one-line comment explaining purpose.
+- `src-tauri/.sqlx/` (+11 cache files): 6 from the audit binary's `sqlx::query!` invocations + 5 pre-existing drift entries from PEND-18 Phase 0/1/2 work absorbed for cache consistency.
+- `pending/PEND-15-hard-space-separation.md`: added Session-679 status note at the top noting Phase 0 LANDED, the binary's CLI usage + invocation, and that Phase 1 is blocked on the user's Path A/B decision based on audit output.
+- `pending/REVIEW-LATER.md`: header line updated to cover both PEND-15 Phase 0 + PEND-12 KILL.
+- `SESSION-LOG.md`: this PEND-15 sub-section + extended Files touched block + Verification block.
 
 **Verification:**
+
+PEND-12 spike (no source committed; revert verified):
 - Spike subagent: `cargo build --tests` produced the documented `error: expected string literal` at `space_filter_spike.rs:39:19` — confirmed kill criterion fired.
-- After revert: `cargo build` clean (working tree empty before the bookkeeping commit).
-- `prek run --all-files` — green (orchestrator runs at commit time).
+- After revert: `cargo build` clean (working tree empty before the PEND-12 closeout commit).
+
+PEND-15 Phase 0:
+- `cargo build --bin audit_cross_space_refs` — clean.
+- `cargo nextest run --bin audit_cross_space_refs` — 11/11 pass.
+- `cargo nextest run --no-fail-fast` (full suite) — 3597/3597 pass + 4 skipped (was 3586 — +11 from the audit binary's tests).
+- `cargo sqlx prepare --check -- --tests` — clean after absorbing the 5 drift entries (errored with "missing one or more queries" before the absorption).
+- `cargo run --bin audit_cross_space_refs -- --help` — prints usage; confirmed by build subagent.
+- `cargo run --bin audit_cross_space_refs -- --db-path src-tauri/dev.db` (run by build subagent against an empty `init_pool` DB) — exit code 0, "0 violations across 4 categories".
+
+Both commits: `prek run --all-files` — green.
 
 **Process notes:**
 - The build subagent followed PROMPT.md's "kill-criteria" guidance correctly: stopped immediately, reported with definitive evidence (compiler error verbatim + sqlx source-line citations), and reverted the spike artifacts to leave a clean working tree. No reviewer needed because no code shipped.
@@ -53,8 +92,9 @@
 - **`cargo build` alone is insufficient verification for sqlx-macro spikes in `#[cfg(test)]` modules.** The lib build is green; only `cargo build --tests` (or `cargo check --tests`) triggers macro expansion in test modules. Future spike specs that exercise `sqlx::query!`/`query_as!` inside test modules should mandate `cargo build --tests` in the verification recipe, not just `cargo build`.
 - **sqlx `query!` macros require a `LitStr` literal — `include_str!` and `concat!` are off-limits.** This is a hard limitation rooted in `sqlx-macros-core-0.8.6/src/query/input.rs`. Any future plan that proposes "build.rs codegen + `include_str!` composition" for sqlx queries should be marked DEAD-ON-ARRIVAL until upstream sqlx#3388 lands. The fallback (drift-detection parity tests in Rust source) is the right shape for source-level DRY in this codebase, mirroring the precedent set by PEND-28a H1 Option 2 (session 677).
 - **Per `pending/README.md` convention, rejected plans get DELETED, not archived.** The fallback work goes back into REVIEW-LATER as a MAINT-* item with the rejection record + new scoping. Git history + SESSION-LOG.md preserve the trail.
+- **`prek run --all-files` does NOT detect missing `.sqlx/` cache entries.** The audit binary's `cargo sqlx prepare -- --tests` discovered 5 drift entries that earlier sessions had introduced silently — production queries from `commands/history.rs:847` + `space.rs:337/352` (PEND-18 Phase 0 and Phase 2 work) compiled fine via online sqlx (DB connection at compile time) but were never cached because earlier `prepare` runs didn't pass `--tests`. Future sessions touching SQL queries in `#[cfg(test)]` paths should always run `cargo sqlx prepare -- --tests` (not just `prepare`) and verify the cache stays clean via `cargo sqlx prepare --check -- --tests`. Consider adding the `--check` form to prek as a follow-up to catch drift at commit time. (Filed as a future MAINT consideration, not a P0.)
 
-**Commit plan:** single small commit `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test`.
+**Commit plan:** two commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up`.
 
 ---
 

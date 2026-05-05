@@ -1,5 +1,7 @@
 # PEND-15 — Hard space separation (no cross-space links)
 
+> **Status (Session 679):** Phase 0 LANDED. New diagnostic binary `cargo run --bin audit_cross_space_refs` (`src-tauri/src/bin/audit_cross_space_refs.rs`, 916 LOC, 11 inline tests) implements all four audit categories from the plan body (A1 cross-space `block_links`, A2 cross-space `block_tags`, A3 cross-space `block_tag_refs`, A4 inline `[[ULID]]`/`((ULID))`/`#[ULID]` tokens). Read-only at the SQLite engine level (`SqliteConnectOptions::new().read_only(true)`) — safe to run on a live DB while the app is running. CLI: `--db-path` (default `~/.local/share/com.agaric.app/notes.db` on Linux), `--limit` (default 10 examples per category), `--help`, `--version`. Exit code 0 = no violations, 1 = violations found, 2 = error. **Next: USER must run the binary against their local DB and share counts** so the gating tags Path A vs Path B decision can be made (see "The tags-scoping question" below). Phase 1 work is blocked on that decision.
+
 ## Problem
 
 User intent: *"I want spaces separate, no links between them."* Each space is a sealed unit. No ULID inside `blocks.content` of space A may reference a block whose space resolves to space B. No `block_links`, `block_tags`, or `block_tag_refs` row crosses a space boundary. No backlinks display cross-space results.

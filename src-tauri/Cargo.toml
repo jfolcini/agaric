@@ -343,3 +343,10 @@ harness = false
 [[bin]]
 name = "agaric-mcp"
 path = "src/bin/agaric-mcp.rs"
+
+# PEND-15 Phase 0 — read-only audit binary that enumerates cross-space
+# references in a local notes.db. Informs the user's Path A vs Path B
+# gating decision before Phase 1 lands. Standalone (no Tauri app handle).
+[[bin]]
+name = "audit_cross_space_refs"
+path = "src/bin/audit_cross_space_refs.rs"
