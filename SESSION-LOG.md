@@ -2,11 +2,73 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 673 (cherry-pick batch closing PEND-16 + PEND-28a M2 — PEND-16 fully closed, plan file deleted; 12 plan files left in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1156+ items.
+**Sessions:** 1 – 674 (Tier-2 features batch closing PEND-11 + PEND-17 Part A + PEND-33 Layer A — PEND-11 fully closed, plan file deleted; PEND-17 + PEND-33 partial with status notes; 11 plan files left in `pending/`) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1159+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 674 — closed PEND-11 + PEND-17 Part A + PEND-33 Layer A (2026-05-05)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-05 |
+| **Subagents** | 3 build (A=PEND-11 SpaceTopStripe + delete SpaceStatusChip, B=PEND-17 Part A DiffDisplay diff-nav fix, C=PEND-33 Layer A SelectionBubbleMenu) + 0 reviewers (subagents self-validated). All 3 frontend on non-overlapping file scopes. C ran `npm install --save @tiptap/extension-bubble-menu@3.22.4` mid-flight to add the explicit pin (was already present as an optionalDependency of `@tiptap/react` in node_modules); first attempt at `^3.22.4` resolved to `3.22.5` and failed peer-resolution against pinned `@tiptap/core@3.22.4`, so C re-installed at exact `3.22.4` and the recorded line uses the `^3.22.4` caret matching every other TipTap entry. |
+| **Items closed** | 3 sub-items: PEND-11 (Alt A: stripe + drop chip + keep collapsed badge); PEND-17 Part A (DiffDisplay diff-nav fix); PEND-33 Layer A (SelectionBubbleMenu). **PEND-11 fully closed — plan file deleted.** PEND-17 still has Part B (restore-with-preview, 3 open questions for user). PEND-33 still has Layer B (priority + overflow popover, "Stop here for review" gate). Pending folder: 12 → 11 plan files. |
+| **Items modified** | — |
+| **Tests added** | +1 frontend (SpaceTopStripe.test.tsx with axe audit and visibility tests) + 4 new DiffDisplay tests + 2 existing DiffDisplay tests adjusted (1-hunk fixtures replaced with 2-hunk so the nav still renders for the assertion); ~20 mark/link tests moved from `FormattingToolbar.test.tsx` to new `SelectionBubbleMenu.test.tsx` + 39 total new tests in the bubble-menu file (visibility, focus preservation, theming tokens, mark-toggle dispatch, axe a11y audit). +0 backend tests. |
+| **Files touched** | 16 source/test (App.tsx, AppSidebar.tsx, DiffDisplay.tsx, EditableBlock.tsx, FormattingToolbar.tsx, SpaceStatusChip.tsx DELETED, App.test.tsx, AppSidebar.test.tsx, DiffDisplay.test.tsx, EditableBlock.test.tsx, FormattingToolbar.test.tsx, SpaceStatusChip.test.tsx DELETED, src/index.css, src/lib/i18n/common.ts, src/lib/i18n/toolbar.ts) + 4 new files (SelectionBubbleMenu.tsx, SelectionBubbleMenu.test.tsx, SpaceTopStripe.tsx, SpaceTopStripe.test.tsx) + package.json/package-lock.json (explicit @tiptap/extension-bubble-menu pin) + 4 docs (PEND-11 deleted, PEND-17 + PEND-33 status notes prepended, README, REVIEW-LATER, FEATURE-MAP, SESSION-LOG). |
+
+**Summary:** First Tier-2 features batch after the user's earlier "park the sweep cycle / cherry-pick" decision. Three concrete features on independent frontend file scopes; respected each plan's natural review gates rather than steam-rolling through. PEND-11 shipped Alt A in full (refined proposal: stripe + collapsed badge, drop chip) — the four redundant active-space affordances collapse to two ambient cues. PEND-17 shipped Part A only (diff-nav visible feedback); Part B (restore-with-preview) deferred because the plan body has 3 open questions for the user (diff library choice, ConfirmDialog scope for non-preview entry points, default diff mode in new panel) that need answers before implementing. PEND-33 shipped Layer A only (BubbleMenu hoist) per the plan's literal "Stop here for review" gate between layers; Layer B (priority + overflow popover with `useToolbarOverflow` hook) is independently approve-able and waits for user sign-off. Both partial plans got status notes prepended at the top so the next reader sees what's done. The PEND-33 install hit a coupled-dependency footgun: `^3.22.4` resolved to `3.22.5` and failed peer-resolution against the pinned TipTap stack at `@tiptap/core@3.22.4`; subagent C correctly diagnosed and re-pinned to exact `3.22.4`, then recorded `^3.22.4` in package.json (matching every other TipTap entry's caret). After-tree summary: 9698+ vitest, 3553/3553 nextest, `prek run --all-files` green after 3 biome auto-fixes (format-only) + 1 manual a11y mock fix where biome couldn't statically verify a `role` prop variable equals "toolbar" — the mock now hardcodes `role="toolbar"` since the real `BubbleMenu` always does. AGENTS.md NOT modified.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 37 → 37 (no items added or removed)
+- **Previously resolved:** 1156+ → 1159+ across 673 → 674 sessions
+
+**Plan files closed (and deleted):**
+- `pending/PEND-11-space-indicator-redesign.md` (Alt A shipped per refined proposal)
+
+**Plan files updated with status notes (still open):**
+- `pending/PEND-17-block-history-restore-and-diff-nav.md` (Part A done; Part B awaits user answers to 3 open questions)
+- `pending/PEND-33-formatting-toolbar-overflow-handling.md` (Layer A done; Layer B awaits explicit user approval per "Stop here for review" gate)
+
+**Files touched (this session):**
+
+PEND-11 (space indicator redesign):
+- `src/components/SpaceTopStripe.tsx` (NEW, +52 LOC): 3 px fixed-position stripe with `aria-hidden`, `pointer-events-none`, `top-[env(safe-area-inset-top)]` for Android, accent colour from `useSpaceStore`.
+- `src/components/__tests__/SpaceTopStripe.test.tsx` (NEW, +120 LOC): axe audit + visibility tests + data-space-id attribute pin.
+- `src/App.tsx` (+8 LOC): mount `<SpaceTopStripe />` at App level above `<SidebarProvider>`.
+- `src/components/AppSidebar.tsx` (−13 LOC): drop `SpaceStatusChip` import + footer chip slot.
+- `src/components/SpaceStatusChip.tsx` (DELETED, −124 LOC).
+- `src/components/__tests__/SpaceStatusChip.test.tsx` (DELETED, −126 LOC).
+- `src/lib/i18n/common.ts` (−1 LOC): drop `'space.statusChip'` typed key.
+- `src/index.css` (1-word comment update): `SpaceStatusChip` → `SpaceTopStripe`.
+- `src/components/__tests__/AppSidebar.test.tsx` (1-line comment update).
+- `src/components/__tests__/App.test.tsx` (+15 LOC): new test asserting `getByTestId('space-top-stripe')` is in the document with the active space's id.
+
+PEND-17 Part A (DiffDisplay diff-nav fix):
+- `src/components/DiffDisplay.tsx` (+79/−27, 205 → 257 LOC): swapped `hunkStarts` array for `{ hunkStarts, hunkOfSpan }` so every span knows its hunk membership; new `findScrollableAncestor` helper for smart `scrollIntoView` skip; `data-hunk-active="true"` data attribute on every span of the active hunk; `ring-2 ring-ring/60 rounded-sm` Tailwind classes via `cn()` (no new `@utility` — scoped to two JSX sites in one component); nav guarded by `hasNav = hunkStarts.length > 1`; counter moved to the left of prev/next buttons.
+- `src/components/__tests__/DiffDisplay.test.tsx` (+180/−3, 445 → 622 LOC): 4 new tests + 2 existing tests adjusted (1-hunk fixtures replaced with 2-hunk fixtures so the nav still renders for the assertion).
+
+PEND-33 Layer A (SelectionBubbleMenu):
+- `src/components/SelectionBubbleMenu.tsx` (NEW, +252 LOC): TipTap `<BubbleMenu>` (from `@tiptap/react/menus`) with 5 mark toggles + External Link; visibility predicate `({ state }) => !state.selection.empty`; semantic theming via `bg-popover border border-border rounded-md shadow-md`; touch-coarse handled by inherited `size="icon-xs"` (which carries `[@media(pointer:coarse)]:size-11`); `Ctrl+K` `open-link-popover` event listener; LinkEditPopover wiring + savedSelection state moved verbatim from FormattingToolbar.
+- `src/components/__tests__/SelectionBubbleMenu.test.tsx` (NEW, +690 LOC): 39 tests across 8 describe blocks; mock for the `BubbleMenu` JSX wrapper hardcodes `role="toolbar"` (orchestrator-applied biome a11y fix — biome can't statically verify a `role` prop variable equals "toolbar"; the real `BubbleMenu` always does).
+- `src/components/EditableBlock.tsx` (+4 LOC): mount `<SelectionBubbleMenu editor={...} blockId={...} />` next to `<FormattingToolbar />`.
+- `src/components/FormattingToolbar.tsx` (−155 LOC, 435 → 310): drop `markToggles` group + first `<Separator>` + standalone External Link `<Popover>` block + `bold`/`italic`/`code`/`strike`/`highlight`/`link` keys from `useEditorState` selector + `Link2`/`getMarkRange` imports + `open-link-popover` event listener.
+- `src/components/__tests__/FormattingToolbar.test.tsx` (−343 LOC, 1186 → 843): ~20 mark/link tests moved to the bubble-menu file.
+- `src/components/__tests__/EditableBlock.test.tsx` (+7 LOC): mock the new `../SelectionBubbleMenu` import.
+- `src/lib/i18n/toolbar.ts` (+1 LOC): `toolbar.selectionFormatting = 'Selection formatting'` key.
+- `package.json` (+1 LOC): explicit `@tiptap/extension-bubble-menu@^3.22.4` dependency line (resolved version `3.22.4` to match the rest of the TipTap stack pin).
+- `package-lock.json` regenerated.
+
+Docs:
+- `pending/PEND-11-space-indicator-redesign.md` (DELETED, 267 LOC): Alt A shipped.
+- `pending/PEND-17-block-history-restore-and-diff-nav.md`: status note prepended at top + TL;DR strikethroughs for shipped item.
+- `pending/PEND-33-formatting-toolbar-overflow-handling.md`: status note prepended at top.
+- `pending/README.md`: removed PEND-11 row; updated PEND-17 + PEND-33 statuses to "partial"; updated mid-tier and out-of-band UX bullets.
+- `pending/REVIEW-LATER.md`: header line updated for session 674.
+- `SESSION-LOG.md`: this entry.
+- `FEATURE-MAP.md`: new "Frontend Tier-2 Features Batch (session 674, PEND-11 + PEND-17 Part A + PEND-33 Layer A)" subsection in Section 10.
 
 ## Session 673 — closed PEND-16 + PEND-28a M2 (2026-05-05)
 

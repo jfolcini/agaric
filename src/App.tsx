@@ -8,6 +8,7 @@ import { GlobalDateControls, JournalControls } from './components/JournalPage'
 import { NoPeersDialog } from './components/NoPeersDialog'
 import { QuickCaptureDialog } from './components/QuickCaptureDialog'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
+import { SpaceTopStripe } from './components/SpaceTopStripe'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
@@ -381,6 +382,13 @@ function App() {
       >
         {t('accessibility.skipToMain')}
       </a>
+      {/*
+       * PEND-11 — full-width 3px accent stripe pinned to the top of
+       * the viewport. Sits above the sidebar/content so it remains
+       * visible regardless of sidebar state. Decorative; identity
+       * is announced by the SpaceSwitcher / OS title.
+       */}
+      <SpaceTopStripe />
       <SidebarProvider>
         <AppSidebar
           currentView={currentView}

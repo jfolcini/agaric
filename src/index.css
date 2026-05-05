@@ -1129,7 +1129,7 @@
 
   /* FEAT-3p10 — high-contrast siblings for the per-space accent palette.
    * Boost chroma + push lightness toward the extremes so the
-   * SpaceAccentBadge and SpaceStatusChip stay distinguishable for
+   * SpaceAccentBadge and SpaceTopStripe stay distinguishable for
    * users who request high-contrast UI (Windows High Contrast Mode,
    * macOS Increase Contrast, etc.). Mirrors the existing semantic-token
    * convention where the bare `:root` definition is the default and

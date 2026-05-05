@@ -23,6 +23,7 @@ import { addAttachment } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { type PageBlockState, usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
+import { SelectionBubbleMenu } from './SelectionBubbleMenu'
 import { StaticBlock } from './StaticBlock'
 
 /**
@@ -284,6 +285,9 @@ function EditableBlockInner({
           blockId={blockId}
           currentPriority={currentPriority}
         />
+      )}
+      {rovingEditor.editor && (
+        <SelectionBubbleMenu editor={rovingEditor.editor} blockId={blockId} />
       )}
       <EditorContent editor={rovingEditor.editor} />
     </section>

@@ -57,8 +57,8 @@ beforeEach(() => {
   vi.clearAllMocks()
 
   // Seed the space store the same way App.test.tsx does so the embedded
-  // SpaceSwitcher / SpaceStatusChip / SpaceAccentBadge render against a
-  // deterministic active space.
+  // SpaceSwitcher / SpaceAccentBadge render against a deterministic
+  // active space.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_PERSONAL',
     availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],

@@ -2644,5 +2644,21 @@ describe('App', () => {
         expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Agaric')
       })
     })
+
+    // PEND-11 — the SpaceTopStripe is mounted at App level (above the
+    // SidebarProvider) so it stays visible regardless of sidebar state.
+    // Smoke-test that the App-level mount renders the stripe with the
+    // active space's id when a space is active.
+    it('mounts SpaceTopStripe at App level with the active space id', async () => {
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      const stripe = screen.getByTestId('space-top-stripe')
+      expect(stripe).toBeInTheDocument()
+      expect(stripe).toHaveAttribute('data-space-id', PERSONAL.id)
+    })
   })
 })
