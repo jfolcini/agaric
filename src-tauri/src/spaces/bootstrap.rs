@@ -741,7 +741,7 @@ pub async fn migrate_orphan_tags_to_space(
                   AND b.deleted_at IS NULL
                   AND b.is_conflict = 0
                INNER JOIN block_properties p
-                   ON p.block_id = b.id
+                   ON p.block_id = COALESCE(b.page_id, b.id)
                   AND p.key = 'space'
                   AND p.value_ref IS NOT NULL
                WHERE r.tag_id = ?
@@ -972,6 +972,63 @@ mod tests {
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 0);
+    }
+
+    #[tokio::test]
+    async fn orphan_tag_assigned_via_content_block_page_id() {
+        // The referencing block is a `content` block (not a `page`), so
+        // the space property lives on its parent page. The query must
+        // resolve via `COALESCE(b.page_id, b.id)`.
+        let (pool, _tmp) = fresh_pool().await;
+        let tag_id = BlockId::new().to_string();
+        let page_id = BlockId::new().to_string();
+        let content_id = BlockId::new().to_string();
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'tag', 'via-content', NULL, 1, NULL, 0)",
+            tag_id,
+        )
+        .execute(&mut *tx).await.unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'page', 'Page', NULL, 1, ?, 0)",
+            page_id, page_id,
+        )
+        .execute(&mut *tx).await.unwrap();
+        sqlx::query!(
+            "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+             VALUES (?, 'space', NULL, NULL, NULL, ?)",
+            page_id, SPACE_WORK_ULID,
+        )
+        .execute(&mut *tx).await.unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+             VALUES (?, 'content', 'content', ?, 2, ?, 0)",
+            content_id, page_id, page_id,
+        )
+        .execute(&mut *tx).await.unwrap();
+        sqlx::query!(
+            "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+            content_id,
+            tag_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(migrated, 1);
+        let space = sqlx::query_scalar!(
+            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+            tag_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
     }
 
     #[tokio::test]
