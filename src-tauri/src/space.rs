@@ -18,6 +18,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::error::AppError;
+use crate::ulid::BlockId;
 
 /// Newtype wrapper around a space ULID for type-safety + IPC bindings.
 ///
@@ -195,6 +196,109 @@ impl SpaceScope {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Block-space resolution helper (PEND-15 Phase 2 foundation)
+// ---------------------------------------------------------------------------
+
+/// Resolve a block's owning space via the canonical
+/// `COALESCE(b.page_id, b.id) → block_properties.space` lookup.
+///
+/// PEND-15 Phase 2 helper. Used by every same-space enforcement
+/// entry point (`set_property` ref-type validation, `edit_block`
+/// content-scan, `add_tag`, sync-ingress rejection, bulk-import
+/// scan). All enforcement points share this helper so the
+/// "what space does this block belong to?" question has exactly
+/// one answer.
+///
+/// # Returns
+///
+/// - `Ok(Some(space_id))` — block has an owning space (a `space`
+///   ref property on its owning page, found via `COALESCE(page_id,
+///   id)` resolution).
+/// - `Ok(None)` — block has no owning space. This is the case for
+///   (a) tag blocks (top-level, no `page_id`, no `space` property
+///   pre-Path-A), (b) space blocks themselves (they ARE the space;
+///   they don't carry a `space` ref pointing at themselves), (c)
+///   pre-FEAT-3 blocks that haven't been migrated to a space yet
+///   (rare; bootstrap fast-path normally covers this), (d) blocks
+///   whose `page_id` points at a deleted/conflict page (the
+///   COALESCE step won't find a live page; falls through to the
+///   block's own id which has no `space` property).
+/// - `Err(AppError::Database)` — DB error (rare; would propagate
+///   from the same `query!` macros every other helper uses).
+///
+/// # Why `Option<SpaceId>` and not `SpaceScope`
+///
+/// The caller's enforcement decision is shape-dependent — same-
+/// space rejection compares `Option<SpaceId>` directly. Wrapping
+/// in `SpaceScope::Global`/`Active` would force the caller to
+/// destructure for the comparison, adding boilerplate. Future
+/// callers can convert via `space.map_or(SpaceScope::Global,
+/// SpaceScope::Active)` if they need the tagged form.
+///
+/// # SQL
+///
+/// The helper executes ONE query (via `query!`). SQLite's
+/// correlated subquery in `COALESCE` short-circuits when the
+/// inner `page_id` lookup yields a row.
+///
+/// Both ends of the COALESCE chain are conflict / soft-delete
+/// filtered to mirror AGENTS.md invariant #9 — conflict copies
+/// and tombstones must never participate in space resolution:
+///
+/// * Inner subquery — the **input** block must be live for its
+///   `page_id` to flow through the COALESCE.
+/// * Outer `JOIN blocks tgt ON tgt.id = bp.block_id` — the block
+///   that *holds* the `space` property (the page, after the
+///   COALESCE resolves) must be live too. This is what catches
+///   case (d) above: an input block whose `page_id` references a
+///   conflict / soft-deleted page falls through to its own id,
+///   which has no `space` property, and the resolver returns
+///   `None`.
+///
+/// # Lifetime
+///
+/// Generic over [`sqlx::SqliteExecutor`] so it accepts both
+/// `&SqlitePool` and `&mut SqliteConnection` (including the
+/// `&mut Transaction` form). Phase 2 enforcement points all run
+/// inside the command's `BEGIN IMMEDIATE` transaction — the
+/// helper must not open a fresh connection.
+pub async fn resolve_block_space<'e, E>(
+    executor: E,
+    block_id: &BlockId,
+) -> Result<Option<SpaceId>, AppError>
+where
+    E: sqlx::SqliteExecutor<'e>,
+{
+    let block_id_str = block_id.as_str();
+    let row = sqlx::query!(
+        r#"SELECT bp.value_ref AS "space_id?"
+             FROM block_properties bp
+             JOIN blocks tgt ON tgt.id = bp.block_id
+                            AND tgt.is_conflict = 0
+                            AND tgt.deleted_at IS NULL
+            WHERE bp.block_id = COALESCE(
+                    (SELECT page_id FROM blocks
+                      WHERE id = ?1
+                        AND is_conflict = 0
+                        AND deleted_at IS NULL),
+                    ?1)
+              AND bp.key = 'space'
+            LIMIT 1"#,
+        block_id_str,
+    )
+    .fetch_optional(executor)
+    .await?;
+
+    // The stored `value_ref` came from a previous `SetProperty(space, …)`
+    // op that was validated at emission time. Skip the re-parse —
+    // `from_trusted` keeps the byte-stable normalisation contract
+    // (AGENTS.md invariant #8) without re-running `ulid::Ulid::from_str`.
+    Ok(row
+        .and_then(|r| r.space_id)
+        .map(|s| SpaceId::from_trusted(&s)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,5 +459,230 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.id.as_str(), FIXTURE_ULID);
+    }
+
+    // -----------------------------------------------------------------
+    // resolve_block_space — PEND-15 Phase 2 helper
+    // -----------------------------------------------------------------
+
+    use crate::spaces::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};
+    use sqlx::SqlitePool;
+
+    /// Synthetic page ULIDs for the resolver tests. Hand-typed 26-char
+    /// Crockford-base32 strings so the asserts are byte-stable.
+    const PAGE_A_ULID: &str = "01PEND15RESOLVERPAGEA00001";
+    const PAGE_B_ULID: &str = "01PEND15RESOLVERPAGEB00002";
+    const CONTENT_A_ULID: &str = "01PEND15RESOLVERCONTENTA01";
+    const CONTENT_B_ULID: &str = "01PEND15RESOLVERCONTENTB02";
+    const TAG_ULID: &str = "01PEND15RESOLVERTAG0000001";
+    const NONEXISTENT_ULID: &str = "01PEND15RESOLVERMISSING001";
+
+    /// Insert the seeded space block (idempotent). The
+    /// `block_properties.value_ref → blocks(id)` FK requires the
+    /// space's own row to exist before any page can carry a `space`
+    /// property pointing at it.
+    async fn seed_space_block(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'Space', NULL, 1, ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a page belonging to `space_id` with the given conflict /
+    /// soft-delete flags. Mirrors the audit binary's `insert_page`
+    /// helper but exposes `is_conflict` + `deleted_at` so the
+    /// conflict-filtering tests can flip them.
+    async fn seed_page(
+        pool: &SqlitePool,
+        page_id: &str,
+        space_id: &str,
+        is_conflict: bool,
+        deleted_at: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, page_id, is_conflict, deleted_at) \
+             VALUES (?, 'page', 'Page', NULL, 1, ?, ?, ?)",
+        )
+        .bind(page_id)
+        .bind(page_id)
+        .bind(if is_conflict { 1 } else { 0 })
+        .bind(deleted_at)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(page_id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a content block under `page_id`. Inherits its space
+    /// transitively via the `COALESCE(page_id, id)` resolution path.
+    async fn seed_content_block(pool: &SqlitePool, block_id: &str, page_id: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', 'Content', ?, 1, ?)",
+        )
+        .bind(block_id)
+        .bind(page_id)
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a tag-style block (top-level, no parent, no page_id, no
+    /// `space` property). Mirrors the pre-Path-A production state for
+    /// tag blocks.
+    async fn seed_tag_block(pool: &SqlitePool, tag_id: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'Tag', NULL, NULL)",
+        )
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_returns_some_for_page_in_space() {
+        let (pool, _dir) = test_pool().await;
+        seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
+        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, false, None).await;
+
+        let resolved = resolve_block_space(&pool, &BlockId::from_trusted(PAGE_A_ULID))
+            .await
+            .unwrap();
+        assert_eq!(resolved, Some(SpaceId::from_trusted(SPACE_PERSONAL_ULID)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_content_block_inherits_pages_space() {
+        let (pool, _dir) = test_pool().await;
+        seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
+        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, false, None).await;
+        seed_content_block(&pool, CONTENT_A_ULID, PAGE_A_ULID).await;
+
+        let page_resolved = resolve_block_space(&pool, &BlockId::from_trusted(PAGE_A_ULID))
+            .await
+            .unwrap();
+        let content_resolved = resolve_block_space(&pool, &BlockId::from_trusted(CONTENT_A_ULID))
+            .await
+            .unwrap();
+        assert_eq!(
+            page_resolved,
+            Some(SpaceId::from_trusted(SPACE_PERSONAL_ULID))
+        );
+        assert_eq!(
+            content_resolved,
+            Some(SpaceId::from_trusted(SPACE_PERSONAL_ULID))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_returns_none_for_block_without_space() {
+        let (pool, _dir) = test_pool().await;
+        seed_tag_block(&pool, TAG_ULID).await;
+
+        let resolved = resolve_block_space(&pool, &BlockId::from_trusted(TAG_ULID))
+            .await
+            .unwrap();
+        assert_eq!(resolved, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_returns_none_for_nonexistent_block() {
+        let (pool, _dir) = test_pool().await;
+        // No seeding — the block id isn't in `blocks` and has no
+        // `block_properties` row either. The COALESCE inner subquery
+        // returns NULL; the outer query falls back to the block's own
+        // id, which has no `space` row, so the resolver returns None.
+        let resolved = resolve_block_space(&pool, &BlockId::from_trusted(NONEXISTENT_ULID))
+            .await
+            .unwrap();
+        assert_eq!(resolved, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_skips_conflict_page_in_coalesce_chain() {
+        let (pool, _dir) = test_pool().await;
+        seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
+        // Page is marked is_conflict = 1 — must not feed page_id
+        // through the COALESCE inner subquery.
+        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, true, None).await;
+        seed_content_block(&pool, CONTENT_A_ULID, PAGE_A_ULID).await;
+
+        let resolved = resolve_block_space(&pool, &BlockId::from_trusted(CONTENT_A_ULID))
+            .await
+            .unwrap();
+        assert_eq!(resolved, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_skips_soft_deleted_page_in_coalesce_chain() {
+        let (pool, _dir) = test_pool().await;
+        seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
+        // Page is soft-deleted (deleted_at non-NULL) — same exclusion
+        // pattern as the conflict case above.
+        seed_page(
+            &pool,
+            PAGE_A_ULID,
+            SPACE_PERSONAL_ULID,
+            false,
+            Some("2025-01-01T00:00:00Z"),
+        )
+        .await;
+        seed_content_block(&pool, CONTENT_A_ULID, PAGE_A_ULID).await;
+
+        let resolved = resolve_block_space(&pool, &BlockId::from_trusted(CONTENT_A_ULID))
+            .await
+            .unwrap();
+        assert_eq!(resolved, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_returns_trusted_form_byte_for_byte() {
+        // Stored ULID is byte-stable (canonical uppercase) coming out
+        // of the materializer. The resolver must return the same bytes
+        // — `from_trusted` just normalises ASCII case, no re-parse.
+        let (pool, _dir) = test_pool().await;
+        seed_space_block(&pool, SPACE_WORK_ULID).await;
+        seed_page(&pool, PAGE_B_ULID, SPACE_WORK_ULID, false, None).await;
+
+        let resolved = resolve_block_space(&pool, &BlockId::from_trusted(PAGE_B_ULID))
+            .await
+            .unwrap()
+            .expect("page in Work resolves to Some(SpaceId)");
+        assert_eq!(resolved.as_str(), SPACE_WORK_ULID);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_block_space_works_inside_transaction() {
+        // Smoke: the `SqliteExecutor` generic accepts `&mut conn` from
+        // an open transaction so Phase 2 enforcement points can call
+        // the helper inside their existing `BEGIN IMMEDIATE` tx.
+        let (pool, _dir) = test_pool().await;
+        seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
+        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, false, None).await;
+        seed_content_block(&pool, CONTENT_B_ULID, PAGE_A_ULID).await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let resolved = resolve_block_space(&mut *tx, &BlockId::from_trusted(CONTENT_B_ULID))
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(resolved, Some(SpaceId::from_trusted(SPACE_PERSONAL_ULID)));
     }
 }
