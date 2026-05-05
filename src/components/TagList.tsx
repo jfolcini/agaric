@@ -29,6 +29,7 @@ import { logger } from '../lib/logger'
 import type { TagCacheRow } from '../lib/tauri'
 import {
   createBlock,
+  deleteBlock,
   deleteProperty,
   editBlock,
   listTagsByPrefix,
@@ -102,6 +103,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const handleDeleteTag = useCallback(
     async (tagId: string) => {
       try {
+        // purge_block_inner requires the block to be soft-deleted first
+        // (deleteBlock), then purged (purgeBlock). Without the soft-delete
+        // step, the purge returns InvalidOperation: "must be soft-deleted
+        // before purging" and the tag survives (BUG session 679).
+        await deleteBlock(tagId)
         await purgeBlock(tagId)
         setTags((prev) => prev.filter((t) => t.tag_id !== tagId))
         useResolveStore.getState().set(tagId, '(deleted)', true)

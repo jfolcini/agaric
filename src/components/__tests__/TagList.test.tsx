@@ -235,11 +235,17 @@ describe('TagList', () => {
 
       expect(await screen.findByText('to-delete')).toBeInTheDocument()
 
-      // Mock delete_block response
+      // Mock delete_block response (soft-delete first — BUG session 679:
+      // purge_block_inner requires deleted_at IS NOT NULL)
       mockedInvoke.mockResolvedValueOnce({
         block_id: 'T1',
         deleted_at: '2025-01-15T00:00:00Z',
         descendants_affected: 0,
+      })
+      // Mock purge_block response (hard-delete after soft-delete)
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'T1',
+        purged_count: 1,
       })
 
       // Open dialog
