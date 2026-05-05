@@ -537,6 +537,28 @@ export function BlockHistoryItem({
       ) : (
         <div data-testid={`block-history-row-${index}`} className="flex items-center gap-2 w-full">
           <HistoryItemCore entry={entry} />
+          {/* MAINT-220: re-add the lock affordance + tooltip for
+              non-restorable rows so users understand why the row is
+              inert. Mirrors the legacy `HistoryListItem` rendering at
+              lines ~330-344 (UX-351's "two visual cues for WCAG"
+              rationale: opacity-50 alone was a single cue; the lock
+              icon + visible label adds a second cue for both visual
+              and SR users). i18n keys `history.nonReversibleLabel` /
+              `history.nonReversibleTooltip` are reused from the
+              legacy path — no new translations needed. */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>{t('history.nonReversibleLabel')}</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('history.nonReversibleTooltip')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       )}
       {isExpanded && isRestorable && rawContent != null && (

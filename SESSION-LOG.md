@@ -117,6 +117,16 @@ Reviewer (post-build): APPROVED CLEAN. Verified mirror-fidelity to the precedent
 
 Suite: 3608/3608 nextest (was 3607 — +1 from Test C). `cargo sqlx prepare --check -- --tests` clean (no new compile-time queries; the runtime form is dynamic SQL).
 
+**MAINT-220 closed (ninth commit, post-MAINT-223):**
+
+PEND-17 Part B follow-up: non-restorable rows in the new `BlockHistoryItem` (the per-block right-rail history list) had no visible explanation for why clicking did nothing. The legacy multi-block grid renderer (`HistoryListItem`'s top branch at lines ~330-344) provides a `Lock` icon + "Non-reversible action" label inside a `Tooltip` for the same case; the redesign just dropped the affordance, leaving non-restorable rows visually identical to restorable ones except for the missing click handler. Per UX-351's "two cues for WCAG" rationale (already encoded at the legacy site), `opacity-50` alone is a single visual cue — the lock icon + label adds the second cue needed for AA conformance.
+
+One-file fix in `src/components/HistoryListItem.tsx` (lines ~540-562, inside the existing `BlockHistoryItem` non-restorable branch — the `<div data-testid={…} className="flex items-center gap-2 w-full">` rendered when `!isRestorable`): added `<TooltipProvider><Tooltip><TooltipTrigger asChild>…<Lock /><span>{t('history.nonReversibleLabel')}</span>…</TooltipTrigger><TooltipContent>{t('history.nonReversibleTooltip')}</TooltipContent></Tooltip></TooltipProvider>` next to the existing `HistoryItemCore` content. Reused i18n keys `history.nonReversibleLabel` + `history.nonReversibleTooltip` already present from the legacy path — no new translations needed. `Lock`, `Tooltip*`, and `TooltipProvider` were already imported in the file (used by the legacy `HistoryListItem` component above) so no import additions either.
+
+2 vitest cases added in `src/components/__tests__/HistoryListItem.test.tsx` (lines ~878-893, inside the existing `describe('BlockHistoryItem', …)` block): (a) `'shows lock affordance + non-reversible label on non-restorable rows (MAINT-220)'` renders a `create_block` entry (non-restorable per the operation_type allowlist) and asserts `screen.getByText('Non-reversible action')` is in the document; (b) `'does not show the lock affordance on restorable rows'` renders the default `edit_block` entry and asserts `screen.queryByText('Non-reversible action')` is null. Test text uses the actual translated string "Non-reversible action" (matching the i18n setup's behaviour for these keys), not the raw key — verified by inspecting other working `BlockHistoryItem` tests in the same file.
+
+Suite: 104/104 in `HistoryListItem.test.tsx` (was 102 — +2 from the new tests). 9581/9581 vitest overall.
+
 **Files touched (this session):**
 
 PEND-12 commit (closeout, no source changes):
@@ -164,6 +174,12 @@ MAINT-223 commit (runtime BlockRow drift parity test):
 - `src-tauri/src/tag_query/query.rs` (+3 / -4): inline SELECT clause replaced with `{}` placeholder + `BLOCK_ROW_RUNTIME_SELECT` format arg. WHERE clause + space-filter subquery + ORDER BY unchanged.
 - `pending/REVIEW-LATER.md`: MAINT-223 entry removed (closed); MAINT-229 added for the `pagination/properties.rs` follow-up; header line updated for the closure.
 - `SESSION-LOG.md`: MAINT-223 sub-section added.
+
+MAINT-220 commit (lock affordance on non-restorable BlockHistoryItem rows):
+- `src/components/HistoryListItem.tsx` (+22 / -1): added `Tooltip` block (lock icon + label + tooltip content) inside the `BlockHistoryItem` non-restorable branch. No imports added (`Lock`, `Tooltip*`, `TooltipProvider` were already imported for the legacy `HistoryListItem` component above).
+- `src/components/__tests__/HistoryListItem.test.tsx` (+16): 2 new vitest cases inside the existing `describe('BlockHistoryItem', …)` block asserting the affordance is present on a `create_block` (non-restorable) row and absent on the default `edit_block` (restorable) row.
+- `pending/REVIEW-LATER.md`: MAINT-220 entry struck through with closure detail; preserved for audit trail.
+- `SESSION-LOG.md`: MAINT-220 sub-section + Files touched + Verification entries added; Quick Reference banner updated.
 
 **Verification:**
 
@@ -214,6 +230,11 @@ MAINT-223:
 - Drift-sensitivity verified: temporarily inlining columns minus `page_id` at `backlink/query.rs:326` failed Test C with informative count-drop error message. Reverted; full suite green.
 - `prek run` — green.
 
+MAINT-220:
+- `npx vitest run src/components/__tests__/HistoryListItem.test.tsx` — 104/104 pass (was 102 — +2 new BlockHistoryItem cases).
+- Frontend overall vitest run unchanged otherwise (no global state touched, no other test files affected).
+- `prek run` — green.
+
 **Process notes:**
 - The build subagent followed PROMPT.md's "kill-criteria" guidance correctly: stopped immediately, reported with definitive evidence (compiler error verbatim + sqlx source-line citations), and reverted the spike artifacts to leave a clean working tree. No reviewer needed because no code shipped.
 - The orchestrator's pre-spike call-graph check (verifying that `pagination/mod.rs:81` is just a doc-comment reference to the SQL pattern, not an actual query) was useful: it confirmed the canonical site count would be 16 production sites + 1 doc-comment reference if Phase 1 had proceeded, matching the plan body's claim.
@@ -224,7 +245,7 @@ MAINT-223:
 - **Per `pending/README.md` convention, rejected plans get DELETED, not archived.** The fallback work goes back into REVIEW-LATER as a MAINT-* item with the rejection record + new scoping. Git history + SESSION-LOG.md preserve the trail.
 - **`prek run --all-files` does NOT detect missing `.sqlx/` cache entries.** The audit binary's `cargo sqlx prepare -- --tests` discovered 5 drift entries that earlier sessions had introduced silently — production queries from `commands/history.rs:847` + `space.rs:337/352` (PEND-18 Phase 0 and Phase 2 work) compiled fine via online sqlx (DB connection at compile time) but were never cached because earlier `prepare` runs didn't pass `--tests`. Future sessions touching SQL queries in `#[cfg(test)]` paths should always run `cargo sqlx prepare -- --tests` (not just `prepare`) and verify the cache stays clean via `cargo sqlx prepare --check -- --tests`. Consider adding the `--check` form to prek as a follow-up to catch drift at commit time. (Filed as a future MAINT consideration, not a P0.)
 
-**Commit plan:** eight commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests` (`7afcd880`); (4) `test(space): close MAINT-172 — drift-detection parity test for the space-filter SQL fragment (mirrors PEND-28a H1 Option 2)` (`7e0d5aa0`); (5) `feat(space): PEND-15 Phase 2 foundation — resolve_block_space helper (no callers yet)` (`b10270b5`); (6) `chore(clippy): close MAINT-225 — i64::try_from for cast-possible-wrap at gcal_push/models.rs:684` (`72e06092`); (7) `docs(feature-map): catch up FEATURE-MAP.md with sessions 678 + 679 work + fix stale PEND-18 reference` (`eefe356e`); (8) `test(blocks): close MAINT-223 — runtime BlockRow drift parity test + 3 production sites use BLOCK_ROW_RUNTIME_SELECT const`.
+**Commit plan:** nine commits in the same session: (1) `chore: close PEND-12 — Phase 0 spike returned KILL on sqlx 0.8.6 limitation; pivot to MAINT-172 drift-test` (`ad681c92`); (2) `feat(audit): PEND-15 Phase 0 — audit_cross_space_refs binary + 11 tests + sqlx cache catch-up` (`275b19cf`); (3) `chore(prek): close MAINT-227 — fix sqlx-prepare-check hook to run with -- --tests` (`7afcd880`); (4) `test(space): close MAINT-172 — drift-detection parity test for the space-filter SQL fragment (mirrors PEND-28a H1 Option 2)` (`7e0d5aa0`); (5) `feat(space): PEND-15 Phase 2 foundation — resolve_block_space helper (no callers yet)` (`b10270b5`); (6) `chore(clippy): close MAINT-225 — i64::try_from for cast-possible-wrap at gcal_push/models.rs:684` (`72e06092`); (7) `docs(feature-map): catch up FEATURE-MAP.md with sessions 678 + 679 work + fix stale PEND-18 reference` (`eefe356e`); (8) `test(blocks): close MAINT-223 — runtime BlockRow drift parity test + 3 production sites use BLOCK_ROW_RUNTIME_SELECT const` (`82fc5999`); (9) `feat(history): close MAINT-220 — re-add lock affordance + non-reversible label on non-restorable BlockHistoryItem rows`.
 
 ---
 
