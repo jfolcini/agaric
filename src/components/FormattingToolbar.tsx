@@ -568,7 +568,7 @@ export function FormattingToolbar({
                     variant="ghost"
                     size="icon-xs"
                     aria-label={t('toolbar.more')}
-                    aria-haspopup="menu"
+                    aria-haspopup="dialog"
                     aria-expanded={overflowPopoverOpen}
                     aria-controls={overflowMenuId}
                     onPointerDown={(e) => {

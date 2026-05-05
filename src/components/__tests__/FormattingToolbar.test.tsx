@@ -784,7 +784,7 @@ describe('FormattingToolbar', () => {
         await new Promise((r) => setTimeout(r, 0))
         const moreBtn = await screen.findByRole('button', { name: t('toolbar.more') })
         expect(moreBtn).toBeInTheDocument()
-        expect(moreBtn).toHaveAttribute('aria-haspopup', 'menu')
+        expect(moreBtn).toHaveAttribute('aria-haspopup', 'dialog')
         expect(moreBtn).toHaveAttribute('aria-expanded', 'false')
         expect(moreBtn).toHaveAttribute('aria-controls')
       } finally {

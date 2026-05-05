@@ -431,6 +431,22 @@ export function BlockHistoryItem({
   // Lazy-fetch the compared-to-current diff on first expand. Refetch
   // when the entry's seq changes (e.g. parent renders a different row
   // into this slot under the same React key — defensive, not expected).
+  //
+  // The early-return guards (comparedDiff / comparedLoading /
+  // comparedFailed) are intentionally NOT in the dep array — they are
+  // SET by this effect, and including them creates a self-cancelling
+  // loop: `setComparedLoading(true)` schedules a re-render, the effect
+  // re-runs because comparedLoading changed, the previous run's
+  // cleanup fires (`cancelled = true`) before the in-flight fetch
+  // resolves, and the `.finally` skips `setComparedLoading(false)` —
+  // leaving the spinner stuck forever in production (sync mocks in
+  // tests resolve before the cleanup runs and miss this). Closures
+  // capture each guard's value at the moment the effect runs, which
+  // is the correct semantic for "skip this fetch if we already have
+  // / are loading / failed for this expansion". The cleanup also
+  // resets `comparedLoading` so a collapse mid-fetch doesn't leave
+  // the spinner stuck on subsequent re-expand.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: comparedDiff/comparedLoading/comparedFailed are runtime guards, not re-run triggers — see comment above.
   React.useEffect(() => {
     if (!isExpanded || !isRestorable) return
     if (comparedDiff != null || comparedLoading || comparedFailed) return
@@ -460,17 +476,14 @@ export function BlockHistoryItem({
       })
     return () => {
       cancelled = true
+      // Defensive: if the user collapses mid-fetch, the resolved
+      // promise's `.finally` will skip `setComparedLoading(false)`
+      // because `cancelled === true`. Reset the spinner here so
+      // subsequent re-expansions aren't blocked by a stuck loading
+      // flag.
+      setComparedLoading(false)
     }
-  }, [
-    isExpanded,
-    isRestorable,
-    blockId,
-    entry.seq,
-    comparedDiff,
-    comparedLoading,
-    comparedFailed,
-    t,
-  ])
+  }, [isExpanded, isRestorable, blockId, entry.seq, t])
 
   const handleRowClick = (e: React.MouseEvent) => {
     if (!isRestorable) return
