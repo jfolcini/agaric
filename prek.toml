@@ -503,16 +503,20 @@ types = ["toml"]
 # trade per-commit speed for the kind of full-suite / compile-required
 # coverage that's worth running before changes leave the local machine.
 
-# `cargo sqlx prepare --check` verifies that the committed `.sqlx/`
-# offline cache is in sync with every `query!()` call in the source.
-# Drift surfaces as a CI failure today; running it on push lets the
-# author fix it (`cargo sqlx prepare`) before the remote run.
+# `cargo sqlx prepare --check -- --tests` verifies that the committed
+# `.sqlx/` offline cache is in sync with every `query!()` call in the
+# source AND in `#[cfg(test)]` modules. The `-- --tests` cargo-flag
+# pass-through is non-negotiable: without it, drift in test-only
+# queries slips through silently (session 679 caught 5 such drifts
+# from session 678's PEND-18 Phase 0/1/2 work — MAINT-227 closure).
+# Drift surfaces as a CI failure; running it on push lets the author
+# fix it (`cargo sqlx prepare -- --tests`) before the remote run.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "sqlx-prepare-check"
 name = "sqlx prepare --check"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo sqlx prepare --check'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo sqlx prepare --check -- --tests'"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/(src/.*\\.rs|migrations/.*\\.sql|Cargo\\.(toml|lock))$"
