@@ -34,21 +34,6 @@ import type {
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
-/**
- * Module-scoped reference to the current `serialize()` call's
- * `onUnknownNode` callback. Set at the top of `serialize` and read by
- * `notifyUnknownNodeType`. Avoids threading the callback through every
- * inline helper purely for one rare branch.
- *
- * Read by exactly one helper (`notifyUnknownNodeType`); a `serialize` call
- * is synchronous and single-threaded in JS, so re-entrance is not a
- * concern.
- */
-let currentOnUnknownNode: ((type: string) => void) | undefined
-
-function notifyUnknownNodeType(type: string): void {
-  currentOnUnknownNode?.(type)
-}
 
 function escapeText(s: string): string {
   let out = ''
@@ -238,7 +223,11 @@ function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
  * Each variant handler is responsible for updating `activeMarks` so the
  * next node sees the correct mark state.
  */
-function serializeInlineChild(child: InlineNode, activeMarks: Set<string>): string {
+function serializeInlineChild(
+  child: InlineNode,
+  activeMarks: Set<string>,
+  onUnknownNode?: (type: string) => void,
+): string {
   if (child.type === 'text') return serializeInlineText(child, activeMarks)
   if (child.type === 'tag_ref') {
     return serializeInlineAtom(`#[${child.attrs.id}]`, activeMarks)
@@ -251,7 +240,7 @@ function serializeInlineChild(child: InlineNode, activeMarks: Set<string>): stri
   }
   if (child.type === 'hardBreak') return serializeInlineAtom('\n', activeMarks)
   const unknown = child as { type: string }
-  notifyUnknownNodeType(unknown.type)
+  onUnknownNode?.(unknown.type)
   return serializeInlineAtom('', activeMarks)
 }
 
@@ -266,12 +255,15 @@ function serializeInlineChild(child: InlineNode, activeMarks: Set<string>): stri
  *   open italic → "a" → open bold → "b" → close bold → "c" → close italic
  *   = `*a**b**c*`
  */
-function serializeInlineNodes(nodes: readonly InlineNode[]): string {
+function serializeInlineNodes(
+  nodes: readonly InlineNode[],
+  onUnknownNode?: (type: string) => void,
+): string {
   let result = ''
   const activeMarks = new Set<string>()
 
   for (const child of nodes) {
-    result += serializeInlineChild(child, activeMarks)
+    result += serializeInlineChild(child, activeMarks, onUnknownNode)
   }
 
   // Close any remaining open marks
@@ -285,7 +277,10 @@ function serializeInlineNodes(nodes: readonly InlineNode[]): string {
  *
  * Groups consecutive nodes by link mark, wrapping linked spans in [text](url).
  */
-function serializeParagraph(node: ParagraphNode): string {
+function serializeParagraph(
+  node: ParagraphNode,
+  onUnknownNode?: (type: string) => void,
+): string {
   if (!node.content || node.content.length === 0) return ''
 
   const groups = groupByLink(node.content)
@@ -295,20 +290,23 @@ function serializeParagraph(node: ParagraphNode): string {
     if (group.href !== null) {
       // Serialize inner content with link marks stripped, then wrap
       const stripped = group.nodes.map(stripLinkMark)
-      const inner = serializeInlineNodes(stripped)
+      const inner = serializeInlineNodes(stripped, onUnknownNode)
       result += `[${inner}](${escapeUrl(group.href)})`
     } else {
-      result += serializeInlineNodes(group.nodes)
+      result += serializeInlineNodes(group.nodes, onUnknownNode)
     }
   }
 
   return result
 }
 
-function serializeHeading(node: HeadingNode): string {
+function serializeHeading(
+  node: HeadingNode,
+  onUnknownNode?: (type: string) => void,
+): string {
   const prefix = `${'#'.repeat(node.attrs.level)} `
   if (!node.content || node.content.length === 0) return prefix
-  return prefix + serializeParagraph({ type: 'paragraph', content: [...node.content] })
+  return prefix + serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode)
 }
 
 function serializeCodeBlock(node: CodeBlockNode): string {
@@ -322,7 +320,10 @@ function serializeCodeBlock(node: CodeBlockNode): string {
   return `${fence}${lang}\n${code}\n${fence}`
 }
 
-function serializeBlockquote(node: BlockquoteNode): string {
+function serializeBlockquote(
+  node: BlockquoteNode,
+  onUnknownNode?: (type: string) => void,
+): string {
   if (!node.content || node.content.length === 0) {
     if (node.attrs?.calloutType) {
       return `> [!${node.attrs.calloutType.toUpperCase()}]`
@@ -332,12 +333,12 @@ function serializeBlockquote(node: BlockquoteNode): string {
   // Recursively serialize each child block, then prefix every line with "> "
   const inner = node.content
     .map((child) => {
-      if (child.type === 'paragraph') return serializeParagraph(child)
-      if (child.type === 'heading') return serializeHeading(child)
+      if (child.type === 'paragraph') return serializeParagraph(child, onUnknownNode)
+      if (child.type === 'heading') return serializeHeading(child, onUnknownNode)
       if (child.type === 'codeBlock') return serializeCodeBlock(child)
-      if (child.type === 'blockquote') return serializeBlockquote(child)
-      if (child.type === 'table') return serializeTable(child)
-      if (child.type === 'orderedList') return serializeOrderedList(child)
+      if (child.type === 'blockquote') return serializeBlockquote(child, onUnknownNode)
+      if (child.type === 'table') return serializeTable(child, onUnknownNode)
+      if (child.type === 'orderedList') return serializeOrderedList(child, onUnknownNode)
       if (child.type === 'horizontalRule') return serializeHorizontalRule(child)
       return ''
     })
@@ -351,7 +352,10 @@ function serializeBlockquote(node: BlockquoteNode): string {
   return lines.map((line) => `> ${line}`).join('\n')
 }
 
-function serializeTable(node: TableNode): string {
+function serializeTable(
+  node: TableNode,
+  onUnknownNode?: (type: string) => void,
+): string {
   if (!node.content || node.content.length === 0) return ''
   const rows = node.content
   const serializedRows: string[][] = []
@@ -369,7 +373,7 @@ function serializeTable(node: TableNode): string {
         // false positive and is dismissed in the code-scanning UI.
         const text =
           cell.content && cell.content.length > 0
-            ? serializeParagraph(cell.content[0] as ParagraphNode).replace(/\|/g, '\\|')
+            ? serializeParagraph(cell.content[0] as ParagraphNode, onUnknownNode).replace(/\|/g, '\\|')
             : ''
         cells.push(text)
       }
@@ -386,13 +390,16 @@ function serializeTable(node: TableNode): string {
   return [header, separator, ...dataRows].join('\n')
 }
 
-function serializeOrderedList(node: OrderedListNode): string {
+function serializeOrderedList(
+  node: OrderedListNode,
+  onUnknownNode?: (type: string) => void,
+): string {
   if (!node.content || node.content.length === 0) return ''
   return node.content
     .map((item: ListItemNode, idx: number) => {
       const inner =
         item.content && item.content.length > 0
-          ? item.content.map((p) => serializeParagraph(p)).join('\n')
+          ? item.content.map((p) => serializeParagraph(p, onUnknownNode)).join('\n')
           : ''
       return `${idx + 1}. ${inner}`
     })
@@ -404,24 +411,19 @@ function serializeHorizontalRule(_node: HorizontalRuleNode): string {
 }
 
 export function serialize(doc: DocNode, onUnknownNode?: (type: string) => void): string {
-  currentOnUnknownNode = onUnknownNode
-  try {
-    if (!doc.content || doc.content.length === 0) return ''
-    return doc.content
-      .map((node) => {
-        if (node.type === 'paragraph') return serializeParagraph(node)
-        if (node.type === 'heading') return serializeHeading(node)
-        if (node.type === 'codeBlock') return serializeCodeBlock(node)
-        if (node.type === 'blockquote') return serializeBlockquote(node)
-        if (node.type === 'table') return serializeTable(node)
-        if (node.type === 'orderedList') return serializeOrderedList(node)
-        if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
-        const unknownType = (node as { type: string }).type
-        notifyUnknownNodeType(unknownType)
-        return ''
-      })
-      .join('\n')
-  } finally {
-    currentOnUnknownNode = undefined
-  }
+  if (!doc.content || doc.content.length === 0) return ''
+  return doc.content
+    .map((node) => {
+      if (node.type === 'paragraph') return serializeParagraph(node, onUnknownNode)
+      if (node.type === 'heading') return serializeHeading(node, onUnknownNode)
+      if (node.type === 'codeBlock') return serializeCodeBlock(node)
+      if (node.type === 'blockquote') return serializeBlockquote(node, onUnknownNode)
+      if (node.type === 'table') return serializeTable(node, onUnknownNode)
+      if (node.type === 'orderedList') return serializeOrderedList(node, onUnknownNode)
+      if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
+      const unknownType = (node as { type: string }).type
+      onUnknownNode?.(unknownType)
+      return ''
+    })
+    .join('\n')
 }

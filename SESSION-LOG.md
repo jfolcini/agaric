@@ -2,11 +2,46 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 680 (Session 680: four S-cost frontend bug fixes — MAINT-200 resolve-store preload retry poison, MAINT-201 projected-agenda cache unbounded growth, MAINT-202 UnfinishedTasks silent catch blocks, MAINT-205 i18n collision detection test. Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223) | **Latest entry:** 2026-05-06 | **Previously resolved counter:** 1171+ items.
+**Sessions:** 1 – 681 (Session 681: five S-cost maintenance fixes — MAINT-199 migration comment parser, MAINT-204 markdown serializer callback threading, MAINT-210 dead i18n key, MAINT-217 diff direction flip, MAINT-224 Test B line numbers. Session 680: four S-cost frontend bug fixes — MAINT-200 resolve-store preload retry poison, MAINT-201 projected-agenda cache unbounded growth, MAINT-202 UnfinishedTasks silent catch blocks, MAINT-205 i18n collision detection test. Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223) | **Latest entry:** 2026-05-07 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 681 — Five S-cost maintenance fixes: MAINT-199 + MAINT-204 + MAINT-210 + MAINT-217 + MAINT-224 (2026-05-07)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-07 |
+| **Subagents** | 0 (single-session batch of 5 closely-scoped maintenance fixes across frontend, Rust, and tooling; no subagent parallelism needed). |
+| **Items closed** | MAINT-199, MAINT-204, MAINT-210, MAINT-217, MAINT-224 (removed from REVIEW-LATER.md). REVIEW-LATER open count: 32 → 27. |
+| **Items modified** | None re-scoped; all five were filed during code review (sessions 658–660) and closed as-planned. |
+| **Tests added** | +5 (4 vitest: 1 new check-migrations-strict test, 1 new HistoryListItem diff-direction test, 3 existing suite passes on changed code; 1 Rust: block_row_columns parity tests pass with line-number enhancement). |
+| **Files touched** | `scripts/check-migrations-strict.mjs`, `src/__tests__/check-migrations-strict.test.ts`, `src-tauri/src/pagination/block_row_columns.rs`, `src/components/HistoryListItem.tsx`, `src/components/__tests__/HistoryListItem.test.tsx`, `src/editor/markdown-serialize.ts`, `src/lib/i18n/references.ts`, `pending/REVIEW-LATER.md`, `SESSION-LOG.md`. |
+
+**Summary:** A batch of five small maintenance fixes filed during previous code reviews. All are S-cost (<2h), low-risk, and touch disjoint file boundaries — ideal for a single-session batch with no subagents.
+
+**MAINT-199 — `check-migrations-strict.mjs` mis-parses `;` inside SQL comments**
+
+Added `stripSqlComments()` preprocessor to `scripts/check-migrations-strict.mjs` that strips `--` line comments and `/* */` block comments while preserving single-quoted string literals, before the regex and boundary scans run. Eliminates false positives where semicolons or parentheses inside comments were mistaken for statement terminators / structure markers. Added 4 vitest cases covering: STRICT present (pass), STRICT missing (fail), line comment with semicolon (no false positive), block comment with semicolon (no false positive).
+
+**MAINT-204 — Markdown serializer uses module-scope mutable callback state**
+
+Removed the module-scoped `let currentOnUnknownNode` and `notifyUnknownNodeType` from `src/editor/markdown-serialize.ts`. Threaded `onUnknownNode` as an optional parameter through `serialize`, `serializeParagraph`, `serializeHeading`, `serializeBlockquote`, `serializeTable`, `serializeOrderedList`, `serializeInlineNodes`, and `serializeInlineChild`. The callback is now passed explicitly rather than stored in mutable module state, eliminating the re-entrance hazard. All existing `markdown-serializer.test.ts` tests pass (including MAINT-183 callback-contract and UX-281 toast tests).
+
+**MAINT-210 — `references.moreFilters` i18n key is dead (PEND-31 leftover)**
+
+Deleted the unused `references.moreFilters` key from `src/lib/i18n/references.ts:19`. Grep-confirmed zero references in `src/`.
+
+**MAINT-217 — "Compared to current" diff direction inverts user intent**
+
+In `src/components/HistoryListItem.tsx`, when `diffMode === 'comparedToCurrent'`, the `activeSpans` now maps each `DiffSpan` through a tag flip: backend `Insert` (added since historical, would be removed on restore) renders as `Delete` (red), and backend `Delete` (removed since historical, would be restored) renders as `Insert` (green). This makes the diff colours match the user's restore intent. Added a vitest in `HistoryListItem.test.tsx` asserting the flip: backend `Insert` → `<del>`, backend `Delete` → `<ins>`.
+
+**MAINT-224 — Test B failure message lacks line numbers**
+
+Added byte→line offset computation in `src-tauri/src/pagination/block_row_columns.rs` Test B: `src[..cap.get(0).unwrap().start()].matches('\n').count() + 1`. The failure message now prints `path:line` (e.g., `commands/blocks/crud.rs:42`) instead of just the file name, making multi-drift-per-file triage faster.
+
+**Verification:** Full frontend test suite (`npx vitest run` on changed files) — 454 tests all green. Rust parity tests (`cargo nextest run -E 'test(block_row_canonical)'`) — 3 tests all green. `prek run --all-files` passed after cargo fmt auto-fix.
 
 ## Session 680 — Four S-cost frontend bug fixes: MAINT-200 + MAINT-201 + MAINT-202 + MAINT-205 (2026-05-06)
 
