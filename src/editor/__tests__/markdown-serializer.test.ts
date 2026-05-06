@@ -67,6 +67,12 @@ describe('serialize', () => {
     it('plain text', () => {
       expect(serialize(doc(paragraph(text('hello world'))))).toBe('hello world')
     })
+    it('typed `- foo` does not silently drop content (BulletList not registered)', () => {
+      // ProseMirror json that the editor would produce *without* the
+      // BulletList extension: a plain paragraph.
+      const json = doc(paragraph(text('- foo')))
+      expect(serialize(json, notifyUnknownNodeTypeToast)).toBe('- foo')
+    })
 
     it('whitespace-only', () => {
       expect(serialize(doc(paragraph(text('   '))))).toBe('   ')
