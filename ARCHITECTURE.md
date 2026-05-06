@@ -1120,7 +1120,7 @@ implemented at the query layer rather than at the schema layer.
 
 - **List/search filtering:** `list_blocks`, `search_blocks`, and the page browser filter by the
   active space's ULID via the `space` property.
-- **Hard space separation (PEND-15):** Every space is a sealed unit. Cross-space references are
+- **Hard space separation:** Every space is a sealed unit. Cross-space references are
   rejected at write time at three enforcement points: `edit_block` content scan (rejects
   `[[ULID]]` / `#[ULID]` tokens targeting a different space), `set_property` ref-type
   validation (rejects ref properties crossing spaces; the `space` key is exempt for page moves),
@@ -1129,27 +1129,10 @@ implemented at the query layer rather than at the schema layer.
   same-space targets. The broken-link UI surface (UX-366) is deleted. Enforcement helpers live
   in `src-tauri/src/spaces/cross_space_validation.rs`; `resolve_block_space` in `space.rs`
   provides the canonical `COALESCE(page_id, id) → block_properties.space` lookup.
-- **Per-space journal (Phase 5):** Daily/weekly/monthly/agenda views scope their queries to the
+- **Per-space journal:** Daily/weekly/monthly/agenda views scope their queries to the
   active space's journal pages. Each space has its own journal lineage.
-- **Per-space templates (Phase 5b):** Templates resolve against the active space's
+- **Per-space templates:** Templates resolve against the active space's
   `template = "true"` pages so a "Meeting notes" template in Work doesn't show up in Personal.
-
-### Phases (shipped)
-
-- **Phase 1** — `list_spaces` command, space block discovery via `is_space = "true"`.
-- **Phase 2** — `create_page_in_space` command, inheritance of `space` property from parent.
-- **Phase 3** — Frontend `useSpaceStore` + `SpaceSwitcher` UI, active-space persistence.
-- **Phase 4** — `list_blocks` / page browser filtered by active space.
-- **Phase 5** — Per-space journal (daily/weekly/monthly/agenda).
-- **Phase 5b** — Per-space templates.
-- **Phase 6** — `create_space` command, in-app space creation, accent colour.
-- **Phase 7** — Cross-space link enforcement at op boundary.
-- **Phase 8** — Per-space recent pages (`useRecentPagesStore`), per-space tabs (`useTabsStore`).
-- **Phase 9 (foundation in place; M2 remaining)** — Per-space external integrations. M1 added
-  `gcal_space_config` (migration `0041`) and per-space keychain entries; M2 will thread
-  `space_id` through the GCal push pipeline. See [GCal Integration](#10-gcal-integration).
-- **Phase 10** — Per-space property definitions visibility / scoping polish.
-- **Phase 11** — Quick-capture and miscellaneous space-aware UX cleanups.
 
 ### Commands
 
