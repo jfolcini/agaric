@@ -275,10 +275,7 @@ mod tests {
                 let raw_select = &cap[1];
                 let normalized = normalize_whitespace(&strip_blocks_alias(raw_select));
                 if normalized != canonical_normalized {
-                    let line = src[..cap.get(0).unwrap().start()]
-                        .matches('\n')
-                        .count()
-                        + 1;
+                    let line = src[..cap.get(0).unwrap().start()].matches('\n').count() + 1;
                     failures.push(format!(
                         "  {path}:{line}\n    actual:    {normalized}\n    canonical: {canonical_normalized}",
                     ));

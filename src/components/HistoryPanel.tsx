@@ -30,6 +30,7 @@ import { HistoryFilterBar } from './HistoryFilterBar'
 import { BlockHistoryItem } from './HistoryListItem'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 interface HistoryPanelProps {
   /** The block to show history for. */
@@ -61,7 +62,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         const resp = await getBlockHistory({
           blockId,
           ...(cursor != null && { cursor }),
-          limit: 50,
+          limit: PAGINATION_LIMIT,
         })
         if (cursor) {
           setEntries((prev) => [...prev, ...resp.items])

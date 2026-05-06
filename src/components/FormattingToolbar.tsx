@@ -49,7 +49,6 @@ import { HeadingLevelSelector } from './HeadingLevelSelector'
 import { Button } from './ui/button'
 import { MenuPopoverContent } from './ui/menu-popover-content'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
-import { ScrollArea } from './ui/scroll-area'
 import { Separator } from './ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
@@ -545,15 +544,14 @@ export function FormattingToolbar({
 
   return (
     <TooltipProvider delayDuration={200}>
-      <ScrollArea className="formatting-toolbar border-b border-border/40 bg-muted/30">
-        <div
-          ref={containerRef}
-          role="toolbar"
-          aria-label={t('toolbar.formatting')}
-          aria-controls={blockId ? `editor-${blockId}` : undefined}
-          className="relative flex items-center gap-0.5 px-2 py-px"
-          data-testid="formatting-toolbar"
-        >
+      <div
+        ref={containerRef}
+        role="toolbar"
+        aria-label={t('toolbar.formatting')}
+        aria-controls={blockId ? `editor-${blockId}` : undefined}
+        className="formatting-toolbar relative flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px"
+        data-testid="formatting-toolbar"
+      >
           {visible.map((item) => (
             <span key={`v-${item.key}`} className="inline-flex">
               {renderItem(item, 'inline')}
@@ -620,7 +618,6 @@ export function FormattingToolbar({
             ))}
           </div>
         </div>
-      </ScrollArea>
-    </TooltipProvider>
+      </TooltipProvider>
   )
 }

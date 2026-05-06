@@ -686,5 +686,107 @@ describe('RecentPagesStrip', () => {
         { timeout: 5000 },
       )
     })
+
+    it('does not apply mask-image when there is no overflow (MAINT-211)', async () => {
+      const { recordVisit } = useRecentPagesStore.getState()
+      for (let i = 0; i < 20; i++) {
+        recordVisit({ pageId: `P${i}`, title: `Page ${i}` })
+      }
+
+      class FiringRO {
+        cb: ResizeObserverCallback
+        constructor(cb: ResizeObserverCallback) {
+          this.cb = cb
+        }
+        observe(target: Element): void {
+          queueMicrotask(() => {
+            this.cb([{ target } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver)
+          })
+        }
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+      vi.stubGlobal('ResizeObserver', FiringRO)
+
+      const origScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
+      const origClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+        get() {
+          if (this.getAttribute('data-slot') === 'scroll-area-viewport') return 100
+          return origScrollWidth?.get?.call(this) ?? 0
+        },
+        configurable: true,
+      })
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        get() {
+          if (this.getAttribute('data-slot') === 'scroll-area-viewport') return 200
+          return origClientWidth?.get?.call(this) ?? 0
+        },
+        configurable: true,
+      })
+
+      try {
+        render(<RecentPagesStrip />)
+        const strip = screen.getByTestId('recent-pages-strip')
+        const viewport = strip.querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement
+        await waitFor(() => {
+          expect(viewport.style.maskImage).toBe('')
+        })
+      } finally {
+        if (origScrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', origScrollWidth)
+        if (origClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClientWidth)
+      }
+    })
+
+    it('applies mask-image when viewport overflows (MAINT-211)', async () => {
+      const { recordVisit } = useRecentPagesStore.getState()
+      for (let i = 0; i < 20; i++) {
+        recordVisit({ pageId: `P${i}`, title: `Page ${i}` })
+      }
+
+      class FiringRO {
+        cb: ResizeObserverCallback
+        constructor(cb: ResizeObserverCallback) {
+          this.cb = cb
+        }
+        observe(target: Element): void {
+          queueMicrotask(() => {
+            this.cb([{ target } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver)
+          })
+        }
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+      vi.stubGlobal('ResizeObserver', FiringRO)
+
+      const origScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
+      const origClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+        get() {
+          if (this.getAttribute('data-slot') === 'scroll-area-viewport') return 400
+          return origScrollWidth?.get?.call(this) ?? 0
+        },
+        configurable: true,
+      })
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        get() {
+          if (this.getAttribute('data-slot') === 'scroll-area-viewport') return 200
+          return origClientWidth?.get?.call(this) ?? 0
+        },
+        configurable: true,
+      })
+
+      try {
+        render(<RecentPagesStrip />)
+        const strip = screen.getByTestId('recent-pages-strip')
+        const viewport = strip.querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement
+        await waitFor(() => {
+          expect(viewport.style.maskImage).toBe('linear-gradient(to right, black 90%, transparent)')
+        })
+      } finally {
+        if (origScrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', origScrollWidth)
+        if (origClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClientWidth)
+      }
+    })
   })
 })

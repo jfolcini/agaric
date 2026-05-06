@@ -48,6 +48,7 @@ import { TrashEmptyDialog } from './TrashView/TrashEmptyDialog'
 import { TrashListView } from './TrashView/TrashListView'
 import { TrashPurgeDialog } from './TrashView/TrashPurgeDialog'
 import { TrashRestoreAllDialog } from './TrashView/TrashRestoreAllDialog'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
@@ -64,7 +65,7 @@ export function TrashView(): React.ReactElement {
       listBlocks({
         showDeleted: true,
         ...(cursor != null && { cursor }),
-        limit: 50,
+        limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId ?? '',
       }),
     [currentSpaceId],

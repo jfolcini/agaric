@@ -28,6 +28,7 @@ import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 interface SelectedTag {
   id: string
@@ -110,7 +111,7 @@ export function TagFilterPanel(): React.ReactElement {
         prefixes: [],
         mode,
         ...(cursor != null && { cursor }),
-        limit: 50,
+        limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId,
       }),
     [selectedTags, mode, currentSpaceId],

@@ -49,6 +49,7 @@ import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
 import { SearchablePopover } from './SearchablePopover'
 import { ViewHeader } from './ViewHeader'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -148,7 +149,7 @@ export function SearchPanel(): React.ReactElement {
         parentId: filterPageId ?? undefined,
         tagIds: filterTagIds.length > 0 ? filterTagIds : undefined,
         cursor,
-        limit: 50,
+        limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId ?? '',
       }),
     [debouncedQuery, filterPageId, filterTagIds, currentSpaceId],

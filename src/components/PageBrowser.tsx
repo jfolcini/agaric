@@ -39,6 +39,7 @@ import { LoadMoreButton } from './LoadMoreButton'
 import { PageBrowserHeader } from './PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
 import { ViewHeader } from './ViewHeader'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 const HEADER_ROW_HEIGHT = 36
 const PAGE_ROW_HEIGHT = 44
@@ -69,7 +70,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       listBlocks({
         blockType: 'page',
         ...(cursor != null && { cursor }),
-        limit: 50,
+        limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId ?? '',
       }),
     [currentSpaceId],

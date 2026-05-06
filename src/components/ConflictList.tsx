@@ -67,11 +67,12 @@ import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { LoadMoreButton } from './LoadMoreButton'
 import { ViewHeader } from './ViewHeader'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export function ConflictList(): React.ReactElement {
   const { t } = useTranslation()
   const queryFn = useCallback(
-    (cursor?: string) => getConflicts({ ...(cursor != null && { cursor }), limit: 50 }),
+    (cursor?: string) => getConflicts({ ...(cursor != null && { cursor }), limit: PAGINATION_LIMIT }),
     [],
   )
   const {

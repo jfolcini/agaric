@@ -33,6 +33,7 @@ import { HistoryRestoreDialog } from './HistoryRestoreDialog'
 import { HistoryRevertDialog } from './HistoryRevertDialog'
 import { HistorySelectionToolbar } from './HistorySelectionToolbar'
 import { ViewHeader } from './ViewHeader'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export function HistoryView(): React.ReactElement {
   const { t } = useTranslation()
@@ -79,7 +80,7 @@ export function HistoryView(): React.ReactElement {
           ...(opTypeFilter != null && { opTypeFilter }),
           ...(effectiveSpaceId != null && { spaceId: effectiveSpaceId }),
           ...(cursor != null && { cursor }),
-          limit: 50,
+          limit: PAGINATION_LIMIT,
         })
         setErrorCategory(null)
         return result

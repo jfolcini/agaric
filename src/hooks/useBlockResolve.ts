@@ -28,6 +28,7 @@ import {
 } from '../lib/tauri'
 import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 function logSlowQuery(fn: string, query: string, t0: number, count: number): void {
   const durationMs = Math.round(performance.now() - t0)
@@ -167,7 +168,7 @@ async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promis
   if (q.length === 0) return
   try {
     const spaceId = useSpaceStore.getState().currentSpaceId
-    const rows = await listPageAliasesByPrefix({ prefix: q, limit: 50, spaceId: spaceId ?? null })
+    const rows = await listPageAliasesByPrefix({ prefix: q, limit: PAGINATION_LIMIT, spaceId: spaceId ?? null })
     if (rows.length === 0) return
 
     const existingPageIds = new Set(matches.filter((m) => !m.isCreate).map((m) => m.id))
