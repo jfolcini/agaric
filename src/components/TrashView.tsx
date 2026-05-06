@@ -22,6 +22,7 @@ import { BatchActionToolbar } from '@/components/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
@@ -48,7 +49,6 @@ import { TrashEmptyDialog } from './TrashView/TrashEmptyDialog'
 import { TrashListView } from './TrashView/TrashListView'
 import { TrashPurgeDialog } from './TrashView/TrashPurgeDialog'
 import { TrashRestoreAllDialog } from './TrashView/TrashRestoreAllDialog'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()

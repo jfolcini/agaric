@@ -80,6 +80,8 @@ export const commands = {
 	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope })),
 	// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
 	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope })),
+	// Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`].
+	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
 	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
 	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppErrorSchema>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
 	// Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].

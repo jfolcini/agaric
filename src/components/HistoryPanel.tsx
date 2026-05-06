@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import type { HistoryEntry } from '../lib/tauri'
@@ -30,7 +31,6 @@ import { HistoryFilterBar } from './HistoryFilterBar'
 import { BlockHistoryItem } from './HistoryListItem'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 interface HistoryPanelProps {
   /** The block to show history for. */

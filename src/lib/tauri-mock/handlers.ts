@@ -37,7 +37,11 @@ type Handler = (args: unknown) => unknown
 const returnNull: Handler = () => null
 const returnUndefined: Handler = () => undefined
 const returnEmptyArray: Handler = () => []
-const returnEmptyPage: Handler = () => ({ items: [], next_cursor: null, has_more: false })
+const returnEmptyPage: Handler = () => ({
+  items: [],
+  next_cursor: null,
+  has_more: false,
+})
 
 export const HANDLERS: Record<string, Handler> = {
   // ---------------------------------------------------------------------------
@@ -481,6 +485,36 @@ export const HANDLERS: Record<string, Handler> = {
   // Properties & tags queries
   // ---------------------------------------------------------------------------
 
+  list_unfinished_tasks: (args) => {
+    const a = args as Record<string, unknown>
+    const beforeDate = a['beforeDate'] as string
+    const todoStates = a['todoStates'] as string[]
+    const limit = (a['limit'] as number | null) ?? 200
+    const spaceId = (a['spaceId'] as string | null) ?? null
+
+    const items = Array.from(blocks.values()).filter((b) => {
+      if (b['deleted_at'] || b['is_conflict']) return false
+      if (spaceId && b['page_id'] !== spaceId && b['id'] !== spaceId) return false
+      if (!todoStates.includes((b['todo_state'] as string) ?? '')) return false
+      const date = b['due_date'] ?? b['scheduled_date']
+      if (!date || date >= beforeDate) return false
+      return true
+    })
+
+    items.sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+      const dateA = a['due_date'] ?? a['scheduled_date'] ?? ''
+      const dateB = b['due_date'] ?? b['scheduled_date'] ?? ''
+      if (dateA !== dateB) return (dateB as string).localeCompare(dateA as string)
+      return (b['id'] as string).localeCompare(a['id'] as string)
+    })
+
+    return Promise.resolve({
+      items: items.slice(0, limit),
+      next_cursor: null,
+      has_more: items.length > limit,
+    })
+  },
+
   query_by_property: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
@@ -639,7 +673,11 @@ export const HANDLERS: Record<string, Handler> = {
       : null
     const blockProps = properties.get(blockId)
     if (blockProps) blockProps.delete(key)
-    pushOp('delete_property', { block_id: blockId, key, from_value: fromValue })
+    pushOp('delete_property', {
+      block_id: blockId,
+      key,
+      from_value: fromValue,
+    })
     return null
   },
 
@@ -1497,7 +1535,11 @@ export const HANDLERS: Record<string, Handler> = {
   // Point-in-time restore
   // ---------------------------------------------------------------------------
 
-  restore_page_to_op: () => ({ ops_reverted: 0, non_reversible_skipped: 0, results: [] }),
+  restore_page_to_op: () => ({
+    ops_reverted: 0,
+    non_reversible_skipped: 0,
+    results: [],
+  }),
 
   // ---------------------------------------------------------------------------
   // Link metadata

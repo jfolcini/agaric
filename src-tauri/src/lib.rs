@@ -80,6 +80,7 @@ macro_rules! agaric_commands {
             $crate::commands::search_blocks,
             $crate::commands::query_by_tags,
             $crate::commands::query_by_property,
+            $crate::commands::list_unfinished_tasks,
             $crate::commands::list_tags_by_prefix,
             $crate::commands::list_tags_for_block,
             $crate::commands::set_property,

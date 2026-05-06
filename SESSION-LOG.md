@@ -7,6 +7,45 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 684 — PEND-31 UnfinishedTasks pagination cap fix (2026-05-06)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-06 |
+| **Subagents** | 0 (orchestrator-direct) |
+| **Items closed** | PEND-31 |
+| **Items modified** | — |
+| **Tests added** | +0 (frontend) / +1 (backend) |
+| **Files touched** | 8 |
+
+**Summary:** Fixed a bug where the `UnfinishedTasks` panel silently truncated carry-over TODOs to a single page (200 oldest blocks). Implemented Option B from PEND-31: pushed the date-window filter to the backend by adding a new `list_unfinished_tasks` command.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND item, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src-tauri/src/pagination/tasks.rs` (new)
+- `src-tauri/src/pagination/mod.rs`
+- `src-tauri/src/pagination/tests.rs`
+- `src-tauri/src/commands/queries.rs`
+- `src-tauri/src/commands/mod.rs`
+- `src-tauri/src/lib.rs`
+- `src/lib/tauri.ts`
+- `src/lib/tauri-mock/handlers.ts`
+- `src/components/journal/UnfinishedTasks.tsx`
+- `src/components/journal/__tests__/UnfinishedTasks.test.tsx`
+- `pending/PEND-31-unfinished-tasks-pagination-cap.md` (deleted)
+- `pending/README.md`
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — all tests passed.
+- `npx vitest run` — all tests passed.
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit.
+
+---
 
 ## Session 682 — Five S-cost frontend maintenance fixes: MAINT-197 + MAINT-211 + MAINT-221 + MAINT-222 + MAINT-206 (2026-05-07)
 

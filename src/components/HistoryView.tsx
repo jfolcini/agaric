@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '../hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '../hooks/useHistorySelection'
@@ -33,7 +34,6 @@ import { HistoryRestoreDialog } from './HistoryRestoreDialog'
 import { HistoryRevertDialog } from './HistoryRevertDialog'
 import { HistorySelectionToolbar } from './HistorySelectionToolbar'
 import { ViewHeader } from './ViewHeader'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export function HistoryView(): React.ReactElement {
   const { t } = useTranslation()

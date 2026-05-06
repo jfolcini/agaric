@@ -552,72 +552,72 @@ export function FormattingToolbar({
         className="formatting-toolbar relative flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px"
         data-testid="formatting-toolbar"
       >
-          {visible.map((item) => (
-            <span key={`v-${item.key}`} className="inline-flex">
-              {renderItem(item, 'inline')}
+        {visible.map((item) => (
+          <span key={`v-${item.key}`} className="inline-flex">
+            {renderItem(item, 'inline')}
+          </span>
+        ))}
+
+        {overflowed.length > 0 && (
+          <Popover open={overflowPopoverOpen} onOpenChange={setOverflowPopoverOpen}>
+            <PopoverAnchor asChild>
+              <Tip label={t('toolbar.moreTip')}>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('toolbar.more')}
+                  aria-haspopup="dialog"
+                  aria-expanded={overflowPopoverOpen}
+                  aria-controls={overflowMenuId}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    setOverflowPopoverOpen((prev) => !prev)
+                  }}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </Tip>
+            </PopoverAnchor>
+            <MenuPopoverContent
+              id={overflowMenuId}
+              align="end"
+              data-editor-portal
+              data-testid="toolbar-overflow-menu"
+            >
+              <div className="flex flex-col gap-0.5">
+                {overflowed.map((item) => (
+                  <span key={`o-${item.key}`}>{renderItem(item, 'overflow')}</span>
+                ))}
+              </div>
+            </MenuPopoverContent>
+          </Popover>
+        )}
+
+        {/*
+         * Off-screen sentinel used by `useToolbarOverflow` to measure
+         * each item's natural width. Mirrors every item (visible or
+         * overflowed) so widths are always available, with
+         * `aria-hidden="true"` so testing-library / a11y traversal
+         * skip the duplicates.
+         */}
+        <div
+          ref={sentinelRef}
+          aria-hidden="true"
+          data-testid="toolbar-sentinel"
+          className="pointer-events-none absolute -left-[9999px] top-0 flex items-center gap-0.5"
+          style={{ visibility: 'hidden' }}
+        >
+          {items.map((item) => (
+            <span key={`s-${item.key}`} data-toolbar-item-key={item.key} className="inline-flex">
+              {item.kind === 'separator' ? (
+                <span className="border-l border-border/40 mx-0.5 h-4" />
+              ) : (
+                renderItem(item, 'sentinel')
+              )}
             </span>
           ))}
-
-          {overflowed.length > 0 && (
-            <Popover open={overflowPopoverOpen} onOpenChange={setOverflowPopoverOpen}>
-              <PopoverAnchor asChild>
-                <Tip label={t('toolbar.moreTip')}>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={t('toolbar.more')}
-                    aria-haspopup="dialog"
-                    aria-expanded={overflowPopoverOpen}
-                    aria-controls={overflowMenuId}
-                    onPointerDown={(e) => {
-                      e.preventDefault()
-                      setOverflowPopoverOpen((prev) => !prev)
-                    }}
-                  >
-                    <MoreHorizontal className="h-3.5 w-3.5" />
-                  </Button>
-                </Tip>
-              </PopoverAnchor>
-              <MenuPopoverContent
-                id={overflowMenuId}
-                align="end"
-                data-editor-portal
-                data-testid="toolbar-overflow-menu"
-              >
-                <div className="flex flex-col gap-0.5">
-                  {overflowed.map((item) => (
-                    <span key={`o-${item.key}`}>{renderItem(item, 'overflow')}</span>
-                  ))}
-                </div>
-              </MenuPopoverContent>
-            </Popover>
-          )}
-
-          {/*
-           * Off-screen sentinel used by `useToolbarOverflow` to measure
-           * each item's natural width. Mirrors every item (visible or
-           * overflowed) so widths are always available, with
-           * `aria-hidden="true"` so testing-library / a11y traversal
-           * skip the duplicates.
-           */}
-          <div
-            ref={sentinelRef}
-            aria-hidden="true"
-            data-testid="toolbar-sentinel"
-            className="pointer-events-none absolute -left-[9999px] top-0 flex items-center gap-0.5"
-            style={{ visibility: 'hidden' }}
-          >
-            {items.map((item) => (
-              <span key={`s-${item.key}`} data-toolbar-item-key={item.key} className="inline-flex">
-                {item.kind === 'separator' ? (
-                  <span className="border-l border-border/40 mx-0.5 h-4" />
-                ) : (
-                  renderItem(item, 'sentinel')
-                )}
-              </span>
-            ))}
-          </div>
         </div>
-      </TooltipProvider>
+      </div>
+    </TooltipProvider>
   )
 }

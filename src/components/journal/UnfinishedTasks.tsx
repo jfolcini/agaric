@@ -20,7 +20,7 @@ import type { NavigateToPageFn } from '../../lib/block-events'
 import { logger } from '../../lib/logger'
 import { priorityColor } from '../../lib/priority-color'
 import type { BlockRow } from '../../lib/tauri'
-import { batchResolve, queryByProperty } from '../../lib/tauri'
+import { batchResolve, listUnfinishedTasks } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
 import { BlockListItem } from '../BlockListItem'
 import { LoadingSkeleton } from '../LoadingSkeleton'
@@ -90,9 +90,17 @@ function groupByAge(blocks: BlockRow[], todayStr: string): AgeGroup[] {
 
   const groups: AgeGroup[] = []
   if (yesterday.length > 0)
-    groups.push({ key: 'yesterday', i18nKey: 'unfinished.yesterday', blocks: yesterday })
+    groups.push({
+      key: 'yesterday',
+      i18nKey: 'unfinished.yesterday',
+      blocks: yesterday,
+    })
   if (thisWeek.length > 0)
-    groups.push({ key: 'thisWeek', i18nKey: 'unfinished.thisWeek', blocks: thisWeek })
+    groups.push({
+      key: 'thisWeek',
+      i18nKey: 'unfinished.thisWeek',
+      blocks: thisWeek,
+    })
   if (older.length > 0) groups.push({ key: 'older', i18nKey: 'unfinished.older', blocks: older })
 
   return groups
@@ -159,26 +167,6 @@ function writeGroupCollapsedState(state: Record<string, boolean>): void {
   }
 }
 
-/** Merge two result pages and filter to unfinished tasks before today. */
-function mergeAndFilterUnfinished(items: BlockRow[], todayStr: string): BlockRow[] {
-  const seen = new Set<string>()
-  const merged: BlockRow[] = []
-  for (const b of items) {
-    if (seen.has(b.id)) continue
-    seen.add(b.id)
-
-    // Filter: only TODO or DOING states
-    if (b.todo_state !== 'TODO' && b.todo_state !== 'DOING') continue
-
-    // Filter: due_date or scheduled_date must be before today
-    const dateStr = b.due_date ?? b.scheduled_date
-    if (!dateStr || dateStr >= todayStr) continue
-
-    merged.push(b)
-  }
-  return merged
-}
-
 /** Resolve a set of page IDs to title map. Returns empty map on failure. */
 async function resolvePageTitles(parentIds: string[]): Promise<Map<string, string>> {
   const titles = new Map<string, string>()
@@ -223,19 +211,20 @@ export function UnfinishedTasks({
     async function fetchUnfinished() {
       setLoading(true)
       try {
-        // Query blocks with due_date and scheduled_date, then filter client-side
-        const [dueResp, schedResp] = await Promise.all([
-          queryByProperty({ key: 'due_date', limit: 500, spaceId: currentSpaceId }),
-          queryByProperty({ key: 'scheduled_date', limit: 500, spaceId: currentSpaceId }),
-        ])
+        // Query unfinished tasks directly from the backend
+        const resp = await listUnfinishedTasks({
+          beforeDate: todayStr,
+          todoStates: ['TODO', 'DOING'],
+          limit: 200,
+          spaceId: currentSpaceId,
+        })
 
         if (stale) return
 
-        const merged = mergeAndFilterUnfinished([...dueResp.items, ...schedResp.items], todayStr)
-        setBlocks(merged)
+        setBlocks(resp.items)
 
         // Resolve page titles for breadcrumbs (non-critical on failure)
-        const parentIds = [...new Set(merged.map((b) => b.page_id).filter(Boolean))] as string[]
+        const parentIds = [...new Set(resp.items.map((b) => b.page_id).filter(Boolean))] as string[]
         if (parentIds.length > 0) {
           const titles = await resolvePageTitles(parentIds)
           if (!stale) {

@@ -88,6 +88,18 @@ function makeOlderBlock(id = 'O1', content = 'Older task'): BlockRow {
  */
 function mockInvokeForBlocks(blocks: BlockRow[], resolvedPages?: { id: string; title: string }[]) {
   mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd === 'list_unfinished_tasks') {
+      const params = args as { beforeDate: string; todoStates: string[] }
+      const beforeDate = params.beforeDate
+      const todoStates = params.todoStates
+      const filtered = blocks.filter((b) => {
+        if (!todoStates.includes(b.todo_state ?? '')) return false
+        const date = b.due_date ?? b.scheduled_date
+        if (!date || date >= beforeDate) return false
+        return true
+      })
+      return { items: filtered, next_cursor: null, has_more: false }
+    }
     if (cmd === 'query_by_property') {
       const params = args as { key: string }
       const key = params.key
@@ -415,7 +427,9 @@ describe('UnfinishedTasks', () => {
     expect(within(olderGroup).getByText('Older task')).toBeInTheDocument()
 
     // Collapse the yesterday group
-    const yesterdayHeader = within(yesterdayGroup).getByRole('button', { expanded: true })
+    const yesterdayHeader = within(yesterdayGroup).getByRole('button', {
+      expanded: true,
+    })
     await user.click(yesterdayHeader)
 
     // Yesterday items should be hidden, older should still be visible
@@ -443,7 +457,9 @@ describe('UnfinishedTasks', () => {
 
       // Collapse the yesterday group
       const yesterdayGroup = screen.getByTestId('unfinished-group-yesterday')
-      const yesterdayHeader = within(yesterdayGroup).getByRole('button', { expanded: true })
+      const yesterdayHeader = within(yesterdayGroup).getByRole('button', {
+        expanded: true,
+      })
       await user.click(yesterdayHeader)
 
       // Storage now has the per-group state
@@ -471,7 +487,9 @@ describe('UnfinishedTasks', () => {
 
       // Section is already expanded — collapse the yesterday group directly.
       const yesterdayGroup = screen.getByTestId('unfinished-group-yesterday')
-      const yesterdayHeader = within(yesterdayGroup).getByRole('button', { expanded: true })
+      const yesterdayHeader = within(yesterdayGroup).getByRole('button', {
+        expanded: true,
+      })
       await user.click(yesterdayHeader)
 
       // Storage round-trip check
@@ -521,7 +539,11 @@ describe('UnfinishedTasks', () => {
     it('drops non-boolean values from stored JSON', async () => {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ yesterday: true, thisWeek: 'collapsed', older: false }),
+        JSON.stringify({
+          yesterday: true,
+          thisWeek: 'collapsed',
+          older: false,
+        }),
       )
       const user = userEvent.setup()
       mockInvokeForBlocks([makeYesterdayBlock(), makeThisWeekBlock(), makeOlderBlock()])
@@ -555,10 +577,10 @@ describe('UnfinishedTasks', () => {
 
   // --- Error paths ---
   describe('error paths', () => {
-    it('queryByProperty rejects — shows empty state and logs warning', async () => {
+    it('listUnfinishedTasks rejects — shows empty state and logs warning', async () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'query_by_property') {
+        if (cmd === 'list_unfinished_tasks') {
           throw new Error('query failure')
         }
         return { items: [], next_cursor: null, has_more: false }
@@ -587,6 +609,19 @@ describe('UnfinishedTasks', () => {
     it('batchResolve rejects — blocks render without page titles', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_unfinished_tasks') {
+          const params = args as { beforeDate: string; todoStates: string[] }
+          const beforeDate = params.beforeDate
+          const todoStates = params.todoStates
+          const blocks = [makeYesterdayBlock()]
+          const filtered = blocks.filter((b) => {
+            if (!todoStates.includes(b.todo_state ?? '')) return false
+            const date = b.due_date ?? b.scheduled_date
+            if (!date || date >= beforeDate) return false
+            return true
+          })
+          return { items: filtered, next_cursor: null, has_more: false }
+        }
         if (cmd === 'query_by_property') {
           const params = args as { key: string }
           const key = params.key

@@ -22,6 +22,7 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -39,7 +40,6 @@ import { LoadMoreButton } from './LoadMoreButton'
 import { PageBrowserHeader } from './PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
 import { ViewHeader } from './ViewHeader'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 const HEADER_ROW_HEIGHT = 36
 const PAGE_ROW_HEIGHT = 44

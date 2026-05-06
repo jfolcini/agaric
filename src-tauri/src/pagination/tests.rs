@@ -4914,3 +4914,14 @@ mod active_row_conversions {
         assert_eq!(active.page_id, row.page_id);
     }
 }
+
+#[tokio::test]
+async fn test_list_unfinished_tasks_empty() {
+    let (pool, _temp_dir) = test_pool().await;
+    let page = PageRequest::new(None, None).unwrap();
+    let states = vec!["TODO".to_string(), "DOING".to_string()];
+    let res = super::tasks::list_unfinished_tasks(&pool, "2024-01-01", &states, &page, None)
+        .await
+        .unwrap();
+    assert!(res.items.is_empty());
+}

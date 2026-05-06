@@ -893,17 +893,18 @@ describe('FormattingToolbar', () => {
         ) as HTMLElement | undefined
         expect(headingBtn).toBeDefined()
 
-        const headingPopover = headingBtn!.closest('[data-popover]') as HTMLElement
+        const headingPopover = (headingBtn as Element).closest('[data-popover]') as HTMLElement
+
         expect(headingPopover).toHaveAttribute('data-open', 'false')
 
-        fireEvent.pointerDown(headingBtn!)
+        fireEvent.pointerDown(headingBtn as Element)
         expect(headingPopover).toHaveAttribute('data-open', 'true')
 
         const h2Btn = Array.from(headingPopover.querySelectorAll('button')).find(
           (b) => b.textContent === 'H2',
         ) as HTMLElement | undefined
         expect(h2Btn).toBeDefined()
-        fireEvent.pointerDown(h2Btn!)
+        fireEvent.pointerDown(h2Btn as Element)
 
         expect(headingPopover).toHaveAttribute('data-open', 'false')
         expect(overflowMenu.closest('[data-popover]')).toHaveAttribute('data-open', 'false')
@@ -927,17 +928,18 @@ describe('FormattingToolbar', () => {
         ) as HTMLElement | undefined
         expect(codeBtn).toBeDefined()
 
-        const codePopover = codeBtn!.closest('[data-popover]') as HTMLElement
+        const codePopover = (codeBtn as Element).closest('[data-popover]') as HTMLElement
+
         expect(codePopover).toHaveAttribute('data-open', 'false')
 
-        fireEvent.pointerDown(codeBtn!)
+        fireEvent.pointerDown(codeBtn as Element)
         expect(codePopover).toHaveAttribute('data-open', 'true')
 
         const plainTextBtn = Array.from(codePopover.querySelectorAll('button')).find(
           (b) => b.textContent === 'Plain text',
         ) as HTMLElement | undefined
         expect(plainTextBtn).toBeDefined()
-        fireEvent.pointerDown(plainTextBtn!)
+        fireEvent.pointerDown(plainTextBtn as Element)
 
         expect(codePopover).toHaveAttribute('data-open', 'false')
         expect(overflowMenu.closest('[data-popover]')).toHaveAttribute('data-open', 'false')
