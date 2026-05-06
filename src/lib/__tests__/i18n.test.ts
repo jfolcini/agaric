@@ -8,6 +8,22 @@
 import { describe, expect, it } from 'vitest'
 import { i18n } from '../i18n'
 
+// Import every namespace individually so we can detect cross-namespace
+// key collisions that object spread silently overwrites.
+import { agenda } from '../i18n/agenda'
+import { block } from '../i18n/block'
+import { common } from '../i18n/common'
+import { conflicts } from '../i18n/conflicts'
+import { editor } from '../i18n/editor'
+import { errors } from '../i18n/errors'
+import { pages } from '../i18n/pages'
+import { properties } from '../i18n/properties'
+import { references } from '../i18n/references'
+import { settings } from '../i18n/settings'
+import { shortcuts } from '../i18n/shortcuts'
+import { sync } from '../i18n/sync'
+import { toolbar } from '../i18n/toolbar'
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /** Return the flat translation object for the English locale. */
@@ -349,6 +365,29 @@ describe('no duplicate keys', () => {
     expect(keys.length).toBe(uniqueKeys.size)
     // Sanity: we have a substantial number of keys
     expect(keys.length).toBeGreaterThan(200)
+  })
+
+  it('has no cross-namespace key collisions (spread-merge integrity)', () => {
+    const namespaces = [
+      common,
+      errors,
+      toolbar,
+      block,
+      agenda,
+      editor,
+      pages,
+      properties,
+      references,
+      conflicts,
+      sync,
+      shortcuts,
+      settings,
+    ]
+    const individualKeyCount = namespaces.reduce((sum, ns) => sum + Object.keys(ns).length, 0)
+    const mergedKeyCount = Object.keys(getTranslations()).length
+    // If any two namespaces share a key, the spread-merge silently overwrites
+    // and the merged count will be smaller than the sum of individual counts.
+    expect(mergedKeyCount).toBe(individualKeyCount)
   })
 
   it('every key follows the namespace.name convention', () => {

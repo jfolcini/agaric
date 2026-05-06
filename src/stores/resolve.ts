@@ -205,7 +205,6 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         })
       } catch (err) {
         logger.warn('ResolveStore', 'preload failed, using fallback', {}, err)
-        set({ _preloaded: true })
       }
     },
 

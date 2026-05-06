@@ -2,11 +2,42 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 679 (PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223 — eight distinct work units in this session. PEND-15 Phase 0 ships `cargo run --bin audit_cross_space_refs`; PEND-15 Phase 2 ships the `resolve_block_space` helper as foundation for future enforcement-point wiring (no callers yet — Path A/B decision still gates Phase 1+2 wiring). PEND-12 plan rejected and deleted after spike confirmed sqlx 0.8.6 limitation per upstream #3388. MAINT-227 closed via one-line fix to the existing `sqlx-prepare-check` pre-push hook. MAINT-172 closed via drift-detection parity test mirroring PEND-28a H1 Option 2's pattern. Pending folder 7 → 6 plan files. Session 678 shipped PEND-18 in four phases) | **Latest entry:** 2026-05-05 | **Previously resolved counter:** 1167+ items.
+**Sessions:** 1 – 680 (Session 680: four S-cost frontend bug fixes — MAINT-200 resolve-store preload retry poison, MAINT-201 projected-agenda cache unbounded growth, MAINT-202 UnfinishedTasks silent catch blocks, MAINT-205 i18n collision detection test. Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223) | **Latest entry:** 2026-05-06 | **Previously resolved counter:** 1171+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 680 — Four S-cost frontend bug fixes: MAINT-200 + MAINT-201 + MAINT-202 + MAINT-205 (2026-05-06)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-06 |
+| **Subagents** | 0 (single-session batch of 4 closely-scoped frontend fixes; no subagent parallelism needed). |
+| **Items closed** | MAINT-200, MAINT-201, MAINT-202, MAINT-205 (removed from REVIEW-LATER.md). REVIEW-LATER open count: 36 → 32. |
+| **Items modified** | None re-scoped; all four were filed during JS/TS code review (session 660) and closed as-planned. |
+| **Tests added** | +3 frontend (1 modified in resolve.test.ts, 1 modified in UnfinishedTasks.test.tsx, 1 new in i18n.test.ts). |
+| **Files touched** | `src/stores/resolve.ts`, `src/stores/__tests__/resolve.test.ts`, `src/hooks/useDuePanelData.ts`, `src/components/journal/UnfinishedTasks.tsx`, `src/components/journal/__tests__/UnfinishedTasks.test.tsx`, `src/lib/__tests__/i18n.test.ts`, `pending/REVIEW-LATER.md`, `SESSION-LOG.md`. |
+
+**Summary:** A batch of four small frontend bug fixes filed during session 660's JS/TS code review. All four are S-cost (<2h), low-risk, and touch disjoint file boundaries — ideal for a single-session batch with no subagents.
+
+**MAINT-200 — `useResolveStore.preload()` catch branch poisoned retry**
+
+Removed `set({ _preloaded: true })` from the catch branch in `src/stores/resolve.ts:206-208`. A transient backend failure at boot no longer permanently disables preload retry for the rest of the session. Updated three test assertions in `resolve.test.ts` to expect `_preloaded: false` on error (previously asserted `true`). Verified existing `warn` logging still fires.
+
+**MAINT-201 — `useDuePanelData` projected-agenda cache unbounded growth**
+
+Added `projectedCache.delete(cacheKey)` in the stale-cache branch of `src/hooks/useDuePanelData.ts:430-433`. When a cached projected-agenda entry's TTL expires, the entry is evicted before the refetch begins, preventing unbounded `Map` growth across many dates in a long session.
+
+**MAINT-202 — `UnfinishedTasks` silent catch blocks**
+
+Replaced three silent `catch {}` blocks in `src/components/journal/UnfinishedTasks.tsx` with `logger.warn(...)` calls: `writeCollapsedState` (localStorage write failure), `writeGroupCollapsedState` (group-localStorage write failure), and the main `fetchUnfinished` fetch failure. Read-side catches (returning safe defaults) intentionally left untouched per AGENTS.md. Added a test assertion in `UnfinishedTasks.test.tsx` verifying `logger.warn('UnfinishedTasks', 'fetchUnfinished failed', ...)` is called when `queryByProperty` rejects.
+
+**MAINT-205 — i18n namespace collision detection**
+
+Added a vitest in `src/lib/__tests__/i18n.test.ts` that imports all 13 namespace modules individually and asserts `Object.keys(mergedTranslation).length === sum(Object.keys(namespace).length)`. This catches any future cross-namespace key collision that object spread would silently overwrite. The test passes against the current zero-collision state.
+
+**Verification:** Full frontend test suite (`npx vitest run`) — 385 test files, 9568 tests — all green (118.58s). No pre-commit run needed (no Rust changes, no migration changes, no formatting drift).
 
 ## Session 679 — PEND-15 Phase 0 audit binary + PEND-12 Phase 0 spike KILL (2026-05-05)
 

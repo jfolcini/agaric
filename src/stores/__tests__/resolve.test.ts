@@ -138,13 +138,13 @@ describe('preload', () => {
     expect(entry).toEqual({ title: 'Deleted Page', deleted: true })
   })
 
-  it('sets _preloaded on error', async () => {
+  it('does not set _preloaded on error so retry is possible', async () => {
     mockedInvoke.mockRejectedValue(new Error('network failure'))
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
-    expect(state._preloaded).toBe(true)
+    expect(state._preloaded).toBe(false)
     expect(state.cache.size).toBe(0)
   })
 
@@ -166,7 +166,7 @@ describe('preload', () => {
       {},
       fetchErr,
     )
-    expect(useResolveStore.getState()._preloaded).toBe(true)
+    expect(useResolveStore.getState()._preloaded).toBe(false)
     warnSpy.mockRestore()
   })
 
@@ -188,7 +188,7 @@ describe('preload', () => {
       {},
       fetchErr,
     )
-    expect(useResolveStore.getState()._preloaded).toBe(true)
+    expect(useResolveStore.getState()._preloaded).toBe(false)
     warnSpy.mockRestore()
   })
 

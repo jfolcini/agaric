@@ -428,7 +428,9 @@ export function useDuePanelData({
     }
 
     if (cached) {
-      // Stale cache — show immediately but refetch
+      // Stale cache — evict so the map doesn't grow unbounded, then
+      // show the now-stale data immediately while the refetch runs.
+      projectedCache.delete(cacheKey)
       setProjectedEntries(cached.entries.filter((e) => e.block.content?.trim()))
     }
 
