@@ -70,7 +70,29 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
     let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.tag_id).collect();
 
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
-    let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+    let mut to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+
+    // PEND-15 Phase 3 — filter out cross-space tag-refs before inserting.
+    // Tags are space-scoped (Path A); the write-time gate rejects
+    // cross-space tag refs, and the cache must mirror that invariant.
+    if !to_insert.is_empty() {
+        let source_block_id = crate::ulid::BlockId::from_trusted(block_id);
+        let source_space = crate::space::resolve_block_space(&mut *tx, &source_block_id).await?;
+        if source_space.is_some() {
+            let mut same_space: Vec<&String> = Vec::with_capacity(to_insert.len());
+            for tag_id in &to_insert {
+                let tag_block_id = crate::ulid::BlockId::from_trusted(tag_id);
+                if let Ok(Some(tag_space)) =
+                    crate::space::resolve_block_space(&mut *tx, &tag_block_id).await
+                {
+                    if Some(&tag_space) == source_space.as_ref() {
+                        same_space.push(tag_id);
+                    }
+                }
+            }
+            to_insert = same_space;
+        }
+    }
 
     if to_delete.is_empty() && to_insert.is_empty() {
         // No changes — transaction rolls back on drop (no commit needed).

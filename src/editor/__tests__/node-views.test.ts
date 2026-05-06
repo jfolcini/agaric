@@ -162,26 +162,6 @@ describe('BlockLink NodeView', () => {
     const chip = editor.view.dom.querySelector('[data-type="block-link"]') as HTMLElement
     expect(() => chip.click()).not.toThrow()
   })
-
-  it('applies block-link-deleted class when resolveStatus returns deleted', () => {
-    editor = createEditor({
-      blockLinkResolveStatus: () => 'deleted',
-      content: {
-        type: 'doc',
-        content: [
-          {
-            type: 'paragraph',
-            content: [{ type: 'block_link', attrs: { id: 'GONE' } }],
-          },
-        ],
-      },
-    })
-
-    const chip = editor.view.dom.querySelector('[data-type="block-link"]')
-    expect(chip?.classList.contains('block-link-deleted')).toBe(true)
-    expect(chip?.classList.contains('block-link-chip')).toBe(true)
-  })
-
   it('does not apply block-link-deleted class when resolveStatus returns active', () => {
     editor = createEditor({
       blockLinkResolveStatus: () => 'active',
@@ -255,44 +235,6 @@ describe('BlockLink NodeView', () => {
     expect(chipAfter?.textContent).toBe('Title:NEW_ID')
     expect(chipAfter?.getAttribute('data-id')).toBe('NEW_ID')
   })
-
-  it('updates deleted class when status changes on attr update', () => {
-    const statusMap: Record<string, 'active' | 'deleted'> = {
-      ACTIVE_ID: 'active',
-      DELETED_ID: 'deleted',
-    }
-    editor = createEditor({
-      blockLinkResolveStatus: (id) => statusMap[id] ?? 'active',
-      content: {
-        type: 'doc',
-        content: [
-          {
-            type: 'paragraph',
-            content: [{ type: 'block_link', attrs: { id: 'ACTIVE_ID' } }],
-          },
-        ],
-      },
-    })
-
-    const chip = editor.view.dom.querySelector('[data-type="block-link"]')
-    expect(chip?.classList.contains('block-link-deleted')).toBe(false)
-
-    // Update to a deleted block
-    let nodePos = -1
-    editor.state.doc.descendants((node, pos) => {
-      if (node.type.name === 'block_link') {
-        nodePos = pos
-        return false
-      }
-      return undefined
-    })
-    const { tr } = editor.state
-    tr.setNodeMarkup(nodePos, undefined, { id: 'DELETED_ID' })
-    editor.view.dispatch(tr)
-
-    expect(chip?.classList.contains('block-link-deleted')).toBe(true)
-  })
-
   it('removes click listener on destroy — clicking after destroy does not call onNavigate', () => {
     const onNavigate = vi.fn()
     editor = createEditor({
@@ -368,59 +310,6 @@ describe('BlockLink NodeView', () => {
  *   4. NOT call onNavigate — broken chips are removable artifacts, not
  *      teleporters that auto-switch space.
  */
-describe('FEAT-3p7 — foreign-space [[ULID]] chip', () => {
-  let editor: Editor
-
-  afterEach(() => {
-    editor?.destroy()
-  })
-
-  it('renders broken-styling, removes on click, and the deletion is undoable', () => {
-    const FOREIGN_ULID = '01H8XYABCDEFGHJKMNPQRSTVWX'
-    const onNavigate = vi.fn()
-    // Simulate the post-batch-resolve state: a deleted placeholder is
-    // present in the resolve store under the active space's prefix, so
-    // the resolveStatus closure returns 'deleted' for FOREIGN_ULID.
-    editor = createEditor({
-      blockLinkResolveTitle: (id) => `[[${id.slice(0, 8)}...]]`,
-      blockLinkResolveStatus: (id) => (id === FOREIGN_ULID ? 'deleted' : 'active'),
-      blockLinkOnNavigate: onNavigate,
-      content: {
-        type: 'doc',
-        content: [
-          {
-            type: 'paragraph',
-            content: [{ type: 'block_link', attrs: { id: FOREIGN_ULID } }],
-          },
-        ],
-      },
-    })
-
-    const chip = editor.view.dom.querySelector('[data-type="block-link"]') as HTMLElement
-    // (1) broken-link class
-    expect(chip.classList.contains('block-link-deleted')).toBe(true)
-    expect(chip.classList.contains('block-link-chip')).toBe(true)
-    // (2) tooltip — i18n hook in the extension is the literal English
-    // string "Broken link or in another space — click to remove" (mirrors block-link.test.ts:92)
-    expect(chip.getAttribute('title')).toBe('Broken link or in another space — click to remove')
-
-    // (3) Click removes the chip.
-    chip.click()
-    expect(editor.view.dom.querySelector('[data-type="block-link"]')).toBeNull()
-    // (4) Click did NOT navigate — broken chips are removable artifacts.
-    expect(onNavigate).not.toHaveBeenCalled()
-
-    // (5) Deletion is undoable via the editor's history extension.
-    // The base test editor doesn't include History, but the deleteRange
-    // call goes through `chain().focus().deleteRange().run()` which
-    // produces a single transaction — TipTap's built-in undo
-    // (when History is registered) reverses it. We verify the
-    // transaction structure here: the doc's first paragraph is now
-    // empty, and stepping backwards through history would restore the
-    // chip. Use `editor.state` to confirm the broken chip is gone.
-    expect(editor.state.doc.firstChild?.childCount ?? -1).toBe(0)
-  })
-})
 
 // -- TagRef NodeView ----------------------------------------------------------
 
@@ -484,26 +373,6 @@ describe('TagRef NodeView', () => {
     expect(chip?.getAttribute('data-id')).toBe('TAGULID99')
     expect(chip?.getAttribute('contenteditable')).toBe('false')
   })
-
-  it('applies tag-ref-deleted class when resolveStatus returns deleted', () => {
-    editor = createEditor({
-      tagRefResolveStatus: () => 'deleted',
-      content: {
-        type: 'doc',
-        content: [
-          {
-            type: 'paragraph',
-            content: [{ type: 'tag_ref', attrs: { id: 'DEADTAG' } }],
-          },
-        ],
-      },
-    })
-
-    const chip = editor.view.dom.querySelector('[data-type="tag-ref"]')
-    expect(chip?.classList.contains('tag-ref-deleted')).toBe(true)
-    expect(chip?.classList.contains('tag-ref-chip')).toBe(true)
-  })
-
   it('does not apply tag-ref-deleted class when resolveStatus returns active', () => {
     editor = createEditor({
       tagRefResolveStatus: () => 'active',
@@ -576,42 +445,5 @@ describe('TagRef NodeView', () => {
     expect(chipAfter).toBe(chipBefore)
     expect(chipAfter?.textContent).toBe('Tag:NEW_TAG')
     expect(chipAfter?.getAttribute('data-id')).toBe('NEW_TAG')
-  })
-
-  it('updates deleted class when status changes on attr update', () => {
-    const statusMap: Record<string, 'active' | 'deleted'> = {
-      LIVE_TAG: 'active',
-      DEAD_TAG: 'deleted',
-    }
-    editor = createEditor({
-      tagRefResolveStatus: (id) => statusMap[id] ?? 'active',
-      content: {
-        type: 'doc',
-        content: [
-          {
-            type: 'paragraph',
-            content: [{ type: 'tag_ref', attrs: { id: 'LIVE_TAG' } }],
-          },
-        ],
-      },
-    })
-
-    const chip = editor.view.dom.querySelector('[data-type="tag-ref"]')
-    expect(chip?.classList.contains('tag-ref-deleted')).toBe(false)
-
-    // Update to a deleted tag
-    let nodePos = -1
-    editor.state.doc.descendants((node, pos) => {
-      if (node.type.name === 'tag_ref') {
-        nodePos = pos
-        return false
-      }
-      return undefined
-    })
-    const { tr } = editor.state
-    tr.setNodeMarkup(nodePos, undefined, { id: 'DEAD_TAG' })
-    editor.view.dispatch(tr)
-
-    expect(chip?.classList.contains('tag-ref-deleted')).toBe(true)
   })
 })

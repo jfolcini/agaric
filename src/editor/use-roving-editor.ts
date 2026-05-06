@@ -185,12 +185,12 @@ export interface RovingEditorOptions {
   searchPropertyKeys?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Called when a property is selected from the :: picker. */
   onPropertySelect?: (item: PickerItem) => void
-  /** Check whether a linked block is active or deleted (broken link). */
-  resolveBlockStatus?: (id: string) => 'active' | 'deleted'
-  /** Check whether a referenced tag is active or deleted. */
-  resolveTagStatus?: (id: string) => 'active' | 'deleted'
   /** Return blocks matching query (for (( picker). */
   searchBlockRefs?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** @deprecated PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
+  /** @deprecated PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
 export interface RovingEditorHandle {
@@ -248,8 +248,6 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onCheckbox,
     searchPropertyKeys = () => [],
     onPropertySelect,
-    resolveBlockStatus,
-    resolveTagStatus,
   } = options
 
   const activeBlockIdRef = useRef<string | null>(null)
@@ -266,10 +264,6 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   onNavigateRef.current = onNavigate
   const onTagClickRef = useRef(onTagClick)
   onTagClickRef.current = onTagClick
-  const resolveBlockStatusRef = useRef(resolveBlockStatus)
-  resolveBlockStatusRef.current = resolveBlockStatus
-  const resolveTagStatusRef = useRef(resolveTagStatus)
-  resolveTagStatusRef.current = resolveTagStatus
   const onCreatePageRef = useRef(onCreatePage)
   onCreatePageRef.current = onCreatePage
   const onCreateTagRef = useRef(onCreateTag)
@@ -319,18 +313,15 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Placeholder.configure({ placeholder }),
       TagRef.configure({
         resolveName: (id: string) => resolveTagNameRef.current(id),
-        resolveStatus: (id: string) => resolveTagStatusRef.current?.(id) ?? 'active',
         onClick: (id: string) => onTagClickRef.current?.(id),
       }),
       BlockLink.configure({
         resolveTitle: (id: string) => resolveBlockTitleRef.current(id),
         onNavigate: (id: string) => onNavigateRef.current?.(id),
-        resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
       BlockRef.configure({
         resolveContent: (id: string) => resolveBlockTitleRef.current(id),
         onNavigate: (id: string) => onNavigateRef.current?.(id),
-        resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
       AtTagPicker.configure({
         items: (query: string) => searchTagsRef.current(query),

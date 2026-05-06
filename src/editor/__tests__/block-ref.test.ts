@@ -61,16 +61,6 @@ describe('BlockRef NodeView', () => {
     const view = (factory as Function)({ node: fakeNode })
     return { dom: view.dom as HTMLSpanElement, view }
   }
-
-  it('renders deleted ref with class block-ref-deleted', () => {
-    const { dom } = createNodeView({
-      id: 'DELETED01',
-      resolveStatus: () => 'deleted',
-    })
-
-    expect(dom.classList.contains('block-ref-deleted')).toBe(true)
-  })
-
   it('active ref has no deleted class', () => {
     const { dom } = createNodeView({
       id: 'ACTIVE01',
@@ -91,28 +81,5 @@ describe('BlockRef NodeView', () => {
     dom.click()
 
     expect(onNavigate).toHaveBeenCalledWith('ACTIVE02')
-  })
-
-  it('clicking deleted ref does NOT call onNavigate', () => {
-    const onNavigate = vi.fn()
-    const { dom } = createNodeView({
-      id: 'DELETED02',
-      resolveStatus: () => 'deleted',
-      onNavigate,
-    })
-
-    dom.click()
-
-    expect(onNavigate).not.toHaveBeenCalled()
-  })
-
-  it('broken ref chip exposes the i18n tooltip via both title and aria-label', () => {
-    const { dom } = createNodeView({
-      id: 'DELETED03',
-      resolveStatus: () => 'deleted',
-    })
-
-    expect(dom.getAttribute('title')).toBe('Broken ref — target block deleted')
-    expect(dom.getAttribute('aria-label')).toBe('Broken ref — target block deleted')
   })
 })

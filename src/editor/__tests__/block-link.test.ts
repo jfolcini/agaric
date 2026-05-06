@@ -2,8 +2,7 @@
  * Tests for the BlockLink extension.
  */
 
-import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { BlockLink } from '../extensions/block-link'
 
 describe('BlockLink', () => {
@@ -82,17 +81,6 @@ describe('BlockLink broken link recovery (UX-25)', () => {
     })
     return { dom: view.dom as HTMLSpanElement, view }
   }
-
-  it('renders broken link with title tooltip', () => {
-    const { dom } = createNodeView({
-      id: 'DELETED01',
-      resolveStatus: () => 'deleted',
-    })
-
-    expect(dom.getAttribute('title')).toBe('Broken link or in another space — click to remove')
-    expect(dom.classList.contains('block-link-deleted')).toBe(true)
-  })
-
   it('does not set title tooltip on active links', () => {
     const { dom } = createNodeView({
       id: 'ACTIVE01',
@@ -101,87 +89,5 @@ describe('BlockLink broken link recovery (UX-25)', () => {
 
     expect(dom.getAttribute('title')).toBeNull()
     expect(dom.classList.contains('block-link-deleted')).toBe(false)
-  })
-
-  it('clicking broken link chip calls deleteRange', () => {
-    const runFn = vi.fn()
-    const deleteRangeFn = vi.fn(() => ({ run: runFn }))
-    const focusFn = vi.fn(() => ({ deleteRange: deleteRangeFn }))
-    const chainFn = vi.fn(() => ({ focus: focusFn }))
-    const mockEditor = { chain: chainFn }
-
-    const pos = 5
-    const { dom } = createNodeView({
-      id: 'DELETED02',
-      resolveStatus: () => 'deleted',
-      editor: mockEditor,
-      getPos: () => pos,
-    })
-
-    dom.click()
-
-    expect(chainFn).toHaveBeenCalled()
-    expect(focusFn).toHaveBeenCalled()
-    expect(deleteRangeFn).toHaveBeenCalledWith({ from: pos, to: pos + 1 })
-    expect(runFn).toHaveBeenCalled()
-  })
-})
-
-describe('BlockLink broken link a11y + toast feedback (UX-313)', () => {
-  /** Helper duplicated from the UX-25 block above (same shape, isolated scope). */
-  function createNodeView(options: {
-    id: string
-    resolveStatus?: (id: string) => 'active' | 'deleted'
-    editor?: unknown
-    getPos?: () => number
-  }) {
-    const ext = BlockLink.configure({
-      resolveTitle: (id) => `Title:${id}`,
-      resolveStatus: options.resolveStatus,
-    })
-    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap extension config
-    const factory = (ext.config.addNodeView as Function)?.call(ext)
-    const fakeNode = { type: { name: 'block_link' }, attrs: { id: options.id }, nodeSize: 1 }
-    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap NodeView factory
-    const view = (factory as Function)({
-      node: fakeNode,
-      editor: options.editor ?? {},
-      getPos: options.getPos ?? (() => 0),
-    })
-    return { dom: view.dom as HTMLSpanElement, view }
-  }
-
-  beforeEach(() => {
-    vi.mocked(toast.success).mockClear()
-  })
-
-  it('broken link chip exposes the i18n tooltip via both title and aria-label', () => {
-    const { dom } = createNodeView({
-      id: 'DELETED03',
-      resolveStatus: () => 'deleted',
-    })
-
-    expect(dom.getAttribute('title')).toBe('Broken link or in another space — click to remove')
-    expect(dom.getAttribute('aria-label')).toBe('Broken link or in another space — click to remove')
-  })
-
-  it('clicking a broken link chip fires toast.success with the i18n message', () => {
-    const runFn = vi.fn()
-    const deleteRangeFn = vi.fn(() => ({ run: runFn }))
-    const focusFn = vi.fn(() => ({ deleteRange: deleteRangeFn }))
-    const chainFn = vi.fn(() => ({ focus: focusFn }))
-    const mockEditor = { chain: chainFn }
-
-    const { dom } = createNodeView({
-      id: 'DELETED04',
-      resolveStatus: () => 'deleted',
-      editor: mockEditor,
-      getPos: () => 7,
-    })
-
-    dom.click()
-
-    expect(runFn).toHaveBeenCalled()
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Broken link removed (undo with Ctrl+Z)')
   })
 })

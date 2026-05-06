@@ -107,6 +107,22 @@ pub async fn add_tag_inner(
         _ => {}
     }
 
+    // PEND-15 Phase 2 (Path A) — reject add_tag when the tag's space
+    // differs from the source block's space. Tags are space-scoped;
+    // cross-space tag references are not allowed.
+    {
+        let src_space =
+            crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(&block_id)).await?;
+        let tag_space =
+            crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(&tag_id)).await?;
+        if src_space != tag_space {
+            return Err(AppError::Validation(format!(
+                "cross-space tag: block '{}' (space {:?}) cannot use tag '{}' (space {:?})",
+                block_id, src_space, tag_id, tag_space,
+            )));
+        }
+    }
+
     // Check for existing association (TOCTOU-safe)
     let dup = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,

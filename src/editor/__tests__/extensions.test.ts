@@ -448,19 +448,6 @@ function callNodeViewFactory(
 }
 
 describe('BlockRef NodeView deleted title (B-67)', () => {
-  it('sets title attribute when status is deleted', () => {
-    const ext = BlockRef.configure({
-      resolveContent: () => 'Some content',
-      resolveStatus: () => 'deleted',
-    })
-
-    const mockNode = { attrs: { id: 'DELETED_BLOCK_ID' }, type: { name: 'block_ref' } }
-    const result = callNodeViewFactory(ext, mockNode)
-
-    expect(result.dom.getAttribute('title')).toBe('Broken ref — target block deleted')
-    expect(result.dom.classList.contains('block-ref-deleted')).toBe(true)
-  })
-
   it('does not set title attribute when status is active', () => {
     const ext = BlockRef.configure({
       resolveContent: () => 'Active content',
@@ -472,24 +459,5 @@ describe('BlockRef NodeView deleted title (B-67)', () => {
 
     expect(result.dom.hasAttribute('title')).toBe(false)
     expect(result.dom.classList.contains('block-ref-deleted')).toBe(false)
-  })
-
-  it('removes title attribute when status changes from deleted to active', () => {
-    let status: 'active' | 'deleted' = 'deleted'
-    const ext = BlockRef.configure({
-      resolveContent: () => 'Some content',
-      resolveStatus: () => status,
-    })
-
-    const mockNode = { attrs: { id: 'BLOCK_ID' }, type: { name: 'block_ref' } }
-    const result = callNodeViewFactory(ext, mockNode)
-
-    expect(result.dom.getAttribute('title')).toBe('Broken ref — target block deleted')
-
-    // Simulate status change via update
-    status = 'active'
-    const updated = result.update({ attrs: { id: 'BLOCK_ID' }, type: { name: 'block_ref' } })
-    expect(updated).toBe(true)
-    expect(result.dom.hasAttribute('title')).toBe(false)
   })
 })

@@ -223,8 +223,6 @@ export function BlockTree({
     resolveTagName: resolve.resolveTagName,
     onNavigate: (id: string) => handleNavigateRef.current(id),
     onTagClick,
-    resolveBlockStatus: resolve.resolveBlockStatus,
-    resolveTagStatus: resolve.resolveTagStatus,
     searchTags: resolve.searchTags,
     searchPages: resolve.searchPages,
     searchBlockRefs: resolve.searchBlockRefs,
