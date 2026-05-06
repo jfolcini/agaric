@@ -24,6 +24,7 @@
  *  - a11y compliance
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
@@ -977,6 +978,31 @@ describe('BlockHistoryItem', () => {
     expect(screen.getByTestId('block-history-diff-mode-just-0')).toHaveAttribute('data-state', 'on')
     // The single-step diff data is now what's rendered.
     expect(document.querySelector('.diff-container')).toBeInTheDocument()
+  })
+
+  it('flips Insert/Delete spans in comparedToCurrent mode so colours match restore intent (MAINT-217)', async () => {
+    const mockedInvoke = vi.mocked(invoke)
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === 'compute_block_vs_current_diff') {
+        return Promise.resolve([
+          { tag: 'Insert', value: 'added since historical' },
+          { tag: 'Delete', value: 'removed since historical' },
+        ])
+      }
+      return Promise.resolve(null)
+    })
+
+    renderInList(blockDefaultProps({ isExpanded: true }))
+    await waitFor(() => {
+      const del = document.querySelector('del')
+      const ins = document.querySelector('ins')
+      // Backend Insert (added since historical) → rendered as Delete (red, would be removed on restore)
+      expect(del).not.toBeNull()
+      expect(del?.textContent).toBe('added since historical')
+      // Backend Delete (removed since historical) → rendered as Insert (green, would be restored)
+      expect(ins).not.toBeNull()
+      expect(ins?.textContent).toBe('removed since historical')
+    })
   })
 
   it('shows device_id with full opacity (not /60)', () => {

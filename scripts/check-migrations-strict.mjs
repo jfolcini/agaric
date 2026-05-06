@@ -19,6 +19,54 @@ import { basename } from 'node:path'
 // a new policy floor; existing migrations 0001..0041 predate PEND-07.
 const FIRST_STRICT_MIGRATION = 42
 
+/**
+ * Strip SQL line comments (dash-dash) and block comments (slash-star)
+ * while preserving content inside single-quoted string literals.
+ * This prevents semicolons or parens inside comments from being
+ * misinterpreted as statement terminators / structure markers.
+ */
+function stripSqlComments(sql) {
+  let out = ''
+  let i = 0
+  while (i < sql.length) {
+    const ch = sql[i]
+    const next = sql[i + 1]
+
+    if (ch === "'") {
+      // String literal: find closing quote (no escape handling needed
+      // for standard SQL single quotes in this context).
+      const end = sql.indexOf("'", i + 1)
+      if (end === -1) {
+        out += sql.slice(i)
+        break
+      }
+      out += sql.slice(i, end + 1)
+      i = end + 1
+      continue
+    }
+
+    if (ch === '-' && next === '-') {
+      // Line comment: skip to end of line.
+      const end = sql.indexOf('\n', i)
+      if (end === -1) break
+      i = end + 1
+      continue
+    }
+
+    if (ch === '/' && next === '*') {
+      // Block comment: skip to matching */.
+      const end = sql.indexOf('*/', i + 2)
+      if (end === -1) break
+      i = end + 2
+      continue
+    }
+
+    out += ch
+    i++
+  }
+  return out
+}
+
 const files = process.argv.slice(2)
 let failed = false
 
@@ -31,7 +79,7 @@ for (const file of files) {
     if (n < FIRST_STRICT_MIGRATION) continue
   }
 
-  const src = readFileSync(file, 'utf8')
+  const src = stripSqlComments(readFileSync(file, 'utf8'))
 
   // Walk every CREATE TABLE in the file. The regex captures the
   // statement start; we then walk forward to the terminating `;`

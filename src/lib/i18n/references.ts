@@ -16,7 +16,6 @@ export const references: Record<string, string> = {
   'references.loadTagsFailed': 'Failed to load tags',
   'references.untitled': 'Untitled',
   'references.empty': '(empty)',
-  'references.moreFilters': 'More filters',
   'references.loadingMore': 'Loading more references',
   'references.loadMoreLabel': 'Load more references',
   'references.backlinksFrom': 'Backlinks from {{title}}',
