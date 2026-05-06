@@ -12,6 +12,7 @@ import { logger } from '@/lib/logger'
 import { listTagsByPrefix } from '../../../lib/tauri'
 import { SearchablePopover } from '../../SearchablePopover'
 import type { FilterFormHandle } from './types'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export interface HasTagFilterFormProps {
   tags: Array<{ id: string; name: string }>
@@ -30,7 +31,7 @@ export function HasTagFilterForm({ tags, ref }: HasTagFilterFormProps): React.Re
 
   const debouncedTagSearch = useDebouncedCallback((query: string) => {
     setTagSearchLoading(true)
-    listTagsByPrefix({ prefix: query, limit: 50 })
+    listTagsByPrefix({ prefix: query, limit: PAGINATION_LIMIT })
       .then((rows) => {
         setTagSearchResults(rows.map((r) => ({ id: r.tag_id, name: r.name })))
       })

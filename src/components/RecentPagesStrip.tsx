@@ -45,7 +45,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -166,6 +166,20 @@ export function RecentPagesStrip(): React.ReactElement | null {
     }
   }, [])
 
+  // MAINT-211: right-edge fade when content overflows the viewport.
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const [hasOverflow, setHasOverflow] = useState(false)
+
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const check = () => setHasOverflow(el.scrollWidth > el.clientWidth)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [visible.length])
+
   if (isMobile) return null
   if (visible.length === 0) return null
 
@@ -194,8 +208,14 @@ export function RecentPagesStrip(): React.ReactElement | null {
       <ScrollArea
         orientation="horizontal"
         className="w-full"
+        viewportRef={viewportRef}
         viewportClassName="overscroll-x-contain"
-        viewportProps={{ onWheel: handleWheel }}
+        viewportProps={{
+          onWheel: handleWheel,
+          style: hasOverflow
+            ? { maskImage: 'linear-gradient(to right, black 90%, transparent)' }
+            : undefined,
+        }}
       >
         <div className="flex items-center gap-1.5 px-4 md:px-6 py-1">
           {visible.map((ref, idx) => {

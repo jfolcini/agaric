@@ -31,6 +31,7 @@ import {
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
@@ -63,7 +64,7 @@ export function DonePanel({
           key: 'completed_at',
           valueDate: date,
           ...(cursor != null && { cursor }),
-          limit: 50,
+          limit: PAGINATION_LIMIT,
           spaceId: currentSpaceId,
         })
         // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
@@ -105,7 +106,7 @@ export function DonePanel({
         const resp = await queryByProperty({
           key: 'completed_at',
           valueDate: date,
-          limit: 50,
+          limit: PAGINATION_LIMIT,
           spaceId: currentSpaceId,
         })
         if (cancelled) return

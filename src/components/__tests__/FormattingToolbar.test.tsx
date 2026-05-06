@@ -698,11 +698,11 @@ describe('FormattingToolbar', () => {
   // ── #590-B7: Toolbar overflow handling ────────────────────────────────
 
   describe('toolbar overflow', () => {
-    it('wraps toolbar in ScrollArea for narrow screens', () => {
+    it('renders toolbar with formatting role', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const toolbar = screen.getByRole('toolbar', { name: t('toolbar.formatting') })
-      const scrollArea = toolbar.closest('[data-slot="scroll-area"]')
-      expect(scrollArea).toBeInTheDocument()
+      expect(toolbar).toBeInTheDocument()
+      expect(toolbar).toHaveClass('formatting-toolbar')
     })
 
     it('does not render the More overflow trigger when nothing overflows', () => {
@@ -872,6 +872,75 @@ describe('FormattingToolbar', () => {
         // treat the overflow popover the same as the existing
         // heading / code-block popovers.
         expect(overflowMenu).toHaveAttribute('data-editor-portal')
+      } finally {
+        restore()
+      }
+    })
+
+    it('heading popover inside overflow closes both popovers on H2 selection (MAINT-221)', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+
+        const moreBtn = screen.getByRole('button', { name: t('toolbar.more') })
+        fireEvent.pointerDown(moreBtn)
+        expect(moreBtn).toHaveAttribute('aria-expanded', 'true')
+
+        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
+        const headingBtn = Array.from(overflowMenu.querySelectorAll('button')).find(
+          (b) => b.getAttribute('aria-label') === t('toolbar.headingLevel'),
+        ) as HTMLElement | undefined
+        expect(headingBtn).toBeDefined()
+
+        const headingPopover = headingBtn!.closest('[data-popover]') as HTMLElement
+        expect(headingPopover).toHaveAttribute('data-open', 'false')
+
+        fireEvent.pointerDown(headingBtn!)
+        expect(headingPopover).toHaveAttribute('data-open', 'true')
+
+        const h2Btn = Array.from(headingPopover.querySelectorAll('button')).find(
+          (b) => b.textContent === 'H2',
+        ) as HTMLElement | undefined
+        expect(h2Btn).toBeDefined()
+        fireEvent.pointerDown(h2Btn!)
+
+        expect(headingPopover).toHaveAttribute('data-open', 'false')
+        expect(overflowMenu.closest('[data-popover]')).toHaveAttribute('data-open', 'false')
+      } finally {
+        restore()
+      }
+    })
+
+    it('code block popover inside overflow closes both popovers on Plain text selection (MAINT-221)', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+
+        const moreBtn = screen.getByRole('button', { name: t('toolbar.more') })
+        fireEvent.pointerDown(moreBtn)
+
+        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
+        const codeBtn = Array.from(overflowMenu.querySelectorAll('button')).find(
+          (b) => b.getAttribute('aria-label') === t('toolbar.codeBlockLanguage'),
+        ) as HTMLElement | undefined
+        expect(codeBtn).toBeDefined()
+
+        const codePopover = codeBtn!.closest('[data-popover]') as HTMLElement
+        expect(codePopover).toHaveAttribute('data-open', 'false')
+
+        fireEvent.pointerDown(codeBtn!)
+        expect(codePopover).toHaveAttribute('data-open', 'true')
+
+        const plainTextBtn = Array.from(codePopover.querySelectorAll('button')).find(
+          (b) => b.textContent === 'Plain text',
+        ) as HTMLElement | undefined
+        expect(plainTextBtn).toBeDefined()
+        fireEvent.pointerDown(plainTextBtn!)
+
+        expect(codePopover).toHaveAttribute('data-open', 'false')
+        expect(overflowMenu.closest('[data-popover]')).toHaveAttribute('data-open', 'false')
       } finally {
         restore()
       }

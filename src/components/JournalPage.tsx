@@ -179,13 +179,7 @@ export function JournalPage({
           onAddBlock={handleAddBlock}
         />
       )}
-      {!loading && mode === 'monthly' && (
-        <MonthlyView
-          makeDayEntry={makeDayEntry}
-          onNavigateToPage={onNavigateToPage}
-          onAddBlock={handleAddBlock}
-        />
-      )}
+      {!loading && mode === 'monthly' && <MonthlyView makeDayEntry={makeDayEntry} />}
       {!loading && mode === 'agenda' && <AgendaView onNavigateToPage={onNavigateToPage} />}
 
       {/* Link preview tooltip — covers all external links in journal */}

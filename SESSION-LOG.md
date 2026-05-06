@@ -2,11 +2,44 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 681 (Session 681: five S-cost maintenance fixes — MAINT-199 migration comment parser, MAINT-204 markdown serializer callback threading, MAINT-210 dead i18n key, MAINT-217 diff direction flip, MAINT-224 Test B line numbers. Session 680: four S-cost frontend bug fixes — MAINT-200 resolve-store preload retry poison, MAINT-201 projected-agenda cache unbounded growth, MAINT-202 UnfinishedTasks silent catch blocks, MAINT-205 i18n collision detection test. Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223) | **Latest entry:** 2026-05-07 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 682 (Session 682: five S-cost frontend maintenance fixes — MAINT-197 Checkbox hitbox, MAINT-211 RecentPagesStrip edge-fade, MAINT-221 nested-popover tests, MAINT-222 redundant ScrollArea removal, MAINT-206 tauri-mock parity (already done as MAINT-123). Session 681: five S-cost maintenance fixes — MAINT-199 migration comment parser, MAINT-204 markdown serializer callback threading, MAINT-210 dead i18n key, MAINT-217 diff direction flip, MAINT-224 Test B line numbers. Session 680: four S-cost frontend bug fixes — MAINT-200 resolve-store preload retry poison, MAINT-201 projected-agenda cache unbounded growth, MAINT-202 UnfinishedTasks silent catch blocks, MAINT-205 i18n collision detection test. Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223) | **Latest entry:** 2026-05-07 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+
+## Session 682 — Five S-cost frontend maintenance fixes: MAINT-197 + MAINT-211 + MAINT-221 + MAINT-222 + MAINT-206 (2026-05-07)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-07 |
+| **Subagents** | 0 (orchestrator-direct; all items are S-cost frontend-only with disjoint file boundaries). |
+| **Items closed** | MAINT-197, MAINT-211, MAINT-221, MAINT-222 (removed from REVIEW-LATER.md). MAINT-206 was already implemented as MAINT-123 (`handlers-drift.test.ts`). REVIEW-LATER open count: 27 → 22. |
+| **Items modified** | None re-scoped. |
+| **Tests added** | +5 vitest (1 FormattingToolbar overflow→heading nested popover, 1 FormattingToolbar overflow→code nested popover, 2 RecentPagesStrip mask-image overflow/no-overflow, 1 Checkbox coarse-pointer hitbox). |
+| **Files touched** | `src/components/ui/checkbox.tsx`, `src/components/ui/__tests__/checkbox.test.tsx`, `src/components/PropertyRowEditor.tsx`, `src/components/RecentPagesStrip.tsx`, `src/components/__tests__/RecentPagesStrip.test.tsx`, `src/components/FormattingToolbar.tsx`, `src/components/__tests__/FormattingToolbar.test.tsx`, `pending/REVIEW-LATER.md`, `SESSION-LOG.md`. |
+
+**Summary:** A batch of five small frontend maintenance fixes. Four were implemented; MAINT-206 was discovered to already exist as MAINT-123 (`handlers-drift.test.ts`). All are S-cost, low-risk, and touch disjoint file boundaries.
+
+**MAINT-197 — `Checkbox` primitive lacks 44 px coarse-pointer hit-area**
+
+Wrapped the Radix `CheckboxPrimitive.Root` inside an `inline-flex` container div with `[media(pointer:coarse)]:min-h-11 [media(pointer:coarse)]:min-w-11` classes, mirroring how `Select` and other primitives carry their own touch sizing. Removed the now-redundant local hitbox wrapper from `PropertyRowEditor.tsx`. Added a vitest case asserting the `data-slot="checkbox-hitbox"` wrapper carries the coarse-pointer classes.
+
+**MAINT-211 — `RecentPagesStrip` edge-fade affordance**
+
+Added `useState` + `useRef` + `ResizeObserver` to `RecentPagesStrip.tsx` that toggles `maskImage: 'linear-gradient(to right, black 90%, transparent)'` on the ScrollArea viewport when `scrollWidth > clientWidth`. The fade is off when there's no overflow. Added 2 vitest cases: one asserting no mask when content fits, one asserting mask applied when content overflows.
+
+**MAINT-221 — Nested-popover integration tests for FormattingToolbar**
+
+Added 2 vitest cases to `FormattingToolbar.test.tsx` under the existing `PEND-33 Layer B overflow popover` describe block. Each test forces tight layout via `withTightLayout(120)`, opens the overflow popover, clicks the heading/code-block button, verifies the inner popover opens, clicks an option (H2 / Plain text), and asserts both the inner popover and the overflow popover close. Validates the `onClose` callback correctly chains `setOverflowPopoverOpen(false)` when `mode === 'overflow'`.
+
+**MAINT-222 — Remove redundant `ScrollArea` from `FormattingToolbar`**
+
+Removed the `ScrollArea` wrapper from `FormattingToolbar.tsx` (import + JSX) and moved its border/background classes to the inner `div`. The overflow hook (`useToolbarOverflow`) handles the case ScrollArea was added for. Updated the existing test that checked for `ScrollArea` presence to instead assert the toolbar renders with `role="toolbar"` and the `formatting-toolbar` class.
+
+**MAINT-206 — `tauri-mock` ↔ `bindings.ts` parity**
+
+Already implemented as MAINT-123 in `src/lib/tauri-mock/__tests__/handlers-drift.test.ts`. The test imports both `HANDLERS` and reads `bindings.ts` source to extract command names, asserting every command has a handler or is on an allowlist. No code changes needed.
 
 ## Session 681 — Five S-cost maintenance fixes: MAINT-199 + MAINT-204 + MAINT-210 + MAINT-217 + MAINT-224 (2026-05-07)
 

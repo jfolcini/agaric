@@ -399,21 +399,13 @@ export function PropertyRowEditor({
             </PopoverContent>
           </Popover>
         ) : valueType === 'boolean' ? (
-          // PEND-14 UX-review fix: wrap the 16/20-px Checkbox in a hitbox that
-          // matches sibling cell height on desktop (28 px = h-7, like Input
-          // and SelectTrigger) AND meets the 44-px touch-target floor on
-          // coarse pointers per AGENTS.md "Frontend Development Guidelines /
-          // Mandatory patterns / Touch targets". The systematic fix —
-          // augmenting `ui/checkbox.tsx` itself — is filed as MAINT-197.
-          <div className="flex h-7 items-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:coarse)]:justify-center">
-            <Checkbox
-              checked={prop.value_bool === 1}
-              onCheckedChange={(checked) => {
-                onSave(checked === true ? 'true' : 'false')
-              }}
-              aria-label={t('property.booleanToggle', { key: prop.key })}
-            />
-          </div>
+          <Checkbox
+            checked={prop.value_bool === 1}
+            onCheckedChange={(checked) => {
+              onSave(checked === true ? 'true' : 'false')
+            }}
+            aria-label={t('property.booleanToggle', { key: prop.key })}
+          />
         ) : valueType === 'select' ? (
           <Select value={localValue || '__none__'} onValueChange={handleSelectChange}>
             <SelectTrigger

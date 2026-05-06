@@ -100,7 +100,7 @@ beforeEach(() => {
 
 describe('MonthlyView', () => {
   it('renders 7 column headers (Mon-Sun for weekStartsOn=1)', () => {
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const headers = screen.getAllByRole('columnheader')
     expect(headers).toHaveLength(7)
@@ -109,7 +109,7 @@ describe('MonthlyView', () => {
   })
 
   it('renders correct number of grid cells for January 2025 (including padding)', () => {
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const cells = screen.getAllByRole('gridcell')
     // Jan 2025 with Mon start: Dec 30, Dec 31, Jan 1-31, Feb 1, Feb 2
@@ -124,7 +124,7 @@ describe('MonthlyView', () => {
   it('renders correct number of cells for February 2025', () => {
     useJournalStore.setState({ currentDate: FEB_DATE })
 
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const cells = screen.getAllByRole('gridcell')
     // Should be a multiple of 7
@@ -139,14 +139,14 @@ describe('MonthlyView', () => {
 
     const todayStr = format(today, 'yyyy-MM-dd')
 
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const todayCell = screen.getByTestId(`monthly-cell-${todayStr}`)
     expect(todayCell).toHaveAttribute('data-is-today', 'true')
   })
 
   it('marks adjacent month cells with isCurrentMonth=false', () => {
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     // Jan 2025 with Monday start: Dec 30 (Mon) is the first padding cell
     const dec30Cell = screen.getByTestId('monthly-cell-2024-12-30')
@@ -155,7 +155,7 @@ describe('MonthlyView', () => {
   })
 
   it('marks current month cells with isCurrentMonth=true', () => {
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const jan15Cell = screen.getByTestId('monthly-cell-2025-01-15')
     expect(jan15Cell).toHaveAttribute('data-is-current-month', 'true')
@@ -168,7 +168,7 @@ describe('MonthlyView', () => {
     mockBatchCounts.agendaCounts = { '2025-01-15': 3 }
     mockBatchCounts.backlinkCounts = { 'page-2025-01-15': 5 }
 
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const cell = screen.getByTestId('monthly-cell-2025-01-15')
     expect(cell).toHaveAttribute('data-agenda-count', '3')
@@ -176,14 +176,14 @@ describe('MonthlyView', () => {
   })
 
   it('re-renders when journal store currentDate changes to different month', () => {
-    const { rerender } = render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    const { rerender } = render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     // Initially: January 2025
     expect(screen.getByTestId('monthly-cell-2025-01-01')).toBeInTheDocument()
 
     // Change to February 2025
     useJournalStore.setState({ currentDate: FEB_DATE })
-    rerender(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    rerender(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     expect(screen.getByTestId('monthly-cell-2025-02-01')).toBeInTheDocument()
     expect(screen.queryByTestId('monthly-cell-2025-01-15')).not.toBeInTheDocument()
@@ -192,9 +192,7 @@ describe('MonthlyView', () => {
   it('has no a11y violations', async () => {
     useJournalStore.setState({ currentDate: FEB_DATE })
 
-    const { container } = render(
-      <MonthlyView makeDayEntry={makeDayEntry} onNavigateToPage={vi.fn()} onAddBlock={vi.fn()} />,
-    )
+    const { container } = render(<MonthlyView makeDayEntry={makeDayEntry} />)
     await waitFor(
       async () => {
         const results = await axe(container)
@@ -207,7 +205,7 @@ describe('MonthlyView', () => {
   it('changes header order when weekStartsOn=0 (Sunday start)', () => {
     mockWeekStart.weekStartsOn = 0
 
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const headers = screen.getAllByRole('columnheader')
     expect(headers).toHaveLength(7)
@@ -216,7 +214,7 @@ describe('MonthlyView', () => {
   })
 
   it('renders grid with role="grid" and aria-label', () => {
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const grid = screen.getByRole('grid')
     expect(grid).toBeInTheDocument()
@@ -231,7 +229,7 @@ describe('MonthlyView', () => {
     const febDate = new Date(year, 1, 10)
     useJournalStore.setState({ currentDate: febDate })
 
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const cells = screen.getAllByRole('gridcell')
     expect(cells.length % 7).toBe(0)
@@ -268,7 +266,7 @@ describe('MonthlyView', () => {
     mockWeekStart.weekStartsOn = 1
     useJournalStore.setState({ currentDate: date })
 
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const cells = screen.getAllByRole('gridcell')
     expect(cells).toHaveLength(expectedCells)
@@ -281,7 +279,7 @@ describe('MonthlyView', () => {
     mockBatchCounts.agendaCountsBySource = {}
     mockBatchCounts.backlinkCounts = {}
 
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
 
     const cells = screen.getAllByRole('gridcell')
     expect(cells.length).toBeGreaterThan(0)

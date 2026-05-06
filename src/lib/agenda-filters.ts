@@ -10,6 +10,7 @@ import type { PageResponse } from './bindings'
 import { formatDate, getDateRangeForFilter } from './date-utils'
 import type { BlockRow } from './tauri'
 import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 /**
  * Pagination limit for agenda-driven IPC queries. The `listBlocks` /
@@ -17,7 +18,7 @@ import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from 
  * use this value so changes propagate consistently.
  *
  * Note: the `listTagsByPrefix` call inside `executeAgendaFilters` uses
- * `limit: 50` deliberately (it's a typeahead-style tag lookup, not an
+ * `limit: PAGINATION_LIMIT` deliberately (it's a typeahead-style tag lookup, not an
  * agenda paginator) and is not affected by this constant.
  *
  * Added for FE-H-2.
@@ -282,7 +283,7 @@ async function queryTag(values: string[], spaceId: string): Promise<Map<string, 
   const result = new Map<string, BlockRow>()
   for (const value of values) {
     // Resolve tag name to ID via prefix search + exact match
-    const candidates = await listTagsByPrefix({ prefix: value, limit: 50 })
+    const candidates = await listTagsByPrefix({ prefix: value, limit: PAGINATION_LIMIT })
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (!match) continue
     const resp = await listBlocks({ tagId: match.tag_id, limit: AGENDA_QUERY_LIMIT, spaceId })

@@ -29,6 +29,7 @@ import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 
 const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-ring/50', 'bg-accent/30'] as const
 
@@ -82,7 +83,7 @@ export function LinkedReferences({
           blockId: pageId,
           ...(allFilters.length > 0 && { filters: allFilters }),
           ...(sort != null && { sort }),
-          limit: 50,
+          limit: PAGINATION_LIMIT,
           ...(cursor != null && { cursor }),
           spaceId: currentSpaceId,
         })

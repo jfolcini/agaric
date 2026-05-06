@@ -28,14 +28,10 @@ import { MonthlyDayCell } from './MonthlyDayCell'
 
 interface MonthlyViewProps {
   makeDayEntry: (d: Date) => DayEntry
-  onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
-  onAddBlock: (dateStr: string) => void
 }
 
 export function MonthlyView({
   makeDayEntry,
-  onNavigateToPage: _onNavigateToPage,
-  onAddBlock: _onAddBlock,
 }: MonthlyViewProps): React.ReactElement {
   const { t } = useTranslation()
   const currentDate = useJournalStore((s) => s.currentDate)

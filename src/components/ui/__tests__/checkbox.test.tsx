@@ -192,6 +192,16 @@ describe('Checkbox', () => {
     expect(cb.className).toContain('[@media(pointer:coarse)]:size-5')
   })
 
+  it('wraps checkbox in a 44 px coarse-pointer hitbox (MAINT-197)', () => {
+    render(<Checkbox aria-label="Accept terms" />)
+
+    const cb = screen.getByRole('checkbox', { name: 'Accept terms' })
+    const hitbox = cb.closest('[data-slot="checkbox-hitbox"]') as HTMLElement
+    expect(hitbox).toBeInTheDocument()
+    expect(hitbox.className).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(hitbox.className).toContain('[@media(pointer:coarse)]:min-w-11')
+  })
+
   // -- Focus-visible ring -----------------------------------------------------
 
   it('includes focus-visible ring classes', () => {
