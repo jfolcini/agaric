@@ -178,7 +178,7 @@ export function RecentPagesStrip(): React.ReactElement | null {
     const ro = new ResizeObserver(check)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [visible.length])
+  }, [])
 
   if (isMobile) return null
   if (visible.length === 0) return null

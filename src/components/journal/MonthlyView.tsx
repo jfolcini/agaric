@@ -30,9 +30,7 @@ interface MonthlyViewProps {
   makeDayEntry: (d: Date) => DayEntry
 }
 
-export function MonthlyView({
-  makeDayEntry,
-}: MonthlyViewProps): React.ReactElement {
+export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElement {
   const { t } = useTranslation()
   const currentDate = useJournalStore((s) => s.currentDate)
   const navigateToDate = useJournalStore((s) => s.navigateToDate)

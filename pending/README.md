@@ -13,14 +13,12 @@
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
 | PEND-29 | Frontend robustness review — second pass | trivial (B-1 only remaining) | partial — **B-1 (BulletList Option A) needs product decision** (Option A remove vs Option B implement) before it can land |
 | PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
-| PEND-31 | `UnfinishedTasks` panel silently truncates carry-over TODOs (200-cap + ASC ordering + no client pagination) | trivial-S (Option A ~1 h) or M (Option B ~2–4 h) | ready — bug confirmed by code review, awaiting user-side data confirmation |
 
 ## Recommended order
 
 **Quick wins first** — schedule when convenient, low / no dependencies:
 
 - PEND-29 B-1 — blocked on product decision
-- PEND-31 — bug fix; Option A (~1 h) is the cheapest hot-fix, Option B (~2–4 h) is the structurally correct landing. Pick once user has confirmed the dataset shape (see "Open questions" in the plan).
 
 **Mid-tier** — useful but more invasive:
 

@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -29,7 +30,6 @@ import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-ring/50', 'bg-accent/30'] as const
 

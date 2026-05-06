@@ -34,7 +34,6 @@ import type {
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
-
 function escapeText(s: string): string {
   let out = ''
   for (let i = 0; i < s.length; i++) {
@@ -277,10 +276,7 @@ function serializeInlineNodes(
  *
  * Groups consecutive nodes by link mark, wrapping linked spans in [text](url).
  */
-function serializeParagraph(
-  node: ParagraphNode,
-  onUnknownNode?: (type: string) => void,
-): string {
+function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) return ''
 
   const groups = groupByLink(node.content)
@@ -300,13 +296,12 @@ function serializeParagraph(
   return result
 }
 
-function serializeHeading(
-  node: HeadingNode,
-  onUnknownNode?: (type: string) => void,
-): string {
+function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {
   const prefix = `${'#'.repeat(node.attrs.level)} `
   if (!node.content || node.content.length === 0) return prefix
-  return prefix + serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode)
+  return (
+    prefix + serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode)
+  )
 }
 
 function serializeCodeBlock(node: CodeBlockNode): string {
@@ -320,10 +315,7 @@ function serializeCodeBlock(node: CodeBlockNode): string {
   return `${fence}${lang}\n${code}\n${fence}`
 }
 
-function serializeBlockquote(
-  node: BlockquoteNode,
-  onUnknownNode?: (type: string) => void,
-): string {
+function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) {
     if (node.attrs?.calloutType) {
       return `> [!${node.attrs.calloutType.toUpperCase()}]`
@@ -352,10 +344,7 @@ function serializeBlockquote(
   return lines.map((line) => `> ${line}`).join('\n')
 }
 
-function serializeTable(
-  node: TableNode,
-  onUnknownNode?: (type: string) => void,
-): string {
+function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) return ''
   const rows = node.content
   const serializedRows: string[][] = []
@@ -373,7 +362,10 @@ function serializeTable(
         // false positive and is dismissed in the code-scanning UI.
         const text =
           cell.content && cell.content.length > 0
-            ? serializeParagraph(cell.content[0] as ParagraphNode, onUnknownNode).replace(/\|/g, '\\|')
+            ? serializeParagraph(cell.content[0] as ParagraphNode, onUnknownNode).replace(
+                /\|/g,
+                '\\|',
+              )
             : ''
         cells.push(text)
       }

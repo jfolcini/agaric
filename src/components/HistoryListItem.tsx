@@ -501,13 +501,14 @@ export function BlockHistoryItem({
     }
   }
 
-  const activeSpans = diffMode === 'comparedToCurrent'
-    ? (comparedDiff?.map((s) => {
-        if (s.tag === 'Insert') return { ...s, tag: 'Delete' as const }
-        if (s.tag === 'Delete') return { ...s, tag: 'Insert' as const }
-        return s
-      }) ?? undefined)
-    : diffSpans
+  const activeSpans =
+    diffMode === 'comparedToCurrent'
+      ? (comparedDiff?.map((s) => {
+          if (s.tag === 'Insert') return { ...s, tag: 'Delete' as const }
+          if (s.tag === 'Delete') return { ...s, tag: 'Insert' as const }
+          return s
+        }) ?? undefined)
+      : diffSpans
   const activeLoading = diffMode === 'comparedToCurrent' ? comparedLoading : isLoadingDiff
 
   return (

@@ -39,6 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { type DateFilter, type TypeFilter, useConflictFilters } from '../hooks/useConflictFilters'
@@ -67,12 +68,12 @@ import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { LoadMoreButton } from './LoadMoreButton'
 import { ViewHeader } from './ViewHeader'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export function ConflictList(): React.ReactElement {
   const { t } = useTranslation()
   const queryFn = useCallback(
-    (cursor?: string) => getConflicts({ ...(cursor != null && { cursor }), limit: PAGINATION_LIMIT }),
+    (cursor?: string) =>
+      getConflicts({ ...(cursor != null && { cursor }), limit: PAGINATION_LIMIT }),
     [],
   )
   const {

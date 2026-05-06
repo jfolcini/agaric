@@ -8,11 +8,11 @@ import type React from 'react'
 import { useEffect, useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { listTagsByPrefix } from '../../../lib/tauri'
 import { SearchablePopover } from '../../SearchablePopover'
 import type { FilterFormHandle } from './types'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export interface HasTagFilterFormProps {
   tags: Array<{ id: string; name: string }>

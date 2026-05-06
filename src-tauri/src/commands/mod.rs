@@ -129,9 +129,10 @@ pub use properties::{
 pub use queries::{
     count_backlinks_batch, count_backlinks_batch_inner, get_backlinks, get_backlinks_inner,
     get_conflicts, get_conflicts_inner, get_status, get_status_inner, list_backlinks_grouped,
-    list_backlinks_grouped_inner, list_unlinked_references, list_unlinked_references_inner,
-    query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
-    query_by_property_inner, search_blocks, search_blocks_inner,
+    list_backlinks_grouped_inner, list_unfinished_tasks, list_unfinished_tasks_inner,
+    list_unlinked_references, list_unlinked_references_inner, query_backlinks_filtered,
+    query_backlinks_filtered_inner, query_by_property, query_by_property_inner, search_blocks,
+    search_blocks_inner,
 };
 pub use spaces::{
     create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,
@@ -226,8 +227,9 @@ pub use properties::{
 pub use queries::{
     __specta__fn__count_backlinks_batch, __specta__fn__get_backlinks, __specta__fn__get_conflicts,
     __specta__fn__get_status, __specta__fn__list_backlinks_grouped,
-    __specta__fn__list_unlinked_references, __specta__fn__query_backlinks_filtered,
-    __specta__fn__query_by_property, __specta__fn__search_blocks,
+    __specta__fn__list_unfinished_tasks, __specta__fn__list_unlinked_references,
+    __specta__fn__query_backlinks_filtered, __specta__fn__query_by_property,
+    __specta__fn__search_blocks,
 };
 #[doc(hidden)]
 pub use spaces::{
@@ -308,7 +310,7 @@ pub use properties::{
 #[doc(hidden)]
 pub use queries::{
     __cmd__count_backlinks_batch, __cmd__get_backlinks, __cmd__get_conflicts, __cmd__get_status,
-    __cmd__list_backlinks_grouped, __cmd__list_unlinked_references,
+    __cmd__list_backlinks_grouped, __cmd__list_unfinished_tasks, __cmd__list_unlinked_references,
     __cmd__query_backlinks_filtered, __cmd__query_by_property, __cmd__search_blocks,
 };
 #[doc(hidden)]

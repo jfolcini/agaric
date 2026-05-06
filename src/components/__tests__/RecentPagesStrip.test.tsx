@@ -700,7 +700,10 @@ describe('RecentPagesStrip', () => {
         }
         observe(target: Element): void {
           queueMicrotask(() => {
-            this.cb([{ target } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver)
+            this.cb(
+              [{ target } as unknown as ResizeObserverEntry],
+              this as unknown as ResizeObserver,
+            )
           })
         }
         unobserve(): void {}
@@ -733,8 +736,10 @@ describe('RecentPagesStrip', () => {
           expect(viewport.style.maskImage).toBe('')
         })
       } finally {
-        if (origScrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', origScrollWidth)
-        if (origClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClientWidth)
+        if (origScrollWidth)
+          Object.defineProperty(HTMLElement.prototype, 'scrollWidth', origScrollWidth)
+        if (origClientWidth)
+          Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClientWidth)
       }
     })
 
@@ -751,7 +756,10 @@ describe('RecentPagesStrip', () => {
         }
         observe(target: Element): void {
           queueMicrotask(() => {
-            this.cb([{ target } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver)
+            this.cb(
+              [{ target } as unknown as ResizeObserverEntry],
+              this as unknown as ResizeObserver,
+            )
           })
         }
         unobserve(): void {}
@@ -784,8 +792,10 @@ describe('RecentPagesStrip', () => {
           expect(viewport.style.maskImage).toBe('linear-gradient(to right, black 90%, transparent)')
         })
       } finally {
-        if (origScrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', origScrollWidth)
-        if (origClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClientWidth)
+        if (origScrollWidth)
+          Object.defineProperty(HTMLElement.prototype, 'scrollWidth', origScrollWidth)
+        if (origClientWidth)
+          Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClientWidth)
       }
     })
   })

@@ -12,6 +12,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
 import { useKeyboardNavigableList } from '../hooks/useKeyboardNavigableList'
@@ -31,7 +32,6 @@ import {
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD

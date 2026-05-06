@@ -632,7 +632,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Shared Components (session 277)
 - **PageOutline** (`src/components/PageOutline.tsx`): TOC/outline panel in Sheet slide-out. `extractHeadings()` scans block content for `# `/`## ` prefixes, returns `{ blockId, level, text }[]`. Click-to-scroll via `scrollIntoView`. Integrated in PageHeader via List icon button. 11 tests.
 - **ImageResizeToolbar** (`src/components/StaticBlock.tsx`): Floating toolbar on image hover with 4 width presets (Small 25%, Medium 50%, Large 75%, Full 100%). Width persisted via `setProperty('image_width')`. Keyboard/touch accessible (Enter/Space toggle). 5 tests.
-- **UnfinishedTasks** (`src/components/journal/UnfinishedTasks.tsx`): Collapsible section in DailyView showing overdue TODO/DOING tasks grouped by age (Yesterday, This Week, Older). Client-side query via `queryByProperty` + filter. localStorage collapse persistence. Only shown for today's date. 23 tests.
+- **UnfinishedTasks** (`src/components/journal/UnfinishedTasks.tsx`): Collapsible section in DailyView showing overdue TODO/DOING tasks grouped by age (Yesterday, This Week, Older). Backend query via `list_unfinished_tasks` (PEND-31). localStorage collapse persistence. Only shown for today's date. 23 tests.
 
 ### Lib Modules (session 277)
 - **tag-colors** (`src/lib/tag-colors.ts`): localStorage-backed tag color helpers — `TAG_COLOR_PRESETS` (8 colors), `getTagColors()`, `getTagColor()`, `setTagColor()`, `clearTagColor()`. Dual storage: localStorage for fast rendering + `setProperty`/`deleteProperty` for sync.

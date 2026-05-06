@@ -17,6 +17,7 @@ import { FilterPill } from '@/components/ui/filter-pill'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -28,7 +29,6 @@ import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 interface SelectedTag {
   id: string

@@ -142,6 +142,31 @@ pub async fn query_by_property_inner(
     .await
 }
 
+/// List unfinished tasks before a given date.
+///
+/// Returns blocks where `todo_state IN ('TODO', 'DOING')` and
+/// `(due_date < before_date OR scheduled_date < before_date)`.
+/// Ordered by `COALESCE(due_date, scheduled_date) DESC, id DESC`.
+#[instrument(skip(pool), err)]
+pub async fn list_unfinished_tasks_inner(
+    pool: &SqlitePool,
+    before_date: String,
+    todo_states: Vec<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: &SpaceScope,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_unfinished_tasks(
+        pool,
+        &before_date,
+        &todo_states,
+        &page,
+        scope.as_filter_param(),
+    )
+    .await
+}
+
 /// Query backlinks for a block with optional filters, sorting, and pagination.
 ///
 /// When no filters are supplied, returns all backlinks (backward compatible).
@@ -373,6 +398,23 @@ pub async fn query_by_property(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_unfinished_tasks(
+    pool: State<'_, ReadPool>,
+    before_date: String,
+    todo_states: Vec<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: SpaceScope,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    list_unfinished_tasks_inner(&pool.0, before_date, todo_states, cursor, limit, &scope)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].

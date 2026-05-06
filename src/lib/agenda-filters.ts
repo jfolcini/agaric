@@ -5,12 +5,12 @@
  * Extracted from AgendaView.tsx (R-13) — no React dependencies.
  */
 
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import type { AgendaFilter } from '../components/AgendaFilterBuilder'
 import type { PageResponse } from './bindings'
 import { formatDate, getDateRangeForFilter } from './date-utils'
 import type { BlockRow } from './tauri'
 import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 /**
  * Pagination limit for agenda-driven IPC queries. The `listBlocks` /

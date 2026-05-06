@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
+import { PAGINATION_LIMIT } from '@/lib/constants'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
@@ -49,7 +50,6 @@ import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
 import { SearchablePopover } from './SearchablePopover'
 import { ViewHeader } from './ViewHeader'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {

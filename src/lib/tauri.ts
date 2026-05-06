@@ -603,7 +603,11 @@ export async function restorePageToOp(params: {
   pageId: string
   targetDeviceId: string
   targetSeq: number
-}): Promise<{ ops_reverted: number; non_reversible_skipped: number; results: unknown[] }> {
+}): Promise<{
+  ops_reverted: number
+  non_reversible_skipped: number
+  results: unknown[]
+}> {
   return unwrap(
     await commands.restorePageToOp(params.pageId, params.targetDeviceId, params.targetSeq),
   )
@@ -615,6 +619,24 @@ export async function restorePageToOp(params: {
  * whose owning page carries `space = <spaceId>`. `null` / `undefined`
  * leaves the result set unscoped (cross-space view).
  */
+export async function listUnfinishedTasks(params: {
+  beforeDate: string
+  todoStates: string[]
+  cursor?: string
+  limit?: number
+  spaceId?: string | null
+}): Promise<PageResponse<BlockRow>> {
+  return unwrap(
+    await commands.listUnfinishedTasks(
+      params.beforeDate,
+      params.todoStates,
+      params.cursor ?? null,
+      params.limit ?? null,
+      toSpaceScope(params.spaceId),
+    ),
+  )
+}
+
 export async function queryByProperty(params: {
   key: string
   valueText?: string | undefined
