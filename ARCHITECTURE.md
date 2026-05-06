@@ -1095,7 +1095,7 @@ Spaces partition pages into user-defined contexts (e.g., "Personal", "Work", "Si
 without introducing new tables, op types, or sync messages. The whole feature is layered onto the
 existing properties system: a "space" is a page block tagged with `is_space = "true"`, and every
 non-space page owns a `space` ref property pointing at its containing space block. Scoping
-(list/search filters, cross-space link enforcement, per-space journals, per-space templates) is
+(list/search filters, hard space separation, per-space journals, per-space templates) is
 implemented at the query layer rather than at the schema layer.
 
 ### Data model
@@ -1120,9 +1120,15 @@ implemented at the query layer rather than at the schema layer.
 
 - **List/search filtering:** `list_blocks`, `search_blocks`, and the page browser filter by the
   active space's ULID via the `space` property.
-- **Cross-space link enforcement (Phase 7):** Inserting a `[[ULID]]` block link or `#[ULID]` tag
-  reference whose target lives in a different space is rejected at command boundary. This is a
-  hard guard, not a UI nicety — the op never reaches the log.
+- **Hard space separation (PEND-15):** Every space is a sealed unit. Cross-space references are
+  rejected at write time at three enforcement points: `edit_block` content scan (rejects
+  `[[ULID]]` / `#[ULID]` tokens targeting a different space), `set_property` ref-type
+  validation (rejects ref properties crossing spaces; the `space` key is exempt for page moves),
+  and `add_tag` space check (rejects tags whose space differs from the source block — tags are
+  space-scoped, Path A). The `block_links` and `block_tag_refs` cache rebuilds filter to
+  same-space targets. The broken-link UI surface (UX-366) is deleted. Enforcement helpers live
+  in `src-tauri/src/spaces/cross_space_validation.rs`; `resolve_block_space` in `space.rs`
+  provides the canonical `COALESCE(page_id, id) → block_properties.space` lookup.
 - **Per-space journal (Phase 5):** Daily/weekly/monthly/agenda views scope their queries to the
   active space's journal pages. Each space has its own journal lineage.
 - **Per-space templates (Phase 5b):** Templates resolve against the active space's

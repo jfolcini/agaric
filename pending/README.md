@@ -11,7 +11,6 @@
 | PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | ready (Tier 1 sync progress first ~6-10h, Tier 2 file transfer later ~6-9h) |
 | PEND-09 | CRDT migration (Loro), merge-layer only | L (11-15 weeks) | ready as a **planned spike + multi-phase migration** |
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
-| PEND-15 | Hard space separation — no cross-space links | L (7-12 weeks) | ready — **Phase 1 MUST land before PEND-09 Phase 2 cutover** (avoids CRDT engine producing fresh cross-space refs that one-shot severance would never see) |
 | PEND-29 | Frontend robustness review — second pass | trivial (B-1 only remaining) | partial — **B-1 (BulletList Option A) needs product decision** (Option A remove vs Option B implement) before it can land |
 | PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
 | PEND-31 | `UnfinishedTasks` panel silently truncates carry-over TODOs (200-cap + ASC ordering + no client pagination) | trivial-S (Option A ~1 h) or M (Option B ~2–4 h) | ready — bug confirmed by code review, awaiting user-side data confirmation |
@@ -32,14 +31,14 @@
 
 - PEND-18 (`SpaceId` newtype + `SpaceScope` enum) — shipped session 678.
 - PEND-12 (build.rs codegen for space-filter SQL) — REJECTED session 679. The Phase 0 spike confirmed sqlx 0.8.6 `query!()` rejects `include_str!(concat!(env!("OUT_DIR"), …))` (parser requires a `LitStr`, not a macro-invocation token tree; upstream sqlx#3388 open with no fix). Plan deleted; fallback (drift-detection parity test) tracked under MAINT-172 in REVIEW-LATER.md, sized to mirror PEND-28a H1 Option 2's pattern (session 677).
+- PEND-15 (hard space separation, no cross-space links) — **SHIPPED session 679 (all 5 phases).** Plan file deleted. Audit confirms 0 cross-space violations. Three write-time enforcement points (edit_block content scan, set_property ref-type validation, add_tag space check), two cache-filter paths (block_links + block_tag_refs), frontend broken-link cleanup. Path A (tags space-scoped).
 
 **Strategic** — independent decisions with multi-phase timelines:
 
-- PEND-15 (hard space separation, no cross-space links) — 7-12 weeks. **Phase 1 MUST land before PEND-09 Phase 2 cutover**.
-- PEND-09 (CRDT migration via Loro) — 11-15 weeks. Start with 2-week time-boxed Phase 0 spike. Don't commit to Phases 1+ before the spike report. **Phase 2 cutover gated on PEND-15 Phase 1 completion.**
+- PEND-09 (CRDT migration via Loro) — 11-15 weeks. Start with 2-week time-boxed Phase 0 spike. Don't commit to Phases 1+ before the spike report. **Phase 2 cutover gated on PEND-15 Phase 1 completion (done — PEND-15 shipped session 679).**
 - PEND-10 (iroh transport adoption) — 14-19 weeks. Start with 3-week time-boxed Phase 0 spike. Headline kill criterion: iroh's current version + wire-format stability stance.
 
-**Recommended sequencing of the strategic trio:** PEND-15 Phase 1 → PEND-09 (CRDT, transport unchanged) → PEND-10 (iroh, post-CRDT). Combined calendar, sequential: **~30-40 weeks of focused engineering** — most of a year for a solo maintainer. **Don't pursue more than one strategic item in parallel.**
+**Recommended sequencing of the strategic duo:** PEND-09 (CRDT, transport unchanged) → PEND-10 (iroh, post-CRDT). Combined calendar, sequential: **~25-34 weeks of focused engineering**. **Don't pursue more than one strategic item in parallel.**
 
 ## Workflow notes
 
