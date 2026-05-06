@@ -58,7 +58,7 @@ rules:
       - release.yml:20
   unpinned-uses:
     ignore:
-      - _validate.yml:121
+      - _validate.yml:124
       - _validate.yml:25
       - _validate.yml:43
       - _validate.yml:46

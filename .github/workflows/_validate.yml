@@ -77,6 +77,9 @@ jobs:
           if ! command -v cargo-machete >/dev/null; then cargo install --locked cargo-machete; fi
           if ! command -v sqruff >/dev/null; then cargo install --locked sqruff; fi
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
+          if ! command -v typos >/dev/null; then cargo install --locked typos-cli; fi
+          if ! command -v zizmor >/dev/null; then cargo install --locked zizmor; fi
+          if ! command -v taplo >/dev/null; then cargo install --locked taplo-cli; fi
 
       - name: Install prek
         # prek is a Rust reimplementation of pre-commit. Source-of-truth for
