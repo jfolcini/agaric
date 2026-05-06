@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../../__tests__/fixtures'
+import { logger } from '../../../lib/logger'
 import type { BlockRow } from '../../../lib/tauri'
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -554,7 +555,8 @@ describe('UnfinishedTasks', () => {
 
   // --- Error paths ---
   describe('error paths', () => {
-    it('queryByProperty rejects — shows empty state', async () => {
+    it('queryByProperty rejects — shows empty state and logs warning', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') {
           throw new Error('query failure')
@@ -572,6 +574,14 @@ describe('UnfinishedTasks', () => {
       // Component shows empty state (no crash, no blocks rendered)
       expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
       expect(container.innerHTML).toBe('')
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'UnfinishedTasks',
+        'fetchUnfinished failed',
+        undefined,
+        expect.any(Error),
+      )
+      warnSpy.mockRestore()
     })
 
     it('batchResolve rejects — blocks render without page titles', async () => {

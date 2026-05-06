@@ -17,6 +17,7 @@ import { formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../../lib/block-events'
+import { logger } from '../../lib/logger'
 import { priorityColor } from '../../lib/priority-color'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../lib/tauri'
@@ -112,8 +113,13 @@ function readCollapsedState(): boolean {
 function writeCollapsedState(collapsed: boolean): void {
   try {
     localStorage.setItem(STORAGE_KEY, String(collapsed))
-  } catch {
-    // Silently ignore storage errors
+  } catch (err) {
+    logger.warn(
+      'UnfinishedTasks',
+      'failed to write collapsed state to localStorage',
+      undefined,
+      err,
+    )
   }
 }
 
@@ -143,8 +149,13 @@ function writeGroupCollapsedState(state: Record<string, boolean>): void {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(state))
-  } catch {
-    // Silently ignore storage errors
+  } catch (err) {
+    logger.warn(
+      'UnfinishedTasks',
+      'failed to write group collapsed state to localStorage',
+      undefined,
+      err,
+    )
   }
 }
 
@@ -231,8 +242,8 @@ export function UnfinishedTasks({
             setPageTitles(titles)
           }
         }
-      } catch {
-        // On error, show empty state
+      } catch (err) {
+        logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
         setBlocks([])
       } finally {
         if (!stale) setLoading(false)
