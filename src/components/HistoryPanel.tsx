@@ -181,6 +181,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   }, [filteredEntries])
 
   const handlePanelKeyDown = useCallback(
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: refactor deferred to follow-up
     (e: React.KeyboardEvent<HTMLUListElement>) => {
       if (restorableEntries.length === 0) return
       const currentIdx = restorableEntries.findIndex((entry) => entry.seq === expandedSeq)

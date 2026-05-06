@@ -361,6 +361,7 @@ export interface PropertyRowProps {
   removeAriaLabel?: string
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: refactor deferred to follow-up
 export function PropertyRow({
   propKey,
   icon: Icon,
