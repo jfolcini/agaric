@@ -53,7 +53,31 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
 
     // 4. Diff
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
-    let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+    let mut to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+
+    // PEND-15 Phase 3 — filter out cross-space targets before inserting.
+    // The write-time enforcement gate (Phase 2) rejects new cross-space
+    // references, but the materializer rebuild path also processes content
+    // that may contain legacy tokens. Filtering here ensures the cache
+    // never holds cross-space rows even if a legacy token survives.
+    if !to_insert.is_empty() {
+        let source_block_id = crate::ulid::BlockId::from_trusted(block_id);
+        let source_space = crate::space::resolve_block_space(&mut *tx, &source_block_id).await?;
+        if source_space.is_some() {
+            let mut same_space: Vec<&String> = Vec::with_capacity(to_insert.len());
+            for target_id in &to_insert {
+                let target_block_id = crate::ulid::BlockId::from_trusted(target_id);
+                if let Ok(Some(target_space)) =
+                    crate::space::resolve_block_space(&mut *tx, &target_block_id).await
+                {
+                    if Some(&target_space) == source_space.as_ref() {
+                        same_space.push(target_id);
+                    }
+                }
+            }
+            to_insert = same_space;
+        }
+    }
 
     if to_delete.is_empty() && to_insert.is_empty() {
         // No changes — transaction is rolled back on drop (no commit needed).

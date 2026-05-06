@@ -8,20 +8,17 @@
  * Atomic inline node. Attr: id (ULID).
  *
  * Uses a NodeView (addNodeView) so we can attach a click handler for
- * navigation and conditionally apply a "deleted" style for broken links.
- * renderHTML is kept for copy-paste / serialization.
+ * navigation. renderHTML is kept for copy-paste / serialization.
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'
-import { toast } from 'sonner'
-import { t } from '../../lib/i18n'
 
 export interface BlockLinkOptions {
   /** Resolve a block/page ULID to its display title. Falls back to truncated ULID. */
   resolveTitle: (id: string) => string
   /** Called when the user clicks a block link chip. Navigates to the target page/block. */
   onNavigate?: ((id: string) => void) | undefined
-  /** Check whether a linked block is active or deleted (broken link). */
+  /** @deprecated PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
@@ -43,7 +40,6 @@ export const BlockLink = Node.create<BlockLinkOptions>({
     return {
       resolveTitle: (id: string) => `[[${id.slice(0, 8)}...]]`,
       onNavigate: undefined,
-      resolveStatus: undefined,
     }
   },
 
@@ -77,34 +73,20 @@ export const BlockLink = Node.create<BlockLinkOptions>({
 
   addNodeView() {
     const extension = this
-    return ({ node, editor: nodeEditor, getPos }) => {
+    return ({ node }) => {
       const dom = document.createElement('span')
       let currentId = node.attrs['id'] as string
 
       function render(blockId: string) {
         currentId = blockId
         const title = extension.options.resolveTitle(blockId)
-        const status = extension.options.resolveStatus?.(blockId) ?? 'active'
 
         dom.textContent = title
-        dom.className = [
-          'block-link-chip',
-          'cursor-pointer',
-          status === 'deleted' ? 'block-link-deleted' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')
+        dom.className = 'block-link-chip cursor-pointer'
         dom.setAttribute('data-type', 'block-link')
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-link-chip')
         dom.setAttribute('contenteditable', 'false')
-        if (status === 'deleted') {
-          const tooltip = t('editor.brokenLinkTooltip')
-          dom.setAttribute('title', tooltip)
-          // `title` is hover-only on most touch UAs; `aria-label` ensures
-          // screen-reader (and touch) users get the same announcement.
-          dom.setAttribute('aria-label', tooltip)
-        }
       }
 
       render(currentId)
@@ -112,22 +94,6 @@ export const BlockLink = Node.create<BlockLinkOptions>({
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        if (dom.classList.contains('block-link-deleted')) {
-          // Delete the broken link chip on click (recoverable via undo)
-          const pos = typeof getPos === 'function' ? getPos() : null
-          if (pos != null) {
-            nodeEditor
-              .chain()
-              .focus()
-              .deleteRange({ from: pos, to: pos + node.nodeSize })
-              .run()
-            // UX-313: surface the same explanation touch users miss from the
-            // hover-only `title` tooltip. Outside the if-block would skip the
-            // toast on no-op deletes (pos == null), which is correct.
-            toast.success(t('editor.brokenLinkRemoved'))
-          }
-          return
-        }
         extension.options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)

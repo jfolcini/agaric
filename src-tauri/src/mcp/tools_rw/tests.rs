@@ -361,6 +361,22 @@ async fn add_tag_happy_path() {
     let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "work".into(), None, None)
         .await
         .unwrap();
+    // PEND-15 Phase 2: tags must be in the same space as the source block
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        tag.id.clone(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(space.clone()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     let result = tools
@@ -848,6 +864,22 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         "stress-tag".into(),
         None,
         Some(2),
+    )
+    .await
+    .unwrap();
+    // PEND-15 Phase 2: tags must be in the same space as the source block
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        tag.id.clone(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(space.clone()),
+        None,
+        None,
     )
     .await
     .unwrap();

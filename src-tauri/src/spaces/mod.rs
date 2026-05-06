@@ -16,6 +16,7 @@
 //! the hash preimage) but the derived-state row converges on the ULID.
 
 pub mod bootstrap;
+pub mod cross_space_validation;
 
 pub use bootstrap::{
     bootstrap_spaces, migrate_personal_pages_to_work, MIGRATION_THRESHOLD_ULID,

@@ -8,19 +8,17 @@
  * Atomic inline node. Attr: id (ULID).
  *
  * Uses a NodeView (addNodeView) so we can attach a click handler for
- * navigation and conditionally apply a "deleted" style for broken refs.
- * renderHTML is kept for copy-paste / serialization.
+ * navigation. renderHTML is kept for copy-paste / serialization.
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'
-import { t } from '../../lib/i18n'
 
 export interface BlockRefOptions {
   /** Resolve a block ULID to the first line of its content. Falls back to truncated ULID. */
   resolveContent: (id: string) => string
   /** Called when the user clicks a block ref chip. Navigates to the target block. */
   onNavigate?: ((id: string) => void) | undefined
-  /** Check whether a referenced block is active or deleted (broken ref). */
+  /** @deprecated PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
@@ -42,7 +40,6 @@ export const BlockRef = Node.create<BlockRefOptions>({
     return {
       resolveContent: (id: string) => `(( ${id.slice(0, 8)}... ))`,
       onNavigate: undefined,
-      resolveStatus: undefined,
     }
   },
 
@@ -83,30 +80,13 @@ export const BlockRef = Node.create<BlockRefOptions>({
       function render(blockId: string) {
         currentId = blockId
         const content = extension.options.resolveContent(blockId)
-        const status = extension.options.resolveStatus?.(blockId) ?? 'active'
 
         dom.textContent = content
-        dom.className = [
-          'block-ref-chip',
-          'cursor-pointer',
-          status === 'deleted' ? 'block-ref-deleted' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')
+        dom.className = 'block-ref-chip cursor-pointer'
         dom.setAttribute('data-type', 'block-ref')
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-ref-chip')
         dom.setAttribute('contenteditable', 'false')
-        if (status === 'deleted') {
-          const tooltip = t('editor.brokenRefTooltip')
-          dom.setAttribute('title', tooltip)
-          // `title` is hover-only on most touch UAs; `aria-label` ensures
-          // screen-reader (and touch) users get the same announcement.
-          dom.setAttribute('aria-label', tooltip)
-        } else {
-          dom.removeAttribute('title')
-          dom.removeAttribute('aria-label')
-        }
       }
 
       render(currentId)
@@ -114,7 +94,6 @@ export const BlockRef = Node.create<BlockRefOptions>({
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        if (dom.classList.contains('block-ref-deleted')) return
         extension.options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)

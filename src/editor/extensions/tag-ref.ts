@@ -7,9 +7,8 @@
  *
  * Atomic inline node. Attr: id (ULID).
  *
- * Uses a NodeView (addNodeView) so we can conditionally apply a
- * "deleted" style for tags that have been soft-deleted.
- * renderHTML is kept for copy-paste / serialization.
+ * Uses a NodeView (addNodeView) for color styling and click/keyboard
+ * interaction. renderHTML is kept for copy-paste / serialization.
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'
@@ -18,14 +17,14 @@ import { getTagColor } from '@/lib/tag-colors'
 export interface TagRefOptions {
   /** Resolve a tag ULID to its display name. Falls back to truncated ULID. */
   resolveName: (id: string) => string
-  /** Check whether a referenced tag is active or deleted. */
-  resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /**
    * Called when the user clicks (or activates via Enter / Space on) a tag
    * chip inside the editor. When omitted the chip stays a plain decoration
    * with no pointer / keyboard affordance.
    */
   onClick?: ((id: string) => void) | undefined
+  /** @deprecated PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
 declare module '@tiptap/core' {
@@ -45,7 +44,6 @@ export const TagRef = Node.create<TagRefOptions>({
   addOptions() {
     return {
       resolveName: (id: string) => `#${id.slice(0, 8)}...`,
-      resolveStatus: undefined,
       onClick: undefined,
     }
   },
@@ -87,19 +85,16 @@ export const TagRef = Node.create<TagRefOptions>({
       function render(tagId: string) {
         currentId = tagId
         const name = extension.options.resolveName(tagId)
-        const status = extension.options.resolveStatus?.(tagId) ?? 'active'
         const color = getTagColor(tagId)
 
         dom.textContent = name
-        dom.className = ['tag-ref-chip', status === 'deleted' ? 'tag-ref-deleted' : '']
-          .filter(Boolean)
-          .join(' ')
+        dom.className = 'tag-ref-chip'
         dom.setAttribute('data-type', 'tag-ref')
         dom.setAttribute('data-id', currentId)
         dom.setAttribute('data-testid', 'tag-ref-chip')
         dom.setAttribute('contenteditable', 'false')
 
-        if (color && status !== 'deleted') {
+        if (color) {
           dom.style.backgroundColor = `${color}20`
           dom.style.color = color
         } else {
