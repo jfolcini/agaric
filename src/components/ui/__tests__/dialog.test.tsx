@@ -74,6 +74,7 @@ describe('DialogContent viewport cap', () => {
       <Dialog open>
         <DialogContent>
           <DialogTitle>Title</DialogTitle>
+          <DialogDescription>Description</DialogDescription>
         </DialogContent>
       </Dialog>,
     )
