@@ -8,7 +8,7 @@
 
 import Blockquote from '@tiptap/extension-blockquote'
 import Bold from '@tiptap/extension-bold'
-import BulletList from '@tiptap/extension-bullet-list'
+
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
@@ -297,7 +297,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       HighlightWithShortcut,
       Blockquote,
       OrderedList,
-      BulletList,
+
       ListItem,
       HorizontalRule,
       Table.configure({ resizable: false }),
