@@ -139,6 +139,38 @@ describe('useCalendarPageDates', () => {
     expect(listBlocksCalls).toHaveLength(1)
   })
 
+  it('cursor-paginates through multiple pages until exhausted', async () => {
+    mockedInvoke
+      .mockResolvedValueOnce({
+        items: [
+          { id: 'P1', block_type: 'page', content: '2025-06-01' },
+        ],
+        next_cursor: 'cursor1',
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          { id: 'P2', block_type: 'page', content: '2025-06-02' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+    const { result } = renderHook(() => useCalendarPageDates())
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listBlocksCalls).toHaveLength(2)
+    expect(listBlocksCalls[1]?.[1]).toMatchObject({ cursor: 'cursor1' })
+
+    expect(result.current.pageMap.get('2025-06-01')).toBe('P1')
+    expect(result.current.pageMap.get('2025-06-02')).toBe('P2')
+    expect(result.current.pageMap.size).toBe(2)
+  })
+
   it('shows toast on fetch failure', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('boom'))
 

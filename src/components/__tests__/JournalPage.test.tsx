@@ -670,7 +670,7 @@ describe('JournalPage', () => {
         ([cmd, args]) =>
           cmd === 'list_blocks' &&
           (args as { blockType?: string; limit?: number })?.blockType === 'page' &&
-          (args as { blockType?: string; limit?: number })?.limit === 500,
+          (args as { blockType?: string; limit?: number })?.limit === 100,
       )
       // Pre-MAINT-119 this was 2 (one in JournalPage, one in JournalControls).
       // After consolidation it must be exactly 1.
