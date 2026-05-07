@@ -122,7 +122,7 @@ describe('JournalControls', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_blocks',
-        expect.objectContaining({ blockType: 'page', limit: 500 }),
+        expect.objectContaining({ blockType: 'page', limit: 100, cursor: null }),
       )
     })
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')

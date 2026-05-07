@@ -216,7 +216,8 @@ describe('GlobalDateControls', () => {
         'list_blocks',
         expect.objectContaining({
           blockType: 'page',
-          limit: 500,
+          limit: 100,
+          cursor: null,
         }),
       )
     })

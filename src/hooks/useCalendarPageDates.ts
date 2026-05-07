@@ -38,13 +38,20 @@ export function __resetCalendarPageDatesForTests(): void {
 async function doFetch(spaceId: string): Promise<Map<string, string>> {
   // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Empty string is
   // the pre-bootstrap no-match fallback (passed in by `fetchPageMap`).
-  const resp = await listBlocks({ blockType: 'page', limit: 500, spaceId })
+  // BUG-FIX: cursor-paginate through all pages so new date-formatted
+  // pages are always found regardless of total page count (limit clamped
+  // to 100 on the backend).
   const map = new Map<string, string>()
-  for (const b of resp.items) {
-    if (b.content && /^\d{4}-\d{2}-\d{2}$/.test(b.content)) {
-      map.set(b.content, b.id)
+  let cursor: string | undefined
+  do {
+    const resp = await listBlocks({ blockType: 'page', limit: 100, spaceId, cursor })
+    for (const b of resp.items) {
+      if (b.content && /^\d{4}-\d{2}-\d{2}$/.test(b.content)) {
+        map.set(b.content, b.id)
+      }
     }
-  }
+    cursor = resp.next_cursor ?? undefined
+  } while (cursor)
   return map
 }
 
