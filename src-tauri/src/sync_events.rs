@@ -580,4 +580,176 @@ mod tests {
             "fresh RecordingEventSink should have no events"
         );
     }
+
+    // ── PEND-06 Phase 1 — Channel<T> dual-emission contract ───────────────────
+    //
+    // ChannelEventSink wraps an inner sink (production: TauriEventSink for
+    // legacy `app.emit` consumers) and a `tauri::ipc::Channel<T>` (new
+    // streaming path). The contract during the Phase 1 transition window:
+    // every event reaches the inner sink, AND Progress/Complete/Error events
+    // also reach the channel as a [`SyncProgressUpdate`]. The next-release
+    // Phase 2 cleanup will drop the duplicate inner emission for the three
+    // progress-shaped variants, so these tests pin the dual-emission
+    // semantics now and will be updated in lockstep with that change.
+
+    use std::sync::Arc;
+
+    /// Build a `Channel<SyncProgressUpdate>` whose payloads land in a
+    /// shared `Vec` for assertion. The `Channel::new` constructor is the
+    /// public API; the message handler receives an `InvokeResponseBody`
+    /// that wraps a JSON payload, which we deserialize back into the
+    /// strongly-typed update.
+    fn capturing_channel() -> (
+        tauri::ipc::Channel<SyncProgressUpdate>,
+        Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+    ) {
+        // SyncProgressUpdate is serde_serialize-only (no Deserialize) so
+        // the test captures the raw JSON `Value` and reads fields by key.
+        let captured: Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured_clone = Arc::clone(&captured);
+        let channel = tauri::ipc::Channel::<SyncProgressUpdate>::new(move |body| {
+            // `Channel.send(SyncProgressUpdate)` serializes the typed
+            // payload into an `InvokeResponseBody::Json(String)`. Match
+            // the Json variant explicitly so a future internal change
+            // (e.g. binary frames) is a deliberate test update rather
+            // than a silent miss.
+            let json_str = match body {
+                tauri::ipc::InvokeResponseBody::Json(s) => s,
+                tauri::ipc::InvokeResponseBody::Raw(_) => {
+                    panic!("expected JSON channel payload, got binary")
+                }
+            };
+            let parsed: serde_json::Value =
+                serde_json::from_str(&json_str).expect("channel body must be valid JSON");
+            captured_clone.lock().unwrap().push(parsed);
+            Ok(())
+        });
+        (channel, captured)
+    }
+
+    #[test]
+    fn channel_event_sink_progress_forwards_to_both_inner_and_channel() {
+        let inner = Arc::new(RecordingEventSink::new());
+        let (channel, captured) = capturing_channel();
+        let sink = ChannelEventSink {
+            inner: Arc::clone(&inner) as Arc<dyn SyncEventSink>,
+            channel,
+        };
+
+        let event = SyncEvent::Progress {
+            state: "streaming_ops".into(),
+            remote_device_id: "DEV_PEER".into(),
+            ops_received: 7,
+            ops_sent: 3,
+        };
+        sink.on_sync_event(event.clone());
+
+        let inner_events = inner.events();
+        assert_eq!(inner_events.len(), 1, "inner sink must observe the event");
+        match &inner_events[0] {
+            SyncEvent::Progress {
+                state,
+                remote_device_id,
+                ops_received,
+                ops_sent,
+            } => {
+                assert_eq!(state, "streaming_ops");
+                assert_eq!(remote_device_id, "DEV_PEER");
+                assert_eq!(*ops_received, 7);
+                assert_eq!(*ops_sent, 3);
+            }
+            other => panic!("inner sink saw wrong variant: {other:?}"),
+        }
+
+        let channel_msgs = captured.lock().unwrap().clone();
+        assert_eq!(
+            channel_msgs.len(),
+            1,
+            "channel must receive a SyncProgressUpdate for Progress events"
+        );
+        assert_eq!(channel_msgs[0]["state"], "streaming_ops");
+        assert_eq!(channel_msgs[0]["remote_device_id"], "DEV_PEER");
+        assert_eq!(channel_msgs[0]["ops_received"], 7);
+        assert_eq!(channel_msgs[0]["ops_sent"], 3);
+    }
+
+    #[test]
+    fn channel_event_sink_complete_translates_to_complete_state() {
+        let inner = Arc::new(RecordingEventSink::new());
+        let (channel, captured) = capturing_channel();
+        let sink = ChannelEventSink {
+            inner: Arc::clone(&inner) as Arc<dyn SyncEventSink>,
+            channel,
+        };
+
+        sink.on_sync_event(SyncEvent::Complete {
+            remote_device_id: "DEV_PEER".into(),
+            ops_received: 12,
+            ops_sent: 4,
+        });
+
+        // Inner sink sees the original Complete variant (semantics
+        // preserved for legacy listeners).
+        assert_eq!(inner.events().len(), 1);
+        // Channel receives a SyncProgressUpdate with state="complete" —
+        // PEND-06 normalises Complete + Error into the same envelope so
+        // the frontend has a single switch on `state` rather than two
+        // different shapes.
+        let msgs = captured.lock().unwrap().clone();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["state"], "complete");
+        assert_eq!(msgs[0]["ops_received"], 12);
+        assert_eq!(msgs[0]["ops_sent"], 4);
+    }
+
+    #[test]
+    fn channel_event_sink_error_translates_to_error_state_with_zero_counts() {
+        let inner = Arc::new(RecordingEventSink::new());
+        let (channel, captured) = capturing_channel();
+        let sink = ChannelEventSink {
+            inner: Arc::clone(&inner) as Arc<dyn SyncEventSink>,
+            channel,
+        };
+
+        sink.on_sync_event(SyncEvent::Error {
+            message: "kapow".into(),
+            remote_device_id: "DEV_PEER".into(),
+        });
+
+        assert_eq!(inner.events().len(), 1);
+        let msgs = captured.lock().unwrap().clone();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["state"], "error");
+        // SyncEvent::Error doesn't carry ops counts, so the channel
+        // payload reports 0/0 — pinned here so a future "carry the last
+        // known counts" change is a deliberate decision.
+        assert_eq!(msgs[0]["ops_received"], 0);
+        assert_eq!(msgs[0]["ops_sent"], 0);
+    }
+
+    #[test]
+    fn channel_event_sink_skips_non_progress_events() {
+        // MdnsDisabled is a peer-discovery event, not a sync-progress
+        // update — it must NOT land on the channel (which is reserved
+        // for the active sync's Progress/Complete/Error stream).
+        let inner = Arc::new(RecordingEventSink::new());
+        let (channel, captured) = capturing_channel();
+        let sink = ChannelEventSink {
+            inner: Arc::clone(&inner) as Arc<dyn SyncEventSink>,
+            channel,
+        };
+
+        sink.on_sync_event(SyncEvent::MdnsDisabled {
+            reason: "test".into(),
+        });
+
+        // Inner sink still sees it (legacy listener path stays intact).
+        assert_eq!(inner.events().len(), 1);
+        // Channel stays silent — no progress update.
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "non-progress events must not produce a channel payload"
+        );
+    }
 }

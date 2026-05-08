@@ -98,6 +98,7 @@ step 7 is a secondary cost.
 radius, no backend change):
 
 1. Load the page's aliases on mount alongside title:
+
    ```typescript
    const [aliases, setAliases] = useState<string[]>([])
    useEffect(() => {
@@ -110,8 +111,10 @@ radius, no backend change):
      return () => { cancelled = true }
    }, [pageId])
    ```
+
 2. In `handleLinkIt`, try the canonical title first, then each alias in
    declared order:
+
    ```typescript
    const candidates = [pageTitle, ...aliases].filter((s) => s.trim().length > 0)
    let newContent = content
@@ -132,6 +135,7 @@ radius, no backend change):
    await editBlock(blockId, newContent)
    // ... existing optimistic-update path
    ```
+
 3. The "no candidate matched" branch is a real failure mode (e.g. FTS5
    matched on something the regex literal-matcher can't see, or aliases
    were added after the search) — surface it as the existing
