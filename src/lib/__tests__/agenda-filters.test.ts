@@ -272,6 +272,8 @@ describe('executeAgendaFilters', () => {
         cursor: null,
         limit: 500,
         scope: { kind: 'active', space_id: '' },
+        excludeParentId: null,
+        contentNonEmpty: false,
       })
     })
   })
@@ -314,6 +316,8 @@ describe('executeAgendaFilters', () => {
         cursor: null,
         limit: 500,
         scope: { kind: 'active', space_id: '' },
+        excludeParentId: null,
+        contentNonEmpty: false,
       })
     })
   })
@@ -632,6 +636,8 @@ describe('executeAgendaFilters', () => {
         cursor: null,
         limit: 500,
         scope: { kind: 'active', space_id: '' },
+        excludeParentId: null,
+        contentNonEmpty: false,
       })
     })
 
@@ -750,6 +756,8 @@ describe('executeAgendaFilters', () => {
         cursor: null,
         limit: 500,
         scope: { kind: 'active', space_id: '' },
+        excludeParentId: null,
+        contentNonEmpty: false,
       })
     })
   })

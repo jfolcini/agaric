@@ -36,14 +36,22 @@ vi.mock('../../lib/tauri', () => ({
 
 import { toast } from 'sonner'
 
+// PEND-35 Tier 1.1 — `import_markdown` now requires `space_id`. Seed a
+// default active space in `beforeEach` so the existing tests exercise
+// the happy path; per-test overrides (UX-385 filename test, the new
+// "disabled when no space" test below) override this fixture.
+const DEFAULT_TEST_SPACE: SpaceRow = {
+  id: 'SPACE_DEFAULT',
+  name: 'Personal',
+  accent_color: 'accent-blue',
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  // Reset the space store between tests so a per-test override (e.g.
-  // the UX-385 filename test below) doesn't leak into siblings.
   useSpaceStore.setState({
-    currentSpaceId: null,
-    availableSpaces: [],
-    isReady: false,
+    currentSpaceId: DEFAULT_TEST_SPACE.id,
+    availableSpaces: [DEFAULT_TEST_SPACE],
+    isReady: true,
   })
 })
 
@@ -70,7 +78,7 @@ describe('DataSettingsTab', () => {
     expect(clickSpy).toHaveBeenCalled()
   })
 
-  it('file selection calls importMarkdown', async () => {
+  it('file selection calls importMarkdown with the active spaceId (PEND-35)', async () => {
     const importResult = {
       page_title: 'Test Page',
       blocks_created: 5,
@@ -89,9 +97,70 @@ describe('DataSettingsTab', () => {
       fileInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
+    // PEND-35 Tier 1.1 — `importMarkdown` now takes `(content, filename,
+    // spaceId)`. Assert the active space's ULID flows through so the
+    // backend can stamp `space = ?spaceId` on the imported page.
     await waitFor(() => {
-      expect(mockImportMarkdown).toHaveBeenCalledWith('# Hello', 'test.md')
+      expect(mockImportMarkdown).toHaveBeenCalledWith('# Hello', 'test.md', DEFAULT_TEST_SPACE.id)
     })
+  })
+
+  it('disables the import button when no active space is selected (PEND-35)', () => {
+    // PEND-35 Tier 1.1 — `import_markdown` rejects empty / unknown
+    // ULIDs. Pre-bootstrap (no active space) the button must stay
+    // disabled rather than firing a doomed IPC. Explicitly clear the
+    // beforeEach seed for this test only.
+    useSpaceStore.setState({
+      currentSpaceId: null,
+      availableSpaces: [],
+      isReady: false,
+    })
+
+    render(<DataSettingsTab />)
+
+    const importBtn = screen.getByRole('button', { name: /Choose Files/i })
+    expect(importBtn).toBeDisabled()
+  })
+
+  it('surfaces a visible + screen-reader-announced reason when import is gated (PEND-35)', () => {
+    // PEND-35 Tier 1.1 — A disabled button with only a `title`
+    // attribute is invisible on touch (`pointer:coarse`) and on
+    // browsers that suppress tooltips for `disabled` controls
+    // (Chromium drops the hover synth because the Button has
+    // `disabled:pointer-events-none`). The visible inline hint plus
+    // `aria-describedby` on the button covers desktop, mobile, and AT.
+    useSpaceStore.setState({
+      currentSpaceId: null,
+      availableSpaces: [],
+      isReady: false,
+    })
+
+    render(<DataSettingsTab />)
+
+    const hint = screen.getByTestId('import-space-not-ready-hint')
+    expect(hint).toHaveTextContent('Select a space before importing.')
+    // Polite live-region so the announcement does not interrupt other
+    // status messages (e.g. import progress in the same panel).
+    expect(hint).toHaveAttribute('aria-live', 'polite')
+
+    // The disabled button references the hint via `aria-describedby`,
+    // so a screen reader reading the focused button also hears the
+    // reason. This is the contract — without it the button is just
+    // "Choose Files, dimmed" with no explanation.
+    const importBtn = screen.getByRole('button', { name: /Choose Files/i })
+    expect(importBtn).toHaveAttribute('aria-describedby', hint.id)
+  })
+
+  it('hides the import-not-ready hint once a space becomes active (PEND-35)', () => {
+    // Sanity check: when the SpaceStore eventually hydrates, the hint
+    // disappears and `aria-describedby` is dropped — otherwise screen
+    // readers would announce a stale "Select a space…" forever.
+    render(<DataSettingsTab />)
+
+    expect(screen.queryByTestId('import-space-not-ready-hint')).not.toBeInTheDocument()
+    const importBtn = screen.getByRole('button', { name: /Choose Files/i })
+    expect(importBtn).not.toBeDisabled()
+    expect(importBtn).not.toHaveAttribute('aria-describedby')
   })
 
   it('shows import result after success', async () => {

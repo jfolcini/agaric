@@ -80,6 +80,23 @@ pub async fn ensure_test_space(pool: &SqlitePool) {
     .unwrap();
 }
 
+/// PEND-35 — stamp `is_space = 'true'` on `space_id` so the block
+/// satisfies `import_markdown_inner` / `create_page_in_space_inner`'s
+/// upfront space-validity check (which requires the target to carry
+/// `is_space = 'true'`). Idempotent (`INSERT OR IGNORE`). Caller must
+/// have seeded the underlying block via `ensure_test_space` /
+/// `ensure_test_space_b` first.
+pub async fn mark_block_as_space(pool: &SqlitePool, space_id: &str) {
+    sqlx::query(
+        "INSERT OR IGNORE INTO block_properties (block_id, key, value_text) \
+         VALUES (?, 'is_space', 'true')",
+    )
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Assign a block to [`TEST_SPACE_ID`] by writing the materialised
 /// `block_properties(key='space', value_ref=TEST_SPACE_ID)` row directly.
 /// Bypasses `set_property_in_tx` intentionally — the FEAT-3 Phase 7 query

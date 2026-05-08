@@ -193,7 +193,15 @@ fn bench_resolve_page_by_alias(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     let alias = target_alias.clone();
-                    async move { resolve_page_by_alias_inner(&pool, &alias).await.unwrap() }
+                    async move {
+                        resolve_page_by_alias_inner(
+                            &pool,
+                            &alias,
+                            &agaric_lib::space::SpaceScope::Global,
+                        )
+                        .await
+                        .unwrap()
+                    }
                 })
             },
         );

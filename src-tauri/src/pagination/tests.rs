@@ -1603,7 +1603,7 @@ async fn query_by_property_returns_matching_blocks() {
     insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None)
+    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None, None, false)
         .await
         .unwrap();
 
@@ -1629,9 +1629,19 @@ async fn query_by_property_filters_by_value() {
     insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", Some("TODO"), None, "eq", &page, None)
-        .await
-        .unwrap();
+    let resp = query_by_property(
+        &pool,
+        "todo",
+        Some("TODO"),
+        None,
+        "eq",
+        &page,
+        None,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 1, "only block with todo=TODO");
     assert_eq!(resp.items[0].id, "BLOCK001", "block matching value filter");
@@ -1650,7 +1660,9 @@ async fn query_by_property_paginates_with_cursor() {
     assert_paginates_with_cursor(
         &pool,
         ["BLOCK001", "BLOCK002", "BLOCK003", "BLOCK004", "BLOCK005"],
-        async |pool, page| query_by_property(pool, "status", None, None, "eq", &page, None).await,
+        async |pool, page| {
+            query_by_property(pool, "status", None, None, "eq", &page, None, None, false).await
+        },
     )
     .await;
 }
@@ -1662,9 +1674,19 @@ async fn query_by_property_returns_empty_for_nonexistent_key() {
     insert_block(&pool, "BLOCK001", "content", "no props", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "nonexistent_key", None, None, "eq", &page, None)
-        .await
-        .unwrap();
+    let resp = query_by_property(
+        &pool,
+        "nonexistent_key",
+        None,
+        None,
+        "eq",
+        &page,
+        None,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
 
     assert!(resp.items.is_empty(), "nonexistent key must return empty");
     assert!(
@@ -1689,7 +1711,7 @@ async fn query_by_property_excludes_soft_deleted() {
     soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None)
+    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None, None, false)
         .await
         .unwrap();
 
@@ -1720,6 +1742,8 @@ async fn query_by_property_rejects_both_value_filters() {
         "eq",
         &page,
         None,
+        None,
+        false,
     )
     .await
     .expect_err("both value filters must be rejected");
@@ -1742,6 +1766,8 @@ async fn query_by_property_rejects_both_value_filters() {
         "eq",
         &page,
         None,
+        None,
+        false,
     )
     .await
     .expect_err("both value filters must be rejected on reserved-key path too");
@@ -2615,7 +2641,9 @@ async fn test_list_block_history_basic() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "HIST_BLK", &page).await.unwrap();
+    let resp = list_block_history(&pool, "HIST_BLK", None, &page)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 2, "only ops for HIST_BLK");
     // Newest first (seq DESC)
@@ -2650,9 +2678,14 @@ async fn test_list_block_history_pagination() {
     }
 
     // Page 1: newest first → seq 5, 4
-    let r1 = list_block_history(&pool, "HIST_BLK", &PageRequest::new(None, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r1 = list_block_history(
+        &pool,
+        "HIST_BLK",
+        None,
+        &PageRequest::new(None, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
     assert_eq!(r1.items.len(), 2, "history page 1 should return 2 items");
     assert!(r1.has_more, "history page 1 should indicate more");
     assert_eq!(r1.items[0].seq, 5, "history page 1 first seq");
@@ -2662,6 +2695,7 @@ async fn test_list_block_history_pagination() {
     let r2 = list_block_history(
         &pool,
         "HIST_BLK",
+        None,
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
     )
     .await
@@ -2675,6 +2709,7 @@ async fn test_list_block_history_pagination() {
     let r3 = list_block_history(
         &pool,
         "HIST_BLK",
+        None,
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
     )
     .await
@@ -2694,7 +2729,7 @@ async fn test_list_block_history_empty() {
 
     // No ops in op_log at all
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "NONEXISTENT", &page)
+    let resp = list_block_history(&pool, "NONEXISTENT", None, &page)
         .await
         .unwrap();
 
@@ -2746,7 +2781,9 @@ async fn test_list_block_history_all_op_types() {
     }
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "BLK01", &page).await.unwrap();
+    let resp = list_block_history(&pool, "BLK01", None, &page)
+        .await
+        .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -2771,6 +2808,212 @@ async fn test_list_block_history_all_op_types() {
         op_types.contains(&"move_block"),
         "move_block op should appear"
     );
+}
+
+/// PEND-35 Tier 1.3 — `op_type_filter = Some("edit_block")` must restrict
+/// the result set to ops of that type at the SQL layer, so cursor pages
+/// arrive pre-filtered (the FE no longer drops rows post-pagination).
+#[tokio::test]
+async fn list_block_history_filters_by_op_type() {
+    let (pool, _dir) = test_pool().await;
+
+    // Mixed ops for the same block (matches the canonical strings used
+    // by the FE filter dropdown in `HistoryFilterBar`).
+    let ops = [
+        (
+            1,
+            "create_block",
+            r#"{"block_id":"FILT_BLK","block_type":"content","content":"hi"}"#,
+        ),
+        (2, "edit_block", r#"{"block_id":"FILT_BLK","to_text":"v2"}"#),
+        (3, "add_tag", r#"{"block_id":"FILT_BLK","tag_id":"TAG01"}"#),
+        (4, "edit_block", r#"{"block_id":"FILT_BLK","to_text":"v3"}"#),
+        (
+            5,
+            "remove_tag",
+            r#"{"block_id":"FILT_BLK","tag_id":"TAG01"}"#,
+        ),
+    ];
+    for (seq, op_type, payload) in &ops {
+        insert_op_log_entry(
+            &pool,
+            "device-1",
+            *seq,
+            op_type,
+            payload,
+            &format!("2025-01-01T{seq:02}:00:00Z"),
+        )
+        .await;
+    }
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+
+    // Filter to edit_block — only the two edit ops should come back.
+    let resp = list_block_history(&pool, "FILT_BLK", Some("edit_block"), &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.items.len(),
+        2,
+        "only edit_block ops should be returned"
+    );
+    assert!(
+        resp.items.iter().all(|e| e.op_type == "edit_block"),
+        "every returned op must be edit_block"
+    );
+
+    // Filter to add_tag — only the single add_tag op.
+    let resp_tag = list_block_history(&pool, "FILT_BLK", Some("add_tag"), &page)
+        .await
+        .unwrap();
+    assert_eq!(resp_tag.items.len(), 1, "only one add_tag op");
+    assert_eq!(resp_tag.items[0].op_type, "add_tag");
+
+    // Filter to a type that's absent — empty result.
+    let resp_none = list_block_history(&pool, "FILT_BLK", Some("move_block"), &page)
+        .await
+        .unwrap();
+    assert!(
+        resp_none.items.is_empty(),
+        "no move_block ops were inserted"
+    );
+}
+
+/// PEND-35 Tier 1.3 control — without an `op_type_filter`, every op for
+/// the block is returned (parity with the pre-filter behaviour).
+#[tokio::test]
+async fn list_block_history_no_filter_returns_all() {
+    let (pool, _dir) = test_pool().await;
+
+    let ops = [
+        (
+            1,
+            "create_block",
+            r#"{"block_id":"NOFLT_BLK","block_type":"content","content":"hi"}"#,
+        ),
+        (
+            2,
+            "edit_block",
+            r#"{"block_id":"NOFLT_BLK","to_text":"v2"}"#,
+        ),
+        (3, "add_tag", r#"{"block_id":"NOFLT_BLK","tag_id":"TAG01"}"#),
+    ];
+    for (seq, op_type, payload) in &ops {
+        insert_op_log_entry(
+            &pool,
+            "device-1",
+            *seq,
+            op_type,
+            payload,
+            &format!("2025-01-01T{seq:02}:00:00Z"),
+        )
+        .await;
+    }
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_block_history(&pool, "NOFLT_BLK", None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        3,
+        "no filter must return every op for the block"
+    );
+}
+
+/// PEND-35 Tier 1.3 — cursor pagination must remain consistent under an
+/// active `op_type_filter`. The pre-PEND-35 anti-pattern was: 50-row
+/// cursor page returned, FE drops the non-matching rows, page appears
+/// empty even though `next_cursor` is set. With the SQL-level filter,
+/// a small cursor `limit` over a sparsely-matching dataset must still
+/// walk every matching row across multiple pages without skipping or
+/// duplicating any.
+#[tokio::test]
+async fn list_block_history_paginates_under_op_type_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    // 5 ops alternating types — 3 edit_block + 2 other. With limit = 1
+    // and filter = "edit_block" we expect exactly 3 pages of 1 row.
+    let ops = [
+        (
+            1,
+            "create_block",
+            r#"{"block_id":"PG_FILT","content":"v1"}"#,
+        ),
+        (2, "edit_block", r#"{"block_id":"PG_FILT","to_text":"v2"}"#),
+        (3, "add_tag", r#"{"block_id":"PG_FILT","tag_id":"TAG01"}"#),
+        (4, "edit_block", r#"{"block_id":"PG_FILT","to_text":"v3"}"#),
+        (5, "edit_block", r#"{"block_id":"PG_FILT","to_text":"v4"}"#),
+    ];
+    for (seq, op_type, payload) in &ops {
+        insert_op_log_entry(
+            &pool,
+            "device-1",
+            *seq,
+            op_type,
+            payload,
+            &format!("2025-01-01T{seq:02}:00:00Z"),
+        )
+        .await;
+    }
+
+    // Page 1 — limit 1, expect the newest edit_block (seq 5).
+    let r1 = list_block_history(
+        &pool,
+        "PG_FILT",
+        Some("edit_block"),
+        &PageRequest::new(None, Some(1)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r1.items.len(), 1, "page 1 must return exactly 1 row");
+    assert_eq!(r1.items[0].seq, 5, "page 1 newest matching seq");
+    assert!(r1.has_more, "filter sees 3 matching rows; more remain");
+    assert!(r1.next_cursor.is_some(), "page 1 must yield a cursor");
+    let r1_seq = r1.items[0].seq;
+    let r1_cursor = r1.next_cursor;
+
+    // Page 2 — using r1.next_cursor, expect seq 4.
+    let r2 = list_block_history(
+        &pool,
+        "PG_FILT",
+        Some("edit_block"),
+        &PageRequest::new(r1_cursor, Some(1)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r2.items.len(), 1, "page 2 must return exactly 1 row");
+    assert_eq!(
+        r2.items[0].seq, 4,
+        "page 2 must skip non-matching rows (seq 3 is add_tag)"
+    );
+    assert!(r2.has_more, "one more matching row remains");
+    let r2_seq = r2.items[0].seq;
+    let r2_cursor = r2.next_cursor;
+
+    // Page 3 — final matching row (seq 2). Must NOT include seq 1
+    // (create_block) because the filter pushes through every page.
+    let r3 = list_block_history(
+        &pool,
+        "PG_FILT",
+        Some("edit_block"),
+        &PageRequest::new(r2_cursor, Some(1)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r3.items.len(),
+        1,
+        "page 3 must return the last matching row"
+    );
+    assert_eq!(r3.items[0].seq, 2, "page 3 must be the oldest edit_block");
+    assert!(!r3.has_more, "no more matching rows");
+    assert!(r3.next_cursor.is_none(), "no further cursor");
+
+    // Across all 3 pages we visited every edit_block exactly once.
+    let seen = vec![r1_seq, r2_seq, r3.items[0].seq];
+    assert_eq!(seen, vec![5, 4, 2], "filtered cursor walk hits every match");
 }
 
 /// PEND-20 B.2 parity: rows whose `block_id` column is unset must NOT
@@ -2809,7 +3052,9 @@ async fn test_list_block_history_uses_native_block_id_column() {
     .unwrap();
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "PEND20B2", &page).await.unwrap();
+    let resp = list_block_history(&pool, "PEND20B2", None, &page)
+        .await
+        .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -2838,7 +3083,7 @@ async fn test_list_conflicts_basic() {
     set_conflict(&pool, "CONFLCT2").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page).await.unwrap();
+    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 2, "only conflict blocks");
     assert_eq!(resp.items[0].id, "CONFLCT1", "first conflict block");
@@ -2862,7 +3107,7 @@ async fn test_list_conflicts_excludes_deleted() {
     soft_delete_block(&pool, "CONFLCT2", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page).await.unwrap();
+    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -2880,7 +3125,7 @@ async fn test_list_conflicts_empty() {
     insert_block(&pool, "NORMAL01", "content", "normal", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page).await.unwrap();
+    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
 
     assert!(
         resp.items.is_empty(),
@@ -2904,7 +3149,7 @@ async fn test_list_conflicts_pagination() {
     }
 
     // Page 1
-    let r1 = list_conflicts(&pool, &PageRequest::new(None, Some(2)).unwrap())
+    let r1 = list_conflicts(&pool, &PageRequest::new(None, Some(2)).unwrap(), None, None)
         .await
         .unwrap();
     assert_eq!(r1.items.len(), 2, "conflicts page 1 should return 2 items");
@@ -2913,18 +3158,28 @@ async fn test_list_conflicts_pagination() {
     assert_eq!(r1.items[1].id, "CONFLCT2", "conflicts page 1 second item");
 
     // Page 2
-    let r2 = list_conflicts(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r2 = list_conflicts(
+        &pool,
+        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(r2.items.len(), 2, "conflicts page 2 should return 2 items");
     assert!(r2.has_more, "conflicts page 2 should indicate more");
     assert_eq!(r2.items[0].id, "CONFLCT3", "conflicts page 2 first item");
     assert_eq!(r2.items[1].id, "CONFLCT4", "conflicts page 2 second item");
 
     // Page 3 (last)
-    let r3 = list_conflicts(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r3 = list_conflicts(
+        &pool,
+        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         r3.items.len(),
         1,
@@ -2936,6 +3191,94 @@ async fn test_list_conflicts_pagination() {
         "conflicts last page should have no cursor"
     );
     assert_eq!(r3.items[0].id, "CONFLCT5", "conflicts last page item");
+}
+
+/// Helper for the PEND-35 Tier 1.4 filter tests — tag a conflict block
+/// with a specific `conflict_type` ("Property" / "Move" / etc).
+async fn set_conflict_type(pool: &SqlitePool, id: &str, conflict_type: &str) {
+    sqlx::query("UPDATE blocks SET conflict_type = ? WHERE id = ?")
+        .bind(conflict_type)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+// PEND-35 Tier 1.4 — `list_conflicts` SQL-side filters
+
+#[tokio::test]
+async fn list_conflicts_no_filter_returns_all() {
+    // Control: when both filter args are None, every conflict comes back.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "CONFLCT1", "content", "first", None, None).await;
+    insert_block(&pool, "CONFLCT2", "content", "second", None, None).await;
+    set_conflict(&pool, "CONFLCT1").await;
+    set_conflict(&pool, "CONFLCT2").await;
+    set_conflict_type(&pool, "CONFLCT1", "Property").await;
+    set_conflict_type(&pool, "CONFLCT2", "Move").await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
+
+    assert_eq!(resp.items.len(), 2, "no filters => every conflict returns");
+}
+
+#[tokio::test]
+async fn list_conflicts_filters_by_conflict_type() {
+    // Seed two conflicts of different `conflict_type`; assert that
+    // `Some("Property")` returns only the matching one.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "CONFLCT1", "content", "prop conflict", None, None).await;
+    insert_block(&pool, "CONFLCT2", "content", "move conflict", None, None).await;
+    set_conflict(&pool, "CONFLCT1").await;
+    set_conflict(&pool, "CONFLCT2").await;
+    set_conflict_type(&pool, "CONFLCT1", "Property").await;
+    set_conflict_type(&pool, "CONFLCT2", "Move").await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_conflicts(&pool, &page, Some("Property"), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "conflict_type=Property must drop the Move row"
+    );
+    assert_eq!(resp.items[0].id, "CONFLCT1", "Property row returned");
+    assert_eq!(
+        resp.items[0].conflict_type.as_deref(),
+        Some("Property"),
+        "row keeps its conflict_type"
+    );
+}
+
+#[tokio::test]
+async fn list_conflicts_filters_by_id_min() {
+    // Seed three conflicts at strictly-increasing IDs (ULIDs are
+    // time-ordered, so `id >= id_min` doubles as a date-min filter);
+    // assert `id_min = "CONFLCT3"` keeps only CONFLCT3 and CONFLCT5.
+    let (pool, _dir) = test_pool().await;
+
+    for id in ["CONFLCT1", "CONFLCT3", "CONFLCT5"] {
+        insert_block(&pool, id, "content", id, None, None).await;
+        set_conflict(&pool, id).await;
+    }
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_conflicts(&pool, &page, None, Some("CONFLCT3"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        2,
+        "id_min must keep rows >= the cutoff (inclusive)"
+    );
+    assert_eq!(resp.items[0].id, "CONFLCT3", "first row at the cutoff");
+    assert_eq!(resp.items[1].id, "CONFLCT5", "second row past the cutoff");
 }
 
 // ====================================================================
@@ -2959,7 +3302,9 @@ async fn snapshot_history_entry_response() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "SNAP_HIS", &page).await.unwrap();
+    let resp = list_block_history(&pool, "SNAP_HIS", None, &page)
+        .await
+        .unwrap();
 
     // TEST-10: exhaustive redactions covering every non-deterministic field
     // surfaced by `PageResponse<HistoryEntry>` — `created_at` is an RFC 3339
@@ -3029,7 +3374,9 @@ async fn test_list_block_history_multi_device_pagination() {
     let mut cursor = None;
     loop {
         let page = PageRequest::new(cursor, Some(1)).unwrap();
-        let resp = list_block_history(&pool, "MULTI_BLK", &page).await.unwrap();
+        let resp = list_block_history(&pool, "MULTI_BLK", None, &page)
+            .await
+            .unwrap();
         for entry in &resp.items {
             all_entries.push((entry.seq, entry.device_id.clone()));
         }

@@ -270,6 +270,7 @@ export const common: Record<string, string> = {
   'data.importDesc': 'Import Logseq or Markdown files as pages.',
   'data.importButton': 'Choose Files',
   'data.importingMessage': 'Importing...',
+  'data.importSpaceNotReady': 'Select a space before importing.',
   'data.importingProgress': 'Importing file {{index}} of {{total}}: {{name}}',
   'data.importingProgressDetail': '{{blocks}} blocks · {{bytes}} processed',
   'data.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',

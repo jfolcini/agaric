@@ -149,7 +149,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     }
     const myReqId = ++aliasReqIdRef.current
     const query = filterText.trim()
-    resolvePageByAlias(query)
+    // PEND-35 Tier 1.2 — pass `spaceId: currentSpaceId` so an alias
+    // pointing at a foreign-space page does not surface here.
+    resolvePageByAlias({ alias: query, spaceId: currentSpaceId })
       .then((result) => {
         if (myReqId !== aliasReqIdRef.current) return
         setAliasMatchId(result ? result[0] : null)
@@ -159,7 +161,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         logger.warn('PageBrowser', 'alias resolution failed', { query }, err)
         setAliasMatchId(null)
       })
-  }, [filterText])
+  }, [filterText, currentSpaceId])
 
   const handleCreatePage = useCallback(async () => {
     const name = newPageName.trim() || t('pageBrowser.untitled')

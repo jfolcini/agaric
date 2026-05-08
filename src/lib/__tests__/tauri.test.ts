@@ -811,6 +811,7 @@ describe('getBlockHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
       blockId: 'BLK001',
+      opTypeFilter: null,
       cursor: 'cur1',
       limit: 5,
     })
@@ -824,6 +825,7 @@ describe('getBlockHistory', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
       blockId: 'BLK001',
+      opTypeFilter: null,
       cursor: null,
       limit: null,
     })
@@ -855,12 +857,21 @@ describe('getConflicts', () => {
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
-    const result = await getConflicts({ cursor: 'cur1', limit: 10 })
+    // PEND-35 Tier 1.4 — `conflictType` and `idMin` are forwarded to
+    // the backend so cursor pagination tracks the post-filter set.
+    const result = await getConflicts({
+      cursor: 'cur1',
+      limit: 10,
+      conflictType: 'Move',
+      idMin: '01HMOCK00000000000000000000',
+    })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
       cursor: 'cur1',
       limit: 10,
+      conflictType: 'Move',
+      idMin: '01HMOCK00000000000000000000',
     })
     expect(result).toEqual(pageResp)
   })
@@ -870,9 +881,13 @@ describe('getConflicts', () => {
 
     await getConflicts()
 
+    // PEND-35 Tier 1.4 — `conflictType` and `idMin` default to null
+    // alongside `cursor` and `limit`.
     expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
       cursor: null,
       limit: null,
+      conflictType: null,
+      idMin: null,
     })
   })
 })
@@ -1157,6 +1172,8 @@ describe('queryByProperty', () => {
       cursor: 'cur1',
       limit: 10,
       scope: { kind: 'global' },
+      excludeParentId: null,
+      contentNonEmpty: false,
     })
     expect(result).toEqual(pageResp)
   })
@@ -1174,6 +1191,8 @@ describe('queryByProperty', () => {
       cursor: null,
       limit: null,
       scope: { kind: 'global' },
+      excludeParentId: null,
+      contentNonEmpty: false,
     })
   })
 
@@ -1182,6 +1201,20 @@ describe('queryByProperty', () => {
     await queryByProperty({ key: 'status', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
+  })
+
+  // PEND-35 Tier 1.5 — push-down filters reach the binding intact.
+  it('forwards excludeParentId and contentNonEmpty to the binding', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await queryByProperty({
+      key: 'completed_at',
+      valueDate: '2026-05-08',
+      excludeParentId: 'PAGE_1',
+      contentNonEmpty: true,
+    })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['excludeParentId']).toBe('PAGE_1')
+    expect(args['contentNonEmpty']).toBe(true)
   })
 })
 
@@ -1705,7 +1738,7 @@ describe('countAgendaBatchBySource', () => {
 // ---------------------------------------------------------------------------
 
 describe('countBacklinksBatch', () => {
-  it('invokes count_backlinks_batch with pageIds', async () => {
+  it('invokes count_backlinks_batch with pageIds and a global scope by default', async () => {
     const expected = { PAGE1: 5, PAGE2: 0 }
     mockedInvoke.mockResolvedValueOnce(expected)
 
@@ -1714,8 +1747,18 @@ describe('countBacklinksBatch', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('count_backlinks_batch', {
       pageIds: ['PAGE1', 'PAGE2'],
+      scope: { kind: 'global' },
     })
     expect(result).toEqual(expected)
+  })
+
+  // PEND-35 Tier 1.6 — spaceId is forwarded as an active scope so the
+  // backend can filter source blocks by owning page's space.
+  it('forwards spaceId as an active scope to the binding', async () => {
+    mockedInvoke.mockResolvedValueOnce({})
+    await countBacklinksBatch({ pageIds: ['PAGE1'], spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 })
 
@@ -2069,20 +2112,37 @@ describe('resolvePageByAlias', () => {
     const expected: [string, string | null] = ['PAGE1', 'My Page']
     mockedInvoke.mockResolvedValueOnce(expected)
 
-    const result = await resolvePageByAlias('my-alias')
+    const result = await resolvePageByAlias({ alias: 'my-alias' })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', { alias: 'my-alias' })
+    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', {
+      alias: 'my-alias',
+      scope: { kind: 'global' },
+    })
     expect(result).toEqual(expected)
   })
 
   it('returns null when alias not found', async () => {
     mockedInvoke.mockResolvedValueOnce(null)
 
-    const result = await resolvePageByAlias('nonexistent')
+    const result = await resolvePageByAlias({ alias: 'nonexistent' })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', { alias: 'nonexistent' })
+    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', {
+      alias: 'nonexistent',
+      scope: { kind: 'global' },
+    })
     expect(result).toBeNull()
+  })
+
+  it('forwards spaceId as an active scope when supplied', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    await resolvePageByAlias({ alias: 'shared', spaceId: 'SPACE_A' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', {
+      alias: 'shared',
+      scope: { kind: 'active', space_id: 'SPACE_A' },
+    })
   })
 })
 
@@ -2499,12 +2559,15 @@ describe('importMarkdown', () => {
     }
     mockedInvoke.mockResolvedValueOnce(expected)
 
-    const result = await importMarkdown('# Title\n\nBody', 'my-page.md')
+    const result = await importMarkdown('# Title\n\nBody', 'my-page.md', 'SPACE_A')
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
+    // PEND-35 Tier 1.1 — `space_id` is required; the FE wrapper threads
+    // it through as `spaceId` (camelCase per the Tauri arg convention).
     expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
       content: '# Title\n\nBody',
       filename: 'my-page.md',
+      spaceId: 'SPACE_A',
     })
     expect(result).toEqual(expected)
   })
@@ -2517,11 +2580,12 @@ describe('importMarkdown', () => {
       warnings: [],
     })
 
-    await importMarkdown('hello')
+    await importMarkdown('hello', undefined, 'SPACE_A')
 
     expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
       content: 'hello',
       filename: null,
+      spaceId: 'SPACE_A',
     })
   })
 })
@@ -3072,7 +3136,7 @@ describe('cross-cutting', () => {
     await cancelSync()
     await setPageAliases('id', ['alias'])
     await getPageAliases('id')
-    await resolvePageByAlias('alias')
+    await resolvePageByAlias({ alias: 'alias' })
     await exportPageMarkdown('id')
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])

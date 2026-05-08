@@ -388,23 +388,50 @@ export async function getBacklinks(params: {
   )
 }
 
-/** List op-log history for a block, paginated (newest first). */
+/** List op-log history for a block, paginated (newest first).
+ *
+ * PEND-35 Tier 1.3 — `opTypeFilter` is pushed into SQL so cursor pages
+ * arrive pre-filtered. Mirrors `listPageHistory`. When `undefined`, all
+ * op types for the block are returned. */
 export async function getBlockHistory(params: {
   blockId: string
+  opTypeFilter?: string | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<HistoryEntry>> {
   return unwrap(
-    await commands.getBlockHistory(params.blockId, params.cursor ?? null, params.limit ?? null),
+    await commands.getBlockHistory(
+      params.blockId,
+      params.opTypeFilter ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
   )
 }
 
-/** List conflict blocks, paginated. */
+/** List conflict blocks, paginated.
+ *
+ * PEND-35 Tier 1.4 — `conflictType` and `idMin` push two formerly
+ * FE-side filters (the ConflictList type dropdown and the "last 7 days"
+ * date filter) into SQL so cursor pagination, `total_count`, and "Load
+ * more" reflect the post-filter row set.
+ *
+ * `idMin` is a ULID lower bound (date min — ULIDs are time-ordered).
+ */
 export async function getConflicts(params?: {
   cursor?: string | undefined
   limit?: number | undefined
+  conflictType?: string | undefined
+  idMin?: string | undefined
 }): Promise<PageResponse<BlockRow>> {
-  return unwrap(await commands.getConflicts(params?.cursor ?? null, params?.limit ?? null))
+  return unwrap(
+    await commands.getConflicts(
+      params?.cursor ?? null,
+      params?.limit ?? null,
+      params?.conflictType ?? null,
+      params?.idMin ?? null,
+    ),
+  )
 }
 
 /** Full-text search across all blocks, paginated by relevance.
@@ -563,11 +590,20 @@ export async function countAgendaBatchBySource(params: {
   return unwrap(await commands.countAgendaBatchBySource(params.dates, toSpaceScope(params.spaceId)))
 }
 
-/** Batch-count backlinks per target page. Returns a map of pageId -> count. */
+/** Batch-count backlinks per target page. Returns a map of pageId -> count.
+ *
+ * `spaceId` (PEND-35 Tier 1.6) — when set, restricts the counted source
+ * blocks to those whose owning page carries `space = <spaceId>`.
+ * `null` / `undefined` keeps the cross-space (legacy) behaviour. The
+ * scope is forwarded as a [`SpaceScope`] via `toSpaceScope`. Without
+ * this filter a page in space A could surface a non-zero badge count
+ * whose source blocks live in space B — backlinks the user can't see.
+ */
 export async function countBacklinksBatch(params: {
   pageIds: string[]
+  spaceId?: string | null | undefined
 }): Promise<Record<string, number>> {
-  return unwrap(await commands.countBacklinksBatch(params.pageIds))
+  return unwrap(await commands.countBacklinksBatch(params.pageIds, toSpaceScope(params.spaceId)))
 }
 
 // ---------------------------------------------------------------------------
@@ -677,6 +713,14 @@ export async function listUnfinishedTasks(params: {
   )
 }
 
+/** Query blocks by property key/value with cursor pagination.
+ *
+ * `excludeParentId` / `contentNonEmpty` (PEND-35 Tier 1.5) push the
+ * DonePanel's two post-filters down into SQL so cursor pagination,
+ * `total_count`, and "Load more" reflect the visible set instead of
+ * the unfiltered raw page. `undefined` / `false` preserves the legacy
+ * unfiltered behaviour.
+ */
 export async function queryByProperty(params: {
   key: string
   valueText?: string | undefined
@@ -685,6 +729,8 @@ export async function queryByProperty(params: {
   cursor?: string | undefined
   limit?: number | undefined
   spaceId?: string | null | undefined
+  excludeParentId?: string | undefined
+  contentNonEmpty?: boolean | undefined
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
     await commands.queryByProperty(
@@ -695,6 +741,8 @@ export async function queryByProperty(params: {
       params.cursor ?? null,
       params.limit ?? null,
       toSpaceScope(params.spaceId),
+      params.excludeParentId ?? null,
+      params.contentNonEmpty ?? false,
     ),
   )
 }
@@ -1019,9 +1067,21 @@ export async function getPageAliases(pageId: string): Promise<string[]> {
   return unwrap(await commands.getPageAliases(pageId))
 }
 
-/** Resolve a page by one of its aliases. Returns page ID + title, or null. */
-export async function resolvePageByAlias(alias: string): Promise<[string, string | null] | null> {
-  return unwrap(await commands.resolvePageByAlias(alias))
+/**
+ * Resolve a page by one of its aliases. Returns page ID + title, or null.
+ *
+ * `spaceId` (PEND-35 Tier 1.2) — when set, restricts the match to
+ * aliases pointing at pages whose `space` property equals `spaceId`.
+ * Mirrors the param-object shape used by `listPageAliasesByPrefix`
+ * directly below. Pass `null` / `undefined` to leave the resolve
+ * unscoped (cross-space) for callers (e.g. agent / MCP tools) that
+ * span every space.
+ */
+export async function resolvePageByAlias(params: {
+  alias: string
+  spaceId?: string | null | undefined
+}): Promise<[string, string | null] | null> {
+  return unwrap(await commands.resolvePageByAlias(params.alias, toSpaceScope(params.spaceId)))
 }
 
 /**
@@ -1146,12 +1206,24 @@ export interface ImportResult {
   warnings: string[]
 }
 
-/** Import a Logseq/Markdown file. Creates a page from the filename and blocks from content. */
+/**
+ * Import a Logseq/Markdown file. Creates a page from the filename and
+ * blocks from content.
+ *
+ * `spaceId` (PEND-35 Tier 1.1) — required. The created page is stamped
+ * with `space = ?spaceId` inside the same backend transaction as the
+ * `CreateBlock` op, so an imported page can never exist without its
+ * space property. Callers must pass the active space's ULID; the
+ * import button must stay disabled while the space store is not
+ * bootstrapped (no active space) so this never receives an empty
+ * string.
+ */
 export async function importMarkdown(
   content: string,
-  filename?: string | undefined,
+  filename: string | undefined,
+  spaceId: string,
 ): Promise<ImportResult> {
-  return unwrap(await commands.importMarkdown(content, filename ?? null))
+  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId))
 }
 
 // ---------------------------------------------------------------------------

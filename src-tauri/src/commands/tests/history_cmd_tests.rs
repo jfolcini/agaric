@@ -27,7 +27,7 @@ async fn get_block_history_returns_ops_for_block() {
         .await
         .unwrap();
 
-    let resp = get_block_history_inner(&pool, created.id, None, None)
+    let resp = get_block_history_inner(&pool, created.id, None, None, None)
         .await
         .unwrap();
 

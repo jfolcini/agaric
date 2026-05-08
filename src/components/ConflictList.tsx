@@ -28,7 +28,7 @@
 import { listen } from '@tauri-apps/api/event'
 import { GitMerge, RefreshCw } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -71,10 +71,48 @@ import { ViewHeader } from './ViewHeader'
 
 export function ConflictList(): React.ReactElement {
   const { t } = useTranslation()
+  const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
+  const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
+  const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [batchAction, setBatchAction] = useState<ConflictBatchAction | null>(null)
+  // UX-264: progress counter shown while a batch keep/discard is iterating
+  // through selected conflicts. `null` while no batch is running.
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(
+    null,
+  )
+  const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
+  const fetchedParentsRef = useRef(new Set<string>())
+
+  // PEND-35 Tier 1.4 — `useConflictFilters` owns the dropdown state
+  // and emits `conflictType` / `idMin` (SQL-side filter params consumed
+  // by `getConflicts(...)`) plus the `filteredBlocks` memo (device
+  // filter, still FE-side per the audit) and the unique-device dropdown
+  // options. We hoist the hook above `usePaginatedQuery` so `queryFn`
+  // sees the current params; we pass `blocks: []` here because the
+  // hook only uses `blocks` for `filteredBlocks`, which we re-derive
+  // below against the real list to avoid an extra render cycle.
+  const {
+    typeFilter,
+    setTypeFilter,
+    deviceFilter,
+    setDeviceFilter,
+    dateFilter,
+    setDateFilter,
+    uniqueDeviceNames,
+    conflictType,
+    idMin,
+  } = useConflictFilters({ blocks: [], deviceNames })
+
   const queryFn = useCallback(
     (cursor?: string) =>
-      getConflicts({ ...(cursor != null && { cursor }), limit: PAGINATION_LIMIT }),
-    [],
+      getConflicts({
+        ...(cursor != null && { cursor }),
+        limit: PAGINATION_LIMIT,
+        ...(conflictType != null && { conflictType }),
+        ...(idMin != null && { idMin }),
+      }),
+    [conflictType, idMin],
   )
   const {
     items: blocks,
@@ -85,33 +123,19 @@ export function ConflictList(): React.ReactElement {
     setItems: setBlocks,
   } = usePaginatedQuery(queryFn, { onError: t('conflict.loadFailed') })
 
-  const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
-  const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
-  const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const { selectedIds, toggleSelected, selectAll, clearSelection } = useConflictSelection({
     blocks,
   })
-  const [batchAction, setBatchAction] = useState<ConflictBatchAction | null>(null)
-  // UX-264: progress counter shown while a batch keep/discard is iterating
-  // through selected conflicts. `null` while no batch is running.
-  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(
-    null,
-  )
-  const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
-  const fetchedParentsRef = useRef(new Set<string>())
 
-  // UX-265 sub-fix 2 — filter bar state + filtered list memo.
-  const {
-    typeFilter,
-    setTypeFilter,
-    deviceFilter,
-    setDeviceFilter,
-    dateFilter,
-    setDateFilter,
-    uniqueDeviceNames,
-    filteredBlocks,
-  } = useConflictFilters({ blocks, deviceNames })
+  // PEND-35 Tier 1.4 — only the device filter still narrows the
+  // backend result here; type + date already happened SQL-side.
+  const filteredBlocks = useMemo(
+    () =>
+      deviceFilter === 'all'
+        ? blocks
+        : blocks.filter((b) => deviceNames.get(b.id) === deviceFilter),
+    [blocks, deviceFilter, deviceNames],
+  )
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
 

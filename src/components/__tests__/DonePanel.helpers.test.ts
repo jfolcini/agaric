@@ -11,64 +11,15 @@ import { makeBlock } from '../../__tests__/fixtures'
 import type { ResolvedBlock } from '../../lib/tauri'
 import {
   collectUniqueParentIds,
-  filterDoneBlocks,
   groupBlocksByPage,
   mergeResolvedTitles,
 } from '../DonePanel.helpers'
 
-// ---------------------------------------------------------------------------
-// filterDoneBlocks
-// ---------------------------------------------------------------------------
-
-describe('filterDoneBlocks', () => {
-  it('keeps blocks with non-empty content when no excludePageId is given', () => {
-    const input = [
-      makeBlock({ id: 'B1', content: 'hello' }),
-      makeBlock({ id: 'B2', content: 'world' }),
-    ]
-    const out = filterDoneBlocks(input, undefined)
-    expect(out).toHaveLength(2)
-    expect(out.map((b) => b.id)).toEqual(['B1', 'B2'])
-  })
-
-  it('drops blocks with null, empty-string, or whitespace-only content (UX-129)', () => {
-    const input = [
-      makeBlock({ id: 'B1', content: 'keep' }),
-      makeBlock({ id: 'B2', content: null }),
-      makeBlock({ id: 'B3', content: '' }),
-      makeBlock({ id: 'B4', content: '   ' }),
-      makeBlock({ id: 'B5', content: '\t\n' }),
-      makeBlock({ id: 'B6', content: 'also keep' }),
-    ]
-    const out = filterDoneBlocks(input, undefined)
-    expect(out).toHaveLength(2)
-    expect(out.map((b) => b.id)).toEqual(['B1', 'B6'])
-  })
-
-  it('drops blocks whose parent_id matches excludePageId (B-74)', () => {
-    const input = [
-      makeBlock({ id: 'B1', parent_id: 'PAGE_1', content: 'same page' }),
-      makeBlock({ id: 'B2', parent_id: 'PAGE_2', content: 'other page' }),
-      makeBlock({ id: 'B3', parent_id: 'PAGE_1', content: 'also same' }),
-      makeBlock({ id: 'B4', parent_id: null, content: 'no parent' }),
-    ]
-    const out = filterDoneBlocks(input, 'PAGE_1')
-    expect(out).toHaveLength(2)
-    expect(out.map((b) => b.id)).toEqual(['B2', 'B4'])
-  })
-
-  it('returns an empty array when input is empty', () => {
-    expect(filterDoneBlocks([], undefined)).toHaveLength(0)
-    expect(filterDoneBlocks([], 'PAGE_1')).toHaveLength(0)
-  })
-
-  it('does not mutate the input array', () => {
-    const input = [makeBlock({ id: 'B1', content: 'keep' }), makeBlock({ id: 'B2', content: null })]
-    const snapshot = input.slice()
-    filterDoneBlocks(input, 'PAGE_1')
-    expect(input).toEqual(snapshot)
-  })
-})
+// PEND-35 Tier 1.5 — `filterDoneBlocks` and its tests retired. The
+// empty-content / excluded-parent filters now live in SQL via
+// `query_by_property`'s `content_non_empty` / `exclude_parent_id`
+// parameters; the DonePanel test suite covers the new behaviour
+// end-to-end (assertions on the IPC argument shape + `totalCount`).
 
 // ---------------------------------------------------------------------------
 // collectUniqueParentIds

@@ -2,11 +2,64 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 682 (Session 682: five S-cost frontend maintenance fixes — MAINT-197 Checkbox hitbox, MAINT-211 RecentPagesStrip edge-fade, MAINT-221 nested-popover tests, MAINT-222 redundant ScrollArea removal, MAINT-206 tauri-mock parity (already done as MAINT-123). Session 681: five S-cost maintenance fixes — MAINT-199 migration comment parser, MAINT-204 markdown serializer callback threading, MAINT-210 dead i18n key, MAINT-217 diff direction flip, MAINT-224 Test B line numbers. Session 680: four S-cost frontend bug fixes — MAINT-200 resolve-store preload retry poison, MAINT-201 projected-agenda cache unbounded growth, MAINT-202 UnfinishedTasks silent catch blocks, MAINT-205 i18n collision detection test. Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 + MAINT-172 + PEND-15 Phase 2 foundation + MAINT-225 + FEATURE-MAP catch-up + MAINT-223) | **Latest entry:** 2026-05-07 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 687 (Session 687: PEND-35 Tier 1 — six correctness/security fixes shipped in one batch (cross-space leaks in `import_markdown` / `resolve_page_by_alias` / `count_backlinks_batch`; FE-filter-broke-paging in `get_block_history` / `get_conflicts` / `query_by_property`). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 687 — PEND-35 Tier 1 (6 items): cross-space leaks + paging-broken-by-FE-filter (2026-05-08)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-08 |
+| **Subagents** | 4 build + 3 review (2 technical + 1 UX) |
+| **Items closed** | PEND-35 Tier 1.1, 1.2, 1.3, 1.4, 1.5, 1.6 |
+| **Items modified** | PEND-35 (Tier 1 section retired; TL;DR + status header updated) |
+| **Tests added** | +14 backend / +14 frontend (rough breakdown: 3 1.1+1.2 + 2 1.3 + 3 1.4 + 3 1.5 + 1 1.6 + 2 review-added regression tests) |
+| **Files touched** | 41 source files + 4 .sqlx cache entries |
+
+**Summary:** Closed all six Tier 1 (correctness / security) findings from the PEND-35 audit in one batched PR-equivalent commit. Two patterns dominated: (A) **space-scope plumbing** for three commands that were silently leaking pages / counts across spaces (`import_markdown`, `resolve_page_by_alias`, `count_backlinks_batch`); (B) **paging pushdown** for three commands where the FE was applying a `.filter()` *after* a cursor page returned — silently breaking pagination (`get_block_history`, `get_conflicts`, `query_by_property`). The fix for each item mirrors an existing space-scoped or filter-pushed sibling already in the codebase, so no new abstractions were needed.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND-35 audit, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src-tauri/src/commands/pages.rs` — `resolve_page_by_alias_inner` takes `&SpaceScope`; `import_markdown_inner` takes `space_id: String`, validates it (TOCTOU-safe inside the tx), and appends `SetProperty("space", value_ref=…)` op.
+- `src-tauri/src/commands/queries.rs` — `query_by_property_inner` + Tauri command thread `exclude_parent_id` / `content_non_empty`; `count_backlinks_batch_inner` takes `&SpaceScope`; `get_conflicts_inner` takes `conflict_type` / `id_min`.
+- `src-tauri/src/commands/mod.rs` — `get_block_history_inner` takes `op_type_filter: Option<String>`.
+- `src-tauri/src/pagination/history.rs` — `list_block_history` takes `op_type_filter`.
+- `src-tauri/src/pagination/hierarchy.rs` — `list_conflicts` takes `conflict_type` / `id_min`.
+- `src-tauri/src/pagination/properties.rs` — `query_by_property` takes `exclude_parent_id` / `content_non_empty`; whitespace handled by `TRIM(content, x'20090a0d')` to match JS `String.prototype.trim()`.
+- `src-tauri/src/commands/tests/{common,page_cmd_tests,query_cmd_tests,history_cmd_tests,snapshot_tests}.rs`, `src-tauri/src/command_integration_tests/{backlink,page,property}_integration.rs`, `src-tauri/src/pagination/tests.rs` — call-site updates + new regression tests (including a cursor-across-filtered-pages walk for 1.3).
+- `src-tauri/benches/{commands_bench,alias_bench,backlink_query_bench,import_bench}.rs` — call-site updates.
+- `src/lib/tauri.ts` — wrappers for the six affected commands.
+- `src/lib/bindings.ts` — regenerated by specta.
+- `src/lib/tauri-mock/handlers.ts` — mocks for all six honour the new args (active vs global SpaceScope, `excludeParentId`, `contentNonEmpty`, `conflictType`, `idMin`, `opTypeFilter`).
+- `src/components/{ConflictList,DataSettingsTab,DonePanel,DonePanel.helpers,HistoryPanel,PageBrowser,SearchPanel}.tsx` — pass new params; drop FE-side `.filter()` calls.
+- `src/hooks/{useBatchCounts,useConflictFilters}.ts` — thread `currentSpaceId`; convert ULID-min from date for conflicts.
+- `src/lib/i18n/common.ts` — new `data.importSpaceNotReady` key.
+- `src/components/__tests__/{ConflictList,DataSettingsTab,DonePanel,DonePanel.helpers,HistoryPanel,QueryResult}.test.tsx` + `src/hooks/__tests__/{useBatchCounts,useConflictFilters}.test.ts` + `src/lib/__tests__/{tauri,agenda-filters,template-utils}.test.ts` — call-site updates + new tests for SQL-side filters.
+- `src-tauri/.sqlx/` — 2 entries deleted (old shapes), 2 added (`list_conflicts` with new filters, `list_block_history` with op_type_filter).
+- `pending/PEND-35-tauri-command-backend-vs-frontend-audit.md` — Tier 1 section retired (replaced by short "shipped" summary); TL;DR table strikes through Tier 1 row; status header updated.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3654 tests run, 3654 passed (+1 net test count from baseline; review-added regression tests).
+- `npx vitest run` — 9599 tests passed across 386 files.
+- `cargo check --benches` — clean.
+- `prek run --all-files` — pending (run at commit time).
+
+**Process notes:**
+- Four build subagents launched in parallel by domain split (A: 1.1+1.2 share `pages.rs`; B: 1.3; C: 1.4; D: 1.5+1.6 share `queries.rs`). All four wrote to the same shared FE files (`tauri.ts`, `tauri-mock/handlers.ts`, `bindings.ts`) and `.sqlx/` cache concurrently — no merge conflicts in practice because writes were on disjoint regions of those files. Worktrees were considered but skipped; the bench files (which all four affected indirectly via signature changes) were patched orchestrator-direct after the fact since none of the build agents thought to update `benches/`.
+- Three review subagents launched in parallel: T1 (1.1+1.2+1.6 space-scope), T2 (1.3+1.4+1.5 paging pushdown), UX (1.1 DataSettingsTab disabled state). T1 caught 3 stale `tauri.test.ts` signatures; T2 caught a whitespace-handling regression in 1.5 (`TRIM(content)` only strips ASCII space — needed `TRIM(content, x'20090a0d')` to match JS) and added a cursor-walk regression test for 1.3; UX caught that the disabled Import button's `title` tooltip is invisible on disabled buttons + touch devices, added a visible `role="status"` hint with `aria-describedby`.
+
+**Lessons learned (for future sessions):**
+- When a batch touches commands whose signatures change, the build subagents must *also* search `benches/` for callers — `cargo nextest run` doesn't compile benches. Add a "grep for inner-fn callsites in `benches/`" line to the subagent prompt template for backend-signature changes.
+- For multi-item batches sharing FE files (`tauri.ts`, `tauri-mock/handlers.ts`, `bindings.ts`), worktrees would have been overkill — the disjoint-region rule held — but the ~2200-line diff is at the edge of "single PR" sizing. Splitting into two commits (space-scope plumbing vs. paging pushdown) was considered and rejected because the shared FE-file regenerations would have created a no-op churn diff in the second commit.
+
+**Commit plan:** single commit.
+
+---
 ## Session 686 — PEND-06 Tier 2 file-transfer per-frame progress (2026-05-08)
 
 | Metadata | Value |

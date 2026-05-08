@@ -16,8 +16,13 @@ use crate::error::AppError;
 /// fallback. The `idx_op_log_block_id` index makes this O(log N) instead
 /// of a full op_log scan with per-row JSON parsing.
 ///
-/// Note: This queries ALL op types for a block (create, edit, add_tag,
-/// remove_tag, move, set_property, etc.).
+/// PEND-35 Tier 1.3: optional `op_type_filter` pushes the FE-side
+/// `op_type` filter into SQL, mirroring `list_page_history`. Without
+/// this the FE applied the filter post-pagination, so a 50-row cursor
+/// page could yield 0 visible rows and "Load more" would appear empty.
+///
+/// Note: When `op_type_filter` is `None`, this queries ALL op types for
+/// a block (create, edit, add_tag, remove_tag, move, set_property, etc.).
 ///
 /// # Cursor seq invariant (L-21)
 ///
@@ -33,6 +38,7 @@ use crate::error::AppError;
 pub async fn list_block_history(
     pool: &SqlitePool,
     block_id: &str,
+    op_type_filter: Option<&str>,
     page: &PageRequest,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let fetch_limit = page.limit + 1;
@@ -52,6 +58,7 @@ pub async fn list_block_history(
         "SELECT device_id, seq, op_type, payload, created_at \
          FROM op_log \
          WHERE block_id = ?1 \
+           AND (?6 IS NULL OR op_type = ?6) \
            AND (?2 IS NULL OR (\
                 seq < ?3 OR (seq = ?3 AND device_id < ?5))) \
          ORDER BY seq DESC, device_id DESC \
@@ -61,6 +68,7 @@ pub async fn list_block_history(
         cursor_seq,       // ?3
         fetch_limit,      // ?4
         cursor_device_id, // ?5
+        op_type_filter,   // ?6
     )
     .fetch_all(pool)
     .await?;

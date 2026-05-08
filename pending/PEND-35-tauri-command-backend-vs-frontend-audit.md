@@ -1,6 +1,6 @@
 # PEND-35 — Tauri command audit: where the frontend is doing work the database/backend should do
 
-> **Status (session 685):** Findings only; no work scheduled yet. Pick & schedule per tier — items are independently approvable.
+> **Status (session 687):** Tier 1 (6 items) shipped — all six correctness/security findings landed in one batch. Tier 2 (12 items), Tier 3 (4 items), Tier 4 (5 items) remain. Pick & schedule per tier — items are independently approvable.
 
 ## Origin
 
@@ -56,81 +56,30 @@ metadata (PK lookup on URL).
 ## TL;DR
 
 Across the full command surface, **27 actionable findings** survived
-validation. Grouped by tier:
+validation; **Tier 1 (6 items) shipped in session 687**, leaving 21
+open. Grouped by tier:
 
 | Tier | Count | Theme |
 | --- | --- | --- |
-| **1 — Correctness / security** | 6 | Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters |
+| ~~**1 — Correctness / security**~~ | ~~6~~ ✅ | ~~Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters~~ — **shipped session 687** |
 | **2 — Hot-path performance (N+1, FE intersection)** | 12 | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row |
 | **3 — Indexes & SQL anti-patterns** | 4 | `json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown |
 | **4 — Minor / low-confidence** | 5 | Single-row reloads, template-loop creates, growing-window history fetches |
 
-Estimated cost is per-item, not bundled. Several Tier-1 fixes share
-plumbing (`SpaceScope` threading) and could batch.
+Estimated cost is per-item, not bundled.
 
 ---
 
-## Tier 1 — Correctness / security (fix first)
+## ~~Tier 1 — Correctness / security~~ — shipped session 687
 
-### 1.1 `import_markdown` creates orphan pages with no `space` property
+All six items landed in one batch (one PR-equivalent commit):
 
-| What | Detail |
-| --- | --- |
-| **Backend** | `src-tauri/src/commands/pages.rs:481-579` (inner), `:997-1013` (cmd) |
-| **FE** | `src/components/DataSettingsTab.tsx:84` |
-| **Symptom** | `import_markdown_inner` calls `create_block_in_tx(... "page" ..., None, None)` and never appends `SetProperty(key="space", value_ref=...)`. Sibling `create_page_in_space_inner` (`spaces.rs:233-245`) does. Imported pages are invisible to space-scoped `listBlocks`/`get_page` and break the FEAT-3 invariant. |
-| **Recommendation** | **UPDATE** `import_markdown` to take `space_id: String`, validate it like `create_page_in_space_inner`, and append the `SetProperty("space", value_ref=space_id)` op inside the same transaction. Plumb `currentSpaceId` from `useSpaceStore` through the FE wrapper. |
-| **Validator verdict** | C1 TRUE |
-
-### 1.2 `resolve_page_by_alias` is unscoped — leaks pages from other spaces
-
-| What | Detail |
-| --- | --- |
-| **Backend** | `src-tauri/src/commands/pages.rs:121-138` |
-| **FE** | `src/components/SearchPanel.tsx:201-220`, `src/components/PageBrowser.tsx:152-162` |
-| **Symptom** | Inner takes only `alias: &str`; SQL has no `space` predicate. Sibling `list_page_aliases_by_prefix_inner` already takes `SpaceScope`. An alias matching a foreign-space page surfaces it in the active space's UI. |
-| **Recommendation** | **UPDATE** `resolve_page_by_alias` (and inner) to take `scope: SpaceScope` and apply the same `key='space' AND value_ref=?` predicate as the prefix sibling. Pass `currentSpaceId` from both FE callsites. While here, widen the SELECT to a full `BlockRow` so SearchPanel can drop its follow-up `getBlock(pageId)` IPC (the JOIN against `blocks` already happens — `pages.rs:127-138`). |
-| **Validator verdict** | C2 TRUE |
-
-### 1.3 HistoryPanel: paging silently wrong under FE-side `op_type` filter
-
-| What | Detail |
-| --- | --- |
-| **Backend** | `get_block_history` cmd `src-tauri/src/commands/mod.rs:843`; helper `src-tauri/src/pagination/history.rs:33` |
-| **FE** | `src/components/HistoryPanel.tsx:96-99` |
-| **Symptom** | Backend takes only `(blockId, cursor, limit)` — no `op_type` filter. FE applies `entries.filter(e => e.op_type === opTypeFilter)` AFTER paging, so a 50-row cursor page can yield 0 visible rows; "Load more" appears empty. Sibling `list_page_history` already accepts `op_type_filter`. |
-| **Recommendation** | **UPDATE** `get_block_history_inner` and `pagination::list_block_history` to accept `op_type_filter: Option<&str>`, mirroring the page sibling at `commands/history.rs:218-231`. Drop the JS filter. |
-| **Validator verdict** | C4 TRUE |
-
-### 1.4 ConflictList: paging silently wrong under FE-side filters
-
-| What | Detail |
-| --- | --- |
-| **Backend** | `pagination::list_conflicts` `src-tauri/src/pagination/hierarchy.rs:142-172` |
-| **FE** | `src/hooks/useConflictFilters.ts:39-85`, `src/components/ConflictList.tsx:114` |
-| **Symptom** | Backend filters only `is_conflict = 1 AND deleted_at IS NULL`, paginates by `id ASC`. FE filters by `conflict_type`, device name, and `last7Days` (decoded from ULID timestamp) over the in-memory page array. Cursor advances on raw count, FE drops some — counts misreported. |
-| **Recommendation** | **UPDATE** `get_conflicts`/`list_conflicts` to accept `conflict_type: Option<String>` and `id_min: Option<String>` (ULID range = date range, since IDs are time-ordered). Device name can stay FE-side until persisted on the row. |
-| **Validator verdict** | C5 TRUE |
-
-### 1.5 DonePanel: paging silently wrong under FE-side filters
-
-| What | Detail |
-| --- | --- |
-| **Backend** | `query_by_property` cmd `src-tauri/src/commands/queries.rs:386`; helper `src-tauri/src/pagination/properties.rs:147-178` |
-| **FE** | `src/components/DonePanel.tsx:63-118`, `src/components/DonePanel.helpers.ts:22-33` |
-| **Symptom** | FE drops empty-content rows and rows whose `parent_id === excludePageId` after each cursor page; `nextCursor`/`hasMore` are taken from the unfiltered backend response, so `totalCount` and "Load more" are wrong. |
-| **Recommendation** | **UPDATE** `query_by_property` to accept `exclude_parent_id: Option<String>` and `content_non_empty: bool` — or **CREATE** a dedicated `list_done_for_date(date, exclude_parent_id, scope)` command since the Done flow has its own semantic. |
-| **Validator verdict** | C3 TRUE |
-
-### 1.6 `count_backlinks_batch` lacks space scoping
-
-| What | Detail |
-| --- | --- |
-| **Backend** | `src-tauri/src/commands/queries.rs:289-319` |
-| **FE** | `src/hooks/useBatchCounts.ts:24-29` |
-| **Symptom** | Inner takes only `page_ids`; SQL has no space filter. Siblings (`get_backlinks`, `query_backlinks_filtered`, `list_backlinks_grouped`) all accept `SpaceScope`. Badge counts can include cross-space backlinks the user can't see. |
-| **Recommendation** | **UPDATE** `count_backlinks_batch_inner` to accept `SpaceScope`, applying the same `key='space' AND value_ref=?` join the siblings use (see `src-tauri/src/backlink/query.rs:82-89` for the pattern). |
-| **Validator verdict** | C6 TRUE, I8 TRUE |
+- **1.1** `import_markdown` now requires `space_id: String`, validates it, and appends `SetProperty("space", value_ref=…)` inside the same transaction. FE plumbs `currentSpaceId`; Settings → Data Import button is disabled with a visible+screen-reader-announced hint when no space is bootstrapped.
+- **1.2** `resolve_page_by_alias` takes `SpaceScope`. SearchPanel + PageBrowser pass `currentSpaceId`. (BlockRow widening deferred — opportunistic follow-up.)
+- **1.3** `get_block_history` / `list_block_history` accept `op_type_filter: Option<String>`. HistoryPanel's FE post-filter dropped.
+- **1.4** `get_conflicts` / `list_conflicts` accept `conflict_type: Option<String>` and `id_min: Option<String>` (ULID lower bound = date filter). ConflictList's type / 7-day FE filters now SQL-side; device-name filter stays FE-side.
+- **1.5** `query_by_property` accepts `exclude_parent_id: Option<String>` and `content_non_empty: bool`. DonePanel's `filterDoneBlocks` post-filter retired. Whitespace handling uses `TRIM(content, x'20090a0d')` to match the JS `String.prototype.trim()` set the FE used.
+- **1.6** `count_backlinks_batch` accepts `SpaceScope`. `useBatchCounts` passes `currentSpaceId`.
 
 ---
 

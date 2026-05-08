@@ -602,14 +602,18 @@ struct ResolvedBlockRow {
 }
 
 /// List op-log history entries for a specific block, with cursor pagination.
+///
+/// PEND-35 Tier 1.3 — `op_type_filter` is pushed into SQL so the FE no
+/// longer drops rows post-pagination. Mirrors `list_page_history_inner`.
 pub async fn get_block_history_inner(
     pool: &SqlitePool,
     block_id: String,
+    op_type_filter: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_block_history(pool, &block_id, &page).await
+    pagination::list_block_history(pool, &block_id, op_type_filter.as_deref(), &page).await
 }
 
 /// Core deletion logic without the built-in key guard.
@@ -843,10 +847,11 @@ pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
 pub async fn get_block_history(
     pool: State<'_, ReadPool>,
     block_id: String,
+    op_type_filter: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
-    get_block_history_inner(&pool.0, block_id, cursor, limit)
+    get_block_history_inner(&pool.0, block_id, op_type_filter, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
