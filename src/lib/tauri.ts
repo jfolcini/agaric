@@ -135,6 +135,31 @@ export async function deleteBlock(blockId: string): Promise<DeleteResponse> {
   return unwrap(await commands.deleteBlock(blockId))
 }
 
+/**
+ * PEND-35 Tier 2.1 — batch soft-delete a list of blocks (cascade to
+ * descendants for each root) inside a single backend IMMEDIATE
+ * transaction. Returns the number of blocks soft-deleted (roots +
+ * descendants combined).
+ *
+ * Replaces the per-row `deleteBlock` IPC loop in
+ * `useBlockMultiSelect.handleBatchDelete`. Multi-select gestures used
+ * to fire one IPC per selected block (50 IPCs for a 50-row delete);
+ * the new path is one IPC, one writer-lock window, one op_log
+ * append-scope. The backend's recursive CTE seeds from every root
+ * simultaneously so descendant ids that are also in the input set
+ * are coalesced — the FE no longer needs the MAINT-173 ancestor
+ * pre-walk.
+ *
+ * Already-deleted / missing ids are silently dropped on the backend
+ * (best-effort across the surviving subset). Validation failures
+ * (empty list, oversize list >1000, non-empty space block) reject
+ * the whole call and surface as `AppError::Validation` /
+ * `AppError::InvalidOperation` toast text.
+ */
+export async function deleteBlocksByIds(blockIds: string[]): Promise<number> {
+  return unwrap(await commands.deleteBlocksByIds(blockIds))
+}
+
 /** Restore a soft-deleted block using its `deleted_at` timestamp as ref. */
 export async function restoreBlock(
   blockId: string,
@@ -160,6 +185,35 @@ export async function restoreAllDeleted(): Promise<BulkTrashResponse> {
 /** Permanently purge all soft-deleted blocks. Irreversible. */
 export async function purgeAllDeleted(): Promise<BulkTrashResponse> {
   return unwrap(await commands.purgeAllDeleted())
+}
+
+/**
+ * PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in a single IPC.
+ *
+ * Mirrors `restoreBlock` but accepts an array of ids; the backend runs one
+ * IMMEDIATE transaction with one op_log scope instead of N. Each id is
+ * treated as a cascade root (matches the TrashView's
+ * `listBlocks({showDeleted:true})` source). Non-deleted / missing ids are
+ * silently skipped (no error). Returns the number of blocks (roots +
+ * descendants) whose `deleted_at` was actually cleared.
+ */
+export async function restoreBlocksByIds(blockIds: string[]): Promise<number> {
+  const resp = unwrap(await commands.restoreBlocksByIds(blockIds))
+  return resp.affected_count
+}
+
+/**
+ * PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in a
+ * single IPC.
+ *
+ * Mirrors `purgeBlock` but accepts an array of ids; the backend runs one
+ * IMMEDIATE transaction with the ~13-table cleanup chain executed once
+ * instead of N times. Non-deleted / missing ids are silently skipped (no
+ * error). Returns the number of `blocks` rows physically removed.
+ */
+export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
+  const resp = unwrap(await commands.purgeBlocksByIds(blockIds))
+  return resp.affected_count
 }
 
 /**
@@ -656,6 +710,30 @@ export async function countConflicts(spaceId?: string | null | undefined): Promi
 /** Set or clear the todo state on a block. Pass null to clear. */
 export async function setTodoState(blockId: string, state: string | null): Promise<BlockRow> {
   return unwrap(await commands.setTodoState(blockId, state))
+}
+
+/**
+ * PEND-35 Tier 2.1 — batch set/clear todo state across a list of blocks
+ * inside a single backend IMMEDIATE transaction. Returns the number of
+ * blocks whose `todo_state` actually changed.
+ *
+ * Replaces the per-row `setTodoState` IPC loop in
+ * `useBlockMultiSelect.handleBatchSetTodo`. Multi-select "mark done"
+ * used to fire one IPC per selected block (50 IPCs for a 50-row
+ * gesture); the new path is one IPC, one writer-lock window, one
+ * op_log append-scope.
+ *
+ * Missing / soft-deleted ids are silently skipped on the backend
+ * (best-effort across the surviving subset). The single-row
+ * `setTodoState` path stays in place for the per-block call sites
+ * (BlockContextMenu, slash commands) — its recurrence + timestamp
+ * transitions (`created_at` / `completed_at` auto-population, repeat
+ * sibling creation) are intentionally NOT applied by the batch path
+ * because propagating them per item under one IMMEDIATE lock would
+ * defeat the latency win.
+ */
+export async function setTodoStateBatch(blockIds: string[], state: string | null): Promise<number> {
+  return unwrap(await commands.setTodoStateBatch(blockIds, state))
 }
 
 /** Set or clear the priority level on a block. Pass null to clear. */

@@ -4992,3 +4992,310 @@ async fn get_property_def_returns_none_for_missing_key() {
         "missing key must surface as Ok(None), got {result:?}"
     );
 }
+
+// ======================================================================
+// PEND-35 Tier 2.1 — set_todo_state_batch
+// ======================================================================
+
+/// PEND-35 Tier 2.1 — N blocks in one input list produce N op_log
+/// rows in ONE contiguous seq range (no foreign tx interleaving) and
+/// every block's `todo_state` column reflects the requested value.
+/// Anchors the multi-IPC → single-IPC refactor: the test would also
+/// pass for the per-row loop, but ONLY by accident (each call would
+/// take a fresh writer lock and the seq range would still be
+/// contiguous in the absence of competing writes); under contention
+/// the contiguity check is what the batch path actually guarantees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut ids = Vec::with_capacity(5);
+    for i in 0..5 {
+        let b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("b{i}"),
+            None,
+            Some(i + 1),
+        )
+        .await
+        .unwrap();
+        ids.push(b.id);
+    }
+    settle(&mat).await;
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+
+    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, ids.clone(), Some("DONE".into()))
+        .await
+        .unwrap();
+    assert_eq!(updated, 5, "all five blocks should be reported as updated");
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+    assert_eq!(
+        post_max - pre_max,
+        5,
+        "the 5 set_property ops must occupy a single contiguous seq \
+         range; got pre={pre_max} post={post_max}"
+    );
+
+    // Every block's materialised column must equal "DONE".
+    for id in &ids {
+        let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(v, Some("DONE".into()), "block {id} todo_state must be DONE");
+    }
+
+    // Op_log shape: each block got exactly one set_property op for
+    // the todo_state key in this seq range.
+    for id in &ids {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+             AND device_id = ? AND seq > ? \
+             AND json_extract(payload, '$.block_id') = ? \
+             AND json_extract(payload, '$.key') = 'todo_state'",
+        )
+        .bind(DEV)
+        .bind(pre_max)
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 1,
+            "block {id} should have exactly one todo_state set_property op"
+        );
+    }
+}
+
+/// PEND-35 Tier 2.1 — missing / soft-deleted ids in the input list
+/// are silently dropped (lenient batch). Mixed input commits the
+/// live subset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_skips_missing_and_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let live = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "live".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let deleted = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "deleted".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    delete_block_inner(&pool, DEV, &mat, deleted.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let updated = set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![live.id.clone(), deleted.id.clone(), "GHOST".into()],
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        updated, 1,
+        "only the live block is updated; the deleted + missing ids drop out"
+    );
+
+    let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(&live.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(v, Some("TODO".into()));
+}
+
+/// PEND-35 Tier 2.1 — invalid `state` (not in the seeded
+/// `["TODO","DOING","DONE"]` set when the property definition row
+/// has been deleted) aborts the whole batch — no op_log rows, no
+/// `blocks.todo_state` writes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b1".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b2".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Delete the seeded `todo_state` definition so the fallback
+    // validation kicks in. CANCELLED is not in the seeded defaults.
+    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+
+    let result = set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b1.id.clone(), b2.id.clone()],
+        Some("CANCELLED".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "invalid state must reject with Validation, got {result:?}"
+    );
+
+    // Atomic: NO op_log rows added, NO todo_state writes landed.
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+    assert_eq!(
+        pre_max, post_max,
+        "validation failure must roll back the whole tx — no op_log rows added"
+    );
+    for id in [&b1.id, &b2.id] {
+        let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            v.is_none(),
+            "block {id} todo_state must remain NULL after rollback"
+        );
+    }
+}
+
+/// PEND-35 Tier 2.1 — empty input rejects with `Validation`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_rejects_empty_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = set_todo_state_batch_inner(&pool, DEV, &mat, vec![], Some("TODO".into())).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty list must reject with Validation, got {result:?}"
+    );
+}
+
+/// PEND-35 Tier 2.1 — input above the cap rejects with `Validation`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_rejects_oversize_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let result = set_todo_state_batch_inner(&pool, DEV, &mat, oversize, Some("TODO".into())).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversize list must reject with Validation, got {result:?}"
+    );
+}
+
+/// PEND-35 Tier 2.1 — `state = None` (clear) is valid and propagates
+/// to every live block in the input list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_clears_state() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    set_todo_state_inner(&pool, DEV, &mat, b.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, vec![b.id.clone()], None)
+        .await
+        .unwrap();
+    assert_eq!(updated, 1);
+
+    let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(&b.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(v.is_none(), "todo_state must be cleared by None");
+}

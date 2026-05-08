@@ -1360,6 +1360,378 @@ async fn purge_block_inner_cleans_projected_agenda_cache() {
 }
 
 // ======================================================================
+// PEND-35 Tier 2.2 — restore_blocks_by_ids / purge_blocks_by_ids
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_clears_deleted_at_for_n_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed N=4 independently soft-deleted top-level blocks. Different
+    // `deleted_at` values stress the multi-root semantic — the "all"
+    // variant's roots-share-timestamp shortcut does not apply here.
+    for i in 0..4 {
+        let id = format!("RBBI{i:03}");
+        insert_block(&pool, &id, "content", "rbbi", None, Some(1)).await;
+        soft_delete::cascade_soft_delete(&pool, DEV, &id)
+            .await
+            .unwrap();
+    }
+
+    let ids: Vec<String> = (0..4).map(|i| format!("RBBI{i:03}")).collect();
+    let resp = restore_blocks_by_ids_inner(&pool, DEV, &mat, ids.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.affected_count, 4, "all 4 roots should restore");
+
+    for id in &ids {
+        let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.deleted_at.is_none(),
+            "block {id} should no longer be soft-deleted"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_restores_descendants_too() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two roots, each with a child — cascade-deleted as a single subtree
+    // per root. The batch restore should clear `deleted_at` on parents
+    // AND children for both roots.
+    insert_block(&pool, "RBBIPAR1", "page", "p1", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "RBBICHD1",
+        "content",
+        "c1",
+        Some("RBBIPAR1"),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "RBBIPAR2", "page", "p2", None, Some(2)).await;
+    insert_block(
+        &pool,
+        "RBBICHD2",
+        "content",
+        "c2",
+        Some("RBBIPAR2"),
+        Some(1),
+    )
+    .await;
+    soft_delete::cascade_soft_delete(&pool, DEV, "RBBIPAR1")
+        .await
+        .unwrap();
+    soft_delete::cascade_soft_delete(&pool, DEV, "RBBIPAR2")
+        .await
+        .unwrap();
+
+    let resp =
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec!["RBBIPAR1".into(), "RBBIPAR2".into()])
+            .await
+            .unwrap();
+
+    assert_eq!(
+        resp.affected_count, 4,
+        "two parents + two children should all restore"
+    );
+    for id in &["RBBIPAR1", "RBBICHD1", "RBBIPAR2", "RBBICHD2"] {
+        let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(row.deleted_at.is_none(), "{id} should be restored");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_skips_non_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Mix: one alive, one missing. Both should be silent no-ops.
+    insert_block(&pool, "RBBIALIVE", "content", "alive", None, Some(1)).await;
+
+    let resp = restore_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["RBBIALIVE".into(), "RBBIGHOST".into()],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.affected_count, 0,
+        "alive + missing ids both skip; count must be 0"
+    );
+
+    // Live block is still alive (i.e. NOT now soft-deleted by the call).
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", "RBBIALIVE")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        row.deleted_at.is_none(),
+        "live block must remain alive after no-op restore call"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_empty_input_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![]).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty input must return Validation error"
+    );
+}
+
+/// PEND-35 Tier 2.2 — input list above the batch cap rejects with
+/// `Validation`. Mirrors the delete + purge sibling rejection paths so
+/// the per-call cap is uniformly enforced across the four `*_by_ids`
+/// commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_rejects_oversize_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let result = restore_blocks_by_ids_inner(&pool, DEV, &mat, oversize).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversize list must reject with Validation, got {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_writes_one_op_log_seq_range() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed 3 soft-deleted roots.
+    for i in 0..3 {
+        let id = format!("RBBOPS{i}");
+        insert_block(&pool, &id, "content", "rbbops", None, Some(1)).await;
+        soft_delete::cascade_soft_delete(&pool, DEV, &id)
+            .await
+            .unwrap();
+    }
+
+    // Snapshot the current max seq before the batch call.
+    let before_max: i64 =
+        sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(seq) FROM op_log WHERE device_id = ?")
+            .bind(DEV)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .unwrap_or(0);
+
+    let ids: Vec<String> = (0..3).map(|i| format!("RBBOPS{i}")).collect();
+    restore_blocks_by_ids_inner(&pool, DEV, &mat, ids)
+        .await
+        .unwrap();
+
+    // The 3 RestoreBlock ops should have consecutive seqs (no gaps,
+    // i.e. one tx, atomic). Read all RestoreBlock op seqs since the
+    // baseline; assert they form a contiguous run of length 3.
+    let seqs: Vec<i64> = sqlx::query_scalar::<_, i64>(
+        "SELECT seq FROM op_log \
+         WHERE device_id = ? AND op_type = 'restore_block' AND seq > ? \
+         ORDER BY seq ASC",
+    )
+    .bind(DEV)
+    .bind(before_max)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(seqs.len(), 3, "exactly 3 RestoreBlock ops appended");
+    for w in seqs.windows(2) {
+        assert_eq!(
+            w[1] - w[0],
+            1,
+            "ops should be a contiguous seq range (no interleaved writes from other txs)"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_blocks_by_ids_clears_all_related_state() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed a soft-deleted block with rows in several dependent tables;
+    // assert each table is wiped after the batch purge.
+    insert_block(&pool, "PBBISTATE", "content", "doomed", None, Some(1)).await;
+    // block_properties — owned property
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+        .bind("PBBISTATE")
+        .bind("note")
+        .bind("hello")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // attachments
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("ATTPBBI001")
+    .bind("PBBISTATE")
+    .bind("text/plain")
+    .bind("pbbistate.txt")
+    .bind(11_i64)
+    .bind("attachments/pbbistate.txt")
+    .bind(FIXED_TS)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // block_drafts (post-migration 0038 schema: block_id PK + content + updated_at)
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind("PBBISTATE")
+        .bind("draft text")
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // page_aliases (the row only matters per-id; block_type is content
+    // here but the aliases FK only checks block existence)
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PBBISTATE")
+        .bind("doomed-alias")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // projected_agenda_cache
+    sqlx::query(
+        "INSERT INTO projected_agenda_cache (block_id, projected_date, source) VALUES (?, ?, ?)",
+    )
+    .bind("PBBISTATE")
+    .bind("2025-06-15")
+    .bind("due_date")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    soft_delete::cascade_soft_delete(&pool, DEV, "PBBISTATE")
+        .await
+        .unwrap();
+
+    let resp = purge_blocks_by_ids_inner(&pool, DEV, &mat, vec!["PBBISTATE".into()])
+        .await
+        .unwrap();
+    assert_eq!(resp.affected_count, 1, "single block should have purged");
+
+    // Each cleanup-chain table should be empty for this block_id.
+    let assertions: &[(&str, &str)] = &[
+        ("blocks", "id"),
+        ("block_properties", "block_id"),
+        ("attachments", "block_id"),
+        ("block_drafts", "block_id"),
+        ("page_aliases", "page_id"),
+        ("projected_agenda_cache", "block_id"),
+    ];
+    for (table, col) in assertions {
+        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {col} = ?"))
+            .bind("PBBISTATE")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "{table}.{col}=PBBISTATE rows should be gone after purge"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_blocks_by_ids_skips_non_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "PBBIALIVE", "content", "alive", None, Some(1)).await;
+    let resp = purge_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["PBBIALIVE".into(), "PBBIGHOST".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        resp.affected_count, 0,
+        "alive + missing ids both skip; count must be 0"
+    );
+
+    // Live block should still be in the DB and not soft-deleted.
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", "PBBIALIVE")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        row.deleted_at.is_none(),
+        "live block must remain alive after no-op purge call"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_blocks_by_ids_empty_input_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = purge_blocks_by_ids_inner(&pool, DEV, &mat, vec![]).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty input must return Validation error"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_blocks_by_ids_atomic_rollback_on_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Capacity check kicks in BEFORE any tx work — the cap rejection
+    // path is itself a fast `Validation` return. We use it as the
+    // "trigger an error" surface to assert no row is touched on error.
+    insert_block(&pool, "PBBIROLL", "content", "doomed", None, Some(1)).await;
+    soft_delete::cascade_soft_delete(&pool, DEV, "PBBIROLL")
+        .await
+        .unwrap();
+
+    let oversized: Vec<String> = (0..1001).map(|i| format!("X{i:04}")).collect();
+    let result = purge_blocks_by_ids_inner(&pool, DEV, &mat, oversized).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversized input must return Validation"
+    );
+
+    // The pre-existing soft-deleted block must still be there — i.e.
+    // the rejected call did not partially mutate state.
+    let exists: Option<i64> = sqlx::query_scalar::<_, i64>("SELECT 1 FROM blocks WHERE id = ?")
+        .bind("PBBIROLL")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        exists.is_some(),
+        "block must remain after a rejected oversized batch"
+    );
+}
+
+// ======================================================================
 // list_blocks
 // ======================================================================
 
@@ -4296,5 +4668,427 @@ async fn first_child_for_blocks_empty_input_returns_empty_map() {
     assert!(
         map.is_empty(),
         "empty input must short-circuit to an empty map (no DB hit), got {map:?}"
+    );
+}
+
+// ======================================================================
+// PEND-35 Tier 2.1 — delete_blocks_by_ids batch
+// ======================================================================
+
+/// PEND-35 Tier 2.1 — seeded parent + child + grandchild, calling
+/// `delete_blocks_by_ids_inner` with the parent's id alone must
+/// soft-delete every descendant via the recursive CTE. Mirrors the
+/// single-row `delete_block_cascades_descendants` regression
+/// behaviourally (one root, full subtree affected).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_cascades_descendants() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let parent = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "parent".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(parent.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let grandchild = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "grandchild".into(),
+        Some(child.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![parent.id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(
+        affected, 3,
+        "parent + child + grandchild = 3 rows soft-deleted"
+    );
+
+    for id in [&parent.id, &child.id, &grandchild.id] {
+        let deleted_at: Option<String> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            deleted_at.is_some(),
+            "block {id} must be soft-deleted by the cascade"
+        );
+    }
+}
+
+/// PEND-35 Tier 2.1 — `delete_blocks_by_ids_inner` writes ONE
+/// `delete_block` op_log row per RESOLVED root. Two independent roots
+/// + their children = 2 op_log rows total (cascade is captured by
+/// the recursive UPDATE, not re-emitted as ops).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let r1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "r1".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let r2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "r2".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let _r1c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "r1c".into(),
+        Some(r1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let _r2c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "r2c".into(),
+        Some(r2.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Snapshot current op_log seq range so we can assert ONE
+    // contiguous range covers the entire batch (no foreign tx
+    // sneaking in between).
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+
+    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id.clone(), r2.id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(affected, 4, "2 roots + 2 children = 4 cascade rows");
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+
+    let delete_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE device_id = ? AND op_type = 'delete_block' AND seq > ?",
+        DEV,
+        pre_max,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        delete_count, 2,
+        "exactly two delete_block ops (one per root) — descendants \
+         covered by the recursive UPDATE, not re-emitted"
+    );
+    // Op_log seq range must be contiguous (no gaps from competing tx).
+    assert_eq!(
+        post_max - pre_max,
+        2,
+        "the 2 ops must occupy a single contiguous seq range under \
+         one IMMEDIATE tx; got pre={pre_max} post={post_max}"
+    );
+}
+
+/// PEND-35 Tier 2.1 — already-soft-deleted block in the input list
+/// is silently skipped (no double-delete, no extra op_log row).
+/// Calling with the SAME id twice in a row yields zero work the
+/// second time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_skips_already_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let first = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(first, 1, "first call soft-deletes the block");
+
+    let second = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(
+        second, 0,
+        "second call must skip the now-deleted block — zero affected"
+    );
+
+    let op_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'delete_block' AND block_id = ?",
+        b.id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        op_count, 1,
+        "exactly one delete_block op total — the no-op second call \
+         must NOT append a duplicate op_log row"
+    );
+}
+
+/// PEND-35 Tier 2.1 — missing ids in the input list silently drop out
+/// (mirror of the `set_todo_state_batch` lenient-skip semantic). A
+/// batch that contains ONLY ghosts must commit cleanly with zero
+/// affected rows and zero op_log writes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_only_ghosts_returns_zero() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+
+    let affected =
+        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["GHOST1".into(), "GHOST2".into()])
+            .await
+            .unwrap();
+    assert_eq!(affected, 0, "no live roots → zero affected");
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+    assert_eq!(
+        pre_max, post_max,
+        "no op_log rows must be appended when every input id is missing"
+    );
+}
+
+/// PEND-35 Tier 2.1 — mixed input (one live, one ghost): the live
+/// root is soft-deleted, the ghost is silently dropped. The whole tx
+/// commits — partial misses must NOT abort the batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_partial_miss_commits_live_subset() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let live = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "live".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let affected =
+        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![live.id.clone(), "GHOST".into()])
+            .await
+            .unwrap();
+    assert_eq!(affected, 1, "the live root is soft-deleted; ghost ignored");
+
+    let deleted_at: Option<String> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(&live.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(deleted_at.is_some(), "live root must be soft-deleted");
+}
+
+/// PEND-35 Tier 2.1 — empty input list rejects with `Validation`
+/// (mirrors every other batch boundary in the surface).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_rejects_empty_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![]).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty list must reject with Validation, got {result:?}"
+    );
+}
+
+/// PEND-35 Tier 2.1 — input list above the batch cap rejects with
+/// `Validation` (defends the writer-lock blast radius).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_rejects_oversize_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let result = delete_blocks_by_ids_inner(&pool, DEV, &mat, oversize).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversize list must reject with Validation, got {result:?}"
+    );
+}
+
+/// PEND-35 Tier 2.1 — selecting both an ancestor and one of its
+/// descendants in the same batch must NOT double-count (the
+/// recursive CTE walks the union; the descendant is already covered
+/// by the ancestor's subtree). Anchors the FE refactor: the FE no
+/// longer needs the MAINT-173 ancestor-pre-walk because the backend
+/// coalesces.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let ancestor = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "anc".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let descendant = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "desc".into(),
+        Some(ancestor.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let affected = delete_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![ancestor.id.clone(), descendant.id.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        affected, 2,
+        "the descendant is reachable from the ancestor's subtree, so \
+         the cascade marks each row exactly once"
+    );
+
+    // Two delete_block ops: one per RESOLVED root in the input list.
+    // The descendant was a live root at probe time too — we don't
+    // pre-filter the input set on the backend, so its op fires.
+    // Verify exactly TWO ops landed (no descendant-cascade ops).
+    let op_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE device_id = ? AND op_type = 'delete_block' \
+           AND (block_id = ? OR block_id = ?)",
+        DEV,
+        ancestor.id,
+        descendant.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        op_count, 2,
+        "one op per resolved root in the input list (ancestor + descendant); \
+         the cascade UPDATE does NOT emit ops for the implicit subtree members"
+    );
+}
+
+/// PEND-35 Tier 2.1 — id casing must be normalised to uppercase
+/// before SQL touch (AGENTS.md invariant #8). Lower-case input
+/// resolves the same row as upper-case.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_normalises_lowercase_block_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "DBI_NORM_01", "content", "lowered", None, Some(1)).await;
+
+    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["dbi_norm_01".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        affected, 1,
+        "lowercase id must be normalised to uppercase before SQL membership probe"
     );
 }

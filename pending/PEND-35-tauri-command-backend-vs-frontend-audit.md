@@ -1,6 +1,6 @@
 # PEND-35 — Tauri command audit: where the frontend is doing work the database/backend should do
 
-> **Status (session 690):** Tier 1 (6) + Tier 3 (4) fully shipped. Tier 2 partial — 7 fully shipped (2.5, 2.6, 2.7, 2.8, 2.9, 2.11, 2.12) + 2.10a partial (2.10b remains). Tier 4: 4.5 shipped. **9 items remain across Tier 2 + Tier 4** — 2.1 (multi-select task ops), 2.2 (TrashView batch), 2.3 (ConflictList 3 N+1s), 2.4 (property fan-out), 2.10b (filtered_blocks_query AND-intersection), 4.1, 4.2, 4.3, 4.4.
+> **Status (session 691):** Tier 1 (6) + Tier 3 (4) fully shipped. Tier 2 partial — 9 fully shipped (2.1, 2.2, 2.5, 2.6, 2.7, 2.8, 2.9, 2.11, 2.12) + 2.10a partial (2.10b remains). Tier 4: 4.5 shipped. **7 items remain across Tier 2 + Tier 4** — 2.3 (ConflictList 3 N+1s), 2.4 (property fan-out), 2.10b (filtered_blocks_query AND-intersection), 4.1, 4.2, 4.3, 4.4.
 
 ## Origin
 
@@ -62,7 +62,7 @@ validation; **Tier 1 (6 items) shipped in session 687** and **Tier 3
 | Tier | Count | Theme |
 | --- | --- | --- |
 | ~~**1 — Correctness / security**~~ | ~~6~~ ✅ | ~~Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters~~ — **shipped session 687** |
-| **2 — Hot-path performance (N+1, FE intersection)** | 12 (8 ✅ / 1 partial / 3 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). **Shipped session 690:** 2.7 (attachments dedup), 2.8 (templates pushdown + first_child_for_blocks), 2.9 (GraphView blockType), 2.10a (agenda fan-out collapse). **Open:** 2.1 multi-select, 2.2 TrashView batch, 2.3 ConflictList 3 N+1s, 2.4 property fan-out, 2.10b filtered_blocks_query. |
+| **2 — Hot-path performance (N+1, FE intersection)** | 12 (10 ✅ / 1 partial / 1 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). **Shipped session 690:** 2.7 (attachments dedup), 2.8 (templates pushdown + first_child_for_blocks), 2.9 (GraphView blockType), 2.10a (agenda fan-out collapse). **Shipped session 691:** 2.1 (multi-select set_todo_state_batch + delete_blocks_by_ids), 2.2 (trash restore_blocks_by_ids + purge_blocks_by_ids). **Open:** 2.3 ConflictList 3 N+1s, 2.4 property fan-out, 2.10b filtered_blocks_query. |
 | ~~**3 — Indexes & SQL anti-patterns**~~ | ~~4~~ ✅ | ~~`json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown~~ — **shipped session 688** |
 | **4 — Minor / low-confidence** | 5 | Single-row reloads, template-loop creates, growing-window history fetches |
 
@@ -85,25 +85,13 @@ All six items landed in one batch (one PR-equivalent commit):
 
 ## Tier 2 — Hot-path performance (N+1 and batch loops)
 
-### 2.1 Multi-select task ops loop one IPC + one IMMEDIATE tx per block
+### ~~2.1 Multi-select task ops loop one IPC + one IMMEDIATE tx per block~~ — shipped session 691
 
-| What | Detail |
-| --- | --- |
-| **Backend** | `set_todo_state` `src-tauri/src/commands/properties.rs:212`; `delete_block` `src-tauri/src/commands/blocks/crud.rs:573` |
-| **FE** | `src/hooks/useBlockMultiSelect.ts:46-60` (`handleBatchSetTodo`), `:88-141` (`handleBatchDelete`) |
-| **Symptom** | Each click of "mark done" / "delete selected" with N selected runs N round-trips, each taking the writer lock and appending one op_log entry. The FE pre-walks `parentOf` (lines 99-110) to drop descendants of selected ancestors — intentional anti-race per MAINT-173 comment, but unnecessary if backend coalesces. |
-| **Recommendation** | **CREATE** `set_todo_state_batch(block_ids, state)` and `delete_blocks(block_ids)` — single IMMEDIATE tx, single op_log scope, recursive `descendants_cte` seeded by all roots in one CTE. The MAINT-173 ancestor-pre-walk becomes unnecessary once backend handles ancestor coalescing. |
-| **Validator verdict** | N6 TRUE, N7 PARTIALLY TRUE (loop is real; cited "all" sibling can't accept id-list, so the recommendation type is CREATE not USE) |
+`set_todo_state_batch(block_ids, state)` and `delete_blocks_by_ids(block_ids)` added. Single `BEGIN IMMEDIATE` tx + single op_log scope per batch. The `delete_blocks_by_ids` recursive CTE is seeded from ALL roots via `json_each(?)` with `is_conflict = 0` filter + `depth < 100` bound (inv #9). The MAINT-173 ancestor-pre-walk in `useBlockMultiSelect.ts` is gone — backend coalesces ancestors and descendants in one walk. IPC delta: 50-block delete went from 50 IPCs → 1 IPC.
 
-### 2.2 TrashView batch restore/purge loops
+### ~~2.2 TrashView batch restore/purge loops~~ — shipped session 691
 
-| What | Detail |
-| --- | --- |
-| **Backend** | `restore_block` `crud.rs:1978`, `purge_block` `crud.rs:2000` |
-| **FE** | `src/components/TrashView.tsx:165-188` (`handleBatchRestore`), `:217-249` (`handleBatchPurge`) |
-| **Symptom** | 50-row selection = 50 IMMEDIATE txs; each `purge_block` runs the full ~13-table cleanup chain. The "all" variants (`restore_all_deleted_inner`/`purge_all_deleted_inner`) exist but can't accept id-lists. |
-| **Recommendation** | **CREATE** `restore_blocks_by_ids(ids)` and `purge_blocks_by_ids(ids)` mirroring the all-variant chain but with `WHERE id IN (SELECT value FROM json_each(?))`. Validator I11 confirmed the substitution is mechanical except for purge's root-selection step (`crud.rs:1256-1269`). |
-| **Validator verdict** | N8 PARTIALLY TRUE, I11 TRUE |
+`restore_blocks_by_ids(ids)` and `purge_blocks_by_ids(ids)` added. Single `BEGIN IMMEDIATE` tx covers all. The ~13-table purge cleanup chain runs ONCE per batch via `WHERE id IN (SELECT id FROM descendants)` (16 queries total — verified by review). Single-row `restore_block` / `purge_block` and the "all" variants stay registered for non-batch callers. IPC delta: 50-block purge went from 50 IPCs → 1 IPC.
 
 ### 2.3 ConflictList: 2N IPCs + N+1 + N+1 in three separate places
 

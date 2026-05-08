@@ -65,12 +65,14 @@ pub use attachments::{
 };
 pub use blocks::{
     batch_resolve, batch_resolve_inner, create_block, create_block_inner,
-    create_block_inner_with_space, delete_block, delete_block_inner, edit_block, edit_block_inner,
-    first_child_for_blocks, first_child_for_blocks_inner, get_active_block_inner, get_block,
-    get_block_inner, list_blocks, list_blocks_inner, move_block, move_block_inner,
-    purge_all_deleted, purge_all_deleted_inner, purge_block, purge_block_inner,
+    create_block_inner_with_space, delete_block, delete_block_inner, delete_blocks_by_ids,
+    delete_blocks_by_ids_inner, edit_block, edit_block_inner, first_child_for_blocks,
+    first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, list_blocks,
+    list_blocks_inner, move_block, move_block_inner, purge_all_deleted, purge_all_deleted_inner,
+    purge_block, purge_block_inner, purge_blocks_by_ids, purge_blocks_by_ids_inner,
     restore_all_deleted, restore_all_deleted_inner, restore_block, restore_block_inner,
-    trash_descendant_counts, trash_descendant_counts_inner,
+    restore_blocks_by_ids, restore_blocks_by_ids_inner, trash_descendant_counts,
+    trash_descendant_counts_inner,
 };
 pub use bug_report::{
     collect_bug_report_metadata, collect_bug_report_metadata_inner, read_logs_for_report,
@@ -126,7 +128,8 @@ pub use properties::{
     get_property_def_inner, list_property_defs, list_property_defs_inner, list_property_keys,
     list_property_keys_inner, set_due_date, set_due_date_inner, set_priority, set_priority_inner,
     set_property, set_property_inner, set_scheduled_date, set_scheduled_date_inner, set_todo_state,
-    set_todo_state_inner, update_property_def_options, update_property_def_options_inner,
+    set_todo_state_batch, set_todo_state_batch_inner, set_todo_state_inner,
+    update_property_def_options, update_property_def_options_inner,
 };
 pub use queries::{
     count_backlinks_batch, count_backlinks_batch_inner, count_conflicts, count_conflicts_inner,
@@ -168,9 +171,11 @@ pub use attachments::{
 #[doc(hidden)]
 pub use blocks::{
     __specta__fn__batch_resolve, __specta__fn__create_block, __specta__fn__delete_block,
-    __specta__fn__edit_block, __specta__fn__first_child_for_blocks, __specta__fn__get_block,
-    __specta__fn__list_blocks, __specta__fn__move_block, __specta__fn__purge_all_deleted,
-    __specta__fn__purge_block, __specta__fn__restore_all_deleted, __specta__fn__restore_block,
+    __specta__fn__delete_blocks_by_ids, __specta__fn__edit_block,
+    __specta__fn__first_child_for_blocks, __specta__fn__get_block, __specta__fn__list_blocks,
+    __specta__fn__move_block, __specta__fn__purge_all_deleted, __specta__fn__purge_block,
+    __specta__fn__purge_blocks_by_ids, __specta__fn__restore_all_deleted,
+    __specta__fn__restore_block, __specta__fn__restore_blocks_by_ids,
     __specta__fn__trash_descendant_counts,
 };
 #[doc(hidden)]
@@ -225,7 +230,7 @@ pub use properties::{
     __specta__fn__get_properties, __specta__fn__get_property_def, __specta__fn__list_property_defs,
     __specta__fn__list_property_keys, __specta__fn__set_due_date, __specta__fn__set_priority,
     __specta__fn__set_property, __specta__fn__set_scheduled_date, __specta__fn__set_todo_state,
-    __specta__fn__update_property_def_options,
+    __specta__fn__set_todo_state_batch, __specta__fn__update_property_def_options,
 };
 #[doc(hidden)]
 pub use queries::{
@@ -265,9 +270,10 @@ pub use attachments::{
 };
 #[doc(hidden)]
 pub use blocks::{
-    __cmd__batch_resolve, __cmd__create_block, __cmd__delete_block, __cmd__edit_block,
-    __cmd__first_child_for_blocks, __cmd__get_block, __cmd__list_blocks, __cmd__move_block,
-    __cmd__purge_all_deleted, __cmd__purge_block, __cmd__restore_all_deleted, __cmd__restore_block,
+    __cmd__batch_resolve, __cmd__create_block, __cmd__delete_block, __cmd__delete_blocks_by_ids,
+    __cmd__edit_block, __cmd__first_child_for_blocks, __cmd__get_block, __cmd__list_blocks,
+    __cmd__move_block, __cmd__purge_all_deleted, __cmd__purge_block, __cmd__purge_blocks_by_ids,
+    __cmd__restore_all_deleted, __cmd__restore_block, __cmd__restore_blocks_by_ids,
     __cmd__trash_descendant_counts,
 };
 #[doc(hidden)]
@@ -315,7 +321,7 @@ pub use properties::{
     __cmd__get_batch_properties, __cmd__get_properties, __cmd__get_property_def,
     __cmd__list_property_defs, __cmd__list_property_keys, __cmd__set_due_date, __cmd__set_priority,
     __cmd__set_property, __cmd__set_scheduled_date, __cmd__set_todo_state,
-    __cmd__update_property_def_options,
+    __cmd__set_todo_state_batch, __cmd__update_property_def_options,
 };
 #[doc(hidden)]
 pub use queries::{

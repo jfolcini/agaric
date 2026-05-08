@@ -65,8 +65,18 @@ macro_rules! agaric_commands {
             $crate::commands::create_block,
             $crate::commands::edit_block,
             $crate::commands::delete_block,
+            // PEND-35 Tier 2.1 — multi-select batch delete: collapses
+            // the FE per-row IPC loop (50 IPCs for a 50-row delete)
+            // into one IMMEDIATE tx with a single recursive CTE
+            // seeded from every root simultaneously.
+            $crate::commands::delete_blocks_by_ids,
             $crate::commands::restore_block,
             $crate::commands::purge_block,
+            // PEND-35 Tier 2.2 — TrashView batch restore/purge: collapses
+            // the per-row IMMEDIATE-tx loop (50 IPCs for a 50-row purge)
+            // into a single tx running the cleanup chain once.
+            $crate::commands::restore_blocks_by_ids,
+            $crate::commands::purge_blocks_by_ids,
             $crate::commands::move_block,
             $crate::commands::list_blocks,
             $crate::commands::get_block,
@@ -85,6 +95,10 @@ macro_rules! agaric_commands {
             $crate::commands::list_tags_for_block,
             $crate::commands::set_property,
             $crate::commands::set_todo_state,
+            // PEND-35 Tier 2.1 — multi-select batch set-todo: collapses
+            // the per-row IPC loop (50 IPCs for "mark 50 done") into
+            // one IMMEDIATE tx with one op_log scope.
+            $crate::commands::set_todo_state_batch,
             $crate::commands::set_priority,
             $crate::commands::set_due_date,
             $crate::commands::set_scheduled_date,

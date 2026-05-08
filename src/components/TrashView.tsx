@@ -38,8 +38,10 @@ import {
   listBlocks,
   purgeAllDeleted,
   purgeBlock,
+  purgeBlocksByIds,
   restoreAllDeleted,
   restoreBlock,
+  restoreBlocksByIds,
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
@@ -162,21 +164,27 @@ export function TrashView(): React.ReactElement {
 
   // ── Batch actions ────────────────────────────────────────────────
 
+  // PEND-35 Tier 2.2 — single IPC for the entire batch. The previous
+  // implementation looped `restoreBlock` per row (50 IMMEDIATE txs +
+  // 50 op_log scopes for a 50-row selection); the backend now handles
+  // the whole list in one tx. Resolve-store updates and per-row
+  // failure tolerance are folded into the post-IPC pass: the backend
+  // silently skips ids that are alive / missing, and we apply the
+  // resolve-store hint for every selected page/tag regardless (the
+  // store is content-addressable and tolerates over-broad sets).
   const handleBatchRestore = useCallback(async () => {
-    const selectedBlocks = blocks.filter((b) => selected.has(b.id))
+    const selectedBlocks = blocks.filter((b) => selected.has(b.id) && b.deleted_at)
     if (selectedBlocks.length === 0) return
     let restored = 0
-    for (const block of selectedBlocks) {
-      if (!block.deleted_at) continue
-      try {
-        await restoreBlock(block.id, block.deleted_at)
+    try {
+      restored = await restoreBlocksByIds(selectedBlocks.map((b) => b.id))
+      for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
           useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
         }
-        restored++
-      } catch (err) {
-        logger.warn('TrashView', 'Restore failed for block', { blockId: block.id }, err)
       }
+    } catch (err) {
+      logger.warn('TrashView', 'Batch restore failed', { count: selectedBlocks.length }, err)
     }
     reload()
     clearSelection()
@@ -214,30 +222,21 @@ export function TrashView(): React.ReactElement {
     requestBatchPurge,
   })
 
+  // PEND-35 Tier 2.2 — single IPC for the entire batch. Replaces a
+  // per-id loop where each iteration ran the full ~13-table cleanup
+  // chain in its own IMMEDIATE tx; the backend now sweeps the whole
+  // list in one tx, running each cleanup-chain query once. Cascade-
+  // deleted ids that would have surfaced as `not_found` in the old
+  // loop (and were counted as success) are now silently skipped server-
+  // side — the returned count reflects rows actually removed.
   const handleBatchPurge = useCallback(async () => {
     const selectedIds = Array.from(selected)
     if (selectedIds.length === 0) return
     let purged = 0
-    for (const id of selectedIds) {
-      try {
-        await purgeBlock(id)
-        purged++
-      } catch (err) {
-        logger.warn(
-          'TrashView',
-          'Purge failed for block, may have been cascade-deleted',
-          { blockId: id },
-          err,
-        )
-        if (
-          err != null &&
-          typeof err === 'object' &&
-          'kind' in err &&
-          (err as { kind: string }).kind === 'not_found'
-        ) {
-          purged++
-        }
-      }
+    try {
+      purged = await purgeBlocksByIds(selectedIds)
+    } catch (err) {
+      logger.warn('TrashView', 'Batch purge failed', { count: selectedIds.length }, err)
     }
     reload()
     clearSelection()
