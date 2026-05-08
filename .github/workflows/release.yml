@@ -83,6 +83,17 @@ jobs:
   # before comparing.
   verify-version:
     needs: bump-version
+    # GitHub Actions treats a skipped `needs:` predecessor as "skipped"
+    # for downstream jobs (NOT "success" as the original MAINT-114
+    # comment claimed). Without an explicit `if:`, every release pushed
+    # via tag (the common path) cascade-skips through verify-version →
+    # validate → build-and-release → android-build-and-release and the
+    # release artifacts never publish — that is exactly what happened
+    # to 0.1.17 and 0.1.18 before this fix. Allow the job when its
+    # predecessor either succeeded (workflow_dispatch path) or was
+    # skipped (tag-push path), but block on real failures or
+    # cancellation.
+    if: ${{ !cancelled() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
