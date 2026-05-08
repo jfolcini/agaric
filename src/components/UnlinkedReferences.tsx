@@ -22,7 +22,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '../hooks/usePropertyKeysCache'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
-import { editBlock, listTagsByPrefix, listUnlinkedReferences } from '../lib/tauri'
+import { editBlock, getPageAliases, listTagsByPrefix, listUnlinkedReferences } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
@@ -62,6 +62,13 @@ export function UnlinkedReferences({
   const [truncated, setTruncated] = useState(false)
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
+  // PEND-36 — `eval_unlinked_references` (backend) OR-joins title +
+  // aliases into the FTS query, so a block that mentions ONLY an alias
+  // surfaces here. The FE-side `handleLinkIt` then needs to know the
+  // same alias set to perform the literal-text rewrite, otherwise the
+  // regex compiled from `pageTitle` alone misses and the user is told
+  // "linked" while the block silently reappears on the next refetch.
+  const [aliases, setAliases] = useState<string[]>([])
   // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
@@ -155,10 +162,61 @@ export function UnlinkedReferences({
     }
   }, [])
 
+  // PEND-36 — load the page's aliases alongside the title so
+  // `handleLinkIt` can rewrite alias-only mentions. Mirrors the
+  // `getPageAliases(pageId)` pattern already used by `PageHeader`.
+  useEffect(() => {
+    let cancelled = false
+    getPageAliases(pageId)
+      .then((rows) => {
+        if (cancelled) return
+        setAliases(rows ?? [])
+      })
+      .catch((err) => {
+        if (cancelled) return
+        logger.error('UnlinkedReferences', 'Failed to load aliases', { pageId }, err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [pageId])
+
   const handleLinkIt = useCallback(
     async (blockId: string, content: string) => {
-      const regex = new RegExp(escapeRegExp(pageTitle), 'i')
-      const newContent = content.replace(regex, `[[${pageId}]]`)
+      // PEND-36 — try the canonical title first, then each alias in
+      // declared order. The backend OR-joins title+aliases into the
+      // FTS query so an alias-only mention surfaces here; without the
+      // fallback, `replace(regex(pageTitle), …)` silently no-ops and
+      // the optimistic UI tells the user "linked" while the block
+      // re-appears on the next fetch. Empty/whitespace candidates are
+      // skipped — `escapeRegExp('')` would compile to a regex that
+      // matches at every position and rewrite the first character of
+      // the content into the link.
+      const candidates = [pageTitle, ...aliases].filter((s) => s.trim().length > 0)
+      let newContent = content
+      let replaced = false
+      for (const term of candidates) {
+        const regex = new RegExp(escapeRegExp(term), 'i')
+        if (regex.test(content)) {
+          newContent = content.replace(regex, `[[${pageId}]]`)
+          replaced = true
+          break
+        }
+      }
+      if (!replaced) {
+        // Reachable when the backend FTS5 match succeeds on a token
+        // the regex literal-matcher can't see (e.g. trigram-tokenized
+        // CJK aliases, or aliases added between the search and the
+        // click). Reuse the existing toast so the user sees something
+        // other than a silent removal — keeping the failure mode
+        // visible was the whole point of PEND-36.
+        logger.warn('UnlinkedReferences', 'No title/alias match found for Link it', {
+          blockId,
+          pageId,
+        })
+        toast.error(t('unlinkedRefs.linkFailed'))
+        return
+      }
       try {
         await editBlock(blockId, newContent)
         // Remove block from groups after successful edit
@@ -176,7 +234,7 @@ export function UnlinkedReferences({
         toast.error(t('unlinkedRefs.linkFailed'))
       }
     },
-    [pageId, pageTitle, t],
+    [pageId, pageTitle, aliases, t],
   )
 
   const toggleCollapsed = useCallback(() => {
