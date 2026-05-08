@@ -118,12 +118,18 @@ jobs:
 
   # Run the same validation as `prek run --all-files` locally before letting
   # the release matrix build any artifacts. Source of truth: prek.toml.
+  #
+  # `if:` mirrors verify-version — without it the upstream skip of
+  # `bump-version` (workflow_dispatch-only) cascades through this and
+  # the build matrix on every tag-push release, so no artefacts publish.
   validate:
     needs: verify-version
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' }}
     uses: ./.github/workflows/_validate.yml
 
   build-and-release:
     needs: [verify-version, validate]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -380,6 +386,7 @@ jobs:
   # ---------------------------------------------------------------------------
   android-build-and-release:
     needs: [verify-version, validate, build-and-release]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
