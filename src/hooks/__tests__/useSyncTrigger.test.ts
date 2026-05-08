@@ -89,7 +89,10 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockListPeerRefs).toHaveBeenCalled()
-    expect(mockStartSync).toHaveBeenCalledWith('PEER1')
+    // PEND-06: `startSync` is now invoked with a progress callback as
+    // its second arg so the hook can stream backend state into the
+    // sync store. Assert peerId + that a function was passed.
+    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
   })
 
   it('syncAll can be called manually', async () => {
@@ -113,7 +116,10 @@ describe('useSyncTrigger', () => {
       await result.current.syncAll()
     })
 
-    expect(mockStartSync).toHaveBeenCalledWith('PEER1')
+    // PEND-06: `startSync` is now invoked with a progress callback as
+    // its second arg so the hook can stream backend state into the
+    // sync store. Assert peerId + that a function was passed.
+    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
   })
 
   it('silently skips sync when peer list is empty', async () => {
@@ -297,7 +303,8 @@ describe('useSyncTrigger', () => {
 
     // Initial failure: startSync called once for the peer.
     expect(mockStartSync).toHaveBeenCalledTimes(1)
-    expect(mockStartSync).toHaveBeenCalledWith('PEER_RETRY_999')
+    // PEND-06: callable now takes (peerId, onProgress).
+    expect(mockStartSync).toHaveBeenCalledWith('PEER_RETRY_999', expect.any(Function))
 
     // Toast.error received the action with onClick.
     const errorCall = vi.mocked(toast.error).mock.calls[0]
@@ -312,7 +319,7 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockStartSync).toHaveBeenCalledTimes(2)
-    expect(mockStartSync).toHaveBeenLastCalledWith('PEER_RETRY_999')
+    expect(mockStartSync).toHaveBeenLastCalledWith('PEER_RETRY_999', expect.any(Function))
   })
 
   it('shows toast.error when listPeerRefs fails', async () => {
@@ -543,7 +550,10 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockListPeerRefs).toHaveBeenCalled()
-    expect(mockStartSync).toHaveBeenCalledWith('PEER1')
+    // PEND-06: `startSync` is now invoked with a progress callback as
+    // its second arg so the hook can stream backend state into the
+    // sync store. Assert peerId + that a function was passed.
+    expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
   })
 
   // UX-264: Offline → online transition feedback

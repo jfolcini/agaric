@@ -176,14 +176,14 @@ if (!HTMLElement.prototype.scrollIntoView) {
 
 /**
  * BUG-48: return the canonical empty shape for the new journal commands
- * (`get_journal_page_by_date` → `null`, `list_journal_page_dates` →
+ * (`get_journal_page_by_date` → `null`, `list_journal_pages_in_range` →
  * `[]`). Returns the sentinel `BUG48_NOT_HANDLED` for anything else so
  * callers can fall through to their own dispatch logic.
  */
 const BUG48_NOT_HANDLED = Symbol('bug48-not-handled')
 function bug48EmptyResponse(cmd: string): unknown {
   if (cmd === 'get_journal_page_by_date') return null
-  if (cmd === 'list_journal_page_dates') return []
+  if (cmd === 'list_journal_pages_in_range') return []
   return BUG48_NOT_HANDLED
 }
 
@@ -204,14 +204,14 @@ function mockEmptyResponses(): void {
 
 /**
  * BUG-48: install a default mock that exposes `pages` to both
- * `list_journal_page_dates` (the calendar map fetch) and
+ * `list_journal_pages_in_range` (the calendar map fetch) and
  * `get_journal_page_by_date` (the auto-create probe). Other commands
  * fall through to `emptyPage`. Use in tests that previously primed the
  * page list with `mockedInvoke.mockResolvedValue({ items: [...], ... })`.
  */
 function mockJournalPages(pages: Array<{ id: string; content: string | null }>): void {
   mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-    if (cmd === 'list_journal_page_dates') return pages
+    if (cmd === 'list_journal_pages_in_range') return pages
     if (cmd === 'get_journal_page_by_date') {
       const date = (args as { date?: string } | undefined)?.date
       return pages.find((p) => p.content === date) ?? null
@@ -693,7 +693,7 @@ describe('JournalPage', () => {
   // ── MAINT-119: page-list fetch dedupe ────────────────────────────────
 
   describe('page-list fetch dedupe (MAINT-119)', () => {
-    it('issues exactly ONE list_journal_page_dates fetch when JournalPage + JournalControls mount together', async () => {
+    it('issues exactly ONE list_journal_pages_in_range fetch when JournalPage + JournalControls mount together', async () => {
       mockEmptyResponses()
 
       renderJournal()
@@ -702,11 +702,11 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // BUG-48: the page-list fetch is now `list_journal_page_dates`
+      // BUG-48: the page-list fetch is now `list_journal_pages_in_range`
       // (a single un-paginated call) instead of the cursor-paginated
       // `list_blocks` loop.
       const pageFetchCalls = mockedInvoke.mock.calls.filter(
-        ([cmd]) => cmd === 'list_journal_page_dates',
+        ([cmd]) => cmd === 'list_journal_pages_in_range',
       )
       // Pre-MAINT-119 this was 2 (one in JournalPage, one in JournalControls).
       // After consolidation it must be exactly 1.
@@ -2161,7 +2161,7 @@ describe('JournalPage', () => {
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         // BUG-48: the calendar fetch + auto-create probe both come
         // from the new journal commands now.
-        if (cmd === 'list_journal_page_dates') return pageRows
+        if (cmd === 'list_journal_pages_in_range') return pageRows
         if (cmd === 'get_journal_page_by_date') {
           const date = (args as { date?: string } | undefined)?.date
           return pageRows.find((p) => p.content === date) ?? null
@@ -2711,10 +2711,9 @@ describe('JournalPage', () => {
     })
 
     it('does NOT fire when inside input/contentEditable', async () => {
-      const yesterday = subDays(new Date(), 1)
-      const yesterdayStr = formatDate(yesterday)
+      const todayStr = formatDate(new Date())
 
-      useJournalStore.setState({ currentDate: yesterday, mode: 'daily' })
+      useJournalStore.setState({ currentDate: new Date(), mode: 'daily' })
 
       mockEmptyResponses()
 
@@ -2724,11 +2723,12 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // Auto-creation now fires for any date in daily mode, wait for it
+      // Today's mount-effect auto-creates the page; wait for it to settle
+      // before asserting the keyboard branch is suppressed inside an input.
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          content: yesterdayStr,
+          content: todayStr,
           spaceId: 'SPACE_TEST',
         })
       })
@@ -2816,11 +2816,13 @@ describe('JournalPage', () => {
       })
     })
 
-    it('auto-creates page+block for a past date in daily mode', async () => {
+    it('does NOT auto-create on mount for a past date in daily mode', async () => {
+      // BUG-48 follow-up: the mount-effect is restricted to today so the
+      // calendar can't silently spawn empty journal pages for any day the
+      // user merely navigates to. Past dates require an explicit
+      // `n`/`Enter` shortcut or the Add block button to backfill.
       const pastDate = subDays(new Date(), 3)
-      const pastStr = formatDate(pastDate)
 
-      // Set journal to display a past date
       useJournalStore.setState({ mode: 'daily', currentDate: pastDate })
       mockEmptyResponses()
 
@@ -2830,18 +2832,21 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
-          parentId: null,
-          content: pastStr,
-          spaceId: 'SPACE_TEST',
-        })
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
       })
+
+      const createPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'create_page_in_space',
+      )
+      expect(createPageCalls).toHaveLength(0)
     })
 
-    it('auto-creates page+block for a future date in daily mode', async () => {
+    it('does NOT auto-create on mount for a future date in daily mode', async () => {
+      // BUG-48 follow-up: same rationale as the past-date test — only
+      // today's page is conjured for free; the user opts in for any
+      // other day.
       const futureDate = addDays(new Date(), 5)
-      const futureStr = formatDate(futureDate)
 
       useJournalStore.setState({ mode: 'daily', currentDate: futureDate })
       mockEmptyResponses()
@@ -2852,13 +2857,14 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
-          parentId: null,
-          content: futureStr,
-          spaceId: 'SPACE_TEST',
-        })
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
       })
+
+      const createPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'create_page_in_space',
+      )
+      expect(createPageCalls).toHaveLength(0)
     })
 
     it('does NOT auto-create in weekly mode', async () => {
@@ -2933,12 +2939,14 @@ describe('JournalPage', () => {
       expect(createPageCalls).toHaveLength(0)
     })
 
-    it('re-triggers auto-creation when navigating to a new date', async () => {
+    it('does NOT re-trigger auto-creation when navigating to a different date', async () => {
+      // BUG-48 follow-up: navigating off today no longer eagerly spawns
+      // pages. Today's auto-create still fires on mount; clicking
+      // previous-day must not result in a fresh `create_page_in_space`
+      // for yesterday.
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
-      const yesterdayStr = formatDate(subDays(new Date(), 1))
 
-      // Start with empty pages — today will be auto-created
       mockedInvoke.mockImplementation(async (cmd: string) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
@@ -2961,27 +2969,22 @@ describe('JournalPage', () => {
         })
       })
 
-      // Clear mocks to track new calls
-      mockedInvoke.mockClear()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        const bug48 = bug48EmptyResponse(cmd)
-        if (bug48 !== BUG48_NOT_HANDLED) return bug48
-        if (cmd === 'create_page_in_space') return 'DP_YESTERDAY'
-        return emptyPage
-      })
+      const callsBefore = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'create_page_in_space',
+      ).length
 
       // Navigate to previous day
       const prevBtn = screen.getByRole('button', { name: /previous day/i })
       await user.click(prevBtn)
 
-      // Should auto-create for yesterday too
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
-          parentId: null,
-          content: yesterdayStr,
-          spaceId: 'SPACE_TEST',
-        })
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
       })
+
+      const callsAfter = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'create_page_in_space',
+      ).length
+      expect(callsAfter).toBe(callsBefore)
     })
   })
 

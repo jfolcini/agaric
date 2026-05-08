@@ -378,22 +378,38 @@ pub async fn get_journal_page_by_date(
         .map_err(sanitize_internal_error)
 }
 
-/// List all date-formatted journal pages in `space_id`.
+/// List date-formatted journal pages in `space_id` whose `content` falls in
+/// the inclusive `[start_date, end_date]` range.
 ///
 /// Returns every live, non-conflict `page` block whose `content` matches the
-/// `YYYY-MM-DD` pattern and whose `space` ref property points at `space_id`.
-/// The result is a flat `Vec<BlockRow>` — NOT paginated — because the
-/// cardinality is bounded by the number of days the user has created a
-/// journal page (typically < 1K even for power users), well within the
-/// carve-out for small-cardinality lookups documented in invariant #3.
+/// `YYYY-MM-DD` pattern, whose `space` ref property points at `space_id`, and
+/// whose date is within the requested range. The result is a flat
+/// `Vec<BlockRow>` — bounded by the visible date span (≤ 42 for a six-week
+/// calendar grid, fewer for daily/weekly views) so pagination would only add
+/// noise.
 ///
-/// Backed by the same `idx_blocks_journal_date` partial index as
-/// [`get_journal_page_by_date_inner`].
+/// Backed by the `idx_blocks_journal_date` partial index plus a range
+/// predicate on `content`, so the lookup remains O(visible-days) regardless of
+/// total block count or total journal-page count across all time.
+///
+/// Both endpoints are validated against the `YYYY-MM-DD` shape, and
+/// `start_date <= end_date` is enforced — callers passing inverted ranges hit
+/// a Validation error rather than a silent empty result.
 #[instrument(skip(pool), err)]
-pub async fn list_journal_page_dates_inner(
+pub async fn list_journal_pages_in_range_inner(
     pool: &SqlitePool,
+    start_date: &str,
+    end_date: &str,
     space_id: &str,
 ) -> Result<Vec<BlockRow>, AppError> {
+    validate_date_format(start_date)?;
+    validate_date_format(end_date)?;
+    if start_date > end_date {
+        return Err(AppError::Validation(
+            "start_date must be <= end_date".to_string(),
+        ));
+    }
+
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
@@ -404,6 +420,8 @@ pub async fn list_journal_page_dates_inner(
              AND b.deleted_at IS NULL
              AND b.is_conflict = 0
              AND b.content LIKE '____-__-__'
+             AND b.content >= ?
+             AND b.content <= ?
              AND EXISTS (
                  SELECT 1 FROM block_properties bp
                  WHERE bp.block_id = b.id
@@ -411,6 +429,8 @@ pub async fn list_journal_page_dates_inner(
                    AND bp.value_ref = ?
              )
            ORDER BY b.content ASC"#,
+        start_date,
+        end_date,
         space_id,
     )
     .fetch_all(pool)
@@ -419,16 +439,18 @@ pub async fn list_journal_page_dates_inner(
     Ok(rows)
 }
 
-/// Tauri command: list all date-formatted journal pages. Delegates to
-/// [`list_journal_page_dates_inner`].
+/// Tauri command: list date-formatted journal pages in `[start_date,
+/// end_date]`. Delegates to [`list_journal_pages_in_range_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn list_journal_page_dates(
+pub async fn list_journal_pages_in_range(
     pool: State<'_, ReadPool>,
+    start_date: String,
+    end_date: String,
     space_id: String,
 ) -> Result<Vec<BlockRow>, AppError> {
-    list_journal_page_dates_inner(&pool.0, &space_id)
+    list_journal_pages_in_range_inner(&pool.0, &start_date, &end_date, &space_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -828,5 +850,194 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // BUG-48 — get_journal_page_by_date / list_journal_pages_in_range
+    // ------------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_journal_page_by_date_finds_existing_page() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+
+        let created = resolve_or_create_journal_page(&pool, DEV, &mat, TEST_DATE, &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let found = get_journal_page_by_date_inner(&pool, TEST_DATE, &space)
+            .await
+            .unwrap()
+            .expect("page should exist");
+        assert_eq!(found.id, created.id);
+        assert_eq!(found.content.as_deref(), Some(TEST_DATE));
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_journal_page_by_date_returns_none_for_missing() {
+        let (pool, _dir) = test_pool().await;
+        let space = mk_space(&pool, "Personal").await;
+
+        let row = get_journal_page_by_date_inner(&pool, TEST_DATE, &space)
+            .await
+            .unwrap();
+        assert!(row.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_journal_page_by_date_rejects_invalid_format() {
+        let (pool, _dir) = test_pool().await;
+        let space = mk_space(&pool, "Personal").await;
+
+        let err = get_journal_page_by_date_inner(&pool, "2025/04/15", &space)
+            .await
+            .expect_err("non-YYYY-MM-DD must be rejected");
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_journal_page_by_date_is_scoped_to_space() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space_a = mk_space(&pool, "Personal").await;
+        let space_b = mk_space(&pool, "Work").await;
+
+        let page_a = resolve_or_create_journal_page(&pool, DEV, &mat, TEST_DATE, &space_a)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // The page lives in space_a; querying space_b for the same date
+        // must not surface it.
+        let in_b = get_journal_page_by_date_inner(&pool, TEST_DATE, &space_b)
+            .await
+            .unwrap();
+        assert!(in_b.is_none(), "space_b must not see space_a's page");
+
+        let in_a = get_journal_page_by_date_inner(&pool, TEST_DATE, &space_a)
+            .await
+            .unwrap()
+            .expect("space_a must see its own page");
+        assert_eq!(in_a.id, page_a.id);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_journal_pages_in_range_filters_by_dates() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+
+        for d in ["2025-03-30", "2025-04-15", "2025-04-20", "2025-05-05"] {
+            resolve_or_create_journal_page(&pool, DEV, &mat, d, &space)
+                .await
+                .unwrap();
+        }
+        mat.flush_background().await.unwrap();
+
+        let april = list_journal_pages_in_range_inner(&pool, "2025-04-01", "2025-04-30", &space)
+            .await
+            .unwrap();
+        let april_dates: Vec<&str> = april
+            .iter()
+            .map(|r| r.content.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(april_dates, vec!["2025-04-15", "2025-04-20"]);
+
+        // Empty range (date outside any page) returns empty without error.
+        let empty = list_journal_pages_in_range_inner(&pool, "2024-01-01", "2024-12-31", &space)
+            .await
+            .unwrap();
+        assert!(empty.is_empty());
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_journal_pages_in_range_excludes_non_date_pages() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+
+        // Date-formatted page in range.
+        resolve_or_create_journal_page(&pool, DEV, &mat, TEST_DATE, &space)
+            .await
+            .unwrap();
+        // Non-date-formatted page in the same space — must not surface.
+        let non_date = crate::commands::create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            "Project Plan".to_string(),
+            space.clone(),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let rows = list_journal_pages_in_range_inner(&pool, "2025-04-01", "2025-04-30", &space)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1, "non-date page must not appear");
+        assert_eq!(rows[0].content.as_deref(), Some(TEST_DATE));
+        assert_ne!(rows[0].id, non_date.into_string());
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_journal_pages_in_range_is_scoped_to_space() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space_a = mk_space(&pool, "Personal").await;
+        let space_b = mk_space(&pool, "Work").await;
+
+        resolve_or_create_journal_page(&pool, DEV, &mat, TEST_DATE, &space_a)
+            .await
+            .unwrap();
+        resolve_or_create_journal_page(&pool, DEV, &mat, TEST_DATE, &space_b)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let a = list_journal_pages_in_range_inner(&pool, "2025-04-01", "2025-04-30", &space_a)
+            .await
+            .unwrap();
+        let b = list_journal_pages_in_range_inner(&pool, "2025-04-01", "2025-04-30", &space_b)
+            .await
+            .unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(b.len(), 1);
+        assert_ne!(a[0].id, b[0].id, "each space sees only its own page");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_journal_pages_in_range_rejects_inverted_range() {
+        let (pool, _dir) = test_pool().await;
+        let space = mk_space(&pool, "Personal").await;
+
+        let err = list_journal_pages_in_range_inner(&pool, "2025-05-01", "2025-04-01", &space)
+            .await
+            .expect_err("inverted range must be rejected");
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_journal_pages_in_range_rejects_invalid_date_format() {
+        let (pool, _dir) = test_pool().await;
+        let space = mk_space(&pool, "Personal").await;
+
+        let err = list_journal_pages_in_range_inner(&pool, "2025-04-1", "2025-04-30", &space)
+            .await
+            .expect_err("non-YYYY-MM-DD start must be rejected");
+        assert!(matches!(err, AppError::Validation(_)));
     }
 }

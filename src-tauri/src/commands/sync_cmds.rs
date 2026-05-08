@@ -455,7 +455,9 @@ pub async fn start_sync(
     peer_id: String,
     device_id: State<'_, DeviceId>,
     scheduler: State<'_, Arc<SyncScheduler>>,
+    progress: tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate>,
 ) -> Result<SyncSessionInfo, AppError> {
+    scheduler.register_channel(&peer_id, progress);
     start_sync_inner(&scheduler, device_id.as_str(), peer_id).map_err(sanitize_internal_error)
 }
 

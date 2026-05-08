@@ -19,7 +19,7 @@ import {
 } from 'date-fns'
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import type React from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -29,6 +29,7 @@ import {
   formatDate,
   formatDateDisplay,
   formatWeekRange,
+  getCalendarMonthRange,
   MAX_JOURNAL_DATE,
   MIN_JOURNAL_DATE,
 } from '../lib/date-utils'
@@ -49,7 +50,8 @@ export function JournalControls(): React.ReactElement {
       })),
     )
   const [calendarOpen, setCalendarOpen] = useState(false)
-  const { highlightedDays } = useCalendarPageDates()
+  const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
+  const { highlightedDays } = useCalendarPageDates(calendarRange)
 
   function goPrev() {
     if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))

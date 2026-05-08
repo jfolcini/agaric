@@ -639,8 +639,15 @@ pub(crate) async fn try_sync_with_peer(
         };
 
     // 7. Run sync protocol through the orchestrator
-    let event_sink_box: Box<dyn SyncEventSink> =
-        Box::new(SharedEventSink(Arc::clone(ctx.event_sink)));
+    let mut event_sink_arc = Arc::clone(ctx.event_sink);
+    if let Some(channel) = ctx.scheduler.take_channel(peer_id) {
+        event_sink_arc = Arc::new(crate::sync_events::ChannelEventSink {
+            inner: event_sink_arc,
+            channel,
+        });
+    }
+
+    let event_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(event_sink_arc.clone()));
     let mut orch = SyncOrchestrator::new(
         ctx.pool.clone(),
         ctx.device_id.to_string(),
@@ -655,7 +662,7 @@ pub(crate) async fn try_sync_with_peer(
         ctx.cancel,
         ctx.pool,
         ctx.materializer,
-        ctx.event_sink,
+        &event_sink_arc,
     )
     .await
     {

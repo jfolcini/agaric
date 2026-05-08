@@ -53,7 +53,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
-  // BUG-48: useCalendarPageDates now hits `list_journal_page_dates`,
+  // BUG-48: useCalendarPageDates now hits `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (no pagination envelope).
   mockedInvoke.mockResolvedValue([])
 })
@@ -214,7 +214,7 @@ describe('GlobalDateControls', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_journal_page_dates',
+        'list_journal_pages_in_range',
         expect.objectContaining({ spaceId: '' }),
       )
     })

@@ -4,10 +4,19 @@
 //! from Tauri, allowing tests to capture events without an `AppHandle`.
 
 use serde::Serialize;
+use specta::Type;
 
 // ---------------------------------------------------------------------------
 // Event payload
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct SyncProgressUpdate {
+    pub state: String,
+    pub remote_device_id: String,
+    pub ops_received: u64,
+    pub ops_sent: u64,
+}
 
 /// Payload sent over Tauri events for sync progress/completion/errors.
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +103,60 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
         };
         if let Err(e) = self.0.emit(event_name, &event) {
             tracing::warn!(%event_name, error = %e, "Failed to emit sync event");
+        }
+    }
+}
+
+/// A sink that forwards events to both an underlying sink and a Tauri IPC channel.
+pub struct ChannelEventSink {
+    pub inner: std::sync::Arc<dyn SyncEventSink>,
+    pub channel: tauri::ipc::Channel<SyncProgressUpdate>,
+}
+
+impl SyncEventSink for ChannelEventSink {
+    fn on_sync_event(&self, event: SyncEvent) {
+        // Forward to the inner sink (e.g. TauriEventSink)
+        self.inner.on_sync_event(event.clone());
+
+        // Forward progress updates to the channel
+        match event {
+            SyncEvent::Progress {
+                state,
+                remote_device_id,
+                ops_received,
+                ops_sent,
+            } => {
+                let _ = self.channel.send(SyncProgressUpdate {
+                    state,
+                    remote_device_id,
+                    ops_received: ops_received as u64,
+                    ops_sent: ops_sent as u64,
+                });
+            }
+            SyncEvent::Complete {
+                remote_device_id,
+                ops_received,
+                ops_sent,
+            } => {
+                let _ = self.channel.send(SyncProgressUpdate {
+                    state: "complete".to_string(),
+                    remote_device_id,
+                    ops_received: ops_received as u64,
+                    ops_sent: ops_sent as u64,
+                });
+            }
+            SyncEvent::Error {
+                message: _,
+                remote_device_id,
+            } => {
+                let _ = self.channel.send(SyncProgressUpdate {
+                    state: "error".to_string(),
+                    remote_device_id,
+                    ops_received: 0,
+                    ops_sent: 0,
+                });
+            }
+            _ => {}
         }
     }
 }

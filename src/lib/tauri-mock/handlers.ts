@@ -119,11 +119,14 @@ export const HANDLERS: Record<string, Handler> = {
     return null
   },
 
-  // BUG-48: list every date-formatted journal page in the active space.
-  // The real backend uses the `idx_blocks_journal_date` partial index
-  // (content LIKE '____-__-__') so this is O(index).
-  list_journal_page_dates: (args) => {
+  // BUG-48 follow-up: list date-formatted journal pages in the active
+  // space whose date falls in `[startDate, endDate]`. The real backend
+  // uses the `idx_blocks_journal_date` partial index plus a content
+  // range predicate so this is O(visible-days).
+  list_journal_pages_in_range: (args) => {
     const a = args as Record<string, unknown>
+    const startDate = a['startDate'] as string
+    const endDate = a['endDate'] as string
     const spaceId = a['spaceId'] as string
     const datePattern = /^\d{4}-\d{2}-\d{2}$/
     const items: Record<string, unknown>[] = []
@@ -133,6 +136,7 @@ export const HANDLERS: Record<string, Handler> = {
       if (b['is_conflict']) continue
       const content = b['content'] as string | null
       if (!content || !datePattern.test(content)) continue
+      if (content < startDate || content > endDate) continue
       const blockProps = properties.get(b['id'] as string)
       const spaceProp = blockProps?.get('space')
       if (spaceProp?.['value_ref'] !== spaceId) continue

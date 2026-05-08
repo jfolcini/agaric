@@ -159,7 +159,7 @@ describe('JournalPage / BlockTree integration — auto-create race (PEND-16)', (
       // these new commands now. Default both to "no page exists" so the
       // hook progresses to creating the daily page.
       if (cmd === 'get_journal_page_by_date') return null
-      if (cmd === 'list_journal_page_dates') return []
+      if (cmd === 'list_journal_pages_in_range') return []
       if (cmd === 'create_page_in_space') return 'DP_NEW'
       if (cmd === 'create_block') {
         const params = args as { blockType?: string; content?: string; parentId?: string }
@@ -241,7 +241,7 @@ describe('JournalPage / BlockTree integration — auto-create race (PEND-16)', (
     mockedInvoke.mockImplementation(async (cmd: string) => {
       // BUG-48: see sibling test for rationale.
       if (cmd === 'get_journal_page_by_date') return null
-      if (cmd === 'list_journal_page_dates') return []
+      if (cmd === 'list_journal_pages_in_range') return []
       if (cmd === 'create_page_in_space') return 'DP_NEW'
       if (cmd === 'create_block') {
         return makeBlock({ id: 'BLK_A11Y', block_type: 'content', parent_id: 'DP_NEW' })

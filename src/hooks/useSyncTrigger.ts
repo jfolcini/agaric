@@ -4,6 +4,7 @@ import { announce } from '../lib/announcer'
 import { i18n } from '../lib/i18n'
 import { listPeerRefs, startSync } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
+import { mapBackendState } from './useSyncEvents'
 
 // Frontend periodic-sync cadence and exponential-backoff caps.
 //
@@ -69,7 +70,16 @@ export function runWithTimeout<T>(p: Promise<T>, ms: number, err: Error): Promis
  */
 async function syncOnePeerWithToast(peerId: string): Promise<boolean> {
   try {
-    await runWithTimeout(startSync(peerId), SYNC_TIMEOUT_MS, new Error('Sync timeout'))
+    const store = useSyncStore.getState()
+    await runWithTimeout(
+      startSync(peerId, (update) => {
+        store.setState(mapBackendState(update.state))
+        store.setOpsReceived(update.ops_received)
+        store.setOpsSent(update.ops_sent)
+      }),
+      SYNC_TIMEOUT_MS,
+      new Error('Sync timeout'),
+    )
     return true
   } catch {
     toast.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }), {
