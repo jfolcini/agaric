@@ -312,6 +312,58 @@ pub async fn list_unlinked_references_inner(
         .await
 }
 
+/// Count active (non-deleted) conflict-copy blocks.
+///
+/// PEND-35 Tier 2.11 — replaces the FE pattern of paginating
+/// [`get_conflicts_inner`] with `limit: 100` just to read
+/// `data.items.length` for the conflicts-tab badge. Materialising up to
+/// 100 full [`BlockRow`]s every 30 s for a single integer is wasteful;
+/// worse, the count is silently capped at 100 since the badge cannot
+/// see past the first page. This helper runs a single
+/// `SELECT COUNT(*)` so the badge surfaces the true count regardless of
+/// magnitude.
+///
+/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the count to
+/// blocks whose owning page (resolved via `COALESCE(b.page_id, b.id)`)
+/// carries `space = ?space_id`. The shape mirrors every sibling
+/// space-scoped read (see `count_backlinks_batch_inner`,
+/// `crate::backlink::query::eval_backlink_query`). [`SpaceScope::Global`]
+/// preserves the cross-space count for legacy callers.
+///
+/// Uses the partial index `idx_blocks_conflict ON blocks(id) WHERE
+/// is_conflict = 1 AND deleted_at IS NULL` (migration 0049, PEND-35
+/// Tier 3.2). The unscoped path is index-served end-to-end; the
+/// space-scoped path still benefits because the partial index narrows
+/// the candidate set before the property-table subquery runs.
+///
+/// # Errors
+///
+/// - Database errors propagated from sqlx.
+#[instrument(skip(pool), err)]
+pub async fn count_conflicts_inner(pool: &SqlitePool, scope: &SpaceScope) -> Result<i64, AppError> {
+    // FEAT-3p4 — `?1` carries the active space id (or NULL for
+    // [`SpaceScope::Global`]). The clause shape mirrors
+    // `crate::backlink::query::eval_backlink_query` and
+    // `count_backlinks_batch_inner`:
+    //   `(?N IS NULL OR COALESCE(b.page_id, b.id) IN (
+    //        SELECT bp.block_id FROM block_properties bp
+    //        WHERE bp.key = 'space' AND bp.value_ref = ?N))`
+    // — applied to the conflict block (`b`) so a conflict whose owning
+    // page lives outside the active space is excluded from the badge.
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) \
+         FROM blocks b \
+         WHERE b.is_conflict = 1 AND b.deleted_at IS NULL \
+           AND (?1 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?1))",
+    )
+    .bind(scope.as_filter_param())
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
 /// Count backlinks per target page for a batch of page IDs in a single query.
 ///
 /// Returns a `HashMap<page_id, count>` for pages that have at least one
@@ -576,6 +628,19 @@ pub async fn count_backlinks_batch(
     scope: SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
     count_backlinks_batch_inner(&read_pool.0, page_ids, &scope)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: count active conflict-copy blocks. Delegates to [`count_conflicts_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn count_conflicts(
+    pool: State<'_, ReadPool>,
+    scope: SpaceScope,
+) -> Result<i64, AppError> {
+    count_conflicts_inner(&pool.0, &scope)
         .await
         .map_err(sanitize_internal_error)
 }

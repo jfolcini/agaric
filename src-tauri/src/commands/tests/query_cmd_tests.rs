@@ -77,6 +77,135 @@ async fn get_conflicts_returns_conflict_blocks() {
 }
 
 // ======================================================================
+// count_conflicts (PEND-35 Tier 2.11)
+// ======================================================================
+//
+// Replaces the FE pattern of paginating `get_conflicts({limit:100})`
+// every 30 s just to read `data.items.length` — materialising up to 100
+// full BlockRows for one integer, and silently capping the badge at 100.
+// `count_conflicts_inner` runs a single `SELECT COUNT(*)` so the badge
+// reflects the true count regardless of magnitude.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_conflicts_returns_zero_when_no_conflicts() {
+    let (pool, _dir) = test_pool().await;
+
+    // Seed a non-conflict block so the table is non-empty (rules out
+    // "any row matches" false positives).
+    insert_block(&pool, "CC_PLAIN", "content", "plain", None, None).await;
+
+    let n = count_conflicts_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
+
+    assert_eq!(n, 0, "table without conflicts should count to zero");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_conflicts_counts_active_conflicts_only() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Three conflict blocks:
+    //   CC_LIVE_A — live conflict in space A
+    //   CC_LIVE_B — live conflict in space B
+    //   CC_DEAD   — soft-deleted conflict (must NOT count under either scope)
+    insert_block(&pool, "CC_LIVE_A", "content", "conflict A", None, None).await;
+    insert_block(&pool, "CC_LIVE_B", "content", "conflict B", None, None).await;
+    insert_block(&pool, "CC_DEAD", "content", "deleted conflict", None, None).await;
+
+    sqlx::query(
+        "UPDATE blocks SET is_conflict = 1 WHERE id IN ('CC_LIVE_A','CC_LIVE_B','CC_DEAD')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'CC_DEAD'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Owning-page assignments: CC_LIVE_A → space A, CC_LIVE_B → space B.
+    // CC_DEAD assigned to A so the space subquery would match it if the
+    // `deleted_at` predicate ever regressed — keeps the test honest.
+    assign_to_space(&pool, "CC_LIVE_A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "CC_LIVE_B", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "CC_DEAD", TEST_SPACE_ID).await;
+
+    // Global — both live conflicts counted, deleted excluded.
+    let global = count_conflicts_inner(&pool, &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global, 2,
+        "Global counts every live conflict regardless of space"
+    );
+
+    // Active(A) — only CC_LIVE_A is visible.
+    let active_a = count_conflicts_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_a, 1,
+        "Active(A) drops the conflict whose owning page is in space B"
+    );
+
+    // Active(B) — only CC_LIVE_B is visible.
+    let active_b = count_conflicts_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_b, 1,
+        "Active(B) drops the conflict whose owning page is in space A"
+    );
+}
+
+// PEND-35 Tier 2.11 — verify the partial index `idx_blocks_conflict`
+// (migration 0049) is picked by SQLite's planner for the
+// `count_conflicts` query shape (`COUNT(*) … WHERE is_conflict = 1 AND
+// deleted_at IS NULL`). Mirrors `pagination::tests::list_conflicts_uses_partial_index`.
+// The unscoped path — the dominant call site (every 30 s for the
+// badge) — must be index-served end-to-end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_conflicts_uses_partial_index() {
+    let (pool, _dir) = test_pool().await;
+
+    // Mirror the SQL in `count_conflicts_inner` exactly — EXPLAIN QUERY
+    // PLAN reflects the actual query string, so any drift here would
+    // silently invalidate the assertion.
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN \
+         SELECT COUNT(*) \
+         FROM blocks b \
+         WHERE b.is_conflict = 1 AND b.deleted_at IS NULL \
+           AND (?1 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?1))",
+    )
+    .bind(Option::<&str>::None) // ?1 — Global path (the dominant case)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let detail = plan
+        .iter()
+        .map(|(_, _, _, d)| d.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        detail.contains("idx_blocks_conflict"),
+        "count_conflicts must use idx_blocks_conflict; plan was:\n{detail}"
+    );
+}
+
+// ======================================================================
 // search_blocks_inner tests
 // ======================================================================
 

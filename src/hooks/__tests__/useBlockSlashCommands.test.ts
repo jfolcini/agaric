@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
+import { _resetPropertyKeysCacheForTest } from '../../lib/property-keys-cache'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -193,6 +194,17 @@ describe('searchSlashCommands', () => {
 })
 
 describe('searchPropertyKeys', () => {
+  // PEND-35 Tier 2.5 — `searchPropertyKeys` now reads through the
+  // shared module-level cache in `src/lib/property-keys-cache.ts`. Each
+  // test below provides a different mocked IPC payload, so the cache
+  // must be reset between tests to force a fresh fetch.
+  beforeEach(() => {
+    _resetPropertyKeysCacheForTest()
+  })
+  afterEach(() => {
+    _resetPropertyKeysCacheForTest()
+  })
+
   it('returns matching property keys', async () => {
     mockedInvoke.mockResolvedValueOnce(['effort', 'assignee', 'location'])
     const results = await searchPropertyKeys('eff')

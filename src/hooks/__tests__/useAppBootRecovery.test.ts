@@ -41,38 +41,35 @@ afterEach(() => {
   __resetPriorityLevelsForTests()
 })
 
-describe('useAppBootRecovery — orphan-draft flush', () => {
-  it('calls flush_draft for every entry returned by list_drafts', async () => {
+describe('useAppBootRecovery — orphan-draft flush (PEND-35 Tier 2.12)', () => {
+  // The boot-recovery path is a single `flush_all_drafts` IPC instead
+  // of `list_drafts` → N `flush_draft` fire-and-forget calls. Tests
+  // mock the consolidated IPC and branch on the returned `flushed`
+  // count.
+  it('issues exactly one flush_all_drafts IPC and no per-draft fan-out', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') {
-        return [{ block_id: 'B1' }, { block_id: 'B2' }]
-      }
-      if (cmd === 'flush_draft') {
-        return undefined
-      }
-      if (cmd === 'list_property_defs') {
-        // M-85: paginated PageResponse envelope.
-        return { items: [], next_cursor: null, has_more: false }
-      }
+      if (cmd === 'flush_all_drafts') return { flushed: 2 }
+      if (cmd === 'get_property_def') return null
       return null
     })
 
     renderHook(() => useAppBootRecovery())
 
     await waitFor(() => {
-      const flushCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'flush_draft')
-      expect(flushCalls).toHaveLength(2)
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'flush_all_drafts')
+      expect(calls).toHaveLength(1)
     })
+    // Regression guard: the old per-draft loop (and its `list_drafts`
+    // probe) must NOT fire any more.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('flush_draft', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_drafts')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_drafts', expect.anything())
   })
 
-  it('logs a warning when list_drafts itself fails', async () => {
+  it('logs a warning when flush_all_drafts itself fails', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') {
-        throw new Error('IPC down')
-      }
-      if (cmd === 'list_property_defs') {
-        return { items: [], next_cursor: null, has_more: false }
-      }
+      if (cmd === 'flush_all_drafts') throw new Error('IPC down')
+      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -81,7 +78,7 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
     await waitFor(() => {
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'App',
-        'Failed to list drafts during boot recovery',
+        'Failed to flush orphaned drafts during boot recovery',
         undefined,
         expect.any(Error),
       )
@@ -93,13 +90,8 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   // don't spam users on a clean boot.
   it('fires toast.info with the recovered count when ≥1 draft is flushed', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') {
-        return [{ block_id: 'B1' }, { block_id: 'B2' }, { block_id: 'B3' }]
-      }
-      if (cmd === 'flush_draft') return undefined
-      if (cmd === 'list_property_defs') {
-        return { items: [], next_cursor: null, has_more: false }
-      }
+      if (cmd === 'flush_all_drafts') return { flushed: 3 }
+      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -116,11 +108,8 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
 
   it('uses singular form when exactly one draft is recovered', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') return [{ block_id: 'B1' }]
-      if (cmd === 'flush_draft') return undefined
-      if (cmd === 'list_property_defs') {
-        return { items: [], next_cursor: null, has_more: false }
-      }
+      if (cmd === 'flush_all_drafts') return { flushed: 1 }
+      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -133,18 +122,16 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
 
   it('does NOT fire any toast when zero drafts are pending', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') return []
-      if (cmd === 'list_property_defs') {
-        return { items: [], next_cursor: null, has_more: false }
-      }
+      if (cmd === 'flush_all_drafts') return { flushed: 0 }
+      if (cmd === 'get_property_def') return null
       return null
     })
 
     renderHook(() => useAppBootRecovery())
 
-    // Wait for the list_drafts promise to settle, then assert silence.
+    // Wait for the IPC to settle, then assert silence.
     await waitFor(() => {
-      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_drafts')
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'flush_all_drafts')
       expect(calls.length).toBeGreaterThanOrEqual(1)
     })
     expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
@@ -156,11 +143,8 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   // sink is what powers offline diagnostics.
   it('still emits logger.info with the recovered count (regression guard)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') return [{ block_id: 'B1' }, { block_id: 'B2' }]
-      if (cmd === 'flush_draft') return undefined
-      if (cmd === 'list_property_defs') {
-        return { items: [], next_cursor: null, has_more: false }
-      }
+      if (cmd === 'flush_all_drafts') return { flushed: 2 }
+      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -173,21 +157,23 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
 })
 
 describe('useAppBootRecovery — priority levels (UX-201b)', () => {
-  it('hydrates the priority-levels cache from list_property_defs', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') return []
-      if (cmd === 'list_property_defs') {
-        return {
-          items: [
-            {
-              key: 'priority',
-              value_type: 'select',
-              options: JSON.stringify(['urgent', 'high', 'low']),
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
+  // PEND-35 Tier 2.6: priority lookup now goes through the dedicated
+  // `get_property_def(key)` PK SELECT instead of paginating the entire
+  // property-definition vocabulary via `list_property_defs`.
+  it('hydrates the priority-levels cache from get_property_def(priority)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'flush_all_drafts') return { flushed: 0 }
+      if (cmd === 'get_property_def') {
+        const a = args as { key: string } | undefined
+        if (a?.key === 'priority') {
+          return {
+            key: 'priority',
+            value_type: 'select',
+            options: JSON.stringify(['urgent', 'high', 'low']),
+            created_at: '2025-01-01T00:00:00Z',
+          }
         }
+        return null
       }
       return null
     })
@@ -197,12 +183,15 @@ describe('useAppBootRecovery — priority levels (UX-201b)', () => {
     await waitFor(() => {
       expect(getPriorityLevels()).toEqual(['urgent', 'high', 'low'])
     })
+    // Regression guard — only the targeted PK lookup is in flight.
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property_def', { key: 'priority' })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_property_defs', expect.anything())
   })
 
   it('keeps defaults when the priority definition is missing', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'flush_all_drafts') return { flushed: 0 }
+      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -211,7 +200,7 @@ describe('useAppBootRecovery — priority levels (UX-201b)', () => {
 
     // Wait a tick for the IPC promise to settle
     await waitFor(() => {
-      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_property_defs')
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_property_def')
       expect(calls.length).toBeGreaterThanOrEqual(1)
     })
     expect(getPriorityLevels()).toEqual(before)
@@ -219,12 +208,13 @@ describe('useAppBootRecovery — priority levels (UX-201b)', () => {
 
   it('keeps defaults and warns on invalid JSON options', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_drafts') return []
-      if (cmd === 'list_property_defs') {
+      if (cmd === 'flush_all_drafts') return { flushed: 0 }
+      if (cmd === 'get_property_def') {
         return {
-          items: [{ key: 'priority', value_type: 'select', options: '{not-json' }],
-          next_cursor: null,
-          has_more: false,
+          key: 'priority',
+          value_type: 'select',
+          options: '{not-json',
+          created_at: '2025-01-01T00:00:00Z',
         }
       }
       return null

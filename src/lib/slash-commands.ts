@@ -48,7 +48,7 @@ import {
 import { matchSorter } from 'match-sorter'
 import type { PickerItem } from '../editor/SuggestionList'
 import { matchesSearchFolded } from './fold-for-search'
-import { listPropertyKeys } from './tauri'
+import { getPropertyKeys } from './property-keys-cache'
 
 export const SLASH_COMMANDS: PickerItem[] = [
   {
@@ -487,7 +487,12 @@ export function searchSlashCommands(query: string): PickerItem[] {
 
 export async function searchPropertyKeys(query: string): Promise<PickerItem[]> {
   try {
-    const keys = await listPropertyKeys()
+    // PEND-35 Tier 2.5 — share the module-level cache from
+    // `src/lib/property-keys-cache.ts` instead of firing a fresh
+    // `list_property_keys` IPC on every keystroke. The cache also
+    // dedupes concurrent fetches and invalidates on
+    // `block:properties-changed`.
+    const keys = await getPropertyKeys()
     // UX-248 — Unicode-aware fold.
     const filtered = query ? keys.filter((k) => matchesSearchFolded(k, query)) : keys
     return filtered.map((k) => ({ id: k, label: k }))

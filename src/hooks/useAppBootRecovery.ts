@@ -5,10 +5,12 @@
  * Two effects, both empty-deps (run once on mount), each retains its
  * original try/catch shape so failures stay non-fatal:
  *
- * 1. Orphan-draft flush — `listDrafts` → `flushDraft` for each entry
- *    left behind by a previous crash. Per-draft failures log a warn;
- *    the outer `listDrafts()` failure is also logged. Either way the
- *    app boots normally.
+ * 1. Orphan-draft flush — `flushAllDrafts()` consolidates every
+ *    pending draft left behind by a previous crash into a single
+ *    IPC + single `BEGIN IMMEDIATE` tx (PEND-35 Tier 2.12). Failures
+ *    log a warn and let boot continue; the backend's all-or-nothing
+ *    semantics mean a single bad draft rolls back the whole batch
+ *    (the next user-driven `flushDraft` retries on demand).
  * 2. Priority-levels load (UX-201b) — read the `priority` property
  *    definition's `options` JSON and hydrate the shared
  *    `setPriorityLevels` cache so badge colours / sort / filter
@@ -21,35 +23,26 @@ import { toast } from 'sonner'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { setPriorityLevels } from '../lib/priority-levels'
-import { flushDraft, listDrafts, listPropertyDefs } from '../lib/tauri'
+import { flushAllDrafts, getPropertyDef } from '../lib/tauri'
 
 export function useAppBootRecovery(): void {
   // ── Boot recovery: flush orphaned drafts from previous crash ──────
+  // PEND-35 Tier 2.12 — one IPC, one `BEGIN IMMEDIATE` tx covering every
+  // orphan draft. Was: `listDrafts` → N fire-and-forget `flushDraft`
+  // calls (each opening its own tx that serialised on the writer lock).
   useEffect(() => {
-    listDrafts()
-      .then((drafts) => {
-        for (const draft of drafts) {
-          flushDraft(draft.block_id).catch((err: unknown) => {
-            logger.warn(
-              'App',
-              'Failed to flush orphaned draft during boot recovery',
-              {
-                blockId: draft.block_id,
-              },
-              err,
-            )
-          })
-        }
-        if (drafts.length > 0) {
-          logger.info('boot', `Recovered ${drafts.length} unsaved draft(s)`)
+    flushAllDrafts()
+      .then(({ flushed }) => {
+        if (flushed > 0) {
+          logger.info('boot', `Recovered ${flushed} unsaved draft(s)`)
           // UX-303: surface the recovery to the user — silent recovery
           // means crashed-mid-edit users have no clue their work was
           // saved. Stay silent on count === 0 (no announcement needed).
-          toast.info(i18n.t('boot.recoveredDrafts', { count: drafts.length }))
+          toast.info(i18n.t('boot.recoveredDrafts', { count: flushed }))
         }
       })
       .catch((err: unknown) => {
-        logger.warn('App', 'Failed to list drafts during boot recovery', undefined, err)
+        logger.warn('App', 'Failed to flush orphaned drafts during boot recovery', undefined, err)
       })
   }, [])
 
@@ -59,13 +52,10 @@ export function useAppBootRecovery(): void {
   // or a missing definition leaves the default `['1','2','3']` levels in
   // place.
   useEffect(() => {
-    // M-85: `listPropertyDefs` is paginated; boot recovery is
-    // single-page-by-design — the priority def lives among the seeded
-    // built-ins, which fit well under one page.
-    listPropertyDefs()
-      .then(({ items: defs }) => {
-        if (!Array.isArray(defs)) return
-        const priorityDef = defs.find((d) => d.key === 'priority')
+    // PEND-35 Tier 2.6: single-key PK lookup instead of paginating the
+    // entire property-definition vocabulary just to read one row.
+    getPropertyDef('priority')
+      .then((priorityDef) => {
         if (!priorityDef) return
         if (priorityDef.options == null) return
         let parsed: unknown

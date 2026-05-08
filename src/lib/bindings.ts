@@ -182,6 +182,16 @@ export const commands = {
 	// Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
 	createPropertyDef: (key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppErrorSchema>(__TAURI_INVOKE("create_property_def", { key, valueType, options })),
 	/**
+	 *  Tauri command: fetch a single property definition by key (PEND-35 Tier 2.6).
+	 *  Delegates to [`get_property_def_inner`].
+	 */
+	getPropertyDef: (key: string) => typedError<{
+	key: string,
+	value_type: string,
+	options: string | null,
+	created_at: string,
+} | null, AppErrorSchema>(__TAURI_INVOKE("get_property_def", { key })),
+	/**
 	 *  Tauri command: list all property definitions, paginated (M-85).
 	 *  Delegates to [`list_property_defs_inner`].
 	 */
@@ -250,6 +260,8 @@ export const commands = {
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
 	countBacklinksBatch: (pageIds: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
+	// Tauri command: count active conflict-copy blocks. Delegates to [`count_conflicts_inner`].
+	countConflicts: (scope: SpaceScope) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("count_conflicts", { scope })),
 	// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
 	setPageAliases: (pageId: string, aliases: string[]) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
 	// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
@@ -303,6 +315,12 @@ export const commands = {
 	 *  Delegates to [`flush_draft_inner`].
 	 */
 	flushDraft: (blockId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("flush_draft", { blockId })),
+	/**
+	 *  Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
+	 *  Delegates to [`flush_all_drafts_inner`]. See that function's doc
+	 *  comment for the all-or-nothing atomicity contract.
+	 */
+	flushAllDrafts: () => typedError<FlushAllDraftsResult, AppErrorSchema>(__TAURI_INVOKE("flush_all_drafts")),
 	// Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`].
 	deleteDraft: (blockId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_draft", { blockId })),
 	// Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`].
@@ -827,6 +845,22 @@ export type ExtraQueryFilters = {
 	 *  into SQL (half-open `[from, to)` range).
 	 */
 	valueDateRange: [string, string] | null,
+};
+
+/**
+ *  Result of [`flush_all_drafts_inner`]: how many drafts were processed
+ *  inside the single transaction.
+ *
+ *  PEND-35 Tier 2.12: returned by the boot-recovery one-IPC flush so the
+ *  frontend can surface a recovery toast / log line.
+ */
+export type FlushAllDraftsResult = {
+	/**
+	 *  Number of drafts processed and removed from `block_drafts`.
+	 *  Includes drafts that were dropped as orphans (target block missing
+	 *  or soft-deleted) — anything that consumed a draft row counts.
+	 */
+	flushed: number,
 };
 
 /**

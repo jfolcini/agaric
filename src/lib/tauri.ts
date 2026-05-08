@@ -14,6 +14,7 @@ export type {
   DiffSpan,
   DiffTag,
   Draft,
+  FlushAllDraftsResult,
   GroupedBacklinkResponse,
   HistoryEntry,
   MoveResponse,
@@ -40,6 +41,7 @@ import type {
   DeleteResponse,
   DiffSpan,
   Draft,
+  FlushAllDraftsResult,
   GroupedBacklinkResponse,
   HistoryEntry,
   MoveResponse,
@@ -613,6 +615,23 @@ export async function countBacklinksBatch(params: {
   return unwrap(await commands.countBacklinksBatch(params.pageIds, toSpaceScope(params.spaceId)))
 }
 
+/** Count active (non-deleted) conflict-copy blocks.
+ *
+ * PEND-35 Tier 2.11 — replaces the previous `getConflicts({limit:100})`
+ * + `.items.length` pattern used by `useConflictCount` for the
+ * conflicts-tab badge. The old shape materialised up to 100 full
+ * `BlockRow`s every 30 s for one integer and silently capped the badge
+ * at 100; this command runs a single `SELECT COUNT(*)` so the badge
+ * reflects the true count regardless of magnitude.
+ *
+ * `spaceId` — when set, restricts the count to conflicts whose owning
+ * page carries `space = <spaceId>`. `null` / `undefined` returns the
+ * cross-space count. Mirrors the [`countBacklinksBatch`] scoping shape.
+ */
+export async function countConflicts(spaceId?: string | null | undefined): Promise<number> {
+  return unwrap(await commands.countConflicts(toSpaceScope(spaceId)))
+}
+
 // ---------------------------------------------------------------------------
 // Block fixed-field commands (thin wrappers for reserved properties)
 // ---------------------------------------------------------------------------
@@ -954,6 +973,19 @@ export async function createPropertyDef(params: {
   )
 }
 
+/** Fetch a single property definition by key (PEND-35 Tier 2.6).
+ *
+ * Returns the row, or `null` when no definition exists for `key`.
+ * Replaces the pattern of calling `listPropertyDefs()` (which paginates
+ * the entire vocabulary) just to read one well-known key — boot
+ * recovery's `priority` lookup and the per-block property-editor popover
+ * each used to ship the full def list to the renderer for a one-row
+ * read.
+ */
+export async function getPropertyDef(key: string): Promise<PropertyDefinition | null> {
+  return unwrap(await commands.getPropertyDef(key))
+}
+
 /** List all property definitions, paginated (M-85).
  *
  * Returns the canonical [`PageResponse`] envelope (`items`,
@@ -1277,6 +1309,17 @@ export async function saveDraft(blockId: string, content: string): Promise<void>
 /** Flush a draft: write an edit_block op and delete the draft row. Called on blur/unmount. */
 export async function flushDraft(blockId: string): Promise<void> {
   unwrap(await commands.flushDraft(blockId))
+}
+
+/**
+ * Flush every pending draft in a single `BEGIN IMMEDIATE` tx (PEND-35
+ * Tier 2.12). Used by `useAppBootRecovery` to consolidate boot recovery
+ * into one IPC instead of N fire-and-forget per-draft round-trips. The
+ * backend semantics are all-or-nothing: a single draft failure rolls
+ * back the whole batch — see `flush_all_drafts_inner`'s doc comment.
+ */
+export async function flushAllDrafts(): Promise<FlushAllDraftsResult> {
+  return unwrap(await commands.flushAllDrafts())
 }
 
 /** Delete a draft for a block (e.g. after a successful normal save). */

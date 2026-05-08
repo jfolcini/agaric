@@ -1,6 +1,6 @@
 # PEND-35 — Tauri command audit: where the frontend is doing work the database/backend should do
 
-> **Status (session 688):** Tier 1 (6 items) + Tier 3 (4 items) shipped. Tier 2 (12 items) and Tier 4 (5 items) remain. Pick & schedule per tier — items are independently approvable.
+> **Status (session 689):** Tier 1 (6 items) + Tier 3 (4 items) shipped. Tier 2 (4 of 12 items shipped — 2.5, 2.6, 2.11, 2.12). 8 Tier 2 items + 5 Tier 4 items remain.
 
 ## Origin
 
@@ -62,7 +62,7 @@ validation; **Tier 1 (6 items) shipped in session 687** and **Tier 3
 | Tier | Count | Theme |
 | --- | --- | --- |
 | ~~**1 — Correctness / security**~~ | ~~6~~ ✅ | ~~Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters~~ — **shipped session 687** |
-| **2 — Hot-path performance (N+1, FE intersection)** | 12 | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row |
+| **2 — Hot-path performance (N+1, FE intersection)** | 12 (4 ✅ / 8 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). |
 | ~~**3 — Indexes & SQL anti-patterns**~~ | ~~4~~ ✅ | ~~`json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown~~ — **shipped session 688** |
 | **4 — Minor / low-confidence** | 5 | Single-row reloads, template-loop creates, growing-window history fetches |
 
@@ -129,22 +129,13 @@ All six items landed in one batch (one PR-equivalent commit):
 | **Recommendations** | (a) **USE** `get_batch_properties` hoisted in `AgendaResults` parent, or **CREATE** narrower `get_properties_by_keys(block_ids, keys)` that also resolves `value_ref` titles to drop the second `batchResolve`. <br> (b) **USE** `get_batch_properties(allSpaceIds)` — single IPC. <br> (c) **CREATE** `get_property(block_id, key) -> Option<PropertyRow>` (single PK lookup on `block_properties`). |
 | **Validator verdict** | N3, N4 TRUE |
 
-### 2.5 `searchPropertyKeys` bypasses the existing cache
+### ~~2.5 `searchPropertyKeys` bypasses the existing cache~~ — shipped session 689
 
-| What | Detail |
-| --- | --- |
-| **FE** | `src/lib/slash-commands.ts:488-497` calls `listPropertyKeys()` (full `SELECT DISTINCT key FROM block_properties`) on every keystroke; `src/hooks/usePropertyKeysCache.ts:36-118` has module-level cache + in-flight dedupe + `EVENT_PROPERTY_CHANGED` invalidation but is unused here. |
-| **Recommendation** | **USE** the existing cache from `usePropertyKeysCache`. Extract it into a non-React module-level helper if needed. No backend change. |
-| **Validator verdict** | N5 TRUE |
+The cache logic was extracted from `usePropertyKeysCache` into a non-React module-level helper at `src/lib/property-keys-cache.ts`; the hook is now a thin React adapter. `searchPropertyKeys` calls `getPropertyKeys()` once across multiple keystrokes (load-bearing test pins this).
 
-### 2.6 `list_property_defs` consumers fetch the whole vocabulary to read one key
+### ~~2.6 `list_property_defs` consumers fetch the whole vocabulary to read one key~~ — shipped session 689
 
-| What | Detail |
-| --- | --- |
-| **FE** | `src/hooks/useAppBootRecovery.ts:62-83` (looks up `priority`); `src/hooks/usePropertyDefForEdit.ts:45-67` (single key). |
-| **Backend** | No `get_property_def` exists. Two private single-key SELECTs already inside `properties.rs` (`:627`, `:719`) prove the shape. |
-| **Recommendation** | **CREATE** `get_property_def(key) -> Option<PropertyDefinition>` — one PK SELECT. |
-| **Validator verdict** | I7 TRUE |
+`get_property_def(key) -> Option<PropertyDefinition>` (single PK SELECT) added. `useAppBootRecovery` (priority lookup) and `usePropertyDefForEdit` migrated. The full-vocabulary `list_property_defs` stays for legitimate consumers (PropertyDefinitionsList, PagePropertyTable, BlockPropertyDrawer, QueryBuilderModal).
 
 ### 2.7 Attachments: redundant batch + per-block re-fetch when batch is in scope
 
@@ -180,22 +171,13 @@ All six items landed in one batch (one PR-equivalent commit):
 | **Recommendations** | (a) **UPDATE** `query_by_property` to accept `value_text_in: Vec<String>` and `value_date_range: Option<(String, String)>` (collapses the per-value/per-day fan-outs). <br> (b) **CREATE** `filtered_blocks_query(property_filters, tag_filters, scope, page) -> PageResponse<BlockRow>` that builds the AND in SQL via `EXISTS` subqueries. The existing `BacklinkFilter::And` resolver in `src-tauri/src/backlink/filters.rs` is a working template. |
 | **Validator verdict** | N13, N14 TRUE, I5 TRUE |
 
-### 2.11 `getConflicts({limit:100})` polled every 30s for a badge count
+### ~~2.11 `getConflicts({limit:100})` polled every 30s for a badge count~~ — shipped session 689
 
-| What | Detail |
-| --- | --- |
-| **FE** | `src/components/ViewDispatcher.tsx:81-87`, `src/hooks/useItemCount.ts:18-27` |
-| **Symptom** | Backend has no `count_conflicts`. FE materializes up to 100 full `BlockRow`s (with all columns) just to read `data.items.length`; counts >100 are masked. |
-| **Recommendation** | **CREATE** `count_conflicts(scope) -> i64`. Pair with the partial index in 3.2. |
-| **Validator verdict** | I1 TRUE |
+`count_conflicts(scope) -> i64` added; uses the `idx_blocks_conflict` partial index from Tier 3.2 (EXPLAIN test pins the planner choice). `useItemCount` now accepts both `Promise<{items}>` (legacy trash badge) and `Promise<number>` (count IPC) shapes; counts >100 regression test added.
 
-### 2.12 Boot recovery loops `flush_draft` per orphan
+### ~~2.12 Boot recovery loops `flush_draft` per orphan~~ — shipped session 689
 
-| What | Detail |
-| --- | --- |
-| **FE** | `src/hooks/useAppBootRecovery.ts:29-42` fires fire-and-forget `flushDraft(id)` per draft; each opens its own BEGIN IMMEDIATE in `drafts.rs:35`. Parallel scheduling is moot — IMMEDIATE txs serialize on the writer lock. |
-| **Recommendation** | **CREATE** `flush_all_drafts()` that loops `flush_draft_inner`'s body server-side in one IPC. Confidence: lower (impact only at boot with N orphans). |
-| **Validator verdict** | N15 TRUE |
+`flush_all_drafts() -> {flushed: i64}` added: single `BEGIN IMMEDIATE` tx covers every draft with all-or-nothing rollback (deliberate change from per-draft semantics; documented in the doc comment). The per-block `flush_draft` command is preserved for blur/window-focus-loss callers.
 
 ---
 

@@ -4,10 +4,11 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::{ReadPool, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::draft;
 use crate::error::AppError;
+use crate::materializer::Materializer;
 
 use super::*;
 
@@ -93,6 +94,147 @@ pub async fn flush_draft_inner(
     Ok(())
 }
 
+/// Result of [`flush_all_drafts_inner`]: how many drafts were processed
+/// inside the single transaction.
+///
+/// PEND-35 Tier 2.12: returned by the boot-recovery one-IPC flush so the
+/// frontend can surface a recovery toast / log line.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct FlushAllDraftsResult {
+    /// Number of drafts processed and removed from `block_drafts`.
+    /// Includes drafts that were dropped as orphans (target block missing
+    /// or soft-deleted) — anything that consumed a draft row counts.
+    pub flushed: i64,
+}
+
+/// Flush every draft in `block_drafts` inside a single `BEGIN IMMEDIATE`
+/// transaction (PEND-35 Tier 2.12).
+///
+/// Loops the body of [`flush_draft_inner`] server-side over every draft
+/// row, accumulating one `edit_block` op per live target into the same
+/// transaction. The materializer fires per-block cache tasks once the
+/// outer commit succeeds.
+///
+/// # Atomicity contract — all-or-nothing
+///
+/// This is a **deliberate change** from `flush_draft_inner`'s per-call
+/// semantics. The single tx covers every draft, so:
+///
+/// - If **any** draft's flush errors (e.g. an oversized-content
+///   `AppError::Validation`, a `prev_edit` lookup failure, a
+///   `block_drafts` DELETE error), the entire transaction rolls back —
+///   **no** drafts are flushed and **no** op_log rows are appended.
+/// - The frontend caller (boot recovery, `useAppBootRecovery`) treats
+///   any error as "log warn, continue boot"; the next user-driven
+///   `flush_draft` on a specific block is unaffected and can still
+///   succeed in isolation.
+///
+/// The alternative — savepoint-per-draft for partial recovery — was
+/// considered and rejected per the PEND-35 audit: this command only
+/// fires at boot with a small N of orphans, and a savepoint loop would
+/// re-introduce the per-draft round-trip cost the consolidation is
+/// designed to eliminate.
+///
+/// # Per-draft behaviour
+///
+/// Mirrors [`flush_draft_inner`] modulo the surrounding tx:
+///
+/// - **H-12b: oversized content** — propagates `AppError::Validation`,
+///   which rolls back the entire batch. The user can edit the offender
+///   down and the next boot retries.
+/// - **H-12a: target block missing or soft-deleted** — the orphan draft
+///   row is deleted in the same tx with a `warn` log, and the loop
+///   continues to the next draft. No op_log row is appended for the
+///   orphan.
+/// - **Happy path** — appends one `edit_block` op (with a `prev_edit`
+///   chained from the most-recent `edit_block`/`create_block` for that
+///   block) and deletes the draft row.
+///
+/// Returns the number of draft rows processed (= number of drafts that
+/// existed when the tx opened — the H-12a branch still counts toward
+/// `flushed` because the draft row itself was consumed).
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn flush_all_drafts_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<FlushAllDraftsResult, AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "flush_all_drafts").await?;
+
+    // 1. Read every draft inside the same tx. Ordering is stable
+    //    (`updated_at ASC`) so the `edit_block` ops land in a
+    //    deterministic sequence — useful when correlating boot-recovery
+    //    logs with op_log entries after the fact.
+    let drafts =
+        sqlx::query!("SELECT block_id, content FROM block_drafts ORDER BY updated_at ASC",)
+            .fetch_all(&mut **tx)
+            .await?;
+
+    let mut flushed: i64 = 0;
+
+    for row in drafts {
+        let block_id = row.block_id;
+        let content = row.content;
+
+        // H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops
+        // `tx` without commit, so every draft row stays — the user can
+        // edit the offender down and retry on next boot. All-or-nothing
+        // by design (see doc comment).
+        if content.len() > super::MAX_CONTENT_LENGTH {
+            return Err(AppError::Validation(format!(
+                "draft content {} exceeds maximum {}",
+                content.len(),
+                super::MAX_CONTENT_LENGTH,
+            )));
+        }
+
+        // H-12a: verify the target block exists and is not soft-deleted.
+        // If absent, drop the orphan draft inside the same tx and skip
+        // the op append — same shape as `flush_draft_inner` modulo the
+        // shared tx.
+        let target_alive = sqlx::query!(
+            "SELECT id FROM blocks WHERE id = ? AND deleted_at IS NULL",
+            block_id,
+        )
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some();
+        if !target_alive {
+            sqlx::query("DELETE FROM block_drafts WHERE block_id = ?")
+                .bind(&block_id)
+                .execute(&mut **tx)
+                .await?;
+            tracing::warn!(
+                block_id = %block_id,
+                "flush_all_drafts: target block missing or soft-deleted; dropped orphan draft"
+            );
+            flushed += 1;
+            continue;
+        }
+
+        // prev_edit lookup (same logic as `flush_draft_inner` step 4) on
+        // the outer tx. `find_prev_edit_in_tx` takes `&mut SqliteConnection`,
+        // so deref through the `CommandTx` (`*tx`) and the inner
+        // `Transaction` (`**tx`).
+        let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, &block_id).await?;
+
+        // Append the edit_block op + delete the draft row, on the outer
+        // tx. `flush_draft_in_tx` returns the `OpRecord` so we can
+        // queue it for post-commit dispatch. Signature takes
+        // `&mut Transaction<'_, Sqlite>`, so deref one level (`*tx`).
+        let record =
+            draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, prev_edit).await?;
+        tx.enqueue_background(record);
+        flushed += 1;
+    }
+
+    // Single commit covers every flushed draft. Materializer fans out
+    // per-block cache tasks in enqueue (= updated_at) order.
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(FlushAllDraftsResult { flushed })
+}
+
 /// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
@@ -118,6 +260,22 @@ pub async fn flush_draft(
     block_id: String,
 ) -> Result<(), AppError> {
     flush_draft_inner(&pool.0, device_id.as_str(), block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
+/// Delegates to [`flush_all_drafts_inner`]. See that function's doc
+/// comment for the all-or-nothing atomicity contract.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn flush_all_drafts(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+) -> Result<FlushAllDraftsResult, AppError> {
+    flush_all_drafts_inner(&pool.0, device_id.as_str(), &materializer)
         .await
         .map_err(sanitize_internal_error)
 }

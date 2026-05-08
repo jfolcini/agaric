@@ -81,7 +81,8 @@ pub use compaction::{
     get_compaction_status_inner, CompactionResult, CompactionStatus, PageLink, RestoreToOpResult,
 };
 pub use drafts::{
-    delete_draft, flush_draft, flush_draft_inner, list_drafts, list_drafts_inner, save_draft,
+    delete_draft, flush_all_drafts, flush_all_drafts_inner, flush_draft, flush_draft_inner,
+    list_drafts, list_drafts_inner, save_draft, FlushAllDraftsResult,
 };
 pub use gcal::{
     disconnect_gcal, disconnect_gcal_inner, force_gcal_resync, force_gcal_resync_inner,
@@ -121,19 +122,19 @@ pub use pages::{
 pub use properties::{
     create_property_def, create_property_def_inner, delete_property, delete_property_def,
     delete_property_def_inner, delete_property_inner, get_batch_properties,
-    get_batch_properties_inner, get_properties, get_properties_inner, list_property_defs,
-    list_property_defs_inner, list_property_keys, list_property_keys_inner, set_due_date,
-    set_due_date_inner, set_priority, set_priority_inner, set_property, set_property_inner,
-    set_scheduled_date, set_scheduled_date_inner, set_todo_state, set_todo_state_inner,
-    update_property_def_options, update_property_def_options_inner,
+    get_batch_properties_inner, get_properties, get_properties_inner, get_property_def,
+    get_property_def_inner, list_property_defs, list_property_defs_inner, list_property_keys,
+    list_property_keys_inner, set_due_date, set_due_date_inner, set_priority, set_priority_inner,
+    set_property, set_property_inner, set_scheduled_date, set_scheduled_date_inner, set_todo_state,
+    set_todo_state_inner, update_property_def_options, update_property_def_options_inner,
 };
 pub use queries::{
-    count_backlinks_batch, count_backlinks_batch_inner, get_backlinks, get_backlinks_inner,
-    get_conflicts, get_conflicts_inner, get_status, get_status_inner, list_backlinks_grouped,
-    list_backlinks_grouped_inner, list_unfinished_tasks, list_unfinished_tasks_inner,
-    list_unlinked_references, list_unlinked_references_inner, query_backlinks_filtered,
-    query_backlinks_filtered_inner, query_by_property, query_by_property_inner, search_blocks,
-    search_blocks_inner,
+    count_backlinks_batch, count_backlinks_batch_inner, count_conflicts, count_conflicts_inner,
+    get_backlinks, get_backlinks_inner, get_conflicts, get_conflicts_inner, get_status,
+    get_status_inner, list_backlinks_grouped, list_backlinks_grouped_inner, list_unfinished_tasks,
+    list_unfinished_tasks_inner, list_unlinked_references, list_unlinked_references_inner,
+    query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
+    query_by_property_inner, search_blocks, search_blocks_inner,
 };
 pub use spaces::{
     create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,
@@ -181,8 +182,8 @@ pub use bug_report::{
 pub use compaction::{__specta__fn__compact_op_log_cmd, __specta__fn__get_compaction_status};
 #[doc(hidden)]
 pub use drafts::{
-    __specta__fn__delete_draft, __specta__fn__flush_draft, __specta__fn__list_drafts,
-    __specta__fn__save_draft,
+    __specta__fn__delete_draft, __specta__fn__flush_all_drafts, __specta__fn__flush_draft,
+    __specta__fn__list_drafts, __specta__fn__save_draft,
 };
 #[doc(hidden)]
 pub use gcal::{
@@ -222,18 +223,18 @@ pub use pages::{
 pub use properties::{
     __specta__fn__create_property_def, __specta__fn__delete_property,
     __specta__fn__delete_property_def, __specta__fn__get_batch_properties,
-    __specta__fn__get_properties, __specta__fn__list_property_defs,
+    __specta__fn__get_properties, __specta__fn__get_property_def, __specta__fn__list_property_defs,
     __specta__fn__list_property_keys, __specta__fn__set_due_date, __specta__fn__set_priority,
     __specta__fn__set_property, __specta__fn__set_scheduled_date, __specta__fn__set_todo_state,
     __specta__fn__update_property_def_options,
 };
 #[doc(hidden)]
 pub use queries::{
-    __specta__fn__count_backlinks_batch, __specta__fn__get_backlinks, __specta__fn__get_conflicts,
-    __specta__fn__get_status, __specta__fn__list_backlinks_grouped,
-    __specta__fn__list_unfinished_tasks, __specta__fn__list_unlinked_references,
-    __specta__fn__query_backlinks_filtered, __specta__fn__query_by_property,
-    __specta__fn__search_blocks,
+    __specta__fn__count_backlinks_batch, __specta__fn__count_conflicts,
+    __specta__fn__get_backlinks, __specta__fn__get_conflicts, __specta__fn__get_status,
+    __specta__fn__list_backlinks_grouped, __specta__fn__list_unfinished_tasks,
+    __specta__fn__list_unlinked_references, __specta__fn__query_backlinks_filtered,
+    __specta__fn__query_by_property, __specta__fn__search_blocks,
 };
 #[doc(hidden)]
 pub use spaces::{
@@ -275,7 +276,10 @@ pub use bug_report::{__cmd__collect_bug_report_metadata, __cmd__read_logs_for_re
 #[doc(hidden)]
 pub use compaction::{__cmd__compact_op_log_cmd, __cmd__get_compaction_status};
 #[doc(hidden)]
-pub use drafts::{__cmd__delete_draft, __cmd__flush_draft, __cmd__list_drafts, __cmd__save_draft};
+pub use drafts::{
+    __cmd__delete_draft, __cmd__flush_all_drafts, __cmd__flush_draft, __cmd__list_drafts,
+    __cmd__save_draft,
+};
 #[doc(hidden)]
 pub use gcal::{
     __cmd__disconnect_gcal, __cmd__force_gcal_resync, __cmd__get_gcal_status,
@@ -309,15 +313,17 @@ pub use pages::{
 #[doc(hidden)]
 pub use properties::{
     __cmd__create_property_def, __cmd__delete_property, __cmd__delete_property_def,
-    __cmd__get_batch_properties, __cmd__get_properties, __cmd__list_property_defs,
-    __cmd__list_property_keys, __cmd__set_due_date, __cmd__set_priority, __cmd__set_property,
-    __cmd__set_scheduled_date, __cmd__set_todo_state, __cmd__update_property_def_options,
+    __cmd__get_batch_properties, __cmd__get_properties, __cmd__get_property_def,
+    __cmd__list_property_defs, __cmd__list_property_keys, __cmd__set_due_date, __cmd__set_priority,
+    __cmd__set_property, __cmd__set_scheduled_date, __cmd__set_todo_state,
+    __cmd__update_property_def_options,
 };
 #[doc(hidden)]
 pub use queries::{
-    __cmd__count_backlinks_batch, __cmd__get_backlinks, __cmd__get_conflicts, __cmd__get_status,
-    __cmd__list_backlinks_grouped, __cmd__list_unfinished_tasks, __cmd__list_unlinked_references,
-    __cmd__query_backlinks_filtered, __cmd__query_by_property, __cmd__search_blocks,
+    __cmd__count_backlinks_batch, __cmd__count_conflicts, __cmd__get_backlinks,
+    __cmd__get_conflicts, __cmd__get_status, __cmd__list_backlinks_grouped,
+    __cmd__list_unfinished_tasks, __cmd__list_unlinked_references, __cmd__query_backlinks_filtered,
+    __cmd__query_by_property, __cmd__search_blocks,
 };
 #[doc(hidden)]
 pub use spaces::{__cmd__create_page_in_space, __cmd__create_space, __cmd__list_spaces};

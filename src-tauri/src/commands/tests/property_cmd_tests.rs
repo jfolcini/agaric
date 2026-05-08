@@ -4951,3 +4951,44 @@ async fn set_is_space_to_invalid_value_returns_error_m90() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// PEND-35 Tier 2.6 — get_property_def (single-key PK lookup)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_property_def_returns_some_for_existing_key() {
+    let (pool, _dir) = test_pool().await;
+
+    create_property_def_inner(
+        &pool,
+        "severity".into(),
+        "select".into(),
+        Some(r#"["low","medium","high"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    let def = get_property_def_inner(&pool, "severity")
+        .await
+        .unwrap()
+        .expect("seeded definition should be returned");
+
+    assert_eq!(def.key, "severity");
+    assert_eq!(def.value_type, "select");
+    assert_eq!(def.options.as_deref(), Some(r#"["low","medium","high"]"#));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_property_def_returns_none_for_missing_key() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = get_property_def_inner(&pool, "definitely-not-a-real-key")
+        .await
+        .unwrap();
+
+    assert!(
+        result.is_none(),
+        "missing key must surface as Ok(None), got {result:?}"
+    );
+}
