@@ -1,5 +1,18 @@
 # PEND-06 — Tauri 2 `Channel<T>` adoption for streaming progress
 
+> **Status (Tier 1, sync progress):** Phase 1 shipped in 0.1.18
+> (`Channel<SyncProgressUpdate>` wired through `start_sync` →
+> `SyncScheduler` → `try_sync_with_peer` → `ChannelEventSink`, with
+> `app.emit('sync:progress')` kept in lockstep as a migration runway).
+> Phase 2 landed on main in commit `0da059a7` (drops the
+> `sync:progress` dual-emission and the matching `useSyncEvents`
+> listener; ships in 0.1.19+). `Complete` and `Error` events still
+> dual-emit because the inner sink's listeners carry post-sync side
+> effects the channel-stream callback does not duplicate.
+>
+> **Tier 2 (file transfer streaming) — not started.** Independent of
+> Tier 1; tracked in this same plan file.
+
 ## What `Channel<T>` is
 
 Tauri 2's `tauri::ipc::Channel<T>` enables **bidirectional streaming** from backend to frontend within a single IPC invocation. Unlike `app.emit("event-name", payload)` (fire-and-forget, requires a separate listener registration on the frontend), a `Channel` is passed as a command parameter, held open for the duration of the operation, and lets the backend send multiple typed messages through it. The frontend awaits the command's completion while receiving progress updates on the same logical connection. Two upsides over `app.emit`:
