@@ -23,7 +23,7 @@
 import { lazy, type ReactElement, Suspense, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useItemCount } from '../hooks/useItemCount'
-import { getConflicts, listBlocks } from '../lib/tauri'
+import { countConflicts, listBlocks } from '../lib/tauri'
 import { useNavigationStore, type View } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
 import { type PageEntry, selectPageStack, useTabsStore } from '../stores/tabs'
@@ -78,11 +78,23 @@ export function useHeaderLabel(): string {
   return item ? t(item.labelKey) : ''
 }
 
-/** Returns the number of unresolved conflicts. Polls every 30 s and on focus. */
+/** Returns the number of unresolved conflicts. Polls every 30 s and on focus.
+ *
+ * PEND-35 Tier 2.11 — calls `countConflicts` (a single `SELECT COUNT(*)`)
+ * instead of paginating `getConflicts({limit:100})` and reading
+ * `.items.length`. The old shape materialised up to 100 full
+ * `BlockRow`s every 30 s for one integer and silently capped the badge
+ * at 100; the new IPC reflects the true count regardless of magnitude.
+ *
+ * `currentSpaceId` scopes the count to the active space so the badge
+ * matches what `ConflictList` actually renders (which is itself
+ * conflict-list-scoped — see `getConflicts` callers downstream).
+ */
 export function useConflictCount(): number {
   const currentView = useNavigationStore((s) => s.currentView)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have resolved conflicts)
-  const queryFn = useCallback(() => getConflicts({ limit: 100 }), [currentView])
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view or space changes (user may have resolved conflicts / switched spaces)
+  const queryFn = useCallback(() => countConflicts(currentSpaceId), [currentView, currentSpaceId])
   return useItemCount(queryFn, 30_000)
 }
 

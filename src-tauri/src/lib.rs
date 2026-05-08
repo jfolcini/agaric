@@ -102,6 +102,7 @@ macro_rules! agaric_commands {
             $crate::commands::list_unlinked_references,
             $crate::commands::list_property_keys,
             $crate::commands::create_property_def,
+            $crate::commands::get_property_def,
             $crate::commands::list_property_defs,
             $crate::commands::update_property_def_options,
             $crate::commands::delete_property_def,
@@ -122,6 +123,9 @@ macro_rules! agaric_commands {
             $crate::commands::count_agenda_batch,
             $crate::commands::count_agenda_batch_by_source,
             $crate::commands::count_backlinks_batch,
+            // PEND-35 Tier 2.11 — count-only conflicts badge (vs. paginating
+            // `get_conflicts({limit:100})` every 30 s just for `.items.length`)
+            $crate::commands::count_conflicts,
             // Page aliases (#598)
             $crate::commands::set_page_aliases,
             $crate::commands::get_page_aliases,
@@ -146,6 +150,7 @@ macro_rules! agaric_commands {
             // Draft autosave (F-17)
             $crate::commands::save_draft,
             $crate::commands::flush_draft,
+            $crate::commands::flush_all_drafts,
             $crate::commands::delete_draft,
             $crate::commands::list_drafts,
             // Frontend logging (F-19)

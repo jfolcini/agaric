@@ -679,6 +679,33 @@ pub async fn list_property_defs_inner(
     })
 }
 
+/// PEND-35 Tier 2.6 — fetch a single property definition by primary
+/// key. Returns `Ok(None)` when no row exists for `key` (callers like
+/// `useAppBootRecovery` treat the missing-priority-def case as "use
+/// the default level set" rather than an error).
+///
+/// The SQL shape mirrors the existing single-key `SELECT` already used
+/// inside [`create_property_def_inner`] (post-INSERT readback) and
+/// [`update_property_def_options_inner`] (existing-row probe) — both
+/// fetch the same four columns from `property_definitions WHERE key =
+/// ?`. Two FE call sites previously called `list_property_defs` (the
+/// full vocabulary) just to read one well-known key; the dedicated PK
+/// SELECT collapses that O(N) wire payload to one row.
+#[instrument(skip(pool), err)]
+pub async fn get_property_def_inner(
+    pool: &SqlitePool,
+    key: &str,
+) -> Result<Option<PropertyDefinition>, AppError> {
+    let row = sqlx::query_as!(
+        PropertyDefinition,
+        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        key
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 /// Update the options array for a select-type definition.
 /// Returns error if the key doesn't exist or isn't select-type.
 ///
@@ -1096,6 +1123,20 @@ pub async fn list_property_defs(
     limit: Option<i64>,
 ) -> Result<pagination::PageResponse<PropertyDefinition>, AppError> {
     list_property_defs_inner(&read_pool.0, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: fetch a single property definition by key (PEND-35 Tier 2.6).
+/// Delegates to [`get_property_def_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_property_def(
+    read_pool: State<'_, ReadPool>,
+    key: String,
+) -> Result<Option<PropertyDefinition>, AppError> {
+    get_property_def_inner(&read_pool.0, &key)
         .await
         .map_err(sanitize_internal_error)
 }

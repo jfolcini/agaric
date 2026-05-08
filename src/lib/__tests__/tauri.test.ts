@@ -24,6 +24,7 @@ import {
   countAgendaBatch,
   countAgendaBatchBySource,
   countBacklinksBatch,
+  countConflicts,
   createBlock,
   createPageInSpace,
   createPropertyDef,
@@ -36,6 +37,7 @@ import {
   editBlock,
   exportPageMarkdown,
   fetchLinkMetadata,
+  flushAllDrafts,
   flushDraft,
   getBacklinks,
   getBatchAttachmentCounts,
@@ -51,6 +53,7 @@ import {
   getPageAliases,
   getPeerRef,
   getProperties,
+  getPropertyDef,
   getStatus,
   importMarkdown,
   listAttachments,
@@ -1801,6 +1804,41 @@ describe('countBacklinksBatch', () => {
 })
 
 // ---------------------------------------------------------------------------
+// countConflicts (PEND-35 Tier 2.11)
+// ---------------------------------------------------------------------------
+
+describe('countConflicts', () => {
+  it('invokes count_conflicts with a global scope when spaceId is omitted', async () => {
+    mockedInvoke.mockResolvedValueOnce(7)
+    const result = await countConflicts()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('count_conflicts', {
+      scope: { kind: 'global' },
+    })
+    // Round-trip: the wrapper unwraps `commands.countConflicts` and
+    // surfaces the raw integer to the caller (the conflicts-tab badge).
+    expect(result).toBe(7)
+  })
+
+  it('forwards spaceId as an active scope to the binding', async () => {
+    mockedInvoke.mockResolvedValueOnce(3)
+    const result = await countConflicts('SPACE_42')
+
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
+    expect(result).toBe(3)
+  })
+
+  it('treats null spaceId as global (cross-space)', async () => {
+    mockedInvoke.mockResolvedValueOnce(0)
+    await countConflicts(null)
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['scope']).toEqual({ kind: 'global' })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // setScheduledDate
 // ---------------------------------------------------------------------------
 
@@ -2061,6 +2099,37 @@ describe('listPropertyDefs', () => {
       limit: 10,
     })
     expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getPropertyDef (PEND-35 Tier 2.6)
+// ---------------------------------------------------------------------------
+
+describe('getPropertyDef', () => {
+  it('invokes get_property_def with the requested key and unwraps the row', async () => {
+    const expected = {
+      key: 'priority',
+      value_type: 'select',
+      options: '["1","2","3"]',
+      created_at: '2025-01-15T00:00:00Z',
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getPropertyDef('priority')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property_def', { key: 'priority' })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns null when the backend has no row for the key', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    const result = await getPropertyDef('nope')
+
+    expect(result).toBeNull()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property_def', { key: 'nope' })
   })
 })
 
@@ -2670,6 +2739,31 @@ describe('flushDraft', () => {
 })
 
 // ---------------------------------------------------------------------------
+// flushAllDrafts (PEND-35 Tier 2.12)
+// ---------------------------------------------------------------------------
+
+describe('flushAllDrafts', () => {
+  it('invokes flush_all_drafts with no arguments and returns the FlushAllDraftsResult', async () => {
+    const expected = { flushed: 5 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await flushAllDrafts()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('flush_all_drafts')
+    expect(result).toEqual(expected)
+  })
+
+  it('returns flushed: 0 on a clean boot (no orphan drafts)', async () => {
+    mockedInvoke.mockResolvedValueOnce({ flushed: 0 })
+
+    const result = await flushAllDrafts()
+
+    expect(result).toEqual({ flushed: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // deleteDraft
 // ---------------------------------------------------------------------------
 
@@ -3159,6 +3253,7 @@ describe('cross-cutting', () => {
     await listUnlinkedReferences({ pageId: 'id' })
     await listPropertyKeys()
     await createPropertyDef({ key: 'k', valueType: 'text' })
+    await getPropertyDef('k')
     await listPropertyDefs()
     await updatePropertyDefOptions('k', '[]')
     await deletePropertyDef('k')
@@ -3219,6 +3314,7 @@ describe('cross-cutting', () => {
       'list_unlinked_references',
       'list_property_keys',
       'create_property_def',
+      'get_property_def',
       'list_property_defs',
       'update_property_def_options',
       'delete_property_def',

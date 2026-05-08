@@ -536,6 +536,34 @@ export const HANDLERS: Record<string, Handler> = {
     return { items, next_cursor: null, has_more: false }
   },
 
+  count_conflicts: (args) => {
+    // PEND-35 Tier 2.11 — mirror `count_conflicts_inner`'s SQL shape so
+    // mock-mode FE tests observe the same scoped count the real backend
+    // produces. Pull the active spaceId out of `{ kind, space_id }`,
+    // fall back to `null` (cross-space, legacy) for `Global`. Matches
+    // the `count_backlinks_batch` handler.
+    const a = (args ?? {}) as Record<string, unknown>
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    let count = 0
+    for (const b of blocks.values()) {
+      if (b['is_conflict'] !== true) continue
+      if (b['deleted_at']) continue
+      if (spaceId !== null) {
+        // Active-space scoping: drop conflicts whose owning page
+        // (resolved via `page_id`, falling back to the block's own id
+        // if it IS a page) doesn't carry `space = <spaceId>`. Matches
+        // the SQL `COALESCE(b.page_id, b.id) IN (... space ...)` used
+        // by `count_conflicts_inner`.
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) continue
+      }
+      count += 1
+    }
+    return count
+  },
+
   search_blocks: (args) => {
     const a = args as Record<string, unknown>
     const query = (a['query'] as string) ?? ''
@@ -636,6 +664,15 @@ export const HANDLERS: Record<string, Handler> = {
       scheduled_date: 'date',
     }
     const rowKind = ROW_FIELD_KEYS[key]
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this
+    // predicate mirrors the SQL evaluation order from
+    // `pagination/properties.rs::query_by_property` so the mock's
+    // observable behaviour matches the backend across reserved-key /
+    // non-reserved / row-fallback branches plus the four pushed-down
+    // filters (excludeParentId, contentNonEmpty, blockType, value_text/
+    // valueTextIn, valueDate/valueDateRange). Splitting this into helpers
+    // would make the SQL→TS correspondence harder to audit and would
+    // duplicate the keep/drop signal across multiple closures.
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       // Push-down filters short-circuit before the property lookup so
@@ -1359,6 +1396,13 @@ export const HANDLERS: Record<string, Handler> = {
     has_more: false,
   }),
 
+  // PEND-35 Tier 2.6 — single-key PK lookup. Returns the entry or null.
+  get_property_def: (args) => {
+    const a = args as Record<string, unknown>
+    const key = a['key'] as string
+    return propertyDefs.get(key) ?? null
+  },
+
   update_property_def_options: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
@@ -1632,6 +1676,11 @@ export const HANDLERS: Record<string, Handler> = {
   delete_draft: returnNull,
 
   list_drafts: returnEmptyArray,
+
+  // PEND-35 Tier 2.12 — boot recovery uses a single IPC. The mock has
+  // no in-memory drafts map (existing `list_drafts: returnEmptyArray`
+  // is the canonical source-of-truth shape), so `flushed` is always 0.
+  flush_all_drafts: () => ({ flushed: 0 }),
 
   // ---------------------------------------------------------------------------
   // Peer address

@@ -247,10 +247,13 @@ describe('useConflictCount', () => {
     vi.useRealTimers()
   })
 
-  it('polls get_conflicts every 30 s', async () => {
+  // PEND-35 Tier 2.11 — `useConflictCount` now polls `count_conflicts`
+  // (a single `SELECT COUNT(*)`) instead of `get_conflicts({limit:100})`
+  // + `.items.length`. The old shape silently capped the badge at 100;
+  // the new IPC returns a plain integer.
+  it('polls count_conflicts every 30 s', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_conflicts')
-        return { items: [{ id: 'c1' }, { id: 'c2' }], next_cursor: null, has_more: false }
+      if (cmd === 'count_conflicts') return 2
       return emptyPage
     })
 
@@ -260,8 +263,8 @@ describe('useConflictCount', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
-    expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', expect.any(Object))
-    const initialCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_conflicts').length
+    expect(mockedInvoke).toHaveBeenCalledWith('count_conflicts', expect.any(Object))
+    const initialCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'count_conflicts').length
     expect(initialCalls).toBe(1)
     expect(result.current).toBe(2)
 
@@ -269,8 +272,26 @@ describe('useConflictCount', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000)
     })
-    const afterTickCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_conflicts').length
+    const afterTickCalls = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'count_conflicts',
+    ).length
     expect(afterTickCalls).toBe(2)
+  })
+
+  // PEND-35 Tier 2.11 audit symptom: the previous `getConflicts({limit:100})`
+  // shape masked counts > 100 because the second page was never fetched.
+  // `count_conflicts` returns the true count regardless of magnitude.
+  it('surfaces counts > 100 — regression for the silently-capped shape', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'count_conflicts') return 427
+      return emptyPage
+    })
+
+    const { result } = renderHook(() => useConflictCount())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(result.current).toBe(427)
   })
 })
 

@@ -954,30 +954,13 @@ describe('App', () => {
   // ── Conflict badge indicator ────────────────────────────────────────────
 
   describe('conflict badge indicator', () => {
-    it('shows conflict badge with count when getConflicts returns items', async () => {
+    // PEND-35 Tier 2.11 — `useConflictCount` now polls `count_conflicts`
+    // (a single `SELECT COUNT(*)`) instead of paginating
+    // `getConflicts({limit:100})` for `.items.length`. The new IPC
+    // returns a plain integer; tests mock it accordingly.
+    it('shows conflict badge with count when count_conflicts returns a positive number', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'get_conflicts') {
-          return {
-            items: [
-              {
-                id: 'CONFLICT_1',
-                block_type: 'paragraph',
-                content: 'x',
-                parent_id: null,
-                position: 0,
-              },
-              {
-                id: 'CONFLICT_2',
-                block_type: 'paragraph',
-                content: 'y',
-                parent_id: null,
-                position: 1,
-              },
-            ],
-            next_cursor: null,
-            has_more: false,
-          }
-        }
+        if (cmd === 'count_conflicts') return 2
         return emptyPage
       })
 
@@ -991,8 +974,10 @@ describe('App', () => {
       })
     })
 
-    it('hides conflict badge when getConflicts returns empty', async () => {
-      // Default mock already returns emptyPage for all commands
+    it('hides conflict badge when count_conflicts returns zero', async () => {
+      // Default mock already returns emptyPage for all commands; the
+      // hook's `data == null` fallback (and number-shape `data === 0`)
+      // both resolve to a hidden badge.
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
@@ -1006,13 +991,9 @@ describe('App', () => {
 
     it('re-polls conflicts on window focus event (#293)', async () => {
       // Initially no conflicts
-      let conflictResponse: {
-        items: Record<string, unknown>[]
-        next_cursor: null
-        has_more: boolean
-      } = emptyPage
+      let conflictCount = 0
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'get_conflicts') return conflictResponse
+        if (cmd === 'count_conflicts') return conflictCount
         return emptyPage
       })
 
@@ -1027,21 +1008,7 @@ describe('App', () => {
       })
 
       // Now conflicts appear on the backend
-      conflictResponse = {
-        items: [
-          {
-            id: 'CONFLICT_2',
-            block_type: 'paragraph',
-            content: 'y',
-            parent_id: null,
-            position: 0,
-            deleted_at: null,
-            is_conflict: true,
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-      }
+      conflictCount = 1
 
       // Dispatch focus event to trigger re-poll
       fireEvent(window, new Event('focus'))
@@ -1736,9 +1703,9 @@ describe('App', () => {
       expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
     })
 
-    it('logs warning when listDrafts fails during boot recovery', async () => {
+    it('logs warning when flushAllDrafts fails during boot recovery', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_drafts') {
+        if (cmd === 'flush_all_drafts') {
           throw new Error('Draft table locked')
         }
         return emptyPage
@@ -1754,38 +1721,8 @@ describe('App', () => {
       await waitFor(() => {
         expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
           'App',
-          'Failed to list drafts during boot recovery',
+          'Failed to flush orphaned drafts during boot recovery',
           undefined,
-          expect.any(Error),
-        )
-      })
-    })
-
-    it('logs warning when flushDraft fails during boot recovery', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_drafts') {
-          return [{ block_id: 'DRAFT_BLOCK_1', content: 'unsaved text', updated_at: '2025-01-01' }]
-        }
-        if (cmd === 'flush_draft') {
-          throw new Error('Write failed')
-        }
-        return emptyPage
-      })
-
-      render(<App />)
-
-      // App should still render normally
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      await waitFor(() => {
-        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-          'App',
-          'Failed to flush orphaned draft during boot recovery',
-          expect.objectContaining({
-            blockId: 'DRAFT_BLOCK_1',
-          }),
           expect.any(Error),
         )
       })
@@ -2118,23 +2055,17 @@ describe('App', () => {
   // options JSON and hydrates the shared priority-levels cache so badge
   // colours / sort / filter choices reflect the user's configured set.
   describe('priority levels boot load (UX-201b)', () => {
-    it('hydrates getPriorityLevels() from listPropertyDefs on mount', async () => {
+    it('hydrates getPriorityLevels() from getPropertyDef on mount', async () => {
       __resetPriorityLevelsForTests()
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_property_defs') {
-          // M-85: paginated PageResponse envelope.
+        if (cmd === 'get_property_def') {
+          // PEND-35 Tier 2.6: single-key PK lookup, returns the row directly.
           return {
-            items: [
-              {
-                key: 'priority',
-                value_type: 'select',
-                options: '["1","2","3","4"]',
-                created_at: '2025-01-01T00:00:00Z',
-              },
-            ],
-            next_cursor: null,
-            has_more: false,
+            key: 'priority',
+            value_type: 'select',
+            options: '["1","2","3","4"]',
+            created_at: '2025-01-01T00:00:00Z',
           }
         }
         return emptyPage
@@ -2151,7 +2082,7 @@ describe('App', () => {
       __resetPriorityLevelsForTests()
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+        if (cmd === 'get_property_def') return null
         return emptyPage
       })
 
@@ -2166,18 +2097,12 @@ describe('App', () => {
       __resetPriorityLevelsForTests()
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_property_defs') {
+        if (cmd === 'get_property_def') {
           return {
-            items: [
-              {
-                key: 'priority',
-                value_type: 'select',
-                options: 'not-json',
-                created_at: '2025-01-01T00:00:00Z',
-              },
-            ],
-            next_cursor: null,
-            has_more: false,
+            key: 'priority',
+            value_type: 'select',
+            options: 'not-json',
+            created_at: '2025-01-01T00:00:00Z',
           }
         }
         return emptyPage
@@ -2199,18 +2124,12 @@ describe('App', () => {
       __resetPriorityLevelsForTests()
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_property_defs') {
+        if (cmd === 'get_property_def') {
           return {
-            items: [
-              {
-                key: 'priority',
-                value_type: 'select',
-                options: '{"x":"y"}',
-                created_at: '2025-01-01T00:00:00Z',
-              },
-            ],
-            next_cursor: null,
-            has_more: false,
+            key: 'priority',
+            value_type: 'select',
+            options: '{"x":"y"}',
+            created_at: '2025-01-01T00:00:00Z',
           }
         }
         return emptyPage

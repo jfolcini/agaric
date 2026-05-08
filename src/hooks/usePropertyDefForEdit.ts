@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
-import { listBlocks, listPropertyDefs } from '../lib/tauri'
+import { getPropertyDef, listBlocks } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 
 export interface UsePropertyDefForEditReturn {
@@ -42,13 +42,12 @@ export function usePropertyDefForEdit(
       return
     }
     let stale = false
-    // M-85: `listPropertyDefs` is paginated. The popover is single-page-by-design —
-    // the seeded property vocabulary fits well under one page; we destructure
-    // `.items` and ignore the cursor.
-    listPropertyDefs()
-      .then(({ items: defs }) => {
+    // PEND-35 Tier 2.6: single-key PK lookup instead of paginating the
+    // entire property-definition vocabulary every time the user opens
+    // the per-block property-editor popover.
+    getPropertyDef(editingProp.key)
+      .then((def) => {
         if (stale) return
-        const def = defs.find((d) => d.key === editingProp.key)
         if (def?.value_type === 'select' && def.options) {
           try {
             setSelectOptions(JSON.parse(def.options) as string[])

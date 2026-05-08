@@ -3929,6 +3929,205 @@ async fn list_drafts_returns_all_drafts() {
 }
 
 // ======================================================================
+// PEND-35 Tier 2.12: flush_all_drafts — single-IPC boot recovery
+// ======================================================================
+
+/// No drafts → 0 flushed, no op_log rows, single tx commits cleanly.
+#[tokio::test]
+async fn flush_all_drafts_no_drafts_returns_zero() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let baseline_ops = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let result = flush_all_drafts_inner(&pool, DEV, &mat).await.unwrap();
+
+    assert_eq!(result.flushed, 0, "no drafts → flushed must be 0");
+
+    let after_ops = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_ops, baseline_ops,
+        "no-op flush must not append any op_log rows"
+    );
+
+    mat.shutdown();
+}
+
+/// Three drafts on three live blocks → exactly 3 new `edit_block` ops
+/// AND all 3 drafts deleted from `block_drafts`.
+#[tokio::test]
+async fn flush_all_drafts_writes_one_op_log_row_per_draft() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Three live blocks. M-93 FK requires the `blocks` row first.
+    let block_ids = [
+        "01HZ000000000000000FA00001",
+        "01HZ000000000000000FA00002",
+        "01HZ000000000000000FA00003",
+    ];
+    for id in block_ids {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'initial', NULL, 1)",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Seed three drafts.
+    for (i, id) in block_ids.iter().enumerate() {
+        draft::save_draft(&pool, id, &format!("flushed-content-{i}"))
+            .await
+            .unwrap();
+    }
+
+    let baseline_edit_ops: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let result = flush_all_drafts_inner(&pool, DEV, &mat).await.unwrap();
+
+    assert_eq!(result.flushed, 3, "all three drafts must be flushed");
+
+    let after_edit_ops: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        after_edit_ops - baseline_edit_ops,
+        3,
+        "exactly one edit_block op must be appended per flushed draft"
+    );
+
+    // Every draft row is gone.
+    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "all draft rows must be deleted after flush_all_drafts"
+    );
+
+    // Each block has its own edit_block op (per-block, not lumped).
+    for id in block_ids {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block' AND block_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            n, 1,
+            "block {id} must receive exactly one edit_block op from the batch"
+        );
+    }
+
+    mat.shutdown();
+}
+
+/// All-or-nothing: a single draft that errors during flush rolls back the
+/// entire batch — no op_log rows added, **no** drafts deleted.
+///
+/// Trigger: oversized content (H-12b path) on one draft. The other two
+/// drafts in the batch are perfectly valid but must remain untouched
+/// because the tx rolls back on the validation error.
+#[tokio::test]
+async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Three live blocks: two valid + one that will hold oversized content.
+    let valid_a = "01HZ000000000000000FA00010";
+    let valid_b = "01HZ000000000000000FA00011";
+    let oversized_id = "01HZ000000000000000FA00012";
+    for id in [valid_a, valid_b, oversized_id] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'initial', NULL, 1)",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Two healthy drafts via the public API.
+    draft::save_draft(&pool, valid_a, "valid content A")
+        .await
+        .unwrap();
+    draft::save_draft(&pool, valid_b, "valid content B")
+        .await
+        .unwrap();
+
+    // Third draft seeded directly with oversized content so it slips past
+    // any future cap on `save_draft`. `flush_all_drafts_inner` will hit
+    // the H-12b guard and propagate `AppError::Validation`, rolling back
+    // the outer tx.
+    let oversized = "x".repeat(crate::commands::MAX_CONTENT_LENGTH + 1);
+    sqlx::query(
+        "INSERT INTO block_drafts (block_id, content, updated_at) \
+         VALUES (?, ?, '2025-01-01T00:00:00Z')",
+    )
+    .bind(oversized_id)
+    .bind(&oversized)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let baseline_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let baseline_drafts: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(baseline_drafts, 3, "fixture must seed exactly three drafts");
+
+    let err = flush_all_drafts_inner(&pool, DEV, &mat)
+        .await
+        .expect_err("oversized draft must propagate AppError::Validation");
+    match err {
+        AppError::Validation(_) => {}
+        other => panic!("expected AppError::Validation, got {other:?}"),
+    }
+
+    // Outer tx rolled back: drafts table unchanged, no op_log rows added.
+    let after_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_ops, baseline_ops,
+        "all-or-nothing: a single draft failure must add zero op_log rows"
+    );
+    let after_drafts: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_drafts, baseline_drafts,
+        "all-or-nothing: a single draft failure must leave every draft row in place"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // Regression: move_block recursive CTEs must filter `is_conflict = 0`
 // (AGENTS.md invariant #9). Conflict copies inherit `parent_id` from the
 // original block and would otherwise be re-parented into a moved subtree

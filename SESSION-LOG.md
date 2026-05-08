@@ -2,11 +2,67 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 688 (Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column rewrites + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown to `query_by_property`/`query_by_tags` plus `ExtraQueryFilters` bundle to stay under specta's 10-arg ceiling). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 689 (Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 689 — PEND-35 Tier 2 small-wins (4 items): create-one-endpoint family (2026-05-08)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-08 |
+| **Subagents** | 4 build + 1 review (consolidated; backend-only changes for 3 of 4 items, no UX surface) |
+| **Items closed** | PEND-35 Tier 2.5, 2.6, 2.11, 2.12 |
+| **Items modified** | PEND-35 (2.5/2.6/2.11/2.12 sections retired; status header + TL;DR table updated) |
+| **Tests added** | +8 backend (3 flush_all_drafts, 3 count_conflicts, 2 get_property_def) / +21 frontend (9 property-keys-cache, 5 slash-commands, 7 useItemCount) |
+| **Files touched** | 18 source files |
+
+**Summary:** Closed four of the twelve Tier 2 items in one batch — the "create one new endpoint and wire one or two FE callsites" subset. Three are backend additions (`get_property_def`, `count_conflicts`, `flush_all_drafts`); the fourth (2.5) is a pure FE refactor that extracts `usePropertyKeysCache` to a non-React module-level helper so non-React callers (slash-commands.ts) can share the same in-flight dedupe + EVENT_PROPERTY_CHANGED invalidation. Two of the three new commands (`get_property_def`, `count_conflicts`) are PK / COUNT-style single-row queries whose use cases were previously paging the whole vocabulary or materializing 100 BlockRows just to read a count. The fourth (`flush_all_drafts`) collapses N writer-lock-serialized IMMEDIATE transactions into one — deliberate all-or-nothing rollback contract documented in the doc comment.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND-35 audit, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src-tauri/src/commands/properties.rs` — `get_property_def_inner` + Tauri wrapper (single PK SELECT against `property_definitions`)
+- `src-tauri/src/commands/queries.rs` — `count_conflicts_inner` + Tauri wrapper (uses `idx_blocks_conflict` from Tier 3.2)
+- `src-tauri/src/commands/drafts.rs` — `flush_all_drafts_inner` + Tauri wrapper + `FlushAllDraftsResult` struct (one BEGIN IMMEDIATE tx, all-or-nothing rollback)
+- `src-tauri/src/commands/mod.rs` — re-exports for the 3 new commands + their `__cmd__` / `__specta__fn__` symbols
+- `src-tauri/src/lib.rs` — `agaric_commands!` macro registers the 3 new commands
+- `src-tauri/src/commands/tests/{property_cmd_tests,query_cmd_tests,block_cmd_tests}.rs` — 8 new backend tests including atomic-rollback (oversized-content trigger) and EXPLAIN-QUERY-PLAN pin
+- `src-tauri/.sqlx/` — 1 new entry for `flush_all_drafts`'s draft enumeration query
+- `src/lib/property-keys-cache.ts` (new) — module-level cache, in-flight dedupe, subscriber set, lazy listener registration; exports `getPropertyKeys` for non-React callers
+- `src/hooks/usePropertyKeysCache.ts` — reduced to React adapter over the module primitives via `useSyncExternalStore`; backwards-compat re-exports preserved
+- `src/lib/slash-commands.ts` — `searchPropertyKeys` calls `getPropertyKeys()` from the cache module instead of `listPropertyKeys()` per keystroke
+- `src/lib/tauri.ts` — `getPropertyDef`, `countConflicts`, `flushAllDrafts` wrappers
+- `src/lib/bindings.ts` — regenerated by specta
+- `src/lib/tauri-mock/handlers.ts` — `get_property_def`, `count_conflicts`, `flush_all_drafts` mocks (count_conflicts honours scope.kind === 'active')
+- `src/hooks/useAppBootRecovery.ts` — `flushAllDrafts()` replaces `listDrafts` → per-draft `flushDraft` loop; `getPropertyDef('priority')` replaces `listPropertyDefs+find`
+- `src/hooks/usePropertyDefForEdit.ts` — `getPropertyDef(key)` replaces `listPropertyDefs+find`
+- `src/components/ViewDispatcher.tsx`, `src/hooks/useItemCount.ts` — `useConflictCount` calls `countConflicts(currentSpaceId)`; `useItemCount` accepts both `Promise<{items}>` and `Promise<number>` shapes
+- `src/components/__tests__/{App,SortableBlock}.test.tsx` (orchestrator-direct fix) — fixture mocks updated from `list_drafts`/`flush_draft`/`list_property_defs` (paginated envelope) to `flush_all_drafts`/`get_property_def` (single-row return)
+- `src/lib/__tests__/{tauri,property-keys-cache,slash-commands}.test.ts`, `src/hooks/__tests__/{useAppBootRecovery,usePropertyDefForEdit,useItemCount}.test.ts` — round-trip tests + IPC-call assertions including counts > 100 regression and "ONE IPC across multiple keystrokes"
+- `pending/PEND-35-tauri-command-backend-vs-frontend-audit.md` — 2.5/2.6/2.11/2.12 sections retired
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3669 tests run, 3669 passed (+8 from baseline 3661 after Tier 3).
+- `npx vitest run` — 9629 tests passed across 389 files.
+- `cd src-tauri && cargo check --benches` — clean.
+- `prek run --all-files` — pending (run at commit time).
+
+**Process notes:**
+- 4 build subagents launched in parallel (one per item). 2.5 reported in 4 minutes; 2.6 in 12 minutes; 2.11 in 21 minutes; 2.12 in 17 minutes. The longer 2.11/2.12 times reflect register-in-`agaric_commands!`-macro + specta-bindings-regen + tauri-mock-parity loops, not real complexity.
+- During 2.6 + 2.12, the subagents updated their direct test files (useAppBootRecovery.test, usePropertyDefForEdit.test, block_cmd_tests) but missed two cross-cutting integration test files: `App.test.tsx` (5 tests still mocking `list_drafts`/`flush_draft`/`list_property_defs`) and `SortableBlock.test.tsx` (14 tests using a now-stale `pageOf([def])` envelope). Orchestrator fixed these directly: rewrote App's two draft-failure tests as one `flush_all_drafts`-failure test; renamed `mockListPropertyDefs` → `mockGetPropertyDef` and used a regex pass to convert all `pageOf([def])` callsites to bare `def` (11 instances). One additional fix needed for an arg-aware mock (the test seeded a `status` def but asked for `effort` — needed `mockImplementation` instead of `mockResolvedValue`).
+- Single review subagent (instead of 2-3) — appropriate for a small batch where each item is independently small. PASS on all four items.
+
+**Lessons learned (for future sessions):**
+- Subagent prompts that say "update existing tests in `useAppBootRecovery.test.ts`" should also enumerate cross-cutting integration test files (`App.test.tsx`, `SortableBlock.test.tsx`) where the same IPC names appear. Otherwise the orchestrator must clean them up post-build, which works but extends the loop.
+- For shape-changed mock data (paginated envelope → bare object), a one-shot regex pass is faster than per-test edits when the pattern is uniform; document the regex so a reviewer can verify the conversion was mechanical.
+
+**Commit plan:** single commit.
+
+---
 ## Session 688 — PEND-35 Tier 3 (4 items): indexes + SQL anti-patterns (2026-05-08)
 
 | Metadata | Value |

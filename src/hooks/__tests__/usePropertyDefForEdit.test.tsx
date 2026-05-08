@@ -6,10 +6,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockListPropertyDefs = vi.fn()
+const mockGetPropertyDef = vi.fn()
 const mockListBlocks = vi.fn()
 vi.mock('../../lib/tauri', () => ({
-  listPropertyDefs: (...args: unknown[]) => mockListPropertyDefs(...args),
+  getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
   listBlocks: (...args: unknown[]) => mockListBlocks(...args),
 }))
 
@@ -43,8 +43,9 @@ function makePage(id: string, content: string): BlockRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // M-85: `listPropertyDefs` returns a paginated `PageResponse` envelope.
-  mockListPropertyDefs.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+  // PEND-35 Tier 2.6: single-key PK lookup; default mock returns null
+  // (no def for the requested key).
+  mockGetPropertyDef.mockResolvedValue(null)
   mockListBlocks.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 })
 
@@ -55,21 +56,15 @@ describe('usePropertyDefForEdit', () => {
     expect(result.current.isRefProp).toBe(false)
     expect(result.current.refPages).toEqual([])
     expect(result.current.refSearch).toBe('')
-    expect(mockListPropertyDefs).not.toHaveBeenCalled()
+    expect(mockGetPropertyDef).not.toHaveBeenCalled()
   })
 
   it('loads select options when value_type is select', async () => {
-    mockListPropertyDefs.mockResolvedValue({
-      items: [
-        {
-          key: 'severity',
-          value_type: 'select',
-          options: JSON.stringify(['Low', 'Medium', 'High']),
-          created_at: '2025-01-01T00:00:00Z',
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
+    mockGetPropertyDef.mockResolvedValue({
+      key: 'severity',
+      value_type: 'select',
+      options: JSON.stringify(['Low', 'Medium', 'High']),
+      created_at: '2025-01-01T00:00:00Z',
     })
 
     const editingProp = { key: 'severity', value: 'Low' }
@@ -80,20 +75,16 @@ describe('usePropertyDefForEdit', () => {
     })
     expect(result.current.isRefProp).toBe(false)
     expect(result.current.refPages).toEqual([])
+    // PEND-35 Tier 2.6: dedicated PK lookup, not a full vocabulary scan.
+    expect(mockGetPropertyDef).toHaveBeenCalledWith('severity')
   })
 
   it('loads ref pages when value_type is ref', async () => {
-    mockListPropertyDefs.mockResolvedValue({
-      items: [
-        {
-          key: 'related',
-          value_type: 'ref',
-          options: null,
-          created_at: '2025-01-01T00:00:00Z',
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
+    mockGetPropertyDef.mockResolvedValue({
+      key: 'related',
+      value_type: 'ref',
+      options: null,
+      created_at: '2025-01-01T00:00:00Z',
     })
     mockListBlocks.mockResolvedValue({
       items: [makePage('PAGE_1', 'Project A'), makePage('PAGE_2', 'Project B')],
@@ -116,8 +107,8 @@ describe('usePropertyDefForEdit', () => {
     expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: '' })
   })
 
-  it('logs a warning and clears state when listPropertyDefs rejects', async () => {
-    mockListPropertyDefs.mockRejectedValueOnce(new Error('network timeout'))
+  it('logs a warning and clears state when getPropertyDef rejects', async () => {
+    mockGetPropertyDef.mockRejectedValueOnce(new Error('network timeout'))
 
     const { result } = renderHook(() => usePropertyDefForEdit({ key: 'status', value: 'open' }))
 
@@ -133,17 +124,11 @@ describe('usePropertyDefForEdit', () => {
   })
 
   it('resets state when editingProp transitions back to null', async () => {
-    mockListPropertyDefs.mockResolvedValue({
-      items: [
-        {
-          key: 'severity',
-          value_type: 'select',
-          options: JSON.stringify(['Low', 'High']),
-          created_at: '2025-01-01T00:00:00Z',
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
+    mockGetPropertyDef.mockResolvedValue({
+      key: 'severity',
+      value_type: 'select',
+      options: JSON.stringify(['Low', 'High']),
+      created_at: '2025-01-01T00:00:00Z',
     })
 
     const editingProp: { key: string; value: string } = { key: 'severity', value: 'Low' }
