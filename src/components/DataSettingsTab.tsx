@@ -8,7 +8,7 @@
 
 import { Download, Upload } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -57,11 +57,32 @@ export function DataSettingsTab(): React.ReactElement {
   const [blocksProcessed, setBlocksProcessed] = useState(0)
   const [bytesProcessed, setBytesProcessed] = useState(0)
   const [exporting, setExporting] = useState(false)
+  // PEND-35 Tier 1.1 — stable id wires the disabled-button's
+  // `aria-describedby` to the visible "Select a space before importing"
+  // hint, so screen-reader users hear WHY the button is unactionable.
+  // The hint also fixes the mobile/touch path: the `title` attribute
+  // alone is invisible on `pointer:coarse` (no hover) and is suppressed
+  // on disabled buttons in most browsers (`pointer-events: none`).
+  const importHintId = useId()
 
   const handleFileImport = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files
       if (!files || files.length === 0) return
+
+      // PEND-35 Tier 1.1 — `import_markdown` now requires a space_id;
+      // the backend rejects empty / unknown ULIDs with
+      // `AppError::Validation`. The Choose-Files button is disabled
+      // when `currentSpaceId` is null (see the `disabled` prop below),
+      // so this branch is defensive: if some unexpected race fires the
+      // change handler before the store hydrates, we surface a toast
+      // instead of letting the IPC error bubble up.
+      const activeSpaceId = useSpaceStore.getState().currentSpaceId
+      if (activeSpaceId == null) {
+        toast.error(t('data.importSpaceNotReady'))
+        e.target.value = ''
+        return
+      }
 
       setImporting(true)
       setImportResult(null)
@@ -81,7 +102,7 @@ export function DataSettingsTab(): React.ReactElement {
         setCurrentFileName(file.name)
         try {
           const content = await file.text()
-          const result = await importMarkdown(content, file.name)
+          const result = await importMarkdown(content, file.name, activeSpaceId)
           totalBlocks += result.blocks_created
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)
@@ -169,12 +190,41 @@ export function DataSettingsTab(): React.ReactElement {
               variant="outline"
               size="sm"
               onClick={() => fileInputRef.current?.click()}
-              disabled={importing}
+              // PEND-35 Tier 1.1 — `import_markdown` now requires a
+              // valid `space_id`; gate the button on the SpaceStore
+              // having an active space so we never call the IPC with
+              // an empty string. On the rare first-boot path before
+              // hydration, `currentSpaceId` is null and the button
+              // stays disabled. The visible hint below + the `title`
+              // attribute surface WHY (the disabled button itself
+              // can't fire hover events on most browsers because
+              // `disabled:pointer-events-none`, so we don't rely on
+              // the tooltip alone).
+              disabled={importing || currentSpaceId == null}
+              title={currentSpaceId == null ? t('data.importSpaceNotReady') : undefined}
+              aria-describedby={currentSpaceId == null ? importHintId : undefined}
             >
               <Upload className="h-3.5 w-3.5" />{' '}
               {importing ? t('data.importingMessage') : t('data.importButton')}
             </Button>
           </div>
+          {currentSpaceId == null && (
+            // PEND-35 Tier 1.1 — visible inline hint on the
+            // pre-bootstrap disabled state. `role="status"` +
+            // `aria-live="polite"` so screen readers announce the
+            // reason once the SpaceStore hydration kicks the user
+            // into this branch; `aria-describedby` on the disabled
+            // Button above also points here.
+            <p
+              id={importHintId}
+              role="status"
+              aria-live="polite"
+              className="text-xs text-muted-foreground mt-2"
+              data-testid="import-space-not-ready-hint"
+            >
+              {t('data.importSpaceNotReady')}
+            </p>
+          )}
           {currentFileIndex !== null && (
             <>
               <p

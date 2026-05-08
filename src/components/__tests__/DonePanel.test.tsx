@@ -586,15 +586,18 @@ describe('DonePanel', () => {
     expect(groupHeaders[1]).toHaveTextContent(`${t('donePanel.untitled')} (1)`)
   })
 
-  // 18. Does not render blocks with empty content (UX-129)
-  it('does not render blocks with empty content', async () => {
+  // 18. PEND-35 Tier 1.5 — empty-content rejection lives in the backend
+  // now. The panel must pass `contentNonEmpty: true` on every fetch so
+  // the backend can drop those rows server-side; cursor accounting and
+  // totalCount then reflect the post-filter set authoritatively.
+  it('passes contentNonEmpty: true so the backend filters empty content (UX-129)', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [
+        // Mock returns whatever the test wants; the FE no longer
+        // post-filters, so the displayed count matches what the
+        // backend returned.
         makeBlock({ id: 'B1', content: 'real done task' }),
-        makeBlock({ id: 'B2', content: null }),
-        makeBlock({ id: 'B3', content: '' }),
-        makeBlock({ id: 'B4', content: '   ' }),
-        makeBlock({ id: 'B5', content: 'another done task' }),
+        makeBlock({ id: 'B2', content: 'another done task' }),
       ],
       next_cursor: null,
       has_more: false,
@@ -602,20 +605,18 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    // Only the 2 non-empty blocks should render
     expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
-    expect(screen.getByText('real done task')).toBeInTheDocument()
-    expect(screen.getByText('another done task')).toBeInTheDocument()
-
-    // Empty / whitespace blocks should not appear
-    expect(screen.queryByText('(empty)')).not.toBeInTheDocument()
+    expect(mockedQueryByProperty).toHaveBeenCalledWith(
+      expect.objectContaining({ contentNonEmpty: true }),
+    )
   })
 
-  // 19. Excludes blocks whose parent_id matches excludePageId (B-74)
-  it('excludes blocks whose parent_id matches excludePageId', async () => {
+  // 19. PEND-35 Tier 1.5 — excludePageId is forwarded as
+  // `excludeParentId` to the backend. Cursor pagination, has_more,
+  // and totalCount now reflect the post-filter set authoritatively.
+  it('forwards excludePageId as excludeParentId to the backend (B-74)', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [
-        makeBlock({ id: 'B1', parent_id: 'PAGE_1', page_id: 'PAGE_1', content: 'same-page task' }),
         makeBlock({ id: 'B2', parent_id: 'PAGE_2', page_id: 'PAGE_2', content: 'other-page task' }),
         makeBlock({ id: 'B3', parent_id: 'PAGE_3', page_id: 'PAGE_3', content: 'third-page task' }),
       ],
@@ -629,12 +630,31 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2026-04-13" excludePageId="PAGE_1" />)
 
-    // Only the 2 non-excluded blocks should render
     expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
-    expect(screen.getByText('other-page task')).toBeInTheDocument()
-    expect(screen.getByText('third-page task')).toBeInTheDocument()
+    expect(mockedQueryByProperty).toHaveBeenCalledWith(
+      expect.objectContaining({ excludeParentId: 'PAGE_1', contentNonEmpty: true }),
+    )
+  })
 
-    // The excluded block should NOT appear
-    expect(screen.queryByText('same-page task')).not.toBeInTheDocument()
+  // 20. PEND-35 Tier 1.5 — totalCount reflects the backend response
+  // size, not a post-filter remainder. Pinning this prevents a
+  // future regression where the FE re-introduces a post-filter that
+  // would silently desync `totalCount` from `hasMore`.
+  it('totalCount reflects backend response size (no FE post-filter)', async () => {
+    mockedQueryByProperty.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'task one' }),
+        makeBlock({ id: 'B2', content: 'task two' }),
+        makeBlock({ id: 'B3', content: 'task three' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DonePanel date="2025-06-15" excludePageId="PAGE_X" />)
+
+    // Header reflects the 3 items the backend returned, even though a
+    // pre-PEND-35 build would have post-filtered some out.
+    expect(await screen.findByText(t('donePanel.header', { count: 3 }))).toBeInTheDocument()
   })
 })

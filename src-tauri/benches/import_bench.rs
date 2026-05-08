@@ -7,7 +7,7 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-use agaric_lib::commands::import_markdown_inner;
+use agaric_lib::commands::{create_space_inner, import_markdown_inner};
 use agaric_lib::db::init_pool;
 use agaric_lib::import::parse_logseq_markdown;
 use agaric_lib::materializer::Materializer;
@@ -107,12 +107,28 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
                         let pool = fresh_pool(&dir, "import").await;
                         let materializer = Materializer::new(pool.clone());
 
+                        // PEND-35 1.1: import_markdown_inner now requires a
+                        // valid space_id. Seed one per iteration via the
+                        // public `create_space_inner` API so the bench
+                        // exercises the full validated path.
+                        let space_id = create_space_inner(
+                            &pool,
+                            DEV_BENCH,
+                            &materializer,
+                            "Bench Space".into(),
+                            None,
+                        )
+                        .await
+                        .unwrap()
+                        .into_string();
+
                         let result = import_markdown_inner(
                             &pool,
                             DEV_BENCH,
                             &materializer,
                             content,
                             Some("BenchPage.md".into()),
+                            space_id,
                         )
                         .await
                         .unwrap();

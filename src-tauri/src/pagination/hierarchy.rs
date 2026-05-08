@@ -139,9 +139,22 @@ pub async fn list_by_type(
 ///
 /// Ordered by `id ASC` (ULID ≈ chronological).
 /// Returns only non-deleted blocks with `is_conflict = 1`.
+///
+/// PEND-35 Tier 1.4 — `conflict_type` and `id_min` push two formerly
+/// FE-side filters into SQL so cursor pagination stays consistent under
+/// filtering. `id_min` is a ULID lower bound (`id >= id_min`); since
+/// ULIDs are time-ordered, this doubles as a date lower-bound filter
+/// (e.g. "last 7 days"). Both arguments are `None` for the unfiltered
+/// path used by older callers.
+///
+/// Note: there is no recursive CTE here, so the `is_conflict = 0` rule
+/// for descendant walks (invariant #9) does NOT apply — this query
+/// specifically wants `is_conflict = 1`.
 pub async fn list_conflicts(
     pool: &SqlitePool,
     page: &PageRequest,
+    conflict_type: Option<&str>,
+    id_min: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
@@ -159,11 +172,15 @@ pub async fn list_conflicts(
          FROM blocks
          WHERE is_conflict = 1 AND deleted_at IS NULL
            AND (?1 IS NULL OR id > ?2)
+           AND (?4 IS NULL OR conflict_type = ?4)
+           AND (?5 IS NULL OR id >= ?5)
          ORDER BY id ASC
          LIMIT ?3"#,
-        cursor_flag, // ?1
-        cursor_id,   // ?2
-        fetch_limit, // ?3
+        cursor_flag,   // ?1
+        cursor_id,     // ?2
+        fetch_limit,   // ?3
+        conflict_type, // ?4
+        id_min,        // ?5
     )
     .fetch_all(pool)
     .await?;

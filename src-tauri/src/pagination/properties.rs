@@ -56,6 +56,7 @@ use crate::op::is_reserved_property_key;
 /// Two precedence rules in one function depending on the routing
 /// branch is a downstream-bug shape; rejecting the conflict at the
 /// boundary keeps the contract uniform.
+#[allow(clippy::too_many_arguments)]
 pub async fn query_by_property(
     pool: &SqlitePool,
     key: &str,
@@ -64,6 +65,8 @@ pub async fn query_by_property(
     operator: &str,
     page: &PageRequest,
     space_id: Option<&str>,
+    exclude_parent_id: Option<&str>,
+    content_non_empty: bool,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // L-23: reject conflicting value filters at the boundary so both
     // routing branches behave identically wrt the value-filter contract.
@@ -90,6 +93,11 @@ pub async fn query_by_property(
         _ => "=", // default to equality
     };
 
+    // PEND-35 Tier 1.5 — `content_non_empty` is bound as `0/1` so the
+    // `(?N = 0 OR …)` short-circuit produces the same plan as the
+    // pre-PEND-35 path when the filter is disabled.
+    let content_filter_flag: i64 = i64::from(content_non_empty);
+
     // FEAT-3p4 — both branches gain the `(?N IS NULL OR
     // COALESCE(b.page_id, b.id) IN (...))` space-filter clause. The
     // literal mirrors `crate::space_filter_clause!` — kept inline
@@ -97,6 +105,20 @@ pub async fn query_by_property(
     // interpolation precludes the `query_as!` macro). The `b.` alias is
     // introduced on the reserved-column branch so the same clause shape
     // applies to both queries.
+    //
+    // PEND-35 Tier 1.5 — both branches additionally gain
+    // `(?N IS NULL OR b.parent_id IS NOT ?N)` and
+    // `(?N = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != ''))`.
+    // The `IS NOT` form on `parent_id` keeps NULL parents in the
+    // result set regardless of the filter (matches the `IS ?N` shape
+    // used by `pagination::list_children`). The content filter is
+    // encoded as a `0/1` int bind so the unfiltered path (`flag = 0`)
+    // produces the same plan as pre-PEND-35. `TRIM(content, x'20090a0d')`
+    // strips space (0x20), tab (0x09), LF (0x0a), and CR (0x0d) so a
+    // whitespace-only block is treated identically to NULL / `''` —
+    // matching the legacy FE predicate `!b.content?.trim()`. SQLite's
+    // bare `TRIM()` only strips spaces, so the explicit char set is
+    // required to cover the FE-equivalent set.
     let rows = if is_reserved_property_key(key) {
         // Reserved keys live as columns on the blocks table, not in block_properties.
         // L-29: explicit Validation on a missed-update fall-through instead of
@@ -128,6 +150,8 @@ pub async fn query_by_property(
                AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                     SELECT bp.block_id FROM block_properties bp \
                     WHERE bp.key = 'space' AND bp.value_ref = ?5)) \
+               AND (?6 IS NULL OR b.parent_id IS NOT ?6) \
+               AND (?7 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
              ORDER BY b.id ASC \
              LIMIT ?4"
         );
@@ -142,6 +166,8 @@ pub async fn query_by_property(
             .bind(cursor_id)
             .bind(fetch_limit)
             .bind(space_id)
+            .bind(exclude_parent_id)
+            .bind(content_filter_flag)
             .fetch_all(pool)
             .await?
     } else {
@@ -162,6 +188,8 @@ pub async fn query_by_property(
                AND (?7 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                     SELECT bp_sp.block_id FROM block_properties bp_sp \
                     WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?7)) \
+               AND (?8 IS NULL OR b.parent_id IS NOT ?8) \
+               AND (?9 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
              ORDER BY b.id ASC \
              LIMIT ?6"
         );
@@ -173,6 +201,8 @@ pub async fn query_by_property(
             .bind(cursor_id) // ?5
             .bind(fetch_limit) // ?6
             .bind(space_id) // ?7
+            .bind(exclude_parent_id) // ?8
+            .bind(content_filter_flag) // ?9
             .fetch_all(pool)
             .await?
     };

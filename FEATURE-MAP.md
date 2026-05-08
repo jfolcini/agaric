@@ -484,7 +484,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ## 9. Import & Export
 
-- **Import**: Logseq/Markdown files as pages + blocks — available in Settings → Data tab
+- **Import**: Logseq/Markdown files as pages + blocks — available in Settings → Data tab. Requires an active space (`useSpaceStore.currentSpaceId`); the imported page's `space` ref-property is appended in the same `BEGIN IMMEDIATE` transaction as the page's `CreateBlock` op, so imported pages can never be observed without their space (FEAT-3 invariant). The Import button is disabled with a `role="status"` aria-live hint when no space is bootstrapped (PEND-35 Tier 1.1).
 - **Export page**: Markdown with resolved tag names and page titles, YAML frontmatter for properties (per-page export remains in page header menu)
 - **Export all**: ZIP of all pages as Markdown files — available in Settings → Data tab
 

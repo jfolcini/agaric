@@ -102,8 +102,10 @@ describe('HistoryPanel', () => {
     render(<HistoryPanel blockId="BLOCK001" />)
 
     await waitFor(() => {
+      // PEND-35 Tier 1.3 — `opTypeFilter` is now part of the IPC contract.
       expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
         blockId: 'BLOCK001',
+        opTypeFilter: null,
         cursor: null,
         limit: 50,
       })
@@ -274,6 +276,7 @@ describe('HistoryPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
         blockId: 'BLOCK001',
+        opTypeFilter: null,
         cursor: 'cursor_page2',
         limit: 50,
       })
@@ -292,6 +295,7 @@ describe('HistoryPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
         blockId: 'BLOCK_A',
+        opTypeFilter: null,
         cursor: null,
         limit: 50,
       })
@@ -302,6 +306,7 @@ describe('HistoryPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
         blockId: 'BLOCK_B',
+        opTypeFilter: null,
         cursor: null,
         limit: 50,
       })
@@ -444,16 +449,23 @@ describe('HistoryPanel', () => {
 
   it('filters entries by op type when filter is changed', async () => {
     const user = userEvent.setup()
-    const page = {
-      items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(2, 'create_block', { block_type: 'content' }, '2025-01-14T10:00:00Z'),
-        makeHistoryEntry(3, 'edit_block', { to_text: 'another edit' }, '2025-01-13T10:00:00Z'),
-      ],
-      next_cursor: null,
-      has_more: false,
-    }
-    setupInvokeRouter({ get_block_history: () => page })
+    // PEND-35 Tier 1.3 — the backend now applies `opTypeFilter` in SQL,
+    // so the mock returns the already-filtered set when the filter is
+    // active. This test exercises the post-filter UX (only edit_block
+    // rows visible) end-to-end through the new IPC contract.
+    const allRows = [
+      makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z'),
+      makeHistoryEntry(2, 'create_block', { block_type: 'content' }, '2025-01-14T10:00:00Z'),
+      makeHistoryEntry(3, 'edit_block', { to_text: 'another edit' }, '2025-01-13T10:00:00Z'),
+    ]
+    setupInvokeRouter({
+      get_block_history: (args) => {
+        const a = args as Record<string, unknown>
+        const filter = a['opTypeFilter'] as string | null
+        const items = filter ? allRows.filter((e) => e.op_type === filter) : allRows
+        return { items, next_cursor: null, has_more: false }
+      },
+    })
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
@@ -464,19 +476,29 @@ describe('HistoryPanel', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     await user.selectOptions(select, 'edit_block')
 
+    await waitFor(() => {
+      expect(screen.queryByText('create_block')).not.toBeInTheDocument()
+    })
     expect(screen.getByText('edited')).toBeInTheDocument()
     expect(screen.getByText('another edit')).toBeInTheDocument()
-    expect(screen.queryByText('create_block')).not.toBeInTheDocument()
   })
 
   it('shows empty state when filter produces zero results', async () => {
     const user = userEvent.setup()
-    const page = {
-      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z')],
-      next_cursor: null,
-      has_more: false,
-    }
-    setupInvokeRouter({ get_block_history: () => page })
+    // PEND-35 Tier 1.3 — empty state now comes from the backend
+    // returning an empty page (no JS post-filter), so the mock honours
+    // the `opTypeFilter` arg.
+    const allRows = [
+      makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z'),
+    ]
+    setupInvokeRouter({
+      get_block_history: (args) => {
+        const a = args as Record<string, unknown>
+        const filter = a['opTypeFilter'] as string | null
+        const items = filter ? allRows.filter((e) => e.op_type === filter) : allRows
+        return { items, next_cursor: null, has_more: false }
+      },
+    })
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
@@ -485,8 +507,72 @@ describe('HistoryPanel', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     await user.selectOptions(select, 'create_block')
 
-    expect(screen.getByText('No history for this block')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('No history for this block')).toBeInTheDocument()
+    })
     expect(screen.queryByText('edited')).not.toBeInTheDocument()
+  })
+
+  // PEND-35 Tier 1.3 — selecting a filter must trigger a refetch with
+  // `opTypeFilter` forwarded into the IPC args, NOT a JS post-filter.
+  it('passes opTypeFilter into get_block_history when the filter changes', async () => {
+    const user = userEvent.setup()
+    setupInvokeRouter({ get_block_history: () => emptyPage })
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
+        blockId: 'BLOCK001',
+        opTypeFilter: null,
+        cursor: null,
+        limit: 50,
+      })
+    })
+
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'edit_block')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
+        blockId: 'BLOCK001',
+        opTypeFilter: 'edit_block',
+        cursor: null,
+        limit: 50,
+      })
+    })
+  })
+
+  // PEND-35 Tier 1.3 regression guard — when the backend returns 50
+  // already-filtered rows, the FE must NOT drop any (no post-filter).
+  it('does not drop rows from a backend page (filter is SQL-side)', async () => {
+    // Backend simulation: 50 already-filtered rows returned for the
+    // active filter. This mirrors the real backend behaviour after the
+    // SQL-level filter lands.
+    const filteredItems = Array.from({ length: 50 }, (_, i) =>
+      makeHistoryEntry(
+        50 - i,
+        'edit_block',
+        { to_text: `edit-${50 - i}` },
+        `2025-01-${String(50 - i).padStart(2, '0')}T00:00:00Z`,
+      ),
+    )
+    setupInvokeRouter({
+      get_block_history: () => ({
+        items: filteredItems,
+        next_cursor: 'page2',
+        has_more: true,
+      }),
+    })
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    // All 50 rows render — none are silently dropped.
+    await waitFor(() => {
+      expect(screen.getAllByText('edit_block')).toHaveLength(50)
+    })
+    // Load More is shown because backend reports has_more=true.
+    expect(screen.getByRole('button', { name: /Load more/i })).toBeInTheDocument()
   })
 
   // -- Rich content rendering (B-45) ----------------------------------------

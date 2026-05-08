@@ -119,19 +119,34 @@ pub async fn get_page_aliases_inner(
 }
 
 /// Look up a page by one of its aliases. Returns `(page_id, title)` if found.
+///
+/// `scope` (PEND-35 Tier 1.2) — [`SpaceScope::Active`] restricts the
+/// match to aliases pointing at pages whose `space` property equals the
+/// wrapped [`SpaceId`]. Mirrors the
+/// `(?N IS NULL OR pa.page_id IN (SELECT bp.block_id ...))` short-circuit
+/// already used by [`list_page_aliases_by_prefix_inner`] so the alias
+/// resolver and the prefix picker apply the same scoping rule.
+/// [`SpaceScope::Global`] keeps the cross-space behaviour for callers
+/// (e.g. agent / MCP tools) that span every space.
 #[instrument(skip(pool), err)]
 pub async fn resolve_page_by_alias_inner(
     pool: &SqlitePool,
     alias: &str,
+    scope: &SpaceScope,
 ) -> Result<Option<(String, Option<String>)>, AppError> {
+    let space_filter = scope.as_filter_param();
     let result: Option<(String, Option<String>)> = sqlx::query_as(
         "SELECT pa.page_id, b.content \
          FROM page_aliases pa \
          JOIN blocks b ON b.id = pa.page_id \
          WHERE pa.alias = ?1 COLLATE NOCASE \
-           AND b.deleted_at IS NULL",
+           AND b.deleted_at IS NULL \
+           AND (?2 IS NULL OR pa.page_id IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2))",
     )
     .bind(alias)
+    .bind(space_filter)
     .fetch_optional(pool)
     .await?;
     Ok(result)
@@ -484,7 +499,15 @@ pub async fn import_markdown_inner(
     materializer: &Materializer,
     content: String,
     filename: Option<String>,
+    space_id: String,
 ) -> Result<ImportResult, AppError> {
+    // PEND-35 Tier 1.1 — normalize ULID to uppercase per AGENTS.md
+    // invariant #8. Mirrors `create_page_in_space_inner` so a raw String
+    // arg from MCP tools / sync replay / scripted imports can never land
+    // a page whose `space` ref disagrees with the case-sensitive
+    // `block_properties.value_ref` lookup downstream.
+    let space_id = space_id.to_ascii_uppercase();
+
     let parse_output = import::parse_logseq_markdown(&content);
 
     // Derive page title from filename (strip .md extension)
@@ -499,6 +522,34 @@ pub async fn import_markdown_inner(
     // transaction rolls back as a whole on first error — never partial.
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
 
+    // PEND-35 Tier 1.1 — validate `space_id` upfront inside the tx,
+    // identically to `create_page_in_space_inner`. The target must
+    // exist as a live, non-conflict block carrying `is_space = 'true'`.
+    // Inside the tx the check is TOCTOU-safe against a concurrent
+    // delete. Rejecting here means the import never partially writes a
+    // page + blocks before failing — the early `?` rolls the whole
+    // transaction back.
+    let space_ok = sqlx::query_scalar!(
+        r#"SELECT 1 as "ok: i32" FROM blocks b
+           WHERE b.id = ?
+             AND b.deleted_at IS NULL
+             AND b.is_conflict = 0
+             AND EXISTS (
+                 SELECT 1 FROM block_properties p
+                 WHERE p.block_id = b.id
+                   AND p.key = 'is_space'
+                   AND p.value_text = 'true'
+             )"#,
+        space_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if space_ok.is_none() {
+        return Err(AppError::Validation(format!(
+            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
+        )));
+    }
+
     // Create the page inside the transaction
     let (page, page_op) = create_block_in_tx(
         &mut tx,
@@ -511,6 +562,25 @@ pub async fn import_markdown_inner(
     .await?;
     tx.enqueue_background(page_op);
     let page_id = page.id.clone();
+
+    // PEND-35 Tier 1.1 — stamp the `space` ref property on the imported
+    // page. Mirrors `create_page_in_space_inner`: ops are emitted in
+    // the order (create-page → set-space) so a sync peer materializes
+    // them in the same order and never observes a page without its
+    // space property in steady state.
+    let (_page_block, page_space_op) = set_property_in_tx(
+        &mut tx,
+        device_id,
+        page_id.clone(),
+        "space",
+        None,
+        None,
+        None,
+        Some(space_id.clone()),
+        None,
+    )
+    .await?;
+    tx.enqueue_background(page_space_op);
 
     let mut blocks_created: i64 = 0;
     let mut properties_set: i64 = 0;
@@ -954,8 +1024,9 @@ pub async fn get_page_aliases(
 pub async fn resolve_page_by_alias(
     read_pool: State<'_, ReadPool>,
     alias: String,
+    scope: SpaceScope,
 ) -> Result<Option<(String, Option<String>)>, AppError> {
-    resolve_page_by_alias_inner(&read_pool.0, &alias)
+    resolve_page_by_alias_inner(&read_pool.0, &alias, &scope)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -991,12 +1062,19 @@ pub async fn export_page_markdown(
 
 /// Tauri command: import a Logseq-style markdown file as a page with
 /// block hierarchy. Delegates to [`import_markdown_inner`].
+///
+/// PEND-35 Tier 1.1 — `space_id` is required. The imported page is
+/// stamped with `space = ?space_id` inside the same transaction as the
+/// `CreateBlock` op, so an imported page can never exist in the op log
+/// without its space property (FEAT-3 invariant). Validation against a
+/// live space block happens TOCTOU-safe inside the same transaction.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn import_markdown(
     content: String,
     filename: Option<String>,
+    space_id: String,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
@@ -1007,6 +1085,7 @@ pub async fn import_markdown(
         &materializer,
         content,
         filename,
+        space_id,
     )
     .await
     .map_err(sanitize_internal_error)

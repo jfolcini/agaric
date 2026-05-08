@@ -26,6 +26,10 @@ import { logger } from '@/lib/logger'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '../lib/tauri'
+// PEND-35 Tier 1.3 — `opTypeFilter` now drives the IPC directly (mirrors
+// the global `HistoryView` path). The legacy post-pagination JS filter
+// silently dropped rows from the cursor page, so a 50-row backend page
+// of mixed op types could yield 0 visible rows.
 import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
 import { BlockHistoryItem } from './HistoryListItem'
@@ -61,6 +65,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       try {
         const resp = await getBlockHistory({
           blockId,
+          ...(opTypeFilter != null && { opTypeFilter }),
           ...(cursor != null && { cursor }),
           limit: PAGINATION_LIMIT,
         })
@@ -77,26 +82,28 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       }
       setLoading(false)
     },
-    [blockId, t],
+    // PEND-35 Tier 1.3 — `opTypeFilter` is now part of the cache key so
+    // changing the filter forces a refetch with pre-filtered SQL.
+    [blockId, opTypeFilter, t],
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when blockId changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when blockId or opTypeFilter changes
   useEffect(() => {
     setEntries([])
     setNextCursor(null)
     setHasMore(false)
     setExpandedSeq(null)
     loadHistory()
-  }, [blockId, loadHistory])
+  }, [blockId, opTypeFilter, loadHistory])
 
   const loadMore = useCallback(() => {
     if (nextCursor) loadHistory(nextCursor)
   }, [nextCursor, loadHistory])
 
-  const filteredEntries = useMemo(
-    () => (opTypeFilter ? entries.filter((e) => e.op_type === opTypeFilter) : entries),
-    [entries, opTypeFilter],
-  )
+  // PEND-35 Tier 1.3 — backend now applies `op_type_filter` in SQL, so
+  // entries arrive pre-filtered. Keep the alias to minimise diff churn
+  // in the consumers below.
+  const filteredEntries = entries
 
   // UX-275 sub-fix 4: restore is reversible — capture the current block
   // content BEFORE applying the historical version so the success toast can

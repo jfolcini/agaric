@@ -9,6 +9,7 @@ vi.mock('../../lib/tauri', () => ({
 
 import { toast } from 'sonner'
 import { countAgendaBatchBySource, countBacklinksBatch } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 import { useBatchCounts } from '../useBatchCounts'
 
 const mockedCountAgendaBatchBySource = vi.mocked(countAgendaBatchBySource)
@@ -37,6 +38,10 @@ function makeDayEntry(dateStr: string, pageId: string | null = null): DayEntry {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Reset the space store so each test starts from a clean
+  // `currentSpaceId: null` state (cross-space / Global). Tests that
+  // exercise the active-space branch set it explicitly.
+  useSpaceStore.setState({ currentSpaceId: null })
 })
 
 describe('useBatchCounts', () => {
@@ -77,7 +82,12 @@ describe('useBatchCounts', () => {
       dates: ['2025-01-06', '2025-01-07'],
       spaceId: null,
     })
-    expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({ pageIds: ['page-1', 'page-2'] })
+    // PEND-35 Tier 1.6 — spaceId must be forwarded so badge counts
+    // exclude source blocks the user can't see (cross-space).
+    expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({
+      pageIds: ['page-1', 'page-2'],
+      spaceId: null,
+    })
   })
 
   it('handles empty entries array', async () => {
@@ -168,5 +178,29 @@ describe('useBatchCounts', () => {
     expect(errSpy).not.toHaveBeenCalled()
     errSpy.mockRestore()
     hookB.unmount()
+  })
+
+  // PEND-35 Tier 1.6 — when the active space is set, both batch
+  // helpers receive that spaceId so badge counts (and agenda counts)
+  // stay scoped to what the user can see.
+  it('forwards the active spaceId to countBacklinksBatch', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_ABC' })
+
+    mockedCountAgendaBatchBySource.mockResolvedValue({})
+    mockedCountBacklinksBatch.mockResolvedValue({ 'page-1': 3 })
+
+    const entries = [makeDayEntry('2025-01-06', 'page-1')]
+    renderHook(() => useBatchCounts(entries))
+
+    await waitFor(() => {
+      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({
+        pageIds: ['page-1'],
+        spaceId: 'SPACE_ABC',
+      })
+    })
+    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith({
+      dates: ['2025-01-06'],
+      spaceId: 'SPACE_ABC',
+    })
   })
 })

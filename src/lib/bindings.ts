@@ -69,9 +69,9 @@ export const commands = {
 	// Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
 	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
 	// Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
-	getBlockHistory: (blockId: string, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("get_block_history", { blockId, cursor, limit })),
+	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
 	// Tauri command: list conflict-copy blocks. Delegates to [`get_conflicts_inner`].
-	getConflicts: (cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_conflicts", { cursor, limit })),
+	getConflicts: (cursor: string | null, limit: number | null, conflictType: string | null, idMin: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_conflicts", { cursor, limit, conflictType, idMin })),
 	// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
 	getStatus: () => typedError<StatusInfo, AppErrorSchema>(__TAURI_INVOKE("get_status")),
 	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
@@ -79,7 +79,7 @@ export const commands = {
 	// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
 	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope })),
 	// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
-	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope })),
+	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, scope: SpaceScope, excludeParentId: string | null, contentNonEmpty: boolean) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, excludeParentId, contentNonEmpty })),
 	// Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`].
 	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
 	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
@@ -214,7 +214,7 @@ export const commands = {
 	// Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`].
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
-	countBacklinksBatch: (pageIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_backlinks_batch", { pageIds })),
+	countBacklinksBatch: (pageIds: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
 	// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
 	setPageAliases: (pageId: string, aliases: string[]) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
 	// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
@@ -225,7 +225,7 @@ export const commands = {
 	 */
 	listPageAliasesByPrefix: (prefix: string, limit: number | null, scope: SpaceScope) => typedError<([string, string, string | null])[], AppErrorSchema>(__TAURI_INVOKE("list_page_aliases_by_prefix", { prefix, limit, scope })),
 	// Tauri command: resolve a page by alias. Delegates to [`resolve_page_by_alias_inner`].
-	resolvePageByAlias: (alias: string) => typedError<[string, string | null] | null, AppErrorSchema>(__TAURI_INVOKE("resolve_page_by_alias", { alias })),
+	resolvePageByAlias: (alias: string, scope: SpaceScope) => typedError<[string, string | null] | null, AppErrorSchema>(__TAURI_INVOKE("resolve_page_by_alias", { alias, scope })),
 	// Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`].
 	exportPageMarkdown: (pageId: string) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("export_page_markdown", { pageId })),
 	/**
@@ -241,8 +241,14 @@ export const commands = {
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_inner`].
+	 *
+	 *  PEND-35 Tier 1.1 — `space_id` is required. The imported page is
+	 *  stamped with `space = ?space_id` inside the same transaction as the
+	 *  `CreateBlock` op, so an imported page can never exist in the op log
+	 *  without its space property (FEAT-3 invariant). Validation against a
+	 *  live space block happens TOCTOU-safe inside the same transaction.
 	 */
-	importMarkdown: (content: string, filename: string | null) => typedError<ImportResult, AppErrorSchema>(__TAURI_INVOKE("import_markdown", { content, filename })),
+	importMarkdown: (content: string, filename: string | null, spaceId: string) => typedError<ImportResult, AppErrorSchema>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId })),
 	// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
 	addAttachment: (blockId: string, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppErrorSchema>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
 	// Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`].

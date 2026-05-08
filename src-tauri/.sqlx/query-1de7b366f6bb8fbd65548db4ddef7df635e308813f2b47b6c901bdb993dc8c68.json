@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, is_conflict as \"is_conflict: bool\",\n                conflict_type, todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks\n         WHERE is_conflict = 1 AND deleted_at IS NULL\n           AND (?1 IS NULL OR id > ?2)\n         ORDER BY id ASC\n         LIMIT ?3",
+  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, is_conflict as \"is_conflict: bool\",\n                conflict_type, todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks\n         WHERE is_conflict = 1 AND deleted_at IS NULL\n           AND (?1 IS NULL OR id > ?2)\n           AND (?4 IS NULL OR conflict_type = ?4)\n           AND (?5 IS NULL OR id >= ?5)\n         ORDER BY id ASC\n         LIMIT ?3",
   "describe": {
     "columns": [
       {
@@ -70,7 +70,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 5
     },
     "nullable": [
       false,
@@ -88,5 +88,5 @@
       true
     ]
   },
-  "hash": "6913c0bf466d5a93d769cdc170e652ef4de0a59e09f6e5f20cfa42696926cad5"
+  "hash": "1de7b366f6bb8fbd65548db4ddef7df635e308813f2b47b6c901bdb993dc8c68"
 }

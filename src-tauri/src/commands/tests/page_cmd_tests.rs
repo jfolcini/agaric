@@ -66,7 +66,9 @@ async fn set_page_aliases_replaces_existing() {
     );
 
     // Old aliases should be gone
-    let resolved = resolve_page_by_alias_inner(&pool, "Old1").await.unwrap();
+    let resolved = resolve_page_by_alias_inner(&pool, "Old1", &SpaceScope::Global)
+        .await
+        .unwrap();
     assert!(resolved.is_none(), "old alias should no longer resolve");
 }
 
@@ -138,7 +140,9 @@ async fn set_page_aliases_atomic_replaces_full_set() {
 
     // And the prior aliases must no longer resolve.
     for old in ["A", "B", "C"] {
-        let r = resolve_page_by_alias_inner(&pool, old).await.unwrap();
+        let r = resolve_page_by_alias_inner(&pool, old, &SpaceScope::Global)
+            .await
+            .unwrap();
         assert!(
             r.is_none(),
             "old alias {old} must not resolve after replace"
@@ -235,7 +239,9 @@ async fn set_page_aliases_in_transaction() {
     );
     // And the partially-attempted new aliases must not have leaked through.
     for leaked in ["C", "D", "__FAIL__"] {
-        let r = resolve_page_by_alias_inner(&pool, leaked).await.unwrap();
+        let r = resolve_page_by_alias_inner(&pool, leaked, &SpaceScope::Global)
+            .await
+            .unwrap();
         assert!(
             r.is_none(),
             "alias '{leaked}' must not be resolvable after rollback"
@@ -276,7 +282,9 @@ async fn resolve_page_by_alias_case_insensitive() {
         .unwrap();
 
     // Exact case
-    let r1 = resolve_page_by_alias_inner(&pool, "MyAlias").await.unwrap();
+    let r1 = resolve_page_by_alias_inner(&pool, "MyAlias", &SpaceScope::Global)
+        .await
+        .unwrap();
     assert!(r1.is_some(), "exact alias should resolve");
     let (pid, title) = r1.unwrap();
     assert_eq!(pid, "PAGE-5", "resolved page id should match");
@@ -287,7 +295,9 @@ async fn resolve_page_by_alias_case_insensitive() {
     );
 
     // Different case
-    let r2 = resolve_page_by_alias_inner(&pool, "myalias").await.unwrap();
+    let r2 = resolve_page_by_alias_inner(&pool, "myalias", &SpaceScope::Global)
+        .await
+        .unwrap();
     assert!(r2.is_some(), "lowercase alias should resolve");
     assert_eq!(
         r2.unwrap().0,
@@ -295,7 +305,9 @@ async fn resolve_page_by_alias_case_insensitive() {
         "lowercase should resolve to same page"
     );
 
-    let r3 = resolve_page_by_alias_inner(&pool, "MYALIAS").await.unwrap();
+    let r3 = resolve_page_by_alias_inner(&pool, "MYALIAS", &SpaceScope::Global)
+        .await
+        .unwrap();
     assert!(r3.is_some(), "uppercase alias should resolve");
     assert_eq!(
         r3.unwrap().0,
@@ -304,7 +316,7 @@ async fn resolve_page_by_alias_case_insensitive() {
     );
 
     // Non-existent alias
-    let r4 = resolve_page_by_alias_inner(&pool, "NoSuchAlias")
+    let r4 = resolve_page_by_alias_inner(&pool, "NoSuchAlias", &SpaceScope::Global)
         .await
         .unwrap();
     assert!(r4.is_none(), "non-existent alias should return None");
@@ -1106,12 +1118,22 @@ async fn export_page_markdown_inner_with_malformed_id_returns_ulid_error() {
 async fn import_markdown_creates_page_and_blocks() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    // PEND-35 Tier 1.1 — `import_markdown_inner` now requires a valid
+    // space_id. Seed the synthetic test space and stamp `is_space=true`.
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     let content = "- Block 1\n  - Child 1\n  - Child 2\n- Block 2";
-    let result =
-        import_markdown_inner(&pool, DEV, &mat, content.into(), Some("TestPage.md".into()))
-            .await
-            .unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.into(),
+        Some("TestPage.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.page_title, "TestPage",
@@ -1133,13 +1155,22 @@ async fn import_markdown_creates_page_and_blocks() {
 async fn import_markdown_handles_properties() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     // BUG-20: values must be in the seeded options:
     //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
     let content = "- Task\n  priority:: 1\n  status:: done";
-    let result = import_markdown_inner(&pool, DEV, &mat, content.into(), Some("Props.md".into()))
-        .await
-        .unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.into(),
+        Some("Props.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.blocks_created, 1,
@@ -1154,11 +1185,14 @@ async fn import_markdown_handles_properties() {
 async fn import_markdown_strips_block_refs() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     let content = "- See ((abc-123-def)) for details";
-    let result = import_markdown_inner(&pool, DEV, &mat, content.into(), None)
-        .await
-        .unwrap();
+    let result =
+        import_markdown_inner(&pool, DEV, &mat, content.into(), None, TEST_SPACE_ID.into())
+            .await
+            .unwrap();
 
     assert_eq!(
         result.blocks_created, 1,
@@ -1176,10 +1210,19 @@ async fn import_markdown_strips_block_refs() {
 async fn import_markdown_empty_content() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    let result = import_markdown_inner(&pool, DEV, &mat, "".into(), Some("Empty.md".into()))
-        .await
-        .unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "".into(),
+        Some("Empty.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.page_title, "Empty",
@@ -1203,13 +1246,22 @@ async fn import_markdown_empty_content() {
 async fn import_markdown_single_transaction() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     // BUG-20: values must be in the seeded options:
     //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
     let content = "- Parent block\n  priority:: 1\n  status:: active\n  - Child A\n  - Child B\n    - Grandchild";
-    let result = import_markdown_inner(&pool, DEV, &mat, content.into(), Some("TxTest.md".into()))
-        .await
-        .unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.into(),
+        Some("TxTest.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
 
     // Basic import stats
     assert_eq!(result.page_title, "TxTest");
@@ -1303,15 +1355,16 @@ async fn import_markdown_single_transaction() {
     assert_eq!(props[0].0, "status");
     assert_eq!(props[0].1, "active");
 
-    // Verify op_log entries: 1 page + 4 blocks + 2 properties = 7 ops
+    // Verify op_log entries: 1 page + 1 set_property(space) for the
+    // page (PEND-35 Tier 1.1) + 4 blocks + 2 properties = 8 ops
     let op_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
         .bind(DEV)
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        op_count.0, 7,
-        "op_log should have 7 entries (1 page + 4 blocks + 2 properties)"
+        op_count.0, 8,
+        "op_log should have 8 entries (1 page + 1 set_property(space) + 4 blocks + 2 properties)"
     );
 
     mat.shutdown();
@@ -1325,9 +1378,12 @@ async fn import_markdown_single_transaction() {
 async fn import_markdown_aborts_on_first_validation_error_l30() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    // Baseline: clean DB. Capture counts so the post-error assertions
-    // tolerate any seed rows the test fixture may have added.
+    // Baseline: post-seed snapshot. Includes the seeded space block +
+    // its `is_space = true` property row, so the post-error assertions
+    // compare against the seeded state rather than a strictly empty DB.
     let blocks_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
@@ -1354,6 +1410,7 @@ async fn import_markdown_aborts_on_first_validation_error_l30() {
         &mat,
         content.into(),
         Some("AbortTest.md".into()),
+        TEST_SPACE_ID.into(),
     )
     .await;
 
@@ -1405,6 +1462,254 @@ async fn import_markdown_aborts_on_first_validation_error_l30() {
     );
 
     mat.shutdown();
+}
+
+// ======================================================================
+// PEND-35 Tier 1.1 — `import_markdown_inner` stamps `space` property
+// ======================================================================
+//
+// Pre-PEND-35, `import_markdown_inner` created a page block but never
+// appended a `SetProperty(key='space', value_ref=<space>)` op. Imported
+// pages were therefore invisible to space-scoped reads
+// (`list_blocks_inner`, `get_page_inner`) and broke the FEAT-3 invariant
+// "nothing outside of spaces". The fix mirrors `create_page_in_space_inner`:
+// validate `space_id` upfront inside the same `BEGIN IMMEDIATE` tx, then
+// append the `SetProperty(space=...)` op right after the `CreateBlock` so
+// the page never lands without its space.
+
+/// PEND-35 Tier 1.1 — happy path: imported page must carry `space =
+/// ?space_id` in `block_properties`. Without the fix, the page would
+/// land with no `space` property at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_stamps_space_property() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- A simple block";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.into(),
+        Some("StampTest.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .expect("happy-path import must succeed");
+    assert_eq!(result.page_title, "StampTest");
+
+    // Look up the imported page by content (filename-derived title)
+    // and verify its `space` property points to the requested space.
+    let page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'StampTest'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("imported page must exist");
+
+    let space_ref: Option<String> = sqlx::query_scalar(
+        "SELECT value_ref FROM block_properties \
+         WHERE block_id = ? AND key = 'space'",
+    )
+    .bind(&page_id)
+    .fetch_one(&pool)
+    .await
+    .expect("imported page must have a space property row");
+    assert_eq!(
+        space_ref.as_deref(),
+        Some(TEST_SPACE_ID),
+        "imported page's `space` property must point to the requested space \
+         (PEND-35 Tier 1.1: orphan-page fix)"
+    );
+
+    mat.shutdown();
+}
+
+/// PEND-35 Tier 1.1 — invalid space rejection: passing a ULID that does
+/// not refer to a live block carrying `is_space = 'true'` must surface as
+/// `AppError::Validation` and leave the DB unchanged. Mirrors
+/// `create_page_in_space_rejects_nonexistent_space` in spaces.rs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_rejects_invalid_space() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Intentionally do NOT seed a space — the validator must reject the
+    // bogus ULID before any block lands.
+
+    // Capture baseline so the assertion tolerates any seed rows the
+    // fixture (migrations, default property defs, …) may have added.
+    let blocks_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let ops_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let bogus = "01JXXXX0000000000000000000".to_string();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- Block 1".into(),
+        Some("RejectTest.md".into()),
+        bogus,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "unknown space_id must yield AppError::Validation, got {result:?}"
+    );
+
+    // Atomicity: the validation failure must roll back the whole tx — no
+    // page row, no op_log row.
+    let blocks_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blocks_after.0, blocks_before.0,
+        "no block rows should land when space validation fails"
+    );
+    let ops_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ops_after.0, ops_before.0,
+        "no op_log entries should land when space validation fails"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// PEND-35 Tier 1.2 — `resolve_page_by_alias_inner` SpaceScope
+// ======================================================================
+//
+// Pre-PEND-35, the inner took only `alias: &str` and the SQL had no
+// `space` predicate, so an alias matching a foreign-space page would
+// surface in the active space's UI (cross-space leak in SearchPanel /
+// PageBrowser). The fix takes a `&SpaceScope` and applies the same
+// `(?N IS NULL OR pa.page_id IN (SELECT bp.block_id ...))` short-circuit
+// `list_page_aliases_by_prefix_inner` already uses.
+
+/// PEND-35 Tier 1.2 — two pages in two spaces share a single alias. A
+/// scoped resolve must surface only the page belonging to that scope;
+/// the unscoped (Global) resolve still returns one match (the page that
+/// won the `INSERT OR IGNORE` race for the alias row).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
+    let (pool, _dir) = test_pool().await;
+
+    // Seed two spaces (A and B) and a page in each.
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "PAGE_A_ALIAS", "page", "Page in A", None, Some(0)).await;
+    insert_block(&pool, "PAGE_B_ALIAS", "page", "Page in B", None, Some(0)).await;
+    assign_to_space(&pool, "PAGE_A_ALIAS", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "PAGE_B_ALIAS", TEST_SPACE_B_ID).await;
+
+    // Both pages claim the same alias text. `INSERT OR IGNORE` on the
+    // unique `page_aliases.alias` column means only the first writer
+    // lands — that's enough for this test: the scope filter must surface
+    // the matching alias's page only when it belongs to that space.
+    // (For the Active(B) branch we also write the alias under PAGE_B
+    // directly so there's a row to match — bypass `set_page_aliases_inner`'s
+    // first-writer-wins behaviour by inserting both alias rows here.)
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PAGE_A_ALIAS")
+        .bind("shared-alias-A")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PAGE_B_ALIAS")
+        .bind("shared-alias-B")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Scoped to A: alias of A surfaces, alias of B does not.
+    let in_a = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-A",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        in_a.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_A_ALIAS"),
+        "Active(A) must surface the page that lives in A"
+    );
+
+    let b_from_a = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-B",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        b_from_a.is_none(),
+        "Active(A) MUST NOT surface a page that lives in B \
+         (PEND-35 Tier 1.2: cross-space leak fix)"
+    );
+
+    // Scoped to B: mirror image — only B's alias surfaces.
+    let in_b = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-B",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        in_b.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_B_ALIAS"),
+        "Active(B) must surface the page that lives in B"
+    );
+
+    let a_from_b = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-A",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        a_from_b.is_none(),
+        "Active(B) MUST NOT surface a page that lives in A \
+         (PEND-35 Tier 1.2: cross-space leak fix)"
+    );
+
+    // SpaceScope::Global: the unscoped path keeps pre-PEND-35 behaviour
+    // — both aliases still resolve, regardless of which space the page
+    // lives in. Confirms the filter is opt-in and does not regress the
+    // MCP / agent paths that span every space.
+    let global_a = resolve_page_by_alias_inner(&pool, "shared-alias-A", &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global_a.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_A_ALIAS"),
+        "Global must still resolve A's alias"
+    );
+    let global_b = resolve_page_by_alias_inner(&pool, "shared-alias-B", &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global_b.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_B_ALIAS"),
+        "Global must still resolve B's alias"
+    );
 }
 
 // ======================================================================

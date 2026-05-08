@@ -895,7 +895,7 @@ fn bench_get_block_history(c: &mut Criterion) {
                     let pool = pool.clone();
                     let block_id = block_id.clone();
                     async move {
-                        get_block_history_inner(&pool, block_id, None, Some(50))
+                        get_block_history_inner(&pool, block_id, None, None, Some(50))
                             .await
                             .unwrap()
                     }
@@ -943,7 +943,11 @@ fn bench_get_conflicts(c: &mut Criterion) {
             |b, _| {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
-                    async move { get_conflicts_inner(&pool, None, Some(50)).await.unwrap() }
+                    async move {
+                        get_conflicts_inner(&pool, None, Some(50), None, None)
+                            .await
+                            .unwrap()
+                    }
                 })
             },
         );

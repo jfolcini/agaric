@@ -198,7 +198,10 @@ export function SearchPanel(): React.ReactElement {
       return
     }
     let cancelled = false
-    resolvePageByAlias(debouncedQuery.trim())
+    // PEND-35 Tier 1.2 — pass `spaceId: currentSpaceId` so an alias
+    // pointing at a foreign-space page does not surface here. Mirrors
+    // the FEAT-3p4 active-space scoping the prefix picker already uses.
+    resolvePageByAlias({ alias: debouncedQuery.trim(), spaceId: currentSpaceId })
       .then(async (result) => {
         if (cancelled) return
         if (!result) {
@@ -235,7 +238,7 @@ export function SearchPanel(): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [debouncedQuery, results])
+  }, [debouncedQuery, results, currentSpaceId])
 
   const debounced = useDebouncedCallback((value: string) => {
     setTyping(false)

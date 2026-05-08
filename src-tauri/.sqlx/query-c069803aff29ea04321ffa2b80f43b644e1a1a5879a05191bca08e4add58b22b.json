@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT device_id, seq, op_type, payload, created_at FROM op_log WHERE block_id = ?1 AND (?2 IS NULL OR (seq < ?3 OR (seq = ?3 AND device_id < ?5))) ORDER BY seq DESC, device_id DESC LIMIT ?4",
+  "query": "SELECT device_id, seq, op_type, payload, created_at FROM op_log WHERE block_id = ?1 AND (?6 IS NULL OR op_type = ?6) AND (?2 IS NULL OR (seq < ?3 OR (seq = ?3 AND device_id < ?5))) ORDER BY seq DESC, device_id DESC LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -30,7 +30,7 @@
       }
     ],
     "parameters": {
-      "Right": 5
+      "Right": 6
     },
     "nullable": [
       false,
@@ -40,5 +40,5 @@
       false
     ]
   },
-  "hash": "4fecad6112652871772e18c9131713a761cb08251eac3fe7690a75d040738b77"
+  "hash": "c069803aff29ea04321ffa2b80f43b644e1a1a5879a05191bca08e4add58b22b"
 }

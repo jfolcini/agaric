@@ -137,7 +137,7 @@ async fn snapshot_block_history_response() {
     .await
     .unwrap();
 
-    let resp = get_block_history_inner(&pool, "SNAP_HIST".into(), None, None)
+    let resp = get_block_history_inner(&pool, "SNAP_HIST".into(), None, None, None)
         .await
         .unwrap();
 

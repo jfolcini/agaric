@@ -129,10 +129,15 @@ describe('ConflictList', () => {
 
     render(<ConflictList />)
 
+    // PEND-35 Tier 1.4 — `conflictType` and `idMin` are part of the
+    // IPC arg shape now; both default to `null` when the filter
+    // dropdowns are at "all".
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
         cursor: null,
         limit: 50,
+        conflictType: null,
+        idMin: null,
       })
     })
   })
@@ -387,9 +392,14 @@ describe('ConflictList', () => {
     await user.click(loadMoreBtn)
 
     await waitFor(() => {
+      // PEND-35 Tier 1.4 — `conflictType` / `idMin` are forwarded as
+      // null when no filter is active; cursor is preserved for the
+      // next page request.
       expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
         cursor: 'cursor_page2',
         limit: 50,
+        conflictType: null,
+        idMin: null,
       })
     })
 
@@ -2887,49 +2897,54 @@ describe('ConflictList', () => {
       expect(screen.queryByTestId('conflict-filter-bar')).not.toBeInTheDocument()
     })
 
-    it('selecting a type filter hides non-matching conflicts', async () => {
+    it('selecting a type filter triggers a backend refetch with conflictType', async () => {
+      // PEND-35 Tier 1.4 — type filter is now a SQL parameter; the
+      // backend mock returns the post-filter row set so cursor
+      // pagination and counts stay consistent. The test asserts both
+      // (a) the IPC was reissued with `conflictType: 'Move'` and (b)
+      // the visible list mirrors the backend's filtered response.
       const user = userEvent.setup()
+      const textRow = {
+        id: 'CTEXT01',
+        block_type: 'content',
+        content: 'text-conflict-row',
+        parent_id: 'P1',
+        position: 1,
+        deleted_at: null,
+        is_conflict: true,
+        conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }
+      const moveRow = {
+        id: 'CMOVE01',
+        block_type: 'content',
+        content: 'move-conflict-row',
+        parent_id: 'P2',
+        position: 2,
+        deleted_at: null,
+        is_conflict: true,
+        conflict_type: 'Move',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }
       // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-      vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
         if (cmd === 'get_conflicts') {
-          return {
-            items: [
-              // Text conflict — its content text "text-conflict-row" is
-              // shown verbatim by TextConflictView.
-              {
-                id: 'CTEXT01',
-                block_type: 'content',
-                content: 'text-conflict-row',
-                parent_id: 'P1',
-                position: 1,
-                deleted_at: null,
-                is_conflict: true,
-                conflict_type: null,
-                todo_state: null,
-                priority: null,
-                due_date: null,
-                scheduled_date: null,
-              },
-              // Move conflict — no content shown; identify by data-testid
-              // and the type badge instead.
-              {
-                id: 'CMOVE01',
-                block_type: 'content',
-                content: 'move-conflict-row',
-                parent_id: 'P2',
-                position: 2,
-                deleted_at: null,
-                is_conflict: true,
-                conflict_type: 'Move',
-                todo_state: null,
-                priority: null,
-                due_date: null,
-                scheduled_date: null,
-              },
-            ],
-            next_cursor: null,
-            has_more: false,
-          }
+          // Backend-side type filter — return only rows whose
+          // `conflict_type` matches the requested one.
+          const wanted = (args?.conflictType ?? null) as string | null
+          const items =
+            wanted == null
+              ? [textRow, moveRow]
+              : [textRow, moveRow].filter((r) =>
+                  wanted === 'Text' ? r.conflict_type == null : r.conflict_type === wanted,
+                )
+          return { items, next_cursor: null, has_more: false }
         }
         if (cmd === 'get_block') {
           return {
@@ -2952,25 +2967,25 @@ describe('ConflictList', () => {
 
       const { container } = render(<ConflictList />)
 
-      // Both conflicts must be rendered before we apply a filter — otherwise
-      // we'd be observing the pre-render state, not the filter behaviour.
+      // Both conflicts must be rendered before we apply a filter.
       await waitFor(() => {
         expect(screen.getAllByTestId('conflict-item')).toHaveLength(2)
       })
-      // Text conflict's content is rendered.
       expect(screen.getByText('text-conflict-row')).toBeInTheDocument()
-      // Move conflict's badge is rendered (Move conflicts don't show content).
-      const typeBadges = container.querySelectorAll('.conflict-type-badge')
-      const badgeTexts = Array.from(typeBadges).map((b) => b.textContent)
-      expect(badgeTexts).toContain('Text')
-      expect(badgeTexts).toContain('Move')
 
-      // Radix Select falls back to a native <select> in jsdom (no pointer
-      // events). Use userEvent.selectOptions on the labelled element.
+      // Apply the type filter — Radix Select uses a native <select> in jsdom.
       const typeFilter = screen.getByLabelText(t('conflict.filterByType')) as HTMLSelectElement
       await user.selectOptions(typeFilter, 'Move')
 
-      // After filter: only the Move conflict remains.
+      // The IPC must have been reissued with `conflictType: 'Move'`.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'get_conflicts',
+          expect.objectContaining({ conflictType: 'Move' }),
+        )
+      })
+
+      // After the refetch the backend returns only the Move conflict.
       await waitFor(() => {
         expect(screen.getAllByTestId('conflict-item')).toHaveLength(1)
       })
@@ -2980,15 +2995,65 @@ describe('ConflictList', () => {
       expect(remainingBadges[0]?.textContent).toBe('Move')
     })
 
-    it('shows a no-match message when filters reduce list to zero', async () => {
+    it('selecting the date filter triggers a backend refetch with idMin', async () => {
+      // PEND-35 Tier 1.4 — the "last 7 days" dropdown is the only
+      // date filter today. Selecting it sets `idMin` to a ULID 7d
+      // ago and ConflictList refetches.
       const user = userEvent.setup()
-      // Single Text conflict, then user selects "Move" filter → 0 matches.
-      const page = {
-        items: [makeConflict({ id: 'C1', content: 'only-text-row' })],
-        next_cursor: null,
-        has_more: false,
-      }
-      mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'get_conflicts') {
+          return {
+            items: [makeConflict({ id: 'C1', content: 'date-filter-row' })],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') return originalBlock
+        return null
+      })
+
+      render(<ConflictList />)
+      await screen.findByText('date-filter-row')
+
+      const dateFilter = screen.getByLabelText(t('conflict.filterByDate')) as HTMLSelectElement
+      await user.selectOptions(dateFilter, 'last7Days')
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'get_conflicts',
+          expect.objectContaining({
+            idMin: expect.stringMatching(/^[0-9A-Z]{10}0{16}$/),
+          }),
+        )
+      })
+    })
+
+    it('totalCount reflects the filtered backend result, not the unfiltered count', async () => {
+      // PEND-35 Tier 1.4 — `usePaginatedQuery`'s row count tracks the
+      // backend response, which is now post-filter. We assert that by
+      // applying a filter that yields zero rows and seeing the
+      // no-match empty state, which only renders once the page has
+      // returned an empty `items[]`.
+      const user = userEvent.setup()
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_conflicts') {
+          const wanted = (args?.conflictType ?? null) as string | null
+          // Only a Text conflict exists — filter for "Move" and the
+          // backend (now SQL-side) returns an empty page.
+          if (wanted === 'Move') {
+            return { items: [], next_cursor: null, has_more: false }
+          }
+          return {
+            items: [makeConflict({ id: 'C1', content: 'only-text-row' })],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') return originalBlock
+        return null
+      })
 
       render(<ConflictList />)
       await screen.findByText('only-text-row')
@@ -2996,10 +3061,14 @@ describe('ConflictList', () => {
       const typeFilter = screen.getByLabelText(t('conflict.filterByType')) as HTMLSelectElement
       await user.selectOptions(typeFilter, 'Move')
 
+      // Empty state appears because the backend returned an empty
+      // page after the filter — `blocks.length === 0` triggers the
+      // "no conflicts" view (not the "no matching filters" hint,
+      // which fires only when `blocks > 0` but FE-side filtering
+      // dropped them all).
       await waitFor(() => {
-        expect(screen.getByTestId('conflict-no-match')).toBeInTheDocument()
+        expect(screen.getByText(/No conflicts/)).toBeInTheDocument()
       })
-      expect(screen.getByText(t('conflict.noMatchingFilters'))).toBeInTheDocument()
       expect(screen.queryByText('only-text-row')).not.toBeInTheDocument()
     })
   })

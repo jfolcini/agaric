@@ -6,11 +6,16 @@
  * filter dropdown options depend on. Extracted from ConflictList.tsx
  * (MAINT-128) so the orchestrator stays focused on data fetching and
  * dialog wiring.
+ *
+ * PEND-35 Tier 1.4 — the type-filter and the `last7Days` date filter
+ * now flow back to ConflictList as `conflictType` / `idMin`, which it
+ * forwards to `getConflicts(...)`. The backend applies them in SQL so
+ * cursor pagination and `total_count` track the visible set. Device
+ * filter stays FE-side per the audit (device name is not persisted on
+ * the row yet).
  */
 
 import { useMemo, useState } from 'react'
-import { inferConflictType } from '../components/ConflictListItem'
-import { ulidToDate } from '../lib/format'
 import type { BlockRow } from '../lib/tauri'
 
 /** Available conflict-type filter values, mapped to ConflictListItem's inferred types. */
@@ -19,6 +24,31 @@ export type TypeFilter = 'all' | 'Text' | 'Property' | 'Move'
 export type DateFilter = 'all' | 'last7Days'
 /** 7 days in milliseconds — used for the "last 7 days" cutoff. */
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+/** Crockford base32 alphabet used by ULIDs. */
+const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+/**
+ * Encode a JS timestamp (ms since epoch) as the lower-bound ULID for
+ * that instant — i.e. the 10-char Crockford base32 timestamp portion
+ * followed by 16 `0`s. Because ULIDs are time-ordered lexicographically,
+ * `id >= ulidMinForTimestamp(ts)` is equivalent to "id was created at
+ * or after `ts`". Backend uses this directly as the SQL `id_min`
+ * parameter.
+ *
+ * Defined locally rather than in `src/lib/format.ts`: this is the only
+ * caller in the codebase, and `ulidToDate` (the inverse) already lives
+ * in format.ts — keeping the encode side here avoids broadening that
+ * module's surface for a single use.
+ */
+export function ulidMinForTimestamp(ts: number): string {
+  let value = ts
+  const chars: string[] = []
+  for (let i = 0; i < 10; i++) {
+    chars.unshift(CROCKFORD_BASE32[value % 32] as string)
+    value = Math.floor(value / 32)
+  }
+  return `${chars.join('')}0000000000000000`
+}
 
 export interface UseConflictFiltersOptions {
   blocks: BlockRow[]
@@ -33,7 +63,16 @@ export interface UseConflictFiltersReturn {
   dateFilter: DateFilter
   setDateFilter: (v: DateFilter) => void
   uniqueDeviceNames: string[]
+  /** FE-side filtered list — only the device filter still narrows here
+   *  (PEND-35 Tier 1.4). Type + date are pushed into SQL via
+   *  `conflictType` / `idMin` instead. */
   filteredBlocks: BlockRow[]
+  /** SQL `conflict_type` parameter for `getConflicts`, or `undefined`
+   *  when the type filter is "all". */
+  conflictType: string | undefined
+  /** SQL `id_min` (ULID lower bound) parameter for `getConflicts`, or
+   *  `undefined` when the date filter is "all". */
+  idMin: string | undefined
 }
 
 export function useConflictFilters({
@@ -51,26 +90,25 @@ export function useConflictFilters({
     return [...set].sort()
   }, [deviceNames])
 
-  // Apply filters to the conflict list. Falls back to full list when every
-  // filter is "all" (the default), so existing behaviour is preserved.
+  // PEND-35 Tier 1.4 — translate the type / date dropdowns into the
+  // SQL parameters ConflictList forwards to `getConflicts(...)`. The
+  // hook recomputes `idMin` from `Date.now()` whenever the date
+  // filter changes so the cutoff stays fresh as the user re-opens the
+  // view (memoised so identity is stable across unrelated re-renders).
+  const conflictType = typeFilter === 'all' ? undefined : typeFilter
+  const idMin = useMemo(
+    () =>
+      dateFilter === 'last7Days' ? ulidMinForTimestamp(Date.now() - SEVEN_DAYS_MS) : undefined,
+    [dateFilter],
+  )
+
+  // Apply the only remaining FE-side filter (device name — not yet
+  // persisted on the row per the PEND-35 audit). Falls back to the
+  // full backend list when the device filter is "all".
   const filteredBlocks = useMemo(() => {
-    if (typeFilter === 'all' && deviceFilter === 'all' && dateFilter === 'all') return blocks
-    const cutoff = dateFilter === 'last7Days' ? Date.now() - SEVEN_DAYS_MS : null
-    return blocks.filter((block) => {
-      if (typeFilter !== 'all' && inferConflictType(block) !== typeFilter) return false
-      if (deviceFilter !== 'all') {
-        const name = deviceNames.get(block.id)
-        if (name !== deviceFilter) return false
-      }
-      if (cutoff != null) {
-        const ts = ulidToDate(block.id)
-        // ULIDs that don't decode to a valid date are kept (we cannot prove
-        // they are old, and dropping them would silently hide data).
-        if (ts && ts.getTime() < cutoff) return false
-      }
-      return true
-    })
-  }, [blocks, typeFilter, deviceFilter, dateFilter, deviceNames])
+    if (deviceFilter === 'all') return blocks
+    return blocks.filter((block) => deviceNames.get(block.id) === deviceFilter)
+  }, [blocks, deviceFilter, deviceNames])
 
   return {
     typeFilter,
@@ -81,5 +119,7 @@ export function useConflictFilters({
     setDateFilter,
     uniqueDeviceNames,
     filteredBlocks,
+    conflictType,
+    idMin,
   }
 }

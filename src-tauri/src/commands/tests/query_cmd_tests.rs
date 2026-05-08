@@ -61,7 +61,9 @@ async fn get_conflicts_returns_conflict_blocks() {
         .await
         .unwrap();
 
-    let resp = get_conflicts_inner(&pool, None, None).await.unwrap();
+    let resp = get_conflicts_inner(&pool, None, None, None, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 1, "only one conflict block should exist");
     assert_eq!(
@@ -600,6 +602,8 @@ async fn query_by_property_returns_matching_blocks() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -628,6 +632,8 @@ async fn query_by_property_empty_key_returns_validation_error() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await;
 
@@ -656,6 +662,8 @@ async fn query_by_property_filters_by_value() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -684,6 +692,8 @@ async fn query_by_property_paginates_correctly() {
         None,
         Some(2),
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -713,6 +723,8 @@ async fn query_by_property_paginates_correctly() {
         r1.next_cursor,
         Some(2),
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -738,6 +750,8 @@ async fn query_by_property_paginates_correctly() {
         r2.next_cursor,
         Some(2),
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -770,6 +784,8 @@ async fn query_by_property_excludes_deleted_blocks() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -826,6 +842,8 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -841,6 +859,8 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -886,6 +906,8 @@ async fn query_by_property_with_gt_operator() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -921,6 +943,8 @@ async fn query_by_property_with_lt_operator() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -956,6 +980,8 @@ async fn query_by_property_defaults_to_eq() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -972,13 +998,157 @@ async fn query_by_property_defaults_to_eq() {
 }
 
 // ======================================================================
+// PEND-35 Tier 1.5 — query_by_property_inner exclude_parent_id +
+// content_non_empty filters (DonePanel pagination correctness)
+// ======================================================================
+//
+// The DonePanel used to drop blocks whose `parent_id == excludePageId`
+// and blocks with empty content AFTER the cursor page returned, which
+// made `total_count` and "Load more" disagree with the visible set.
+// These tests pin the SQL push-down so the inner returns the
+// post-filter rows directly.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_excludes_parent_id() {
+    let (pool, _dir) = test_pool().await;
+
+    // Three blocks share the same property; two sit under PARENT_X
+    // (which the caller wants to hide), one under PARENT_Y (kept), one
+    // with NULL parent (kept — `IS NOT` is NULL-safe so a parentless
+    // block is never accidentally filtered).
+    insert_block(&pool, "PARENT_X", "page", "X", None, None).await;
+    insert_block(&pool, "PARENT_Y", "page", "Y", None, None).await;
+    insert_block(&pool, "QPX_A", "content", "in X", Some("PARENT_X"), Some(1)).await;
+    insert_block(&pool, "QPX_B", "content", "in X", Some("PARENT_X"), Some(2)).await;
+    insert_block(&pool, "QPX_C", "content", "in Y", Some("PARENT_Y"), Some(3)).await;
+    insert_block(&pool, "QPX_D", "content", "orphan", None, Some(4)).await;
+    for id in &["QPX_A", "QPX_B", "QPX_C", "QPX_D"] {
+        insert_property(&pool, id, "completed_at", "2026-05-08").await;
+    }
+
+    // Unfiltered baseline — all four come back.
+    let unfiltered = query_by_property_inner(
+        &pool,
+        "completed_at".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        unfiltered.items.len(),
+        4,
+        "baseline must surface all four blocks; got {:?}",
+        unfiltered.items.iter().map(|b| &b.id).collect::<Vec<_>>()
+    );
+
+    // Filtered — drop PARENT_X children, keep PARENT_Y child + orphan.
+    let filtered = query_by_property_inner(
+        &pool,
+        "completed_at".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        Some("PARENT_X".into()),
+        false,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        filtered.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["QPX_C", "QPX_D"].into_iter().collect(),
+        "exclude_parent_id must drop only the PARENT_X children; \
+         orphan (NULL parent) must survive the IS NOT comparison; \
+         got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_content_non_empty() {
+    let (pool, _dir) = test_pool().await;
+
+    // Mix of content shapes — only "real text" should survive.
+    // Note: SQLite stores NULL for `INSERT INTO blocks (..., content, ...) VALUES (?, NULL, ?)`,
+    // and an empty string distinct from NULL for explicit ''. Whitespace-only
+    // content (E) must also be dropped so the SQL push-down matches the
+    // legacy FE predicate (`!b.content?.trim()`); without `TRIM(...)` in
+    // the SQL clause, a row of "   " would silently survive.
+    insert_block(&pool, "QPCNE_A", "content", "real text", None, Some(1)).await;
+    insert_block(&pool, "QPCNE_B", "content", "", None, Some(2)).await;
+    sqlx::query("UPDATE blocks SET content = NULL WHERE id = ?")
+        .bind("QPCNE_B")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_block(&pool, "QPCNE_C", "content", "", None, Some(3)).await;
+    insert_block(&pool, "QPCNE_D", "content", "more", None, Some(4)).await;
+    insert_block(&pool, "QPCNE_E", "content", "   \t\n", None, Some(5)).await;
+    for id in &["QPCNE_A", "QPCNE_B", "QPCNE_C", "QPCNE_D", "QPCNE_E"] {
+        insert_property(&pool, id, "completed_at", "2026-05-08").await;
+    }
+
+    // Disabled filter — all five come back (unfiltered parity).
+    let unfiltered = query_by_property_inner(
+        &pool,
+        "completed_at".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(unfiltered.items.len(), 5, "filter disabled = no-op");
+
+    // Enabled — drop NULL, empty-string, and whitespace-only content.
+    let filtered = query_by_property_inner(
+        &pool,
+        "completed_at".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        true,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        filtered.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["QPCNE_A", "QPCNE_D"].into_iter().collect(),
+        "content_non_empty must drop NULL, '', and whitespace-only content; got {ids:?}"
+    );
+}
+
+// ======================================================================
 // count_backlinks_batch
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_empty_page_ids_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = count_backlinks_batch_inner(&pool, vec![]).await.unwrap();
+    let result = count_backlinks_batch_inner(&pool, vec![], &SpaceScope::Global)
+        .await
+        .unwrap();
     assert!(
         result.is_empty(),
         "empty page_ids input should return empty map"
@@ -1020,6 +1190,7 @@ async fn count_backlinks_batch_returns_correct_counts() {
     let result = count_backlinks_batch_inner(
         &pool,
         vec!["BLB_TGT1".into(), "BLB_TGT2".into(), "NONEXISTENT".into()],
+        &SpaceScope::Global,
     )
     .await
     .unwrap();
@@ -1070,7 +1241,7 @@ async fn count_backlinks_batch_excludes_deleted_source_blocks() {
         .await
         .unwrap();
 
-    let result = count_backlinks_batch_inner(&pool, vec!["BLD_TGT".into()])
+    let result = count_backlinks_batch_inner(&pool, vec!["BLD_TGT".into()], &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -1110,7 +1281,7 @@ async fn count_backlinks_batch_excludes_conflict_source_blocks() {
         .await
         .unwrap();
 
-    let result = count_backlinks_batch_inner(&pool, vec!["CTGT".into()])
+    let result = count_backlinks_batch_inner(&pool, vec!["CTGT".into()], &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -1140,7 +1311,7 @@ async fn count_backlinks_batch_single_id_returns_expected_count() {
             .unwrap();
     }
 
-    let result = count_backlinks_batch_inner(&pool, vec!["SNG_TGT".into()])
+    let result = count_backlinks_batch_inner(&pool, vec!["SNG_TGT".into()], &SpaceScope::Global)
         .await
         .unwrap();
 
@@ -1187,11 +1358,104 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
     ids.push("BIG_TGT1".into());
     ids.push("BIG_TGT2".into());
 
-    let result = count_backlinks_batch_inner(&pool, ids).await.unwrap();
+    let result = count_backlinks_batch_inner(&pool, ids, &SpaceScope::Global)
+        .await
+        .unwrap();
 
     assert_eq!(result.len(), 2, "only two IDs have backlinks");
     assert_eq!(result.get("BIG_TGT1"), Some(&2), "BIG_TGT1 has 2 backlinks");
     assert_eq!(result.get("BIG_TGT2"), Some(&1), "BIG_TGT2 has 1 backlink");
+}
+
+// ----------------------------------------------------------------------
+// PEND-35 Tier 1.6 — `count_backlinks_batch_inner` honours `&SpaceScope`
+// ----------------------------------------------------------------------
+//
+// Without space-scoping a page in space A could surface a non-zero
+// badge count whose source blocks live in space B — backlinks the user
+// can't actually see. This test seeds two pages, each with a backlink
+// from each space, and asserts:
+//   - Active(A) sees only the A-source backlink.
+//   - Active(B) sees only the B-source backlink.
+//   - Global counts both (parity with the pre-PEND-35 behaviour).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_backlinks_batch_active_scope() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Two target pages — one in each space.
+    insert_block(&pool, "PG_A", "page", "page A", None, None).await;
+    assign_to_space(&pool, "PG_A", TEST_SPACE_ID).await;
+    insert_block(&pool, "PG_B", "page", "page B", None, None).await;
+    assign_to_space(&pool, "PG_B", TEST_SPACE_B_ID).await;
+
+    // Source blocks — one per space, each linking to BOTH targets.
+    insert_block(&pool, "SRC_A", "content", "src in A", None, None).await;
+    assign_to_space(&pool, "SRC_A", TEST_SPACE_ID).await;
+    insert_block(&pool, "SRC_B", "content", "src in B", None, None).await;
+    assign_to_space(&pool, "SRC_B", TEST_SPACE_B_ID).await;
+
+    for (src, tgt) in [
+        ("SRC_A", "PG_A"),
+        ("SRC_A", "PG_B"),
+        ("SRC_B", "PG_A"),
+        ("SRC_B", "PG_B"),
+    ] {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(tgt)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let page_ids = vec!["PG_A".to_string(), "PG_B".to_string()];
+
+    // Global — every backlink counted regardless of space.
+    let global = count_backlinks_batch_inner(&pool, page_ids.clone(), &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(global.get("PG_A"), Some(&2), "Global counts both sources");
+    assert_eq!(global.get("PG_B"), Some(&2), "Global counts both sources");
+
+    // Active(A) — only SRC_A's links are visible.
+    let active_a = count_backlinks_batch_inner(
+        &pool,
+        page_ids.clone(),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_a.get("PG_A"),
+        Some(&1),
+        "Active(A) drops the SRC_B → PG_A backlink"
+    );
+    assert_eq!(
+        active_a.get("PG_B"),
+        Some(&1),
+        "Active(A) drops the SRC_B → PG_B backlink"
+    );
+
+    // Active(B) — only SRC_B's links are visible.
+    let active_b = count_backlinks_batch_inner(
+        &pool,
+        page_ids,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_b.get("PG_A"),
+        Some(&1),
+        "Active(B) drops the SRC_A → PG_A backlink"
+    );
+    assert_eq!(
+        active_b.get("PG_B"),
+        Some(&1),
+        "Active(B) drops the SRC_A → PG_B backlink"
+    );
 }
 
 // ======================================================================
@@ -1477,6 +1741,8 @@ async fn query_by_property_returns_only_current_space_blocks_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1507,6 +1773,8 @@ async fn query_by_property_returns_only_current_space_blocks_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1545,6 +1813,8 @@ async fn query_by_property_with_none_space_id_returns_all_feat3p4() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1571,6 +1841,8 @@ async fn query_by_property_with_nonexistent_space_id_returns_empty_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST")),
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1607,6 +1879,8 @@ async fn query_by_property_disjointness_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1619,6 +1893,8 @@ async fn query_by_property_disjointness_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1675,6 +1951,8 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1687,6 +1965,8 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -1699,6 +1979,8 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -2949,6 +3231,8 @@ async fn pend18_query_by_property_scope_parity() {
         None,
         None,
         &SpaceScope::Global,
+        None,
+        false,
     )
     .await
     .unwrap();
@@ -2967,6 +3251,8 @@ async fn pend18_query_by_property_scope_parity() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+        false,
     )
     .await
     .unwrap();

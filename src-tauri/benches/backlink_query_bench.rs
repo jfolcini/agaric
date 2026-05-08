@@ -632,8 +632,13 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
         let page_ids: Vec<String> = (0..10).map(|p| format!("PAGE{p:020}")).collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            b.to_async(&rt)
-                .iter(|| count_backlinks_batch_inner(&pool, page_ids.clone()));
+            b.to_async(&rt).iter(|| {
+                count_backlinks_batch_inner(
+                    &pool,
+                    page_ids.clone(),
+                    &agaric_lib::space::SpaceScope::Global,
+                )
+            });
         });
     }
     group.finish();

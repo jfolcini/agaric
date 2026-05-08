@@ -72,7 +72,7 @@ async fn resolve_page_by_alias() {
         .unwrap();
 
     // Resolve by alias
-    let resolved = resolve_page_by_alias_inner(&pool, "my-alias")
+    let resolved = resolve_page_by_alias_inner(&pool, "my-alias", &SpaceScope::Global)
         .await
         .unwrap();
     assert!(resolved.is_some(), "alias must resolve to a page");
@@ -86,7 +86,7 @@ async fn resolve_page_by_alias() {
     );
 
     // Non-existent alias returns None
-    let missing = resolve_page_by_alias_inner(&pool, "no-such-alias")
+    let missing = resolve_page_by_alias_inner(&pool, "no-such-alias", &SpaceScope::Global)
         .await
         .unwrap();
     assert!(missing.is_none(), "unknown alias must return None");
@@ -143,7 +143,7 @@ async fn alias_collision_returns_error() {
     );
 
     // The alias still resolves to page A
-    let resolved = resolve_page_by_alias_inner(&pool, "shared-alias")
+    let resolved = resolve_page_by_alias_inner(&pool, "shared-alias", &SpaceScope::Global)
         .await
         .unwrap();
     assert!(resolved.is_some(), "alias must still resolve");

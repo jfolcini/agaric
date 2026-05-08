@@ -1778,7 +1778,7 @@ async fn get_block_history_returns_ops_for_block() {
         .await
         .unwrap();
 
-    let resp = get_block_history_inner(&pool, block.id.clone(), None, None)
+    let resp = get_block_history_inner(&pool, block.id.clone(), None, None, None)
         .await
         .unwrap();
 
@@ -1793,7 +1793,7 @@ async fn get_block_history_returns_ops_for_block() {
 async fn get_block_history_empty_for_nonexistent_block() {
     let (pool, _dir) = test_pool().await;
 
-    let resp = get_block_history_inner(&pool, "GHOST_HIST".into(), None, None)
+    let resp = get_block_history_inner(&pool, "GHOST_HIST".into(), None, None, None)
         .await
         .unwrap();
 
@@ -1808,7 +1808,9 @@ async fn get_block_history_empty_for_nonexistent_block() {
 async fn get_conflicts_empty_when_none_exist() {
     let (pool, _dir) = test_pool().await;
 
-    let resp = get_conflicts_inner(&pool, None, None).await.unwrap();
+    let resp = get_conflicts_inner(&pool, None, None, None, None)
+        .await
+        .unwrap();
 
     assert!(
         resp.items.is_empty(),
@@ -1833,7 +1835,9 @@ async fn get_conflicts_returns_conflict_blocks() {
     .await
     .unwrap();
 
-    let resp = get_conflicts_inner(&pool, None, None).await.unwrap();
+    let resp = get_conflicts_inner(&pool, None, None, None, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 1, "one conflict block expected");
     assert_eq!(

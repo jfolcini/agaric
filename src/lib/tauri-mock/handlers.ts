@@ -478,7 +478,13 @@ export const HANDLERS: Record<string, Handler> = {
     return { items: backlinkItems, next_cursor: null, has_more: false }
   },
 
-  get_block_history: () => {
+  get_block_history: (_args) => {
+    // PEND-35 Tier 1.3 — the backend now accepts `opTypeFilter`. The
+    // mock signature mirrors that for parity with `bindings.ts` (the
+    // handlers-drift test only checks that the command name is
+    // present, but accepting the arg is the right shape). Browser-mode
+    // callers don't currently exercise per-block history end-to-end, so
+    // returning an empty page is still the cheapest correct behaviour.
     return { items: [], next_cursor: null, has_more: false }
   },
 
@@ -513,8 +519,20 @@ export const HANDLERS: Record<string, Handler> = {
     return results
   },
 
-  get_conflicts: () => {
-    const items = [...blocks.values()].filter((b) => b['is_conflict'] === true && !b['deleted_at'])
+  get_conflicts: (args) => {
+    // PEND-35 Tier 1.4 — apply optional `conflictType` and `idMin` (ULID
+    // lower bound) filters server-side so the mock's post-filter set
+    // matches the real backend's keyset pagination output.
+    const a = (args ?? {}) as Record<string, unknown>
+    const conflictType = (a['conflictType'] as string | null | undefined) ?? null
+    const idMin = (a['idMin'] as string | null | undefined) ?? null
+    const items = [...blocks.values()].filter((b) => {
+      if (b['is_conflict'] !== true) return false
+      if (b['deleted_at']) return false
+      if (conflictType != null && b['conflict_type'] !== conflictType) return false
+      if (idMin != null && (b['id'] as string) < idMin) return false
+      return true
+    })
     return { items, next_cursor: null, has_more: false }
   },
 
@@ -588,6 +606,13 @@ export const HANDLERS: Record<string, Handler> = {
     const key = a['key'] as string
     const valueText = (a['valueText'] as string | null) ?? null
     const valueDate = (a['valueDate'] as string | null) ?? null
+    // PEND-35 Tier 1.5 — mirror the backend push-down filters so the
+    // mock honours `excludeParentId` (skip rows whose `parent_id`
+    // matches) and `contentNonEmpty` (skip rows whose content is null
+    // or empty). Without these the FE tests can't observe the filter
+    // going through the IPC layer.
+    const excludeParentId = (a['excludeParentId'] as string | null) ?? null
+    const contentNonEmpty = Boolean(a['contentNonEmpty'])
     // Some well-known "properties" live on the block row itself in the seed
     // data (todo_state, priority, due_date, scheduled_date, completed_at,
     // created_at). The real backend exposes them through the properties
@@ -603,6 +628,13 @@ export const HANDLERS: Record<string, Handler> = {
     const rowKind = ROW_FIELD_KEYS[key]
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
+      // Push-down filters short-circuit before the property lookup so
+      // the mock matches the SQL evaluation order.
+      if (excludeParentId !== null && b['parent_id'] === excludeParentId) return false
+      if (contentNonEmpty) {
+        const content = b['content'] as string | null | undefined
+        if (content == null || (content as string).trim() === '') return false
+      }
       const blockProps = properties.get(b['id'] as string)
       const prop = blockProps?.get(key)
       if (prop) {
@@ -1066,11 +1098,28 @@ export const HANDLERS: Record<string, Handler> = {
   count_backlinks_batch: (args) => {
     const a = args as Record<string, unknown>
     const pageIds = a['pageIds'] as string[]
+    // PEND-35 Tier 1.6 — honour `scope` so mock-mode FE tests can
+    // observe space-scoped badge counts the same way the real backend
+    // produces them. The shape mirrors `list_page_aliases_by_prefix`
+    // above: pull the active spaceId out of `{ kind, space_id }`,
+    // fall back to `null` (cross-space, legacy) for `Global`.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const LINK_RE_BATCH = /\[\[([0-9A-Z]{26})\]\]/g
     const result: Record<string, number> = {}
     for (const pid of pageIds) {
       const count = [...blocks.values()].filter((b) => {
         if (b['deleted_at']) return false
+        // Active-space scoping: drop source blocks whose owning page
+        // (resolved via `page_id`, falling back to the block's own id
+        // if it IS a page) doesn't carry `space = <spaceId>`. Matches
+        // the SQL `COALESCE(b.page_id, b.id) IN (... space ...)` used
+        // by `count_backlinks_batch_inner`.
+        if (spaceId !== null) {
+          const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+          const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+          if (ownerSpace !== spaceId) return false
+        }
         const content = (b['content'] as string) ?? ''
         for (const m of content.matchAll(LINK_RE_BATCH)) {
           if (m[1] === pid) return true
@@ -1325,10 +1374,22 @@ export const HANDLERS: Record<string, Handler> = {
   resolve_page_by_alias: (args) => {
     const a = args as Record<string, unknown>
     const alias = (a['alias'] as string).toLowerCase()
+    // PEND-35 Tier 1.2 — backend now takes `scope: SpaceScope`. Mirror
+    // the `list_page_aliases_by_prefix` mock (sibling below) so an
+    // alias pointing at a foreign-space page does not surface when the
+    // caller is scoped to the active space. Global keeps the
+    // cross-space lookup so the MCP / agent surfaces don't regress.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     for (const [pid, aliases] of pageAliases.entries()) {
       if (aliases.some((al) => al.toLowerCase() === alias)) {
         const page = blocks.get(pid)
-        return [pid, page ? ((page['content'] as string) ?? null) : null]
+        if (!page) continue
+        if (spaceId !== null) {
+          const space = properties.get(pid)?.get('space')?.['value_ref'] ?? null
+          if (space !== spaceId) continue
+        }
+        return [pid, (page['content'] as string) ?? null]
       }
     }
     return null
@@ -1400,6 +1461,14 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const content = (a['content'] as string) ?? ''
     const filename = (a['filename'] as string | null) ?? null
+    // PEND-35 Tier 1.1 — backend now requires `space_id`. Mirror the
+    // backend behaviour: stamp `space = ?spaceId` on the created page
+    // so `tauri-mock-parity` and downstream space-scoped read mocks
+    // see the imported page in the active space. The backend rejects
+    // empty / missing values with `AppError::Validation`; the mock is
+    // permissive about the value (skips the stamp when empty) so older
+    // mock fixtures that pre-date this fix don't break.
+    const spaceId = (a['spaceId'] as string | undefined) ?? ''
 
     // Derive page title from filename (strip .md extension) or first heading
     let pageTitle = 'Untitled'
@@ -1414,10 +1483,22 @@ export const HANDLERS: Record<string, Handler> = {
       lines.shift() // remove heading line from block content
     }
 
-    // Create the page block
+    // Create the page block + stamp `space` ref property (PEND-35).
     const pageId = fakeId()
     const pageBlock = makeBlock(pageId, 'page', pageTitle, null, blocks.size)
     blocks.set(pageId, pageBlock)
+    if (spaceId) {
+      if (!properties.has(pageId)) properties.set(pageId, new Map())
+      properties.get(pageId)?.set('space', {
+        block_id: pageId,
+        key: 'space',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: spaceId,
+        value_bool: null,
+      })
+    }
 
     // Create content blocks from non-empty lines
     let blocksCreated = 0

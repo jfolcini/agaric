@@ -15,22 +15,11 @@ export interface DoneBlockGroup {
   items: BlockRow[]
 }
 
-/**
- * Drop blocks with empty/whitespace content (UX-129) and blocks whose
- * `parent_id` matches the page the panel is currently rendered on (B-74).
- */
-export function filterDoneBlocks(
-  items: readonly BlockRow[],
-  excludePageId: string | undefined,
-): BlockRow[] {
-  const out: BlockRow[] = []
-  for (const b of items) {
-    if (!b.content?.trim()) continue
-    if (excludePageId && b.parent_id === excludePageId) continue
-    out.push(b)
-  }
-  return out
-}
+// PEND-35 Tier 1.5 — `filterDoneBlocks` retired. Its UX-129
+// (empty content) and B-74 (parent_id match) filters now live in SQL
+// via `query_by_property`'s `content_non_empty` and
+// `exclude_parent_id` parameters, so cursor pagination /
+// `total_count` / "Load more" stay consistent under filtering.
 
 /**
  * Collect the unique, non-null `page_id`s from a list of blocks. Preserves

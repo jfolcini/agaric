@@ -40,14 +40,21 @@ pub async fn get_backlinks_inner(
 }
 
 /// List conflict-copy blocks (blocks with `is_conflict = true`), with cursor pagination.
+///
+/// PEND-35 Tier 1.4 — `conflict_type` and `id_min` push two FE-side
+/// filters into SQL so cursor pagination remains consistent under
+/// filtering. `id_min` is a ULID lower bound (date lower bound, since
+/// ULIDs are time-ordered).
 #[instrument(skip(pool), err)]
 pub async fn get_conflicts_inner(
     pool: &SqlitePool,
     cursor: Option<String>,
     limit: Option<i64>,
+    conflict_type: Option<String>,
+    id_min: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_conflicts(pool, &page).await
+    pagination::list_conflicts(pool, &page, conflict_type.as_deref(), id_min.as_deref()).await
 }
 
 /// Return current materializer queue metrics and system status.
@@ -109,6 +116,12 @@ pub async fn search_blocks_inner(
 /// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
 /// preserved for callsites that span every space.
 ///
+/// `exclude_parent_id` / `content_non_empty` (PEND-35 Tier 1.5) push the
+/// DonePanel's two post-filters down into SQL so cursor pagination,
+/// `total_count`, and "Load more" reflect the visible set instead of
+/// the unfiltered page. `None` / `false` preserves the legacy
+/// behaviour (clauses short-circuit to no-ops).
+///
 /// # Errors
 /// - [`AppError::Validation`] — `key` is empty
 #[instrument(skip(pool), err)]
@@ -122,6 +135,8 @@ pub async fn query_by_property_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     scope: &SpaceScope,
+    exclude_parent_id: Option<String>,
+    content_non_empty: bool,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if key.trim().is_empty() {
         return Err(AppError::Validation(
@@ -138,6 +153,8 @@ pub async fn query_by_property_inner(
         op,
         &page,
         scope.as_filter_param(),
+        exclude_parent_id.as_deref(),
+        content_non_empty,
     )
     .await
 }
@@ -282,6 +299,15 @@ pub async fn list_unlinked_references_inner(
 /// Returns a `HashMap<page_id, count>` for pages that have at least one
 /// incoming link whose source block is not soft-deleted and is not a conflict.
 ///
+/// `scope` (PEND-35 Tier 1.6) — [`SpaceScope::Active`] restricts the
+/// counted source blocks to those whose owning page carries
+/// `space = ?space_id`. Mirrors the `(?N IS NULL OR COALESCE(b.page_id,
+/// b.id) IN (...))` clause used by every sibling backlink query (see
+/// `crate::backlink::query::eval_backlink_query`). Without this clause
+/// a page in space A could surface a non-zero badge count whose source
+/// blocks live in space B — backlinks the user can't actually see.
+/// [`SpaceScope::Global`] preserves the pre-PEND-35 unscoped count.
+///
 /// # Errors
 ///
 /// - Database errors propagated from sqlx.
@@ -289,20 +315,33 @@ pub async fn list_unlinked_references_inner(
 pub async fn count_backlinks_batch_inner(
     pool: &SqlitePool,
     page_ids: Vec<String>,
+    scope: &SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
     if page_ids.is_empty() {
         return Ok(HashMap::new());
     }
     let ids_json = serde_json::to_string(&page_ids)?;
+    // PEND-35 Tier 1.6 — `?2` carries the active space id (or NULL for
+    // [`SpaceScope::Global`]). The shape mirrors
+    // `crate::backlink::query::eval_backlink_query`:
+    //   `(?N IS NULL OR COALESCE(b.page_id, b.id) IN (
+    //        SELECT bp.block_id FROM block_properties bp
+    //        WHERE bp.key = 'space' AND bp.value_ref = ?N))`
+    // — applied to the SOURCE block (`b`) so a backlink whose source
+    // page lives outside the active space is excluded from the count.
     let sql = "SELECT bl.target_id, COUNT(*) as cnt \
          FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
            AND b.is_conflict = 0 \
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
          GROUP BY bl.target_id";
     let rows = sqlx::query_as::<_, (String, i64)>(sql)
         .bind(ids_json)
+        .bind(scope.as_filter_param())
         .fetch_all(pool)
         .await?;
     Ok(rows
@@ -342,8 +381,10 @@ pub async fn get_conflicts(
     pool: State<'_, ReadPool>,
     cursor: Option<String>,
     limit: Option<i64>,
+    conflict_type: Option<String>,
+    id_min: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    get_conflicts_inner(&pool.0, cursor, limit)
+    get_conflicts_inner(&pool.0, cursor, limit, conflict_type, id_min)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -392,9 +433,20 @@ pub async fn query_by_property(
     cursor: Option<String>,
     limit: Option<i64>,
     scope: SpaceScope,
+    exclude_parent_id: Option<String>,
+    content_non_empty: bool,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     query_by_property_inner(
-        &pool.0, key, value_text, value_date, operator, cursor, limit, &scope,
+        &pool.0,
+        key,
+        value_text,
+        value_date,
+        operator,
+        cursor,
+        limit,
+        &scope,
+        exclude_parent_id,
+        content_non_empty,
     )
     .await
     .map_err(sanitize_internal_error)
@@ -481,8 +533,9 @@ pub async fn list_unlinked_references(
 pub async fn count_backlinks_batch(
     read_pool: State<'_, ReadPool>,
     page_ids: Vec<String>,
+    scope: SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
-    count_backlinks_batch_inner(&read_pool.0, page_ids)
+    count_backlinks_batch_inner(&read_pool.0, page_ids, &scope)
         .await
         .map_err(sanitize_internal_error)
 }

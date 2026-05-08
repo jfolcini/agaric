@@ -23,12 +23,7 @@ import { batchResolve, queryByProperty } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
-import {
-  collectUniqueParentIds,
-  filterDoneBlocks,
-  groupBlocksByPage,
-  mergeResolvedTitles,
-} from './DonePanel.helpers'
+import { collectUniqueParentIds, groupBlocksByPage, mergeResolvedTitles } from './DonePanel.helpers'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
@@ -55,7 +50,14 @@ export function DonePanel({
   const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  // Fetch blocks completed on the given date
+  // Fetch blocks completed on the given date.
+  //
+  // PEND-35 Tier 1.5 — `excludeParentId` and `contentNonEmpty` are
+  // passed straight to the backend so cursor pagination, `total_count`,
+  // and "Load more" reflect the visible (post-filter) set instead of
+  // the raw page. Previously the FE post-filtered each cursor page
+  // (UX-129 / B-74) which silently broke the cursor accounting on
+  // partial pages.
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
       setLoading(true)
@@ -66,14 +68,14 @@ export function DonePanel({
           ...(cursor != null && { cursor }),
           limit: PAGINATION_LIMIT,
           spaceId: currentSpaceId,
+          ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
+          contentNonEmpty: true,
         })
-        // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
-        const nonEmptyItems = filterDoneBlocks(resp.items, excludePageId)
-        const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
+        const newBlocks = cursor ? [...blocks, ...resp.items] : resp.items
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(cursor ? totalCount + nonEmptyItems.length : nonEmptyItems.length)
+        setTotalCount(cursor ? totalCount + resp.items.length : resp.items.length)
 
         // Resolve parent page titles
         const uniqueParentIds = collectUniqueParentIds(newBlocks)
@@ -108,17 +110,20 @@ export function DonePanel({
           valueDate: date,
           limit: PAGINATION_LIMIT,
           spaceId: currentSpaceId,
+          // PEND-35 Tier 1.5 — push excludeParentId (B-74) and
+          // contentNonEmpty (UX-129) into SQL so totalCount/hasMore
+          // reflect the visible set rather than the raw page.
+          ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
+          contentNonEmpty: true,
         })
         if (cancelled) return
-        // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
-        const nonEmptyItems = filterDoneBlocks(resp.items, excludePageId)
-        setBlocks(nonEmptyItems)
+        setBlocks(resp.items)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(nonEmptyItems.length)
+        setTotalCount(resp.items.length)
 
         // Resolve parent page titles
-        const uniqueParentIds = collectUniqueParentIds(nonEmptyItems)
+        const uniqueParentIds = collectUniqueParentIds(resp.items)
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
           if (cancelled) return
