@@ -11,6 +11,11 @@
  * module-level in-flight promise so concurrent subscribers reuse a
  * single IPC round-trip.
  *
+ * BUG-48: the underlying fetch is now `listJournalPageDates`, a
+ * database-native, indexed lookup that returns every date-formatted
+ * journal page in one shot — no cursor pagination, no client-side
+ * regex filtering, no F06 100-row clamp drop-off.
+ *
  * The cache is intentionally only "in-flight" — once the promise
  * settles, `inflight` is cleared so the next fresh mount triggers a new
  * fetch. We do not try to share a long-lived cache here because the
@@ -23,7 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
-import { listBlocks } from '../lib/tauri'
+import { listJournalPageDates } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 
 // FEAT-3 Phase 4 — dedupe keyed by `spaceId` so two concurrent
@@ -36,22 +41,11 @@ export function __resetCalendarPageDatesForTests(): void {
 }
 
 async function doFetch(spaceId: string): Promise<Map<string, string>> {
-  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Empty string is
-  // the pre-bootstrap no-match fallback (passed in by `fetchPageMap`).
-  // BUG-FIX: cursor-paginate through all pages so new date-formatted
-  // pages are always found regardless of total page count (limit clamped
-  // to 100 on the backend).
+  const rows = await listJournalPageDates({ spaceId })
   const map = new Map<string, string>()
-  let cursor: string | undefined
-  do {
-    const resp = await listBlocks({ blockType: 'page', limit: 100, spaceId, cursor })
-    for (const b of resp.items) {
-      if (b.content && /^\d{4}-\d{2}-\d{2}$/.test(b.content)) {
-        map.set(b.content, b.id)
-      }
-    }
-    cursor = resp.next_cursor ?? undefined
-  } while (cursor)
+  for (const b of rows) {
+    if (b.content) map.set(b.content, b.id)
+  }
   return map
 }
 
@@ -107,7 +101,7 @@ export function useCalendarPageDates(): UseCalendarPageDatesResult {
     // space's dates don't flash before the new fetch resolves.
     setLoading(true)
     setPageMap(new Map())
-    // `listBlocks` requires `spaceId`. The `?? ''` fallback is
+    // `listJournalPageDates` requires `spaceId`. The `?? ''` fallback is
     // intentional pre-bootstrap behaviour: empty string forces a
     // no-match SQL filter rather than a runtime null deref.
     fetchPageMap(currentSpaceId ?? '')

@@ -13,10 +13,10 @@
 //! (`descendants_cte_purge!()`, `tag_inh_subtree_active!()`,
 //! `ancestors_cte_standard!()`) are used inside the dynamic
 //! `sqlx::query(...)` API, which accepts a runtime `&str`, not the
-//! compile-time `query_as!` family used at the 18 production sites.
+//! compile-time `query_as!` family used at the 20 production sites.
 //!
 //! Trade-off chosen (PEND-28a H1 Option 2): keep the canonical
-//! column list duplicated at all 18 production sites, accept the
+//! column list duplicated at all 20 production sites, accept the
 //! manual lockstep-update cost when `BlockRow` changes, and use the
 //! parity tests in this module's `#[cfg(test)] mod tests` to catch
 //! drift in CI.
@@ -26,7 +26,7 @@
 //! Two production-visible consts coexist because the macro and
 //! runtime sqlx APIs diverge on type-cast syntax:
 //!
-//! - [`BLOCK_ROW_CANONICAL_SELECT`] — for the 18 `sqlx::query_as!(BlockRow, …)`
+//! - [`BLOCK_ROW_CANONICAL_SELECT`] — for the 20 `sqlx::query_as!(BlockRow, …)`
 //!   compile-time macro sites. Includes the `is_conflict as "is_conflict: bool"`
 //!   cast required by the proc-macro to type-resolve the column.
 //! - [`BLOCK_ROW_RUNTIME_SELECT`] — for the 3 runtime
@@ -306,7 +306,7 @@ mod tests {
         // removed), this assertion fails — bump the constant
         // deliberately and confirm the new site uses the canonical
         // SELECT.
-        const EXPECTED_HITS: usize = 18;
+        const EXPECTED_HITS: usize = 20;
         assert_eq!(
             total_hits, EXPECTED_HITS,
             "expected {EXPECTED_HITS} `query_as!(BlockRow, …)` \

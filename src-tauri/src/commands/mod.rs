@@ -96,8 +96,9 @@ pub use history::{
     revert_ops_inner, undo_page_op, undo_page_op_inner,
 };
 pub use journal::{
-    journal_for_date_inner, navigate_journal_inner, quick_capture_block, quick_capture_block_inner,
-    today_journal_inner,
+    get_journal_page_by_date, get_journal_page_by_date_inner, journal_for_date_inner,
+    list_journal_page_dates, list_journal_page_dates_inner, navigate_journal_inner,
+    quick_capture_block, quick_capture_block_inner, today_journal_inner,
 };
 pub use link_metadata::{
     fetch_link_metadata, fetch_link_metadata_inner, get_link_metadata, get_link_metadata_inner,
@@ -195,7 +196,10 @@ pub use history::{
     __specta__fn__revert_ops, __specta__fn__undo_page_op,
 };
 #[doc(hidden)]
-pub use journal::__specta__fn__quick_capture_block;
+pub use journal::{
+    __specta__fn__get_journal_page_by_date, __specta__fn__list_journal_page_dates,
+    __specta__fn__quick_capture_block,
+};
 #[doc(hidden)]
 pub use link_metadata::{__specta__fn__fetch_link_metadata, __specta__fn__get_link_metadata};
 #[doc(hidden)]
@@ -283,7 +287,9 @@ pub use history::{
     __cmd__redo_page_op, __cmd__restore_page_to_op, __cmd__revert_ops, __cmd__undo_page_op,
 };
 #[doc(hidden)]
-pub use journal::__cmd__quick_capture_block;
+pub use journal::{
+    __cmd__get_journal_page_by_date, __cmd__list_journal_page_dates, __cmd__quick_capture_block,
+};
 #[doc(hidden)]
 pub use link_metadata::{__cmd__fetch_link_metadata, __cmd__get_link_metadata};
 #[doc(hidden)]

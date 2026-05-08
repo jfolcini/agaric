@@ -453,6 +453,30 @@ export const commands = {
 	 *  journal page in `space_id`. Delegates to [`quick_capture_block_inner`].
 	 */
 	quickCaptureBlock: (content: string, spaceId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("quick_capture_block", { content, spaceId })),
+	/**
+	 *  Tauri command: look up a journal page by date. Delegates to
+	 *  [`get_journal_page_by_date_inner`].
+	 */
+	getJournalPageByDate: (date: string, spaceId: string) => typedError<{
+	id: string,
+	block_type: string,
+	content: string | null,
+	parent_id: string | null,
+	position: number | null,
+	deleted_at: string | null,
+	is_conflict: boolean,
+	conflict_type: string | null,
+	todo_state: string | null,
+	priority: string | null,
+	due_date: string | null,
+	scheduled_date: string | null,
+	page_id: string | null,
+} | null, AppErrorSchema>(__TAURI_INVOKE("get_journal_page_by_date", { date, spaceId })),
+	/**
+	 *  Tauri command: list all date-formatted journal pages. Delegates to
+	 *  [`list_journal_page_dates_inner`].
+	 */
+	listJournalPageDates: (spaceId: string) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("list_journal_page_dates", { spaceId })),
 };
 
 /* Types */

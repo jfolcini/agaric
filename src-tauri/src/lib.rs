@@ -189,6 +189,9 @@ macro_rules! agaric_commands {
             $crate::commands::create_space,
             // Quick capture (FEAT-12) — desktop global-shortcut entry point
             $crate::commands::quick_capture_block,
+            // Journal page lookup (BUG-48) — database-native date queries
+            $crate::commands::get_journal_page_by_date,
+            $crate::commands::list_journal_page_dates,
         ]
     };
 }

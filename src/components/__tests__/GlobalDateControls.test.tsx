@@ -35,7 +35,6 @@ vi.mock('../ui/calendar', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -54,7 +53,9 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
-  mockedInvoke.mockResolvedValue(emptyPage)
+  // BUG-48: useCalendarPageDates now hits `list_journal_page_dates`,
+  // which returns a flat `BlockRow[]` (no pagination envelope).
+  mockedInvoke.mockResolvedValue([])
 })
 
 describe('GlobalDateControls', () => {
@@ -213,12 +214,8 @@ describe('GlobalDateControls', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({
-          blockType: 'page',
-          limit: 100,
-          cursor: null,
-        }),
+        'list_journal_page_dates',
+        expect.objectContaining({ spaceId: '' }),
       )
     })
   })

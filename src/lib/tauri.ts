@@ -219,6 +219,34 @@ export async function listBlocks(params: {
   )
 }
 
+/**
+ * Look up a single journal page by its date string in the given space.
+ *
+ * BUG-48 — replaces the frontend pattern of paginating `listBlocks({ blockType:
+ * 'page', limit: 100 })` and probing the resulting Map. Backed by the partial
+ * index `idx_blocks_journal_date` (migration 0047) so the lookup is O(index)
+ * regardless of total block count. Returns `null` when no journal page exists
+ * for `date` in `spaceId`.
+ */
+export async function getJournalPageByDate(params: {
+  date: string
+  spaceId: string
+}): Promise<BlockRow | null> {
+  return unwrap(await commands.getJournalPageByDate(params.date, params.spaceId))
+}
+
+/**
+ * List every date-formatted journal page in the given space.
+ *
+ * BUG-48 — replaces the cursor-paginated `listBlocks({ blockType: 'page',
+ * limit: 100 })` loop in `useCalendarPageDates`. The result is a flat array
+ * (not paginated) because journal-page cardinality is bounded by days-with-
+ * notes — small enough to fit invariant #3's small-cardinality carve-out.
+ */
+export async function listJournalPageDates(params: { spaceId: string }): Promise<BlockRow[]> {
+  return unwrap(await commands.listJournalPageDates(params.spaceId))
+}
+
 /** List undated tasks (tasks with todo_state but no due/scheduled date).
  *
  * `spaceId` (FEAT-3 Phase 4) — when set, restricts results to undated
