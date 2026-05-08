@@ -1,6 +1,13 @@
 # PEND-06 — Tauri 2 `Channel<T>` adoption for streaming progress
 
-> **Status (Tier 1, sync progress):** Phase 1 shipped in 0.1.18
+> **Status:** Tier 1 + Tier 2 **shipped.** Tier 3 (import progress)
+> deferred to a separate item, **[PEND-38](PEND-38-import-progress-channel.md)**,
+> because it requires restructuring `import_markdown` away from a
+> single SQL transaction (per-block savepoints) before channel
+> adoption produces any UX win. The plan body below is preserved as
+> the historical design record.
+>
+> **Tier 1 — sync progress.** Phase 1 shipped in 0.1.18
 > (`Channel<SyncProgressUpdate>` wired through `start_sync` →
 > `SyncScheduler` → `try_sync_with_peer` → `ChannelEventSink`, with
 > `app.emit('sync:progress')` kept in lockstep as a migration runway).
@@ -10,8 +17,15 @@
 > dual-emit because the inner sink's listeners carry post-sync side
 > effects the channel-stream callback does not duplicate.
 >
-> **Tier 2 (file transfer streaming) — not started.** Independent of
-> Tier 1; tracked in this same plan file.
+> **Tier 2 — file transfer streaming.** Shipped: `SyncProgressUpdate`
+> became a tagged enum (`Sync` | `Files`) so a single per-session
+> channel carries both phases; `SyncEvent::FileProgress` is emitted
+> per 5 MB binary frame from `sync_files::run_file_transfer_initiator`
+> (the user-facing initiator side); the responder side passes `None`
+> on purpose (its `TauriEventSink` has no channel to deliver to —
+> see the Tier 2 emission scope note below); the frontend consumes
+> the tagged variant in `useSyncTrigger` and writes file/byte
+> counters into `useSyncStore`.
 
 ## What `Channel<T>` is
 

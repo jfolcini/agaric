@@ -696,6 +696,10 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
         rt.block_on(seed_unlinked_refs(&pool, count));
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            // PEND-18 Phase 2 / FEAT-3p4: `list_unlinked_references_inner`
+            // takes `&SpaceScope`. The bench query is content-addressed by
+            // page id with no space-scope filter, so use `Global`.
+            let scope = agaric_lib::space::SpaceScope::Global;
             b.to_async(&rt).iter(|| {
                 list_unlinked_references_inner(
                     &pool,
@@ -704,7 +708,7 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
-                    None,
+                    &scope,
                 )
             });
         });

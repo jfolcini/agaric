@@ -1162,12 +1162,49 @@ export type StatusInfo = {
 	retry_queue_pending: number | null,
 };
 
-export type SyncProgressUpdate = {
-	state: string,
-	remote_device_id: string,
-	ops_received: number,
-	ops_sent: number,
-};
+/**
+ *  Streaming progress payload carried over the sync channel.
+ *
+ *  PEND-06 Tier 2 made this a tagged enum so a single channel per sync
+ *  session carries both the orchestrator's state-transition stream
+ *  (`Sync`) and the post-sync attachment-transfer stream (`Files`).
+ *  Frontend consumers switch on `kind` and read the variant-specific
+ *  fields.
+ */
+export type SyncProgressUpdate =
+/**
+ *  Op-sync state transitions (Tier 1). Mirrors the
+ *  [`SyncEvent::Progress`] / [`SyncEvent::Complete`] /
+ *  [`SyncEvent::Error`] envelope, with `state` carrying
+ *  `"complete"` / `"error"` for the terminal cases.
+ */
+{ kind: "sync"; state: string; remote_device_id: string; ops_received: number; ops_sent: number } |
+/**
+ *  Per-frame attachment transfer progress (Tier 2). Emitted by
+ *  `sync_files::run_file_transfer_*` between binary frames so the
+ *  UI can render a real bytes-done bar instead of a spinner.
+ */
+{ kind: "files";
+/**
+ *  `"sending"` (we are pushing files to the peer),
+ *  `"receiving"` (we are pulling files from the peer), or
+ *  `"complete"` (both halves are done for this session).
+ */
+phase: string; remote_device_id: string;
+// Files fully transferred so far in the current `phase`.
+files_done: number;
+/**
+ *  Total files the peer or we requested for this `phase`. May
+ *  be 0 in the steady-state "nothing to transfer" case.
+ */
+files_total: number;
+/**
+ *  Bytes shipped/received so far in the current `phase`,
+ *  including in-progress frames.
+ */
+bytes_done: number;
+// Aggregate byte total advertised for the current `phase`.
+bytes_total: number };
 
 // Response payload returned by [`start_sync`].
 export type SyncSessionInfo = {

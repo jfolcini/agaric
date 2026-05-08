@@ -330,6 +330,12 @@ async fn recovery_on_empty_database_is_noop() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
+    // L-103 test isolation: tests share a single process, and the
+    // production guard would trip on the second `recover_at_boot` call
+    // in the same run. Reset before each invocation so the four
+    // recovery integration tests can run together (matches
+    // `recovery::tests::recover_at_boot_test`).
+    crate::recovery::reset_recovery_guard();
     let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert_eq!(report.pending_snapshots_deleted, 0, "no pending snapshots");
@@ -368,6 +374,12 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
         .await
         .unwrap();
 
+    // L-103 test isolation: tests share a single process, and the
+    // production guard would trip on the second `recover_at_boot` call
+    // in the same run. Reset before each invocation so the four
+    // recovery integration tests can run together (matches
+    // `recovery::tests::recover_at_boot_test`).
+    crate::recovery::reset_recovery_guard();
     let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert_eq!(
@@ -436,6 +448,12 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
         .unwrap()
         .len();
 
+    // L-103 test isolation: tests share a single process, and the
+    // production guard would trip on the second `recover_at_boot` call
+    // in the same run. Reset before each invocation so the four
+    // recovery integration tests can run together (matches
+    // `recovery::tests::recover_at_boot_test`).
+    crate::recovery::reset_recovery_guard();
     let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert!(report.drafts_recovered.is_empty(), "no new recovery needed");
@@ -485,6 +503,12 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         .unwrap()
         .len();
 
+    // L-103 test isolation: tests share a single process, and the
+    // production guard would trip on the second `recover_at_boot` call
+    // in the same run. Reset before each invocation so the four
+    // recovery integration tests can run together (matches
+    // `recovery::tests::recover_at_boot_test`).
+    crate::recovery::reset_recovery_guard();
     let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert_eq!(report.drafts_recovered.len(), 1, "one draft recovered");

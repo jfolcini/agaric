@@ -122,6 +122,91 @@ describe('useSyncTrigger', () => {
     expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
   })
 
+  it('PEND-06 Tier 2: routes Files-variant updates into the sync store', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER_FILES',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+        last_address: null,
+      },
+    ])
+
+    // Capture the onProgress callback the hook hands to startSync, then
+    // drive it through a realistic Sync→Files→complete sequence and
+    // assert the store reflects each tick.
+    let capturedOnProgress: Parameters<typeof startSync>[1] | undefined
+    mockStartSync.mockImplementation(async (_peerId, onProgress) => {
+      capturedOnProgress = onProgress
+      return {
+        state: 'complete',
+        local_device_id: 'L',
+        remote_device_id: 'R',
+        ops_received: 0,
+        ops_sent: 0,
+      }
+    })
+
+    const { result } = renderHook(() => useSyncTrigger())
+    // Kick off sync but don't await yet — we want to drive progress
+    // events while it's mid-flight.
+    const pending = act(async () => {
+      await result.current.syncAll()
+    })
+
+    // Wait one microtask so the implementation has captured the callback.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(capturedOnProgress).toBeDefined()
+
+    // Tier 2 — receiving phase mid-stream.
+    act(() => {
+      capturedOnProgress?.({
+        kind: 'files',
+        phase: 'receiving',
+        remote_device_id: 'R',
+        files_done: 0,
+        files_total: 2,
+        bytes_done: 5_000_000,
+        bytes_total: 12_000_000,
+      })
+    })
+    {
+      const state = useSyncStore.getState()
+      expect(state.filePhase).toBe('receiving')
+      expect(state.filesTotal).toBe(2)
+      expect(state.bytesDone).toBe(5_000_000)
+      expect(state.bytesTotal).toBe(12_000_000)
+    }
+
+    // Tier 2 — terminal complete tick clears the file affordance.
+    act(() => {
+      capturedOnProgress?.({
+        kind: 'files',
+        phase: 'complete',
+        remote_device_id: 'R',
+        files_done: 2,
+        files_total: 2,
+        bytes_done: 12_000_000,
+        bytes_total: 12_000_000,
+      })
+    })
+    {
+      const state = useSyncStore.getState()
+      expect(state.filePhase).toBeNull()
+      expect(state.filesDone).toBe(0)
+      expect(state.bytesDone).toBe(0)
+    }
+
+    await pending
+  })
+
   it('silently skips sync when peer list is empty', async () => {
     mockListPeerRefs.mockResolvedValue([])
 

@@ -857,8 +857,26 @@ pub(crate) async fn run_sync_session(
     // check is dead code once we reach this phase).
     if orch.is_succeeded() {
         if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(pool).await {
-            match crate::sync_files::run_file_transfer_initiator(conn, pool, &app_data_dir, cancel)
-                .await
+            // PEND-06 Tier 2 — wire the active sync's event sink into
+            // file transfer so per-frame progress lands on the same
+            // `Channel<SyncProgressUpdate>` that streamed op-sync
+            // transitions. `expected_remote_id` is the device id we
+            // told the orchestrator at session start; the session's
+            // `remote_device_id` is the same value once HeadExchange
+            // populates it.
+            let remote_device_id = orch.expected_remote_id().unwrap_or("").to_string();
+            let progress = crate::sync_files::FileTransferProgress {
+                event_sink,
+                remote_device_id: &remote_device_id,
+            };
+            match crate::sync_files::run_file_transfer_initiator(
+                conn,
+                pool,
+                &app_data_dir,
+                cancel,
+                Some(&progress),
+            )
+            .await
             {
                 Ok(stats) => {
                     if stats.files_received > 0 || stats.files_sent > 0 {

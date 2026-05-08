@@ -43,6 +43,13 @@ pub use cache_refresh::refresh_caches_for_recovered_drafts;
 pub use draft_recovery::find_prev_edit;
 pub use replay::{replay_unmaterialized_ops, ReplayReport};
 
+// L-103 test wrapper: re-export the once-only-guard reset for in-crate
+// test code (`integration_tests.rs`) so multi-test runs aren't poisoned
+// by the production guard. Test-only by `cfg(test)`; not part of the
+// public crate API.
+#[cfg(test)]
+pub(crate) use boot::reset_recovery_guard;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

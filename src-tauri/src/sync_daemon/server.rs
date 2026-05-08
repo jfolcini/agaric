@@ -333,11 +333,21 @@ pub(crate) async fn handle_incoming_sync(
     let responder_cancel = std::sync::atomic::AtomicBool::new(false);
     if orch.is_succeeded() {
         if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
+            // PEND-06 Tier 2 — pass `None`: the responder is the
+            // *incoming* side of a sync session, so no `start_sync`
+            // command on this device has set up a `Channel` for file
+            // progress. The active `Channel` lives on the initiator's
+            // device; emitting `FileProgress` here would just drop on
+            // the floor in `TauriEventSink`. Surfacing responder-side
+            // file-receive progress to the local UI is a follow-up
+            // (would need a new `app.emit` event or a daemon-owned
+            // long-lived channel).
             match crate::sync_files::run_file_transfer_responder(
                 &mut conn,
                 &pool_ref,
                 &app_data_dir,
                 &responder_cancel,
+                None,
             )
             .await
             {

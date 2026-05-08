@@ -56,6 +56,40 @@ pub struct FileTransferStats {
     pub skipped_hash_mismatch: usize,
 }
 
+/// Optional progress reporting hook for file-transfer functions.
+///
+/// PEND-06 Tier 2: when `Some(_)`, the file-transfer loops emit
+/// [`SyncEvent::FileProgress`](crate::sync_events::SyncEvent::FileProgress)
+/// before each file and after each 5 MB binary frame so the active
+/// sync's `Channel<SyncProgressUpdate>` (set up by `start_sync`) carries
+/// a real bytes-done signal to the UI. `None` is the test default — no
+/// emission, no `Arc` clone.
+pub struct FileTransferProgress<'a> {
+    pub event_sink: &'a std::sync::Arc<dyn crate::sync_events::SyncEventSink>,
+    pub remote_device_id: &'a str,
+}
+
+impl FileTransferProgress<'_> {
+    fn emit(
+        &self,
+        phase: &str,
+        files_done: u64,
+        files_total: u64,
+        bytes_done: u64,
+        bytes_total: u64,
+    ) {
+        self.event_sink
+            .on_sync_event(crate::sync_events::SyncEvent::FileProgress {
+                phase: phase.to_string(),
+                remote_device_id: self.remote_device_id.to_string(),
+                files_done,
+                files_total,
+                bytes_done,
+                bytes_total,
+            });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
@@ -715,6 +749,7 @@ pub async fn receive_request_and_send_files(
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
@@ -737,6 +772,26 @@ pub async fn receive_request_and_send_files(
             return Ok(stats);
         }
     };
+
+    // PEND-06 Tier 2: tally totals before the per-file loop so the UI
+    // gets a `bytes_total` denominator on its first tick. If a row is
+    // missing or unreadable here we'll skip it inside the loop too;
+    // the resulting `bytes_total` is a best-effort number that tracks
+    // the same set of files we'll actually try to send.
+    let files_total = attachment_ids.len() as u64;
+    let mut bytes_total: u64 = 0;
+    if progress.is_some() && files_total > 0 {
+        for id in &attachment_ids {
+            if let Ok(Some(fs_path)) = get_attachment_fs_path(pool, id).await {
+                if let Ok((size, _)) = read_attachment_file_metadata(app_data_dir, &fs_path).await {
+                    bytes_total = bytes_total.saturating_add(size);
+                }
+            }
+        }
+        if let Some(p) = progress {
+            p.emit("sending", 0, files_total, 0, bytes_total);
+        }
+    }
 
     // 2. For each requested attachment: send FileOffer + binary data
     for attachment_id in &attachment_ids {
@@ -823,8 +878,32 @@ pub async fn receive_request_and_send_files(
                  hash_pass={size_bytes} bytes, stream_pass={reopen_size} bytes"
             )));
         }
-        conn.send_binary_streaming(file, size_bytes, BINARY_FRAME_CHUNK_SIZE)
+        // PEND-06 Tier 2 — per-frame progress: capture the running
+        // bytes-shipped tally for this file so the UI sees movement
+        // mid-transfer on multi-frame attachments. The `bytes_total`
+        // tally above is the denominator across the whole `sending`
+        // phase; we add `bytes_so_far_in_file` to the per-file base.
+        let bytes_base = stats.bytes_sent;
+        if let Some(p) = progress {
+            conn.send_binary_streaming_with_progress(
+                file,
+                size_bytes,
+                BINARY_FRAME_CHUNK_SIZE,
+                |bytes_in_file| {
+                    p.emit(
+                        "sending",
+                        stats.files_sent as u64,
+                        files_total,
+                        bytes_base + bytes_in_file,
+                        bytes_total,
+                    );
+                },
+            )
             .await?;
+        } else {
+            conn.send_binary_streaming(file, size_bytes, BINARY_FRAME_CHUNK_SIZE)
+                .await?;
+        }
 
         // Wait for FileReceived acknowledgment
         let ack: SyncMessage = conn.recv_json().await?;
@@ -834,6 +913,15 @@ pub async fn receive_request_and_send_files(
             } if ack_id == attachment_id => {
                 stats.files_sent += 1;
                 stats.bytes_sent += size_bytes;
+                if let Some(p) = progress {
+                    p.emit(
+                        "sending",
+                        stats.files_sent as u64,
+                        files_total,
+                        stats.bytes_sent,
+                        bytes_total,
+                    );
+                }
             }
             other => {
                 tracing::warn!(
@@ -875,6 +963,7 @@ pub async fn request_and_receive_files(
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
@@ -884,6 +973,26 @@ pub async fn request_and_receive_files(
 
     if ids.is_empty() {
         tracing::debug!("no missing attachment files, sending empty FileRequest");
+    }
+
+    // PEND-06 Tier 2: tally totals from the local DB rows for the
+    // attachments we're about to request. The peer's `FileOffer`
+    // size_bytes is authoritative on the wire (M-52 cross-checks it),
+    // but the DB row is the only place we know `bytes_total` *before*
+    // any FileOffer arrives — and we want a denominator on the very
+    // first tick so the UI doesn't briefly show "?/?".
+    let files_total = ids.len() as u64;
+    let mut bytes_total: u64 = 0;
+    if progress.is_some() && files_total > 0 {
+        for id in &ids {
+            if let Ok(Some(meta)) = get_attachment_receive_meta(pool, id).await {
+                bytes_total =
+                    bytes_total.saturating_add(u64::try_from(meta.size_bytes).unwrap_or(0));
+            }
+        }
+        if let Some(p) = progress {
+            p.emit("receiving", 0, files_total, 0, bytes_total);
+        }
     }
 
     // 2. Send FileRequest
@@ -970,7 +1079,29 @@ pub async fn request_and_receive_files(
                         return Err(e);
                     }
                 };
-                if let Err(e) = conn.receive_binary_streaming(&mut writer, size_bytes).await {
+                // PEND-06 Tier 2 — per-frame progress on the receive
+                // path: capture the running bytes-received tally so a
+                // multi-frame attachment ticks the UI mid-transfer.
+                let bytes_base = stats.bytes_received;
+                let recv_result = if let Some(p) = progress {
+                    conn.receive_binary_streaming_with_progress(
+                        &mut writer,
+                        size_bytes,
+                        |bytes_in_file| {
+                            p.emit(
+                                "receiving",
+                                stats.files_received as u64,
+                                files_total,
+                                bytes_base + bytes_in_file,
+                                bytes_total,
+                            );
+                        },
+                    )
+                    .await
+                } else {
+                    conn.receive_binary_streaming(&mut writer, size_bytes).await
+                };
+                if let Err(e) = recv_result {
                     tracing::error!(
                         attachment_id,
                         error = %e,
@@ -997,6 +1128,15 @@ pub async fn request_and_receive_files(
 
                 stats.files_received += 1;
                 stats.bytes_received += size_bytes;
+                if let Some(p) = progress {
+                    p.emit(
+                        "receiving",
+                        stats.files_received as u64,
+                        files_total,
+                        stats.bytes_received,
+                        bytes_total,
+                    );
+                }
 
                 // Only after successful write + hash verify do we ACK.
                 conn.send_json(&SyncMessage::FileReceived { attachment_id })
@@ -1058,18 +1198,20 @@ pub async fn run_file_transfer_initiator(
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
     // Phase 1: Request our missing files from responder
-    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel).await?;
+    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel, progress).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
     stats.skipped_not_found += recv_stats.skipped_not_found;
 
     // Phase 2: Respond to responder's file request
-    let send_stats = receive_request_and_send_files(conn, pool, app_data_dir, cancel).await?;
+    let send_stats =
+        receive_request_and_send_files(conn, pool, app_data_dir, cancel, progress).await?;
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
@@ -1082,6 +1224,19 @@ pub async fn run_file_transfer_initiator(
             bytes_received = stats.bytes_received,
             bytes_sent = stats.bytes_sent,
             "file transfer complete"
+        );
+    }
+
+    // PEND-06 Tier 2: emit a final `complete` tick so the UI can flip
+    // its file-transfer phase chip back to idle without waiting for
+    // the next sync session.
+    if let Some(p) = progress {
+        p.emit(
+            "complete",
+            (stats.files_received + stats.files_sent) as u64,
+            (stats.files_received + stats.files_sent) as u64,
+            stats.bytes_received + stats.bytes_sent,
+            stats.bytes_received + stats.bytes_sent,
         );
     }
 
@@ -1102,18 +1257,20 @@ pub async fn run_file_transfer_responder(
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
     // Phase 1: Respond to initiator's file request
-    let send_stats = receive_request_and_send_files(conn, pool, app_data_dir, cancel).await?;
+    let send_stats =
+        receive_request_and_send_files(conn, pool, app_data_dir, cancel, progress).await?;
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
     stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
 
     // Phase 2: Request our missing files from initiator
-    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel).await?;
+    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel, progress).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
@@ -1126,6 +1283,16 @@ pub async fn run_file_transfer_responder(
             bytes_received = stats.bytes_received,
             bytes_sent = stats.bytes_sent,
             "file transfer complete"
+        );
+    }
+
+    if let Some(p) = progress {
+        p.emit(
+            "complete",
+            (stats.files_received + stats.files_sent) as u64,
+            (stats.files_received + stats.files_sent) as u64,
+            stats.bytes_received + stats.bytes_sent,
+            stats.bytes_received + stats.bytes_sent,
         );
     }
 
