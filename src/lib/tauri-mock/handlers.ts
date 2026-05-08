@@ -606,13 +606,23 @@ export const HANDLERS: Record<string, Handler> = {
     const key = a['key'] as string
     const valueText = (a['valueText'] as string | null) ?? null
     const valueDate = (a['valueDate'] as string | null) ?? null
-    // PEND-35 Tier 1.5 — mirror the backend push-down filters so the
-    // mock honours `excludeParentId` (skip rows whose `parent_id`
-    // matches) and `contentNonEmpty` (skip rows whose content is null
-    // or empty). Without these the FE tests can't observe the filter
-    // going through the IPC layer.
-    const excludeParentId = (a['excludeParentId'] as string | null) ?? null
-    const contentNonEmpty = Boolean(a['contentNonEmpty'])
+    // PEND-35 Tier 1.5 / Tier 3.4 — push-down filters bundled into
+    // `extraFilters` on the IPC boundary. Mirror the backend
+    // semantics so FE tests can observe the filter going through.
+    //   - `excludeParentId` skips rows whose `parent_id` matches.
+    //   - `contentNonEmpty` drops null/empty/whitespace-only content.
+    //   - `blockType` (Tier 3.4) restricts to a single block_type.
+    //   - `valueTextIn` (Tier 3.4) is set-membership over value_text;
+    //     mutually exclusive with `valueText`.
+    //   - `valueDateRange` (Tier 3.4) is half-open `[from, to)`.
+    const extra = (a['extraFilters'] as Record<string, unknown> | null) ?? null
+    const excludeParentId = ((extra?.['excludeParentId'] as string | null) ?? null) as string | null
+    const contentNonEmpty = Boolean(extra?.['contentNonEmpty'])
+    const blockType = ((extra?.['blockType'] as string | null) ?? null) as string | null
+    const valueTextIn = ((extra?.['valueTextIn'] as string[] | null) ?? null) as string[] | null
+    const valueDateRange = ((extra?.['valueDateRange'] as [string, string] | null) ?? null) as
+      | [string, string]
+      | null
     // Some well-known "properties" live on the block row itself in the seed
     // data (todo_state, priority, due_date, scheduled_date, completed_at,
     // created_at). The real backend exposes them through the properties
@@ -635,9 +645,21 @@ export const HANDLERS: Record<string, Handler> = {
         const content = b['content'] as string | null | undefined
         if (content == null || (content as string).trim() === '') return false
       }
+      if (blockType !== null && b['block_type'] !== blockType) return false
       const blockProps = properties.get(b['id'] as string)
       const prop = blockProps?.get(key)
+      const matchesValueTextIn = (v: string | null | undefined): boolean =>
+        valueTextIn === null || valueTextIn.length === 0 || (v != null && valueTextIn.includes(v))
+      const matchesValueDateRange = (v: string | null | undefined): boolean => {
+        if (valueDateRange === null) return true
+        if (v == null) return false
+        const [from, to] = valueDateRange
+        // Half-open `[from, to)`: include `from`, exclude `to`.
+        return v >= from && v < to
+      }
       if (prop) {
+        if (!matchesValueTextIn(prop['value_text'] as string | null | undefined)) return false
+        if (!matchesValueDateRange(prop['value_date'] as string | null | undefined)) return false
         if (valueText !== null) return prop['value_text'] === valueText
         if (valueDate !== null) return prop['value_date'] === valueDate
         return true
@@ -645,6 +667,8 @@ export const HANDLERS: Record<string, Handler> = {
       if (rowKind !== undefined) {
         const rowValue = b[key] as string | null | undefined
         if (rowValue == null) return false
+        if (rowKind === 'text' && !matchesValueTextIn(rowValue)) return false
+        if (rowKind === 'date' && !matchesValueDateRange(rowValue)) return false
         if (valueText !== null) return rowKind === 'text' && rowValue === valueText
         if (valueDate !== null) return rowKind === 'date' && rowValue === valueDate
         return true
@@ -659,6 +683,9 @@ export const HANDLERS: Record<string, Handler> = {
     const tagIds = (a['tagIds'] as string[]) ?? []
     const prefixes = (a['prefixes'] as string[] | null) ?? []
     const mode = ((a['mode'] as string) ?? 'and').toLowerCase()
+    // PEND-35 Tier 3.4 — `blockType` push-down: restrict to a single
+    // block_type. `null` / `undefined` keeps the unfiltered behaviour.
+    const blockType = (a['blockType'] as string | null) ?? null
 
     // Resolve prefixes to tag IDs by matching tag block content
     const resolvedFromPrefix: string[] = []
@@ -679,6 +706,7 @@ export const HANDLERS: Record<string, Handler> = {
 
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
+      if (blockType !== null && b['block_type'] !== blockType) return false
       const tags = blockTags.get(b['id'] as string)
       if (!tags || tags.size === 0) return false
       if (allTagIds.length === 0) return false

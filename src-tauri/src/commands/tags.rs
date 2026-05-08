@@ -254,6 +254,13 @@ pub async fn remove_tag_inner(
 /// set to blocks whose owning page carries `space = ?space_id`.
 /// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
 /// preserved for callsites that span every space.
+///
+/// `block_type` (PEND-35 Tier 3.4) — when `Some`, restricts results to
+/// blocks whose `block_type` equals the supplied value. `None` is the
+/// unfiltered behaviour. Pushes GraphView's JS-side
+/// `pagesResp.items.filter(p => p.block_type === 'page')` predicate
+/// into SQL so the unbounded `limit:5000` over-fetch and post-filter
+/// discard collapses into one paginated query.
 #[instrument(skip(pool, tag_ids), err)]
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_tags_inner(
@@ -265,6 +272,7 @@ pub async fn query_by_tags_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     scope: &SpaceScope,
+    block_type: Option<String>,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let mut exprs = Vec::new();
     for tag_id in tag_ids {
@@ -295,6 +303,7 @@ pub async fn query_by_tags_inner(
         &page,
         include_inherited.unwrap_or(false),
         scope.as_filter_param(),
+        block_type.as_deref(),
     )
     .await
 }
@@ -417,6 +426,7 @@ pub async fn query_by_tags(
     cursor: Option<String>,
     limit: Option<i64>,
     scope: SpaceScope,
+    block_type: Option<String>,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     query_by_tags_inner(
         &pool.0,
@@ -427,6 +437,7 @@ pub async fn query_by_tags(
         cursor,
         limit,
         &scope,
+        block_type,
     )
     .await
     .map_err(sanitize_internal_error)

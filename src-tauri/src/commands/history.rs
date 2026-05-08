@@ -387,7 +387,7 @@ pub async fn restore_page_to_op_inner(
              ) \
              SELECT o.device_id, o.seq, o.op_type FROM op_log o \
              WHERE ( \
-               json_extract(o.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+               o.block_id IN (SELECT id FROM page_blocks) \
                OR (o.op_type = 'delete_attachment' AND EXISTS ( \
                    SELECT 1 FROM attachments a \
                    WHERE a.id = json_extract(o.payload, '$.attachment_id') \
@@ -490,7 +490,7 @@ pub async fn undo_page_op_inner(
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
          FROM op_log ol \
          WHERE ( \
-             json_extract(ol.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+             ol.block_id IN (SELECT id FROM page_blocks) \
              OR ( \
                  ol.op_type = 'delete_attachment' \
                  AND EXISTS ( \

@@ -141,7 +141,7 @@ pub async fn list_page_history(
                     ol.created_at < ?3 \
                     OR (ol.created_at = ?3 AND ol.seq < ?4) \
                     OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
-               AND (?7 IS NULL OR json_extract(ol.payload, '$.block_id') IN ( \
+               AND (?7 IS NULL OR ol.block_id IN ( \
                     SELECT bp.block_id FROM block_properties bp \
                     WHERE bp.key = 'space' AND bp.value_ref = ?7)) \
              ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
@@ -176,7 +176,7 @@ pub async fn list_page_history(
          ) \
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
          FROM op_log ol \
-         WHERE json_extract(ol.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+         WHERE ol.block_id IN (SELECT id FROM page_blocks) \
            AND (?2 IS NULL OR ol.op_type = ?2) \
            AND (?3 IS NULL OR ( \
                 ol.created_at < ?4 \

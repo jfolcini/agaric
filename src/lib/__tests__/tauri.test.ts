@@ -600,6 +600,8 @@ describe('queryByTags', () => {
       limit: null,
       // PEND-18 Phase 3: omitted spaceId → `SpaceScope::Global`.
       scope: { kind: 'global' },
+      // PEND-35 Tier 3.4: omitted blockType → null (no push-down).
+      blockType: null,
     })
     expect(result).toEqual(emptyPage)
   })
@@ -638,8 +640,17 @@ describe('queryByTags', () => {
       cursor: 'cursor123',
       limit: 25,
       scope: { kind: 'global' },
+      blockType: null,
     })
     expect(result).toEqual(pageResp)
+  })
+
+  // PEND-35 Tier 3.4 — blockType push-down round-trips through the wrapper.
+  it('forwards blockType through to the binding', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await queryByTags({ tagIds: ['TAG01'], prefixes: [], mode: 'or', blockType: 'page' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['blockType']).toBe('page')
   })
 
   it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
@@ -1164,6 +1175,10 @@ describe('queryByProperty', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
+    // PEND-35 Tier 3.4 — push-down knobs are bundled into
+    // `extraFilters` on the IPC boundary; with no extras supplied the
+    // wrapper sends `null` so the backend's `Option<ExtraQueryFilters>`
+    // short-circuits.
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
       key: 'status',
       valueText: 'done',
@@ -1172,8 +1187,7 @@ describe('queryByProperty', () => {
       cursor: 'cur1',
       limit: 10,
       scope: { kind: 'global' },
-      excludeParentId: null,
-      contentNonEmpty: false,
+      extraFilters: null,
     })
     expect(result).toEqual(pageResp)
   })
@@ -1191,8 +1205,7 @@ describe('queryByProperty', () => {
       cursor: null,
       limit: null,
       scope: { kind: 'global' },
-      excludeParentId: null,
-      contentNonEmpty: false,
+      extraFilters: null,
     })
   })
 
@@ -1203,8 +1216,9 @@ describe('queryByProperty', () => {
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 
-  // PEND-35 Tier 1.5 — push-down filters reach the binding intact.
-  it('forwards excludeParentId and contentNonEmpty to the binding', async () => {
+  // PEND-35 Tier 1.5 — push-down filters reach the binding through
+  // `extraFilters`.
+  it('forwards excludeParentId and contentNonEmpty into extraFilters', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByProperty({
       key: 'completed_at',
@@ -1213,8 +1227,32 @@ describe('queryByProperty', () => {
       contentNonEmpty: true,
     })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['excludeParentId']).toBe('PAGE_1')
-    expect(args['contentNonEmpty']).toBe(true)
+    const extra = args['extraFilters'] as Record<string, unknown>
+    expect(extra['excludeParentId']).toBe('PAGE_1')
+    expect(extra['contentNonEmpty']).toBe(true)
+    expect(extra['blockType']).toBeNull()
+    expect(extra['valueTextIn']).toBeNull()
+    expect(extra['valueDateRange']).toBeNull()
+  })
+
+  // PEND-35 Tier 3.4 — block_type / valueTextIn / valueDateRange
+  // round-trip through the extraFilters bundle.
+  it('forwards blockType / valueTextIn / valueDateRange into extraFilters', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await queryByProperty({
+      key: 'status',
+      blockType: 'page',
+      valueTextIn: ['TODO', 'DOING'],
+      valueDateRange: ['2026-01-01', '2026-02-01'],
+    })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    const extra = args['extraFilters'] as Record<string, unknown>
+    expect(extra['blockType']).toBe('page')
+    expect(extra['valueTextIn']).toEqual(['TODO', 'DOING'])
+    expect(extra['valueDateRange']).toEqual(['2026-01-01', '2026-02-01'])
+    // Tier 1.5 knobs default-null inside the bundle when not supplied.
+    expect(extra['excludeParentId']).toBeNull()
+    expect(extra['contentNonEmpty']).toBeNull()
   })
 })
 

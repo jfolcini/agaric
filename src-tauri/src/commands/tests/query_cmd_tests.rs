@@ -448,6 +448,7 @@ async fn query_by_tags_inner_empty_inputs_returns_empty() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -483,6 +484,7 @@ async fn query_by_tags_inner_or_mode_unions_tag_ids() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -516,6 +518,7 @@ async fn query_by_tags_inner_and_mode_intersects_tag_ids() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -556,6 +559,7 @@ async fn query_by_tags_inner_with_prefix() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -604,6 +608,9 @@ async fn query_by_property_returns_matching_blocks() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -634,6 +641,9 @@ async fn query_by_property_empty_key_returns_validation_error() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await;
 
@@ -664,6 +674,9 @@ async fn query_by_property_filters_by_value() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -694,6 +707,9 @@ async fn query_by_property_paginates_correctly() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -725,6 +741,9 @@ async fn query_by_property_paginates_correctly() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -752,6 +771,9 @@ async fn query_by_property_paginates_correctly() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -786,6 +808,9 @@ async fn query_by_property_excludes_deleted_blocks() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -844,6 +869,9 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -861,6 +889,9 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -908,6 +939,9 @@ async fn query_by_property_with_gt_operator() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -945,6 +979,9 @@ async fn query_by_property_with_lt_operator() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -982,6 +1019,9 @@ async fn query_by_property_defaults_to_eq() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1038,6 +1078,9 @@ async fn query_by_property_excludes_parent_id() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1060,6 +1103,9 @@ async fn query_by_property_excludes_parent_id() {
         &SpaceScope::Global,
         Some("PARENT_X".into()),
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1110,6 +1156,9 @@ async fn query_by_property_content_non_empty() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1127,6 +1176,9 @@ async fn query_by_property_content_non_empty() {
         &SpaceScope::Global,
         None,
         true,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1136,6 +1188,293 @@ async fn query_by_property_content_non_empty() {
         ids,
         ["QPCNE_A", "QPCNE_D"].into_iter().collect(),
         "content_non_empty must drop NULL, '', and whitespace-only content; got {ids:?}"
+    );
+}
+
+// ======================================================================
+// PEND-35 Tier 3.4 — query_by_property_inner block_type +
+// value_text_in + value_date_range push-downs
+// ======================================================================
+//
+// These four tests pin the SQL push-downs added in Tier 3.4:
+//
+// 1. `block_type` — equality on `b.block_type` so callers can restrict
+//    a property query to (e.g.) `block_type = 'page'` without an
+//    FE-side `.filter()`.
+// 2. `value_text_in` — set-membership over `bp.value_text`. Replaces
+//    the per-value `queryByProperty` fan-out in `agenda-filters`.
+// 3. `value_date_range` — half-open `[from, to)` range. The exclusive
+//    upper bound is asserted explicitly: a row whose date equals `to`
+//    must NOT be returned.
+// 4. Mutual exclusion between `value_text` and `value_text_in` —
+//    rejected at the boundary so the SQL evaluation has a single
+//    precedence rule.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_filters_by_block_type() {
+    let (pool, _dir) = test_pool().await;
+
+    // Mix of block_types — only `page` rows should be returned.
+    insert_block(&pool, "QPBT_PG1", "page", "page one", None, Some(1)).await;
+    insert_block(&pool, "QPBT_PG2", "page", "page two", None, Some(2)).await;
+    insert_block(&pool, "QPBT_CT1", "content", "content one", None, Some(3)).await;
+    for id in &["QPBT_PG1", "QPBT_PG2", "QPBT_CT1"] {
+        insert_property(&pool, id, "topic", "rust").await;
+    }
+
+    let unfiltered = query_by_property_inner(
+        &pool,
+        "topic".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(unfiltered.items.len(), 3, "baseline returns all three");
+
+    let pages_only = query_by_property_inner(
+        &pool,
+        "topic".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        Some("page".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        pages_only.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["QPBT_PG1", "QPBT_PG2"].into_iter().collect(),
+        "block_type='page' must drop the content row; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_value_text_in() {
+    let (pool, _dir) = test_pool().await;
+
+    // Three blocks with property `status` set to "a"/"b"/"c". A
+    // `value_text_in = ["a","c"]` query must return exactly 2 rows.
+    insert_block(&pool, "QPVI_A", "content", "a", None, Some(1)).await;
+    insert_block(&pool, "QPVI_B", "content", "b", None, Some(2)).await;
+    insert_block(&pool, "QPVI_C", "content", "c", None, Some(3)).await;
+    insert_property(&pool, "QPVI_A", "status", "a").await;
+    insert_property(&pool, "QPVI_B", "status", "b").await;
+    insert_property(&pool, "QPVI_C", "status", "c").await;
+
+    let result = query_by_property_inner(
+        &pool,
+        "status".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        Some(vec!["a".into(), "c".into()]),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["QPVI_A", "QPVI_C"].into_iter().collect(),
+        "value_text_in must surface only matching values; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_value_date_range() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Three blocks with `due_date` (reserved key path):
+    //   - 2026-01-01 (lower bound, INCLUDED)
+    //   - 2026-01-15 (interior, INCLUDED)
+    //   - 2026-02-01 (upper bound, EXCLUDED — half-open semantic)
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task jan 1".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    set_due_date_inner(&pool, DEV, &mat, b1.id.clone(), Some("2026-01-01".into()))
+        .await
+        .unwrap();
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task jan 15".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    set_due_date_inner(&pool, DEV, &mat, b2.id.clone(), Some("2026-01-15".into()))
+        .await
+        .unwrap();
+    let b3 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task feb 1".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    set_due_date_inner(&pool, DEV, &mat, b3.id.clone(), Some("2026-02-01".into()))
+        .await
+        .unwrap();
+
+    let result = query_by_property_inner(
+        &pool,
+        "due_date".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        Some(("2026-01-01".into(), "2026-02-01".into())),
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [b1.id.as_str(), b2.id.as_str()].into_iter().collect(),
+        "value_date_range must include `from` and EXCLUDE `to` \
+         (half-open [from, to)); got {ids:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test]
+async fn query_by_property_value_text_in_rejects_with_value_text() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "QPVR_A", "content", "task", None, Some(1)).await;
+    insert_property(&pool, "QPVR_A", "status", "a").await;
+
+    let err = query_by_property_inner(
+        &pool,
+        "status".into(),
+        Some("a".into()),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        Some(vec!["a".into()]),
+        None,
+    )
+    .await
+    .expect_err("value_text + value_text_in must be rejected");
+    match err {
+        AppError::Validation(msg) => {
+            assert!(
+                msg.contains("value_text_in") && msg.contains("value_text"),
+                "validation message must name both inputs; got {msg:?}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+// ======================================================================
+// PEND-35 Tier 3.4 — query_by_tags_inner block_type push-down
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_tags_filters_by_block_type() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "QTBT_TAG", "tag", "atag", None, None).await;
+    insert_block(&pool, "QTBT_PG1", "page", "page one", None, Some(1)).await;
+    insert_block(&pool, "QTBT_PG2", "page", "page two", None, Some(2)).await;
+    insert_block(&pool, "QTBT_CT1", "content", "content one", None, Some(3)).await;
+    insert_tag_assoc(&pool, "QTBT_PG1", "QTBT_TAG").await;
+    insert_tag_assoc(&pool, "QTBT_PG2", "QTBT_TAG").await;
+    insert_tag_assoc(&pool, "QTBT_CT1", "QTBT_TAG").await;
+
+    // Baseline — all three tagged blocks come back.
+    let unfiltered = query_by_tags_inner(
+        &pool,
+        vec!["QTBT_TAG".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        unfiltered.items.len(),
+        3,
+        "baseline must return all three tagged blocks"
+    );
+
+    // Filter to block_type='page' — drops the content row.
+    let pages_only = query_by_tags_inner(
+        &pool,
+        vec!["QTBT_TAG".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        Some("page".into()),
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        pages_only.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["QTBT_PG1", "QTBT_PG2"].into_iter().collect(),
+        "block_type='page' must drop the content row; got {ids:?}"
     );
 }
 
@@ -1493,6 +1832,7 @@ async fn query_by_tags_returns_only_current_space_blocks_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -1529,6 +1869,7 @@ async fn query_by_tags_with_none_space_id_returns_all_feat3p4() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1562,6 +1903,7 @@ async fn query_by_tags_with_nonexistent_space_id_returns_empty_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST")),
+        None,
     )
     .await
     .unwrap();
@@ -1600,6 +1942,7 @@ async fn query_by_tags_disjointness_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -1612,6 +1955,7 @@ async fn query_by_tags_disjointness_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -1661,6 +2005,7 @@ async fn query_by_tags_inner_global_matches_legacy_none_pend18() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1681,6 +2026,7 @@ async fn query_by_tags_inner_global_matches_legacy_none_pend18() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -1693,6 +2039,7 @@ async fn query_by_tags_inner_global_matches_legacy_none_pend18() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -1743,6 +2090,9 @@ async fn query_by_property_returns_only_current_space_blocks_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1775,6 +2125,9 @@ async fn query_by_property_returns_only_current_space_blocks_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1815,6 +2168,9 @@ async fn query_by_property_with_none_space_id_returns_all_feat3p4() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1843,6 +2199,9 @@ async fn query_by_property_with_nonexistent_space_id_returns_empty_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST")),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1881,6 +2240,9 @@ async fn query_by_property_disjointness_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1895,6 +2257,9 @@ async fn query_by_property_disjointness_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1953,6 +2318,9 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1967,6 +2335,9 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1981,6 +2352,9 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -3233,6 +3607,9 @@ async fn pend18_query_by_property_scope_parity() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -3253,6 +3630,9 @@ async fn pend18_query_by_property_scope_parity() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();

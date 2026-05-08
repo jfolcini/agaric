@@ -537,6 +537,7 @@ async fn pend18_query_by_tags_scope_parity() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -555,6 +556,7 @@ async fn pend18_query_by_tags_scope_parity() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();

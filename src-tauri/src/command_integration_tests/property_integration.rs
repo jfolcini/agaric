@@ -920,6 +920,9 @@ async fn query_by_property_happy_path() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -938,6 +941,9 @@ async fn query_by_property_happy_path() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -957,6 +963,9 @@ async fn query_by_property_happy_path() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1275,6 +1284,9 @@ async fn query_by_property_finds_reserved_key_in_blocks_column() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1375,6 +1387,9 @@ async fn set_todo_state_then_query_by_property_returns_match() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1428,6 +1443,9 @@ async fn set_due_date_then_query_by_property_returns_match() {
         &SpaceScope::Global,
         None,
         false,
+        None,
+        None,
+        None,
     )
     .await
     .unwrap();

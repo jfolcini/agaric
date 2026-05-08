@@ -17,12 +17,20 @@ use crate::sql_utils::escape_like;
 /// behaviour. The space filter is applied at the projection step (after
 /// the tag resolver) so the tag expression continues to operate on the
 /// full universe and only the visible result set is space-scoped.
+///
+/// `block_type` (PEND-35 Tier 3.4) — when `Some`, restricts the result
+/// set to blocks whose `block_type` equals the supplied value. `None`
+/// is the unfiltered (pre-Tier-3.4) behaviour. Pushes GraphView's
+/// JS-side `pagesResp.items.filter(p => p.block_type === 'page')`
+/// predicate into SQL so the unbounded `limit:5000` over-fetch and
+/// post-filter discard collapses into one paginated query.
 pub async fn eval_tag_query(
     pool: &SqlitePool,
     expr: &TagExpr,
     page: &PageRequest,
     include_inherited: bool,
     space_id: Option<&str>,
+    block_type: Option<&str>,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
     if block_ids.is_empty() {
@@ -73,6 +81,10 @@ pub async fn eval_tag_query(
     // intersects against `block_properties(key = 'space').value_ref`
     // when `space_id` is `Some`. The single `?` is bound after the
     // ID-list placeholders below.
+    // PEND-35 Tier 3.4 — `(? IS NULL OR b.block_type = ?)` push-down so
+    // GraphView's `pagesResp.items.filter(p => p.block_type === 'page')`
+    // post-filter is replaced by a SQL clause. Bound after the space
+    // filter (two more trailing `?` placeholders).
     let query_str = format!(
         "SELECT {} \
          FROM blocks b \
@@ -82,6 +94,7 @@ pub async fn eval_tag_query(
            AND (? IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+           AND (? IS NULL OR b.block_type = ?) \
          ORDER BY id",
         crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     );
@@ -97,8 +110,13 @@ pub async fn eval_tag_query(
     }
     // The trailing `?` placeholders for the space filter are bound twice
     // (once for the NULL guard, once for the value comparison) so the
-    // dynamic-SQL form keeps the `(? IS NULL OR …)` short-circuit.
-    query = query.bind(space_id).bind(space_id);
+    // dynamic-SQL form keeps the `(? IS NULL OR …)` short-circuit. The
+    // `block_type` push-down (Tier 3.4) follows the same pattern.
+    query = query
+        .bind(space_id)
+        .bind(space_id)
+        .bind(block_type)
+        .bind(block_type);
     let items: Vec<ActiveBlockRow> = query.fetch_all(pool).await?;
     let next_cursor = if has_more {
         let last = items.last().expect("has_more implies non-empty");
@@ -206,7 +224,7 @@ mod tests {
         }
         let expr = TagExpr::Tag("TAG_X".into());
         let page1 = PageRequest::new(None, Some(2)).unwrap();
-        let resp1 = eval_tag_query(&pool, &expr, &page1, false, None)
+        let resp1 = eval_tag_query(&pool, &expr, &page1, false, None, None)
             .await
             .unwrap();
         assert_eq!(resp1.items.len(), 2);
@@ -214,14 +232,14 @@ mod tests {
         assert_eq!(resp1.items[1].id, "BLK_B");
         assert!(resp1.has_more);
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-        let resp2 = eval_tag_query(&pool, &expr, &page2, false, None)
+        let resp2 = eval_tag_query(&pool, &expr, &page2, false, None, None)
             .await
             .unwrap();
         assert_eq!(resp2.items.len(), 2);
         assert_eq!(resp2.items[0].id, "BLK_C");
         assert_eq!(resp2.items[1].id, "BLK_D");
         let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
-        let resp3 = eval_tag_query(&pool, &expr, &page3, false, None)
+        let resp3 = eval_tag_query(&pool, &expr, &page3, false, None, None)
             .await
             .unwrap();
         assert_eq!(resp3.items.len(), 1);
@@ -234,7 +252,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let expr = TagExpr::Tag("NONEXISTENT".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+        let resp = eval_tag_query(&pool, &expr, &page, false, None, None)
             .await
             .unwrap();
         assert!(resp.items.is_empty());
@@ -248,7 +266,7 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
         let expr = TagExpr::Tag("TAG_A".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+        let resp = eval_tag_query(&pool, &expr, &page, false, None, None)
             .await
             .unwrap();
         assert_eq!(resp.items.len(), 1);
@@ -276,7 +294,7 @@ mod tests {
         .encode()
         .unwrap();
         let page = PageRequest::new(Some(cursor), Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+        let resp = eval_tag_query(&pool, &expr, &page, false, None, None)
             .await
             .unwrap();
         assert!(resp.items.is_empty());
@@ -301,18 +319,18 @@ mod tests {
         crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
         let expr = TagExpr::Tag("TAG_PG".into());
         let page1 = PageRequest::new(None, Some(2)).unwrap();
-        let resp1 = eval_tag_query(&pool, &expr, &page1, true, None)
+        let resp1 = eval_tag_query(&pool, &expr, &page1, true, None, None)
             .await
             .unwrap();
         assert_eq!(resp1.items.len(), 2);
         assert!(resp1.has_more);
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-        let resp2 = eval_tag_query(&pool, &expr, &page2, true, None)
+        let resp2 = eval_tag_query(&pool, &expr, &page2, true, None, None)
             .await
             .unwrap();
         assert_eq!(resp2.items.len(), 2);
         let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
-        let resp3 = eval_tag_query(&pool, &expr, &page3, true, None)
+        let resp3 = eval_tag_query(&pool, &expr, &page3, true, None, None)
             .await
             .unwrap();
         assert_eq!(resp3.items.len(), 1);
@@ -365,6 +383,56 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "100%_done");
     }
+
+    /// PEND-35 Tier 3.3 — the LIKE-prefix query in `list_tags_by_prefix`
+    /// (`WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2`) is hit
+    /// on every keystroke of every tag picker. SQLite's default LIKE is
+    /// case-insensitive on ASCII, so the implicit BINARY index from
+    /// `tags_cache.name UNIQUE` cannot satisfy the query. Migration 0050
+    /// adds `idx_tags_cache_name_nocase ON tags_cache(name COLLATE
+    /// NOCASE)` so the planner can do a NOCASE prefix range-scan.
+    ///
+    /// This test pins that the planner picks `idx_tags_cache_name_nocase`
+    /// for that exact query shape — regressing the index (drop, rename,
+    /// or accidentally dropping the `COLLATE NOCASE` clause) would flip
+    /// the plan back to a full scan and fail this test.
+    #[tokio::test]
+    async fn list_tags_by_prefix_uses_nocase_index() {
+        use sqlx::Row as _;
+        let (pool, _dir) = test_pool().await;
+        // Populate a few rows so the planner has stats to reason about
+        // (also makes the test fail loudly if it ever returned wrong rows).
+        insert_block(&pool, "TAG_A", "tag", "alpha").await;
+        insert_block(&pool, "TAG_B", "tag", "beta").await;
+        insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
+        insert_tag_cache(&pool, "TAG_B", "beta", 2).await;
+
+        // Mirror the exact query shape from `list_tags_by_prefix`. Use
+        // dynamic `sqlx::query` (not `query!`) so the EXPLAIN prefix
+        // doesn't get type-checked against the offline cache.
+        let rows = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+               SELECT tag_id, name, usage_count, updated_at
+               FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2"#,
+        )
+        .bind("a%")
+        .bind(50_i64)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let plan: String = rows
+            .iter()
+            .map(|r| r.try_get::<String, _>("detail").unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan.contains("idx_tags_cache_name_nocase"),
+            "expected query plan to use the NOCASE index added by \
+             migration 0050, got plan:\n{plan}"
+        );
+    }
+
     #[tokio::test]
     async fn list_tags_for_block_returns_tag_ids() {
         let (pool, _dir) = test_pool().await;
@@ -435,7 +503,7 @@ mod tests {
 
         let expr = TagExpr::Tag("TAG_X".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+        let resp = eval_tag_query(&pool, &expr, &page, false, None, None)
             .await
             .unwrap();
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();

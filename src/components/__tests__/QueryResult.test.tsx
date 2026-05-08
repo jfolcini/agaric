@@ -895,8 +895,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
       cursor: null,
       limit: 200,
       scope: { kind: 'global' },
-      excludeParentId: null,
-      contentNonEmpty: false,
+      extraFilters: null,
     })
   })
 

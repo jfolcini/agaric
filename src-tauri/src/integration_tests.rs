@@ -1686,6 +1686,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1720,6 +1721,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
