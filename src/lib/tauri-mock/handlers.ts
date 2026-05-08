@@ -213,10 +213,17 @@ export const HANDLERS: Record<string, Handler> = {
   // top-level page), `content`, and `spaceId`. Returns the new page's ULID
   // as a plain string — `bindings.ts` documents this departure from the
   // BlockRow shape used by `create_block`.
+  //
+  // BUG-48 — the real backend wraps both the CreateBlock and
+  // SetProperty(space) ops in a single transaction; the mock mirrors
+  // that here so journal-page lookups (`get_journal_page_by_date`,
+  // `list_journal_pages_in_range`) find newly-created pages by their
+  // active space.
   create_page_in_space: (args) => {
     const a = args as Record<string, unknown>
     const id = fakeId()
     const parentId = (a['parentId'] as string | null) ?? null
+    const spaceId = (a['spaceId'] as string | null) ?? null
     const siblings = [...blocks.values()].filter(
       (b) => b['parent_id'] === parentId && !b['deleted_at'],
     )
@@ -237,6 +244,18 @@ export const HANDLERS: Record<string, Handler> = {
       scheduled_date: null,
     }
     blocks.set(id, row)
+    if (spaceId) {
+      if (!properties.has(id)) properties.set(id, new Map())
+      properties.get(id)?.set('space', {
+        block_id: id,
+        key: 'space',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: spaceId,
+        value_bool: null,
+      })
+    }
     pushOp('create_block', {
       block_id: id,
       content: row.content,
