@@ -1,5 +1,7 @@
 use super::*;
 use crate::db::init_pool;
+use crate::sync_events::{RecordingEventSink, SyncEvent, SyncEventSink};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 // ── find_missing_attachments ─────────────────────────────────────────
@@ -581,13 +583,15 @@ async fn protocol_initiator_requests_and_receives_files() {
             &mut server_conn,
             &responder_pool,
             responder_dir.path(),
-            &cancel_resp
+            &cancel_resp,
+            None,
         ),
         request_and_receive_files(
             &mut client_conn,
             &initiator_pool,
             initiator_dir.path(),
-            &cancel_init
+            &cancel_init,
+            None,
         ),
     );
 
@@ -617,6 +621,174 @@ async fn protocol_initiator_requests_and_receives_files() {
     assert_eq!(
         receiver_stats.skipped_not_found, 0,
         "happy path should have no not-found skips"
+    );
+
+    server.shutdown().await;
+}
+
+/// PEND-06 Tier 2: per-frame file-transfer progress emission.
+///
+/// Pins the contract that `run_file_transfer_*` emits
+/// [`SyncEvent::FileProgress`] events through the supplied event sink:
+/// - one initial tick when the phase starts (so the UI gets a
+///   denominator immediately),
+/// - at least one tick mid-stream whose `bytes_done` is strictly
+///   between 0 and `bytes_total` for a multi-frame attachment,
+/// - a terminal tick after the file finishes whose
+///   `files_done == files_total` and `bytes_done == bytes_total`,
+/// - a final `phase: "complete"` tick from the top-level
+///   `run_file_transfer_initiator` so the UI can reset.
+///
+/// Uses a >1-frame file so the per-frame loop fires at least twice;
+/// the captured events let us pin "bytes_done grows monotonically."
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn protocol_run_file_transfer_emits_per_frame_progress() {
+    use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
+
+    let initiator_dir = TempDir::new().unwrap();
+    let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let responder_dir = TempDir::new().unwrap();
+    let responder_pool = init_pool(&responder_dir.path().join("test.db"))
+        .await
+        .unwrap();
+
+    // Build a file that spans more than one frame (1.5 × chunk size)
+    // so the per-frame callback fires at least twice — that's the
+    // whole point of the streaming progress contract.
+    let multi_frame_size = BINARY_FRAME_CHUNK_SIZE + BINARY_FRAME_CHUNK_SIZE / 2;
+    let file_data: Vec<u8> = (0..multi_frame_size)
+        .map(|i| u8::try_from(i % 251).expect("i % 251 < 256 fits in u8"))
+        .collect();
+    insert_test_attachment(
+        &initiator_pool,
+        "ATTBIG",
+        "attachments/big.bin",
+        i64::try_from(file_data.len()).expect("test fixture fits in i64"),
+    )
+    .await;
+    insert_test_attachment(
+        &responder_pool,
+        "ATTBIG",
+        "attachments/big.bin",
+        i64::try_from(file_data.len()).expect("test fixture fits in i64"),
+    )
+    .await;
+    write_attachment_file(responder_dir.path(), "attachments/big.bin", &file_data).unwrap();
+    assert!(!initiator_dir.path().join("attachments/big.bin").exists());
+
+    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+    // Capture every SyncEvent emitted on the initiator (receiving) side.
+    // Keep the concrete handle for assertions; clone-coerce a trait
+    // object handle for the progress hook.
+    let init_recorder: Arc<RecordingEventSink> = Arc::new(RecordingEventSink::new());
+    let init_sink: Arc<dyn SyncEventSink> = init_recorder.clone();
+    let init_progress = FileTransferProgress {
+        event_sink: &init_sink,
+        remote_device_id: "DEV_RESPONDER",
+    };
+
+    let cancel_resp = AtomicBool::new(false);
+    let cancel_init = AtomicBool::new(false);
+    let (responder_result, initiator_result) = tokio::join!(
+        // Responder side: not under test for emission, no progress hook.
+        receive_request_and_send_files(
+            &mut server_conn,
+            &responder_pool,
+            responder_dir.path(),
+            &cancel_resp,
+            None,
+        ),
+        request_and_receive_files(
+            &mut client_conn,
+            &initiator_pool,
+            initiator_dir.path(),
+            &cancel_init,
+            Some(&init_progress),
+        ),
+    );
+
+    let _sender_stats = responder_result.unwrap();
+    let receiver_stats = initiator_result.unwrap();
+    assert_eq!(receiver_stats.files_received, 1);
+
+    // Pull the file-progress envelope out of the recorded events.
+    let recorded = init_recorder.events();
+    let file_events: Vec<_> = recorded
+        .iter()
+        .filter_map(|e| match e {
+            SyncEvent::FileProgress {
+                phase,
+                files_done,
+                files_total,
+                bytes_done,
+                bytes_total,
+                ..
+            } => Some((
+                phase.clone(),
+                *files_done,
+                *files_total,
+                *bytes_done,
+                *bytes_total,
+            )),
+            _ => None,
+        })
+        .collect();
+
+    // ── Contract assertions ───────────────────────────────────────────
+    assert!(
+        file_events.len() >= 3,
+        "expected at least an initial tick + ≥1 per-frame tick + terminal file tick, got {}",
+        file_events.len()
+    );
+
+    // Every event is in the "receiving" phase (the receive helper).
+    for (phase, _, files_total, _, _) in &file_events {
+        assert_eq!(phase, "receiving", "expected only receiving-phase events");
+        assert_eq!(*files_total, 1, "files_total should be the requested count");
+    }
+
+    // First event: zero progress (the "denominator" tick).
+    let (_, first_done, _, first_bytes, first_total) = &file_events[0];
+    assert_eq!(*first_done, 0, "first tick: no files done yet");
+    assert_eq!(*first_bytes, 0, "first tick: no bytes received yet");
+    assert!(
+        *first_total > 0,
+        "first tick: bytes_total must be advertised"
+    );
+
+    // bytes_done grows monotonically across the recorded sequence.
+    let mut prev = 0u64;
+    for (_, _, _, bytes_done, _) in &file_events {
+        assert!(
+            *bytes_done >= prev,
+            "bytes_done must be monotonically non-decreasing, saw {prev} then {bytes_done}"
+        );
+        prev = *bytes_done;
+    }
+
+    // At least one mid-stream tick (bytes_done > 0 AND < bytes_total).
+    // This is what proves the per-frame callback ran rather than just
+    // pre/post.
+    let saw_midstream = file_events
+        .iter()
+        .any(|(_, _, _, b, total)| *b > 0 && b < total);
+    assert!(
+        saw_midstream,
+        "expected at least one per-frame mid-stream tick, got {file_events:?}"
+    );
+
+    // Terminal file tick: files_done == files_total and bytes_done == bytes_total.
+    let last = file_events.last().expect("events non-empty");
+    assert_eq!(
+        last.1, last.2,
+        "terminal file tick: files_done == files_total"
+    );
+    assert_eq!(
+        last.3, last.4,
+        "terminal file tick: bytes_done == bytes_total"
     );
 
     server.shutdown().await;
@@ -664,13 +836,15 @@ async fn protocol_empty_transfer_when_no_missing_files() {
             &mut server_conn,
             &responder_pool,
             responder_dir.path(),
-            &cancel_resp
+            &cancel_resp,
+            None,
         ),
         request_and_receive_files(
             &mut client_conn,
             &initiator_pool,
             initiator_dir.path(),
-            &cancel_init
+            &cancel_init,
+            None,
         ),
     );
 
@@ -758,7 +932,8 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
             &mut client_conn,
             &initiator_pool,
             initiator_dir.path(),
-            &cancel_init
+            &cancel_init,
+            None,
         ),
     );
 
@@ -851,7 +1026,8 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
             &mut client_conn,
             &initiator_pool,
             initiator_dir.path(),
-            &cancel_init
+            &cancel_init,
+            None,
         ),
     );
 
@@ -924,13 +1100,15 @@ async fn protocol_large_file_chunking() {
             &mut server_conn,
             &responder_pool,
             responder_dir.path(),
-            &cancel_resp
+            &cancel_resp,
+            None,
         ),
         request_and_receive_files(
             &mut client_conn,
             &initiator_pool,
             initiator_dir.path(),
-            &cancel_init
+            &cancel_init,
+            None,
         ),
     );
 
@@ -1060,9 +1238,10 @@ async fn inmem_receive_request_empty_request() {
     });
 
     let cancel = AtomicBool::new(false);
-    let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel)
-        .await
-        .unwrap();
+    let stats =
+        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel, None)
+            .await
+            .unwrap();
     client_task.await.unwrap();
 
     assert_eq!(stats.files_sent, 0);
@@ -1088,9 +1267,10 @@ async fn inmem_receive_request_transfer_complete_instead() {
     });
 
     let cancel = AtomicBool::new(false);
-    let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel)
-        .await
-        .unwrap();
+    let stats =
+        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel, None)
+            .await
+            .unwrap();
     client_task.await.unwrap();
 
     assert_eq!(stats.files_sent, 0);
@@ -1162,9 +1342,10 @@ async fn inmem_receive_request_sends_one_file() {
     });
 
     let cancel = AtomicBool::new(false);
-    let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel)
-        .await
-        .unwrap();
+    let stats =
+        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel, None)
+            .await
+            .unwrap();
     client_task.await.unwrap();
 
     assert_eq!(stats.files_sent, 1);
@@ -1207,7 +1388,7 @@ async fn inmem_request_receive_no_missing() {
     });
 
     let cancel = AtomicBool::new(false);
-    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel)
+    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None)
         .await
         .unwrap();
     server_task.await.unwrap();
@@ -1278,7 +1459,7 @@ async fn inmem_request_receive_one_file() {
     });
 
     let cancel = AtomicBool::new(false);
-    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel)
+    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None)
         .await
         .unwrap();
     server_task.await.unwrap();
@@ -1368,7 +1549,8 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
     });
 
     let cancel = AtomicBool::new(false);
-    let result = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel).await;
+    let result =
+        request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None).await;
     server_task.await.unwrap();
 
     // (a) Receive surfaces the disconnection as Err.
@@ -1438,7 +1620,7 @@ async fn inmem_responder_bidirectional_no_files() {
     });
 
     let cancel = AtomicBool::new(false);
-    let stats = run_file_transfer_responder(&mut server_conn, &pool, &app_data_dir, &cancel)
+    let stats = run_file_transfer_responder(&mut server_conn, &pool, &app_data_dir, &cancel, None)
         .await
         .unwrap();
     initiator_task.await.unwrap();
@@ -1566,7 +1748,7 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     });
 
     // Initiator (receiver) side: run the production code path.
-    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel)
+    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None)
         .await
         .expect("M-47: receive must return Ok with partial stats on cancel");
 
@@ -1919,8 +2101,8 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (resp_result, init_result) = tokio::join!(
-        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp),
-        request_and_receive_files(&mut client_conn, &init_pool, &init_app, &cancel_init),
+        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp, None),
+        request_and_receive_files(&mut client_conn, &init_pool, &init_app, &cancel_init, None),
     );
     let send_stats = resp_result.expect("M-51 streaming send must succeed");
     let recv_stats = init_result.expect("M-51 streaming receive must succeed");
@@ -2074,8 +2256,14 @@ async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (resp_result, init_result) = tokio::join!(
-        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp),
-        request_and_receive_files(&mut client_conn, &init_pool, init_dir.path(), &cancel_init,),
+        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp, None),
+        request_and_receive_files(
+            &mut client_conn,
+            &init_pool,
+            init_dir.path(),
+            &cancel_init,
+            None
+        ),
     );
     let send_stats = resp_result.unwrap();
     let recv_stats = init_result.unwrap();

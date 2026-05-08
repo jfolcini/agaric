@@ -18,6 +18,13 @@ describe('useSyncStore', () => {
       expect(state.lastSyncedAt).toBeNull()
       expect(state.opsReceived).toBe(0)
       expect(state.opsSent).toBe(0)
+      // PEND-06 Tier 2 — file-transfer progress fields default to a
+      // "no transfer active" tuple so the UI hides the affordance.
+      expect(state.filePhase).toBeNull()
+      expect(state.filesDone).toBe(0)
+      expect(state.filesTotal).toBe(0)
+      expect(state.bytesDone).toBe(0)
+      expect(state.bytesTotal).toBe(0)
     })
   })
 
@@ -132,6 +139,53 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // setFileProgress / resetFileProgress (PEND-06 Tier 2)
+  // ---------------------------------------------------------------------------
+  describe('setFileProgress', () => {
+    it('records the active file-transfer phase and counters', () => {
+      useSyncStore.getState().setFileProgress('sending', 1, 3, 5_000_000, 15_000_000)
+      const state = useSyncStore.getState()
+      expect(state.filePhase).toBe('sending')
+      expect(state.filesDone).toBe(1)
+      expect(state.filesTotal).toBe(3)
+      expect(state.bytesDone).toBe(5_000_000)
+      expect(state.bytesTotal).toBe(15_000_000)
+    })
+
+    it('does not clobber unrelated state', () => {
+      useSyncStore.getState().setState('syncing')
+      useSyncStore.getState().setOpsReceived(7)
+
+      useSyncStore.getState().setFileProgress('receiving', 0, 2, 0, 8_000_000)
+
+      const state = useSyncStore.getState()
+      expect(state.state).toBe('syncing')
+      expect(state.opsReceived).toBe(7)
+      expect(state.filePhase).toBe('receiving')
+    })
+  })
+
+  describe('resetFileProgress', () => {
+    it('clears file-transfer fields without touching the rest', () => {
+      useSyncStore.getState().setState('syncing')
+      useSyncStore.getState().setOpsReceived(12)
+      useSyncStore.getState().setFileProgress('sending', 2, 2, 10_000_000, 10_000_000)
+
+      useSyncStore.getState().resetFileProgress()
+
+      const state = useSyncStore.getState()
+      expect(state.filePhase).toBeNull()
+      expect(state.filesDone).toBe(0)
+      expect(state.filesTotal).toBe(0)
+      expect(state.bytesDone).toBe(0)
+      expect(state.bytesTotal).toBe(0)
+      // Unrelated fields untouched.
+      expect(state.state).toBe('syncing')
+      expect(state.opsReceived).toBe(12)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // reset
   // ---------------------------------------------------------------------------
   describe('reset', () => {
@@ -144,6 +198,7 @@ describe('useSyncStore', () => {
       useSyncStore.getState().updateLastSynced('2025-01-15T12:00:00Z')
       useSyncStore.getState().setOpsReceived(42)
       useSyncStore.getState().setOpsSent(17)
+      useSyncStore.getState().setFileProgress('sending', 1, 2, 5_000_000, 10_000_000)
 
       // Reset
       useSyncStore.getState().reset()
@@ -156,6 +211,11 @@ describe('useSyncStore', () => {
       expect(state.lastSyncedAt).toBeNull()
       expect(state.opsReceived).toBe(0)
       expect(state.opsSent).toBe(0)
+      expect(state.filePhase).toBeNull()
+      expect(state.filesDone).toBe(0)
+      expect(state.filesTotal).toBe(0)
+      expect(state.bytesDone).toBe(0)
+      expect(state.bytesTotal).toBe(0)
     })
   })
 

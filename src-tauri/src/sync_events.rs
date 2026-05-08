@@ -10,12 +10,46 @@ use specta::Type;
 // Event payload
 // ---------------------------------------------------------------------------
 
+/// Streaming progress payload carried over the sync channel.
+///
+/// PEND-06 Tier 2 made this a tagged enum so a single channel per sync
+/// session carries both the orchestrator's state-transition stream
+/// (`Sync`) and the post-sync attachment-transfer stream (`Files`).
+/// Frontend consumers switch on `kind` and read the variant-specific
+/// fields.
 #[derive(Debug, Clone, Serialize, Type)]
-pub struct SyncProgressUpdate {
-    pub state: String,
-    pub remote_device_id: String,
-    pub ops_received: u64,
-    pub ops_sent: u64,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SyncProgressUpdate {
+    /// Op-sync state transitions (Tier 1). Mirrors the
+    /// [`SyncEvent::Progress`] / [`SyncEvent::Complete`] /
+    /// [`SyncEvent::Error`] envelope, with `state` carrying
+    /// `"complete"` / `"error"` for the terminal cases.
+    Sync {
+        state: String,
+        remote_device_id: String,
+        ops_received: u64,
+        ops_sent: u64,
+    },
+    /// Per-frame attachment transfer progress (Tier 2). Emitted by
+    /// `sync_files::run_file_transfer_*` between binary frames so the
+    /// UI can render a real bytes-done bar instead of a spinner.
+    Files {
+        /// `"sending"` (we are pushing files to the peer),
+        /// `"receiving"` (we are pulling files from the peer), or
+        /// `"complete"` (both halves are done for this session).
+        phase: String,
+        remote_device_id: String,
+        /// Files fully transferred so far in the current `phase`.
+        files_done: u64,
+        /// Total files the peer or we requested for this `phase`. May
+        /// be 0 in the steady-state "nothing to transfer" case.
+        files_total: u64,
+        /// Bytes shipped/received so far in the current `phase`,
+        /// including in-progress frames.
+        bytes_done: u64,
+        /// Aggregate byte total advertised for the current `phase`.
+        bytes_total: u64,
+    },
 }
 
 /// Payload sent over Tauri events for sync progress/completion/errors.
@@ -36,6 +70,20 @@ pub enum SyncEvent {
     Error {
         message: String,
         remote_device_id: String,
+    },
+    /// PEND-06 Tier 2: per-frame attachment-transfer progress emitted
+    /// by `sync_files`. The [`ChannelEventSink`] forwards these to the
+    /// `Channel<SyncProgressUpdate>` as the `Files` variant; the
+    /// production [`TauriEventSink`] drops them (no `app.emit`
+    /// fallback — file-transfer progress was never on the legacy event
+    /// bus, so the channel is the single canonical source).
+    FileProgress {
+        phase: String,
+        remote_device_id: String,
+        files_done: u64,
+        files_total: u64,
+        bytes_done: u64,
+        bytes_total: u64,
     },
     /// Emitted when mDNS peer discovery cannot be initialized (e.g. the
     /// iOS sandbox blocks raw UDP multicast, or the Android app is missing
@@ -100,6 +148,13 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             SyncEvent::Complete { .. } => EVENT_SYNC_COMPLETE,
             SyncEvent::Error { .. } => EVENT_SYNC_ERROR,
             SyncEvent::MdnsDisabled { .. } => EVENT_SYNC_MDNS_DISABLED,
+            // PEND-06 Tier 2: file-transfer progress was never on the
+            // legacy `app.emit` bus, so this sink drops it. The
+            // canonical path is `ChannelEventSink` → `Channel<…>::Files`;
+            // a `TauriEventSink` reached without the channel wrapper
+            // means no active sync command is listening, and there's
+            // nothing for a side-channel `app.emit` to deliver to.
+            SyncEvent::FileProgress { .. } => return,
         };
         if let Err(e) = self.0.emit(event_name, &event) {
             tracing::warn!(%event_name, error = %e, "Failed to emit sync event");
@@ -119,6 +174,10 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
 /// the channel callback in `useSyncTrigger` does not duplicate. Other
 /// non-progress events (e.g. `MdnsDisabled`) hit the inner sink only —
 /// the channel is reserved for the active sync's progress stream.
+///
+/// PEND-06 Tier 2 added the `FileProgress` variant: it goes to the
+/// channel only (no legacy `app.emit` listener to keep in lockstep) and
+/// is delivered as `SyncProgressUpdate::Files`.
 pub struct ChannelEventSink {
     pub inner: std::sync::Arc<dyn SyncEventSink>,
     pub channel: tauri::ipc::Channel<SyncProgressUpdate>,
@@ -140,8 +199,15 @@ impl SyncEventSink for ChannelEventSink {
         // not own. A later cleanup can move those side effects into
         // the channel path and drop the inner emission for Complete
         // + Error too — out of scope for PEND-06 Phase 2.
-        let is_progress = matches!(event, SyncEvent::Progress { .. });
-        if !is_progress {
+        //
+        // PEND-06 Tier 2 — FileProgress is channel-only by construction:
+        // the legacy event bus never carried per-frame attachment
+        // progress, so there's no inner listener to feed.
+        let channel_only = matches!(
+            event,
+            SyncEvent::Progress { .. } | SyncEvent::FileProgress { .. }
+        );
+        if !channel_only {
             self.inner.on_sync_event(event.clone());
         }
 
@@ -153,7 +219,7 @@ impl SyncEventSink for ChannelEventSink {
                 ops_received,
                 ops_sent,
             } => {
-                let _ = self.channel.send(SyncProgressUpdate {
+                let _ = self.channel.send(SyncProgressUpdate::Sync {
                     state,
                     remote_device_id,
                     ops_received: ops_received as u64,
@@ -165,7 +231,7 @@ impl SyncEventSink for ChannelEventSink {
                 ops_received,
                 ops_sent,
             } => {
-                let _ = self.channel.send(SyncProgressUpdate {
+                let _ = self.channel.send(SyncProgressUpdate::Sync {
                     state: "complete".to_string(),
                     remote_device_id,
                     ops_received: ops_received as u64,
@@ -176,11 +242,28 @@ impl SyncEventSink for ChannelEventSink {
                 message: _,
                 remote_device_id,
             } => {
-                let _ = self.channel.send(SyncProgressUpdate {
+                let _ = self.channel.send(SyncProgressUpdate::Sync {
                     state: "error".to_string(),
                     remote_device_id,
                     ops_received: 0,
                     ops_sent: 0,
+                });
+            }
+            SyncEvent::FileProgress {
+                phase,
+                remote_device_id,
+                files_done,
+                files_total,
+                bytes_done,
+                bytes_total,
+            } => {
+                let _ = self.channel.send(SyncProgressUpdate::Files {
+                    phase,
+                    remote_device_id,
+                    files_done,
+                    files_total,
+                    bytes_done,
+                    bytes_total,
                 });
             }
             _ => {}
@@ -691,6 +774,10 @@ mod tests {
             1,
             "channel must receive a SyncProgressUpdate for Progress events"
         );
+        // PEND-06 Tier 2: SyncProgressUpdate is now a tagged enum
+        // (`#[serde(tag = "kind")]`). Op-sync transitions land as
+        // `kind: "sync"`; the file-transfer path uses `kind: "files"`.
+        assert_eq!(channel_msgs[0]["kind"], "sync");
         assert_eq!(channel_msgs[0]["state"], "streaming_ops");
         assert_eq!(channel_msgs[0]["remote_device_id"], "DEV_PEER");
         assert_eq!(channel_msgs[0]["ops_received"], 7);
@@ -715,12 +802,13 @@ mod tests {
         // Inner sink sees the original Complete variant (semantics
         // preserved for legacy listeners).
         assert_eq!(inner.events().len(), 1);
-        // Channel receives a SyncProgressUpdate with state="complete" —
+        // Channel receives a SyncProgressUpdate::Sync with state="complete" —
         // PEND-06 normalises Complete + Error into the same envelope so
         // the frontend has a single switch on `state` rather than two
         // different shapes.
         let msgs = captured.lock().unwrap().clone();
         assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["kind"], "sync");
         assert_eq!(msgs[0]["state"], "complete");
         assert_eq!(msgs[0]["ops_received"], 12);
         assert_eq!(msgs[0]["ops_sent"], 4);
@@ -743,12 +831,51 @@ mod tests {
         assert_eq!(inner.events().len(), 1);
         let msgs = captured.lock().unwrap().clone();
         assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["kind"], "sync");
         assert_eq!(msgs[0]["state"], "error");
         // SyncEvent::Error doesn't carry ops counts, so the channel
         // payload reports 0/0 — pinned here so a future "carry the last
         // known counts" change is a deliberate decision.
         assert_eq!(msgs[0]["ops_received"], 0);
         assert_eq!(msgs[0]["ops_sent"], 0);
+    }
+
+    #[test]
+    fn channel_event_sink_file_progress_forwards_to_channel_only() {
+        // PEND-06 Tier 2 — FileProgress is channel-only by construction.
+        // The legacy event bus never carried per-frame attachment
+        // progress, so the inner sink stays silent and the channel
+        // receives a `SyncProgressUpdate::Files` payload.
+        let inner = Arc::new(RecordingEventSink::new());
+        let (channel, captured) = capturing_channel();
+        let sink = ChannelEventSink {
+            inner: Arc::clone(&inner) as Arc<dyn SyncEventSink>,
+            channel,
+        };
+
+        sink.on_sync_event(SyncEvent::FileProgress {
+            phase: "sending".into(),
+            remote_device_id: "DEV_PEER".into(),
+            files_done: 1,
+            files_total: 3,
+            bytes_done: 5_000_000,
+            bytes_total: 15_000_000,
+        });
+
+        assert!(
+            inner.events().is_empty(),
+            "FileProgress must NOT reach the inner sink (channel is canonical)"
+        );
+
+        let msgs = captured.lock().unwrap().clone();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["kind"], "files");
+        assert_eq!(msgs[0]["phase"], "sending");
+        assert_eq!(msgs[0]["remote_device_id"], "DEV_PEER");
+        assert_eq!(msgs[0]["files_done"], 1);
+        assert_eq!(msgs[0]["files_total"], 3);
+        assert_eq!(msgs[0]["bytes_done"], 5_000_000);
+        assert_eq!(msgs[0]["bytes_total"], 15_000_000);
     }
 
     #[test]

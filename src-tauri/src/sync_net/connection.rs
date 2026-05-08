@@ -249,14 +249,39 @@ impl SyncConnection {
     /// `metadata().len()` for a `tokio::fs::File`).
     pub async fn send_binary_streaming<R: AsyncRead + Unpin>(
         &mut self,
-        mut reader: R,
+        reader: R,
         total_size: u64,
         chunk_size: usize,
     ) -> Result<(), AppError> {
+        self.send_binary_streaming_with_progress(reader, total_size, chunk_size, |_| {})
+            .await
+    }
+
+    /// Per-frame variant of [`Self::send_binary_streaming`].
+    ///
+    /// PEND-06 Tier 2: invokes `on_progress(bytes_sent_so_far)` after
+    /// every frame written to the wire so callers can stream
+    /// per-5 MB-frame progress updates through a Tauri channel without
+    /// duplicating the chunk loop. The closure is called *after* each
+    /// successful `send_binary`; on the zero-size sentinel path it is
+    /// called once with `0` so the caller always sees a final tick.
+    pub async fn send_binary_streaming_with_progress<R, F>(
+        &mut self,
+        mut reader: R,
+        total_size: u64,
+        chunk_size: usize,
+        mut on_progress: F,
+    ) -> Result<(), AppError>
+    where
+        R: AsyncRead + Unpin,
+        F: FnMut(u64),
+    {
         // Zero-size sentinel: emit a single empty frame so the
         // receiver loop terminates after one `recv_binary` call.
         if total_size == 0 {
-            return self.send_binary(&[]).await;
+            self.send_binary(&[]).await?;
+            on_progress(0);
+            return Ok(());
         }
 
         // Defensive minimum: a zero-byte chunk size would loop
@@ -288,6 +313,7 @@ impl SyncConnection {
             }
             self.send_binary(&buf[..filled]).await?;
             sent += filled as u64;
+            on_progress(sent);
         }
         Ok(())
     }
@@ -311,6 +337,26 @@ impl SyncConnection {
         writer: &mut W,
         total_size: u64,
     ) -> Result<(), AppError> {
+        self.receive_binary_streaming_with_progress(writer, total_size, |_| {})
+            .await
+    }
+
+    /// Per-frame variant of [`Self::receive_binary_streaming`].
+    ///
+    /// PEND-06 Tier 2 mirror of
+    /// [`Self::send_binary_streaming_with_progress`]: the closure is
+    /// invoked with `bytes_received_so_far` after every successful
+    /// `write_all`, plus once with `0` on the zero-size path.
+    pub async fn receive_binary_streaming_with_progress<W, F>(
+        &mut self,
+        writer: &mut W,
+        total_size: u64,
+        mut on_progress: F,
+    ) -> Result<(), AppError>
+    where
+        W: AsyncWrite + Unpin,
+        F: FnMut(u64),
+    {
         // Zero-size sentinel: expect exactly one empty frame.
         if total_size == 0 {
             let chunk = self.recv_binary().await?;
@@ -320,6 +366,7 @@ impl SyncConnection {
                     chunk.len()
                 )));
             }
+            on_progress(0);
             return Ok(());
         }
 
@@ -339,6 +386,7 @@ impl SyncConnection {
                 .await
                 .map_err(|e| sync_err(format!("write for streaming receive: {e}")))?;
             received += chunk_len;
+            on_progress(received);
         }
         Ok(())
     }

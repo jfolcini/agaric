@@ -16,6 +16,17 @@ export interface PeerInfo {
   resetCount: number
 }
 
+/**
+ * File-transfer phase for the post-sync attachment exchange.
+ *
+ * `null` means no file-transfer phase is active (idle / pre-sync /
+ * sync without attachments). The string values mirror the backend's
+ * `SyncProgressUpdate::Files.phase`: `"sending"` (we're shipping
+ * attachments to the peer), `"receiving"` (we're pulling), and
+ * `"complete"` (terminal tick before reset).
+ */
+export type FilePhase = 'sending' | 'receiving' | 'complete' | null
+
 interface SyncStore {
   state: SyncState
   error: string | null
@@ -23,6 +34,14 @@ interface SyncStore {
   lastSyncedAt: string | null
   opsReceived: number
   opsSent: number
+  // PEND-06 Tier 2 — attachment-transfer progress (post-op-sync phase).
+  // `filesTotal === 0` is the steady-state "nothing to transfer" case
+  // and the UI should hide the file progress affordance.
+  filePhase: FilePhase
+  filesDone: number
+  filesTotal: number
+  bytesDone: number
+  bytesTotal: number
 
   // Actions
   setState: (state: SyncState, error?: string | null) => void
@@ -30,7 +49,23 @@ interface SyncStore {
   updateLastSynced: (timestamp: string) => void
   setOpsReceived: (count: number) => void
   setOpsSent: (count: number) => void
+  setFileProgress: (
+    phase: Exclude<FilePhase, null>,
+    filesDone: number,
+    filesTotal: number,
+    bytesDone: number,
+    bytesTotal: number,
+  ) => void
+  resetFileProgress: () => void
   reset: () => void
+}
+
+const INITIAL_FILE_PROGRESS = {
+  filePhase: null as FilePhase,
+  filesDone: 0,
+  filesTotal: 0,
+  bytesDone: 0,
+  bytesTotal: 0,
 }
 
 const INITIAL_STATE = {
@@ -40,6 +75,7 @@ const INITIAL_STATE = {
   lastSyncedAt: null as string | null,
   opsReceived: 0,
   opsSent: 0,
+  ...INITIAL_FILE_PROGRESS,
 }
 
 export const useSyncStore = create<SyncStore>((set) => ({
@@ -63,6 +99,20 @@ export const useSyncStore = create<SyncStore>((set) => ({
 
   setOpsSent: (count: number) => {
     set({ opsSent: count })
+  },
+
+  setFileProgress: (phase, filesDone, filesTotal, bytesDone, bytesTotal) => {
+    set({
+      filePhase: phase,
+      filesDone,
+      filesTotal,
+      bytesDone,
+      bytesTotal,
+    })
+  },
+
+  resetFileProgress: () => {
+    set({ ...INITIAL_FILE_PROGRESS })
   },
 
   reset: () => {

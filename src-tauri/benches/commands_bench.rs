@@ -607,9 +607,14 @@ fn bench_batch_resolve(c: &mut Criterion) {
                     let pool = pool.clone();
                     let ids = ids.clone();
                     async move {
-                        batch_resolve_inner(&pool, ids, Some(BENCH_SPACE_ID.to_string()))
-                            .await
-                            .unwrap()
+                        // PEND-18 Phase 2 / FEAT-3p4: `batch_resolve_inner`
+                        // takes `&SpaceScope` (was `Option<String>`).
+                        // Wrap the bench fixture's space ULID in
+                        // `SpaceScope::Active`.
+                        let scope = agaric_lib::space::SpaceScope::Active(
+                            agaric_lib::space::SpaceId::from_trusted(BENCH_SPACE_ID),
+                        );
+                        batch_resolve_inner(&pool, ids, &scope).await.unwrap()
                     }
                 })
             },

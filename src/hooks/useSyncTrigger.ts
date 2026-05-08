@@ -73,9 +73,26 @@ async function syncOnePeerWithToast(peerId: string): Promise<boolean> {
     const store = useSyncStore.getState()
     await runWithTimeout(
       startSync(peerId, (update) => {
-        store.setState(mapBackendState(update.state))
-        store.setOpsReceived(update.ops_received)
-        store.setOpsSent(update.ops_sent)
+        // PEND-06 Tier 2 — `SyncProgressUpdate` is a tagged enum: the
+        // op-sync stream lands as `kind: 'sync'`, the post-sync
+        // attachment-transfer stream lands as `kind: 'files'`. Fall
+        // through to the file branch on `complete` so the affordance
+        // resets without an extra explicit tick.
+        if (update.kind === 'sync') {
+          store.setState(mapBackendState(update.state))
+          store.setOpsReceived(update.ops_received)
+          store.setOpsSent(update.ops_sent)
+        } else if (update.phase === 'complete') {
+          store.resetFileProgress()
+        } else if (update.phase === 'sending' || update.phase === 'receiving') {
+          store.setFileProgress(
+            update.phase,
+            Number(update.files_done),
+            Number(update.files_total),
+            Number(update.bytes_done),
+            Number(update.bytes_total),
+          )
+        }
       }),
       SYNC_TIMEOUT_MS,
       new Error('Sync timeout'),
