@@ -99,6 +99,51 @@ export const HANDLERS: Record<string, Handler> = {
     return { items, next_cursor: null, has_more: false }
   },
 
+  // BUG-48: indexed lookup for a single date-formatted journal page in
+  // the active space. Real backend implementation: a SELECT on
+  // `idx_blocks_journal_date` with a `space` ref-property subquery.
+  get_journal_page_by_date: (args) => {
+    const a = args as Record<string, unknown>
+    const date = a['date'] as string
+    const spaceId = a['spaceId'] as string
+    for (const b of blocks.values()) {
+      if (b['block_type'] !== 'page') continue
+      if (b['deleted_at']) continue
+      if (b['is_conflict']) continue
+      if (b['content'] !== date) continue
+      const blockProps = properties.get(b['id'] as string)
+      const spaceProp = blockProps?.get('space')
+      if (spaceProp?.['value_ref'] !== spaceId) continue
+      return b
+    }
+    return null
+  },
+
+  // BUG-48: list every date-formatted journal page in the active space.
+  // The real backend uses the `idx_blocks_journal_date` partial index
+  // (content LIKE '____-__-__') so this is O(index).
+  list_journal_page_dates: (args) => {
+    const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/
+    const items: Record<string, unknown>[] = []
+    for (const b of blocks.values()) {
+      if (b['block_type'] !== 'page') continue
+      if (b['deleted_at']) continue
+      if (b['is_conflict']) continue
+      const content = b['content'] as string | null
+      if (!content || !datePattern.test(content)) continue
+      const blockProps = properties.get(b['id'] as string)
+      const spaceProp = blockProps?.get('space')
+      if (spaceProp?.['value_ref'] !== spaceId) continue
+      items.push(b)
+    }
+    items.sort((x, y) =>
+      ((x['content'] as string) ?? '').localeCompare((y['content'] as string) ?? ''),
+    )
+    return items
+  },
+
   list_undated_tasks: () => {
     const items = [...blocks.values()].filter(
       (b) =>

@@ -28,6 +28,7 @@ import type { NavigateToPageFn } from '../lib/block-events'
 import type { DayEntry } from '../lib/date-utils'
 import { formatDate, formatDateDisplay } from '../lib/date-utils'
 import { useJournalStore } from '../stores/journal'
+import { useSpaceStore } from '../stores/space'
 import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
 import { MonthlyView } from './journal/MonthlyView'
@@ -69,6 +70,7 @@ export function JournalPage({
     })),
   )
   const { pageMap, loading, addPage } = useCalendarPageDates()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // UX-371 — surface the per-space journal-template configuration from the
   // Journal view itself; previously only reachable through Manage Spaces.
   // SpaceManageDialog has no scroll-to-section prop, so the dialog opens at
@@ -113,7 +115,7 @@ export function JournalPage({
     loading,
     mode,
     currentDate,
-    pageMap,
+    spaceId: currentSpaceId ?? '',
     createdPages,
     handleAddBlock,
   })

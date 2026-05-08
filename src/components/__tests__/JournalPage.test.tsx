@@ -174,6 +174,52 @@ if (!HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = vi.fn()
 }
 
+/**
+ * BUG-48: return the canonical empty shape for the new journal commands
+ * (`get_journal_page_by_date` → `null`, `list_journal_page_dates` →
+ * `[]`). Returns the sentinel `BUG48_NOT_HANDLED` for anything else so
+ * callers can fall through to their own dispatch logic.
+ */
+const BUG48_NOT_HANDLED = Symbol('bug48-not-handled')
+function bug48EmptyResponse(cmd: string): unknown {
+  if (cmd === 'get_journal_page_by_date') return null
+  if (cmd === 'list_journal_page_dates') return []
+  return BUG48_NOT_HANDLED
+}
+
+/**
+ * BUG-48: install a smart default mock that returns the right empty
+ * shapes for the new journal commands and `emptyPage` for every other
+ * command. Replaces the previous `mockedInvoke.mockResolvedValue(emptyPage)`
+ * one-liner — that pattern still works for legacy paginated commands
+ * but breaks the BUG-48 commands which expect non-envelope shapes.
+ */
+function mockEmptyResponses(): void {
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    const bug48 = bug48EmptyResponse(cmd)
+    if (bug48 !== BUG48_NOT_HANDLED) return bug48
+    return emptyPage
+  })
+}
+
+/**
+ * BUG-48: install a default mock that exposes `pages` to both
+ * `list_journal_page_dates` (the calendar map fetch) and
+ * `get_journal_page_by_date` (the auto-create probe). Other commands
+ * fall through to `emptyPage`. Use in tests that previously primed the
+ * page list with `mockedInvoke.mockResolvedValue({ items: [...], ... })`.
+ */
+function mockJournalPages(pages: Array<{ id: string; content: string | null }>): void {
+  mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd === 'list_journal_page_dates') return pages
+    if (cmd === 'get_journal_page_by_date') {
+      const date = (args as { date?: string } | undefined)?.date
+      return pages.find((p) => p.content === date) ?? null
+    }
+    return emptyPage
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   __resetCalendarPageDatesForTests()
@@ -293,6 +339,8 @@ function templateCreateBlockResponse(args: unknown, todayStr: string): unknown {
 /** Dispatcher used by the `auto-create applies journal template` test. */
 function makeJournalTemplateMockImpl(todayStr: string) {
   return async (cmd: string, args?: unknown): Promise<unknown> => {
+    const bug48 = bug48EmptyResponse(cmd)
+    if (bug48 !== BUG48_NOT_HANDLED) return bug48
     if (cmd === 'list_blocks') return templateListBlocksResponse(args)
     if (cmd === 'query_by_property') return templateQueryByPropertyResponse(args)
     // BUG-1 / H-3b — JournalPage now routes page creation through
@@ -309,7 +357,7 @@ describe('JournalPage', () => {
 
   describe('daily mode', () => {
     it('defaults to daily mode showing one day section (today)', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -326,7 +374,7 @@ describe('JournalPage', () => {
     })
 
     it('daily mode hides date heading (shown in header bar instead)', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -345,7 +393,7 @@ describe('JournalPage', () => {
     })
 
     it('shows empty state with "No blocks" when no page exists for the day', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -361,11 +409,7 @@ describe('JournalPage', () => {
     it('renders BlockTree when a page exists for the current day', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -380,7 +424,7 @@ describe('JournalPage', () => {
 
     it('prev button navigates to previous day', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -399,7 +443,7 @@ describe('JournalPage', () => {
 
     it('next button navigates to next day', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -418,7 +462,7 @@ describe('JournalPage', () => {
 
     it('today button returns to current day', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -446,7 +490,7 @@ describe('JournalPage', () => {
   describe('weekly mode', () => {
     it('shows 7 day sections (Mon-Sun) when switched to weekly', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -463,7 +507,7 @@ describe('JournalPage', () => {
 
     it('week starts on Monday and ends on Sunday', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -487,7 +531,7 @@ describe('JournalPage', () => {
 
     it('displays week range in nav header', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -509,11 +553,7 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -537,7 +577,7 @@ describe('JournalPage', () => {
   describe('monthly mode', () => {
     it('shows calendar grid when switched to monthly', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -557,7 +597,7 @@ describe('JournalPage', () => {
 
     it('displays month/year in nav header', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -576,11 +616,7 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -605,7 +641,7 @@ describe('JournalPage', () => {
 
   describe('mode switcher', () => {
     it('renders Day/Week/Month tabs', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -619,7 +655,7 @@ describe('JournalPage', () => {
     })
 
     it('Day tab is selected by default', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -635,7 +671,7 @@ describe('JournalPage', () => {
 
     it('switching modes updates aria-selected on tabs', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -657,8 +693,8 @@ describe('JournalPage', () => {
   // ── MAINT-119: page-list fetch dedupe ────────────────────────────────
 
   describe('page-list fetch dedupe (MAINT-119)', () => {
-    it('issues exactly ONE list_blocks page-fetch when JournalPage + JournalControls mount together', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+    it('issues exactly ONE list_journal_page_dates fetch when JournalPage + JournalControls mount together', async () => {
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -666,11 +702,11 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
+      // BUG-48: the page-list fetch is now `list_journal_page_dates`
+      // (a single un-paginated call) instead of the cursor-paginated
+      // `list_blocks` loop.
       const pageFetchCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'list_blocks' &&
-          (args as { blockType?: string; limit?: number })?.blockType === 'page' &&
-          (args as { blockType?: string; limit?: number })?.limit === 100,
+        ([cmd]) => cmd === 'list_journal_page_dates',
       )
       // Pre-MAINT-119 this was 2 (one in JournalPage, one in JournalControls).
       // After consolidation it must be exactly 1.
@@ -682,7 +718,7 @@ describe('JournalPage', () => {
 
   describe('header bar layout', () => {
     it('journal header renders as a flex container (positioned in the fixed header bar)', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -716,7 +752,7 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -729,6 +765,8 @@ describe('JournalPage', () => {
       // Use a command-dispatched implementation so the responses are
       // deterministic regardless of call order.
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'create_page_in_space') return 'DP1'
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'create_block') {
@@ -791,11 +829,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
       const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
 
-      mockedInvoke.mockResolvedValue({
-        items: [dailyPage],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([dailyPage])
 
       renderJournal()
 
@@ -847,11 +881,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
       const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
 
-      mockedInvoke.mockResolvedValue({
-        items: [dailyPage],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([dailyPage])
 
       renderJournal()
 
@@ -866,6 +896,8 @@ describe('JournalPage', () => {
       // undefined (TEST-3 flake). Dispatching by command name makes the
       // click-time responses deterministic regardless of call order.
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'create_block') {
           return {
             id: 'NEW_BLOCK',
@@ -908,11 +940,7 @@ describe('JournalPage', () => {
       const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
       const onNavigateToPage = vi.fn()
 
-      mockedInvoke.mockResolvedValue({
-        items: [dailyPage],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([dailyPage])
 
       renderJournal({ onNavigateToPage })
 
@@ -932,7 +960,7 @@ describe('JournalPage', () => {
     })
 
     it('does not show "Open in editor" button for days without pages', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal({ onNavigateToPage: vi.fn() })
 
@@ -949,7 +977,7 @@ describe('JournalPage', () => {
   describe('clickable day titles', () => {
     it('day headings in weekly view are clickable buttons', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -962,7 +990,7 @@ describe('JournalPage', () => {
 
     it('clicking a day title in weekly view navigates to daily mode', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -979,7 +1007,7 @@ describe('JournalPage', () => {
 
     it('grid cells in monthly view are clickable', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -991,7 +1019,7 @@ describe('JournalPage', () => {
     })
 
     it('day headings in daily view are NOT clickable buttons', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -1005,7 +1033,7 @@ describe('JournalPage', () => {
   describe('day section IDs', () => {
     it('day sections have id attributes for scroll targeting', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -1019,7 +1047,7 @@ describe('JournalPage', () => {
     })
 
     it('today section has id matching today date string', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -1063,7 +1091,7 @@ describe('JournalPage', () => {
   // ── a11y ────────────────────────────────────────────────────────────
 
   it('has no a11y violations (daily mode, empty state)', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    mockEmptyResponses()
 
     const { container } = renderJournal()
 
@@ -1078,11 +1106,7 @@ describe('JournalPage', () => {
     const todayStr = formatDate(new Date())
     const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
 
-    mockedInvoke.mockResolvedValue({
-      items: [dailyPage],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockJournalPages([dailyPage])
 
     const { container } = renderJournal({ onNavigateToPage: () => {} })
 
@@ -1098,7 +1122,7 @@ describe('JournalPage', () => {
   describe('calendar dropdown positioning', () => {
     it('flips above when calendar overflows viewport bottom', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1153,7 +1177,7 @@ describe('JournalPage', () => {
 
     it('shifts right when calendar overflows left edge on narrow viewport', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1206,7 +1230,7 @@ describe('JournalPage', () => {
   describe('calendar dropdown interactions', () => {
     it('opens calendar when calendar button is clicked', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1224,7 +1248,7 @@ describe('JournalPage', () => {
 
     it('closes calendar when clicking backdrop', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1252,7 +1276,7 @@ describe('JournalPage', () => {
 
     it('closes calendar on Escape key', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1278,7 +1302,7 @@ describe('JournalPage', () => {
 
     it('Today button navigates to today in weekly mode', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1310,7 +1334,7 @@ describe('JournalPage', () => {
 
     it('Today button navigates to today in monthly mode', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1343,7 +1367,7 @@ describe('JournalPage', () => {
 
   describe('date navigation boundaries', () => {
     it('prev button is disabled at MIN_JOURNAL_DATE', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       useJournalStore.setState({
         mode: 'daily',
@@ -1361,7 +1385,7 @@ describe('JournalPage', () => {
     })
 
     it('next button is disabled at MAX_JOURNAL_DATE', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       useJournalStore.setState({
         mode: 'daily',
@@ -1379,7 +1403,7 @@ describe('JournalPage', () => {
     })
 
     it('prev button is enabled when after MIN_JOURNAL_DATE', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       useJournalStore.setState({
         mode: 'daily',
@@ -1397,7 +1421,7 @@ describe('JournalPage', () => {
     })
 
     it('next button is enabled when before MAX_JOURNAL_DATE', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       useJournalStore.setState({
         mode: 'daily',
@@ -1415,7 +1439,7 @@ describe('JournalPage', () => {
     })
 
     it('boundary applies to weekly navigation', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       useJournalStore.setState({
         mode: 'weekly',
@@ -1433,7 +1457,7 @@ describe('JournalPage', () => {
     })
 
     it('boundary applies to monthly navigation', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       useJournalStore.setState({
         mode: 'monthly',
@@ -1456,7 +1480,7 @@ describe('JournalPage', () => {
   describe('agenda mode', () => {
     it('renders AgendaFilterBuilder in agenda mode', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1474,7 +1498,7 @@ describe('JournalPage', () => {
 
     it('renders AgendaResults in agenda mode', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1492,7 +1516,7 @@ describe('JournalPage', () => {
 
     it('renders a visual separator between controls and results', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1513,6 +1537,8 @@ describe('JournalPage', () => {
     it('default agenda loads TODO+DOING tasks via queryByProperty with todo_state (UX-196)', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'query_by_property') {
           const params = args as { key?: string; valueText?: string }
           if (params?.key === 'todo_state' && params?.valueText === 'TODO') {
@@ -1603,7 +1629,7 @@ describe('JournalPage', () => {
 
     it('hides prev/next arrows in agenda mode but keeps Today + calendar visible (UX-235)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1625,7 +1651,7 @@ describe('JournalPage', () => {
 
     it('displays "Tasks" in the date-display area', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -1641,7 +1667,7 @@ describe('JournalPage', () => {
 
     it('agenda view passes axe a11y check', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       const { container } = renderJournal()
 
@@ -1669,6 +1695,8 @@ describe('JournalPage', () => {
       const futureDate = formatDate(addDays(new Date(), 3))
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') {
           return emptyPage
         }
@@ -1765,6 +1793,8 @@ describe('JournalPage', () => {
 
     it("dueDate 'This week' filter queries with a date range", async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') {
           return emptyPage
         }
@@ -1818,6 +1848,8 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') {
           const params = args as { agenda?: { source?: string; date?: string } }
           if (
@@ -1886,6 +1918,8 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') {
           return emptyPage
         }
@@ -1952,11 +1986,7 @@ describe('JournalPage', () => {
     it('daily mode renders DuePanel with correct date', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -1970,11 +2000,7 @@ describe('JournalPage', () => {
     it('daily mode renders LinkedReferences with correct pageId', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -1989,11 +2015,7 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -2016,11 +2038,7 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -2040,7 +2058,7 @@ describe('JournalPage', () => {
     })
 
     it('panels not rendered when pageId is null', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2055,11 +2073,7 @@ describe('JournalPage', () => {
     it('DuePanel renders before LinkedReferences in DOM order', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -2083,11 +2097,7 @@ describe('JournalPage', () => {
     it('daily mode renders DonePanel with correct date', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -2101,11 +2111,7 @@ describe('JournalPage', () => {
     it('DonePanel renders after LinkedReferences in DOM order', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -2151,10 +2157,18 @@ describe('JournalPage', () => {
       }
       const backlinkCounts = opts?.backlinkCounts ?? { 'DP-MON': 5 }
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
+      const pageRows = pages.map((p) => makeDailyPage({ id: p.id, content: p.dateStr }))
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        // BUG-48: the calendar fetch + auto-create probe both come
+        // from the new journal commands now.
+        if (cmd === 'list_journal_page_dates') return pageRows
+        if (cmd === 'get_journal_page_by_date') {
+          const date = (args as { date?: string } | undefined)?.date
+          return pageRows.find((p) => p.content === date) ?? null
+        }
         if (cmd === 'list_blocks') {
           return {
-            items: pages.map((p) => makeDailyPage({ id: p.id, content: p.dateStr })),
+            items: pageRows,
             next_cursor: null,
             has_more: false,
           }
@@ -2347,6 +2361,8 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') {
           return emptyPage
         }
@@ -2396,11 +2412,7 @@ describe('JournalPage', () => {
     it("does NOT auto-create when today's page already exists", async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
       renderJournal()
 
@@ -2496,6 +2508,8 @@ describe('JournalPage', () => {
     }) {
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: per-space template test mock fans out across 7 distinct Tauri commands (list_blocks / get_properties / get_block_property_def / list_blocks_lite / list_pages / create_block / create_page_in_space) to pin the FEAT-3p5b template-seeding flow; flattening into one switch keeps the cause-effect chain in one place. Score 32 vs default 25.
       return async (cmd: string, args?: unknown): Promise<unknown> => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') return templateListBlocksResponse(args)
         if (cmd === 'get_properties') {
           if (opts.perSpaceTemplate == null) return []
@@ -2658,7 +2672,7 @@ describe('JournalPage', () => {
 
       useJournalStore.setState({ currentDate: yesterday, mode: 'daily' })
 
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2668,6 +2682,8 @@ describe('JournalPage', () => {
 
       // BUG-1 / H-3b — page creation routes through `create_page_in_space`.
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'create_page_in_space') return 'DP-KEY'
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'create_block') {
@@ -2700,7 +2716,7 @@ describe('JournalPage', () => {
 
       useJournalStore.setState({ currentDate: yesterday, mode: 'daily' })
 
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2742,7 +2758,7 @@ describe('JournalPage', () => {
 
   describe('mobile responsiveness', () => {
     it('journal header has flex-wrap for mobile responsiveness', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2760,7 +2776,7 @@ describe('JournalPage', () => {
     // readout. The min-width is now gated on `sm:` so phones let the date
     // determine its own width, while sm+ still gets a 100 px floor.
     it('date display min-width is scoped to sm: breakpoint', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2783,7 +2799,7 @@ describe('JournalPage', () => {
     it('auto-creates page+block for today in daily mode', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2806,7 +2822,7 @@ describe('JournalPage', () => {
 
       // Set journal to display a past date
       useJournalStore.setState({ mode: 'daily', currentDate: pastDate })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2828,7 +2844,7 @@ describe('JournalPage', () => {
       const futureStr = formatDate(futureDate)
 
       useJournalStore.setState({ mode: 'daily', currentDate: futureDate })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2847,7 +2863,7 @@ describe('JournalPage', () => {
 
     it('does NOT auto-create in weekly mode', async () => {
       useJournalStore.setState({ mode: 'weekly', currentDate: new Date() })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2871,7 +2887,7 @@ describe('JournalPage', () => {
 
     it('does NOT auto-create in monthly mode', async () => {
       useJournalStore.setState({ mode: 'monthly', currentDate: new Date() })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -2896,11 +2912,7 @@ describe('JournalPage', () => {
     it('does not auto-create when page already exists for the day', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage({ id: 'DP_EXISTING', content: todayStr })],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockJournalPages([makeDailyPage({ id: 'DP_EXISTING', content: todayStr })])
 
       renderJournal()
 
@@ -2928,6 +2940,8 @@ describe('JournalPage', () => {
 
       // Start with empty pages — today will be auto-created
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'create_page_in_space') return 'DP_AUTO'
         return emptyPage
       })
@@ -2950,6 +2964,8 @@ describe('JournalPage', () => {
       // Clear mocks to track new calls
       mockedInvoke.mockClear()
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'create_page_in_space') return 'DP_YESTERDAY'
         return emptyPage
       })
@@ -2974,7 +2990,7 @@ describe('JournalPage', () => {
   describe('calendar per-source dots', () => {
     it('fetches agenda-by-source data when calendar opens', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 
@@ -3005,6 +3021,8 @@ describe('JournalPage', () => {
       const todayStr = formatDate(today)
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'count_agenda_batch_by_source') {
           return { [todayStr]: { 'column:due_date': 2 } }
         }
@@ -3033,6 +3051,8 @@ describe('JournalPage', () => {
       const todayStr = formatDate(today)
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'count_agenda_batch_by_source') {
           return { [todayStr]: { 'column:scheduled_date': 1 } }
         }
@@ -3061,6 +3081,8 @@ describe('JournalPage', () => {
       const todayStr = formatDate(today)
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'count_agenda_batch_by_source') {
           return { [todayStr]: { 'property:deadline': 3 } }
         }
@@ -3089,6 +3111,8 @@ describe('JournalPage', () => {
       const todayStr = formatDate(today)
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'count_agenda_batch_by_source') {
           return {
             [todayStr]: {
@@ -3217,13 +3241,13 @@ describe('JournalPage', () => {
     })
 
     it('renders Today button in agenda mode', () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
     })
 
     it('renders calendar trigger in agenda mode', () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()
     })
@@ -3231,7 +3255,7 @@ describe('JournalPage', () => {
     it('hides prev/next arrows and the formatted date display in agenda mode', () => {
       // Set a non-today currentDate so the agenda-mode branch is exercised.
       useJournalStore.setState({ mode: 'agenda', currentDate: new Date('2026-03-15T12:00:00') })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
 
       expect(screen.queryByRole('button', { name: /previous day/i })).not.toBeInTheDocument()
@@ -3248,7 +3272,7 @@ describe('JournalPage', () => {
     })
 
     it('keeps the "Tasks" label in agenda mode', () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       expect(screen.getByTestId('date-display')).toHaveTextContent('Tasks')
     })
@@ -3256,7 +3280,7 @@ describe('JournalPage', () => {
     it('clicking Today in agenda mode switches to daily on today', async () => {
       // Start agenda mode on a non-today date so the mode switch is observable.
       useJournalStore.setState({ mode: 'agenda', currentDate: new Date('2026-03-15T12:00:00') })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       const user = userEvent.setup()
 
       renderJournal()
@@ -3268,7 +3292,7 @@ describe('JournalPage', () => {
 
     it('calendar date pick in agenda mode switches to daily on the picked date', async () => {
       useJournalStore.setState({ mode: 'agenda', currentDate: new Date('2026-04-20T12:00:00') })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       const user = userEvent.setup()
 
       renderJournal()
@@ -3307,7 +3331,7 @@ describe('JournalPage', () => {
 
     describe('GlobalDateControls', () => {
       beforeEach(() => {
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
       })
 
       it('hides Today when on journal view + daily mode + today', () => {
@@ -3433,7 +3457,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.queryByRole('button', { name: /go to today/i })).not.toBeInTheDocument()
@@ -3446,7 +3470,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
@@ -3459,7 +3483,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
@@ -3472,7 +3496,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
@@ -3485,7 +3509,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
@@ -3500,7 +3524,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
@@ -3513,7 +3537,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
@@ -3526,7 +3550,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
@@ -3539,7 +3563,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         const user = userEvent.setup()
 
         renderJournal()
@@ -3556,7 +3580,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
@@ -3569,7 +3593,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
@@ -3582,7 +3606,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
@@ -3595,7 +3619,7 @@ describe('JournalPage', () => {
           scrollToDate: null,
           scrollToPanel: null,
         })
-        mockedInvoke.mockResolvedValue(emptyPage)
+        mockEmptyResponses()
         renderJournal()
 
         expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
@@ -3623,7 +3647,7 @@ describe('JournalPage', () => {
         isReady: true,
       })
       useJournalStore.getState().navigateToDate(new Date(2025, 0, 15), 'weekly')
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -3661,7 +3685,7 @@ describe('JournalPage', () => {
         isReady: true,
       })
       useJournalStore.getState().navigateToDate(new Date(2025, 0, 15), 'weekly')
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
       renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -3697,7 +3721,7 @@ describe('JournalPage', () => {
   describe('configure journal template entry (UX-371)', () => {
     it('renders the entry and clicking it opens the SpaceManageDialog', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      mockEmptyResponses()
 
       renderJournal()
 

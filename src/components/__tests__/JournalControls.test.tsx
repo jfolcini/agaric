@@ -25,7 +25,6 @@ vi.mock('../ui/calendar', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -36,7 +35,9 @@ beforeEach(() => {
     scrollToDate: null,
     scrollToPanel: null,
   })
-  mockedInvoke.mockResolvedValue(emptyPage)
+  // BUG-48: useCalendarPageDates now hits `list_journal_page_dates`,
+  // which returns a flat `BlockRow[]` (no pagination envelope).
+  mockedInvoke.mockResolvedValue([])
 })
 
 describe('JournalControls', () => {
@@ -121,12 +122,12 @@ describe('JournalControls', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ blockType: 'page', limit: 100, cursor: null }),
+        'list_journal_page_dates',
+        expect.objectContaining({ spaceId: '' }),
       )
     })
-    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-    expect(listBlocksCalls).toHaveLength(1)
+    const fetchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_page_dates')
+    expect(fetchCalls).toHaveLength(1)
   })
 
   // PEND-28 M11: the date readout's min-width is gated on sm: so phones

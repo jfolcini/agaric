@@ -2,7 +2,7 @@
  * Tests for useCalendarPageDates hook.
  *
  * Validates:
- *  - Loads pageMap from listBlocks on mount
+ *  - Loads pageMap from listJournalPageDates on mount (BUG-48)
  *  - highlightedDays derived from page-content YYYY-MM-DD strings
  *  - addPage merges a new entry without re-fetching
  *  - Multiple concurrent subscribers share ONE in-flight fetch (the
@@ -17,12 +17,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetCalendarPageDatesForTests, useCalendarPageDates } from '../useCalendarPageDates'
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
   __resetCalendarPageDatesForTests()
-  mockedInvoke.mockResolvedValue(emptyPage)
+  // BUG-48: the underlying fetch is now `list_journal_page_dates`, which
+  // returns a flat `BlockRow[]` (not a paginated envelope).
+  mockedInvoke.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -41,16 +42,11 @@ describe('useCalendarPageDates', () => {
     })
   })
 
-  it('populates pageMap with YYYY-MM-DD pages from listBlocks', async () => {
-    mockedInvoke.mockResolvedValue({
-      items: [
-        { id: 'P1', block_type: 'page', content: '2025-06-15' },
-        { id: 'P2', block_type: 'page', content: '2025-06-16' },
-        { id: 'P3', block_type: 'page', content: 'Not a date' },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
+  it('populates pageMap with YYYY-MM-DD pages from list_journal_page_dates', async () => {
+    mockedInvoke.mockResolvedValue([
+      { id: 'P1', block_type: 'page', content: '2025-06-15' },
+      { id: 'P2', block_type: 'page', content: '2025-06-16' },
+    ])
 
     const { result } = renderHook(() => useCalendarPageDates())
 
@@ -64,11 +60,7 @@ describe('useCalendarPageDates', () => {
   })
 
   it('exposes highlightedDays derived from pageMap keys', async () => {
-    mockedInvoke.mockResolvedValue({
-      items: [{ id: 'P1', block_type: 'page', content: '2025-06-15' }],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockedInvoke.mockResolvedValue([{ id: 'P1', block_type: 'page', content: '2025-06-15' }])
 
     const { result } = renderHook(() => useCalendarPageDates())
 
@@ -102,11 +94,7 @@ describe('useCalendarPageDates', () => {
   })
 
   it('addPage is a no-op when the entry already matches', async () => {
-    mockedInvoke.mockResolvedValue({
-      items: [{ id: 'P1', block_type: 'page', content: '2025-06-15' }],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockedInvoke.mockResolvedValue([{ id: 'P1', block_type: 'page', content: '2025-06-15' }])
 
     const { result } = renderHook(() => useCalendarPageDates())
 
@@ -126,7 +114,7 @@ describe('useCalendarPageDates', () => {
 
   it('two concurrent subscribers share ONE in-flight fetch', async () => {
     // Render two separate hook instances simultaneously. With the inflight
-    // dedupe in place, only one listBlocks call should be issued.
+    // dedupe in place, only one `list_journal_page_dates` IPC should fire.
     const a = renderHook(() => useCalendarPageDates())
     const b = renderHook(() => useCalendarPageDates())
 
@@ -135,26 +123,18 @@ describe('useCalendarPageDates', () => {
       expect(b.result.current.loading).toBe(false)
     })
 
-    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-    expect(listBlocksCalls).toHaveLength(1)
+    const fetchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_page_dates')
+    expect(fetchCalls).toHaveLength(1)
   })
 
-  it('cursor-paginates through multiple pages until exhausted', async () => {
-    mockedInvoke
-      .mockResolvedValueOnce({
-        items: [
-          { id: 'P1', block_type: 'page', content: '2025-06-01' },
-        ],
-        next_cursor: 'cursor1',
-        has_more: true,
-      })
-      .mockResolvedValueOnce({
-        items: [
-          { id: 'P2', block_type: 'page', content: '2025-06-02' },
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
+  it('issues a single un-paginated fetch (BUG-48)', async () => {
+    // BUG-48: replaces the cursor-paginated `list_blocks` loop with a
+    // single `list_journal_page_dates` call. Guards against a regression
+    // that re-introduces pagination on this code path.
+    mockedInvoke.mockResolvedValue([
+      { id: 'P1', block_type: 'page', content: '2025-06-01' },
+      { id: 'P2', block_type: 'page', content: '2025-06-02' },
+    ])
 
     const { result } = renderHook(() => useCalendarPageDates())
 
@@ -162,9 +142,10 @@ describe('useCalendarPageDates', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-    expect(listBlocksCalls).toHaveLength(2)
-    expect(listBlocksCalls[1]?.[1]).toMatchObject({ cursor: 'cursor1' })
+    const fetchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_page_dates')
+    expect(fetchCalls).toHaveLength(1)
+    // Argument shape: { spaceId } only — no cursor / limit / blockType.
+    expect(fetchCalls[0]?.[1]).toEqual({ spaceId: '' })
 
     expect(result.current.pageMap.get('2025-06-01')).toBe('P1')
     expect(result.current.pageMap.get('2025-06-02')).toBe('P2')

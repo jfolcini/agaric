@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::{CommandTx, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -307,6 +307,130 @@ pub async fn quick_capture_block(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+// ---------------------------------------------------------------------------
+// Journal page lookup commands — database-native, no pagination
+// ---------------------------------------------------------------------------
+
+/// Look up a single journal page by exact date string.
+///
+/// Returns the [`BlockRow`] for a live, non-conflict `page` block whose
+/// `content` exactly matches `date` (in `YYYY-MM-DD` format) and whose
+/// `space` ref property points at `space_id`. Returns `None` when no such
+/// page exists.
+///
+/// This replaces the frontend pattern of calling `listBlocks({
+/// block_type: 'page', limit: 500 })` and scanning a JS Map — which broke
+/// when the backend clamped `limit` to 100 (F06) and newer pages fell
+/// off the end of the result set.
+///
+/// The query is backed by `idx_blocks_journal_date` (migration 0047), a
+/// partial index on `blocks(content)` scoped to `block_type = 'page' AND
+/// content LIKE '____-__-__'`, so the lookup is O(index) regardless of total
+/// block count.
+#[instrument(skip(pool), err)]
+pub async fn get_journal_page_by_date_inner(
+    pool: &SqlitePool,
+    date: &str,
+    space_id: &str,
+) -> Result<Option<BlockRow>, AppError> {
+    validate_date_format(date)?;
+
+    let row = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
+                  b.is_conflict as "is_conflict: bool", b.conflict_type,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
+           FROM blocks b
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             AND b.is_conflict = 0
+             AND b.content = ?
+             AND EXISTS (
+                 SELECT 1 FROM block_properties bp
+                 WHERE bp.block_id = b.id
+                   AND bp.key = 'space'
+                   AND bp.value_ref = ?
+             )
+           LIMIT 1"#,
+        date,
+        space_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
+/// Tauri command: look up a journal page by date. Delegates to
+/// [`get_journal_page_by_date_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_journal_page_by_date(
+    pool: State<'_, ReadPool>,
+    date: String,
+    space_id: String,
+) -> Result<Option<BlockRow>, AppError> {
+    get_journal_page_by_date_inner(&pool.0, &date, &space_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// List all date-formatted journal pages in `space_id`.
+///
+/// Returns every live, non-conflict `page` block whose `content` matches the
+/// `YYYY-MM-DD` pattern and whose `space` ref property points at `space_id`.
+/// The result is a flat `Vec<BlockRow>` — NOT paginated — because the
+/// cardinality is bounded by the number of days the user has created a
+/// journal page (typically < 1K even for power users), well within the
+/// carve-out for small-cardinality lookups documented in invariant #3.
+///
+/// Backed by the same `idx_blocks_journal_date` partial index as
+/// [`get_journal_page_by_date_inner`].
+#[instrument(skip(pool), err)]
+pub async fn list_journal_page_dates_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<Vec<BlockRow>, AppError> {
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
+                  b.is_conflict as "is_conflict: bool", b.conflict_type,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
+           FROM blocks b
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             AND b.is_conflict = 0
+             AND b.content LIKE '____-__-__'
+             AND EXISTS (
+                 SELECT 1 FROM block_properties bp
+                 WHERE bp.block_id = b.id
+                   AND bp.key = 'space'
+                   AND bp.value_ref = ?
+             )
+           ORDER BY b.content ASC"#,
+        space_id,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+/// Tauri command: list all date-formatted journal pages. Delegates to
+/// [`list_journal_page_dates_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_journal_page_dates(
+    pool: State<'_, ReadPool>,
+    space_id: String,
+) -> Result<Vec<BlockRow>, AppError> {
+    list_journal_page_dates_inner(&pool.0, &space_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(test)]
