@@ -22,6 +22,7 @@
  */
 
 import { useTranslation } from 'react-i18next'
+import { accentVar } from '@/lib/space-accent'
 import type { SpaceRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -37,22 +38,6 @@ interface SpaceAccentBadgeProps {
   onClick?: () => void
   /** Extra class names — composed via `cn()`. */
   className?: string
-}
-
-/**
- * Map a free-form `accent_color` token (e.g. `accent-emerald`) to the
- * matching CSS custom property. Returns the brand-default
- * `var(--accent-current)` for tokens we don't recognise so a synced
- * peer that introduced a new palette token doesn't render a blank
- * badge — visual fallback over hard error.
- */
-function accentVar(token: string | null | undefined): string {
-  if (token == null || token === '') return 'var(--accent-current)'
-  // The token shape is `accent-<name>` and matches the CSS variable
-  // names defined in `index.css` directly. A future custom-palette
-  // surface can extend this without touching the rest of the
-  // component — the fallback keeps it forward-compatible.
-  return `var(--${token}, var(--accent-current))`
 }
 
 /**

@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isMac } from '@/lib/platform'
+import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { SpaceManageDialog } from './SpaceManageDialog'
@@ -66,6 +67,11 @@ export function SpaceSwitcher(): React.JSX.Element {
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const setCurrentSpace = useSpaceStore((s) => s.setCurrentSpace)
   const refreshAvailableSpaces = useSpaceStore((s) => s.refreshAvailableSpaces)
+
+  // PEND-37 — colour identity in the trigger. The dot inherits the
+  // active space's accent so the user reads the same colour signal
+  // here that `SpaceTopStripe` paints across the top of the viewport.
+  const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId)
 
   useEffect(() => {
     // Fire-and-forget refresh on mount. `refreshAvailableSpaces` never
@@ -114,15 +120,26 @@ export function SpaceSwitcher(): React.JSX.Element {
                 )}
               >
                 {/*
-                 * UX-364 — static "Space:" prefix rendered as a sibling
-                 * BEFORE `<SelectValue>` so the trigger reads as a
-                 * switcher ("Space: Personal") rather than a bare label.
-                 * Kept outside `<SelectValue>` because Radix mirrors the
-                 * active option's text content into `SelectValue` and
-                 * wrapping it would trip the auto-mirror warning called
-                 * out in the FEAT-3p11 comment below.
+                 * PEND-37 — replace the previous static "Space:" text
+                 * prefix (UX-364) with a colour-identity dot that
+                 * mirrors `SpaceTopStripe` and `SpaceAccentBadge`. The
+                 * dot is decorative (`aria-hidden`) so the
+                 * `aria-label="Switch space"` on `SelectTrigger` is
+                 * still the accessible name. Rendered as a sibling
+                 * BEFORE `<SelectValue>` for the same reason the old
+                 * prefix span was: Radix mirrors the active option's
+                 * text into `SelectValue` and wrapping it would trip
+                 * the auto-mirror warning called out in the FEAT-3p11
+                 * comment below.
                  */}
-                <span className="text-muted-foreground mr-1 shrink-0">{t('space.prefix')}</span>
+                {activeSpace != null && (
+                  <span
+                    aria-hidden="true"
+                    data-testid="space-switcher-accent-dot"
+                    className="mr-2 h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: accentVar(activeSpace.accent_color) }}
+                  />
+                )}
                 {/*
                  * FEAT-3p11 — keep the digit-hint chip scoped to the
                  * dropdown rows so it does not bleed into the trigger

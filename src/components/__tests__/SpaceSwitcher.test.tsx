@@ -306,13 +306,79 @@ describe('SpaceSwitcher', () => {
     expect(chips[1]?.textContent).toBe('Ctrl+2')
   })
 
-  // ── UX-364: trigger reads as a switcher, not a label ──
-  // The trigger now renders a static "Space:" prefix as a sibling
-  // BEFORE `<SelectValue>` so the active option reads as
-  // "Space: Personal" instead of a bare "Personal" that looks like a
-  // header. The prefix lives outside `<SelectValue>` to avoid tripping
-  // Radix's auto-mirror warning (see FEAT-3p11 comment in the file).
-  it('renders a "Space:" prefix in the trigger (UX-364)', async () => {
+  // ── PEND-37: trigger replaces "Space:" prefix with an accent dot ──
+  //
+  // The static "Space:" text prefix (UX-364) was reclaiming ~50px in
+  // a sidebar that's already narrow. PEND-37 replaces it with an 8px
+  // colour-identity dot that mirrors `SpaceTopStripe` and
+  // `SpaceAccentBadge`. The dot is decorative — `aria-hidden` + the
+  // existing `aria-label="Switch space"` on `SelectTrigger` is the
+  // accessible name. The four cases below pin the new behaviour
+  // (presence + colour + fallback) AND the regression carve-out
+  // (no "Space:" text in the trigger anymore, `aria-label` still set).
+  it('renders an accent-coloured dot before the active space name (PEND-37)', async () => {
+    mockedListSpaces.mockResolvedValueOnce([{ ...PERSONAL, accent_color: 'accent-emerald' }, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    const dot = await screen.findByTestId('space-switcher-accent-dot')
+    expect(dot).toBeInTheDocument()
+    // `accentVar('accent-emerald')` resolves to `var(--accent-emerald, var(--accent-current))`
+    // — assert on `style.backgroundColor` rather than computed colour
+    // because jsdom doesn't resolve CSS custom properties.
+    expect((dot as HTMLElement).style.backgroundColor).toContain('var(--accent-emerald')
+    // The dot is decorative; its `aria-hidden` keeps screen readers on
+    // the trigger's existing `aria-label="Switch space"`.
+    expect(dot).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it("dot's colour follows the active space when the user switches (PEND-37)", async () => {
+    mockedListSpaces.mockResolvedValueOnce([
+      { ...PERSONAL, accent_color: 'accent-emerald' },
+      { ...WORK, accent_color: 'accent-violet' },
+    ])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    // Initially Personal is active → emerald dot.
+    let dot = (await screen.findByTestId('space-switcher-accent-dot')) as HTMLElement
+    expect(dot.style.backgroundColor).toContain('var(--accent-emerald')
+
+    // Switch to Work via the store (the test environment uses the
+    // ui-select shared mock which exposes the underlying native
+    // `<select>` for direct programmatic switches; cleaner than
+    // simulating a click through the Radix portal here).
+    useSpaceStore.getState().setCurrentSpace(WORK.id)
+    await waitFor(() => {
+      const next = screen.getByTestId('space-switcher-accent-dot') as HTMLElement
+      expect(next.style.backgroundColor).toContain('var(--accent-violet')
+    })
+
+    dot = screen.getByTestId('space-switcher-accent-dot') as HTMLElement
+    expect(dot.style.backgroundColor).not.toContain('accent-emerald')
+  })
+
+  it('falls back to var(--accent-current) when accent_color is null (PEND-37)', async () => {
+    // Mirrors the SpaceAccentBadge fallback test — a synced peer with
+    // a null accent_color must still produce a non-blank dot.
+    mockedListSpaces.mockResolvedValueOnce([{ ...PERSONAL, accent_color: null }])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    const dot = (await screen.findByTestId('space-switcher-accent-dot')) as HTMLElement
+    expect(dot.style.backgroundColor).toContain('var(--accent-current')
+  })
+
+  it('does NOT render the legacy "Space:" prefix in the trigger (PEND-37)', async () => {
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
@@ -320,12 +386,28 @@ describe('SpaceSwitcher', () => {
       expect(useSpaceStore.getState().isReady).toBe(true)
     })
 
-    // The per-file mock override renders SelectTrigger's children into
-    // a sibling `<div data-slot="select-trigger-children">` so we can
-    // assert the prefix text actually lives inside the trigger.
+    // The per-file mock override renders SelectTrigger's children
+    // into a sibling `<div data-slot="select-trigger-children">`.
+    // PEND-37 removes the prefix; the trigger should no longer carry
+    // "Space:" text anywhere.
     const triggerChildren = document.querySelector('[data-slot="select-trigger-children"]')
     expect(triggerChildren).not.toBeNull()
-    expect(triggerChildren).toHaveTextContent('Space:')
+    expect(triggerChildren?.textContent ?? '').not.toContain('Space:')
+  })
+
+  it('keeps the trigger\'s aria-label="Switch space" (PEND-37 a11y guard)', async () => {
+    // The dot is decorative + `aria-hidden`. The accessible name on
+    // the trigger must still be the i18n `space.switch` string so SR
+    // users hear "Switch space" rather than the bare option text.
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    const trigger = screen.getByRole('combobox', { name: /Switch space/ })
+    expect(trigger).toBeInTheDocument()
   })
 
   // ── UX-373: single-space "Create another space…" hint ──
