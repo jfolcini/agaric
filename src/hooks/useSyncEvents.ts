@@ -1,10 +1,17 @@
 /**
  * useSyncEvents — listens to Tauri sync events and updates the sync store.
  *
- * Handles three event types from the Rust backend:
- * - sync:progress — maps backend state to frontend SyncState, updates op counters
+ * Handles two event types from the Rust backend:
  * - sync:complete — resets to idle, shows toast, reloads blocks if data changed
  * - sync:error — sets error state, shows error toast
+ *
+ * Per-state-transition progress (`sync:progress` in Phase 1) was dropped
+ * by PEND-06 Phase 2 — `useSyncTrigger` now consumes the Channel<T>
+ * `onProgress` callback set up by `startSync` for that. The two event
+ * listeners that remain carry post-sync side effects (toast / page reload
+ * / conflict refresh on complete; error toast on failure) that the
+ * channel-stream callback does not duplicate; if those side effects move
+ * to the channel path in a later cleanup, this hook can shrink further.
  *
  * No-op in browser mode (when Tauri APIs are unavailable).
  * Call once at app root (App.tsx).
@@ -24,14 +31,6 @@ import { useSyncStore } from '@/stores/sync'
 import { useTauriEventListener } from './useTauriEventListener'
 
 /** Payload shapes from the Rust backend sync_events.rs */
-export interface SyncProgressPayload {
-  type: 'progress'
-  state: string
-  remote_device_id: string
-  ops_received: number
-  ops_sent: number
-}
-
 export interface SyncCompletePayload {
   type: 'complete'
   remote_device_id: string
@@ -77,30 +76,10 @@ export function useSyncEvents(): void {
   // registration entirely.
   const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-  // PEND-06: sync:progress is deprecated in favor of Channel<T> streaming
-  // during startSync. We keep the listener for one release as a fallback
-  // for any components that haven't migrated.
-  useTauriEventListener<SyncProgressPayload>(
-    'sync:progress',
-    (event) => {
-      try {
-        const { state, ops_received, ops_sent } = event.payload
-        const store = useSyncStore.getState()
-        store.setState(mapBackendState(state))
-        store.setOpsReceived(ops_received)
-        store.setOpsSent(ops_sent)
-      } catch (err: unknown) {
-        logger.error('useSyncEvents', 'sync:progress handler failed', undefined, err)
-      }
-    },
-    {
-      enabled,
-      onError: (err) => {
-        logger.warn('useSyncEvents', 'Failed to listen to sync:progress', undefined, err)
-      },
-    },
-  )
-
+  // PEND-06 Phase 2 — `sync:progress` listener removed. The
+  // Channel<SyncProgressUpdate> opened by `startSync` is now the
+  // canonical source for per-state-transition progress; see
+  // `useSyncTrigger` for the consumer.
   useTauriEventListener<SyncCompletePayload>(
     'sync:complete',
     (event) => {

@@ -107,7 +107,18 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
     }
 }
 
-/// A sink that forwards events to both an underlying sink and a Tauri IPC channel.
+/// A sink that forwards events to an underlying sink AND a Tauri IPC channel,
+/// with PEND-06 Phase 2 semantics: `Progress` events go to the channel only
+/// (the inner sink's `sync:progress` `app.emit` was the dual-emission
+/// migration runway in Phase 1 and is no longer needed now that
+/// `useSyncEvents` has dropped the `sync:progress` listener).
+///
+/// `Complete` and `Error` events still dual-emit because the inner sink's
+/// `sync:complete` / `sync:error` listeners in `useSyncEvents` carry
+/// post-sync side effects (toast, page reload, conflict-list refresh) that
+/// the channel callback in `useSyncTrigger` does not duplicate. Other
+/// non-progress events (e.g. `MdnsDisabled`) hit the inner sink only —
+/// the channel is reserved for the active sync's progress stream.
 pub struct ChannelEventSink {
     pub inner: std::sync::Arc<dyn SyncEventSink>,
     pub channel: tauri::ipc::Channel<SyncProgressUpdate>,
@@ -115,8 +126,24 @@ pub struct ChannelEventSink {
 
 impl SyncEventSink for ChannelEventSink {
     fn on_sync_event(&self, event: SyncEvent) {
-        // Forward to the inner sink (e.g. TauriEventSink)
-        self.inner.on_sync_event(event.clone());
+        // PEND-06 Phase 2 — Progress events go to the channel ONLY. The
+        // inner sink's `sync:progress` `app.emit` from Phase 1 has no
+        // remaining frontend consumer (`useSyncEvents` dropped its
+        // listener in lockstep with this commit), so the dual-emit
+        // would burn an extra serialise + IPC round-trip per state
+        // transition (~10 per sync) for nobody to listen to.
+        //
+        // Complete + Error stay dual-emit for now because
+        // `useSyncEvents.sync:complete` / `.sync:error` carry
+        // post-sync side effects (toast, page reload, conflict refresh)
+        // that the channel-stream callback in `useSyncTrigger` does
+        // not own. A later cleanup can move those side effects into
+        // the channel path and drop the inner emission for Complete
+        // + Error too — out of scope for PEND-06 Phase 2.
+        let is_progress = matches!(event, SyncEvent::Progress { .. });
+        if !is_progress {
+            self.inner.on_sync_event(event.clone());
+        }
 
         // Forward progress updates to the channel
         match event {
@@ -629,7 +656,14 @@ mod tests {
     }
 
     #[test]
-    fn channel_event_sink_progress_forwards_to_both_inner_and_channel() {
+    fn channel_event_sink_progress_forwards_only_to_channel() {
+        // PEND-06 Phase 2 — Progress events are channel-only now. The
+        // inner sink's `sync:progress` app.emit from Phase 1 had no
+        // remaining frontend consumer once `useSyncEvents` dropped its
+        // listener, so we stopped paying for an extra IPC round-trip
+        // per state transition that nobody was listening to. A future
+        // peer-discovery / conflict-notification consumer of the inner
+        // sink is unaffected — they hit different SyncEvent variants.
         let inner = Arc::new(RecordingEventSink::new());
         let (channel, captured) = capturing_channel();
         let sink = ChannelEventSink {
@@ -645,22 +679,11 @@ mod tests {
         };
         sink.on_sync_event(event.clone());
 
-        let inner_events = inner.events();
-        assert_eq!(inner_events.len(), 1, "inner sink must observe the event");
-        match &inner_events[0] {
-            SyncEvent::Progress {
-                state,
-                remote_device_id,
-                ops_received,
-                ops_sent,
-            } => {
-                assert_eq!(state, "streaming_ops");
-                assert_eq!(remote_device_id, "DEV_PEER");
-                assert_eq!(*ops_received, 7);
-                assert_eq!(*ops_sent, 3);
-            }
-            other => panic!("inner sink saw wrong variant: {other:?}"),
-        }
+        // Phase 2 contract: inner sink stays silent on Progress.
+        assert!(
+            inner.events().is_empty(),
+            "Phase 2: inner sink must NOT observe Progress events (channel is canonical)",
+        );
 
         let channel_msgs = captured.lock().unwrap().clone();
         assert_eq!(
