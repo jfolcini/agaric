@@ -50,11 +50,15 @@ export function TemplatesView(): React.ReactElement {
     setLoading(true)
     try {
       const pages = await loadTemplatePagesWithPreview(currentSpaceId)
+      // PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL via
+      // Tier 3.4's `query_by_property` push-down filter so non-page
+      // rows never cross the IPC boundary.
       const journalResp = await queryByProperty({
         key: 'journal-template',
         valueText: 'true',
         limit: 10,
         spaceId: currentSpaceId,
+        blockType: 'page',
       })
       const journalIds = new Set(journalResp.items.map((b) => b.id))
       setTemplates(

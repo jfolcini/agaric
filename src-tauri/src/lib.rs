@@ -143,7 +143,6 @@ macro_rules! agaric_commands {
             $crate::commands::add_attachment,
             $crate::commands::delete_attachment,
             $crate::commands::list_attachments,
-            $crate::commands::get_batch_attachment_counts,
             $crate::commands::list_attachments_batch,
             // Graph visualization (F-33)
             $crate::commands::list_page_links,
@@ -166,6 +165,9 @@ macro_rules! agaric_commands {
             $crate::commands::purge_all_deleted,
             // Trash descendant counts (UX-243)
             $crate::commands::trash_descendant_counts,
+            // First-child-per-parent batch (PEND-35 Tier 2.8) — collapses the
+            // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.
+            $crate::commands::first_child_for_blocks,
             // Link metadata (UX-165)
             $crate::commands::fetch_link_metadata,
             $crate::commands::get_link_metadata,

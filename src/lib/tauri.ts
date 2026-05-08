@@ -174,6 +174,23 @@ export async function trashDescendantCounts(rootIds: string[]): Promise<Record<s
   return unwrap(await commands.trashDescendantCounts(rootIds))
 }
 
+/**
+ * Batch-fetch the first child of each parent block in a single IPC call.
+ *
+ * PEND-35 Tier 2.8 — collapses the TemplatesView preview-fetch N+1
+ * (`listBlocks({ parentId, limit: 1 })` per template) into a single
+ * window-function-backed query on the backend. The returned record
+ * maps `parentId -> firstChildBlockRow`, ordered by `(position, id)`
+ * ASC inside the CTE so the value is the canonical first sibling.
+ *
+ * Parents with no active children are omitted from the record. Soft-deleted
+ * and conflict-copy children are filtered out inside the CTE so the
+ * returned row is always a live, surfaceable block.
+ */
+export async function firstChildForBlocks(blockIds: string[]): Promise<Record<string, BlockRow>> {
+  return unwrap(await commands.firstChildForBlocks(blockIds))
+}
+
 /** List blocks with optional filters and cursor-based pagination.
  *
  * The public TypeScript shape keeps the agenda knobs (`agendaDate`,
@@ -686,11 +703,33 @@ export async function listPageHistory(params: {
  * `spaceId` (FEAT-3 Phase 4) — when set, restricts the link set to
  * source pages whose `space = <spaceId>`. `null` / `undefined` leaves
  * the graph cross-space (legacy behaviour).
+ *
+ * `tagIds` (PEND-35 Tier 4.5) — when non-empty, restricts edges to
+ * those whose **target page** carries at least one of the listed
+ * tags (via `block_tags`, `block_tag_inherited`, or
+ * `block_tag_refs` — same UX-250 union semantics as `queryByTags`).
+ * Pushes the GraphView tag-filter predicate into SQL so the renderer
+ * no longer fetches every space-wide edge then drops the off-tag
+ * subgraph in JS. `null` / `undefined` / empty leaves the edge set
+ * unfiltered.
+ *
+ * Backward-compat note: callers that still pass a bare `spaceId`
+ * string keep working — the legacy positional shape is detected and
+ * normalised to `{ spaceId, tagIds: null }` below.
  */
 export async function listPageLinks(
-  spaceId?: string | null | undefined,
+  arg?:
+    | string
+    | null
+    | undefined
+    | {
+        spaceId?: string | null | undefined
+        tagIds?: string[] | null | undefined
+      },
 ): Promise<Array<{ source_id: string; target_id: string; ref_count: number }>> {
-  return unwrap(await commands.listPageLinks(toSpaceScope(spaceId)))
+  const params = typeof arg === 'object' && arg !== null ? arg : { spaceId: arg ?? null }
+  const tagIds = params.tagIds && params.tagIds.length > 0 ? params.tagIds : null
+  return unwrap(await commands.listPageLinks(toSpaceScope(params.spaceId), tagIds))
 }
 
 /** Revert a batch of operations (by device_id + seq pairs). */
@@ -1210,31 +1249,17 @@ export async function listAttachments(blockId: string): Promise<AttachmentRow[]>
 }
 
 /**
- * Batch-fetch attachment counts for many blocks in one IPC.
- *
- * Returns a record mapping block_id → count. Block IDs absent from the
- * record have either 0 attachments or are not in the database; callers
- * should default missing keys to 0.
- *
- * MAINT-131 — replaces N per-block `listAttachments` IPCs for badge
- * counts in `SortableBlock` with a single batched query.
- */
-export async function getBatchAttachmentCounts(
-  blockIds: string[],
-): Promise<Record<string, number>> {
-  return unwrap(await commands.getBatchAttachmentCounts(blockIds))
-}
-
-/**
  * Batch-fetch full attachment lists for many blocks in one IPC.
  *
  * Returns a record mapping block_id → AttachmentRow[]. Block IDs absent
  * from the record have either 0 attachments or are not in the database;
- * callers should default missing keys to `[]`.
+ * callers should default missing keys to `[]`. Counts are derivable as
+ * `result[id].length` — PEND-35 Tier 2.7a folded the separate count
+ * batch (`get_batch_attachment_counts`) into this one.
  *
- * MAINT-131 StaticBlock half — replaces N per-block `listAttachments`
- * IPCs for inline-image-render decisions in `StaticBlock` with a single
- * batched query mounted at the BlockTree level.
+ * MAINT-131 — replaces N per-block `listAttachments` IPCs for both the
+ * SortableBlock paperclip badge and the StaticBlock inline-image render
+ * path with a single batched query mounted at the BlockTree level.
  */
 export async function getBatchAttachments(
   blockIds: string[],

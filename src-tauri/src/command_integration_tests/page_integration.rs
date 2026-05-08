@@ -779,7 +779,7 @@ async fn list_page_links_returns_empty_with_no_links() {
     .unwrap();
     settle(&mat).await;
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     assert!(
@@ -844,7 +844,7 @@ async fn list_page_links_rolls_up_content_block_links_to_pages() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
 
@@ -919,7 +919,7 @@ async fn list_page_links_excludes_deleted_blocks() {
         .unwrap();
     settle(&mat).await;
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let has_link = links
@@ -973,7 +973,7 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let self_link = links.iter().find(|l| l.source_id == l.target_id);
@@ -1058,7 +1058,7 @@ async fn list_page_links_deduplicates() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
 

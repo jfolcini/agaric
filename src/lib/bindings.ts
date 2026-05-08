@@ -302,12 +302,17 @@ export const commands = {
 	deleteAttachment: (attachmentId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
 	// Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`].
 	listAttachments: (blockId: string) => typedError<AttachmentRow[], AppErrorSchema>(__TAURI_INVOKE("list_attachments", { blockId })),
-	// Tauri command: batch-fetch attachment counts. Delegates to [`get_batch_attachment_counts_inner`].
-	getBatchAttachmentCounts: (blockIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("get_batch_attachment_counts", { blockIds })),
 	// Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`].
 	listAttachmentsBatch: (blockIds: string[]) => typedError<{ [key in string]: AttachmentRow[] }, AppErrorSchema>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
-	// Tauri command: list all page-to-page links for graph visualization.
-	listPageLinks: (scope: SpaceScope) => typedError<PageLink[], AppErrorSchema>(__TAURI_INVOKE("list_page_links", { scope })),
+	/**
+	 *  Tauri command: list all page-to-page links for graph visualization.
+	 *
+	 *  `tag_ids` (PEND-35 Tier 4.5) — when non-empty, restricts edges to
+	 *  those whose target page carries at least one of the listed tags. The
+	 *  frontend GraphView passes its active tag filter here so the backend
+	 *  no longer ships every space-wide edge for the renderer to discard.
+	 */
+	listPageLinks: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageLink[], AppErrorSchema>(__TAURI_INVOKE("list_page_links", { scope, tagIds })),
 	// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
 	saveDraft: (blockId: string, content: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("save_draft", { blockId, content })),
 	/**
@@ -365,6 +370,11 @@ export const commands = {
 	 *  Delegates to [`trash_descendant_counts_inner`].
 	 */
 	trashDescendantCounts: (rootIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("trash_descendant_counts", { rootIds })),
+	/**
+	 *  Tauri command: batch-fetch the first child per parent block. Delegates
+	 *  to [`first_child_for_blocks_inner`].
+	 */
+	firstChildForBlocks: (blockIds: string[]) => typedError<{ [key in string]: BlockRow }, AppErrorSchema>(__TAURI_INVOKE("first_child_for_blocks", { blockIds })),
 	/**
 	 *  Tauri command: fetch (or refresh) link metadata for a URL. Cache
 	 *  hits return immediately; stale or missing entries trigger an HTTP

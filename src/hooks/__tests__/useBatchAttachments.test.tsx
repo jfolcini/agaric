@@ -10,6 +10,9 @@
  *  - Does NOT re-fetch when blockIds reference changes but membership is identical
  *  - `invalidate(blockId)` triggers a refetch of the whole batch
  *  - `loading` flips during initial fetch and after invalidation
+ *  - PEND-35 Tier 2.7a: `getCount(blockId)` returns `rows.length` (or 0 when
+ *    the block is absent from the cache) — replaces the dropped
+ *    BatchAttachmentCountsProvider.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -31,6 +34,7 @@ const mockedInvoke = vi.mocked(invoke)
 
 interface BatchAttachmentsValue {
   get: (blockId: string) => AttachmentRow[] | undefined
+  getCount: (blockId: string) => number
   loading: boolean
   invalidate: (blockId: string) => void
 }
@@ -294,6 +298,66 @@ describe('useBatchAttachments', () => {
 
     await waitFor(() => {
       expect(result.current?.loading).toBe(false)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // PEND-35 Tier 2.7a — getCount derives `rows.length` from the same cache
+  // -------------------------------------------------------------------------
+
+  describe('getCount', () => {
+    it('returns rows.length for cached blocks', async () => {
+      const a1 = makeAttachment({ id: 'a1', block_id: 'A' })
+      const a2 = makeAttachment({ id: 'a2', block_id: 'A', filename: 'second.png' })
+      const b1 = makeAttachment({ id: 'b1', block_id: 'B' })
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_attachments_batch') return { A: [a1, a2], B: [b1] }
+        return undefined
+      })
+
+      const { result } = renderHook(() => useBatchAttachments(), {
+        wrapper: makeWrapper(['A', 'B', 'C']),
+      })
+
+      await waitFor(() => {
+        expect(result.current?.getCount('A')).toBe(2)
+      })
+      expect(result.current?.getCount('B')).toBe(1)
+      // C is absent from the response (no attachments) — must default to 0.
+      expect(result.current?.getCount('C')).toBe(0)
+    })
+
+    it('returns 0 for unknown blockId before the fetch completes', () => {
+      // No mock resolution — the initial fetch promise stays pending. The
+      // map is still empty so getCount must not throw.
+      const { result } = renderHook(() => useBatchAttachments(), {
+        wrapper: makeWrapper(['A']),
+      })
+      expect(result.current?.getCount('A')).toBe(0)
+      expect(result.current?.getCount('NONEXISTENT')).toBe(0)
+    })
+
+    it('does NOT issue a separate IPC for counts (single source: list batch)', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_attachments_batch') return { A: [makeAttachment()] }
+        return undefined
+      })
+
+      const { result } = renderHook(() => useBatchAttachments(), {
+        wrapper: makeWrapper(['A']),
+      })
+
+      await waitFor(() => {
+        expect(result.current?.getCount('A')).toBe(1)
+      })
+
+      // Regression for PEND-35 Tier 2.7a: the dropped count batch must
+      // never fire — this hook is now the sole source of attachment data.
+      const countCalls = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'get_batch_attachment_counts',
+      )
+      expect(countCalls).toHaveLength(0)
     })
   })
 })

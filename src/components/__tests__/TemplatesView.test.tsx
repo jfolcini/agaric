@@ -103,6 +103,8 @@ describe('TemplatesView', () => {
   })
 
   it('renders template list with preview', async () => {
+    // PEND-35 Tier 2.8 — preview fetches go through the
+    // `first_child_for_blocks` batch IPC, not per-template `list_blocks`.
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
         const params = args as { key: string }
@@ -116,23 +118,11 @@ describe('TemplatesView', () => {
         // journal-template query
         return emptyPage
       }
-      if (cmd === 'list_blocks') {
-        const params = args as { parentId: string }
-        if (params.parentId === 'T1') {
-          return {
-            items: [makeChild('C1', 'First section of meeting notes', 'T1')],
-            next_cursor: null,
-            has_more: false,
-          }
+      if (cmd === 'first_child_for_blocks') {
+        return {
+          T1: makeChild('C1', 'First section of meeting notes', 'T1'),
+          T2: makeChild('C2', 'Review items for the week', 'T2'),
         }
-        if (params.parentId === 'T2') {
-          return {
-            items: [makeChild('C2', 'Review items for the week', 'T2')],
-            next_cursor: null,
-            has_more: false,
-          }
-        }
-        return emptyPage
       }
       return emptyPage
     })
@@ -143,6 +133,16 @@ describe('TemplatesView', () => {
     expect(screen.getByText('Weekly Review')).toBeInTheDocument()
     expect(screen.getByText('First section of meeting notes')).toBeInTheDocument()
     expect(screen.getByText('Review items for the week')).toBeInTheDocument()
+
+    // PEND-35 Tier 2.8 — a single batch IPC for previews; no per-template
+    // `list_blocks` call.
+    const firstChildCalls = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'first_child_for_blocks',
+    )
+    expect(firstChildCalls).toHaveLength(1)
+    expect(firstChildCalls[0]?.[1]).toEqual({ blockIds: ['T1', 'T2'] })
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listBlocksCalls).toHaveLength(0)
   })
 
   it('filters templates by search input', async () => {

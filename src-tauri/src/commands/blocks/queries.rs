@@ -384,3 +384,85 @@ pub async fn trash_descendant_counts(
         .await
         .map_err(sanitize_internal_error)
 }
+
+/// Batch-fetch the first child of each parent block in a single query.
+///
+/// Returns a `HashMap<parent_id, BlockRow>` where the value is the first
+/// child of `parent_id` ordered by `(position ASC, id ASC)` — the canonical
+/// sibling-order used by every page renderer. Parents with no active
+/// children are omitted; callers should treat missing keys as "no preview".
+///
+/// PEND-35 Tier 2.8 — the templates view used to fire one
+/// `list_blocks({ parent_id, limit: 1 })` IPC per template just to
+/// surface a one-line preview. This batch endpoint collapses that
+/// N+1 into a single query using SQLite's `ROW_NUMBER()` window
+/// function partitioned by `parent_id`.
+///
+/// Conflict copies (`is_conflict = 1`) and soft-deleted rows
+/// (`deleted_at IS NOT NULL`) are excluded inside the CTE so the
+/// `rn = 1` row is always the first **active** sibling — matching the
+/// shape of every other UI-facing read in this module.
+///
+/// Empty `block_ids` returns an empty map (not an error).
+///
+/// # Errors
+///
+/// - [`AppError::Json`] — failed to serialize `block_ids`.
+/// - [`AppError::Database`] — propagated from sqlx.
+#[instrument(skip(pool, block_ids), err)]
+pub async fn first_child_for_blocks_inner(
+    pool: &SqlitePool,
+    block_ids: Vec<String>,
+) -> Result<HashMap<String, BlockRow>, AppError> {
+    if block_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let ids_json = serde_json::to_string(&block_ids)?;
+
+    // ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY position, id)
+    // surfaces exactly one row per parent_id (the first child).
+    // The CTE pre-filters `deleted_at IS NULL AND is_conflict = 0`
+    // so the rn = 1 row is the first ACTIVE sibling — the same rows
+    // `list_blocks({ parent_id })` would return.
+    let sql = format!(
+        "WITH ranked AS ( \
+             SELECT {cols}, \
+                    ROW_NUMBER() OVER ( \
+                        PARTITION BY parent_id \
+                        ORDER BY position ASC, id ASC \
+                    ) AS rn \
+             FROM blocks \
+             WHERE parent_id IN (SELECT value FROM json_each(?1)) \
+               AND deleted_at IS NULL \
+               AND is_conflict = 0 \
+         ) \
+         SELECT {cols} FROM ranked WHERE rn = 1",
+        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
+    );
+    let rows = sqlx::query_as::<_, BlockRow>(&sql)
+        .bind(ids_json)
+        .fetch_all(pool)
+        .await?;
+
+    let mut map: HashMap<String, BlockRow> = HashMap::with_capacity(rows.len());
+    for row in rows {
+        if let Some(parent) = row.parent_id.clone() {
+            map.insert(parent, row);
+        }
+    }
+    Ok(map)
+}
+
+/// Tauri command: batch-fetch the first child per parent block. Delegates
+/// to [`first_child_for_blocks_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn first_child_for_blocks(
+    pool: State<'_, ReadPool>,
+    block_ids: Vec<String>,
+) -> Result<HashMap<String, BlockRow>, AppError> {
+    first_child_for_blocks_inner(&pool.0, block_ids)
+        .await
+        .map_err(sanitize_internal_error)
+}

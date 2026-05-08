@@ -1608,24 +1608,10 @@ export const HANDLERS: Record<string, Handler> = {
     return [...attachments.values()].filter((att) => att['block_id'] === blockId)
   },
 
-  // MAINT-131: batch counts to replace per-block list_attachments IPCs in
-  // SortableBlock badge rendering. Mirrors the json_each-backed batch
+  // MAINT-131 / PEND-35 Tier 2.7a: full-list batch — single source for both
+  // SortableBlock badge counts (consumer reads `.length`) and StaticBlock
+  // inline-image-render decisions. Mirrors the json_each-backed batch
   // pattern in `commands/blocks/queries.rs::batch_resolve_inner`.
-  get_batch_attachment_counts: (args) => {
-    const a = args as Record<string, unknown>
-    const blockIds = (a['blockIds'] as string[]) ?? []
-    const counts: Record<string, number> = {}
-    for (const att of attachments.values()) {
-      const bid = att['block_id'] as string
-      if (blockIds.includes(bid)) {
-        counts[bid] = (counts[bid] ?? 0) + 1
-      }
-    }
-    return counts
-  },
-
-  // MAINT-131 StaticBlock half: full-list batch to replace per-block
-  // list_attachments IPCs in StaticBlock inline-image-render decisions.
   list_attachments_batch: (args) => {
     const a = args as Record<string, unknown>
     const blockIds = (a['blockIds'] as string[]) ?? []
@@ -1692,9 +1678,18 @@ export const HANDLERS: Record<string, Handler> = {
   // Page links for graph view (F-33)
   // ---------------------------------------------------------------------------
 
-  list_page_links: () => {
+  list_page_links: (args) => {
     // Scan all non-deleted blocks for [[ULID]] page link tokens and
     // return page-to-page edges (source = parent page, target = linked page).
+    const a = (args as Record<string, unknown> | null | undefined) ?? {}
+    // PEND-35 Tier 4.5 — when `tagIds` is non-empty, restrict edges to
+    // those whose target page carries at least one of the listed tags.
+    // Mirrors the backend semantics (`block_tags`-only resolution in the
+    // mock world; the real backend additionally unions
+    // `block_tag_inherited` / `block_tag_refs`, which the mock does not
+    // model — see seed.ts).
+    const rawTagIds = a['tagIds'] as string[] | null | undefined
+    const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
     const LINK_RE_PL = /\[\[([0-9A-Z]{26})\]\]/g
     const linkSet = new Set<string>()
     const pageLinks: Array<{ source_id: string; target_id: string }> = []
@@ -1712,6 +1707,20 @@ export const HANDLERS: Record<string, Handler> = {
         const targetBlock = blocks.get(targetPageId)
         if (!targetBlock || targetBlock['block_type'] !== 'page' || targetBlock['deleted_at'])
           continue
+        // PEND-35 Tier 4.5 — apply target-side tag filter.
+        if (tagFilter) {
+          const targetTags = blockTags.get(targetPageId)
+          let hit = false
+          if (targetTags) {
+            for (const tid of tagFilter) {
+              if (targetTags.has(tid)) {
+                hit = true
+                break
+              }
+            }
+          }
+          if (!hit) continue
+        }
         // Deduplicate edges
         const key = `${parentId}→${targetPageId}`
         if (!linkSet.has(key)) {
@@ -1931,6 +1940,48 @@ export const HANDLERS: Record<string, Handler> = {
         }
       }
       result[rootId] = count
+    }
+    return result
+  },
+
+  // ---------------------------------------------------------------------------
+  // First-child-per-parent batch (PEND-35 Tier 2.8)
+  //
+  // Mirrors `commands/blocks/queries.rs::first_child_for_blocks_inner`:
+  // returns a map of `parentId → first BlockRow` ordered by
+  // `(position ASC, id ASC)`. Soft-deleted and conflict-copy children
+  // are filtered out so the value is always a live block. Parents
+  // with no active children are omitted from the record.
+  // ---------------------------------------------------------------------------
+
+  first_child_for_blocks: (args) => {
+    const a = args as Record<string, unknown>
+    const blockIds = (a['blockIds'] as string[]) ?? []
+    const parentSet = new Set(blockIds)
+    const result: Record<string, unknown> = {}
+    // Group children by parent_id, then pick the first by (position, id).
+    const grouped = new Map<string, Record<string, unknown>[]>()
+    for (const b of blocks.values()) {
+      const parent = b['parent_id'] as string | null | undefined
+      if (parent == null) continue
+      if (!parentSet.has(parent)) continue
+      if (b['deleted_at']) continue
+      if (b['is_conflict']) continue
+      const bucket = grouped.get(parent) ?? []
+      bucket.push(b)
+      grouped.set(parent, bucket)
+    }
+    for (const [parent, children] of grouped) {
+      children.sort((x, y) => {
+        const px = (x['position'] as number | null) ?? 0
+        const py = (y['position'] as number | null) ?? 0
+        if (px !== py) return px - py
+        const idX = x['id'] as string
+        const idY = y['id'] as string
+        return idX.localeCompare(idY)
+      })
+      const first = children[0]
+      if (first) result[parent] = first
     }
     return result
   },

@@ -37,10 +37,10 @@ import {
   editBlock,
   exportPageMarkdown,
   fetchLinkMetadata,
+  firstChildForBlocks,
   flushAllDrafts,
   flushDraft,
   getBacklinks,
-  getBatchAttachmentCounts,
   getBatchAttachments,
   getBatchProperties,
   getBlock,
@@ -2342,6 +2342,50 @@ describe('trashDescendantCounts', () => {
 })
 
 // ---------------------------------------------------------------------------
+// firstChildForBlocks (PEND-35 Tier 2.8)
+// ---------------------------------------------------------------------------
+
+describe('firstChildForBlocks', () => {
+  it('invokes first_child_for_blocks with the blockIds array', async () => {
+    const expected = {
+      T1: {
+        id: 'C1',
+        block_type: 'content',
+        content: 'first child of T1',
+        parent_id: 'T1',
+        position: 0,
+        deleted_at: null,
+        is_conflict: false,
+        conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+        page_id: null,
+      },
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await firstChildForBlocks(['T1', 'T2'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('first_child_for_blocks', {
+      blockIds: ['T1', 'T2'],
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('round-trips an empty array as an empty record', async () => {
+    mockedInvoke.mockResolvedValueOnce({})
+
+    const result = await firstChildForBlocks([])
+
+    expect(mockedInvoke).toHaveBeenCalledWith('first_child_for_blocks', { blockIds: [] })
+    expect(result).toEqual({})
+  })
+})
+
+// ---------------------------------------------------------------------------
 // listProjectedAgenda
 // ---------------------------------------------------------------------------
 
@@ -2445,7 +2489,13 @@ describe('listPageLinks', () => {
     const result = await listPageLinks()
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links', { scope: { kind: 'global' } })
+    // PEND-35 Tier 4.5 — `tagIds: null` is forwarded so the backend's
+    // `(?2 IS NULL OR …)` short-circuit evaluates to TRUE, preserving
+    // the pre-Tier-4.5 unfiltered behaviour.
+    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links', {
+      scope: { kind: 'global' },
+      tagIds: null,
+    })
     expect(result).toEqual(expected)
   })
 
@@ -2462,6 +2512,22 @@ describe('listPageLinks', () => {
     await listPageLinks('SPACE_42')
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
+    expect(args['tagIds']).toBeNull()
+  })
+
+  it('forwards tagIds when provided via the param-object shape (PEND-35 Tier 4.5)', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+    await listPageLinks({ spaceId: 'SPACE_42', tagIds: ['TAG_A', 'TAG_B'] })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
+    expect(args['tagIds']).toEqual(['TAG_A', 'TAG_B'])
+  })
+
+  it('normalises an empty tagIds array to null (PEND-35 Tier 4.5)', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+    await listPageLinks({ spaceId: 'SPACE_42', tagIds: [] })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['tagIds']).toBeNull()
   })
 })
 
@@ -2537,30 +2603,6 @@ describe('listAttachments', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_attachments', { blockId: 'BLK001' })
     expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// getBatchAttachmentCounts
-// ---------------------------------------------------------------------------
-
-describe('getBatchAttachmentCounts', () => {
-  it('invokes get_batch_attachment_counts with blockIds', async () => {
-    const expected = { BLK001: 2, BLK002: 0 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await getBatchAttachmentCounts(['BLK001', 'BLK002'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_batch_attachment_counts', {
-      blockIds: ['BLK001', 'BLK002'],
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
-    await expect(getBatchAttachmentCounts(['BLK001'])).rejects.toThrow('db error')
   })
 })
 

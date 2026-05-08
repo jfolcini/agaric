@@ -65,12 +65,17 @@ function fetchPages(
       spaceId: spaceId ?? '',
     }) as Promise<PagesResponse>
   }
+  // PEND-35 Tier 2.9 — push the `block_type = 'page'` predicate into SQL
+  // so the unbounded `limit:5000` over-fetch can no longer ship up to
+  // 5000 non-page rows the renderer would discard. The post-filter that
+  // used to live below the `Promise.all` boundary is now redundant.
   return queryByTags({
     tagIds: [...tagFilterIds],
     prefixes: [],
     mode: 'or',
     limit: 5000,
     spaceId,
+    blockType: 'page',
   }) as Promise<PagesResponse>
 }
 
@@ -128,17 +133,22 @@ export async function fetchGraphData(
   tagFilterIds: readonly string[],
   spaceId: string | null,
 ): Promise<GraphFetchResult> {
+  // PEND-35 Tier 4.5 — push the active tag filter into `list_page_links`
+  // so the backend ships only edges whose **target page** carries one
+  // of the requested tags. Pre-Tier-4.5 the renderer fetched every
+  // space-wide edge then dropped any whose endpoint was not in the
+  // post-filtered `nodeIds` set; with the push-down the response is
+  // already shape-restricted to the visible subgraph.
+  const linksTagIds: string[] | null = tagFilterIds.length > 0 ? [...tagFilterIds] : null
   const [pagesResp, links, templatesResp] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
-    listPageLinks(spaceId),
+    listPageLinks({ spaceId, tagIds: linksTagIds }),
     queryByProperty({ key: 'template', valueText: 'true', limit: 1000, spaceId }),
   ])
 
-  // When filtering by tag, the API may return non-page blocks — keep only pages.
-  const items =
-    tagFilterIds.length > 0
-      ? pagesResp.items.filter((p) => (p['block_type'] as string | undefined) === 'page')
-      : pagesResp.items
+  // PEND-35 Tier 2.9 — `queryByTags` now applies `block_type = 'page'`
+  // server-side, so the previous JS post-filter is gone.
+  const items = pagesResp.items
 
   const templateIds = new Set(
     templatesResp.items.map((p) => p.id).filter((id): id is string => typeof id === 'string'),

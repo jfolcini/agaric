@@ -18,11 +18,13 @@ beforeEach(() => {
 
 describe('loadTemplatePages', () => {
   it('returns pages with template property', async () => {
+    // PEND-35 Tier 2.8 — backend now drops non-page rows via the
+    // `block_type = 'page'` push-down filter (Tier 3.4), so the mock
+    // only returns rows that already match.
     mockedInvoke.mockResolvedValueOnce({
       items: [
         { id: 'T1', block_type: 'page', content: 'Meeting Notes' },
         { id: 'T2', block_type: 'page', content: 'Bug Report' },
-        { id: 'B1', block_type: 'content', content: 'Not a page' },
       ],
       next_cursor: null,
       has_more: false,
@@ -30,6 +32,9 @@ describe('loadTemplatePages', () => {
 
     const result = await loadTemplatePages(null)
 
+    // PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL via
+    // Tier 3.4's `query_by_property` push-down, so the IPC carries it
+    // in the `extraFilters` struct.
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
       key: 'template',
       valueText: 'true',
@@ -38,7 +43,13 @@ describe('loadTemplatePages', () => {
       cursor: null,
       limit: 100,
       scope: { kind: 'global' },
-      extraFilters: null,
+      extraFilters: {
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: 'page',
+        valueTextIn: null,
+        valueDateRange: null,
+      },
     })
     expect(result).toHaveLength(2)
     expect(result[0]?.id).toBe('T1')
@@ -328,18 +339,28 @@ describe('loadTemplatePagesWithPreview', () => {
       next_cursor: null,
       has_more: false,
     })
-    // Mock list_blocks(T1) → 1 child
+    // PEND-35 Tier 2.8 — first_child_for_blocks([T1]) returns
+    // { T1: child } in a single batch call.
     mockedInvoke.mockResolvedValueOnce({
-      items: [
-        { id: 'C1', block_type: 'content', content: '## Attendees', parent_id: 'T1', position: 0 },
-      ],
-      next_cursor: null,
-      has_more: false,
+      T1: {
+        id: 'C1',
+        block_type: 'content',
+        content: '## Attendees',
+        parent_id: 'T1',
+        position: 0,
+      },
     })
 
     const result = await loadTemplatePagesWithPreview(null)
     expect(result).toHaveLength(1)
     expect(result[0]?.preview).toBe('## Attendees')
+    // PEND-35 Tier 2.8 \u2014 single batch IPC for previews. The per-template
+    // `list_blocks({ parentId, limit: 1 })` loop is gone.
+    expect(mockedInvoke).toHaveBeenCalledWith('first_child_for_blocks', {
+      blockIds: ['T1'],
+    })
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listBlocksCalls).toHaveLength(0)
   })
 
   it('returns null preview when template has no children', async () => {
@@ -348,11 +369,8 @@ describe('loadTemplatePagesWithPreview', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    // Empty record \u2014 T1 omitted because it has no children.
+    mockedInvoke.mockResolvedValueOnce({})
 
     const result = await loadTemplatePagesWithPreview(null)
     expect(result[0]?.preview).toBeNull()
@@ -366,11 +384,7 @@ describe('loadTemplatePagesWithPreview', () => {
       has_more: false,
     })
     mockedInvoke.mockResolvedValueOnce({
-      items: [
-        { id: 'C1', block_type: 'content', content: longContent, parent_id: 'T1', position: 0 },
-      ],
-      next_cursor: null,
-      has_more: false,
+      T1: { id: 'C1', block_type: 'content', content: longContent, parent_id: 'T1', position: 0 },
     })
 
     const result = await loadTemplatePagesWithPreview(null)
@@ -383,10 +397,41 @@ describe('loadTemplatePagesWithPreview', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedInvoke.mockRejectedValueOnce(new Error('list_blocks failed'))
+    // Batch fetch rejection \u2014 every page surfaces a null preview.
+    mockedInvoke.mockRejectedValueOnce(new Error('first_child_for_blocks failed'))
 
     const result = await loadTemplatePagesWithPreview(null)
     expect(result[0]?.preview).toBeNull()
+  })
+
+  it('fires a single batch preview IPC for many templates', async () => {
+    // Three templates \u2192 one query_by_property + one first_child_for_blocks.
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        { id: 'T1', block_type: 'page', content: 'A' },
+        { id: 'T2', block_type: 'page', content: 'B' },
+        { id: 'T3', block_type: 'page', content: 'C' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedInvoke.mockResolvedValueOnce({
+      T1: { id: 'C1', block_type: 'content', content: 'first-A', parent_id: 'T1', position: 0 },
+      T3: { id: 'C3', block_type: 'content', content: 'first-C', parent_id: 'T3', position: 0 },
+    })
+
+    const result = await loadTemplatePagesWithPreview(null)
+
+    expect(result).toHaveLength(3)
+    expect(result[0]?.preview).toBe('first-A')
+    expect(result[1]?.preview).toBeNull()
+    expect(result[2]?.preview).toBe('first-C')
+
+    // Exactly two IPCs total: the property query + the preview batch.
+    expect(mockedInvoke).toHaveBeenCalledTimes(2)
+    expect(mockedInvoke).toHaveBeenLastCalledWith('first_child_for_blocks', {
+      blockIds: ['T1', 'T2', 'T3'],
+    })
   })
 })
 

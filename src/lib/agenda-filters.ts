@@ -106,36 +106,45 @@ export function toPastDatePreset(value: string): string | null {
 // Per-dimension query handlers
 // ---------------------------------------------------------------------------
 
-/** Query blocks matching the given todo_state values. */
+/**
+ * Query blocks matching the given todo_state values.
+ *
+ * PEND-35 Tier 2.10a — collapses N per-value fan-out into ONE
+ * `query_by_property` call using `valueTextIn` (Tier 3.4). The previous
+ * loop fired one IPC per status value; the SQL `value_text IN (?, ?, …)`
+ * binding does the union server-side in a single round-trip.
+ */
 async function queryStatus(values: string[], spaceId: string): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
-  for (const value of values) {
-    const resp = await queryByProperty({
-      key: 'todo_state',
-      valueText: value,
-      limit: AGENDA_QUERY_LIMIT,
-      spaceId,
-    })
-    for (const b of resp.items) {
-      result.set(b.id, b)
-    }
+  if (values.length === 0) return result
+  const resp = await queryByProperty({
+    key: 'todo_state',
+    valueTextIn: values,
+    limit: AGENDA_QUERY_LIMIT,
+    spaceId,
+  })
+  for (const b of resp.items) {
+    result.set(b.id, b)
   }
   return result
 }
 
-/** Query blocks matching the given priority values. */
+/**
+ * Query blocks matching the given priority values.
+ *
+ * PEND-35 Tier 2.10a — same per-value fan-out collapse as `queryStatus`.
+ */
 async function queryPriority(values: string[], spaceId: string): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
-  for (const value of values) {
-    const resp = await queryByProperty({
-      key: 'priority',
-      valueText: value,
-      limit: AGENDA_QUERY_LIMIT,
-      spaceId,
-    })
-    for (const b of resp.items) {
-      result.set(b.id, b)
-    }
+  if (values.length === 0) return result
+  const resp = await queryByProperty({
+    key: 'priority',
+    valueTextIn: values,
+    limit: AGENDA_QUERY_LIMIT,
+    spaceId,
+  })
+  for (const b of resp.items) {
+    result.set(b.id, b)
   }
   return result
 }
@@ -232,7 +241,16 @@ async function queryDateDimension(
 
 /**
  * Query blocks by a property-based date dimension (completed_at or created_at).
- * Iterates each day in the range and queries by valueDate.
+ *
+ * PEND-35 Tier 2.10a — collapses the per-day fan-out into ONE
+ * `query_by_property` call per filter value using `valueDateRange`
+ * (Tier 3.4). The backend evaluates the half-open `[from, to)` window
+ * server-side, so a 7-day "Last 7 days" preset that previously fired 7
+ * IPCs now fires 1.
+ *
+ * `getDateRangeForFilter` returns an *inclusive* `{start, end}` range;
+ * `valueDateRange` is half-open. We convert by advancing `end` by one
+ * day so the last included calendar date stays in the result set.
  */
 async function queryPropertyDateDimension(
   values: string[],
@@ -247,32 +265,20 @@ async function queryPropertyDateDimension(
     if (!preset) continue
     const range = getDateRangeForFilter(preset, today)
     if (!range) continue
-    const start = new Date(`${range.start}T00:00:00`)
-    const end = new Date(`${range.end}T00:00:00`)
-    // PEND-27 P1 (Tier 1) — fan out per-day IPC calls in parallel rather
-    // than awaiting sequentially. Each `queryByProperty` is read-only and
-    // idempotent, so ordering only affects which equal row wins the final
-    // `result.set(b.id, b)` — benign. Cuts wall-clock from N×roundtrip to
-    // ~1×roundtrip + small fan-out overhead. The Tier 2 backend command
-    // (`query_by_property_date_range`) is tracked separately.
-    const dates: string[] = []
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      dates.push(formatDate(d))
-    }
-    const responses = await Promise.all(
-      dates.map((dateStr) =>
-        queryByProperty({
-          key: propertyKey,
-          valueDate: dateStr,
-          limit: AGENDA_QUERY_LIMIT,
-          spaceId,
-        }),
-      ),
-    )
-    for (const resp of responses) {
-      for (const b of resp.items) {
-        result.set(b.id, b)
-      }
+    // Convert inclusive `end` -> half-open `endExclusive` (= end + 1 day).
+    // `formatDate` parses local-time; constructing from `${end}T00:00:00`
+    // and `setDate(getDate() + 1)` rolls month/year boundaries correctly.
+    const endExclusiveDate = new Date(`${range.end}T00:00:00`)
+    endExclusiveDate.setDate(endExclusiveDate.getDate() + 1)
+    const endExclusive = formatDate(endExclusiveDate)
+    const resp = await queryByProperty({
+      key: propertyKey,
+      valueDateRange: [range.start, endExclusive],
+      limit: AGENDA_QUERY_LIMIT,
+      spaceId,
+    })
+    for (const b of resp.items) {
+      result.set(b.id, b)
     }
   }
   return result

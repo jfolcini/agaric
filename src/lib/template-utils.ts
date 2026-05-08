@@ -1,12 +1,23 @@
 import { logger } from './logger'
 import type { BlockRow } from './tauri'
-import { createBlock, getProperties, listBlocks, queryByProperty } from './tauri'
+import {
+  createBlock,
+  firstChildForBlocks,
+  getProperties,
+  listBlocks,
+  queryByProperty,
+} from './tauri'
 
 /**
  * Load all pages marked as templates (property `template` = 'true').
  *
  * `spaceId` (FEAT-3 Phase 4) — when set, restricts templates to the
  * active space. `null` keeps the cross-space (legacy) behaviour.
+ *
+ * PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL via
+ * Tier 3.4's `query_by_property` push-down filter. The previous
+ * JS-side `b.block_type === 'page'` filter wasted bandwidth on
+ * non-page rows that the backend now drops at query time.
  */
 export async function loadTemplatePages(spaceId: string | null): Promise<BlockRow[]> {
   const resp = await queryByProperty({
@@ -14,8 +25,9 @@ export async function loadTemplatePages(spaceId: string | null): Promise<BlockRo
     valueText: 'true',
     limit: 100,
     spaceId,
+    blockType: 'page',
   })
-  return resp.items.filter((b) => b.block_type === 'page')
+  return resp.items
 }
 
 /**
@@ -25,6 +37,9 @@ export async function loadTemplatePages(spaceId: string | null): Promise<BlockRo
  *
  * `spaceId` (FEAT-3 Phase 4) — when set, restricts the search to the
  * active space.
+ *
+ * PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL so non-page
+ * rows are dropped at query time rather than via a JS-side filter.
  */
 export async function loadJournalTemplate(spaceId: string | null): Promise<{
   template: BlockRow | null
@@ -35,8 +50,9 @@ export async function loadJournalTemplate(spaceId: string | null): Promise<{
     valueText: 'true',
     limit: 10,
     spaceId,
+    blockType: 'page',
   })
-  const pages = resp.items.filter((b) => b.block_type === 'page')
+  const pages = resp.items
   const duplicateWarning =
     pages.length > 1
       ? `Multiple journal templates found (${pages.length}). Using "${pages[0]?.content ?? pages[0]?.id}". ` +
@@ -50,31 +66,44 @@ export async function loadJournalTemplate(spaceId: string | null): Promise<{
  * Returns the page data plus a truncated preview string.
  *
  * `spaceId` (FEAT-3 Phase 4) — when set, restricts templates to the
- * active space. The child preview's `listBlocks` call is required to
- * pass `spaceId`; the `?? ''` fallback is the pre-bootstrap no-match
- * sentinel.
+ * active space.
+ *
+ * PEND-35 Tier 2.8 — collapses the previous N+1
+ * (`listBlocks({ parentId, limit: 1 })` per template) into a single
+ * `firstChildForBlocks(allTemplateIds)` IPC. Templates with no
+ * children, with a fetch failure, or absent from the response map
+ * surface a `null` preview (best-effort, mirroring the prior shape).
  */
 export async function loadTemplatePagesWithPreview(
   spaceId: string | null,
 ): Promise<Array<{ id: string; content: string; preview: string | null }>> {
   const pages = await loadTemplatePages(spaceId)
-  const result: Array<{ id: string; content: string; preview: string | null }> = []
-  for (const page of pages) {
-    let preview: string | null = null
-    try {
-      const children = await listBlocks({ parentId: page.id, limit: 1, spaceId: spaceId ?? '' })
-      if (children.items.length > 0) {
-        const text = children.items[0]?.content ?? ''
-        preview = text.length > 60 ? `${text.slice(0, 60)}…` : text
-      }
-    } catch (err) {
-      // Preview is best-effort — skip on failure but log so we can
-      // correlate with backend errors during support.
-      logger.warn('template-utils', 'template preview fetch failed', { pageId: page.id }, err)
-    }
-    result.push({ id: page.id, content: page.content ?? '', preview })
+  if (pages.length === 0) return []
+
+  let firstChildren: Record<string, BlockRow> = {}
+  try {
+    firstChildren = await firstChildForBlocks(pages.map((p) => p.id))
+  } catch (err) {
+    // Preview is best-effort — log and fall through; every page surfaces
+    // a `null` preview, matching the per-template per-error shape that
+    // the prior loop produced.
+    logger.warn(
+      'template-utils',
+      'template preview batch fetch failed',
+      { templateCount: pages.length },
+      err,
+    )
   }
-  return result
+
+  return pages.map((page) => {
+    const child = firstChildren[page.id]
+    let preview: string | null = null
+    if (child) {
+      const text = child.content ?? ''
+      preview = text.length > 60 ? `${text.slice(0, 60)}…` : text
+    }
+    return { id: page.id, content: page.content ?? '', preview }
+  })
 }
 
 /**

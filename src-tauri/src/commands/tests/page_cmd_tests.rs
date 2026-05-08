@@ -1769,7 +1769,7 @@ async fn list_page_links_returns_edges_between_pages() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
 
@@ -1842,7 +1842,7 @@ async fn list_page_links_excludes_deleted_pages() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let has_deleted = links.iter().any(|l| l.target_id == p2.id);
@@ -1891,7 +1891,7 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let self_link = links.iter().find(|l| l.source_id == l.target_id);
@@ -1906,7 +1906,7 @@ async fn list_page_links_excludes_self_links() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_links_empty_when_no_links() {
     let (pool, _dir) = test_pool().await;
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     assert!(links.is_empty(), "should return empty when no links exist");
@@ -1984,7 +1984,7 @@ async fn list_page_links_deduplicates_multiple_content_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
 
@@ -2060,7 +2060,7 @@ async fn list_page_links_single_link_has_ref_count_one() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let edge = links
@@ -2129,7 +2129,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
 
     // Verify link exists before deletion
-    let links_before = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links_before = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let has_link = links_before
@@ -2143,7 +2143,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let links_after = list_page_links_inner(&pool, &SpaceScope::Global)
+    let links_after = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let has_deleted_source = links_after.iter().any(|l| l.source_id == p1.id);
@@ -2323,7 +2323,7 @@ async fn list_page_links_optimized_matches_oracle() {
     }
 
     // -- Compare optimized vs oracle --
-    let mut optimized = list_page_links_inner(&pool, &SpaceScope::Global)
+    let mut optimized = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     optimized.sort();
@@ -2384,7 +2384,7 @@ async fn list_page_links_inner_global_matches_legacy_none_pend18() {
             .unwrap();
     }
 
-    let global = list_page_links_inner(&pool, &SpaceScope::Global)
+    let global = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     let global_edges: std::collections::HashSet<(String, String)> = global
@@ -2404,17 +2404,262 @@ async fn list_page_links_inner_global_matches_legacy_none_pend18() {
     let scope_a = list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
     let scope_b = list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
     )
     .await
     .unwrap();
     assert_eq!(scope_a.len(), 1, "Active(A) keeps the within-A edge only");
     assert_eq!(scope_b.len(), 1, "Active(B) keeps the within-B edge only");
+}
+
+// PEND-35 Tier 4.5 — `tag_ids` filter pushes the GraphView tag-filter
+// predicate into SQL: only edges whose **target page** carries one of
+// the listed tags surface. Pre-Tier-4.5 the renderer fetched every
+// space-wide edge and JS-discarded any whose endpoint was not in the
+// tag-filtered node set.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_filters_by_tag_ids() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Source page (carries no tag) and two target pages — one tagged
+    // with TAG_A, the other with TAG_B. Source -> each target via a
+    // distinct content block. With `tag_ids = [TAG_A]` only the edge
+    // whose target carries TAG_A may surface.
+    let p_src = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let p_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target A".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let p_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target B".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Two tag blocks — minted as `block_type='tag'` so the ULID is a
+    // real row in `blocks`. The `block_tags` FK requires both endpoints
+    // to be live blocks.
+    let tag_a = create_block_inner(&pool, DEV, &mat, "tag".into(), "alpha".into(), None, None)
+        .await
+        .unwrap();
+    let tag_b = create_block_inner(&pool, DEV, &mat, "tag".into(), "beta".into(), None, None)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Tag the target pages.
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&p_a.id)
+        .bind(&tag_a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&p_b.id)
+        .bind(&tag_b.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Two content blocks under p_src, each linking to one target page.
+    let b_to_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_a.id),
+        Some(p_src.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let b_to_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_b.id),
+        Some(p_src.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_a.id)
+        .bind(&p_a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_b.id)
+        .bind(&p_b.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Filter by TAG_A — only the edge to p_a should remain.
+    let tag_ids = vec![tag_a.id.clone()];
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, Some(&tag_ids))
+        .await
+        .unwrap();
+    let to_a = links
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_a.id)
+        .count();
+    let to_b = links
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_b.id)
+        .count();
+    assert_eq!(to_a, 1, "edge to TAG_A-tagged page must surface");
+    assert_eq!(
+        to_b, 0,
+        "edge to TAG_B-tagged page must be filtered out when tag_ids = [TAG_A]"
+    );
+
+    mat.shutdown();
+}
+
+// PEND-35 Tier 4.5 — control test: `tag_ids = None` is identical to the
+// pre-Tier-4.5 behaviour (every edge surfaces). Guards against a
+// regression where `None` accidentally suppresses rows via a planner
+// quirk in the `(?2 IS NULL OR …)` short-circuit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_no_tag_filter_returns_all() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let p_src = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let p_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target A".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let p_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target B".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b_to_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_a.id),
+        Some(p_src.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let b_to_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_b.id),
+        Some(p_src.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_a.id)
+        .bind(&p_a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_b.id)
+        .bind(&p_b.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links_none = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let links_empty = list_page_links_inner(&pool, &SpaceScope::Global, Some(&[]))
+        .await
+        .unwrap();
+
+    let to_a_none = links_none
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_a.id)
+        .count();
+    let to_b_none = links_none
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_b.id)
+        .count();
+    assert_eq!(to_a_none, 1, "no tag filter must surface edge to A");
+    assert_eq!(to_b_none, 1, "no tag filter must surface edge to B");
+    // Empty slice is treated as no filter (matches FE wrapper, which
+    // normalises `tagIds: []` to `null` before binding).
+    assert_eq!(
+        links_empty.len(),
+        links_none.len(),
+        "empty tag_ids slice must be equivalent to None"
+    );
+
+    mat.shutdown();
 }
 
 // ======================================================================
