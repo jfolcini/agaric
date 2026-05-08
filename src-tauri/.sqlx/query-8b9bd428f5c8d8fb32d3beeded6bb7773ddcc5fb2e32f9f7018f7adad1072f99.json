@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT page_id, title FROM pages_cache ORDER BY title",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "title",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8b9bd428f5c8d8fb32d3beeded6bb7773ddcc5fb2e32f9f7018f7adad1072f99"
+}

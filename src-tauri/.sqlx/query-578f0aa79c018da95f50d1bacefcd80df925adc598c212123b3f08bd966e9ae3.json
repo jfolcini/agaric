@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT payload FROM op_log WHERE device_id = ? AND seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "payload",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "578f0aa79c018da95f50d1bacefcd80df925adc598c212123b3f08bd966e9ae3"
+}

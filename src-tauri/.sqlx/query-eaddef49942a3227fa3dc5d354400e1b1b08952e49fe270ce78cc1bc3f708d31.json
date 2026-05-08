@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT is_conflict as \"is_conflict: bool\", conflict_source FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "is_conflict: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "conflict_source",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "eaddef49942a3227fa3dc5d354400e1b1b08952e49fe270ce78cc1bc3f708d31"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "content",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "0d611b2b127e30b57a3eae7ccf6db98db79a3fdb3a14db4e3bc215f9201c6705"
+}

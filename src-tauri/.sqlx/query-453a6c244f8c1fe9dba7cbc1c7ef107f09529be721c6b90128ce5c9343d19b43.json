@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT data, up_to_hash FROM log_snapshots WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "data",
+        "ordinal": 0,
+        "type_info": "Blob"
+      },
+      {
+        "name": "up_to_hash",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "453a6c244f8c1fe9dba7cbc1c7ef107f09529be721c6b90128ce5c9343d19b43"
+}

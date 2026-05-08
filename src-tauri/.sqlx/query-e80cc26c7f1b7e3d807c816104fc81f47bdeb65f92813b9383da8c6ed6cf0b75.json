@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT deleted_at FROM blocks WHERE id = 'M81P_CC'",
+  "describe": {
+    "columns": [
+      {
+        "name": "deleted_at",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "e80cc26c7f1b7e3d807c816104fc81f47bdeb65f92813b9383da8c6ed6cf0b75"
+}

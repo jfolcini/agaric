@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_text FROM block_properties\n           WHERE block_id = ? AND key = 'accent_color'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_text",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "49de6064a624738faa2716329020f8e459486667659d6bc1b96e906469791d5a"
+}

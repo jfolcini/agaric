@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT parent_id FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "parent_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "4e22750b7c614bccf48040caed7cd9a6c767534a42f6d349d2e0dfa45ca114a8"
+}

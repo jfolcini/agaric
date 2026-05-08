@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "usage_count",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7c83d6af3e58e78ff324b5adbb84d50d3e51bfd6636379f951038962700cd9fb"
+}

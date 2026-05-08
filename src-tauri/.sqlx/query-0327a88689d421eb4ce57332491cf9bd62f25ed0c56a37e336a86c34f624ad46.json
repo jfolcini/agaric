@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"n!: i64\" FROM op_log WHERE op_type = 'set_property'",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0327a88689d421eb4ce57332491cf9bd62f25ed0c56a37e336a86c34f624ad46"
+}

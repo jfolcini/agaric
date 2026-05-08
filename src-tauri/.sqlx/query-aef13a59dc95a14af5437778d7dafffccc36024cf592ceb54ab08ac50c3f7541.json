@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_type as \"block_type!: String\", content\n               FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_type!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "aef13a59dc95a14af5437778d7dafffccc36024cf592ceb54ab08ac50c3f7541"
+}
