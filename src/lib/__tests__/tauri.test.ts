@@ -1422,7 +1422,13 @@ describe('cancelPairing', () => {
 // ---------------------------------------------------------------------------
 
 describe('startSync', () => {
-  it('invokes start_sync with peerId', async () => {
+  it('invokes start_sync with peerId and a Channel<SyncProgressUpdate>', async () => {
+    // PEND-06 — `startSync` now passes a `tauri::ipc::Channel<T>` as the
+    // second argument so the backend can stream progress updates back
+    // through a single IPC. The wrapper constructs the channel
+    // internally, so the test asserts the IPC carries `{ peerId,
+    // progress }` where `progress` is the mock Channel stub from the
+    // shared test setup.
     const expected = {
       state: 'syncing',
       local_device_id: 'local',
@@ -1433,7 +1439,10 @@ describe('startSync', () => {
     mockedInvoke.mockResolvedValueOnce(expected)
     const result = await startSync('peer-1')
     expect(result).toEqual(expected)
-    expect(mockedInvoke).toHaveBeenCalledWith('start_sync', { peerId: 'peer-1' })
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'start_sync',
+      expect.objectContaining({ peerId: 'peer-1', progress: expect.anything() }),
+    )
   })
 
   it('propagates errors from invoke', async () => {

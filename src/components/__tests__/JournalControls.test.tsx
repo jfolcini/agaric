@@ -35,7 +35,7 @@ beforeEach(() => {
     scrollToDate: null,
     scrollToPanel: null,
   })
-  // BUG-48: useCalendarPageDates now hits `list_journal_page_dates`,
+  // BUG-48: useCalendarPageDates now hits `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (no pagination envelope).
   mockedInvoke.mockResolvedValue([])
 })
@@ -122,11 +122,13 @@ describe('JournalControls', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_journal_page_dates',
+        'list_journal_pages_in_range',
         expect.objectContaining({ spaceId: '' }),
       )
     })
-    const fetchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_page_dates')
+    const fetchCalls = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'list_journal_pages_in_range',
+    )
     expect(fetchCalls).toHaveLength(1)
   })
 

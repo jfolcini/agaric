@@ -77,6 +77,9 @@ export function useSyncEvents(): void {
   // registration entirely.
   const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
+  // PEND-06: sync:progress is deprecated in favor of Channel<T> streaming
+  // during startSync. We keep the listener for one release as a fallback
+  // for any components that haven't migrated.
   useTauriEventListener<SyncProgressPayload>(
     'sync:progress',
     (event) => {

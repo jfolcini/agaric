@@ -32,6 +32,11 @@ pub struct SyncScheduler {
     /// Backoff state per peer.
     backoff: std::sync::Mutex<HashMap<String, BackoffState>>,
 
+    /// Channels for streaming progress to the frontend.
+    channels: std::sync::Mutex<
+        HashMap<String, tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate>>,
+    >,
+
     /// Fires when local changes are detected (debounced).
     change_notify: Notify,
 
@@ -84,6 +89,7 @@ impl SyncScheduler {
         Self {
             peer_locks: std::sync::Mutex::new(HashMap::new()),
             backoff: std::sync::Mutex::new(HashMap::new()),
+            channels: std::sync::Mutex::new(HashMap::new()),
             change_notify: Notify::new(),
             debounce_window: DEFAULT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
@@ -122,6 +128,29 @@ impl SyncScheduler {
             }),
             Err(_) => None,
         }
+    }
+
+    /// Register a channel for streaming progress to the frontend.
+    pub fn register_channel(
+        &self,
+        peer_id: &str,
+        channel: tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate>,
+    ) {
+        self.channels
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(peer_id.to_string(), channel);
+    }
+
+    /// Take the registered channel for a peer, if any.
+    pub fn take_channel(
+        &self,
+        peer_id: &str,
+    ) -> Option<tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate>> {
+        self.channels
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(peer_id)
     }
 
     /// L-56: Garbage-collect entries from `peer_locks` whose `Arc::strong_count`

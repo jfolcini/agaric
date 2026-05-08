@@ -172,8 +172,24 @@ if (typeof window.matchMedia !== 'function') {
 
 // Shared mock for @tauri-apps/api/core — all component & store tests need this.
 // Individual tests can override via vi.mocked(invoke).mockResolvedValueOnce(...)
+//
+// PEND-06: a minimal `Channel<T>` stub is exported alongside `invoke` because
+// `src/lib/tauri.ts::startSync` constructs a `new Channel(...)` at module
+// load time. Without a stub, every test that imports `tauri.ts` trips
+// vitest's "no Channel export on mock" guard at import time. The stub
+// supports the `onmessage` setter and the `(payload) => void` callable shape
+// used by `tauri-specta`'s generated bindings; tests that need to assert on
+// channel deliveries can construct one and call `channel.onmessage(payload)`
+// directly.
+class MockChannel<T> {
+  onmessage?: (msg: T) => void
+  send(msg: T): void {
+    if (this.onmessage) this.onmessage(msg)
+  }
+}
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+  Channel: MockChannel,
 }))
 
 // Shared mock for `@tauri-apps/plugin-clipboard-manager` — `src/lib/clipboard.ts`

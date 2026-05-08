@@ -1,3 +1,4 @@
+import { Channel } from '@tauri-apps/api/core'
 import { commands } from './bindings'
 import { logger } from './logger'
 
@@ -25,6 +26,7 @@ export type {
   SpaceRow,
   SpaceScope,
   StatusInfo,
+  SyncProgressUpdate,
   TagCacheRow,
   TagResponse,
 } from './bindings'
@@ -48,6 +50,7 @@ import type {
   SpaceRow,
   SpaceScope,
   StatusInfo,
+  SyncProgressUpdate,
   TagCacheRow,
   TagResponse,
 } from './bindings'
@@ -236,15 +239,24 @@ export async function getJournalPageByDate(params: {
 }
 
 /**
- * List every date-formatted journal page in the given space.
+ * List the date-formatted journal pages in the given space whose date falls
+ * inclusively in `[startDate, endDate]`.
  *
  * BUG-48 — replaces the cursor-paginated `listBlocks({ blockType: 'page',
- * limit: 100 })` loop in `useCalendarPageDates`. The result is a flat array
- * (not paginated) because journal-page cardinality is bounded by days-with-
- * notes — small enough to fit invariant #3's small-cardinality carve-out.
+ * limit: 100 })` loop in `useCalendarPageDates` with a range-scoped
+ * indexed lookup. Callers pass the visible date range (typically the
+ * 6-week calendar grid for monthly views, or the visible week / day for
+ * smaller views) so the response is bounded by what the UI actually
+ * renders rather than every journal page ever created in the space.
  */
-export async function listJournalPageDates(params: { spaceId: string }): Promise<BlockRow[]> {
-  return unwrap(await commands.listJournalPageDates(params.spaceId))
+export async function listJournalPagesInRange(params: {
+  startDate: string
+  endDate: string
+  spaceId: string
+}): Promise<BlockRow[]> {
+  return unwrap(
+    await commands.listJournalPagesInRange(params.startDate, params.endDate, params.spaceId),
+  )
 }
 
 /** List undated tasks (tasks with todo_state but no due/scheduled date).
@@ -979,8 +991,13 @@ export async function cancelPairing(): Promise<void> {
 }
 
 /** Start a sync session with a known peer. */
-export async function startSync(peerId: string): Promise<SyncSessionInfo> {
-  return unwrap(await commands.startSync(peerId))
+export async function startSync(
+  peerId: string,
+  onProgress?: (update: SyncProgressUpdate) => void,
+): Promise<SyncSessionInfo> {
+  const channel = new Channel<SyncProgressUpdate>()
+  if (onProgress) channel.onmessage = onProgress
+  return unwrap(await commands.startSync(peerId, channel))
 }
 
 /** Cancel an in-progress sync session. */

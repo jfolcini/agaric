@@ -24,15 +24,19 @@ export function useJournalAutoCreate({
 }: UseJournalAutoCreateOptions): void {
   const autoCreatedRef = useRef<string | null>(null)
 
-  // Auto-create the displayed day's page on mount / date change in daily mode.
-  // BUG-48: the page-existence probe is now an indexed DB lookup
-  // (`get_journal_page_by_date`) instead of a scan of a paginated
-  // listBlocks response, so this no longer drops dates that fall past
-  // the page-fetch limit.
+  // Auto-create *today*'s page on mount when the journal opens in daily mode.
+  // BUG-48 follow-up: the prior behaviour fired on every date change, which
+  // silently created an empty journal page for any past or future day the
+  // user merely navigated to. Restricting to today scopes the
+  // create-on-arrival affordance to the case users actually want — landing
+  // on the journal and finding today's page ready to type into — and leaves
+  // backfilling old dates to the explicit `n`/`Enter` shortcut or the
+  // `Add block` button.
   useEffect(() => {
     if (loading) return
     if (mode !== 'daily') return
     const dateStr = formatDate(currentDate)
+    if (dateStr !== formatDate(new Date())) return
     if (autoCreatedRef.current === dateStr) return
     if (createdPages.has(dateStr)) return
     let cancelled = false

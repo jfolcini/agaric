@@ -97,7 +97,7 @@ pub use history::{
 };
 pub use journal::{
     get_journal_page_by_date, get_journal_page_by_date_inner, journal_for_date_inner,
-    list_journal_page_dates, list_journal_page_dates_inner, navigate_journal_inner,
+    list_journal_pages_in_range, list_journal_pages_in_range_inner, navigate_journal_inner,
     quick_capture_block, quick_capture_block_inner, today_journal_inner,
 };
 pub use link_metadata::{
@@ -197,7 +197,7 @@ pub use history::{
 };
 #[doc(hidden)]
 pub use journal::{
-    __specta__fn__get_journal_page_by_date, __specta__fn__list_journal_page_dates,
+    __specta__fn__get_journal_page_by_date, __specta__fn__list_journal_pages_in_range,
     __specta__fn__quick_capture_block,
 };
 #[doc(hidden)]
@@ -288,7 +288,7 @@ pub use history::{
 };
 #[doc(hidden)]
 pub use journal::{
-    __cmd__get_journal_page_by_date, __cmd__list_journal_page_dates, __cmd__quick_capture_block,
+    __cmd__get_journal_page_by_date, __cmd__list_journal_pages_in_range, __cmd__quick_capture_block,
 };
 #[doc(hidden)]
 pub use link_metadata::{__cmd__fetch_link_metadata, __cmd__get_link_metadata};

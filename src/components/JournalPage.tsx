@@ -14,7 +14,7 @@
 
 import { Settings2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -26,7 +26,7 @@ import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useScrollToFocus } from '../hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { DayEntry } from '../lib/date-utils'
-import { formatDate, formatDateDisplay } from '../lib/date-utils'
+import { formatDate, formatDateDisplay, getCalendarMonthRange } from '../lib/date-utils'
 import { useJournalStore } from '../stores/journal'
 import { useSpaceStore } from '../stores/space'
 import { AgendaView } from './journal/AgendaView'
@@ -69,7 +69,8 @@ export function JournalPage({
       clearScrollTarget: s.clearScrollTarget,
     })),
   )
-  const { pageMap, loading, addPage } = useCalendarPageDates()
+  const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
+  const { pageMap, loading, addPage } = useCalendarPageDates(calendarRange)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // UX-371 — surface the per-space journal-template configuration from the
   // Journal view itself; previously only reachable through Manage Spaces.

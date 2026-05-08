@@ -224,9 +224,13 @@ describe('DeviceManagement', () => {
     await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('start_sync', {
-        peerId: 'peer-abc-1234567890',
-      })
+      // PEND-06: `startSync` constructs a `Channel<SyncProgressUpdate>`
+      // and forwards it as `progress`. The exact channel instance is an
+      // implementation detail; assert the IPC name + peerId only.
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'start_sync',
+        expect.objectContaining({ peerId: 'peer-abc-1234567890' }),
+      )
     })
   })
 

@@ -148,6 +148,25 @@ export function getTodayString(): string {
 }
 
 /**
+ * BUG-48 follow-up — return the inclusive `[startDate, endDate]` range that
+ * covers the 6-week (~42-day) calendar grid centred on `date`'s month. The
+ * grid begins at the first day-of-week boundary on or before the 1st of
+ * `date`'s month and spans 42 consecutive days, matching what
+ * `react-day-picker` renders inside `JournalCalendarDropdown`.
+ *
+ * Used by the journal-page and agenda-counts fetches so each query asks for
+ * exactly the dates the UI displays — no off-screen results, no need to
+ * paginate or cap arbitrarily.
+ */
+export function getCalendarMonthRange(date: Date): { startDate: string; endDate: string } {
+  const firstOfMonth = new Date(date.getFullYear(), date.getMonth(), 1)
+  const start = startOfWeek(firstOfMonth, getWeekOptions())
+  const end = new Date(start)
+  end.setDate(end.getDate() + 41)
+  return { startDate: formatDate(start), endDate: formatDate(end) }
+}
+
+/**
  * Color classes for a YYYY-MM-DD due-date string.
  *
  * Past → destructive (overdue), today → status-pending (warning),
