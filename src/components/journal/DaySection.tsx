@@ -167,15 +167,26 @@ export function DaySection({
         </PageBlockStoreProvider>
       )}
 
-      {/* DuePanel + LinkedReferences + DonePanel — only in daily mode */}
-      {mode === 'daily' && entry.pageId && (
+      {/* DuePanel + DonePanel are date-keyed agenda queries — they
+          render in daily mode for any day regardless of whether a
+          journal page exists for that day (BUG-48 follow-up: the
+          journal page is no longer auto-created for past navigation,
+          so gating these on `entry.pageId` would silently hide overdue
+          tasks for past days).
+
+          LinkedReferences is page-keyed (backlinks into this page) so
+          stays gated on `entry.pageId` — there are no backlinks to a
+          page that doesn't exist. */}
+      {mode === 'daily' && (
         <>
           <div id="journal-due-panel">
             <DuePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
           </div>
-          <div id="journal-references-panel">
-            <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
-          </div>
+          {entry.pageId && (
+            <div id="journal-references-panel">
+              <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+            </div>
+          )}
           <div id="journal-done-panel">
             <DonePanel
               date={entry.dateStr}
