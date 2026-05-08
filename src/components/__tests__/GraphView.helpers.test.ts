@@ -53,7 +53,7 @@ describe('fetchGraphData', () => {
     )
   })
 
-  it('uses queryByTags (OR mode) when multiple tag filters are provided', async () => {
+  it('uses queryByTags (OR mode, blockType=page) when multiple tag filters are provided', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       if (cmd === 'list_page_links') return Promise.resolve([])
@@ -63,21 +63,64 @@ describe('fetchGraphData', () => {
 
     await fetchGraphData(['tag-a', 'tag-b'], null)
 
+    // PEND-35 Tier 2.9 — `blockType: 'page'` is pushed into SQL so the
+    // unbounded `limit:5000` over-fetch can no longer ship up to 5000
+    // non-page rows for the renderer to discard.
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_tags',
       expect.objectContaining({
         tagIds: ['tag-a', 'tag-b'],
         prefixes: [],
         mode: 'or',
+        blockType: 'page',
       }),
     )
   })
 
-  it('filters out non-page blocks when a tag filter is active', async () => {
-    const mixedResponse = {
+  it('passes tagIds to listPageLinks when a tag filter is active (Tier 4.5)', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(emptyPage)
+      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      return Promise.resolve(null)
+    })
+
+    await fetchGraphData(['tag-a', 'tag-b'], null)
+
+    // PEND-35 Tier 4.5 — tag filter pushed into list_page_links so the
+    // backend ships only edges whose target page carries one of the
+    // requested tags.
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'list_page_links',
+      expect.objectContaining({ tagIds: ['tag-a', 'tag-b'] }),
+    )
+  })
+
+  it('passes tagIds=null to listPageLinks when no tag filter is active (Tier 4.5)', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(emptyPage)
+      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      return Promise.resolve(null)
+    })
+
+    await fetchGraphData([], null)
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'list_page_links',
+      expect.objectContaining({ tagIds: null }),
+    )
+  })
+
+  it('does not post-filter non-page blocks when a tag filter is active (Tier 2.9)', async () => {
+    // PEND-35 Tier 2.9 — `queryByTags` now applies `block_type = 'page'`
+    // server-side. The mock's `query_by_tags` honours `blockType` so the
+    // result is already shape-restricted by the time it reaches
+    // `fetchGraphData`. The previous JS post-filter is gone.
+    const onlyPages = {
       items: [
         { id: 'page-1', content: 'Page One', block_type: 'page' },
-        { id: 'block-1', content: 'Heading', block_type: 'heading' },
         { id: 'page-2', content: 'Page Two', block_type: 'page' },
       ],
       next_cursor: null,
@@ -85,13 +128,13 @@ describe('fetchGraphData', () => {
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(mixedResponse)
+      if (cmd === 'query_by_tags') return Promise.resolve(onlyPages)
       if (cmd === 'list_page_links') return Promise.resolve([])
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData(['tag-a'], null)
+    const result = await fetchGraphData(['tag-a', 'tag-b'], null)
 
     expect(result.nodes).toHaveLength(2)
     expect(result.nodes.map((n) => n.id)).toEqual(['page-1', 'page-2'])

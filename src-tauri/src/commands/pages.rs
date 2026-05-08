@@ -662,11 +662,37 @@ pub async fn import_markdown_inner(
 /// crossing space boundaries must not surface in either space's
 /// graph. [`SpaceScope::Global`] keeps the pre-FEAT-3 cross-space
 /// behaviour for callers that span every space.
-#[instrument(skip(pool), err)]
+///
+/// `tag_ids` (PEND-35 Tier 4.5) — when `Some(non-empty)`, restricts
+/// edges to those whose **target page** carries at least one of the
+/// listed tags via `block_tags` or `block_tag_inherited` (the same
+/// UX-250 union semantics `query_by_tags` resolves to: explicit
+/// `block_tags`, materialised inheritance via `block_tag_inherited`,
+/// and inline `[[ULID]]` references via `block_tag_refs`). The audit
+/// implies the tag predicate filters the **page being linked TO** —
+/// so a graph filtered by `#project` shows only the edges whose
+/// target page is project-tagged. `None` / empty leaves the edge
+/// set unfiltered (pre-Tier-4.5 behaviour).
+///
+/// Pushed down so the renderer no longer ships every space-wide edge
+/// then drops any whose endpoint is not in the post-filtered node
+/// set. The unfiltered path passes a SQL NULL via the `(?2 IS NULL OR
+/// …)` short-circuit so the planner picks the same shape as before.
+#[instrument(skip(pool, tag_ids), err)]
 pub async fn list_page_links_inner(
     pool: &SqlitePool,
     scope: &SpaceScope,
+    tag_ids: Option<&[String]>,
 ) -> Result<Vec<PageLink>, AppError> {
+    // PEND-35 Tier 4.5 — encode the tag set as a JSON array so the SQL
+    // can fan it out via `json_each(?2)` (mirrors the
+    // `value_text_in_json` shape in `pagination::properties`). The
+    // unfiltered branch passes `None` and the `(?2 IS NULL OR …)`
+    // short-circuit collapses the EXISTS subquery away.
+    let tag_ids_json: Option<String> = match tag_ids {
+        Some(ids) if !ids.is_empty() => Some(serde_json::to_string(ids)?),
+        _ => None,
+    };
     // For each block_link, find the parent page of the source block.
     // The target in block_links is already a page (since [[links]] point to pages).
     // The source might be a content block under a page — we need the page ancestor.
@@ -695,6 +721,16 @@ pub async fn list_page_links_inner(
     // lands the underlying lookup is index-only, so the gain here is
     // "subquery materialised once instead of twice" rather than a
     // planner-level shift.
+    // PEND-35 Tier 4.5 — the trailing `(?2 IS NULL OR EXISTS …)` clause
+    // restricts edges to those whose **target page** carries at least
+    // one of the requested tags. The EXISTS subquery unions
+    // `block_tags`, `block_tag_inherited`, and `block_tag_refs` to
+    // mirror the UX-250 / `tag_query::resolve_tag_leaves` semantics so
+    // a graph filtered by `#project` picks up inherited and inline
+    // refs identically to `queryByTags`. Soft-deleted / conflict tag
+    // blocks are not joined here because the materialised tables already
+    // exclude conflict copies via the materializer's invariant-#9
+    // guarantees on the inserter side.
     let links = sqlx::query_as::<_, PageLink>(
         "WITH space_members AS MATERIALIZED (
              SELECT block_id FROM block_properties
@@ -722,9 +758,23 @@ pub async fn list_page_links_inner(
                  COALESCE(sb.parent_id, bl.source_id) IN (SELECT block_id FROM space_members)
                  AND bl.target_id IN (SELECT block_id FROM space_members)
              ))
+             AND (?2 IS NULL OR EXISTS (
+                 SELECT 1 FROM block_tags bt
+                 WHERE bt.block_id = bl.target_id
+                   AND bt.tag_id IN (SELECT value FROM json_each(?2))
+                 UNION ALL
+                 SELECT 1 FROM block_tag_inherited bti
+                 WHERE bti.block_id = bl.target_id
+                   AND bti.tag_id IN (SELECT value FROM json_each(?2))
+                 UNION ALL
+                 SELECT 1 FROM block_tag_refs btr
+                 WHERE btr.source_id = bl.target_id
+                   AND btr.tag_id IN (SELECT value FROM json_each(?2))
+             ))
          GROUP BY 1, 2",
     )
     .bind(scope.as_filter_param())
+    .bind(tag_ids_json.as_deref())
     .fetch_all(pool)
     .await?;
 
@@ -1092,14 +1142,20 @@ pub async fn import_markdown(
 }
 
 /// Tauri command: list all page-to-page links for graph visualization.
+///
+/// `tag_ids` (PEND-35 Tier 4.5) — when non-empty, restricts edges to
+/// those whose target page carries at least one of the listed tags. The
+/// frontend GraphView passes its active tag filter here so the backend
+/// no longer ships every space-wide edge for the renderer to discard.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_page_links(
     pool: State<'_, ReadPool>,
     scope: SpaceScope,
+    tag_ids: Option<Vec<String>>,
 ) -> Result<Vec<PageLink>, AppError> {
-    list_page_links_inner(&pool.0, &scope)
+    list_page_links_inner(&pool.0, &scope, tag_ids.as_deref())
         .await
         .map_err(sanitize_internal_error)
 }

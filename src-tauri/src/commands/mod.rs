@@ -61,14 +61,14 @@ pub use agenda::{
 pub(crate) use agenda::list_projected_agenda_on_the_fly;
 pub use attachments::{
     add_attachment, add_attachment_inner, delete_attachment, delete_attachment_inner,
-    get_batch_attachment_counts, get_batch_attachment_counts_inner, list_attachments,
-    list_attachments_batch, list_attachments_batch_inner, list_attachments_inner,
+    list_attachments, list_attachments_batch, list_attachments_batch_inner, list_attachments_inner,
 };
 pub use blocks::{
     batch_resolve, batch_resolve_inner, create_block, create_block_inner,
     create_block_inner_with_space, delete_block, delete_block_inner, edit_block, edit_block_inner,
-    get_active_block_inner, get_block, get_block_inner, list_blocks, list_blocks_inner, move_block,
-    move_block_inner, purge_all_deleted, purge_all_deleted_inner, purge_block, purge_block_inner,
+    first_child_for_blocks, first_child_for_blocks_inner, get_active_block_inner, get_block,
+    get_block_inner, list_blocks, list_blocks_inner, move_block, move_block_inner,
+    purge_all_deleted, purge_all_deleted_inner, purge_block, purge_block_inner,
     restore_all_deleted, restore_all_deleted_inner, restore_block, restore_block_inner,
     trash_descendant_counts, trash_descendant_counts_inner,
 };
@@ -162,16 +162,15 @@ pub use agenda::{
 };
 #[doc(hidden)]
 pub use attachments::{
-    __specta__fn__add_attachment, __specta__fn__delete_attachment,
-    __specta__fn__get_batch_attachment_counts, __specta__fn__list_attachments,
+    __specta__fn__add_attachment, __specta__fn__delete_attachment, __specta__fn__list_attachments,
     __specta__fn__list_attachments_batch,
 };
 #[doc(hidden)]
 pub use blocks::{
     __specta__fn__batch_resolve, __specta__fn__create_block, __specta__fn__delete_block,
-    __specta__fn__edit_block, __specta__fn__get_block, __specta__fn__list_blocks,
-    __specta__fn__move_block, __specta__fn__purge_all_deleted, __specta__fn__purge_block,
-    __specta__fn__restore_all_deleted, __specta__fn__restore_block,
+    __specta__fn__edit_block, __specta__fn__first_child_for_blocks, __specta__fn__get_block,
+    __specta__fn__list_blocks, __specta__fn__move_block, __specta__fn__purge_all_deleted,
+    __specta__fn__purge_block, __specta__fn__restore_all_deleted, __specta__fn__restore_block,
     __specta__fn__trash_descendant_counts,
 };
 #[doc(hidden)]
@@ -261,14 +260,14 @@ pub use agenda::{
 };
 #[doc(hidden)]
 pub use attachments::{
-    __cmd__add_attachment, __cmd__delete_attachment, __cmd__get_batch_attachment_counts,
-    __cmd__list_attachments, __cmd__list_attachments_batch,
+    __cmd__add_attachment, __cmd__delete_attachment, __cmd__list_attachments,
+    __cmd__list_attachments_batch,
 };
 #[doc(hidden)]
 pub use blocks::{
     __cmd__batch_resolve, __cmd__create_block, __cmd__delete_block, __cmd__edit_block,
-    __cmd__get_block, __cmd__list_blocks, __cmd__move_block, __cmd__purge_all_deleted,
-    __cmd__purge_block, __cmd__restore_all_deleted, __cmd__restore_block,
+    __cmd__first_child_for_blocks, __cmd__get_block, __cmd__list_blocks, __cmd__move_block,
+    __cmd__purge_all_deleted, __cmd__purge_block, __cmd__restore_all_deleted, __cmd__restore_block,
     __cmd__trash_descendant_counts,
 };
 #[doc(hidden)]

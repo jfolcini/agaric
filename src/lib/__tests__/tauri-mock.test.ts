@@ -2248,37 +2248,6 @@ describe('list_attachments', () => {
   })
 })
 
-describe('get_batch_attachment_counts', () => {
-  it('returns an empty record when no attachments exist', () => {
-    const result = invoke('get_batch_attachment_counts', {
-      blockIds: [SEED_IDS.BLOCK_GS_1],
-    })
-    expect(result).toEqual({})
-  })
-
-  it('returns counts for blocks with attachments after add_attachment', () => {
-    invoke('add_attachment', {
-      blockId: SEED_IDS.BLOCK_GS_1,
-      filename: 'a.png',
-      mimeType: 'image/png',
-      sizeBytes: 100,
-      fsPath: '/tmp/a.png',
-    })
-    invoke('add_attachment', {
-      blockId: SEED_IDS.BLOCK_GS_1,
-      filename: 'b.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 200,
-      fsPath: '/tmp/b.pdf',
-    })
-    const result = invoke('get_batch_attachment_counts', {
-      blockIds: [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2],
-    }) as Record<string, number>
-    expect(result[SEED_IDS.BLOCK_GS_1]).toBe(2)
-    expect(result[SEED_IDS.BLOCK_GS_2]).toBeUndefined()
-  })
-})
-
 describe('list_attachments_batch', () => {
   it('returns an empty record when no attachments exist', () => {
     const result = invoke('list_attachments_batch', { blockIds: [SEED_IDS.BLOCK_GS_1] })
@@ -2728,6 +2697,64 @@ describe('trash_descendant_counts', () => {
 
   it('returns an empty record for empty input', () => {
     const result = invoke('trash_descendant_counts', { rootIds: [] }) as Record<string, number>
+    expect(result).toEqual({})
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PEND-35 Tier 2.8: first_child_for_blocks
+// ---------------------------------------------------------------------------
+
+describe('first_child_for_blocks', () => {
+  it('returns the first child per parent ordered by (position, id)', () => {
+    // Seed parent + 3 children at distinct positions; last-created child
+    // is at position 0 so the helper must surface it (not the
+    // insertion-order first).
+    const parent = invoke('create_block', {
+      blockType: 'content',
+      content: 'parent',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const parentId = parent['id'] as string
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'second',
+      parentId,
+      position: 2,
+    })
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'third',
+      parentId,
+      position: 3,
+    })
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'first',
+      parentId,
+      position: 1,
+    })
+
+    const result = invoke('first_child_for_blocks', {
+      blockIds: [parentId],
+    }) as Record<string, Record<string, unknown>>
+    expect(result[parentId]?.['content']).toBe('first')
+  })
+
+  it('omits parents with no active children', () => {
+    const parent = invoke('create_block', {
+      blockType: 'content',
+      content: 'lonely',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const result = invoke('first_child_for_blocks', {
+      blockIds: [parent['id'] as string],
+    }) as Record<string, unknown>
+    expect(result).toEqual({})
+  })
+
+  it('returns an empty record for empty input', () => {
+    const result = invoke('first_child_for_blocks', { blockIds: [] }) as Record<string, unknown>
     expect(result).toEqual({})
   })
 })

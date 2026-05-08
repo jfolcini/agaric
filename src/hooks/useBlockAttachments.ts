@@ -30,11 +30,35 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
   // the AttachmentList drawer's local state. Outside a provider the hook
   // is `null` and the optional-chain calls below are no-ops.
   const batchProvider = useBatchAttachments()
+  // PEND-35 Tier 2.7b: when a BatchAttachmentsProvider is mounted, defer
+  // entirely to it — the provider is the page-level source of truth and
+  // already issues a single batched IPC for every block on the page. We
+  // read the rows reference and the loading flag so the effect re-runs
+  // when the batch transitions from in-flight → resolved. The
+  // per-block `listAttachments` IPC only runs when no provider wraps us
+  // (e.g. isolated unit tests, dialogs rendered outside the BlockTree).
+  const batchActive = batchProvider !== null
+  const batchLoading = batchProvider?.loading ?? false
+  const batchRows = batchProvider?.get(blockId ?? '')
 
   // Load attachments when blockId changes
   useEffect(() => {
     setAttachments([])
     if (!blockId) {
+      setLoading(false)
+      return
+    }
+    // PEND-35 Tier 2.7b: defer to the batch provider when one is mounted.
+    // While the batch is in flight we mirror its loading flag (no per-block
+    // IPC fires); once it resolves we read `get(blockId) ?? []` (absent
+    // keys mean "no attachments"). The provider's `invalidate` path keeps
+    // local state in sync after add/delete mutations.
+    if (batchActive) {
+      if (batchLoading) {
+        setLoading(true)
+        return
+      }
+      setAttachments(batchRows ?? [])
       setLoading(false)
       return
     }
@@ -46,7 +70,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         toast.error(i18n.t('attachments.loadFailed'))
       })
       .finally(() => setLoading(false))
-  }, [blockId])
+  }, [blockId, batchActive, batchLoading, batchRows])
 
   const handleAddAttachment = useCallback(
     async (filename: string, mimeType: string, sizeBytes: number, fsPath: string) => {

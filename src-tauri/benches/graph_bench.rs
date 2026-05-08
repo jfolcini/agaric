@@ -104,7 +104,7 @@ fn bench_list_page_links(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     async move {
-                        list_page_links_inner(&pool, &SpaceScope::Global)
+                        list_page_links_inner(&pool, &SpaceScope::Global, None)
                             .await
                             .unwrap()
                     }

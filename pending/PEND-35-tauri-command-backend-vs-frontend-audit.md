@@ -1,6 +1,6 @@
 # PEND-35 — Tauri command audit: where the frontend is doing work the database/backend should do
 
-> **Status (session 689):** Tier 1 (6 items) + Tier 3 (4 items) shipped. Tier 2 (4 of 12 items shipped — 2.5, 2.6, 2.11, 2.12). 8 Tier 2 items + 5 Tier 4 items remain.
+> **Status (session 690):** Tier 1 (6) + Tier 3 (4) fully shipped. Tier 2 partial — 7 fully shipped (2.5, 2.6, 2.7, 2.8, 2.9, 2.11, 2.12) + 2.10a partial (2.10b remains). Tier 4: 4.5 shipped. **9 items remain across Tier 2 + Tier 4** — 2.1 (multi-select task ops), 2.2 (TrashView batch), 2.3 (ConflictList 3 N+1s), 2.4 (property fan-out), 2.10b (filtered_blocks_query AND-intersection), 4.1, 4.2, 4.3, 4.4.
 
 ## Origin
 
@@ -62,7 +62,7 @@ validation; **Tier 1 (6 items) shipped in session 687** and **Tier 3
 | Tier | Count | Theme |
 | --- | --- | --- |
 | ~~**1 — Correctness / security**~~ | ~~6~~ ✅ | ~~Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters~~ — **shipped session 687** |
-| **2 — Hot-path performance (N+1, FE intersection)** | 12 (4 ✅ / 8 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). |
+| **2 — Hot-path performance (N+1, FE intersection)** | 12 (8 ✅ / 1 partial / 3 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). **Shipped session 690:** 2.7 (attachments dedup), 2.8 (templates pushdown + first_child_for_blocks), 2.9 (GraphView blockType), 2.10a (agenda fan-out collapse). **Open:** 2.1 multi-select, 2.2 TrashView batch, 2.3 ConflictList 3 N+1s, 2.4 property fan-out, 2.10b filtered_blocks_query. |
 | ~~**3 — Indexes & SQL anti-patterns**~~ | ~~4~~ ✅ | ~~`json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown~~ — **shipped session 688** |
 | **4 — Minor / low-confidence** | 5 | Single-row reloads, template-loop creates, growing-window history fetches |
 
@@ -137,38 +137,25 @@ The cache logic was extracted from `usePropertyKeysCache` into a non-React modul
 
 `get_property_def(key) -> Option<PropertyDefinition>` (single PK SELECT) added. `useAppBootRecovery` (priority lookup) and `usePropertyDefForEdit` migrated. The full-vocabulary `list_property_defs` stays for legitimate consumers (PropertyDefinitionsList, PagePropertyTable, BlockPropertyDrawer, QueryBuilderModal).
 
-### 2.7 Attachments: redundant batch + per-block re-fetch when batch is in scope
+### ~~2.7 Attachments: redundant batch + per-block re-fetch when batch is in scope~~ — shipped session 690
+
+The `get_batch_attachment_counts` Tauri command + its `BatchAttachmentCountsProvider` were deleted entirely; counts derive O(1) from the list batch via a new `getCount(blockId)` method on `BatchAttachmentsValue`. `useBlockAttachments` short-circuits to the provider when present (NO `list_attachments` IPC fires under a mounted batch provider — regression test pins this).
+
+### ~~2.8 Template loading: client-side block_type filter + per-template preview fetch~~ — shipped session 690
+
+`template-utils.ts` passes `blockType: 'page'` through `queryByProperty` (Tier 3.4 enabled this); JS-side filter dropped. New `first_child_for_blocks(block_ids) -> HashMap<String, BlockRow>` command (window-function CTE, `(position ASC, id ASC)` ordering, excludes deleted/conflict) collapses the per-template `listBlocks({limit:1})` N+1 to one IPC.
+
+### ~~2.9 GraphView post-filters tag results client-side~~ — shipped session 690
+
+`queryByTags(...)` now passes `blockType: 'page'`. The `pagesResp.items.filter(p => p.block_type === 'page')` post-filter is gone.
+
+### Tier 2.10 Agenda/Query AND-intersection done in JS with silent row-cap
 
 | What | Detail |
 | --- | --- |
-| 2.7a | **Two batch IPCs over the same block-set.** `BatchAttachmentsProvider` and `BatchAttachmentCountsProvider` both mount over `allBlockIds` in `src/components/BlockTree.tsx:702-703`. The list batch already returns `AttachmentRow[]` per block — counts are derivable as `result[id].length`. Sites: `src/hooks/useBatchAttachmentCounts.tsx:49`, `src/hooks/useBatchAttachments.tsx:69`, `src-tauri/src/commands/attachments.rs:484`. |
-| 2.7b | **`useBlockAttachments(blockId)` always fires `listAttachments(blockId)`** even when an active `BatchAttachmentsProvider` already holds the rows. `src/hooks/useBlockAttachments.ts:32-49`. |
-| **Recommendations** | (a) **USE** the list batch as the single source; drop the count provider/command (or inline counts into `BatchAttachmentsValue`). <br> (b) **UPDATE** `useBlockAttachments` to seed from `useBatchAttachments()?.get(blockId)` and only fall back to `listAttachments` when the provider is absent. |
-| **Validator verdict** | N1, N2 TRUE |
-
-### 2.8 Template loading: client-side block_type filter + per-template preview fetch
-
-| What | Detail |
-| --- | --- |
-| **FE** | `src/lib/template-utils.ts:11-19` (filters `b.block_type === 'page'` JS-side after `queryByProperty`); `:57-78` (loops `listBlocks({parentId, limit:1})` per template); `src/components/TemplatesView.tsx:52-67`. |
-| **Recommendation** | **UPDATE** `query_by_property` to accept optional `block_type` (see 3.4). **CREATE** `first_child_for_blocks(block_ids) -> HashMap<String, BlockRow>` for the preview path so the N+1 collapses to one IPC. |
-| **Validator verdict** | N12 TRUE, I4 TRUE |
-
-### 2.9 GraphView post-filters tag results client-side
-
-| What | Detail |
-| --- | --- |
-| **FE** | `src/components/GraphView.helpers.ts:138-141` calls `queryByTags(tagIds, mode:'or', limit:5000)` then `pagesResp.items.filter(p => p.block_type === 'page')`. Up to 5000 non-page rows shipped and discarded per render. |
-| **Recommendation** | **UPDATE** `query_by_tags` to accept optional `block_type` filter (see 3.4). |
-| **Validator verdict** | I6 TRUE |
-
-### 2.10 Agenda/Query AND-intersection done in JS with silent row-cap
-
-| What | Detail |
-| --- | --- |
-| 2.10a | **Per-value / per-day fan-out.** `agenda-filters.queryStatus`/`queryPriority` fire one `queryByProperty` per status value; `queryPropertyDateDimension` fires one per day in range. `src/lib/agenda-filters.ts:110-141`, `:237-279`. |
+| ~~2.10a~~ ✅ session 690 | ~~Per-value / per-day fan-out.~~ `agenda-filters.queryStatus`/`queryPriority` collapsed to `valueTextIn` (single IPC); `queryPropertyDateDimension` collapsed to half-open `valueDateRange` (1 IPC instead of N for "Last 7 days" / "Last 30 days" etc.). |
 | 2.10b | **JS AND-intersection with silent cap.** `useQueryExecution.fetchFilteredQuery` AND-intersects sub-results in JS with `FILTERED_QUERY_MAX_ROWS=50` and `FILTERED_SUBQUERY_LIMIT=200` — any AND-set member outside the top-200 of any sub-query is silently dropped. `src/hooks/useQueryExecution.ts:13-16, 111-174`. |
-| **Recommendations** | (a) **UPDATE** `query_by_property` to accept `value_text_in: Vec<String>` and `value_date_range: Option<(String, String)>` (collapses the per-value/per-day fan-outs). <br> (b) **CREATE** `filtered_blocks_query(property_filters, tag_filters, scope, page) -> PageResponse<BlockRow>` that builds the AND in SQL via `EXISTS` subqueries. The existing `BacklinkFilter::And` resolver in `src-tauri/src/backlink/filters.rs` is a working template. |
+| **Recommendation (b)** | **CREATE** `filtered_blocks_query(property_filters, tag_filters, scope, page) -> PageResponse<BlockRow>` that builds the AND in SQL via `EXISTS` subqueries. The existing `BacklinkFilter::And` resolver in `src-tauri/src/backlink/filters.rs` is a working template. |
 | **Validator verdict** | N13, N14 TRUE, I5 TRUE |
 
 ### ~~2.11 `getConflicts({limit:100})` polled every 30s for a badge count~~ — shipped session 689
@@ -202,7 +189,7 @@ These signature expansions enable Tier 2.8 / 2.9 / 2.10 callsite cleanups withou
 | 4.2 | `src/components/PageEditor.tsx:113-121` (empty-page first block reloads page after `createBlock`) | Use the returned `BlockRow` directly via a `pageStore.appendBlock(row)` setter. |
 | 4.3 | Template insertion loops `create_block` per descendant / per markdown line (`src/lib/template-utils.ts:130-219`) | **CREATE** `create_blocks_batch(blocks) -> Vec<BlockRow>`. |
 | 4.4 | Undo grouping re-fetches `list_page_history` with growing window after every Ctrl+Z (`src/stores/undo.ts:265-303`) | **CREATE** `find_undo_group(pageId, depth, window_ms) -> i32` or grow `undo_page_op` with `auto_group: bool`. |
-| 4.5 | `list_page_links` ships every space-edge then GraphView discards by tag (`src/components/GraphView.helpers.ts:131-156`) | **UPDATE** `list_page_links_inner` to accept `tag_ids: Option<Vec<String>>`. |
+| ~~4.5~~ | ~~`list_page_links` ships every space-edge then GraphView discards by tag~~ | ✅ session 690 — `list_page_links_inner` accepts `tag_ids: Option<&[String]>` with `EXISTS UNION ALL block_tags / block_tag_inherited / block_tag_refs` semantics. |
 
 ---
 

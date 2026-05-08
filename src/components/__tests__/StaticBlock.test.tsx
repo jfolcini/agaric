@@ -64,6 +64,8 @@ const mockedUseBatchAttachments = vi.mocked(useBatchAttachments)
 function mockBatchAttachments(attachments: AttachmentRow[], options: { loading?: boolean } = {}) {
   mockedUseBatchAttachments.mockReturnValue({
     get: (id: string) => (id === 'B1' ? attachments : undefined),
+    // PEND-35 Tier 2.7a: getCount derives from the same map.
+    getCount: (id: string) => (id === 'B1' ? attachments.length : 0),
     loading: options.loading ?? false,
     invalidate: vi.fn(),
   })

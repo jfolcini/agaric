@@ -170,8 +170,9 @@ vi.mock('../BlockContextMenu', () => ({
 }))
 
 // Mock tauri setProperty, getPropertyDef, listBlocks
-// MAINT-131: SortableBlock no longer calls listAttachments — the badge count
-// now flows from BatchAttachmentCountsProvider. Tests render SortableBlock
+// MAINT-131 / PEND-35 Tier 2.7a: SortableBlock no longer calls
+// listAttachments — the badge count now flows from BatchAttachmentsProvider
+// (`useBatchAttachments()?.getCount(blockId)`). Tests render SortableBlock
 // without a provider, so attachmentCount falls back to 0 (no paperclip).
 const mockSetProperty = vi.fn().mockResolvedValue({})
 // PEND-35 Tier 2.6: `usePropertyDefForEdit` now calls `getPropertyDef(key)`
@@ -4015,10 +4016,10 @@ describe('SortableBlock error paths', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  // MAINT-131: SortableBlock no longer fires `listAttachments` directly.
-  // Without a `BatchAttachmentCountsProvider` the count falls back to 0,
-  // so the paperclip and attachment list never render. The IPC-failure
-  // path is now exercised by useBatchAttachmentCounts.test.tsx.
+  // MAINT-131 / PEND-35 Tier 2.7a: SortableBlock no longer fires
+  // `listAttachments` directly. Without a `BatchAttachmentsProvider` the
+  // count falls back to 0, so the paperclip and attachment list never
+  // render. The IPC-failure path is exercised by useBatchAttachments.test.tsx.
   it('renders without paperclip when no batch attachment provider wraps the block', () => {
     const { container } = render(
       <SortableBlock

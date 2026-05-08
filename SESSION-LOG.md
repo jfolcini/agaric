@@ -2,11 +2,66 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 689 (Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 690 (Session 690: PEND-35 Tier 2 (4 more items: 2.7 attachments dedup — count provider/command deleted, counts derive from list batch via new `getCount` method; 2.8 templates SQL pushdown + new `first_child_for_blocks` window-function batch endpoint; 2.9 GraphView `blockType:'page'` pushdown via Tier 3.4; 2.10a per-value/per-day fan-out collapsed via `valueTextIn`/`valueDateRange`) + Tier 4.5 (`list_page_links` accepts `tag_ids` filter via UNION ALL across `block_tags`/`block_tag_inherited`/`block_tag_refs`). Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 690 — PEND-35 Tier 2 (4 more items) + Tier 4.5: SQL pushdown + N+1 collapse (2026-05-08)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-08 |
+| **Subagents** | 4 build + 1 review (technical only — no UX surface; backend + FE wiring) |
+| **Items closed** | PEND-35 Tier 2.7, 2.8, 2.9, 2.10a, 4.5 |
+| **Items modified** | PEND-35 (sections retired; status header + TL;DR table updated; 2.10 split — 2.10a shipped, 2.10b deferred) |
+| **Tests added** | +6 backend (4 first_child_for_blocks, 2 list_page_links tag_ids) / +12 frontend (3 useBatchAttachments getCount + 2 useBlockAttachments provider-skip + 1 single-IPC template + 4 agenda fan-out collapse + 2 firstChildForBlocks/listPageLinks round-trip) |
+| **Files touched** | 24 source files + 1 file deleted (useBatchAttachmentCounts.tsx + its test) |
+
+**Summary:** Five PEND-35 items shipped — four Tier 2 + one Tier 4. Three of them adopt Tier 3.4's new `block_type` / `value_text_in` / `value_date_range` filter signatures (2.8 templates, 2.9 GraphView, 2.10a agenda fan-out) — Tier 3.4 was deliberately landed first to unblock these. The fourth Tier 2 item (2.7) drops the redundant `get_batch_attachment_counts` Tauri command + its provider entirely; counts now derive O(1) from the existing list batch via a new `getCount(blockId)` method on `BatchAttachmentsValue`. The new `first_child_for_blocks(block_ids)` command (window-function CTE with `(position ASC, id ASC)` ordering, excludes deleted/conflict) collapses the per-template `listBlocks({limit:1})` N+1 in template preview loading. Tier 4.5 extends `list_page_links_inner` to accept `tag_ids: Option<&[String]>` so GraphView's tag filter pushes into SQL instead of materializing every space-edge then discarding by tag client-side. 2.10b (JS AND-intersection with silent row-cap) deferred — it requires a new `filtered_blocks_query` command that builds the AND in SQL via EXISTS subqueries, which is bigger than the rest of this batch.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND-35 audit, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src-tauri/src/commands/blocks/queries.rs` — new `first_child_for_blocks_inner` (runtime `query_as` with `BLOCK_ROW_RUNTIME_SELECT`, window-function CTE) + Tauri wrapper
+- `src-tauri/src/commands/pages.rs` — `list_page_links_inner` accepts `tag_ids: Option<&[String]>`; SQL `EXISTS UNION ALL` over `block_tags`/`block_tag_inherited`/`block_tag_refs` (mirrors `resolve_tag_leaves` semantics)
+- `src-tauri/src/commands/attachments.rs` — `get_batch_attachment_counts` + `_inner` deleted
+- `src-tauri/src/commands/mod.rs` + `src-tauri/src/lib.rs` — `first_child_for_blocks` registered; `get_batch_attachment_counts` removed from `agaric_commands!`
+- `src-tauri/src/commands/tests/{block,page}_cmd_tests.rs`, `src-tauri/src/command_integration_tests/page_integration.rs`, `src-tauri/benches/graph_bench.rs` — call-site updates + 6 new tests
+- `src/hooks/useBatchAttachments.tsx` — added `getCount(blockId)` method on the value
+- `src/hooks/useBlockAttachments.ts` — short-circuits to provider when present (mirrors `loading`); per-block IPC only fires under the no-provider fallback path
+- `src/hooks/useBatchAttachmentCounts.tsx` (deleted) + its test (deleted)
+- `src/components/BlockTree.tsx` — `BatchAttachmentCountsProvider` mount removed
+- `src/components/SortableBlock.tsx` — uses `useBatchAttachments()?.getCount(blockId) ?? 0`
+- `src/components/GraphView.helpers.ts` — `queryByTags` passes `blockType: 'page'`; `listPageLinks` passes `tagIds` when filter active; JS post-filter dropped
+- `src/lib/template-utils.ts` — `queryByProperty` passes `blockType: 'page'`; `firstChildForBlocks` replaces per-template `listBlocks` loop
+- `src/lib/agenda-filters.ts` — `queryStatus` / `queryPriority` collapse to `valueTextIn` (single IPC); `queryPropertyDateDimension` collapses to half-open `valueDateRange` with proper Date arithmetic for month/year rollover
+- `src/lib/tauri.ts` — `firstChildForBlocks`, `listPageLinks` overload (legacy positional + new `{spaceId, tagIds}` object form), removed `getBatchAttachmentCounts`
+- `src/lib/bindings.ts` — regenerated by specta
+- `src/lib/tauri-mock/handlers.ts` — `first_child_for_blocks` mock; `list_page_links` honours `tagIds`; `get_batch_attachment_counts` removed
+- Test updates in `template-utils.test.ts`, `TemplatesView.test.tsx`, `GraphView.helpers.test.ts`, `agenda-filters.test.ts`, `JournalPage.test.tsx`, `useBatchAttachments.test.tsx`, `useBlockAttachments.test.ts`, `tauri.test.ts`, `tauri-mock.test.ts`, `StaticBlock.test.tsx`
+- `pending/PEND-35-tauri-command-backend-vs-frontend-audit.md` — 2.7/2.8/2.9 sections retired; 2.10 split; 4.5 retired in Tier 4 table
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3671 tests run, 3671 passed (+2 from baseline 3669 after Tier 2 small-wins; the 2.7 deletion removed 4 count-cmd tests, the additions are 4 first_child_for_blocks + 2 list_page_links tag_ids).
+- `npx vitest run` — 9637 tests passed across 388 files.
+- `cd src-tauri && cargo check --benches` — clean (orchestrator fixed `graph_bench.rs:107` callsite that the 2.9+4.5 build subagent missed).
+- `prek run --all-files` — pending (run at commit time).
+
+**Process notes:**
+- 4 build subagents launched in parallel by item (2.7 / 2.8 / 2.9+4.5 / 2.10a). 2.10a reported in 5 minutes (FE-only, three call-site collapses); 2.9+4.5 in 14 minutes (backend SQL UNION + tag-filter consumer); 2.7 in 16 minutes (cross-cutting deletion across BE + FE); 2.8 in 20 minutes (new backend command + window-function CTE + template-utils refactor + per-template preview collapse).
+- One review subagent (consolidated, technical-only). PASS on all 5 items — no fixes applied.
+- 2.10b explicitly held back; documented as the deferred half in the PEND-35 status. Its `filtered_blocks_query` command would build AND-intersection in SQL via EXISTS subqueries (BacklinkFilter::And resolver is the working template) — natural batch-of-one for a future session.
+
+**Lessons learned (for future sessions):**
+- When backend signatures change, build subagents must search `benches/` for callers — `cargo nextest run` doesn't compile benches. Two of the last three batches needed orchestrator-direct bench fixes after the agents finished (Tier 1 import_bench, Tier 2 graph_bench). Worth adding to the subagent prompt template.
+- Deleting an entire IPC command (the 2.7 case here) is cleaner than "redirecting" it when the only consumer is one provider. Cuts the cognitive load of "two ways to count attachments" + a stale tauri-mock handler. Default to deletion when the call surface is truly internal; preserve only when external callers exist.
+
+**Commit plan:** single commit.
+
+---
 ## Session 689 — PEND-35 Tier 2 small-wins (4 items): create-one-endpoint family (2026-05-08)
 
 | Metadata | Value |

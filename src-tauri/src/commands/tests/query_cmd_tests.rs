@@ -3446,6 +3446,7 @@ async fn list_page_links_returns_only_current_space_edges_feat3p4() {
     let scoped_a = crate::commands::list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -3495,7 +3496,7 @@ async fn list_page_links_with_none_space_id_returns_all_edges_feat3p4() {
     insert_link(&pool, "LPL_PSB", "LPL_PTA").await;
     insert_link(&pool, "LPL_PSB", "LPL_PTB").await;
 
-    let unscoped = crate::commands::list_page_links_inner(&pool, &SpaceScope::Global)
+    let unscoped = crate::commands::list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
     assert_eq!(
@@ -3528,6 +3529,7 @@ async fn list_page_links_with_nonexistent_space_id_returns_empty_feat3p4() {
     let resp = crate::commands::list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted("01NONEXISTENT0000000000000")),
+        None,
     )
     .await
     .unwrap();
@@ -3575,6 +3577,7 @@ async fn list_page_links_disjointness_feat3p4() {
         crate::commands::list_page_links_inner(
             &pool,
             &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+            None,
         )
         .await
         .unwrap(),
@@ -3583,6 +3586,7 @@ async fn list_page_links_disjointness_feat3p4() {
         crate::commands::list_page_links_inner(
             &pool,
             &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+            None,
         )
         .await
         .unwrap(),
@@ -3644,16 +3648,18 @@ async fn list_page_links_cte_parity_with_inlined_subquery_pend20f() {
     let scope_a = crate::commands::list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
     let scope_b = crate::commands::list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
     )
     .await
     .unwrap();
-    let unscoped = crate::commands::list_page_links_inner(&pool, &SpaceScope::Global)
+    let unscoped = crate::commands::list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
         .unwrap();
 

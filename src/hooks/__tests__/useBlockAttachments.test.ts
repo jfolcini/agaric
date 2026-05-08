@@ -8,6 +8,8 @@
  * - handleAddAttachment does not notify undo on failure
  * - handleDeleteAttachment does not notify undo on failure
  * - loading state transitions correctly
+ * - PEND-35 Tier 2.7b: skips the per-block listAttachments IPC when an
+ *   active BatchAttachmentsProvider already holds the rows
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -16,6 +18,7 @@ import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
+import { BatchAttachmentsProvider } from '../../hooks/useBatchAttachments'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -419,5 +422,69 @@ describe('useBlockAttachments error paths', () => {
     expect(mockedToastError).toHaveBeenCalledWith('Failed to delete attachment')
     // All attachments must remain after failed deletion
     expect(result.current.attachments).toEqual(existing)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PEND-35 Tier 2.7b — skip per-block listAttachments IPC when batch provider
+// already has the data
+// ---------------------------------------------------------------------------
+
+describe('useBlockAttachments batch-provider seeding', () => {
+  it('uses BatchAttachmentsProvider rows and does NOT fire listAttachments IPC', async () => {
+    const seeded = [
+      makeAttachmentRow('ATT_1', 'BLOCK_BATCH_1', 'a.pdf'),
+      makeAttachmentRow('ATT_2', 'BLOCK_BATCH_1', 'b.png'),
+    ]
+
+    // Provider's `list_attachments_batch` IPC returns the seeded rows.
+    // The per-block `list_attachments` IPC must NEVER fire when the batch
+    // already holds the rows.
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_attachments_batch') return { BLOCK_BATCH_1: seeded }
+      if (cmd === 'list_attachments') return [] // would be wrong if hit
+      return undefined
+    })
+
+    const batchWrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        PageBlockContext.Provider,
+        { value: pageStore },
+        createElement(BatchAttachmentsProvider, { blockIds: ['BLOCK_BATCH_1'], children }),
+      )
+
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_BATCH_1'), {
+      wrapper: batchWrapper,
+    })
+
+    // Wait until the batch fetch resolves and the hook seeds local state.
+    await waitFor(() => {
+      expect(result.current.attachments).toHaveLength(2)
+    })
+    expect(result.current.attachments).toEqual(seeded)
+    expect(result.current.loading).toBe(false)
+
+    // Critical assertion — the per-block IPC must not fire.
+    const perBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments')
+    expect(perBlockCalls).toHaveLength(0)
+  })
+
+  it('falls back to listAttachments IPC when no provider is mounted', async () => {
+    const rows = [makeAttachmentRow('ATT_1', 'BLOCK_NOBATCH', 'x.pdf')]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_attachments') return rows
+      return []
+    })
+
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_NOBATCH'), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.attachments).toHaveLength(1)
+    })
+
+    const perBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments')
+    expect(perBlockCalls).toHaveLength(1)
   })
 })

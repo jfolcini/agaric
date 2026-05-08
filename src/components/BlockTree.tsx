@@ -25,7 +25,6 @@ import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { type RovingEditorHandle, useRovingEditor } from '../editor/use-roving-editor'
-import { BatchAttachmentCountsProvider } from '../hooks/useBatchAttachmentCounts'
 import { BatchAttachmentsProvider } from '../hooks/useBatchAttachments'
 import { type BlockActions, BlockActionsProvider } from '../hooks/useBlockActions'
 import { useBlockCollapse } from '../hooks/useBlockCollapse'
@@ -699,95 +698,93 @@ export function BlockTree({
   const measuring = DND_MEASURING
 
   return (
-    <BatchAttachmentCountsProvider blockIds={allBlockIds}>
-      <BatchAttachmentsProvider blockIds={allBlockIds}>
-        <BlockZoomBar
-          breadcrumbs={zoomBreadcrumb}
-          onNavigate={handleZoomIn}
-          onZoomToRoot={zoomToRoot}
+    <BatchAttachmentsProvider blockIds={allBlockIds}>
+      <BlockZoomBar
+        breadcrumbs={zoomBreadcrumb}
+        onNavigate={handleZoomIn}
+        onZoomToRoot={zoomToRoot}
+      />
+      <BlockBatchActionMenu
+        selectedBlockIds={selectedBlockIds}
+        batchInProgress={batchInProgress}
+        batchDeleteConfirm={batchDeleteConfirm}
+        onBatchSetTodo={handleBatchSetTodo}
+        onBatchDelete={handleBatchDelete}
+        onSetBatchDeleteConfirm={setBatchDeleteConfirm}
+        onClearSelection={clearSelected}
+      />
+      <DndContext
+        sensors={dnd.sensors}
+        collisionDetection={closestCenter}
+        measuring={measuring}
+        onDragStart={dnd.handleDragStart}
+        onDragMove={dnd.handleDragMove}
+        onDragOver={dnd.handleDragOver}
+        onDragEnd={dnd.handleDragEnd}
+        onDragCancel={dnd.handleDragCancel}
+      >
+        <BlockActionsProvider value={blockActions}>
+          <BlockResolversProvider value={blockResolvers}>
+            <BlockListRenderer
+              visibleItems={dnd.visibleItems}
+              blocks={blocks}
+              loading={loading}
+              rootParentId={rootParentId}
+              focusedBlockId={focusedBlockId}
+              selectedBlockIds={selectedBlockIds}
+              projected={dnd.projected}
+              activeId={dnd.activeId}
+              overId={dnd.overId}
+              viewport={viewport}
+              rovingEditor={rovingEditor}
+              onContainerPointerDown={handleContainerPointerDown}
+              hasChildrenSet={hasChildrenSet}
+              collapsedIds={collapsedIds}
+              blockProperties={blockProperties}
+            />
+          </BlockResolversProvider>
+        </BlockActionsProvider>
+        <BlockDndOverlay
+          activeBlock={activeBlock}
+          projected={dnd.projected}
+          activeId={dnd.activeId}
         />
-        <BlockBatchActionMenu
-          selectedBlockIds={selectedBlockIds}
-          batchInProgress={batchInProgress}
-          batchDeleteConfirm={batchDeleteConfirm}
-          onBatchSetTodo={handleBatchSetTodo}
-          onBatchDelete={handleBatchDelete}
-          onSetBatchDeleteConfirm={setBatchDeleteConfirm}
-          onClearSelection={clearSelected}
+      </DndContext>
+
+      {/* Floating date picker for /DATE slash command */}
+      {datePickerOpen && (
+        <BlockDatePicker
+          onSelect={(day) => day && handleDatePick(day)}
+          onClose={() => setDatePickerOpen(false)}
         />
-        <DndContext
-          sensors={dnd.sensors}
-          collisionDetection={closestCenter}
-          measuring={measuring}
-          onDragStart={dnd.handleDragStart}
-          onDragMove={dnd.handleDragMove}
-          onDragOver={dnd.handleDragOver}
-          onDragEnd={dnd.handleDragEnd}
-          onDragCancel={dnd.handleDragCancel}
-        >
-          <BlockActionsProvider value={blockActions}>
-            <BlockResolversProvider value={blockResolvers}>
-              <BlockListRenderer
-                visibleItems={dnd.visibleItems}
-                blocks={blocks}
-                loading={loading}
-                rootParentId={rootParentId}
-                focusedBlockId={focusedBlockId}
-                selectedBlockIds={selectedBlockIds}
-                projected={dnd.projected}
-                activeId={dnd.activeId}
-                overId={dnd.overId}
-                viewport={viewport}
-                rovingEditor={rovingEditor}
-                onContainerPointerDown={handleContainerPointerDown}
-                hasChildrenSet={hasChildrenSet}
-                collapsedIds={collapsedIds}
-                blockProperties={blockProperties}
-              />
-            </BlockResolversProvider>
-          </BlockActionsProvider>
-          <BlockDndOverlay
-            activeBlock={activeBlock}
-            projected={dnd.projected}
-            activeId={dnd.activeId}
-          />
-        </DndContext>
+      )}
 
-        {/* Floating date picker for /DATE slash command */}
-        {datePickerOpen && (
-          <BlockDatePicker
-            onSelect={(day) => day && handleDatePick(day)}
-            onClose={() => setDatePickerOpen(false)}
-          />
-        )}
-
-        {/* Floating template picker for /TEMPLATE slash command */}
-        {templatePickerOpen && (
-          <TemplatePicker
-            templatePages={templatePages}
-            onSelect={handleTemplateSelect}
-            onClose={() => setTemplatePickerOpen(false)}
-          />
-        )}
-
-        {/* History side-sheet for per-block history */}
-        <BlockHistorySheet
-          blockId={historyBlockId}
-          open={!!historyBlockId}
-          onOpenChange={(open) => {
-            if (!open) setHistoryBlockId(null)
-          }}
+      {/* Floating template picker for /TEMPLATE slash command */}
+      {templatePickerOpen && (
+        <TemplatePicker
+          templatePages={templatePages}
+          onSelect={handleTemplateSelect}
+          onClose={() => setTemplatePickerOpen(false)}
         />
+      )}
 
-        {/* Property drawer for per-block properties */}
-        <BlockPropertyDrawerSheet
-          blockId={propertyDrawerBlockId}
-          open={!!propertyDrawerBlockId}
-          onOpenChange={(open) => {
-            if (!open) setPropertyDrawerBlockId(null)
-          }}
-        />
-      </BatchAttachmentsProvider>
-    </BatchAttachmentCountsProvider>
+      {/* History side-sheet for per-block history */}
+      <BlockHistorySheet
+        blockId={historyBlockId}
+        open={!!historyBlockId}
+        onOpenChange={(open) => {
+          if (!open) setHistoryBlockId(null)
+        }}
+      />
+
+      {/* Property drawer for per-block properties */}
+      <BlockPropertyDrawerSheet
+        blockId={propertyDrawerBlockId}
+        open={!!propertyDrawerBlockId}
+        onOpenChange={(open) => {
+          if (!open) setPropertyDrawerBlockId(null)
+        }}
+      />
+    </BatchAttachmentsProvider>
   )
 }

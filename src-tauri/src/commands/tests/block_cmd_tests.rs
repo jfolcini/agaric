@@ -2952,231 +2952,11 @@ async fn list_attachments_returns_for_block() {
 }
 
 // ======================================================================
-// get_batch_attachment_counts (MAINT-131)
-// ======================================================================
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_batch_attachment_counts_returns_counts_per_block() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // Three blocks: A (2 attachments), B (1 attachment), C (0 attachments).
-    let block_a = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "block a".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-    let block_b = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "block b".into(),
-        None,
-        Some(2),
-    )
-    .await
-    .unwrap();
-    let block_c = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "block c".into(),
-        None,
-        Some(3),
-    )
-    .await
-    .unwrap();
-
-    let app_data_dir = _dir.path();
-    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
-    std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 10]).unwrap();
-    std::fs::write(app_data_dir.join("attachments/a2.pdf"), vec![0u8; 20]).unwrap();
-    std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
-
-    add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block_a.id.clone(),
-        "a1.png".into(),
-        "image/png".into(),
-        10,
-        "attachments/a1.png".into(),
-    )
-    .await
-    .unwrap();
-    add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block_a.id.clone(),
-        "a2.pdf".into(),
-        "application/pdf".into(),
-        20,
-        "attachments/a2.pdf".into(),
-    )
-    .await
-    .unwrap();
-    add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block_b.id.clone(),
-        "b1.txt".into(),
-        "text/plain".into(),
-        5,
-        "attachments/b1.txt".into(),
-    )
-    .await
-    .unwrap();
-
-    let counts = get_batch_attachment_counts_inner(
-        &pool,
-        vec![block_a.id.clone(), block_b.id.clone(), block_c.id.clone()],
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        counts.get(&block_a.id),
-        Some(&2_u32),
-        "block_a should have 2 attachments"
-    );
-    assert_eq!(
-        counts.get(&block_b.id),
-        Some(&1_u32),
-        "block_b should have 1 attachment"
-    );
-    assert!(
-        !counts.contains_key(&block_c.id),
-        "block_c (no attachments) must be absent from the map, not present with count 0"
-    );
-
-    mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_batch_attachment_counts_empty_input_returns_empty_map() {
-    let (pool, _dir) = test_pool().await;
-
-    let counts = get_batch_attachment_counts_inner(&pool, vec![])
-        .await
-        .unwrap();
-    assert!(
-        counts.is_empty(),
-        "empty input must return an empty map (not an error)"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_batch_attachment_counts_unknown_ids_omitted() {
-    let (pool, _dir) = test_pool().await;
-
-    let counts = get_batch_attachment_counts_inner(&pool, vec!["NONEXISTENT_ULID_01HZ".into()])
-        .await
-        .unwrap();
-    assert!(
-        counts.is_empty(),
-        "unknown block IDs must be silently omitted from the result map"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_batch_attachment_counts_filters_by_block_id() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    let block_a = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "block a".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-    let block_b = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "block b".into(),
-        None,
-        Some(2),
-    )
-    .await
-    .unwrap();
-
-    let app_data_dir = _dir.path();
-    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
-    std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 10]).unwrap();
-    std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
-
-    add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block_a.id.clone(),
-        "a1.png".into(),
-        "image/png".into(),
-        10,
-        "attachments/a1.png".into(),
-    )
-    .await
-    .unwrap();
-    add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block_b.id.clone(),
-        "b1.txt".into(),
-        "text/plain".into(),
-        5,
-        "attachments/b1.txt".into(),
-    )
-    .await
-    .unwrap();
-
-    // Only ask about block_a — block_b's row must be filtered out by the IN clause.
-    let counts = get_batch_attachment_counts_inner(&pool, vec![block_a.id.clone()])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        counts.get(&block_a.id),
-        Some(&1_u32),
-        "block_a should have 1 attachment"
-    );
-    assert!(
-        !counts.contains_key(&block_b.id),
-        "block_b must not appear when only block_a was requested"
-    );
-    assert_eq!(
-        counts.len(),
-        1,
-        "result map must contain exactly the one queried block"
-    );
-
-    mat.shutdown();
-}
-
-// ======================================================================
 // list_attachments_batch (MAINT-131)
+//
+// PEND-35 Tier 2.7a: the previous `get_batch_attachment_counts_*` tests
+// were retired with the command — counts are now derived as `rows.len()`
+// from this batch's response on the frontend.
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4394,4 +4174,127 @@ async fn pend18_batch_resolve_scope_parity() {
         "Active(TEST_SPACE_ID) must drop the foreign-space target; got {active_a:?}"
     );
     assert_eq!(active_a[0].id, "P18_BR_A");
+}
+
+// ======================================================================
+// PEND-35 Tier 2.8 — first_child_for_blocks_inner
+// ======================================================================
+//
+// Asserts the per-parent first-child batch query used by the templates
+// preview path: `(position ASC, id ASC)` ordering, conflict/soft-delete
+// exclusion, and empty-input contract.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_child_for_blocks_returns_first_by_position() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FC_PAR", "page", "parent", None, Some(1)).await;
+    insert_block(&pool, "FC_C2", "content", "second", Some("FC_PAR"), Some(2)).await;
+    insert_block(&pool, "FC_C1", "content", "first", Some("FC_PAR"), Some(1)).await;
+    insert_block(&pool, "FC_C3", "content", "third", Some("FC_PAR"), Some(3)).await;
+
+    let map = first_child_for_blocks_inner(&pool, vec!["FC_PAR".into()])
+        .await
+        .unwrap();
+
+    let row = map.get("FC_PAR").expect("FC_PAR has children");
+    assert_eq!(
+        row.id, "FC_C1",
+        "the position=1 child must win the (position ASC, id ASC) ordering; got {row:?}"
+    );
+    assert_eq!(row.content.as_deref(), Some("first"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_child_for_blocks_breaks_ties_by_id() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FC_TIE_PAR", "page", "parent", None, Some(1)).await;
+    // Two children at the same position. ULID `01...A` lex-precedes
+    // `01...B`, so the lower-id row must surface as the first child.
+    insert_block(
+        &pool,
+        "01TIE0000000000000000000A",
+        "content",
+        "low-id",
+        Some("FC_TIE_PAR"),
+        Some(5),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01TIE0000000000000000000B",
+        "content",
+        "high-id",
+        Some("FC_TIE_PAR"),
+        Some(5),
+    )
+    .await;
+
+    let map = first_child_for_blocks_inner(&pool, vec!["FC_TIE_PAR".into()])
+        .await
+        .unwrap();
+
+    let row = map.get("FC_TIE_PAR").expect("FC_TIE_PAR has children");
+    assert_eq!(
+        row.id, "01TIE0000000000000000000A",
+        "ties on `position` must break by `id ASC`; lower ULID must win. got {row:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_child_for_blocks_excludes_deleted_and_conflict() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FC_EX_PAR", "page", "parent", None, Some(1)).await;
+    // Position-1 child is soft-deleted; position-2 child is a conflict
+    // copy; position-3 child is the active first sibling. The query
+    // must skip the deleted + conflict rows and surface position-3.
+    insert_block(
+        &pool,
+        "FC_EX_DEL",
+        "content",
+        "deleted",
+        Some("FC_EX_PAR"),
+        Some(1),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = 'FC_EX_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_conflict_copy_with_page(&pool, "FC_EX_CC", "FC_EX_PAR", None).await;
+    insert_block(
+        &pool,
+        "FC_EX_OK",
+        "content",
+        "active",
+        Some("FC_EX_PAR"),
+        Some(3),
+    )
+    .await;
+
+    let map = first_child_for_blocks_inner(&pool, vec!["FC_EX_PAR".into()])
+        .await
+        .unwrap();
+
+    let row = map
+        .get("FC_EX_PAR")
+        .expect("FC_EX_PAR has at least one active child");
+    assert_eq!(
+        row.id, "FC_EX_OK",
+        "the deleted (pos=1) and conflict-copy (pos=999) rows must be \
+         excluded so position-3 wins as the first ACTIVE sibling. got {row:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_child_for_blocks_empty_input_returns_empty_map() {
+    let (pool, _dir) = test_pool().await;
+
+    let map = first_child_for_blocks_inner(&pool, vec![]).await.unwrap();
+    assert!(
+        map.is_empty(),
+        "empty input must short-circuit to an empty map (no DB hit), got {map:?}"
+    );
 }

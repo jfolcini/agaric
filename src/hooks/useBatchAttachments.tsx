@@ -3,14 +3,19 @@
  *
  * Fetches FULL attachment lists for the given block IDs in a single IPC
  * call. Mounted once at the BlockTree level so descendant components
- * (StaticBlock for inline image preview decisions) read from the shared
- * map instead of each firing their own `listAttachments` IPC.
+ * (StaticBlock for inline image preview decisions, SortableBlock for
+ * paperclip badge counts) read from the shared map instead of each firing
+ * their own `listAttachments` IPC.
  *
  * Outside a provider, the hook returns `null` — components that fall back
- * to per-block fetches use `useBatchAttachments()?.get(blockId) ?? []`.
+ * to per-block fetches use `useBatchAttachments()?.get(blockId) ?? []`
+ * (or `?.getCount(blockId) ?? 0` for the badge-count variant).
  *
- * MAINT-131 — closes the StaticBlock per-row IPC half. Pairs with
- * `useBatchAttachmentCounts` (badge counts) from session 572.
+ * MAINT-131 — replaced N per-block `listAttachments` IPCs with one batched
+ * query mounted at the BlockTree level. PEND-35 Tier 2.7a folded the
+ * separate `BatchAttachmentCountsProvider` into this provider: counts are
+ * derived as `rows.length`, eliminating a redundant Tauri command, IPC,
+ * specta binding, and tauri-mock handler.
  *
  * ## Cache invalidation
  *
@@ -30,6 +35,13 @@ import { getBatchAttachments } from '../lib/tauri'
 interface BatchAttachmentsValue {
   /** Read the cached attachment list for a block. Returns undefined if the block isn't in the cache. */
   get: (blockId: string) => AttachmentRow[] | undefined
+  /**
+   * Read the cached attachment count for a block. Returns 0 when the block
+   * is absent from the cache (no attachments OR the initial fetch is still
+   * pending). Derived as `rows.length` from the same map `get` reads —
+   * PEND-35 Tier 2.7a collapsed the separate count batch into this hook.
+   */
+  getCount: (blockId: string) => number
   /** Whether the initial fetch is still in flight. */
   loading: boolean
   /** Trigger a refetch of the entire batch (used after add/delete mutations). */
@@ -91,6 +103,13 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
     (blockId: string) => attachmentsByBlock.get(blockId),
     [attachmentsByBlock],
   )
+  const getCount = useCallback(
+    // O(1) — `Map.get` then `Array.length`. Returns 0 for blocks absent
+    // from the cache (no attachments OR initial fetch still pending),
+    // matching the previous BatchAttachmentCountsProvider semantics.
+    (blockId: string) => attachmentsByBlock.get(blockId)?.length ?? 0,
+    [attachmentsByBlock],
+  )
   const invalidate = useCallback((_blockId: string) => {
     // Simplest invalidation: bump the token to refetch the whole batch.
     // The `_blockId` arg is reserved for a future surgical-update API
@@ -99,8 +118,8 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
   }, [])
 
   const value = useMemo<BatchAttachmentsValue>(
-    () => ({ get, loading, invalidate }),
-    [get, loading, invalidate],
+    () => ({ get, getCount, loading, invalidate }),
+    [get, getCount, loading, invalidate],
   )
 
   return (

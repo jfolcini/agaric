@@ -1540,8 +1540,20 @@ describe('JournalPage', () => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'query_by_property') {
-          const params = args as { key?: string; valueText?: string }
-          if (params?.key === 'todo_state' && params?.valueText === 'TODO') {
+          // PEND-35 Tier 2.10a — `queryStatus` now collapses N per-value
+          // calls into ONE `query_by_property` with `valueTextIn` riding
+          // through `extraFilters`. Both TODO and DOING come back from a
+          // single IPC.
+          const params = args as {
+            key?: string
+            extraFilters?: { valueTextIn?: string[] | null } | null
+          }
+          const valueTextIn = params?.extraFilters?.valueTextIn ?? null
+          if (
+            params?.key === 'todo_state' &&
+            valueTextIn?.includes('TODO') &&
+            valueTextIn?.includes('DOING')
+          ) {
             return {
               items: [
                 {
@@ -1557,14 +1569,6 @@ describe('JournalPage', () => {
                   priority: null,
                   scheduled_date: null,
                 },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          if (params?.key === 'todo_state' && params?.valueText === 'DOING') {
-            return {
-              items: [
                 {
                   id: 'TASK-2',
                   block_type: 'content',
@@ -1600,22 +1604,17 @@ describe('JournalPage', () => {
       const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
       await user.click(agendaTab)
 
-      // UX-196: default filter is now { status: ['TODO', 'DOING'] }, not empty.
-      // queryStatus calls query_by_property once per value with { key: 'todo_state',
-      // valueText: value } — so we expect two invocations.
+      // UX-196: default filter is { status: ['TODO', 'DOING'] }, not empty.
+      // PEND-35 Tier 2.10a: `queryStatus` fires ONE `query_by_property`
+      // with `valueTextIn: ['TODO', 'DOING']` (not two per-value calls).
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'query_by_property',
           expect.objectContaining({
             key: 'todo_state',
-            valueText: 'TODO',
-          }),
-        )
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'query_by_property',
-          expect.objectContaining({
-            key: 'todo_state',
-            valueText: 'DOING',
+            extraFilters: expect.objectContaining({
+              valueTextIn: ['TODO', 'DOING'],
+            }),
           }),
         )
       })
@@ -1916,6 +1915,13 @@ describe('JournalPage', () => {
 
     it("completedDate 'Today' filter queries completed_at with today's date", async () => {
       const todayStr = formatDate(new Date())
+      // PEND-35 Tier 2.10a — `queryPropertyDateDimension` collapses
+      // per-day fan-out into ONE call with `valueDateRange: [today,
+      // tomorrow]` (half-open). Compute tomorrow the same way as the
+      // module under test so DST / month-rollover stay consistent.
+      const tomorrow = new Date(`${todayStr}T00:00:00`)
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      const tomorrowStr = formatDate(tomorrow)
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         const bug48 = bug48EmptyResponse(cmd)
@@ -1924,8 +1930,12 @@ describe('JournalPage', () => {
           return emptyPage
         }
         if (cmd === 'query_by_property') {
-          const params = args as { key?: string; valueDate?: string }
-          if (params?.key === 'completed_at' && params?.valueDate === todayStr) {
+          const params = args as {
+            key?: string
+            extraFilters?: { valueDateRange?: [string, string] | null } | null
+          }
+          const range = params?.extraFilters?.valueDateRange ?? null
+          if (params?.key === 'completed_at' && range?.[0] === todayStr) {
             return {
               items: [
                 {
@@ -1971,13 +1981,17 @@ describe('JournalPage', () => {
         expect(results).toHaveAttribute('data-block-count', '1')
       })
 
-      // Verify it called query_by_property with key=completed_at and valueDate=today
+      // Verify it called query_by_property with key=completed_at and a
+      // half-open `valueDateRange: [today, tomorrow]` (PEND-35 Tier 2.10a).
       const completedCalls = mockedInvoke.mock.calls.filter(
         ([cmd, callArgs]) =>
           cmd === 'query_by_property' && (callArgs as { key?: string })?.key === 'completed_at',
       )
-      expect(completedCalls.length).toBeGreaterThanOrEqual(1)
-      expect((completedCalls[0]?.[1] as { valueDate: string }).valueDate).toBe(todayStr)
+      expect(completedCalls.length).toBe(1)
+      const extras = (
+        completedCalls[0]?.[1] as { extraFilters: { valueDateRange: [string, string] } }
+      ).extraFilters
+      expect(extras.valueDateRange).toEqual([todayStr, tomorrowStr])
     })
   })
 
