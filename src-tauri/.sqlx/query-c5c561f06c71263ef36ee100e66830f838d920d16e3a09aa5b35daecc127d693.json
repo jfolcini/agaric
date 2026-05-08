@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "c5c561f06c71263ef36ee100e66830f838d920d16e3a09aa5b35daecc127d693"
+}

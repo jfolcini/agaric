@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT source_id FROM block_tag_refs",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "960e7d231e88ae2d22e2b34fe96c5c5df8e86e594127268ab355e1f18aad86f1"
+}

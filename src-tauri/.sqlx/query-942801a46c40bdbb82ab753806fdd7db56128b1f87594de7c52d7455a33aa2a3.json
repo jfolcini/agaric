@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"v: i32\" FROM attachments WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "v: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "942801a46c40bdbb82ab753806fdd7db56128b1f87594de7c52d7455a33aa2a3"
+}

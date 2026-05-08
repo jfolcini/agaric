@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "origin",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "80157113c4a6b9b72a14f3b4f37ebf2f66e65ca63b4475f0a62e11bc0a2397a9"
+}

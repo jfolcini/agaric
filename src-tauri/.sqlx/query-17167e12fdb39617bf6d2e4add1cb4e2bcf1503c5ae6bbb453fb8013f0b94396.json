@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT payload FROM op_log WHERE op_type = 'edit_block' AND json_extract(payload, '$.block_id') = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "payload",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "17167e12fdb39617bf6d2e4add1cb4e2bcf1503c5ae6bbb453fb8013f0b94396"
+}

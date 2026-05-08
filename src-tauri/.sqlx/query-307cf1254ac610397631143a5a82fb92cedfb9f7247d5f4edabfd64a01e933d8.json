@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT usage_count FROM tags_cache WHERE tag_id = 'HTAG'",
+  "describe": {
+    "columns": [
+      {
+        "name": "usage_count",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "307cf1254ac610397631143a5a82fb92cedfb9f7247d5f4edabfd64a01e933d8"
+}

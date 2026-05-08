@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict, deleted_at) VALUES (?, 'page', 'Archive', NULL, 1, ?, 0, '2025-01-01T00:00:00Z')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cd5cd3bd7345457f8e84ea79ba9af6711267c6e88985e98c6bd50eec03ad6e04"
+}

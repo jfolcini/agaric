@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT priority FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "priority",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "96acb826ad26fa4dfb6a99f8e969623d0db45d107ee683cbdb7f4ee0f427eebf"
+}

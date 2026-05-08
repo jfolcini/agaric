@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT date, block_id, source FROM agenda_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "date",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "block_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "source",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "af5cc4c487de4f716b45a65ec46d18bd42d00319b5d01a2bb0c146aba52ded87"
+}

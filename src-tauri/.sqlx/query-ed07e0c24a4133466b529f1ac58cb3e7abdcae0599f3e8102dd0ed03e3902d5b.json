@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_ref",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ed07e0c24a4133466b529f1ac58cb3e7abdcae0599f3e8102dd0ed03e3902d5b"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id, task_kind FROM materializer_retry_queue WHERE task_kind = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "task_kind",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "79706c0fc2032bbd5de738329c4a7c995eab8cdd1829c9ee5947a1f2f0e87f66"
+}

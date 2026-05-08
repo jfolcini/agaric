@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM op_log WHERE json_extract(payload, '$.block_id') IN (SELECT id FROM blocks WHERE parent_id = ?)",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1c43de1e2d25bfa209b98a186111a028c53354660c6bb9d5f1a8034cb55e37c7"
+}
