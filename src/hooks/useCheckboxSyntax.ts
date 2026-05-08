@@ -12,7 +12,7 @@ import { useCallback } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
 import { logger } from '../lib/logger'
-import { getProperties, setTodoState as setTodoStateCmd } from '../lib/tauri'
+import { getProperty, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 
@@ -41,13 +41,13 @@ export function useCheckboxSyntax({
       setTodoStateCmd(focusedBlockId, state)
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          // F-37: warn when completing a task that has unresolved dependencies
+          // F-37: warn when completing a task that has unresolved dependencies.
+          // PEND-35 Tier 2.4c — single-key PK lookup; the check only
+          // needs the `blocked_by` row, not the full vocabulary.
           if (state === 'DONE') {
-            getProperties(focusedBlockId)
-              .then((props) => {
-                const hasBlockedBy = props.some(
-                  (p) => p.key === 'blocked_by' && p.value_ref != null,
-                )
+            getProperty(focusedBlockId, 'blocked_by')
+              .then((row) => {
+                const hasBlockedBy = row != null && row.value_ref != null
                 if (hasBlockedBy) {
                   toast.warning(t('dependency.dependencyWarning'))
                 }

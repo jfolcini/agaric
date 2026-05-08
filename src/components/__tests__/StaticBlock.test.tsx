@@ -47,7 +47,11 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../lib/tauri')>()
   return {
     ...mod,
-    getProperties: vi.fn(() => Promise.resolve([])),
+    // PEND-35 Tier 2.4c — `StaticBlock` uses `getProperty` for the
+    // single-key `image_width` read; default mock returns null so
+    // tests that don't seed a width fall through to the "no stored
+    // width" path without firing a backend round-trip.
+    getProperty: vi.fn(() => Promise.resolve(null)),
     setProperty: vi.fn(() => Promise.resolve({})),
   }
 })
@@ -77,8 +81,8 @@ const mockedParse = vi.mocked(parse)
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
 
-const { getProperties, setProperty } = await import('../../lib/tauri')
-const mockedGetProperties = vi.mocked(getProperties)
+const { getProperty, setProperty } = await import('../../lib/tauri')
+const mockedGetProperty = vi.mocked(getProperty)
 const mockedSetProperty = vi.mocked(setProperty)
 
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
@@ -99,8 +103,10 @@ const REF_BLOCK_2 = '01PRZ3NDEKTSV4RRFFQ69G5FAV'
 describe('StaticBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // Restore default behavior for mocked tauri functions
-    mockedGetProperties.mockResolvedValue([])
+    // Restore default behavior for mocked tauri functions.
+    // PEND-35 Tier 2.4c — `getProperty` returns the single row (or
+    // null) from the backend's `block_properties` PK lookup.
+    mockedGetProperty.mockResolvedValue(null)
     mockedSetProperty.mockResolvedValue({} as never)
     mockBatchAttachments([])
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
@@ -1009,17 +1015,16 @@ describe('StaticBlock', () => {
     it('applies stored width from properties', async () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
       mockBatchAttachments([makeAttachment()])
-      // getProperties returns image_width = '50'
-      mockedGetProperties.mockResolvedValueOnce([
-        {
-          key: 'image_width',
-          value_text: '50',
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        },
-      ])
+      // PEND-35 Tier 2.4c — `getProperty` returns the single
+      // `image_width` row directly (single-key PK lookup).
+      mockedGetProperty.mockResolvedValueOnce({
+        key: 'image_width',
+        value_text: '50',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      })
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -1029,6 +1034,11 @@ describe('StaticBlock', () => {
         expect(wrapper).not.toBeNull()
         expect((wrapper as HTMLElement).style.maxWidth).toBe('50%')
       })
+
+      // Regression pin (PEND-35 Tier 2.4c): the read goes through the
+      // dedicated single-key command, NOT the full-vocabulary
+      // `getProperties` it used to.
+      expect(mockedGetProperty).toHaveBeenCalledWith('B1', 'image_width')
     })
 
     it('defaults to full width when no property is set', async () => {

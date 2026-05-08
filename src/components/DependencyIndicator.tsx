@@ -4,10 +4,17 @@
  *
  * Props:
  *   blockId — the block whose properties to check
- *   propertiesCache — shared ref-based cache to avoid redundant fetches
+ *   propertiesCache — optional shared ref-based cache (legacy fallback path)
  *
- * The component lazy-loads properties on mount and caches results in the
- * provided Map ref so sibling agenda items don't re-fetch.
+ * The component reads properties from a parent-mounted
+ * `BatchPropertiesProvider` (PEND-35 Tier 2.4a) when present, collapsing
+ * what was previously N per-row `getProperties` IPCs on initial mount
+ * into a single batched query at the `AgendaResults` parent.
+ *
+ * When NO provider is mounted (e.g. a one-off render outside an agenda
+ * list), the component falls back to the legacy per-block
+ * `getProperties` path, optionally backed by the provided
+ * `propertiesCache` ref to dedupe re-renders.
  */
 
 import { Link2 } from 'lucide-react'
@@ -15,6 +22,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useBatchProperties } from '@/hooks/useBatchProperties'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import type { PropertyRow } from '../lib/tauri'
@@ -23,10 +31,14 @@ import { batchResolve, getProperties } from '../lib/tauri'
 export interface DependencyIndicatorProps {
   /** Block ID to check for blocked_by property */
   blockId: string
-  /** Shared cache so multiple indicators don't re-fetch the same block */
-  propertiesCache: React.RefObject<Map<string, PropertyRow[]>>
+  /**
+   * Optional shared cache for the legacy fallback path. When a
+   * `BatchPropertiesProvider` is mounted at the parent, this cache is
+   * unused — properties come from the provider directly.
+   */
+  propertiesCache?: React.RefObject<Map<string, PropertyRow[]>> | undefined
   /** Additional CSS classes */
-  className?: string
+  className?: string | undefined
 }
 
 export function DependencyIndicator({
@@ -38,16 +50,42 @@ export function DependencyIndicator({
   const [blockedByTitle, setBlockedByTitle] = useState<string | null>(null)
   const [hasBlockedBy, setHasBlockedBy] = useState(false)
 
+  const batchProperties = useBatchProperties()
+  // Read from the provider (if mounted) — `undefined` means "not in
+  // cache yet" (initial fetch still pending or block missing from
+  // batch). Empty array means "fetched, no properties".
+  const providerProps = batchProperties?.get(blockId)
+
   useEffect(() => {
     let cancelled = false
 
     async function loadDependency() {
       try {
-        // Check cache first
-        let props = propertiesCache.current.get(blockId)
-        if (!props) {
-          props = await getProperties(blockId)
-          propertiesCache.current.set(blockId, props)
+        let props: PropertyRow[] | undefined
+
+        if (batchProperties) {
+          // Provider path — wait for the batch to populate. If the
+          // provider has resolved (`loading === false`) and the block
+          // is absent from its map, the block has no properties.
+          if (providerProps !== undefined) {
+            props = providerProps
+          } else if (!batchProperties.loading) {
+            // Batch resolved but this block is absent → no props.
+            props = []
+          } else {
+            // Batch still pending; bail and let the next render (when
+            // `providerProps` updates) re-trigger this effect.
+            return
+          }
+        } else {
+          // Legacy fallback — check the optional ref cache, else fetch.
+          const cached = propertiesCache?.current.get(blockId)
+          if (cached) {
+            props = cached
+          } else {
+            props = await getProperties(blockId)
+            propertiesCache?.current.set(blockId, props)
+          }
         }
 
         const blockedByProp = props.find((p) => p.key === 'blocked_by' && p.value_ref != null)
@@ -91,7 +129,7 @@ export function DependencyIndicator({
     return () => {
       cancelled = true
     }
-  }, [blockId, propertiesCache])
+  }, [blockId, propertiesCache, batchProperties, providerProps])
 
   if (!hasBlockedBy) return null
 

@@ -184,6 +184,22 @@ export const commands = {
 	deleteProperty: (blockId: string, key: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_property", { blockId, key })),
 	// Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].
 	getProperties: (blockId: string) => typedError<PropertyRow[], AppErrorSchema>(__TAURI_INVOKE("get_properties", { blockId })),
+	/**
+	 *  Tauri command: fetch a single property row by `(block_id, key)`
+	 *  primary key (PEND-35 Tier 2.4c). Delegates to [`get_property_inner`].
+	 */
+	getProperty: (blockId: string, key: string) => typedError<{
+	key: string,
+	value_text: string | null,
+	value_num: number | null,
+	value_date: string | null,
+	value_ref: string | null,
+	/**
+	 *  PEND-14: native boolean property storage. SQLite represents booleans
+	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
+	 */
+	value_bool: number | null,
+} | null, AppErrorSchema>(__TAURI_INVOKE("get_property", { blockId, key })),
 	// Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`].
 	getBatchProperties: (blockIds: string[]) => typedError<{ [key in string]: PropertyRow[] }, AppErrorSchema>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
 	// Tauri command: list page history. Delegates to [`list_page_history_inner`].
@@ -409,6 +425,25 @@ export const commands = {
 	 *  to [`first_child_for_blocks_inner`].
 	 */
 	firstChildForBlocks: (blockIds: string[]) => typedError<{ [key in string]: BlockRow }, AppErrorSchema>(__TAURI_INVOKE("first_child_for_blocks", { blockIds })),
+	/**
+	 *  Tauri command: batch-fetch full block rows by id. Delegates to
+	 *  [`get_blocks_inner`].
+	 */
+	getBlocks: (ids: string[]) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("get_blocks", { ids })),
+	/**
+	 *  Tauri command: batch-resolve the first-op device per block. Delegates
+	 *  to [`first_op_device_for_blocks_inner`].
+	 */
+	firstOpDeviceForBlocks: (blockIds: string[]) => typedError<{ [key in string]: string }, AppErrorSchema>(__TAURI_INVOKE("first_op_device_for_blocks", { blockIds })),
+	/**
+	 *  Tauri command: atomically resolve a batch of conflicts. Delegates to
+	 *  [`resolve_conflicts_batch_inner`].
+	 *
+	 *  PEND-35 Tier 2.3 — collapses the FE per-row `editBlock` + `deleteBlock`
+	 *  IPC loop in `src/components/ConflictList.tsx::handleBatchConfirm` into
+	 *  one round-trip and one writer-lock window.
+	 */
+	resolveConflictsBatch: (actions: ConflictResolveAction[]) => typedError<ConflictResolveBatchResult, AppErrorSchema>(__TAURI_INVOKE("resolve_conflicts_batch", { actions })),
 	/**
 	 *  Tauri command: fetch (or refresh) link metadata for a URL. Cache
 	 *  hits return immediately; stale or missing entries trigger an HTTP
@@ -814,6 +849,69 @@ export type CompactionStatus = {
 
 // Comparison operators for property filters.
 export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" | "StartsWith";
+
+/**
+ *  One row of [`resolve_conflicts_batch_inner`]'s input list.
+ *
+ *  `action` is a closed-set string enum (`"keep"` | `"discard"`) — wider
+ *  than a Rust enum to keep the FE wire format simple, but validated at
+ *  the boundary so `serde` accepts arbitrary input and we surface a
+ *  clean [`AppError::Validation`] instead of a confusing deserialise
+ *  error.
+ *
+ *  `keep` = apply the conflict's `content` to the original block (parent)
+ *  and soft-delete the conflict copy. `discard` = soft-delete the
+ *  conflict copy without touching the parent. Mirrors the FE shape of
+ *  `editBlock(parent_id, content)` then `deleteBlock(conflict_id)` for
+ *  the keep path, and `deleteBlock(conflict_id)` for the discard path.
+ */
+export type ConflictResolveAction = {
+	// The conflict-copy block id (the row whose `is_conflict = 1`).
+	blockId: string,
+	/**
+	 *  The original / parent block id whose content is overwritten on `keep`.
+	 *  For `discard` actions this field is unused but still required by the
+	 *  wire format (FE consistency — the row-level resolve dialog always has
+	 *  a `parent_id` regardless of action).
+	 */
+	parentId: string,
+	/**
+	 *  `"keep"` or `"discard"`. Validated at the IPC boundary; any other
+	 *  string is rejected with [`AppError::Validation`].
+	 */
+	action: string,
+	/**
+	 *  Content to write on a `keep` action. Required for `keep`; ignored on
+	 *  `discard`.
+	 */
+	content: string | null,
+};
+
+/**
+ *  Result of [`resolve_conflicts_batch_inner`]: the count of actions that
+ *  landed inside the single transaction.
+ *
+ *  Atomicity contract: the whole batch is all-or-nothing. If any action
+ *  fails (e.g. a parent block was concurrently soft-deleted between FE
+ *  selection and IPC, or an `edit_block` content size validation fails),
+ *  the entire transaction rolls back. `resolved` is therefore always
+ *  equal to `actions.len()` on success — `failed` is reserved for a
+ *  future per-action savepoint variant if we ever need it.
+ */
+export type ConflictResolveBatchResult = {
+	/**
+	 *  Number of conflict actions that completed successfully (all-or-nothing,
+	 *  so this equals `actions.len()` on a successful return).
+	 */
+	resolved: number,
+	/**
+	 *  Number of conflict actions that failed within the transaction.
+	 *  Always 0 in the current implementation (rollback is all-or-nothing).
+	 *  Reserved so the FE wire shape can grow into a per-action savepoint
+	 *  variant without a binding-rebuild churn.
+	 */
+	failed: number,
+};
 
 // A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format.
 export type DateRange = {

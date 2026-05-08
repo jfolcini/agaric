@@ -15,7 +15,7 @@ import { useBatchAttachments } from '../hooks/useBatchAttachments'
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { logger } from '../lib/logger'
 import { openUrl } from '../lib/open-url'
-import { getProperties } from '../lib/tauri'
+import { getProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { AttachmentRenderer } from './AttachmentRenderer'
 import { ImageLightbox } from './ImageLightbox'
@@ -125,14 +125,15 @@ function StaticBlockInner({
   const hasImageAttachments =
     !attachmentsLoading && attachments.some((a) => a.mime_type.startsWith('image/'))
 
-  // Load stored image_width property when image attachments are present
+  // Load stored image_width property when image attachments are present.
+  // PEND-35 Tier 2.4c — single-key PK lookup instead of fetching the
+  // whole property vocabulary just to read one row.
   useEffect(() => {
     if (!hasImageAttachments) return
     let cancelled = false
-    getProperties(blockId)
-      .then((props) => {
+    getProperty(blockId, 'image_width')
+      .then((widthProp) => {
         if (cancelled) return
-        const widthProp = props.find((p) => p.key === 'image_width')
         if (widthProp?.value_text) {
           setImageWidth(widthProp.value_text)
         }

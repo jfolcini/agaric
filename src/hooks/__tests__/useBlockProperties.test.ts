@@ -562,21 +562,29 @@ const mockedToastWarning = vi.mocked(toast.warning)
 
 describe('useBlockProperties handleToggleTodo F-37 dependency warning', () => {
   /**
-   * Route both `set_todo_state` and `get_properties` IPC calls. The
+   * Route both `set_todo_state` and `get_property` IPC calls. The
    * gutter-cycle path fires the dependency check fire-and-forget after
    * the state-change IPC resolves — tests must let microtasks flush
    * before asserting on the warning toast.
+   *
+   * PEND-35 Tier 2.4c — the dependency probe used to fetch the full
+   * property vocabulary and `find` the `blocked_by` row in JS. After
+   * Tier 2.4c it issues a single-key PK lookup against `get_property`,
+   * so this helper simulates that one row directly.
    */
   function mockInvokeWithProperties(props: Array<Partial<{ key: string; value_ref: string }>>) {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') {
-        return props.map((p) => ({
-          key: p.key ?? '',
+    mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+      if (cmd === 'get_property') {
+        const requestedKey = (args as { key: string } | undefined)?.key
+        const match = props.find((p) => (p.key ?? '') === requestedKey)
+        if (!match) return null
+        return {
+          key: match.key ?? '',
           value_text: null,
           value_num: null,
           value_date: null,
-          value_ref: p.value_ref ?? null,
-        }))
+          value_ref: match.value_ref ?? null,
+        }
       }
       return undefined
     })

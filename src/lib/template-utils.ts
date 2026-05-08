@@ -1,12 +1,6 @@
 import { logger } from './logger'
 import type { BlockRow } from './tauri'
-import {
-  createBlock,
-  firstChildForBlocks,
-  getProperties,
-  listBlocks,
-  queryByProperty,
-} from './tauri'
+import { createBlock, firstChildForBlocks, getProperty, listBlocks, queryByProperty } from './tauri'
 
 /**
  * Load all pages marked as templates (property `template` = 'true').
@@ -195,8 +189,9 @@ export async function insertTemplateBlocks(
  * a daily journal page is created inside the space.
  */
 export async function loadJournalTemplateForSpace(spaceId: string): Promise<string | null> {
-  const props = await getProperties(spaceId)
-  const row = props.find((p) => p.key === 'journal_template')
+  // PEND-35 Tier 2.4c — single-key PK lookup against `block_properties`
+  // instead of fetching the whole vocabulary just to read one row.
+  const row = await getProperty(spaceId, 'journal_template')
   return row?.value_text ?? null
 }
 

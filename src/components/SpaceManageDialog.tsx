@@ -68,7 +68,7 @@ import {
   deleteBlock,
   deleteProperty,
   editBlock,
-  getProperties,
+  getBatchProperties,
   listBlocks,
   setProperty,
 } from '@/lib/tauri'
@@ -698,15 +698,24 @@ export function SpaceManageDialog({
   const journalTemplateFetchedRef = useRef<Set<string>>(new Set())
 
   // PEND-29 B-7: cancellation flag prevents post-unmount setState on
-  // both IIFEs. Closing the dialog unmounts the content (Radix portal,
-  // no `forceMount`); without the guard the in-flight `listBlocks` /
-  // `getProperties` IPCs resolved into setState calls on an unmounted
-  // component. The `emptinessFetchedRef` / `journalTemplateFetchedRef`
-  // dedup behavior is preserved — the catch path's `delete(id)` now
-  // also gates on `active` so we don't re-open a slot for a dead
-  // component.
+  // both async chains. Closing the dialog unmounts the content (Radix
+  // portal, no `forceMount`); without the guard the in-flight
+  // `listBlocks` / `getBatchProperties` IPCs resolved into setState
+  // calls on an unmounted component. The `emptinessFetchedRef` /
+  // `journalTemplateFetchedRef` dedup behavior is preserved — the
+  // catch path's `delete(id)` still gates on `active` so we don't
+  // re-open a slot for a dead component.
+  //
+  // PEND-35 Tier 2.4b: the per-space `getProperties(id)` loop was
+  // collapsed into a single `getBatchProperties(ids)` call covering
+  // every un-fetched space id at once. Each row only reads one key
+  // (`journal_template`); fanning out N IPCs to surface N single-key
+  // values is wasteful. The `listBlocks` emptiness probe stays
+  // per-space because no batched `list_blocks` shape exists yet.
   useEffect(() => {
     let active = true
+    // Per-space emptiness probe — still one IPC per space.id (no
+    // batched list_blocks shape today).
     for (const space of availableSpaces) {
       const id = space.id
       if (!emptinessFetchedRef.current.has(id)) {
@@ -735,26 +744,42 @@ export function SpaceManageDialog({
           }
         })()
       }
-      if (!journalTemplateFetchedRef.current.has(id)) {
-        journalTemplateFetchedRef.current.add(id)
-        void (async () => {
-          try {
-            const props = await getProperties(id)
-            if (!active) return
-            const row = props.find((p) => p.key === 'journal_template')
-            const value = row?.value_text ?? ''
-            setJournalTemplateBySpace((prev) => ({ ...prev, [id]: value }))
-          } catch (err) {
-            if (active) journalTemplateFetchedRef.current.delete(id)
-            logger.warn(
-              LOG_MODULE,
-              'failed to load journal template property',
-              { spaceId: id },
-              err,
-            )
+    }
+    // Single-IPC batched journal-template fetch — covers every
+    // un-fetched space id in one `getBatchProperties` call.
+    const journalIdsToFetch = availableSpaces
+      .map((s) => s.id)
+      .filter((id) => !journalTemplateFetchedRef.current.has(id))
+    if (journalIdsToFetch.length > 0) {
+      // Reserve all ids up-front so a concurrent re-render doesn't
+      // re-issue the batch. On error, release them again so the next
+      // render can retry.
+      for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.add(id)
+      void (async () => {
+        try {
+          const result = await getBatchProperties(journalIdsToFetch)
+          if (!active) return
+          setJournalTemplateBySpace((prev) => {
+            const next = { ...prev }
+            for (const id of journalIdsToFetch) {
+              const props = result[id] ?? []
+              const row = props.find((p) => p.key === 'journal_template')
+              next[id] = row?.value_text ?? ''
+            }
+            return next
+          })
+        } catch (err) {
+          if (active) {
+            for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.delete(id)
           }
-        })()
-      }
+          logger.warn(
+            LOG_MODULE,
+            'failed to load journal template properties',
+            { spaceIds: journalIdsToFetch },
+            err,
+          )
+        }
+      })()
     }
     return () => {
       active = false

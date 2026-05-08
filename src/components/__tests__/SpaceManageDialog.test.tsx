@@ -82,9 +82,11 @@ function setupDefaultIpcMocks() {
     if (cmd === 'edit_block') return null
     if (cmd === 'set_property') return null
     if (cmd === 'delete_property') return null
-    // FEAT-3p5b — per-space `journal_template` lookup. Default to no
-    // properties so the textarea starts empty.
-    if (cmd === 'get_properties') return []
+    // FEAT-3p5b — per-space `journal_template` lookup. PEND-35 Tier
+    // 2.4b: collapsed N `get_properties(spaceId)` calls into one
+    // `get_batch_properties(spaceIds)` call. Default to no properties
+    // for any space so textareas start empty.
+    if (cmd === 'get_batch_properties') return {}
     if (cmd === 'delete_block') return { affected_count: 1 }
     if (cmd === 'create_space') return 'SPACE_NEW_ID'
     return null
@@ -151,7 +153,7 @@ describe('SpaceManageDialog', () => {
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
       if (cmd === 'edit_block') throw new Error('IPC offline')
       if (cmd === 'set_property') return null
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') return {}
       return null
     })
 
@@ -272,7 +274,7 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return nonEmptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') return {}
       return null
     })
 
@@ -303,7 +305,7 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return nonEmptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') return {}
       return null
     })
 
@@ -491,25 +493,29 @@ describe('SpaceManageDialog', () => {
   // ── Per-space journal template (FEAT-3p5b) ──────────────────────────
 
   it('journal template textarea pre-populates from existing property', async () => {
-    // Seed `get_properties(PERSONAL.id)` with a `journal_template` row;
-    // every other space returns no properties (default-empty).
+    // Seed the batched `get_batch_properties` call so PERSONAL.id has
+    // a `journal_template` row; WORK returns no properties.
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_properties') {
-        const a = args as { blockId: string }
-        if (a.blockId === PERSONAL.id) {
-          return [
-            {
-              key: 'journal_template',
-              value_text: '## Standup\n- TODOs',
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            },
-          ]
+      if (cmd === 'get_batch_properties') {
+        const ids = (args as { blockIds: string[] }).blockIds
+        const out: Record<string, unknown[]> = {}
+        for (const id of ids) {
+          out[id] =
+            id === PERSONAL.id
+              ? [
+                  {
+                    key: 'journal_template',
+                    value_text: '## Standup\n- TODOs',
+                    value_num: null,
+                    value_date: null,
+                    value_ref: null,
+                  },
+                ]
+              : []
         }
-        return []
+        return out
       }
       return null
     })
@@ -558,20 +564,24 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_properties') {
-        const a = args as { blockId: string }
-        if (a.blockId === PERSONAL.id) {
-          return [
-            {
-              key: 'journal_template',
-              value_text: 'Existing template',
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            },
-          ]
+      if (cmd === 'get_batch_properties') {
+        const ids = (args as { blockIds: string[] }).blockIds
+        const out: Record<string, unknown[]> = {}
+        for (const id of ids) {
+          out[id] =
+            id === PERSONAL.id
+              ? [
+                  {
+                    key: 'journal_template',
+                    value_text: 'Existing template',
+                    value_num: null,
+                    value_date: null,
+                    value_ref: null,
+                  },
+                ]
+              : []
         }
-        return []
+        return out
       }
       if (cmd === 'delete_property') return null
       if (cmd === 'set_property') return null
@@ -602,20 +612,24 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_properties') {
-        const a = args as { blockId: string }
-        if (a.blockId === PERSONAL.id) {
-          return [
-            {
-              key: 'journal_template',
-              value_text: 'Original',
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            },
-          ]
+      if (cmd === 'get_batch_properties') {
+        const ids = (args as { blockIds: string[] }).blockIds
+        const out: Record<string, unknown[]> = {}
+        for (const id of ids) {
+          out[id] =
+            id === PERSONAL.id
+              ? [
+                  {
+                    key: 'journal_template',
+                    value_text: 'Original',
+                    value_num: null,
+                    value_date: null,
+                    value_ref: null,
+                  },
+                ]
+              : []
         }
-        return []
+        return out
       }
       if (cmd === 'set_property') throw new Error('IPC offline')
       return null
@@ -678,15 +692,20 @@ describe('SpaceManageDialog', () => {
     expect(panel.textContent ?? '').toContain('<% today %>')
   })
 
-  // ── MAINT-180 — IPC dedup contract ──────────────────────────────────
+  // ── MAINT-180 / PEND-35 Tier 2.4b — IPC dedup contract ─────────────
   //
   // The emptiness probe (`list_blocks { spaceId, blockType:'page',
-  // limit:1 }`) and the journal-template fetch (`get_properties`) are
-  // owned by `SpaceManageDialog` and keyed by `space.id`, so each IPC
-  // fires exactly once per unique `space.id` for the whole lifetime of
-  // the dialog — not once per `SpaceRowEditor` mount.
+  // limit:1 }`) is owned by `SpaceManageDialog` and keyed by
+  // `space.id`, so it fires exactly once per unique `space.id` for
+  // the whole lifetime of the dialog — not once per `SpaceRowEditor`
+  // mount.
+  //
+  // PEND-35 Tier 2.4b collapsed the previous per-space
+  // `get_properties(spaceId)` loop into a single
+  // `get_batch_properties(spaceIds)` call covering every un-fetched
+  // space in one IPC.
 
-  it('fires the emptiness probe and journal-template fetch exactly once per space.id (MAINT-180)', async () => {
+  it('fires the emptiness probe per space.id and the journal-template fetch as ONE batch (MAINT-180 / PEND-35 Tier 2.4b)', async () => {
     useSpaceStore.setState({
       currentSpaceId: PERSONAL.id,
       availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side', accent_color: null }],
@@ -696,9 +715,9 @@ describe('SpaceManageDialog', () => {
     render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
 
     // Wait for both IPC chains to settle: the textareas mount empty
-    // and only resolve once `get_properties` resolves; the Delete
-    // buttons start disabled and only enable once `list_blocks`
-    // resolves with an empty page.
+    // and only resolve once `get_batch_properties` resolves; the
+    // Delete buttons start disabled and only enable once
+    // `list_blocks` resolves with an empty page.
     await waitFor(() => {
       const buttons = screen.getAllByRole('button', {
         name: t('space.deleteSpaceLabel'),
@@ -707,23 +726,36 @@ describe('SpaceManageDialog', () => {
       for (const btn of buttons) expect(btn).not.toBeDisabled()
     })
 
-    // Each IPC fires exactly N times where N = number of unique
-    // space.ids — not 2N, not "once per row mount across re-renders".
+    // `list_blocks` still fires once per space.id (no batched
+    // emptiness probe today). The journal-template fetch fires
+    // exactly ONCE — a single `get_batch_properties` covering all
+    // three space ids — replacing the previous 3 `get_properties`
+    // calls.
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-    const getPropertiesCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_properties')
+    const batchPropertiesCalls = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_batch_properties',
+    )
     expect(listBlocksCalls).toHaveLength(3)
-    expect(getPropertiesCalls).toHaveLength(3)
+    expect(batchPropertiesCalls).toHaveLength(1)
 
-    // Each space.id appears exactly once in the call args for each
-    // IPC — proves dedup is keyed on space.id, not just call count.
+    // Regression guard against backslide to the per-space
+    // `get_properties` loop: the dropped fan-out path must NOT fire
+    // when the batch path is in use.
+    const perBlockPropertyCalls = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_properties',
+    )
+    expect(perBlockPropertyCalls).toHaveLength(0)
+
+    // Each space.id appears exactly once in the listBlocks call args
+    // — proves dedup is keyed on space.id, not just call count.
     const listBlocksSpaceIds = listBlocksCalls.map(
       ([, args]) => (args as { spaceId: string }).spaceId,
     )
     expect(new Set(listBlocksSpaceIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
-    const getPropertiesBlockIds = getPropertiesCalls.map(
-      ([, args]) => (args as { blockId: string }).blockId,
-    )
-    expect(new Set(getPropertiesBlockIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
+
+    // The single batch call covers all three space ids.
+    const batchedIds = (batchPropertiesCalls[0] as [string, { blockIds: string[] }])[1].blockIds
+    expect(new Set(batchedIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
   })
 
   it('does not re-fetch on close + reopen with the same space.id set (MAINT-180)', async () => {
@@ -739,11 +771,12 @@ describe('SpaceManageDialog', () => {
     const initialListBlocks = mockedInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'list_blocks',
     ).length
-    const initialGetProperties = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'get_properties',
+    const initialBatchProperties = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_batch_properties',
     ).length
     expect(initialListBlocks).toBe(2)
-    expect(initialGetProperties).toBe(2)
+    // PEND-35 Tier 2.4b: a single batched IPC covers both spaces.
+    expect(initialBatchProperties).toBe(1)
 
     // Close the dialog — this unmounts every `SpaceRowEditor` via
     // Radix (no `forceMount`), but the `SpaceManageDialog` parent
@@ -764,11 +797,11 @@ describe('SpaceManageDialog', () => {
 
     // No additional IPC calls were made.
     const finalListBlocks = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks').length
-    const finalGetProperties = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'get_properties',
+    const finalBatchProperties = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_batch_properties',
     ).length
     expect(finalListBlocks).toBe(initialListBlocks)
-    expect(finalGetProperties).toBe(initialGetProperties)
+    expect(finalBatchProperties).toBe(initialBatchProperties)
   })
 
   // ── PEND-29 B-7 — cancellation guard on the per-space probe IIFEs ───
@@ -791,7 +824,7 @@ describe('SpaceManageDialog', () => {
           resolveBlocks = resolve
         })
       }
-      if (cmd === 'get_properties') {
+      if (cmd === 'get_batch_properties') {
         return new Promise((resolve) => {
           resolveProps = resolve
         })
@@ -803,10 +836,10 @@ describe('SpaceManageDialog', () => {
 
     const { unmount } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
 
-    // Wait for both IIFEs to fire their respective IPC calls.
+    // Wait for both async chains to fire their respective IPC calls.
     await waitFor(() => {
       expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'list_blocks')).toBe(true)
-      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'get_properties')).toBe(true)
+      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'get_batch_properties')).toBe(true)
     })
 
     // Unmount before either probe resolves — cleanup sets active=false.
@@ -816,7 +849,7 @@ describe('SpaceManageDialog', () => {
     // chain settle inside `act(async)`.
     await act(async () => {
       resolveBlocks(emptyPage)
-      resolveProps([])
+      resolveProps({})
     })
 
     // Cancellation guard short-circuits the success path: no
@@ -831,7 +864,7 @@ describe('SpaceManageDialog', () => {
     )
     expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
       expect.any(String),
-      'failed to load journal template property',
+      'failed to load journal template properties',
       expect.anything(),
       expect.anything(),
     )

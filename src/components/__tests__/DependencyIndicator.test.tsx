@@ -6,6 +6,9 @@
  *  2. Shows nothing when block has no `blocked_by` property
  *  3. Tooltip shows "Blocked by" text
  *  4. axe a11y audit
+ *  5. PEND-35 Tier 2.4a — when wrapped in `BatchPropertiesProvider`,
+ *     the indicator does NOT fire its own `getProperties` IPC; it reads
+ *     from the provider instead.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -14,10 +17,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 const mockGetProperties = vi.fn()
+const mockGetBatchProperties = vi.fn()
 const mockBatchResolve = vi.fn()
 
 vi.mock('../../lib/tauri', () => ({
   getProperties: (...args: unknown[]) => mockGetProperties(...args),
+  getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
   batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
 }))
 
@@ -25,6 +30,7 @@ vi.mock('lucide-react', () => ({
   Link2: (props: Record<string, unknown>) => <svg data-testid="icon-link2" {...props} />,
 }))
 
+import { BatchPropertiesProvider } from '../../hooks/useBatchProperties'
 import { DependencyIndicator, type DependencyIndicatorProps } from '../DependencyIndicator'
 
 function makeCache(): React.RefObject<Map<string, unknown[]>> {
@@ -43,6 +49,7 @@ describe('DependencyIndicator', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetProperties.mockResolvedValue([])
+    mockGetBatchProperties.mockResolvedValue({})
     mockBatchResolve.mockResolvedValue([])
   })
 
@@ -161,6 +168,7 @@ describe('DependencyIndicator', () => {
 
   it('uses cache to avoid redundant property fetches', async () => {
     const cache = makeCache() as DependencyIndicatorProps['propertiesCache']
+    if (!cache) throw new Error('cache must be defined for this test')
     cache.current.set('B1', [
       {
         key: 'blocked_by',
@@ -220,5 +228,63 @@ describe('DependencyIndicator', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ─── PEND-35 Tier 2.4a — provider-backed batch path ──────────────────
+  describe('with BatchPropertiesProvider', () => {
+    it('reads properties from the provider instead of firing per-block getProperties', async () => {
+      mockGetBatchProperties.mockResolvedValue({
+        B1: [
+          {
+            key: 'blocked_by',
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: 'BLOCKER',
+          },
+        ],
+      })
+      mockBatchResolve.mockResolvedValue([
+        { id: 'BLOCKER', title: 'Blocking task', block_type: 'block', deleted: false },
+      ])
+
+      render(
+        <BatchPropertiesProvider blockIds={['B1']}>
+          <DependencyIndicator blockId="B1" />
+        </BatchPropertiesProvider>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('dependency-indicator')).toBeInTheDocument()
+      })
+
+      // Provider fired exactly one batch call.
+      expect(mockGetBatchProperties).toHaveBeenCalledTimes(1)
+      expect(mockGetBatchProperties).toHaveBeenCalledWith(['B1'])
+      // Per-block fallback IPC is silent under the provider — regression
+      // guard against future backslide to the per-row fan-out.
+      expect(mockGetProperties).not.toHaveBeenCalled()
+    })
+
+    it('renders nothing when the provider has no entry for the block (no blocked_by)', async () => {
+      // Provider resolves with no entry for B1 → indicator hides.
+      mockGetBatchProperties.mockResolvedValue({})
+
+      render(
+        <BatchPropertiesProvider blockIds={['B1']}>
+          <DependencyIndicator blockId="B1" />
+        </BatchPropertiesProvider>,
+      )
+
+      // Wait for the batch to resolve (one tick is enough), then
+      // confirm no indicator and no fallback IPC.
+      await waitFor(() => {
+        expect(mockGetBatchProperties).toHaveBeenCalled()
+      })
+      // Allow the loading→loaded transition to flush.
+      await new Promise((r) => setTimeout(r, 0))
+      expect(screen.queryByTestId('dependency-indicator')).not.toBeInTheDocument()
+      expect(mockGetProperties).not.toHaveBeenCalled()
+    })
   })
 })

@@ -18,6 +18,7 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { StatusIcon } from '@/components/ui/status-icon'
+import { BatchPropertiesProvider } from '@/hooks/useBatchProperties'
 import { dueDateColor, formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -33,7 +34,7 @@ import {
 } from '../lib/agenda-sort'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
-import type { BlockRow, PropertyRow } from '../lib/tauri'
+import type { BlockRow } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { BlockListItem } from './BlockListItem'
 import { DateChipEditor } from './DateChipEditor'
@@ -154,16 +155,20 @@ export function AgendaResults({
       untitledLabel: t('agenda.untitled'),
     })
 
-  // Shared cache for block properties — avoids redundant IPC calls across renders.
-  // PEND-27 P6: cache is invalidated on `block:properties-changed` events and on
-  // space switches so the dependency indicator reflects fresh data after edits.
-  const propertiesCacheRef = useRef<Map<string, PropertyRow[]>>(new Map())
+  // PEND-35 Tier 2.4a: properties for every visible agenda row are
+  // fetched in a single `getBatchProperties` IPC mounted via
+  // `BatchPropertiesProvider` below. The previous per-row
+  // `getProperties` fan-out (deduped only across re-renders, not
+  // across initial mount of N rows) is gone.
+  //
+  // PEND-27 P6: the provider re-fetches whenever
+  // `useBlockPropertyEvents().invalidationKey` bumps OR the active
+  // space switches, so the dependency indicator reflects fresh data
+  // after edits. We pass a stable composite key into the provider
+  // rather than driving a separate cache-clear effect.
   const { invalidationKey: propertyInvalidationKey } = useBlockPropertyEvents()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey + space are signals that drive the cache-clear side-effect
-  useEffect(() => {
-    propertiesCacheRef.current.clear()
-  }, [propertyInvalidationKey, currentSpaceId])
+  const batchInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}`
 
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null)
@@ -194,6 +199,11 @@ export function AgendaResults({
     () => (groups ? groups.flatMap((g) => g.blocks) : sortedBlocks),
     [groups, sortedBlocks],
   )
+
+  // Stable list of block IDs for the BatchPropertiesProvider. The
+  // provider derives a sorted membership key internally so a new array
+  // reference with identical contents does NOT trigger a refetch.
+  const allBlockIds = useMemo(() => blocks.map((b) => b.id), [blocks])
 
   const {
     focusedIndex,
@@ -287,8 +297,10 @@ export function AgendaResults({
             {/* Due date chip — clickable with inline date editor */}
             <DueDateChip block={block} onDateChanged={onDateChanged} />
 
-            {/* Dependency indicator — shows Link2 icon when blocked_by property exists */}
-            <DependencyIndicator blockId={block.id} propertiesCache={propertiesCacheRef} />
+            {/* Dependency indicator — reads properties from the
+                BatchPropertiesProvider mounted at the AgendaResults
+                root (PEND-35 Tier 2.4a). One IPC for all rows. */}
+            <DependencyIndicator blockId={block.id} />
           </>
         }
         pageId={block.page_id}
@@ -317,64 +329,66 @@ export function AgendaResults({
   let flatIndex = 0
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container
-    <div
-      className="agenda-results space-y-2"
-      ref={listRef}
-      // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (navHandleKeyDown(e)) e.preventDefault()
-      }}
-    >
-      {/* Screen-reader result count */}
-      <div role="status" className="sr-only">
-        {blocks.length === 1
-          ? t('agenda.resultOne')
-          : t('agenda.resultCount', { count: blocks.length })}
+    <BatchPropertiesProvider blockIds={allBlockIds} invalidationKey={batchInvalidationKey}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container */}
+      <div
+        className="agenda-results space-y-2"
+        ref={listRef}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (navHandleKeyDown(e)) e.preventDefault()
+        }}
+      >
+        {/* Screen-reader result count */}
+        <div role="status" className="sr-only">
+          {blocks.length === 1
+            ? t('agenda.resultOne')
+            : t('agenda.resultCount', { count: blocks.length })}
+        </div>
+
+        {groups ? (
+          groups.map((group) => {
+            const i18nKey = GROUP_I18N[group.label]
+            const displayLabel = i18nKey ? t(i18nKey) : group.label
+            return (
+              <div key={group.label} className="agenda-group mb-3">
+                <h3
+                  className={cn(
+                    'agenda-group-header text-sm font-semibold uppercase tracking-wide px-3 py-1',
+                    group.className ?? 'text-muted-foreground',
+                  )}
+                  data-testid="agenda-group-header"
+                >
+                  {displayLabel}
+                  <span className="ml-1.5 text-muted-foreground font-normal">
+                    ({group.blocks.length})
+                  </span>
+                </h3>
+                <ul className="agenda-results-list space-y-2" aria-label={displayLabel}>
+                  {group.blocks.map((block) => renderItem(block, flatIndex++))}
+                </ul>
+              </div>
+            )
+          })
+        ) : (
+          <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
+            {sortedBlocks.map((block) => renderItem(block, flatIndex++))}
+          </ul>
+        )}
+
+        {/* Load more */}
+        <LoadMoreButton
+          hasMore={hasMore}
+          loading={loading}
+          onLoadMore={onLoadMore}
+          className="agenda-results-load-more mt-2"
+          label={t('agenda.loadMore')}
+          loadingLabel={t('agenda.loading')}
+          ariaLabel={t('agenda.loadMoreLabel')}
+          ariaLoadingLabel={t('agenda.loadingMore')}
+        />
       </div>
-
-      {groups ? (
-        groups.map((group) => {
-          const i18nKey = GROUP_I18N[group.label]
-          const displayLabel = i18nKey ? t(i18nKey) : group.label
-          return (
-            <div key={group.label} className="agenda-group mb-3">
-              <h3
-                className={cn(
-                  'agenda-group-header text-sm font-semibold uppercase tracking-wide px-3 py-1',
-                  group.className ?? 'text-muted-foreground',
-                )}
-                data-testid="agenda-group-header"
-              >
-                {displayLabel}
-                <span className="ml-1.5 text-muted-foreground font-normal">
-                  ({group.blocks.length})
-                </span>
-              </h3>
-              <ul className="agenda-results-list space-y-2" aria-label={displayLabel}>
-                {group.blocks.map((block) => renderItem(block, flatIndex++))}
-              </ul>
-            </div>
-          )
-        })
-      ) : (
-        <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
-          {sortedBlocks.map((block) => renderItem(block, flatIndex++))}
-        </ul>
-      )}
-
-      {/* Load more */}
-      <LoadMoreButton
-        hasMore={hasMore}
-        loading={loading}
-        onLoadMore={onLoadMore}
-        className="agenda-results-load-more mt-2"
-        label={t('agenda.loadMore')}
-        loadingLabel={t('agenda.loading')}
-        ariaLabel={t('agenda.loadMoreLabel')}
-        ariaLoadingLabel={t('agenda.loadingMore')}
-      />
-    </div>
+    </BatchPropertiesProvider>
   )
 }

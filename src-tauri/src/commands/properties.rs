@@ -698,6 +698,45 @@ pub async fn get_properties_inner(
     Ok(rows)
 }
 
+/// PEND-35 Tier 2.4c — fetch a single property row by `(block_id, key)`
+/// primary key. Returns `Ok(None)` when no row exists.
+///
+/// Sibling of [`get_properties_inner`] for the common "list everything
+/// then `find(p => p.key === '<one-key>')`" pattern: five FE callsites
+/// (`loadJournalTemplateForSpace`, `StaticBlock` image-width read, the
+/// three `blocked_by` dependency probes in `useBlockProperties` /
+/// `useBlockSlashCommands` / `useCheckboxSyntax`) used to ship the full
+/// vocabulary across the IPC boundary just to read one well-known key.
+/// This dedicated PK lookup collapses that O(N) wire payload to one row.
+///
+/// Block id is normalised to canonical uppercase per AGENTS.md
+/// invariant #8 — callers occasionally pass lowercase ids (sync replay,
+/// hand-crafted scripts) and the on-disk row stores the canonical
+/// uppercase form.
+///
+/// The column projection mirrors `get_properties_inner` so the FE
+/// `PropertyRow` shape is byte-identical between the bulk and single-key
+/// paths.
+#[instrument(skip(pool), err)]
+pub async fn get_property_inner(
+    pool: &SqlitePool,
+    block_id: &str,
+    key: &str,
+) -> Result<Option<PropertyRow>, AppError> {
+    let block_id = block_id.to_ascii_uppercase();
+    let row = sqlx::query_as!(
+        PropertyRow,
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
+         FROM block_properties WHERE block_id = ?1 AND key = ?2",
+        block_id,
+        key,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
 /// Create a property definition. Uses INSERT OR IGNORE for idempotency —
 /// if the key already exists, this is a no-op.
 #[instrument(skip(pool, options), err)]
@@ -1267,6 +1306,21 @@ pub async fn get_properties(
     block_id: String,
 ) -> Result<Vec<PropertyRow>, AppError> {
     get_properties_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: fetch a single property row by `(block_id, key)`
+/// primary key (PEND-35 Tier 2.4c). Delegates to [`get_property_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_property(
+    pool: State<'_, ReadPool>,
+    block_id: String,
+    key: String,
+) -> Result<Option<PropertyRow>, AppError> {
+    get_property_inner(&pool.0, &block_id, &key)
         .await
         .map_err(sanitize_internal_error)
 }

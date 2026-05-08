@@ -5092,3 +5092,270 @@ async fn delete_blocks_by_ids_normalises_lowercase_block_id() {
         "lowercase id must be normalised to uppercase before SQL membership probe"
     );
 }
+
+// ======================================================================
+// PEND-35 Tier 2.3 — resolve_conflicts_batch
+// ======================================================================
+
+/// PEND-35 Tier 2.3 — three conflict resolutions (2 keep, 1 discard) all
+/// land inside one transaction. The result count reports `resolved = 3,
+/// failed = 0`, all three conflict copies are soft-deleted, and the two
+/// `keep` parents have their content replaced by the conflict's
+/// content.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_conflicts_batch_keeps_and_discards_atomically() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Three parents, three conflict copies. The conflict copy carries the
+    // "incoming" content the user wants to keep; the parent has the
+    // "current" version.
+    insert_block(&pool, "RCB_P1", "content", "p1 current", None, Some(1)).await;
+    insert_block(&pool, "RCB_P2", "content", "p2 current", None, Some(2)).await;
+    insert_block(&pool, "RCB_P3", "content", "p3 current", None, Some(3)).await;
+    insert_conflict_copy_with_page(&pool, "RCB_C1", "RCB_P1", None).await;
+    insert_conflict_copy_with_page(&pool, "RCB_C2", "RCB_P2", None).await;
+    insert_conflict_copy_with_page(&pool, "RCB_C3", "RCB_P3", None).await;
+
+    let pre_seq: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?")
+            .bind(DEV)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let actions = vec![
+        crate::commands::ConflictResolveAction {
+            block_id: "RCB_C1".into(),
+            parent_id: "RCB_P1".into(),
+            action: "keep".into(),
+            content: Some("p1 incoming".into()),
+        },
+        crate::commands::ConflictResolveAction {
+            block_id: "RCB_C2".into(),
+            parent_id: "RCB_P2".into(),
+            action: "keep".into(),
+            content: Some("p2 incoming".into()),
+        },
+        crate::commands::ConflictResolveAction {
+            block_id: "RCB_C3".into(),
+            parent_id: "RCB_P3".into(),
+            action: "discard".into(),
+            content: None,
+        },
+    ];
+    let result = resolve_conflicts_batch_inner(&pool, DEV, &mat, actions)
+        .await
+        .unwrap();
+    assert_eq!(result.resolved, 3, "all 3 actions must land");
+    assert_eq!(
+        result.failed, 0,
+        "all-or-nothing rollback => failed = 0 on success"
+    );
+
+    // Conflict copies all soft-deleted.
+    for cid in ["RCB_C1", "RCB_C2", "RCB_C3"] {
+        let deleted_at: Option<String> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(cid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            deleted_at.is_some(),
+            "{cid} must be soft-deleted by the batch"
+        );
+    }
+    // Keep parents got new content; discard parent kept its original content.
+    let p1_content: Option<String> =
+        sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'RCB_P1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        p1_content.as_deref(),
+        Some("p1 incoming"),
+        "keep wrote incoming to parent"
+    );
+    let p2_content: Option<String> =
+        sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'RCB_P2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(p2_content.as_deref(), Some("p2 incoming"));
+    let p3_content: Option<String> =
+        sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'RCB_P3'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        p3_content.as_deref(),
+        Some("p3 current"),
+        "discard MUST NOT touch parent content"
+    );
+
+    // One transaction, one contiguous op_log seq range. 2 keeps × (edit + delete)
+    // + 1 discard × delete = 5 ops total. All ops have seq > pre_seq.
+    let post_seq: i64 = sqlx::query_scalar("SELECT MAX(seq) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let new_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq > ?")
+            .bind(DEV)
+            .bind(pre_seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        new_count, 5,
+        "2 keeps (edit+delete) + 1 discard (delete) = 5 ops"
+    );
+    assert_eq!(
+        post_seq - pre_seq,
+        5,
+        "seq advanced by exactly the new-op count"
+    );
+}
+
+/// PEND-35 Tier 2.3 — atomic rollback. Triggering a NotFound mid-batch
+/// (parent deleted between FE selection and IPC) must roll back every
+/// prior action in the same call: no parent content updated, no
+/// conflict copy soft-deleted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_conflicts_batch_atomic_rollback() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // P1 lives, P2 is soft-deleted (so the keep targeting P2 will fail).
+    insert_block(&pool, "RCB_R_P1", "content", "p1 current", None, Some(1)).await;
+    insert_block(&pool, "RCB_R_P2", "content", "p2 current", None, Some(2)).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = 'RCB_R_P2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_conflict_copy_with_page(&pool, "RCB_R_C1", "RCB_R_P1", None).await;
+    insert_conflict_copy_with_page(&pool, "RCB_R_C2", "RCB_R_P2", None).await;
+
+    let actions = vec![
+        // Action 0 succeeds in isolation; it must be rolled back when
+        // action 1 hits NotFound on the soft-deleted parent.
+        crate::commands::ConflictResolveAction {
+            block_id: "RCB_R_C1".into(),
+            parent_id: "RCB_R_P1".into(),
+            action: "keep".into(),
+            content: Some("p1 incoming".into()),
+        },
+        crate::commands::ConflictResolveAction {
+            block_id: "RCB_R_C2".into(),
+            parent_id: "RCB_R_P2".into(),
+            action: "keep".into(),
+            content: Some("p2 incoming".into()),
+        },
+    ];
+    let result = resolve_conflicts_batch_inner(&pool, DEV, &mat, actions).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "deleted parent must surface as NotFound, got {result:?}"
+    );
+
+    // Rollback: P1 content unchanged, C1 still active.
+    let p1_content: Option<String> =
+        sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'RCB_R_P1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        p1_content.as_deref(),
+        Some("p1 current"),
+        "rollback must leave P1 unchanged (no partial commit)"
+    );
+    let c1_deleted: Option<String> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'RCB_R_C1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        c1_deleted.is_none(),
+        "rollback must leave C1 NOT soft-deleted (no partial commit)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_conflicts_batch_rejects_empty_oversize() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let empty = resolve_conflicts_batch_inner(&pool, DEV, &mat, vec![]).await;
+    assert!(
+        matches!(empty, Err(AppError::Validation(_))),
+        "empty list must reject with Validation"
+    );
+
+    let oversize: Vec<crate::commands::ConflictResolveAction> = (0
+        ..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| crate::commands::ConflictResolveAction {
+            block_id: format!("C{i}"),
+            parent_id: format!("P{i}"),
+            action: "discard".into(),
+            content: None,
+        })
+        .collect();
+    let big = resolve_conflicts_batch_inner(&pool, DEV, &mat, oversize).await;
+    assert!(
+        matches!(big, Err(AppError::Validation(_))),
+        "oversize list must reject with Validation"
+    );
+}
+
+/// PEND-35 Tier 2.3 — `keep` action with `content = None` must reject
+/// at the boundary (Validation) — the wire format requires content for
+/// the edit step.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_conflicts_batch_rejects_keep_without_content() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = resolve_conflicts_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![crate::commands::ConflictResolveAction {
+            block_id: "C1".into(),
+            parent_id: "P1".into(),
+            action: "keep".into(),
+            content: None,
+        }],
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "keep without content must reject with Validation, got {result:?}"
+    );
+}
+
+/// PEND-35 Tier 2.3 — unknown action string rejects at the boundary
+/// (Validation) without touching the database.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_conflicts_batch_rejects_unknown_action() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = resolve_conflicts_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![crate::commands::ConflictResolveAction {
+            block_id: "C1".into(),
+            parent_id: "P1".into(),
+            action: "bogus".into(),
+            content: None,
+        }],
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "unknown action must reject with Validation, got {result:?}"
+    );
+}

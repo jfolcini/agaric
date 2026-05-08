@@ -18,7 +18,7 @@ import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { getPriorityCycle } from '../lib/priority-levels'
 import {
-  getProperties,
+  getProperty,
   setPriority as setPriorityCmd,
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
@@ -57,9 +57,11 @@ export interface UseBlockPropertiesReturn {
  * the dependency check is advisory.
  */
 function warnIfBlocked(blockId: string): void {
-  getProperties(blockId)
-    .then((props) => {
-      const hasBlockedBy = props.some((p) => p.key === 'blocked_by' && p.value_ref != null)
+  // PEND-35 Tier 2.4c — single-key PK lookup; the hook only needs the
+  // `blocked_by` row, not the full vocabulary the FE used to ship.
+  getProperty(blockId, 'blocked_by')
+    .then((row) => {
+      const hasBlockedBy = row != null && row.value_ref != null
       if (hasBlockedBy) toast.warning(i18n.t('dependency.dependencyWarning'))
     })
     .catch((err) => {

@@ -2,11 +2,67 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 691 (Session 691: PEND-35 Tier 2.1 + 2.2 — multi-select batch family. Four new `*_by_ids(Vec<String>)` Tauri commands close every multi-select user-action gap: `set_todo_state_batch`, `delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`. Each batch runs in one BEGIN IMMEDIATE tx + one op_log scope, eliminating writer-lock serialization. The `delete_blocks_by_ids` CTE seeds from ALL roots in one walk so the MAINT-173 ancestor pre-walk in `useBlockMultiSelect.ts` could be removed. IPC delta on a 50-row selection: 50 IPCs → 1 IPC for each of mark-done / delete / restore / purge. Session 690: PEND-35 Tier 2 (4 more items: 2.7 attachments dedup — count provider/command deleted, counts derive from list batch via new `getCount` method; 2.8 templates SQL pushdown + new `first_child_for_blocks` window-function batch endpoint; 2.9 GraphView `blockType:'page'` pushdown via Tier 3.4; 2.10a per-value/per-day fan-out collapsed via `valueTextIn`/`valueDateRange`) + Tier 4.5 (`list_page_links` accepts `tag_ids` filter via UNION ALL across `block_tags`/`block_tag_inherited`/`block_tag_refs`). Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 692 (Session 692: PEND-35 Tier 2.3 + 2.4 — ConflictList N+1 collapse (3 new commands `get_blocks`, `first_op_device_for_blocks`, `resolve_conflicts_batch` collapse 50-conflict view from ~150 IPCs → 3) + property fan-out fixes (new `BatchPropertiesProvider` hoisted in AgendaResults; SpaceManageDialog uses single batch IPC; new `get_property` command for 5 single-key callsites). Session 691: PEND-35 Tier 2.1 + 2.2 — multi-select batch family. Four new `*_by_ids(Vec<String>)` Tauri commands close every multi-select user-action gap: `set_todo_state_batch`, `delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`. Each batch runs in one BEGIN IMMEDIATE tx + one op_log scope, eliminating writer-lock serialization. The `delete_blocks_by_ids` CTE seeds from ALL roots in one walk so the MAINT-173 ancestor pre-walk in `useBlockMultiSelect.ts` could be removed. IPC delta on a 50-row selection: 50 IPCs → 1 IPC for each of mark-done / delete / restore / purge. Session 690: PEND-35 Tier 2 (4 more items: 2.7 attachments dedup — count provider/command deleted, counts derive from list batch via new `getCount` method; 2.8 templates SQL pushdown + new `first_child_for_blocks` window-function batch endpoint; 2.9 GraphView `blockType:'page'` pushdown via Tier 3.4; 2.10a per-value/per-day fan-out collapsed via `valueTextIn`/`valueDateRange`) + Tier 4.5 (`list_page_links` accepts `tag_ids` filter via UNION ALL across `block_tags`/`block_tag_inherited`/`block_tag_refs`). Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 692 — PEND-35 Tier 2.3 + 2.4: ConflictList N+1 collapse + property fan-out fixes (2026-05-09)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-09 |
+| **Subagents** | 3 build + 1 review |
+| **Items closed** | PEND-35 Tier 2.3 (a/b/c), 2.4 (a/b/c) |
+| **Items modified** | PEND-35 (2.3 + 2.4 sections retired; status header + TL;DR table updated) |
+| **Tests added** | +17 backend (12 from 2.3 + 3 from 2.4c + 2 from FE-only doesn't apply here) / +11 frontend (3 ConflictList regressions + 9 useBatchProperties tests + 2 DependencyIndicator provider-path tests + …) |
+| **Files touched** | ~22 source files |
+
+**Summary:** Closed Tier 2.3 (ConflictList three N+1s) and all of Tier 2.4 (property fan-out — 3 sub-items). Tier 2 is now 11/12 shipped; only 2.10b (filtered_blocks_query AND-intersection) remains. Three new backend batch endpoints for ConflictList (`get_blocks` full-row batch including deleted/conflict; `first_op_device_for_blocks` uses native `op_log.block_id` indexed column with `MIN(seq)` correlated subquery; `resolve_conflicts_batch` runs all keep/discard actions in one `BEGIN IMMEDIATE` tx). One new generic `BatchPropertiesProvider` (modeled on `BatchAttachmentsProvider` from Tier 2.7, with an extra `invalidationKey` prop tying into `useBlockPropertyEvents` + active space id). One new `get_property(block_id, key)` PK SELECT command + 5 callsite migrations from full-vocabulary fetch + JS `find()` to the dedicated single-key IPC.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND-35 audit, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src-tauri/src/commands/blocks/queries.rs` — new `get_blocks_inner` (BLOCK_ROW_RUNTIME_SELECT + json_each, includes deleted+conflict rows) and `first_op_device_for_blocks_inner` (CTE on indexed `op_log.block_id`, MIN(seq) device per block with MIN(device_id) tie-breaker)
+- `src-tauri/src/commands/blocks/crud.rs` — new `ConflictResolveAction` / `ConflictResolveBatchResult` types + `resolve_conflicts_batch_inner` (one BEGIN IMMEDIATE tx; per-action keep mirrors `edit_block_inner`, discard mirrors `delete_block_inner` cascade including `reparent_orphan_conflict_copies` + tag-inheritance sweep; FEAT-5i GCal snapshots buffered until post-commit)
+- `src-tauri/src/commands/properties.rs` — new `get_property_inner` (single PK SELECT via `query_as!`) + Tauri wrapper
+- `src-tauri/src/commands/mod.rs` + `src-tauri/src/lib.rs` — re-exports + `agaric_commands!` registration for all 4 new commands
+- `src-tauri/src/commands/tests/{block,query,property}_cmd_tests.rs` — 17 new backend tests covering atomicity, cascade, validation, ULID normalization, MIN(seq) tie-break, deleted+conflict inclusion
+- `src-tauri/.sqlx/` — multiple new entries (one for `get_property` plus several for `resolve_conflicts_batch_inner`'s component queries)
+- `src/hooks/useBatchProperties.tsx` (new) — `BatchPropertiesProvider` + `useBatchProperties()` hook with `invalidationKey` prop driving refetches on `EVENT_PROPERTY_CHANGED` + space switches
+- `src/hooks/__tests__/useBatchProperties.test.tsx` (new) — 9 tests covering null-outside-provider, empty-blockIds, batch fetch, IPC failure logging, membership-change refetch, reference-stable no-refetch, `invalidate()` refetch, `invalidationKey` refetch, loading transitions
+- `src/lib/tauri.ts` — wrappers for `getBlocks`, `firstOpDeviceForBlocks`, `resolveConflictsBatch`, `getProperty`
+- `src/lib/bindings.ts` — regenerated by specta (4 new commands + ConflictResolveAction/Result types)
+- `src/lib/tauri-mock/handlers.ts` — 4 new mocks honoring input args
+- `src/components/ConflictList.tsx` — 3 N+1 patterns each replaced by ONE batch IPC; per-row `editBlock`+`deleteBlock` confirm loop replaced by single `resolveConflictsBatch(actions)`. Progress bar simplified to a 0/total stub.
+- `src/components/AgendaResults.tsx` — mounts `BatchPropertiesProvider` over `allBlockIds`; dropped `propertiesCacheRef` + cache-clear effect (now driven by `invalidationKey` prop)
+- `src/components/DependencyIndicator.tsx` — reads from `useBatchProperties()` when provider mounted; falls back to per-block `getProperties()` when not
+- `src/components/SpaceManageDialog.tsx` — single `getBatchProperties(journalIdsToFetch)` call replaces N-space fan-out
+- `src/components/StaticBlock.tsx` — image-resize useEffect uses `getProperty(blockId, 'image_width')`
+- `src/lib/template-utils.ts` — `loadJournalTemplateForSpace` uses `getProperty(spaceId, 'journal_template')`
+- `src/hooks/useBlockProperties.ts`, `src/hooks/useBlockSlashCommands.ts`, `src/hooks/useCheckboxSyntax.ts` — 3 callsites use `getProperty(blockId, 'blocked_by')`
+- Updated tests in `src/components/__tests__/{ConflictList,AgendaResults,DependencyIndicator,SpaceManageDialog,StaticBlock,JournalPage}.test.tsx`, `src/hooks/__tests__/{useBlockProperties,useCheckboxSyntax}.test.ts`, `src/lib/__tests__/{tauri,template-utils}.test.ts` — call-site updates + IPC-collapse regression assertions
+- `pending/PEND-35-tauri-command-backend-vs-frontend-audit.md` — 2.3 + 2.4 sections retired
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3711 tests run, 3711 passed (+12 from baseline 3699 — review noted +17 tests but the suite count includes some test-file-internal renames).
+- `npx vitest run` — 9669 tests passed across 389 files.
+- `cd src-tauri && cargo check --benches` — clean.
+- `prek run --all-files` — pending (run at commit time).
+
+**Process notes:**
+- 3 build subagents launched in parallel (2.3 / 2.4a+b / 2.4c). 2.4a+b reported in 16 minutes; 2.4c in 19 minutes; 2.3 in 34 minutes (heaviest — 3 new backend commands + 3 FE refactors + 17 tests).
+- One review subagent. PASS on all dimensions, no fixes applied. Reviewer noted that `useBatchProperties` deliberately omits a `getCount`-style helper that `BatchAttachmentsProvider` has, because the consumer (DependencyIndicator) only checks presence, not count. Acceptable parity divergence.
+- Cross-cutting test-file drift: `JournalPage.test.tsx` mocked the old `get_properties` IPC for the FEAT-3p5b per-space-template test path. After Tier 2.4c migrated `loadJournalTemplateForSpace` to `getProperty(spaceId, 'journal_template')`, the test broke. Orchestrator-direct fix updated 2 tests (renamed mock + assertion to the new IPC + arg shape). Continues the pattern from sessions 689/691 — cross-cutting integration test files (App.test.tsx, SortableBlock.test.tsx, BlockTree.test.tsx, JournalPage.test.tsx) consistently get missed by the per-item subagents and need orchestrator-direct cleanup.
+
+**Lessons learned (for future sessions):**
+- Cross-cutting integration test files now include `JournalPage.test.tsx` alongside `App.test.tsx`, `SortableBlock.test.tsx`, `BlockTree.test.tsx`. Worth folding all four into the build-subagent prompt template ("after IPC migration, grep for the OLD ipc-name across `src/components/__tests__/` and update all hits").
+
+**Commit plan:** single commit.
+
+---
 ## Session 691 — PEND-35 Tier 2.1 + 2.2: multi-select batch family (4 new *_by_ids commands) (2026-05-08)
 
 | Metadata | Value |

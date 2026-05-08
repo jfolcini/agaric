@@ -21,7 +21,9 @@ import { useCheckboxSyntax } from '../useCheckboxSyntax'
 
 vi.mock('../../lib/tauri', () => ({
   setTodoState: vi.fn(),
-  getProperties: vi.fn(),
+  // PEND-35 Tier 2.4c — checkbox-syntax DONE path now reads
+  // `blocked_by` via the single-key `getProperty` command.
+  getProperty: vi.fn(),
 }))
 
 vi.mock('../../lib/logger', () => ({
