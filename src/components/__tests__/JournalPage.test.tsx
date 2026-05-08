@@ -2057,7 +2057,22 @@ describe('JournalPage', () => {
       expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
     })
 
-    it('panels not rendered when pageId is null', async () => {
+    it('LinkedReferences not rendered when pageId is null', async () => {
+      // BUG-48 follow-up: DuePanel and DonePanel are date-keyed
+      // agenda queries, so they render even when no journal page
+      // exists for the day (e.g. navigating to a past date that was
+      // never written into). Only LinkedReferences is gated on
+      // pageId because backlinks into a non-existent page are
+      // semantically empty.
+      const todayStr = formatDate(new Date())
+
+      // Today's journal mount-effect would auto-create a page; pin
+      // the probe to "page exists" via mockJournalPages but use a
+      // currentDate that has no page, so the displayed entry has
+      // pageId=null.
+      const pastDate = subDays(new Date(), 5)
+      useJournalStore.setState({ mode: 'daily', currentDate: pastDate })
+      void todayStr // clarity: only the displayed date matters
       mockEmptyResponses()
 
       renderJournal()
@@ -2066,7 +2081,8 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
+      // DuePanel + DonePanel still render (date-keyed), only
+      // LinkedReferences is suppressed.
       expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
     })
 
