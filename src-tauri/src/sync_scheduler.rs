@@ -726,4 +726,63 @@ mod tests {
             "all peers in backoff should result in empty resync list"
         );
     }
+
+    // ── PEND-06 Phase 1 — channel registration / handoff ───────────────────────
+    //
+    // The scheduler holds the per-peer `Channel<SyncProgressUpdate>` set up by
+    // `start_sync` so the daemon's `try_sync_with_peer` can hand it off to the
+    // orchestrator's event sink. These tests pin the in/out semantics so a
+    // future change to the storage shape (e.g. supporting multiple concurrent
+    // observers per peer, or moving to a tokio channel) is a deliberate
+    // breaking decision.
+
+    fn dummy_channel() -> tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate> {
+        // Channel::new requires a callback, but the tests below only exercise
+        // register/take — the callback never runs because nothing ever calls
+        // `channel.send`. A no-op closure is enough.
+        tauri::ipc::Channel::<crate::sync_events::SyncProgressUpdate>::new(|_| Ok(()))
+    }
+
+    #[test]
+    fn register_then_take_channel_returns_some() {
+        let sched = SyncScheduler::new();
+        sched.register_channel("PEER1", dummy_channel());
+        assert!(
+            sched.take_channel("PEER1").is_some(),
+            "registered channel must be retrievable"
+        );
+    }
+
+    #[test]
+    fn take_channel_consumes_the_entry() {
+        // Take is a one-shot — the orchestrator owns the channel after
+        // handoff, so a second take returns None.
+        let sched = SyncScheduler::new();
+        sched.register_channel("PEER1", dummy_channel());
+        assert!(sched.take_channel("PEER1").is_some());
+        assert!(
+            sched.take_channel("PEER1").is_none(),
+            "second take must be empty"
+        );
+    }
+
+    #[test]
+    fn take_channel_for_unknown_peer_returns_none() {
+        let sched = SyncScheduler::new();
+        assert!(sched.take_channel("PEER_UNKNOWN").is_none());
+    }
+
+    #[test]
+    fn registering_replaces_prior_channel_for_same_peer() {
+        // A second start_sync on the same peer (e.g. user clicks Sync Now
+        // twice in quick succession) must not leak the first channel — the
+        // newer one wins. Semantics chosen because two concurrent
+        // try_lock_peer calls are mutually exclusive, so only one
+        // registration is "live" at a time anyway.
+        let sched = SyncScheduler::new();
+        sched.register_channel("PEER1", dummy_channel());
+        sched.register_channel("PEER1", dummy_channel());
+        assert!(sched.take_channel("PEER1").is_some());
+        assert!(sched.take_channel("PEER1").is_none());
+    }
 }
