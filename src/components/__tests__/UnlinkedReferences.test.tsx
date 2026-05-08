@@ -27,6 +27,11 @@ vi.mock('../../lib/tauri', () => ({
   editBlock: vi.fn(),
   listTagsByPrefix: vi.fn(),
   listPropertyKeys: vi.fn(),
+  // PEND-36 — `handleLinkIt` now reads aliases via `getPageAliases` so
+  // alias-only mentions can be rewritten. Default mock returns no
+  // aliases so the legacy title-only test paths stay unaffected;
+  // PEND-36-specific cases override per-test.
+  getPageAliases: vi.fn(),
 }))
 
 vi.mock('../../lib/logger', () => ({
@@ -106,6 +111,7 @@ import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache
 import { logger } from '../../lib/logger'
 import {
   editBlock,
+  getPageAliases,
   listPropertyKeys,
   listTagsByPrefix,
   listUnlinkedReferences,
@@ -117,6 +123,7 @@ const mockedListUnlinked = vi.mocked(listUnlinkedReferences)
 const mockedEditBlock = vi.mocked(editBlock)
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
 const mockedListPropertyKeys = vi.mocked(listPropertyKeys)
+const mockedGetPageAliases = vi.mocked(getPageAliases)
 
 function makeGroup(
   pageId: string,
@@ -177,6 +184,8 @@ beforeEach(() => {
   })
   mockedListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue([])
+  // PEND-36: legacy tests don't care about aliases — default to none.
+  mockedGetPageAliases.mockResolvedValue([])
 })
 
 /** Wrap UnlinkedReferences in TooltipProvider (required for UX-168 filter icon button). */
@@ -1337,5 +1346,170 @@ describe('UnlinkedReferences', () => {
       undefined,
       expect.any(Error),
     )
+  })
+
+  // ── PEND-36: alias fallback in handleLinkIt ──────────────────────────────
+  //
+  // The backend's `eval_unlinked_references` OR-joins the page title and
+  // its aliases into the FTS5 query, so a block whose content mentions
+  // ONLY an alias still surfaces here. Pre-PEND-36 the FE's
+  // `handleLinkIt` compiled `new RegExp(escapeRegExp(pageTitle))` and
+  // silently no-op'd on alias-only matches while the optimistic UI told
+  // the user "linked" — see `pending/PEND-36-...` for the full diagnosis.
+  // The four cases below pin: alias-only match rewrites, title takes
+  // priority when both present, the no-match guard surfaces a toast and
+  // skips the optimistic removal, and aliases follow the page when
+  // `pageId` changes.
+
+  it('"Link it" rewrites an alias-only mention into [[pageId]] (PEND-36)', async () => {
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue(['ProjAlpha'])
+    const resp = {
+      groups: [
+        makeGroup('SOURCE', 'Source Page', [
+          { id: 'B_ALIAS', content: 'See ProjAlpha for more info' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Project Alpha' })
+
+    await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
+
+    // Wait for aliases load + the block to render.
+    await waitFor(() => {
+      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
+    })
+
+    const linkBtn = await screen.findByRole('button', {
+      name: /Link it: replace mention in block B_ALIAS/i,
+    })
+    await user.click(linkBtn)
+
+    await waitFor(() => {
+      expect(mockedEditBlock).toHaveBeenCalledWith('B_ALIAS', 'See [[PAGE_ALPHA]] for more info')
+    })
+  })
+
+  it('"Link it" prefers the canonical title when content matches both (PEND-36)', async () => {
+    // Title takes priority — the user gave the page that name, the
+    // alias is secondary. If both appear in the content, the title
+    // mention is the one that gets converted.
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue(['ProjAlpha'])
+    const resp = {
+      groups: [
+        makeGroup('SOURCE', 'Source Page', [
+          { id: 'B_BOTH', content: 'See Project Alpha aka ProjAlpha for the rationale' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Project Alpha' })
+
+    await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
+    await waitFor(() => {
+      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
+    })
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: /Link it: replace mention in block B_BOTH/i,
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mockedEditBlock).toHaveBeenCalledWith(
+        'B_BOTH',
+        'See [[PAGE_ALPHA]] aka ProjAlpha for the rationale',
+      )
+    })
+  })
+
+  it('"Link it" surfaces a toast and skips edit when no candidate matches (PEND-36)', async () => {
+    // Reachable when the backend FTS5 match succeeds on a token the
+    // regex literal-matcher can't see (e.g. trigram-tokenized CJK
+    // alias). The FE must NOT call `editBlock` (would write a
+    // duplicate-content edit op) and must NOT optimistically remove
+    // the block (would tell the user "linked" while the block reappears
+    // on the next refetch).
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue([])
+    const resp = {
+      groups: [
+        makeGroup('SOURCE', 'Source Page', [
+          { id: 'B_GHOST', content: 'No literal match for the title here' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Project Alpha' })
+
+    await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
+    await waitFor(() => {
+      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
+    })
+
+    const linkBtn = await screen.findByRole('button', {
+      name: /Link it: replace mention in block B_GHOST/i,
+    })
+    await user.click(linkBtn)
+
+    // editBlock must not have fired.
+    expect(mockedEditBlock).not.toHaveBeenCalled()
+    // The block must still be in the DOM (no optimistic removal).
+    expect(linkBtn).toBeInTheDocument()
+    // logger.warn carries the diagnosis — pin the call so a future
+    // refactor doesn't regress to a silent failure.
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'UnlinkedReferences',
+      'No title/alias match found for Link it',
+      expect.objectContaining({ blockId: 'B_GHOST', pageId: 'PAGE_ALPHA' }),
+    )
+  })
+
+  it('"Link it" reloads aliases when pageId changes (PEND-36)', async () => {
+    // Two consecutive renders with different pageIds — the alias fetch
+    // must fire for each, otherwise switching pages would carry the
+    // previous page's aliases into the new context.
+    mockedGetPageAliases.mockResolvedValue([])
+    mockedListUnlinked.mockResolvedValue(emptyResponse)
+
+    const { rerender } = renderUnlinkedReferences({
+      pageId: 'PAGE_ALPHA',
+      pageTitle: 'Project Alpha',
+    })
+    await waitFor(() => {
+      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
+    })
+
+    rerender(
+      <TooltipProvider>
+        <UnlinkedReferences pageId="PAGE_BETA" pageTitle="Project Beta" />
+      </TooltipProvider>,
+    )
+
+    await waitFor(() => {
+      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_BETA')
+    })
+    expect(mockedGetPageAliases).toHaveBeenCalledTimes(2)
   })
 })
