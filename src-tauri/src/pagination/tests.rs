@@ -1603,9 +1603,22 @@ async fn query_by_property_returns_matching_blocks() {
     insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None, None, false)
-        .await
-        .unwrap();
+    let resp = query_by_property(
+        &pool,
+        "todo",
+        None,
+        None,
+        "eq",
+        &page,
+        None,
+        None,
+        false,
+        None,
+        &[],
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 2, "only blocks with 'todo' property");
     assert_eq!(
@@ -1639,6 +1652,9 @@ async fn query_by_property_filters_by_value() {
         None,
         None,
         false,
+        None,
+        &[],
+        None,
     )
     .await
     .unwrap();
@@ -1661,7 +1677,21 @@ async fn query_by_property_paginates_with_cursor() {
         &pool,
         ["BLOCK001", "BLOCK002", "BLOCK003", "BLOCK004", "BLOCK005"],
         async |pool, page| {
-            query_by_property(pool, "status", None, None, "eq", &page, None, None, false).await
+            query_by_property(
+                pool,
+                "status",
+                None,
+                None,
+                "eq",
+                &page,
+                None,
+                None,
+                false,
+                None,
+                &[],
+                None,
+            )
+            .await
         },
     )
     .await;
@@ -1684,6 +1714,9 @@ async fn query_by_property_returns_empty_for_nonexistent_key() {
         None,
         None,
         false,
+        None,
+        &[],
+        None,
     )
     .await
     .unwrap();
@@ -1711,9 +1744,22 @@ async fn query_by_property_excludes_soft_deleted() {
     soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None, None, false)
-        .await
-        .unwrap();
+    let resp = query_by_property(
+        &pool,
+        "todo",
+        None,
+        None,
+        "eq",
+        &page,
+        None,
+        None,
+        false,
+        None,
+        &[],
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 1, "soft-deleted block must be excluded");
     assert_eq!(
@@ -1744,6 +1790,9 @@ async fn query_by_property_rejects_both_value_filters() {
         None,
         None,
         false,
+        None,
+        &[],
+        None,
     )
     .await
     .expect_err("both value filters must be rejected");
@@ -1768,6 +1817,9 @@ async fn query_by_property_rejects_both_value_filters() {
         None,
         None,
         false,
+        None,
+        &[],
+        None,
     )
     .await
     .expect_err("both value filters must be rejected on reserved-key path too");
@@ -3279,6 +3331,53 @@ async fn list_conflicts_filters_by_id_min() {
     );
     assert_eq!(resp.items[0].id, "CONFLCT3", "first row at the cutoff");
     assert_eq!(resp.items[1].id, "CONFLCT5", "second row past the cutoff");
+}
+
+// PEND-35 Tier 3.2 — verify the partial index `idx_blocks_conflict`
+// (migration 0049) is actually picked by SQLite's planner for the
+// `list_conflicts` query shape (`is_conflict = 1 AND deleted_at IS
+// NULL ORDER BY id ASC` plus the two optional filters). Without the
+// index the planner would do a full table scan; the assertion here
+// fails loudly if a future schema change accidentally drops or
+// shadows it.
+#[tokio::test]
+async fn list_conflicts_uses_partial_index() {
+    let (pool, _dir) = test_pool().await;
+
+    // Mirror the SQL in `pagination::hierarchy::list_conflicts` exactly —
+    // EXPLAIN QUERY PLAN reflects the actual query string, so any drift
+    // here would silently invalidate the assertion.
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN \
+         SELECT id, block_type, content, parent_id, position, \
+                deleted_at, is_conflict, conflict_type, todo_state, \
+                priority, due_date, scheduled_date, page_id \
+         FROM blocks \
+         WHERE is_conflict = 1 AND deleted_at IS NULL \
+           AND (?1 IS NULL OR id > ?2) \
+           AND (?4 IS NULL OR conflict_type = ?4) \
+           AND (?5 IS NULL OR id >= ?5) \
+         ORDER BY id ASC \
+         LIMIT ?3",
+    )
+    .bind(Option::<i64>::None) // ?1 cursor_flag
+    .bind("") // ?2 cursor_id
+    .bind(11_i64) // ?3 fetch_limit
+    .bind(Option::<&str>::None) // ?4 conflict_type
+    .bind(Option::<&str>::None) // ?5 id_min
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let detail = plan
+        .iter()
+        .map(|(_, _, _, d)| d.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        detail.contains("idx_blocks_conflict"),
+        "list_conflicts must use idx_blocks_conflict; plan was:\n{detail}"
+    );
 }
 
 // ====================================================================

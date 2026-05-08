@@ -1767,18 +1767,37 @@ mod tests {
         );
     }
 
+    /// PEND-35 Tier 3.1: migration 0048 retires the expression index
+    /// `idx_op_log_payload_block_id` from migration 0003 because the four
+    /// remaining query sites in `pagination/history.rs` and
+    /// `commands/history.rs` now read the native `op_log.block_id` column
+    /// (added by migration 0030 and covered by `idx_op_log_block_id`).
+    /// This test guards both halves: the legacy expression index is gone,
+    /// and the native column index is in place.
     #[tokio::test]
-    async fn expression_index_on_block_id_exists() {
+    async fn op_log_block_id_indexes_post_migration_0048() {
         let (pool, _dir) = test_pool().await;
-        let row = sqlx::query_scalar!(
+
+        let legacy = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_op_log_payload_block_id'"
         )
         .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(
-            row, 1,
-            "expression index on json_extract block_id should exist"
+            legacy, 0,
+            "migration 0048 must drop idx_op_log_payload_block_id (the json_extract expression index)"
+        );
+
+        let native = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_op_log_block_id'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            native, 1,
+            "idx_op_log_block_id (native column index from migration 0030) must remain"
         );
     }
 

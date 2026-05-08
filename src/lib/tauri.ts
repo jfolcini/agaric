@@ -473,6 +473,11 @@ export async function getStatus(): Promise<StatusInfo> {
  * `spaceId` (FEAT-3 Phase 4) — when set, restricts matches to blocks
  * whose owning page carries `space = <spaceId>`. `null` / `undefined`
  * leaves the result set unscoped (cross-space view).
+ *
+ * `blockType` (PEND-35 Tier 3.4) — when set, restricts matches to
+ * blocks whose `block_type` equals the supplied value (e.g. `'page'`).
+ * Pushes GraphView's JS-side `pagesResp.items.filter(p => p.block_type
+ * === 'page')` predicate into SQL.
  */
 export async function queryByTags(params: {
   tagIds: string[]
@@ -482,6 +487,7 @@ export async function queryByTags(params: {
   cursor?: string | undefined
   limit?: number | undefined
   spaceId?: string | null | undefined
+  blockType?: string | undefined
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
     await commands.queryByTags(
@@ -492,6 +498,7 @@ export async function queryByTags(params: {
       params.cursor ?? null,
       params.limit ?? null,
       toSpaceScope(params.spaceId),
+      params.blockType ?? null,
     ),
   )
 }
@@ -720,6 +727,21 @@ export async function listUnfinishedTasks(params: {
  * `total_count`, and "Load more" reflect the visible set instead of
  * the unfiltered raw page. `undefined` / `false` preserves the legacy
  * unfiltered behaviour.
+ *
+ * `blockType` / `valueTextIn` / `valueDateRange` (PEND-35 Tier 3.4)
+ * push three more filters into SQL:
+ *  - `blockType` — equality on `b.block_type` (e.g. restrict templates
+ *    to `'page'`).
+ *  - `valueTextIn` — set-membership on `value_text`. Mutually
+ *    exclusive with `valueText`; passing both is rejected by the
+ *    backend.
+ *  - `valueDateRange` — half-open `[from, to)` date range on
+ *    `value_date` (or the matching reserved column for
+ *    `due_date` / `scheduled_date`).
+ *
+ * On the IPC boundary the five push-down knobs are bundled into the
+ * Rust `ExtraQueryFilters` struct so the Tauri command stays under the
+ * `tauri-specta` 10-arg limit. The flat public API is preserved here.
  */
 export async function queryByProperty(params: {
   key: string
@@ -731,7 +753,25 @@ export async function queryByProperty(params: {
   spaceId?: string | null | undefined
   excludeParentId?: string | undefined
   contentNonEmpty?: boolean | undefined
+  blockType?: string | undefined
+  valueTextIn?: string[] | undefined
+  valueDateRange?: [string, string] | undefined
 }): Promise<PageResponse<BlockRow>> {
+  const hasExtra =
+    params.excludeParentId !== undefined ||
+    params.contentNonEmpty !== undefined ||
+    params.blockType !== undefined ||
+    params.valueTextIn !== undefined ||
+    params.valueDateRange !== undefined
+  const extraFilters = hasExtra
+    ? {
+        excludeParentId: params.excludeParentId ?? null,
+        contentNonEmpty: params.contentNonEmpty ?? null,
+        blockType: params.blockType ?? null,
+        valueTextIn: params.valueTextIn ?? null,
+        valueDateRange: params.valueDateRange ?? null,
+      }
+    : null
   return unwrap(
     await commands.queryByProperty(
       params.key,
@@ -741,8 +781,7 @@ export async function queryByProperty(params: {
       params.cursor ?? null,
       params.limit ?? null,
       toSpaceScope(params.spaceId),
-      params.excludeParentId ?? null,
-      params.contentNonEmpty ?? false,
+      extraFilters,
     ),
   )
 }

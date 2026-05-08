@@ -122,9 +122,17 @@ pub async fn search_blocks_inner(
 /// the unfiltered page. `None` / `false` preserves the legacy
 /// behaviour (clauses short-circuit to no-ops).
 ///
+/// `block_type` / `value_text_in` / `value_date_range` (PEND-35 Tier
+/// 3.4) push three more filters into SQL: a `block_type` equality, a
+/// JSON-array `value_text IN (...)`, and a half-open `[from, to)` date
+/// range. `value_text_in` and `value_text` are mutually exclusive
+/// (rejected with [`AppError::Validation`]).
+///
 /// # Errors
 /// - [`AppError::Validation`] — `key` is empty
-#[instrument(skip(pool), err)]
+/// - [`AppError::Validation`] — both `value_text` and `value_text_in` supplied
+/// - [`AppError::Validation`] — both `value_text` and `value_date` supplied
+#[instrument(skip(pool, value_text_in), err)]
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_property_inner(
     pool: &SqlitePool,
@@ -137,6 +145,9 @@ pub async fn query_by_property_inner(
     scope: &SpaceScope,
     exclude_parent_id: Option<String>,
     content_non_empty: bool,
+    block_type: Option<String>,
+    value_text_in: Option<Vec<String>>,
+    value_date_range: Option<(String, String)>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if key.trim().is_empty() {
         return Err(AppError::Validation(
@@ -145,6 +156,10 @@ pub async fn query_by_property_inner(
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
     let op = operator.as_deref().unwrap_or("eq");
+    let value_text_in_slice: &[String] = value_text_in.as_deref().unwrap_or(&[]);
+    let value_date_range_ref: Option<(&str, &str)> = value_date_range
+        .as_ref()
+        .map(|(from, to)| (from.as_str(), to.as_str()));
     pagination::query_by_property(
         pool,
         &key,
@@ -155,6 +170,9 @@ pub async fn query_by_property_inner(
         scope.as_filter_param(),
         exclude_parent_id.as_deref(),
         content_non_empty,
+        block_type.as_deref(),
+        value_text_in_slice,
+        value_date_range_ref,
     )
     .await
 }
@@ -420,6 +438,15 @@ pub async fn search_blocks(
 }
 
 /// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
+///
+/// All push-down filters (`exclude_parent_id`, `content_non_empty`,
+/// `block_type`, `value_text_in`, `value_date_range`) are bundled
+/// into [`ExtraQueryFilters`] to keep this wrapper under the
+/// `tauri-specta` 10-arg limit. The hand-written TS wrapper in
+/// `src/lib/tauri.ts` keeps the flat public API at
+/// `queryByProperty({ blockType, valueTextIn, ... })` and marshals
+/// into the struct only at the IPC boundary, mirroring the
+/// [`AgendaQuery`] precedent on `list_blocks`.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -433,9 +460,19 @@ pub async fn query_by_property(
     cursor: Option<String>,
     limit: Option<i64>,
     scope: SpaceScope,
-    exclude_parent_id: Option<String>,
-    content_non_empty: bool,
+    extra_filters: Option<ExtraQueryFilters>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
+    let (exclude_parent_id, content_non_empty, block_type, value_text_in, value_date_range) =
+        match extra_filters {
+            Some(f) => (
+                f.exclude_parent_id,
+                f.content_non_empty.unwrap_or(false),
+                f.block_type,
+                f.value_text_in,
+                f.value_date_range,
+            ),
+            None => (None, false, None, None, None),
+        };
     query_by_property_inner(
         &pool.0,
         key,
@@ -447,6 +484,9 @@ pub async fn query_by_property(
         &scope,
         exclude_parent_id,
         content_non_empty,
+        block_type,
+        value_text_in,
+        value_date_range,
     )
     .await
     .map_err(sanitize_internal_error)

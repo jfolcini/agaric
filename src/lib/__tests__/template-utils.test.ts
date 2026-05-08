@@ -38,8 +38,7 @@ describe('loadTemplatePages', () => {
       cursor: null,
       limit: 100,
       scope: { kind: 'global' },
-      excludeParentId: null,
-      contentNonEmpty: false,
+      extraFilters: null,
     })
     expect(result).toHaveLength(2)
     expect(result[0]?.id).toBe('T1')

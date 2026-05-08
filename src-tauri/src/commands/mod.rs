@@ -438,6 +438,46 @@ pub struct AgendaQuery {
     pub source: Option<String>,
 }
 
+/// Bundled extra filters for the [`query_by_property`] Tauri command.
+///
+/// Exists purely to keep `query_by_property`'s argument count under
+/// the `tauri-specta` 10-arg limit. PEND-35 Tier 1.5 added
+/// `exclude_parent_id` / `content_non_empty` (pushing this command
+/// to 9 IPC args incl. `pool`); PEND-35 Tier 3.4 adds another three
+/// (`block_type`, `value_text_in`, `value_date_range`). Bundling all
+/// five into one struct keeps the IPC arg count at 8.
+///
+/// The five sub-fields are still threaded into
+/// `query_by_property_inner` as individual parameters — bundling is a
+/// transport-layer concern. `None` means "no extra filter applies"
+/// (the common case); each sub-field remains optional inside the
+/// struct so callers can specify just one. The hand-written TS
+/// wrapper in `src/lib/tauri.ts` keeps the flat public API and
+/// marshals into this struct only at the IPC boundary, mirroring the
+/// [`AgendaQuery`] precedent on `list_blocks`.
+///
+/// Serde `rename_all = "camelCase"` matches the Tauri command-arg
+/// convention.
+#[derive(Debug, Clone, Default, serde::Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraQueryFilters {
+    /// PEND-35 Tier 1.5 — exclude rows whose `parent_id` matches.
+    /// `IS NOT` semantics so NULL parents are kept.
+    pub exclude_parent_id: Option<String>,
+    /// PEND-35 Tier 1.5 — drop rows whose content is NULL, empty, or
+    /// whitespace-only (matches FE `!b.content?.trim()`).
+    pub content_non_empty: Option<bool>,
+    /// PEND-35 Tier 3.4 — push `block_type = ?` into SQL.
+    pub block_type: Option<String>,
+    /// PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
+    /// `json_each`. Mutually exclusive with `value_text` on
+    /// `query_by_property`.
+    pub value_text_in: Option<Vec<String>>,
+    /// PEND-35 Tier 3.4 — push `value_date >= from AND value_date < to`
+    /// into SQL (half-open `[from, to)` range).
+    pub value_date_range: Option<(String, String)>,
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct DeleteResponse {
     pub block_id: String,

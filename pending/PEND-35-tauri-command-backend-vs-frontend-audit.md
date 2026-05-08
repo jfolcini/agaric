@@ -1,6 +1,6 @@
 # PEND-35 — Tauri command audit: where the frontend is doing work the database/backend should do
 
-> **Status (session 687):** Tier 1 (6 items) shipped — all six correctness/security findings landed in one batch. Tier 2 (12 items), Tier 3 (4 items), Tier 4 (5 items) remain. Pick & schedule per tier — items are independently approvable.
+> **Status (session 688):** Tier 1 (6 items) + Tier 3 (4 items) shipped. Tier 2 (12 items) and Tier 4 (5 items) remain. Pick & schedule per tier — items are independently approvable.
 
 ## Origin
 
@@ -56,14 +56,14 @@ metadata (PK lookup on URL).
 ## TL;DR
 
 Across the full command surface, **27 actionable findings** survived
-validation; **Tier 1 (6 items) shipped in session 687**, leaving 21
-open. Grouped by tier:
+validation; **Tier 1 (6 items) shipped in session 687** and **Tier 3
+(4 items) shipped in session 688**, leaving 17 open. Grouped by tier:
 
 | Tier | Count | Theme |
 | --- | --- | --- |
 | ~~**1 — Correctness / security**~~ | ~~6~~ ✅ | ~~Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters~~ — **shipped session 687** |
 | **2 — Hot-path performance (N+1, FE intersection)** | 12 | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row |
-| **3 — Indexes & SQL anti-patterns** | 4 | `json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown |
+| ~~**3 — Indexes & SQL anti-patterns**~~ | ~~4~~ ✅ | ~~`json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown~~ — **shipped session 688** |
 | **4 — Minor / low-confidence** | 5 | Single-row reloads, template-loop creates, growing-window history fetches |
 
 Estimated cost is per-item, not bundled.
@@ -199,41 +199,16 @@ All six items landed in one batch (one PR-equivalent commit):
 
 ---
 
-## Tier 3 — Indexes & SQL anti-patterns
+## ~~Tier 3 — Indexes & SQL anti-patterns~~ — shipped session 688
 
-### 3.1 op_log JSON-extract bypasses native indexed column (4 sites)
+All four items landed in one batch:
 
-| What | Detail |
-| --- | --- |
-| **Sites** | `src-tauri/src/pagination/history.rs:127-150` (global branch), `:161-188` (per-page branch); `src-tauri/src/commands/history.rs:390` (`restore_page_to_op_inner`); `:493` (`undo_page_op_inner`). |
-| **Symptom** | All four use `json_extract(ol.payload, '$.block_id') IN (...)` even though migration 0030 added a denormalized `op_log.block_id` column with `idx_op_log_block_id`. The expression index from migration 0003 keeps the predicate indexed, but every row pays a JSON-extract cost on the projection — and the older expression index becomes redundant. |
-| **Recommendation** | **UPDATE** the four SQL strings to read `ol.block_id IN (...)`. After migration, retire `idx_op_log_payload_block_id` (migration 0003). |
-| **Validator verdict** | C7 TRUE, I9 TRUE |
+- **3.1** Four `json_extract(ol.payload, '$.block_id')` sites (in `pagination/history.rs` and `commands/history.rs`) rewritten to read the native `ol.block_id` column added by migration 0030. Migration 0048 retires the now-redundant expression index `idx_op_log_payload_block_id` from migration 0003.
+- **3.2** Migration 0049 adds partial index `idx_blocks_conflict ON blocks(id) WHERE is_conflict = 1 AND deleted_at IS NULL` to support the `list_conflicts` query path. EXPLAIN-QUERY-PLAN test pins the planner choice.
+- **3.3** Migration 0050 adds `idx_tags_cache_name_nocase ON tags_cache(name COLLATE NOCASE)` so the high-volume case-insensitive LIKE-prefix query in every tag picker is index-served.
+- **3.4** `query_by_property` and `query_by_tags`/`eval_tag_query` accept `block_type: Option<String>`. `query_by_property` additionally accepts `value_text_in: Vec<String>` (JSON-each binding) and `value_date_range: Option<(String, String)>` (half-open `[from, to)`). The `query_by_property` Tauri command bundles the new + Tier 1.5 filters into an `ExtraQueryFilters` struct (mirror of `AgendaQuery` precedent) to stay under specta's 10-arg ceiling — flat FE wrapper API preserved.
 
-### 3.2 No partial index for `is_conflict = 1`
-
-| What | Detail |
-| --- | --- |
-| **Site** | `src-tauri/src/pagination/hierarchy.rs:142-167` runs `WHERE is_conflict = 1 AND deleted_at IS NULL ORDER BY id ASC`. Grep across all migrations confirms zero `is_conflict` indexes. |
-| **Recommendation** | **ADD** `CREATE INDEX idx_blocks_conflict ON blocks(id) WHERE is_conflict = 1 AND deleted_at IS NULL` (mirrors `idx_blocks_deleted` in 0001 and `idx_blocks_page_alive` in 0023). |
-| **Validator verdict** | I2 TRUE |
-
-### 3.3 `tags_cache.name` can't satisfy case-insensitive LIKE prefix
-
-| What | Detail |
-| --- | --- |
-| **Site** | `src-tauri/src/tag_query/query.rs:124-135` runs `WHERE name LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT ?2`. Schema (`migrations/0001_initial.sql:94-99`) only has the implicit BINARY index from the `UNIQUE` constraint. SQLite default LIKE is case-insensitive on ASCII; BINARY index can't be used. Sibling `page_aliases` already does NOCASE in `migrations/0015_page_aliases.sql`. |
-| **Symptom** | High-volume site: every keystroke of every tag picker (SearchPanel, TagFilterPanel, TagValuePicker, HasTagFilterForm, useBlockResolve, agenda-filters). Each call full-scans `tags_cache` and re-sorts. |
-| **Recommendation** | **ADD** `CREATE INDEX idx_tags_cache_name_nocase ON tags_cache(name COLLATE NOCASE)` and (optionally) declare `tags_cache.name` itself NOCASE in a new migration. |
-| **Validator verdict** | I3 TRUE |
-
-### 3.4 `query_by_property` and `query_by_tags` lack `block_type` and multi-value filters
-
-| What | Detail |
-| --- | --- |
-| **Sites** | `src-tauri/src/pagination/properties.rs:59-181` (no `block_type`, single equality only); `src-tauri/src/commands/tags.rs:259-300` (`query_by_tags_inner`, no `block_type`). |
-| **Recommendation** (covers 2.8/2.9/2.10) | **UPDATE** both to accept `block_type: Option<String>`; **UPDATE** `query_by_property` to also accept `value_text_in: Vec<String>` and `value_date_range: Option<(String, String)>`. |
-| **Validator verdict** | I4, I5, I6 TRUE |
+These signature expansions enable Tier 2.8 / 2.9 / 2.10 callsite cleanups without further backend changes.
 
 ---
 

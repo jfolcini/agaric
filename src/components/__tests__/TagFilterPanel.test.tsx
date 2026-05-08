@@ -314,6 +314,7 @@ describe('TagFilterPanel', () => {
       cursor: null,
       limit: 50,
       scope: { kind: 'global' },
+      blockType: null,
     })
 
     expect(screen.getByText('work note')).toBeInTheDocument()
@@ -362,6 +363,7 @@ describe('TagFilterPanel', () => {
       cursor: 'cursor_abc',
       limit: 50,
       scope: { kind: 'global' },
+      blockType: null,
     })
 
     // Both results should be accumulated
@@ -719,6 +721,7 @@ describe('TagFilterPanel', () => {
       cursor: null,
       limit: 50,
       scope: { kind: 'global' },
+      blockType: null,
     })
   })
 

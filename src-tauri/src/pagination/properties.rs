@@ -56,6 +56,35 @@ use crate::op::is_reserved_property_key;
 /// Two precedence rules in one function depending on the routing
 /// branch is a downstream-bug shape; rejecting the conflict at the
 /// boundary keeps the contract uniform.
+///
+/// # Multi-value filters (PEND-35 Tier 3.4)
+///
+/// `value_text_in` is an alternative to `value_text` for set-membership
+/// checks: when non-empty, rows are filtered by `value IN (...)` against
+/// the `block_properties.value_text` column (non-reserved path) or the
+/// matching reserved column (reserved-key path, e.g. `b.todo_state IN
+/// (...)`). The values are bound as a JSON array via `json_each(?N)` so
+/// SQLite parses a single string parameter rather than splatting the
+/// vec into `N` placeholders. When empty, behaviour is identical to the
+/// pre-Tier-3.4 path.
+///
+/// `value_text_in` and `value_text` are mutually exclusive — supplying
+/// both is rejected with [`AppError::Validation`]. Precedence: when
+/// `value_text_in` is non-empty, it wins; `value_text` must be `None`.
+///
+/// `value_date_range` filters on `[from, to)` (half-open: rows with
+/// `value_date == to` are excluded). The shape mirrors typical FE
+/// date-range pickers where the "to" represents an exclusive upper
+/// bound (e.g. "due before 2026-02-01" excludes rows on Feb 1). On the
+/// reserved-key path, the range is applied to the matching column
+/// (e.g. `b.due_date`); for `due_date` / `scheduled_date`, prefer
+/// `value_date_range` over `value_text_in`.
+///
+/// # Block-type filter (PEND-35 Tier 3.4)
+///
+/// `block_type` is a simple equality push-down on `b.block_type` — when
+/// `Some`, only rows whose block matches are returned. `None` is the
+/// unfiltered (pre-Tier-3.4) behaviour.
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_property(
     pool: &SqlitePool,
@@ -67,12 +96,24 @@ pub async fn query_by_property(
     space_id: Option<&str>,
     exclude_parent_id: Option<&str>,
     content_non_empty: bool,
+    block_type: Option<&str>,
+    value_text_in: &[String],
+    value_date_range: Option<(&str, &str)>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // L-23: reject conflicting value filters at the boundary so both
     // routing branches behave identically wrt the value-filter contract.
     if value_text.is_some() && value_date.is_some() {
         return Err(AppError::Validation(
             "query_by_property: at most one of value_text / value_date may be supplied".to_string(),
+        ));
+    }
+
+    // PEND-35 Tier 3.4 — `value_text_in` is an alternative to
+    // `value_text`. Allowing both would require choosing precedence in
+    // SQL; rejecting at the boundary keeps the contract single-shape.
+    if !value_text_in.is_empty() && value_text.is_some() {
+        return Err(AppError::Validation(
+            "query_by_property: value_text_in and value_text are mutually exclusive".to_string(),
         ));
     }
 
@@ -97,6 +138,26 @@ pub async fn query_by_property(
     // `(?N = 0 OR …)` short-circuit produces the same plan as the
     // pre-PEND-35 path when the filter is disabled.
     let content_filter_flag: i64 = i64::from(content_non_empty);
+
+    // PEND-35 Tier 3.4 — `value_text_in` is bound as a JSON array via
+    // `json_each(?N)` so the unfiltered path passes a NULL and the
+    // `(?N IS NULL OR …)` short-circuit produces the same plan as
+    // pre-Tier-3.4. The non-empty path serialises once per call.
+    let value_text_in_json: Option<String> = if value_text_in.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(value_text_in)?)
+    };
+
+    // PEND-35 Tier 3.4 — `value_date_range` is split into two binds so
+    // each side participates in the `(?N IS NULL OR …)` short-circuit.
+    // Half-open `[from, to)` semantics: a row whose date equals `to`
+    // is EXCLUDED — matches typical FE date-pickers where the upper
+    // bound is exclusive.
+    let (value_date_from, value_date_to): (Option<&str>, Option<&str>) = match value_date_range {
+        Some((from, to)) => (Some(from), Some(to)),
+        None => (None, None),
+    };
 
     // FEAT-3p4 — both branches gain the `(?N IS NULL OR
     // COALESCE(b.page_id, b.id) IN (...))` space-filter clause. The
@@ -136,6 +197,13 @@ pub async fn query_by_property(
                 )));
             }
         };
+        // PEND-35 Tier 3.4 — three new clauses on the reserved-key path:
+        //   ?8  block_type equality push-down
+        //   ?9  value_text_in (JSON array; bound against `b.{col}`
+        //       because `bp.value_text` does not exist on this path)
+        //   ?10/?11  value_date_range half-open `[from, to)`
+        //       (applied against `b.{col}` so a query on `due_date`
+        //       binds the range to the date column directly)
         let sql = format!(
             "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                     b.deleted_at, b.is_conflict, b.conflict_type, \
@@ -152,6 +220,10 @@ pub async fn query_by_property(
                     WHERE bp.key = 'space' AND bp.value_ref = ?5)) \
                AND (?6 IS NULL OR b.parent_id IS NOT ?6) \
                AND (?7 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
+               AND (?8 IS NULL OR b.block_type = ?8) \
+               AND (?9 IS NULL OR b.{col} IN (SELECT value FROM json_each(?9))) \
+               AND (?10 IS NULL OR b.{col} >= ?10) \
+               AND (?11 IS NULL OR b.{col} < ?11) \
              ORDER BY b.id ASC \
              LIMIT ?4"
         );
@@ -161,17 +233,25 @@ pub async fn query_by_property(
             _ => value_text.or(value_date),
         };
         sqlx::query_as::<_, BlockRow>(&sql)
-            .bind(filter_value)
-            .bind(cursor_flag)
-            .bind(cursor_id)
-            .bind(fetch_limit)
-            .bind(space_id)
-            .bind(exclude_parent_id)
-            .bind(content_filter_flag)
+            .bind(filter_value) // ?1
+            .bind(cursor_flag) // ?2
+            .bind(cursor_id) // ?3
+            .bind(fetch_limit) // ?4
+            .bind(space_id) // ?5
+            .bind(exclude_parent_id) // ?6
+            .bind(content_filter_flag) // ?7
+            .bind(block_type) // ?8
+            .bind(value_text_in_json.as_deref()) // ?9
+            .bind(value_date_from) // ?10
+            .bind(value_date_to) // ?11
             .fetch_all(pool)
             .await?
     } else {
         // Dynamic SQL needed because sqlx::query_as! macro cannot interpolate operators.
+        // PEND-35 Tier 3.4 — three new clauses on the non-reserved path:
+        //   ?10  block_type equality push-down on `b.block_type`
+        //   ?11  value_text_in (JSON array) bound against `bp.value_text`
+        //   ?12/?13  value_date_range half-open `[from, to)` against `bp.value_date`
         let sql = format!(
             "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                     b.deleted_at, b.is_conflict, b.conflict_type, \
@@ -190,6 +270,10 @@ pub async fn query_by_property(
                     WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?7)) \
                AND (?8 IS NULL OR b.parent_id IS NOT ?8) \
                AND (?9 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
+               AND (?10 IS NULL OR b.block_type = ?10) \
+               AND (?11 IS NULL OR bp.value_text IN (SELECT value FROM json_each(?11))) \
+               AND (?12 IS NULL OR bp.value_date >= ?12) \
+               AND (?13 IS NULL OR bp.value_date < ?13) \
              ORDER BY b.id ASC \
              LIMIT ?6"
         );
@@ -203,6 +287,10 @@ pub async fn query_by_property(
             .bind(space_id) // ?7
             .bind(exclude_parent_id) // ?8
             .bind(content_filter_flag) // ?9
+            .bind(block_type) // ?10
+            .bind(value_text_in_json.as_deref()) // ?11
+            .bind(value_date_from) // ?12
+            .bind(value_date_to) // ?13
             .fetch_all(pool)
             .await?
     };

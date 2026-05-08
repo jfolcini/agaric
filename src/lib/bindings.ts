@@ -77,9 +77,44 @@ export const commands = {
 	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
 	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
 	// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
-	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope })),
-	// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
-	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, scope: SpaceScope, excludeParentId: string | null, contentNonEmpty: boolean) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, excludeParentId, contentNonEmpty })),
+	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope, blockType })),
+	/**
+	 *  Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
+	 *
+	 *  All push-down filters (`exclude_parent_id`, `content_non_empty`,
+	 *  `block_type`, `value_text_in`, `value_date_range`) are bundled
+	 *  into [`ExtraQueryFilters`] to keep this wrapper under the
+	 *  `tauri-specta` 10-arg limit. The hand-written TS wrapper in
+	 *  `src/lib/tauri.ts` keeps the flat public API at
+	 *  `queryByProperty({ blockType, valueTextIn, ... })` and marshals
+	 *  into the struct only at the IPC boundary, mirroring the
+	 *  [`AgendaQuery`] precedent on `list_blocks`.
+	 */
+	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, scope: SpaceScope, extraFilters: {
+	/**
+	 *  PEND-35 Tier 1.5 — exclude rows whose `parent_id` matches.
+	 *  `IS NOT` semantics so NULL parents are kept.
+	 */
+	excludeParentId: string | null,
+	/**
+	 *  PEND-35 Tier 1.5 — drop rows whose content is NULL, empty, or
+	 *  whitespace-only (matches FE `!b.content?.trim()`).
+	 */
+	contentNonEmpty: boolean | null,
+	// PEND-35 Tier 3.4 — push `block_type = ?` into SQL.
+	blockType: string | null,
+	/**
+	 *  PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
+	 *  `json_each`. Mutually exclusive with `value_text` on
+	 *  `query_by_property`.
+	 */
+	valueTextIn: string[] | null,
+	/**
+	 *  PEND-35 Tier 3.4 — push `value_date >= from AND value_date < to`
+	 *  into SQL (half-open `[from, to)` range).
+	 */
+	valueDateRange: [string, string] | null,
+} | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, extraFilters })),
 	// Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`].
 	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
 	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
@@ -744,6 +779,54 @@ export type Draft = {
 	block_id: string,
 	content: string,
 	updated_at: string,
+};
+
+/**
+ *  Bundled extra filters for the [`query_by_property`] Tauri command.
+ *
+ *  Exists purely to keep `query_by_property`'s argument count under
+ *  the `tauri-specta` 10-arg limit. PEND-35 Tier 1.5 added
+ *  `exclude_parent_id` / `content_non_empty` (pushing this command
+ *  to 9 IPC args incl. `pool`); PEND-35 Tier 3.4 adds another three
+ *  (`block_type`, `value_text_in`, `value_date_range`). Bundling all
+ *  five into one struct keeps the IPC arg count at 8.
+ *
+ *  The five sub-fields are still threaded into
+ *  `query_by_property_inner` as individual parameters — bundling is a
+ *  transport-layer concern. `None` means "no extra filter applies"
+ *  (the common case); each sub-field remains optional inside the
+ *  struct so callers can specify just one. The hand-written TS
+ *  wrapper in `src/lib/tauri.ts` keeps the flat public API and
+ *  marshals into this struct only at the IPC boundary, mirroring the
+ *  [`AgendaQuery`] precedent on `list_blocks`.
+ *
+ *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
+ *  convention.
+ */
+export type ExtraQueryFilters = {
+	/**
+	 *  PEND-35 Tier 1.5 — exclude rows whose `parent_id` matches.
+	 *  `IS NOT` semantics so NULL parents are kept.
+	 */
+	excludeParentId: string | null,
+	/**
+	 *  PEND-35 Tier 1.5 — drop rows whose content is NULL, empty, or
+	 *  whitespace-only (matches FE `!b.content?.trim()`).
+	 */
+	contentNonEmpty: boolean | null,
+	// PEND-35 Tier 3.4 — push `block_type = ?` into SQL.
+	blockType: string | null,
+	/**
+	 *  PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
+	 *  `json_each`. Mutually exclusive with `value_text` on
+	 *  `query_by_property`.
+	 */
+	valueTextIn: string[] | null,
+	/**
+	 *  PEND-35 Tier 3.4 — push `value_date >= from AND value_date < to`
+	 *  into SQL (half-open `[from, to)` range).
+	 */
+	valueDateRange: [string, string] | null,
 };
 
 /**

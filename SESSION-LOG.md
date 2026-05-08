@@ -2,11 +2,67 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 687 (Session 687: PEND-35 Tier 1 — six correctness/security fixes shipped in one batch (cross-space leaks in `import_markdown` / `resolve_page_by_alias` / `count_backlinks_batch`; FE-filter-broke-paging in `get_block_history` / `get_conflicts` / `query_by_property`). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 688 (Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column rewrites + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown to `query_by_property`/`query_by_tags` plus `ExtraQueryFilters` bundle to stay under specta's 10-arg ceiling). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 688 — PEND-35 Tier 3 (4 items): indexes + SQL anti-patterns (2026-05-08)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-08 |
+| **Subagents** | 4 build + 2 review (technical only — backend-only changes, no UX surface) |
+| **Items closed** | PEND-35 Tier 3.1, 3.2, 3.3, 3.4 |
+| **Items modified** | PEND-35 (Tier 3 section retired; TL;DR + status header updated) |
+| **Tests added** | +7 backend / +2 frontend (3.1: 1 repurposed migration test; 3.2: 1 EXPLAIN test; 3.3: 1 EXPLAIN test; 3.4: 5 backend + 2 frontend) |
+| **Files touched** | 24 source files + 3 new migrations + 4 .sqlx cache delta |
+
+**Summary:** Closed all four Tier 3 (indexes / SQL anti-patterns) findings from the PEND-35 audit. Three migrations land: 0048 retires the redundant op_log expression index from migration 0003 (now that 4 query sites read the denormalized `op_log.block_id` column added in migration 0030); 0049 adds a partial index `idx_blocks_conflict` for the conflict-listing query; 0050 adds `idx_tags_cache_name_nocase` so every tag-picker keystroke can index-serve the case-insensitive LIKE-prefix query. The fourth item expands `query_by_property` (block_type + value_text_in via json_each + value_date_range half-open) and `query_by_tags`/`eval_tag_query` (block_type) — the `query_by_property` Tauri command bundles the Tier 1.5 + Tier 3.4 filters into an `ExtraQueryFilters` struct to stay under specta's 10-arg ceiling, mirror-pattern of `AgendaQuery`. The flat FE wrapper API is preserved. These signature expansions are the prerequisite for Tier 2.8/2.9/2.10 callsite cleanups in a future batch.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND-35 audit, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src-tauri/migrations/0048_drop_op_log_payload_block_id_index.sql` (new) — `DROP INDEX IF EXISTS idx_op_log_payload_block_id;`
+- `src-tauri/migrations/0049_index_blocks_conflict.sql` (new) — partial index on `(id) WHERE is_conflict = 1 AND deleted_at IS NULL`
+- `src-tauri/migrations/0050_index_tags_cache_name_nocase.sql` (new) — `idx_tags_cache_name_nocase ON tags_cache(name COLLATE NOCASE)`
+- `src-tauri/src/pagination/history.rs` — 2 sites: `json_extract(ol.payload, '$.block_id')` → `ol.block_id`
+- `src-tauri/src/commands/history.rs` — 2 sites: `o.payload` and `ol.payload` aliases
+- `src-tauri/src/op_log.rs` — repurposed test confirms migration 0048 dropped the legacy index AND `idx_op_log_block_id` is intact
+- `src-tauri/src/pagination/properties.rs` — `query_by_property` gains `block_type` / `value_text_in` / `value_date_range` on both reserved-key and non-reserved-key branches; `value_text_in` / `value_text` mutual-exclusion validation
+- `src-tauri/src/tag_query/query.rs` — `eval_tag_query` gains `block_type`; new `list_tags_by_prefix_uses_nocase_index` test
+- `src-tauri/src/commands/queries.rs` — `query_by_property_inner` + Tauri wrapper; `ExtraQueryFilters` IPC bundle
+- `src-tauri/src/commands/tags.rs` — `query_by_tags_inner` + wrapper gain `block_type`
+- `src-tauri/src/commands/mod.rs` — new `ExtraQueryFilters` struct (specta `Type, Serialize, Deserialize, Default` derivations, `serde(rename_all = "camelCase")`)
+- `src-tauri/src/pagination/tests.rs` — new `list_conflicts_uses_partial_index` EXPLAIN test; existing call-sites updated to new arity
+- `src-tauri/src/commands/tests/{query,tag}_cmd_tests.rs`, `src-tauri/src/command_integration_tests/property_integration.rs`, `src-tauri/src/integration_tests.rs` — call-site updates + 5 new query_by_property/query_by_tags tests
+- `src-tauri/benches/tag_query_bench.rs` — call-site updates (5 sites)
+- `src/lib/tauri.ts` — wrappers expose flat API for `queryByProperty` / `queryByTags`; bundle into `extraFilters` at IPC boundary
+- `src/lib/bindings.ts` — regenerated by specta
+- `src/lib/tauri-mock/handlers.ts` — mocks honour all five extraFilters knobs + blockType on query_by_tags (parity with backend half-open date range and json_each set membership)
+- `src/components/__tests__/{QueryResult,TagFilterPanel}.test.tsx`, `src/lib/__tests__/{tauri,agenda-filters,template-utils}.test.ts` — call-site updates + 2 new FE round-trip tests
+- `src-tauri/.sqlx/` — 3 entries deleted (old json_extract shapes from 3.1), 4 added (new `ol.block_id IN` shapes — one extra appears to come from a related query path)
+- `pending/PEND-35-tauri-command-backend-vs-frontend-audit.md` — Tier 3 section retired; TL;DR + status header updated
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3661 tests run, 3661 passed (+7 from baseline 3654 after Tier 1).
+- `npx vitest run` — 9601 tests passed across 386 files.
+- `cd src-tauri && cargo check --benches` — clean.
+- `prek run --all-files` — pending (run at commit time).
+
+**Process notes:**
+- Four build subagents launched in parallel by item (3.1 / 3.2 / 3.3 / 3.4). Migration numbers 0048/0049/0050 pre-allocated by orchestrator to avoid collision. 3.1, 3.2, 3.3 reported in 5-7 minutes each; 3.4 took ~25 minutes because it had to propagate signature changes through `tag_query/query.rs`, `commands/tags.rs`, three integration test files, and the `tag_query_bench.rs` (signature was 5-arg, now 6-arg in `eval_tag_query` + 8→9-arg in `query_by_tags_inner`).
+- Two review subagents (no UX review needed — Tier 3 is backend-only). T1 (3.1+3.2+3.3) FIX-APPLIED `IF NOT EXISTS` to migrations 0049/0050 for consistency with the rest of the migration corpus. T2 (3.4) PASS — no fixes, but spot-checked the half-open date range with mutation testing to confirm the test is load-bearing.
+
+**Lessons learned (for future sessions):**
+- When adding a new IPC arg pushes the wrapper past specta's 10-arg ceiling, bundle into a struct rather than splitting commands — `AgendaQuery` is the canonical precedent. Folding adjacent recently-added knobs into the same bundle (Tier 1.5's `excludeParentId`/`contentNonEmpty` here) is fine and keeps headroom for future filters.
+- For migration-only batches, a single `EXPLAIN QUERY PLAN`-asserts-index-name test per index is enough verification — but ONLY if the test SQL byte-mirrors the production SQL. Drift between test SQL and production SQL silently invalidates the assertion. Worth establishing a helper that pulls the SQL from a constant shared between production code and test, or at minimum a code comment cross-referencing the production line numbers.
+
+**Commit plan:** single commit.
+
+---
 ## Session 687 — PEND-35 Tier 1 (6 items): cross-space leaks + paging-broken-by-FE-filter (2026-05-08)
 
 | Metadata | Value |
