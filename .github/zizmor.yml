@@ -33,9 +33,9 @@ rules:
       - ci.yml:181
       - ci.yml:51
       - release.yml:37
-      - release.yml:88
-      - release.yml:132
-      - release.yml:374
+      - release.yml:99
+      - release.yml:143
+      - release.yml:385
   cache-poisoning:
     ignore:
       - ci.yml:189
@@ -47,12 +47,12 @@ rules:
       - ci.yml:83
       - release.yml:3
       - release.yml:51
-      - release.yml:140
-      - release.yml:171
-      - release.yml:172
-      - release.yml:382
-      - release.yml:406
-      - release.yml:407
+      - release.yml:151
+      - release.yml:182
+      - release.yml:183
+      - release.yml:393
+      - release.yml:417
+      - release.yml:418
   excessive-permissions:
     ignore:
       - release.yml:20
@@ -81,15 +81,15 @@ rules:
       - release.yml:38
       - release.yml:49
       - release.yml:51
-      - release.yml:88
-      - release.yml:132
-      - release.yml:135
-      - release.yml:140
-      - release.yml:171
-      - release.yml:180
-      - release.yml:374
-      - release.yml:377
-      - release.yml:382
-      - release.yml:392
-      - release.yml:398
-      - release.yml:406
+      - release.yml:99
+      - release.yml:143
+      - release.yml:146
+      - release.yml:151
+      - release.yml:182
+      - release.yml:191
+      - release.yml:385
+      - release.yml:388
+      - release.yml:393
+      - release.yml:403
+      - release.yml:409
+      - release.yml:417
