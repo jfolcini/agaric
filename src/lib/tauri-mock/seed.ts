@@ -179,6 +179,32 @@ export function seedBlocks(): void {
   blocks.set(SEED_IDS.PAGE_PROJECTS, makeBlock(SEED_IDS.PAGE_PROJECTS, 'page', 'Projects', null, 3))
   blocks.set(SEED_IDS.PAGE_MEETINGS, makeBlock(SEED_IDS.PAGE_MEETINGS, 'page', 'Meetings', null, 4))
 
+  // BUG-48: every seeded page belongs to the canonical Personal space —
+  // the new `get_journal_page_by_date` / `list_journal_pages_in_range`
+  // handlers filter by the `space` ref property to mirror the real
+  // backend's per-space scoping. Without this, e2e tests that exercise
+  // the journal view (DuePanel, calendar dot dots, navigation) would
+  // see today's seeded daily page as foreign-space and silently hide
+  // it.
+  for (const pageId of [
+    SEED_IDS.PAGE_GETTING_STARTED,
+    SEED_IDS.PAGE_QUICK_NOTES,
+    SEED_IDS.PAGE_DAILY,
+    SEED_IDS.PAGE_PROJECTS,
+    SEED_IDS.PAGE_MEETINGS,
+  ]) {
+    if (!properties.has(pageId)) properties.set(pageId, new Map())
+    properties.get(pageId)?.set('space', {
+      block_id: pageId,
+      key: 'space',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: 'SPACE_PERSONAL',
+      value_bool: null,
+    })
+  }
+
   // Content blocks — children of "Getting Started"
   blocks.set(
     SEED_IDS.BLOCK_GS_1,
