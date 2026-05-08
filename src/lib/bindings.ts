@@ -17,10 +17,30 @@ export const commands = {
 	editBlock: (blockId: string, toText: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("edit_block", { blockId, toText })),
 	// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 	deleteBlock: (blockId: string) => typedError<DeleteResponse, AppErrorSchema>(__TAURI_INVOKE("delete_block", { blockId })),
+	/**
+	 *  Tauri command: batch-delete blocks by ids (PEND-35 Tier 2.1).
+	 *
+	 *  Delegates to [`delete_blocks_by_ids_inner`]. Single IMMEDIATE tx
+	 *  covers the whole batch — collapses the legacy N-IPC loop in
+	 *  `useBlockMultiSelect.handleBatchDelete` into one round-trip and
+	 *  one writer-lock window. Returns the number of blocks soft-deleted
+	 *  (roots + descendants combined).
+	 */
+	deleteBlocksByIds: (blockIds: string[]) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
 	// Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
 	restoreBlock: (blockId: string, deletedAtRef: string) => typedError<RestoreResponse, AppErrorSchema>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
 	// Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`].
 	purgeBlock: (blockId: string) => typedError<PurgeResponse, AppErrorSchema>(__TAURI_INVOKE("purge_block", { blockId })),
+	/**
+	 *  PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in one IPC.
+	 *  Delegates to [`restore_blocks_by_ids_inner`].
+	 */
+	restoreBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("restore_blocks_by_ids", { blockIds })),
+	/**
+	 *  PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in one IPC.
+	 *  Delegates to [`purge_blocks_by_ids_inner`].
+	 */
+	purgeBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("purge_blocks_by_ids", { blockIds })),
 	// Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`].
 	moveBlock: (blockId: string, newParentId: string | null, newPosition: number) => typedError<MoveResponse, AppErrorSchema>(__TAURI_INVOKE("move_block", { blockId, newParentId, newPosition })),
 	/**
@@ -131,6 +151,20 @@ export const commands = {
 	setProperty: (blockId: string, key: string, value: SetPropertyArgs) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_property", { blockId, key, value })),
 	// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
 	setTodoState: (blockId: string, state: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
+	/**
+	 *  Tauri command: batch-set todo state on multiple blocks (PEND-35 Tier 2.1).
+	 *
+	 *  Delegates to [`set_todo_state_batch_inner`]. Single IMMEDIATE tx
+	 *  covers every per-block write — collapses the legacy N-IPC loop the
+	 *  FE used to drive in `useBlockMultiSelect.handleBatchSetTodo` into
+	 *  one round-trip / one op_log seq range / one writer-lock window.
+	 *
+	 *  Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
+	 *  so existing per-block listeners (e.g. agenda recompute, property
+	 *  drawer) keep firing without protocol changes. Failed-emit
+	 *  breadcrumbs follow the established log-on-error pattern (L-33).
+	 */
+	setTodoStateBatch: (blockIds: string[], state: string | null) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
 	 *  Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
 	 *

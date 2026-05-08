@@ -638,7 +638,10 @@ describe('TrashView', () => {
     expect(screen.getByRole('button', { name: /^Purge selected$/i })).toBeInTheDocument()
   })
 
-  it('batch restore calls restoreBlock for each selected', async () => {
+  // PEND-35 Tier 2.2 — batch restore is one IPC. The previous version of
+  // this test pinned a per-row `restore_block` loop; that path is now
+  // collapsed into a single `restore_blocks_by_ids` call.
+  it('batch restore fires ONE restore_blocks_by_ids IPC for all selected', async () => {
     const user = userEvent.setup()
     const blocks = [
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
@@ -647,7 +650,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
 
@@ -665,15 +668,13 @@ describe('TrashView', () => {
     await user.click(restoreSelectedBtn)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
-        blockId: 'B1',
-        deletedAtRef: '2025-01-15T00:00:00Z',
-      })
-      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
-        blockId: 'B2',
-        deletedAtRef: '2025-01-14T00:00:00Z',
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+        blockIds: ['B1', 'B2'],
       })
     })
+
+    // Per-row restore_block must NOT be called
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_block', expect.anything())
 
     // Should show batch toast
     await waitFor(() => {
@@ -681,7 +682,9 @@ describe('TrashView', () => {
     })
   })
 
-  it('batch purge shows confirmation dialog then calls purgeBlock for each', async () => {
+  // PEND-35 Tier 2.2 — batch purge is one IPC. Previous test pinned a
+  // per-row `purge_block` loop; collapsed to `purge_blocks_by_ids`.
+  it('batch purge shows confirmation then fires ONE purge_blocks_by_ids IPC', async () => {
     const user = userEvent.setup()
     const blocks = [
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
@@ -690,7 +693,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_block') return { block_id: 'XX', purged_count: 1 }
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
 
@@ -715,9 +718,13 @@ describe('TrashView', () => {
     await user.click(yesBtn)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('purge_block', { blockId: 'B1' })
-      expect(mockedInvoke).toHaveBeenCalledWith('purge_block', { blockId: 'B2' })
+      expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', {
+        blockIds: ['B1', 'B2'],
+      })
     })
+
+    // Per-row purge_block must NOT be called
+    expect(mockedInvoke).not.toHaveBeenCalledWith('purge_block', expect.anything())
 
     // Should show batch toast
     await waitFor(() => {
@@ -1601,7 +1608,8 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      // PEND-35 Tier 2.2 — single-IPC batch restore.
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
 
@@ -1628,7 +1636,8 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_block') return { block_id: 'XX', purged_count: 1 }
+      // PEND-35 Tier 2.2 — single-IPC batch purge.
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
 
@@ -1738,7 +1747,8 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      // PEND-35 Tier 2.2 — single-IPC batch restore.
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
 
@@ -1758,14 +1768,9 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     await user.keyboard('{Shift>}R{/Shift}')
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'restore_block',
-        expect.objectContaining({ blockId: 'B1' }),
-      )
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'restore_block',
-        expect.objectContaining({ blockId: 'B2' }),
-      )
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+        blockIds: ['B1', 'B2'],
+      })
     })
   })
 
@@ -1799,7 +1804,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
       return undefined
     })
 
@@ -1809,9 +1814,10 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     await user.keyboard('{Shift>}R{/Shift}')
     await user.keyboard('{Shift>}{Delete}{/Shift}')
 
-    // Neither shortcut should have produced a side-effect: no restore_block,
+    // Neither shortcut should have produced a side-effect: no batch IPC,
     // no batch purge confirmation dialog mounted.
-    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_blocks_by_ids', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('purge_blocks_by_ids', expect.anything())
     expect(screen.queryByText(/Permanently delete \d+ items\?/i)).not.toBeInTheDocument()
   })
 
@@ -1851,9 +1857,9 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_block') {
+      if (cmd === 'restore_blocks_by_ids') {
         restoreCalls++
-        return { block_id: 'XX', restored_count: 1 }
+        return { affected_count: 6 }
       }
       return undefined
     })
@@ -1876,8 +1882,9 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     // Confirm — now the actual batch restore fires.
     await user.click(screen.getByTestId('trash-batch-restore-yes'))
 
+    // PEND-35 Tier 2.2 — single IPC for the entire batch.
     await waitFor(() => {
-      expect(restoreCalls).toBe(6)
+      expect(restoreCalls).toBe(1)
     })
   })
 
@@ -1890,7 +1897,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 3 }
       return undefined
     })
 
@@ -1907,11 +1914,11 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     await user.click(screen.getByTestId('trash-batch-restore-btn'))
 
     expect(screen.queryByTestId('trash-batch-restore-confirm')).not.toBeInTheDocument()
+    // PEND-35 Tier 2.2 — single batch IPC for the whole selection.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'restore_block',
-        expect.objectContaining({ blockId: 'B0' }),
-      )
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+        blockIds: ['B0', 'B1', 'B2'],
+      })
     })
   })
 
@@ -1924,7 +1931,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 6 }
       return undefined
     })
 
@@ -1944,7 +1951,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('trash-batch-restore-confirm')).not.toBeInTheDocument()
     })
-    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_blocks_by_ids', expect.anything())
   })
 })
 

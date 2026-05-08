@@ -41,7 +41,17 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockMultiSe
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(undefined)
+  // Default mock: every batch IPC reports "all input ids handled".
+  // Per-test overrides return specific counts to exercise the
+  // affected-count branch in the toast logic.
+  mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
+    if (cmd === 'set_todo_state_batch' || cmd === 'delete_blocks_by_ids') {
+      const a = args as Record<string, unknown>
+      const ids = (a['blockIds'] as string[]) ?? []
+      return Promise.resolve(ids.length)
+    }
+    return Promise.resolve(undefined)
+  })
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({
     blocks: [
@@ -69,7 +79,9 @@ describe('useBlockMultiSelect initial state', () => {
 })
 
 describe('useBlockMultiSelect handleBatchSetTodo', () => {
-  it('sets todo state on all selected blocks optimistically', async () => {
+  // PEND-35 Tier 2.1 — was N IPCs (one `set_todo_state` per block);
+  // is now ONE `set_todo_state_batch` IPC carrying the whole id list.
+  it('fires a single set_todo_state_batch IPC for the whole selection', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -77,12 +89,9 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
       await result.current.handleBatchSetTodo('TODO')
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
-      blockId: 'BLOCK_1',
-      state: 'TODO',
-    })
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
-      blockId: 'BLOCK_2',
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
+      blockIds: ['BLOCK_1', 'BLOCK_2'],
       state: 'TODO',
     })
   })
@@ -109,8 +118,26 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalled()
   })
 
-  it('shows error toast when some IPC calls fail', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('fail'))
+  it('shows error toast when the batch IPC fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetTodo('TODO')
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalled()
+  })
+
+  it('shows error toast when the backend silently skipped some ids', async () => {
+    // Backend returns affected_count < ids.length when some ids are
+    // missing or already-deleted. The hook surfaces that as a partial
+    // failure so the user sees an honest summary.
+    mockedInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'set_todo_state_batch') return Promise.resolve(1) // 1 of 2
+      return Promise.resolve(undefined)
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -141,15 +168,19 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
       await result.current.handleBatchSetTodo(null)
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
-      blockId: 'BLOCK_1',
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
+      blockIds: ['BLOCK_1', 'BLOCK_2'],
       state: null,
     })
   })
 })
 
 describe('useBlockMultiSelect handleBatchDelete', () => {
-  it('deletes selected blocks', async () => {
+  // PEND-35 Tier 2.1 — was N IPCs (one `delete_block` per block); is
+  // now ONE `delete_blocks_by_ids` IPC carrying the whole id list.
+  // The backend's recursive CTE walks every root's subtree in one tx,
+  // so the FE no longer needs the MAINT-173 ancestor pre-walk.
+  it('fires a single delete_blocks_by_ids IPC for the whole selection', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -157,8 +188,10 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
       await result.current.handleBatchDelete()
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'BLOCK_1' })
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'BLOCK_2' })
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['BLOCK_1', 'BLOCK_2'],
+    })
   })
 
   it('clears selection after delete', async () => {
@@ -172,7 +205,12 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     expect(params.clearSelected).toHaveBeenCalled()
   })
 
-  it('filters out child blocks whose parent is also selected', async () => {
+  // PEND-35 Tier 2.1 — the FE no longer pre-walks ancestors. The
+  // backend's recursive CTE handles ancestor coalescing in one tx, so
+  // even when both an ancestor and its descendant are selected the FE
+  // sends the raw selection unchanged. Asserts the new behaviour:
+  // single IPC, every selected id present in the payload.
+  it('passes both ancestor and descendant ids through unchanged (backend coalesces)', async () => {
     pageStore.setState({
       blocks: [makeBlock({ id: 'PARENT' }), makeBlock({ id: 'CHILD', parent_id: 'PARENT' })],
     })
@@ -186,11 +224,15 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'PARENT' })
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['PARENT', 'CHILD'],
+    })
   })
 
-  // #MAINT-173 — ancestor-walk filter (not just direct-parent filter).
-  it('filters out transitive descendants whose ancestor is also selected', async () => {
+  // PEND-35 Tier 2.1 — the MAINT-173 ancestor-walk filter is gone (the
+  // backend's recursive CTE seeded from every root subsumes the same
+  // descendant set). Transitive descendants are passed through unchanged.
+  it('passes transitive descendants through unchanged (backend coalesces via CTE)', async () => {
     pageStore.setState({
       blocks: [
         makeBlock({ id: 'A' }),
@@ -208,7 +250,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'A' })
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['A', 'C'] })
   })
 
   it('deletes independent siblings when neither is an ancestor of the other', async () => {
@@ -229,9 +271,8 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
       await result.current.handleBatchDelete()
     })
 
-    expect(mockedInvoke).toHaveBeenCalledTimes(2)
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'A' })
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'C' })
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['A', 'C'] })
   })
 
   it('deletes a block whose parent_id points to an id not in the store (orphan chain)', async () => {
@@ -248,7 +289,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'X' })
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['X'] })
   })
 
   it('shows error toast on failure', async () => {
@@ -350,8 +391,8 @@ describe('useBlockMultiSelect reentrancy guard (#MAINT-9)', () => {
 
     // Only the first invoke has been issued; the second call was rejected.
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
-      blockId: 'BLOCK_1',
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
+      blockIds: ['BLOCK_1'],
       state: 'TODO',
     })
 

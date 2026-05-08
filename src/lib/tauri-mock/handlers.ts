@@ -344,6 +344,58 @@ export const HANDLERS: Record<string, Handler> = {
     }
   },
 
+  // PEND-35 Tier 2.1 — batch soft-delete (mirror of `delete_block`'s
+  // cascade). The backend version walks descendants via a recursive
+  // CTE seeded from every root; here we approximate that by walking
+  // the live `blocks` map per root once (covers the same set without
+  // SQL). Already-deleted / missing ids are silently skipped to
+  // mirror the backend's lenient policy. One `delete_block` op_log
+  // entry per RESOLVED root (matches the real backend's shape).
+  delete_blocks_by_ids: (args) => {
+    const a = args as Record<string, unknown>
+    const inputIds = (a['blockIds'] as string[]) ?? []
+    if (inputIds.length === 0) {
+      throw new Error('block_ids list cannot be empty')
+    }
+    const now = new Date().toISOString()
+    // Resolve live roots (skip missing, already-deleted, or conflict copy).
+    const liveRoots = inputIds.filter((id) => {
+      const b = blocks.get(id)
+      return b && !b['deleted_at'] && !b['is_conflict']
+    })
+    // BFS from every root, soft-delete every reachable non-conflict
+    // descendant whose `deleted_at` is currently NULL.
+    let count = 0
+    const stack: string[] = [...liveRoots]
+    const seen = new Set<string>()
+    while (stack.length > 0) {
+      const id = stack.pop()
+      if (id == null) break
+      if (seen.has(id)) continue
+      seen.add(id)
+      const b = blocks.get(id)
+      if (!b || b['is_conflict'] || b['deleted_at']) continue
+      b['deleted_at'] = now
+      count++
+      for (const child of blocks.values()) {
+        if (
+          child['parent_id'] === id &&
+          !child['is_conflict'] &&
+          !child['deleted_at'] &&
+          !seen.has(child['id'] as string)
+        ) {
+          stack.push(child['id'] as string)
+        }
+      }
+    }
+    // Append one delete_block op per resolved root (NOT per descendant)
+    // — mirrors the backend's op_log shape.
+    for (const root of liveRoots) {
+      pushOp('delete_block', { block_id: root })
+    }
+    return count
+  },
+
   restore_block: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
@@ -374,6 +426,51 @@ export const HANDLERS: Record<string, Handler> = {
     for (const [id, b] of blocks.entries()) {
       if (b['deleted_at']) {
         blocks.delete(id)
+        count++
+      }
+    }
+    return { affected_count: count }
+  },
+
+  // PEND-35 Tier 2.2 — single-IPC batch restore. Iterates the input ids,
+  // clears `deleted_at` on each (matches existing `restore_block` mock's
+  // per-row logic), pushes one `restore_block` op per actually-restored
+  // root (mirrors backend's one op-per-root semantic). Non-deleted /
+  // missing ids are silently skipped.
+  restore_blocks_by_ids: (args) => {
+    const a = args as Record<string, unknown>
+    const ids = (a['blockIds'] as string[]) ?? []
+    let count = 0
+    for (const id of ids) {
+      const b = blocks.get(id)
+      if (b && b['deleted_at']) {
+        b['deleted_at'] = null
+        pushOp('restore_block', { block_id: id })
+        count++
+      }
+    }
+    return { affected_count: count }
+  },
+
+  // PEND-35 Tier 2.2 — single-IPC batch purge. Iterates the input ids,
+  // physically removes each block plus all its related state from the
+  // in-memory maps (matches the existing `purge_block` mock's cleanup
+  // shape — that one only removed from `blocks`, but the real backend
+  // cleans the ~13 dependent tables; we mirror that here for the maps
+  // the seed actually tracks: properties, blockTags, attachments,
+  // pageAliases). Non-deleted / missing ids are silently skipped.
+  purge_blocks_by_ids: (args) => {
+    const a = args as Record<string, unknown>
+    const ids = (a['blockIds'] as string[]) ?? []
+    let count = 0
+    for (const id of ids) {
+      const b = blocks.get(id)
+      if (b && b['deleted_at']) {
+        blocks.delete(id)
+        properties.delete(id)
+        blockTags.delete(id)
+        attachments.delete(id)
+        pageAliases.delete(id)
         count++
       }
     }
@@ -1075,6 +1172,33 @@ export const HANDLERS: Record<string, Handler> = {
       from_state: fromState,
     })
     return { ...b }
+  },
+
+  // PEND-35 Tier 2.1 — batch set/clear todo state. Iterates the
+  // input list, sets `b.todo_state` on each live block, and emits a
+  // single `set_property` op per affected block (mirrors the
+  // backend's per-block op_log entry under one tx). Missing /
+  // soft-deleted ids are silently skipped (lenient batch semantic).
+  set_todo_state_batch: (args) => {
+    const a = args as Record<string, unknown>
+    const inputIds = (a['blockIds'] as string[]) ?? []
+    if (inputIds.length === 0) {
+      throw new Error('block_ids list cannot be empty')
+    }
+    const newState = (a['state'] as string | null) ?? null
+    let updated = 0
+    for (const id of inputIds) {
+      const b = blocks.get(id)
+      if (!b || b['deleted_at']) continue
+      b['todo_state'] = newState
+      pushOp('set_property', {
+        block_id: id,
+        key: 'todo_state',
+        value_text: newState,
+      })
+      updated++
+    }
+    return updated
   },
 
   set_priority: (args) => {

@@ -363,6 +363,151 @@ pub async fn set_todo_state_inner(
     Ok(result)
 }
 
+/// PEND-35 Tier 2.1 — maximum number of block ids accepted by a single
+/// `*_batch` / `*_by_ids` command in one transaction.
+///
+/// The cap exists to bound the blast radius of one IMMEDIATE transaction:
+/// a runaway caller (or a malicious MCP tool) could otherwise hold the
+/// writer lock for an unbounded interval while writing thousands of
+/// op_log rows. 1000 covers every realistic UI multi-select gesture
+/// (TrashView caps its own table to a few hundred rows; the page editor's
+/// multi-select fans the same way). Callers exceeding the cap should
+/// chunk client-side — the FE wrappers in `src/lib/tauri.ts` deliberately
+/// pass the input through unchanged so the backend's cap is the single
+/// authority. The same constant is reused in `set_todo_state_batch_inner`
+/// and `delete_blocks_by_ids_inner` (and any future `*_by_ids` siblings)
+/// so the limit is not silently inconsistent across the family.
+pub(crate) const MAX_BATCH_BLOCK_IDS: usize = 1000;
+
+/// PEND-35 Tier 2.1 — batch variant of [`set_todo_state_inner`].
+///
+/// Replaces the per-row IMMEDIATE-tx loop the FE used to drive on
+/// "mark done" / "mark TODO" multi-select gestures. The whole batch
+/// runs in a single `BEGIN IMMEDIATE` transaction so a crash mid-batch
+/// either commits every state change or none of them — same all-or-
+/// nothing semantics as the single-row path (H-4 / invariant #2).
+///
+/// `state` validation matches `set_todo_state_inner` (1-50 chars,
+/// fallback to seeded `["TODO","DOING","DONE"]` defaults when the
+/// `property_definitions` row is missing).
+///
+/// **Tolerance for missing rows**: in contrast with the single-row
+/// `set_todo_state_inner` (which returns `NotFound` for a missing or
+/// soft-deleted block), the batch path silently skips ids that no
+/// longer resolve to a live block. Multi-select gestures inevitably
+/// race against concurrent deletes / sync replay; the batch is
+/// "best-effort across the surviving subset". The return value is the
+/// number of blocks actually updated so the FE can decide how to
+/// summarise the result. Validation failures (empty list, oversize
+/// list, invalid `state`) still abort the whole tx — those are caller
+/// errors, not data drift.
+///
+/// Recurrence + `created_at`/`completed_at` timestamp transitions
+/// (which the single-row path performs in the same tx) are NOT
+/// applied here. The batch is a bulk multi-select reflex — the
+/// expected gesture is "mark these N blocks DONE" or "clear todo on
+/// these N blocks" — and propagating recurrence per item under one
+/// IMMEDIATE lock would defeat the latency win. Callers that need
+/// recurrence + timestamp transitions should fall through to the
+/// single-row path.
+#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+pub async fn set_todo_state_batch_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<String>,
+    state: Option<String>,
+) -> Result<i64, AppError> {
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::Validation(format!(
+            "block_ids length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
+            block_ids.len()
+        )));
+    }
+    if let Some(ref s) = state {
+        if s.is_empty() || s.len() > 50 {
+            return Err(AppError::Validation(
+                "Todo state must be 1-50 characters".into(),
+            ));
+        }
+    }
+
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — normalise every input id
+    // to canonical uppercase before any SQL touch so the membership
+    // probe matches the byte-exact ULID on disk regardless of casing
+    // supplied by the caller (MCP, sync replay, hand-crafted scripts).
+    let block_ids: Vec<String> = block_ids
+        .into_iter()
+        .map(|id| id.to_ascii_uppercase())
+        .collect();
+
+    // One IMMEDIATE tx covers every per-block write (op_log + blocks
+    // column). Either every state change commits or none of them.
+    let mut tx = CommandTx::begin_immediate(pool, "set_todo_state_batch").await?;
+
+    // BUG-20 / MAINT-147 (e) fallback validation — mirrors
+    // `set_todo_state_inner`. Read once for the whole batch (single
+    // SELECT, regardless of N).
+    if let Some(ref s) = state {
+        let def_row =
+            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
+                .fetch_optional(&mut **tx)
+                .await?;
+        validate_reserved_property_value(
+            def_row.is_some(),
+            "todo_state",
+            s,
+            &["TODO", "DOING", "DONE"],
+        )?;
+    }
+
+    let mut updated: i64 = 0;
+    for block_id in block_ids {
+        // Probe existence inside the tx so a concurrent delete that
+        // landed between the FE selection and this call cleanly skips
+        // rather than aborting the whole batch.
+        let exists = sqlx::query_scalar!(
+            r#"SELECT 1 AS "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+            block_id
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
+        if exists.is_none() {
+            continue;
+        }
+
+        // Reuse the canonical per-row helper so reserved-key validation,
+        // op_log append, and the `blocks.todo_state` materialised write
+        // all share the single source of truth. Returns `(BlockRow,
+        // OpRecord)`; we discard the row (the batch wrapper does not
+        // surface per-block payloads) and queue the op record for
+        // post-commit dispatch.
+        let (_row, op_record) = crate::commands::blocks::set_property_in_tx(
+            &mut tx,
+            device_id,
+            block_id,
+            "todo_state",
+            state.clone(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        tx.enqueue_background(op_record);
+        updated += 1;
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(updated)
+}
+
 /// Set the priority on a block (level value or clear).
 ///
 /// M-20: priority levels are user-configurable through the
@@ -980,6 +1125,48 @@ pub async fn set_todo_state(
         .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["todo_state".to_string()]);
     Ok(result)
+}
+
+/// Tauri command: batch-set todo state on multiple blocks (PEND-35 Tier 2.1).
+///
+/// Delegates to [`set_todo_state_batch_inner`]. Single IMMEDIATE tx
+/// covers every per-block write — collapses the legacy N-IPC loop the
+/// FE used to drive in `useBlockMultiSelect.handleBatchSetTodo` into
+/// one round-trip / one op_log seq range / one writer-lock window.
+///
+/// Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
+/// so existing per-block listeners (e.g. agenda recompute, property
+/// drawer) keep firing without protocol changes. Failed-emit
+/// breadcrumbs follow the established log-on-error pattern (L-33).
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn set_todo_state_batch(
+    app: tauri::AppHandle,
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_ids: Vec<String>,
+    state: Option<String>,
+) -> Result<i64, AppError> {
+    let block_ids_for_emit = block_ids.clone();
+    let updated =
+        set_todo_state_batch_inner(&pool.0, device_id.as_str(), &materializer, block_ids, state)
+            .await
+            .map_err(sanitize_internal_error)?;
+    // Emit per-block change events so the existing per-block listeners
+    // continue to receive the same signal shape they got from the
+    // single-row path. The inner already skipped missing rows silently,
+    // but emitting for ids that did not actually update is harmless —
+    // the listener side already debounces / re-reads.
+    for id in block_ids_for_emit {
+        emit_property_changed_event(
+            &app,
+            id.to_ascii_uppercase(),
+            vec!["todo_state".to_string()],
+        );
+    }
+    Ok(updated)
 }
 
 /// Tauri command: set priority on a block. Delegates to [`set_priority_inner`].

@@ -2,11 +2,59 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 690 (Session 690: PEND-35 Tier 2 (4 more items: 2.7 attachments dedup — count provider/command deleted, counts derive from list batch via new `getCount` method; 2.8 templates SQL pushdown + new `first_child_for_blocks` window-function batch endpoint; 2.9 GraphView `blockType:'page'` pushdown via Tier 3.4; 2.10a per-value/per-day fan-out collapsed via `valueTextIn`/`valueDateRange`) + Tier 4.5 (`list_page_links` accepts `tag_ids` filter via UNION ALL across `block_tags`/`block_tag_inherited`/`block_tag_refs`). Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 691 (Session 691: PEND-35 Tier 2.1 + 2.2 — multi-select batch family. Four new `*_by_ids(Vec<String>)` Tauri commands close every multi-select user-action gap: `set_todo_state_batch`, `delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`. Each batch runs in one BEGIN IMMEDIATE tx + one op_log scope, eliminating writer-lock serialization. The `delete_blocks_by_ids` CTE seeds from ALL roots in one walk so the MAINT-173 ancestor pre-walk in `useBlockMultiSelect.ts` could be removed. IPC delta on a 50-row selection: 50 IPCs → 1 IPC for each of mark-done / delete / restore / purge. Session 690: PEND-35 Tier 2 (4 more items: 2.7 attachments dedup — count provider/command deleted, counts derive from list batch via new `getCount` method; 2.8 templates SQL pushdown + new `first_child_for_blocks` window-function batch endpoint; 2.9 GraphView `blockType:'page'` pushdown via Tier 3.4; 2.10a per-value/per-day fan-out collapsed via `valueTextIn`/`valueDateRange`) + Tier 4.5 (`list_page_links` accepts `tag_ids` filter via UNION ALL across `block_tags`/`block_tag_inherited`/`block_tag_refs`). Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 691 — PEND-35 Tier 2.1 + 2.2: multi-select batch family (4 new *_by_ids commands) (2026-05-08)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-08 |
+| **Subagents** | 2 build + 1 review |
+| **Items closed** | PEND-35 Tier 2.1, 2.2 |
+| **Items modified** | PEND-35 (2.1 + 2.2 sections retired; status header + TL;DR table updated) |
+| **Tests added** | +25 backend (15 from 2.1 + 9 from 2.2 + 1 from review fix-applied) / +6 frontend (round-trips for 4 new wrappers + 2 batch-IPC assertions) |
+| **Files touched** | 11 source files |
+
+**Summary:** Closed both Tier 2.1 (multi-select task ops) and Tier 2.2 (trash batch ops). Four new `*_by_ids(Vec<String>)` Tauri commands close every multi-select user-action gap from the audit: `set_todo_state_batch`, `delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`. Each batch runs in one `BEGIN IMMEDIATE` tx + one op_log scope, eliminating the per-block writer-lock serialization that made every "mark 50 selected DONE" / "delete 50 selected" / "restore 50 from trash" / "purge 50 from trash" gesture take 50 round-trips. The `delete_blocks_by_ids` recursive CTE is seeded from ALL roots via `json_each(?)` so the MAINT-173 ancestor pre-walk in `useBlockMultiSelect.ts` (which the audit explicitly authorized dropping) could be retired. The `purge_blocks_by_ids` ~13-table cleanup chain (16 queries verified by review) runs ONCE per batch via `WHERE id IN (SELECT id FROM descendants)` instead of per-row.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND-35 audit, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src-tauri/src/commands/properties.rs` — `MAX_BATCH_BLOCK_IDS = 1000` const + `set_todo_state_batch_inner` + Tauri wrapper. Lenient (silently skips missing/soft-deleted ids).
+- `src-tauri/src/commands/blocks/crud.rs` — `delete_blocks_by_ids_inner` (recursive CTE seeded from all roots, `is_conflict = 0` + `depth < 100`, per-root `reparent_orphan_conflict_copies` + `tag_inheritance::remove_subtree_inherited`, FEAT-3p6 space-block guard); `restore_blocks_by_ids_inner` + `purge_blocks_by_ids_inner` mirroring the existing all-variant chains but with `IN (SELECT value FROM json_each(?))`. Re-uses the const from properties.rs.
+- `src-tauri/src/commands/mod.rs` + `src-tauri/src/lib.rs` — re-exports + `agaric_commands!` registration. Single-row `set_todo_state` / `delete_block` / `restore_block` / `purge_block` and the "all" variants stay registered.
+- `src-tauri/src/commands/tests/{block,property}_cmd_tests.rs` — 15 + 9 = 24 new backend tests covering atomicity, cascade, rejection, ULID normalization, ancestor+descendant coalescing, all-cleanup-tables-purged, oversize rejection. Reviewer added 1 more (oversize for restore — was missing).
+- `src/lib/tauri.ts` — 4 new wrappers (`setTodoStateBatch`, `deleteBlocksByIds`, `restoreBlocksByIds`, `purgeBlocksByIds`).
+- `src/lib/bindings.ts` — regenerated by specta.
+- `src/lib/tauri-mock/handlers.ts` — 4 new mocks; lenient skip semantics + cascade BFS in delete_blocks_by_ids; full cleanup-chain in purge_blocks_by_ids (clears properties / blockTags / attachments / pageAliases).
+- `src/hooks/useBlockMultiSelect.ts` — `handleBatchSetTodo` and `handleBatchDelete` send ONE batch IPC each. MAINT-173 ancestor pre-walk dropped; comment now explains why.
+- `src/components/TrashView.tsx` — `handleBatchRestore` and `handleBatchPurge` send ONE batch IPC each.
+- `src/hooks/__tests__/useBlockMultiSelect.test.ts`, `src/components/__tests__/{TrashView,BlockTree}.test.tsx`, `src/lib/__tests__/tauri.test.ts` — call-site updates + IPC-collapse regression tests + 4 wrapper round-trips. Orchestrator-direct fix needed for `BlockTree.test.tsx` batch-toolbar tests (3 fixtures still mocking the old per-row IPC).
+- `pending/PEND-35-tauri-command-backend-vs-frontend-audit.md` — 2.1 + 2.2 sections retired
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3695 tests run, 3695 passed (+24 from baseline 3671).
+- `npx vitest run` — 9646 tests passed across 388 files.
+- `cd src-tauri && cargo check --benches` — clean.
+- `prek run --all-files` — pending (run at commit time).
+
+**Process notes:**
+- 2 build subagents, both backend-heavy — 2.1 took ~24 minutes, 2.2 took ~24 minutes (parallel). Both touch `src-tauri/src/commands/blocks/crud.rs` and `src-tauri/src/lib.rs`. Concurrent appends to non-overlapping regions of crud.rs worked; both registered their commands in `agaric_commands!` without conflict.
+- `BlockTree.test.tsx` had 3 batch-toolbar tests still mocking the old per-row IPCs (`delete_block`, `set_todo_state`) and asserting `length === 2` — orchestrator rewrote them to expect the single batch IPC and added "no per-row IPC fires" regression assertions. Same cross-cutting-test-file blind spot as session 689 (App.test.tsx, SortableBlock.test.tsx) — confirms the lesson that subagents must enumerate cross-cutting integration test files.
+- One review subagent. PASS on both items + FIX-APPLIED for one missing oversize-rejection test on `restore_blocks_by_ids`. Review caught a deliberate design choice worth documenting (when input contains both an ancestor and a descendant, two `DeleteBlock` ops fire — one per resolved input root — even though the cascade UPDATE marks each row exactly once; idempotent on revert because both ops share the same `created_at` snapshot).
+
+**Lessons learned (for future sessions):**
+- For batches that touch `BlockTree.tsx` or any other "consumer that orchestrates many child components," the BlockTree.test.tsx integration suite is the second cross-cutting fixture file (after App.test.tsx and SortableBlock.test.tsx). Add to the build-subagent prompt template: "search the whole `src/components/__tests__/` for the IPC name being changed, not just the directly-related component."
+- Batch-IPC tests should ALWAYS include a "legacy per-row IPC must NOT fire" assertion (`expect(...).filter(cmd === 'delete_block').toHaveLength(0)`) — guards against silent regression where a future code change re-introduces the loop. Adopted for this batch's BlockTree tests.
+
+**Commit plan:** single commit.
+
+---
 ## Session 690 — PEND-35 Tier 2 (4 more items) + Tier 4.5: SQL pushdown + N+1 collapse (2026-05-08)
 
 | Metadata | Value |

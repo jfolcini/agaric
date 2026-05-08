@@ -30,6 +30,7 @@ import {
   createPropertyDef,
   deleteAttachment,
   deleteBlock,
+  deleteBlocksByIds,
   deleteDraft,
   deletePeerRef,
   deleteProperty,
@@ -75,6 +76,7 @@ import {
   moveBlock,
   purgeAllDeleted,
   purgeBlock,
+  purgeBlocksByIds,
   queryBacklinksFiltered,
   queryByProperty,
   queryByTags,
@@ -85,6 +87,7 @@ import {
   resolvePageByAlias,
   restoreAllDeleted,
   restoreBlock,
+  restoreBlocksByIds,
   restorePageToOp,
   revertOps,
   saveDraft,
@@ -96,6 +99,7 @@ import {
   setProperty,
   setScheduledDate,
   setTodoState,
+  setTodoStateBatch,
   startPairing,
   startSync,
   trashDescendantCounts,
@@ -224,6 +228,29 @@ describe('deleteBlock', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'BLK001' })
     expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deleteBlocksByIds (PEND-35 Tier 2.1)
+// ---------------------------------------------------------------------------
+
+describe('deleteBlocksByIds', () => {
+  it('invokes delete_blocks_by_ids with the full id list', async () => {
+    mockedInvoke.mockResolvedValueOnce(7)
+
+    const result = await deleteBlocksByIds(['BLK1', 'BLK2', 'BLK3'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['BLK1', 'BLK2', 'BLK3'],
+    })
+    expect(result).toBe(7)
+  })
+
+  it('returns the affected_count number unchanged', async () => {
+    mockedInvoke.mockResolvedValueOnce(0)
+    expect(await deleteBlocksByIds(['MISSING'])).toBe(0)
   })
 })
 
@@ -1664,6 +1691,31 @@ describe('thin fixed-field commands', () => {
     })
   })
 
+  // PEND-35 Tier 2.1 — single-IPC batch wrapper.
+  it('setTodoStateBatch passes the id list + state through to set_todo_state_batch', async () => {
+    mockedInvoke.mockResolvedValueOnce(3)
+
+    const result = await setTodoStateBatch(['B1', 'B2', 'B3'], 'DONE')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
+      blockIds: ['B1', 'B2', 'B3'],
+      state: 'DONE',
+    })
+    expect(result).toBe(3)
+  })
+
+  it('setTodoStateBatch sends null state to clear', async () => {
+    mockedInvoke.mockResolvedValueOnce(2)
+
+    await setTodoStateBatch(['B1', 'B2'], null)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
+      blockIds: ['B1', 'B2'],
+      state: null,
+    })
+  })
+
   it('setPriority calls invoke with set_priority command', async () => {
     const expected = { id: 'BLOCK1', priority: '1' }
     mockedInvoke.mockResolvedValueOnce(expected)
@@ -2311,6 +2363,48 @@ describe('purgeAllDeleted', () => {
   it('propagates errors from invoke', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('db error'))
     await expect(purgeAllDeleted()).rejects.toThrow('db error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PEND-35 Tier 2.2 — restoreBlocksByIds / purgeBlocksByIds
+// ---------------------------------------------------------------------------
+
+describe('restoreBlocksByIds', () => {
+  it('invokes restore_blocks_by_ids with the id list and returns affected_count', async () => {
+    mockedInvoke.mockResolvedValueOnce({ affected_count: 3 })
+
+    const result = await restoreBlocksByIds(['B1', 'B2', 'B3'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+      blockIds: ['B1', 'B2', 'B3'],
+    })
+    expect(result).toBe(3)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(restoreBlocksByIds(['X'])).rejects.toThrow('db error')
+  })
+})
+
+describe('purgeBlocksByIds', () => {
+  it('invokes purge_blocks_by_ids with the id list and returns affected_count', async () => {
+    mockedInvoke.mockResolvedValueOnce({ affected_count: 5 })
+
+    const result = await purgeBlocksByIds(['B1', 'B2', 'B3', 'B4', 'B5'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', {
+      blockIds: ['B1', 'B2', 'B3', 'B4', 'B5'],
+    })
+    expect(result).toBe(5)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(purgeBlocksByIds(['X'])).rejects.toThrow('db error')
   })
 })
 

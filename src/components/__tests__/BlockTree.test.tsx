@@ -5455,7 +5455,7 @@ describe('BlockTree batch toolbar (#657)', () => {
     expect(screen.getByText(/Delete 2 block/)).toBeInTheDocument()
   })
 
-  it('batch delete calls deleteBlock for each selected', async () => {
+  it('batch delete sends a single delete_blocks_by_ids IPC for the whole selection', async () => {
     const user = userEvent.setup()
     const tree = [
       makeBlock({ id: 'A', content: 'Alpha' }),
@@ -5468,12 +5468,7 @@ describe('BlockTree batch toolbar (#657)', () => {
     })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'delete_block')
-        return {
-          block_id: 'X',
-          deleted_at: '2026-04-03T00:00:00Z',
-          descendants_affected: 0,
-        }
+      if (cmd === 'delete_blocks_by_ids') return 2
       return null
     })
 
@@ -5485,15 +5480,18 @@ describe('BlockTree batch toolbar (#657)', () => {
     await user.click(screen.getByRole('button', { name: /Yes, delete/i }))
 
     await waitFor(() => {
-      const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')
-      expect(deleteCalls.length).toBe(2)
+      const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_blocks_by_ids')
+      expect(batchCalls.length).toBe(1)
     })
+    // The legacy per-row IPC must NOT fire under batch — PEND-35 Tier 2.1
+    // collapsed N IMMEDIATE txs into a single one.
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
 
     // Selection should be cleared
     expect(useBlockStore.getState().selectedBlockIds).toEqual([])
   })
 
-  it('batch set todo state calls setTodoState for each selected', async () => {
+  it('batch set todo state sends a single set_todo_state_batch IPC for the whole selection', async () => {
     const user = userEvent.setup()
     const tree = [
       makeBlock({ id: 'A', content: 'Alpha' }),
@@ -5506,21 +5504,7 @@ describe('BlockTree batch toolbar (#657)', () => {
     })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_todo_state')
-        return {
-          id: 'X',
-          block_type: 'content',
-          content: 'X',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          is_conflict: false,
-          conflict_type: null,
-          todo_state: 'TODO',
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
+      if (cmd === 'set_todo_state_batch') return 2
       return null
     })
 
@@ -5531,9 +5515,11 @@ describe('BlockTree batch toolbar (#657)', () => {
     await user.click(screen.getByRole('button', { name: 'TODO' }))
 
     await waitFor(() => {
-      const todoCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'set_todo_state')
-      expect(todoCalls.length).toBe(2)
+      const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'set_todo_state_batch')
+      expect(batchCalls.length).toBe(1)
     })
+    // Legacy per-row IPC must NOT fire under batch (PEND-35 Tier 2.1).
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'set_todo_state')).toHaveLength(0)
 
     // Selection should be cleared
     expect(useBlockStore.getState().selectedBlockIds).toEqual([])
@@ -5572,9 +5558,10 @@ describe('BlockTree batch toolbar (#657)', () => {
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
-    // Now mock set_todo_state to block, after initial render is done
+    // Mock set_todo_state_batch to block, after initial render is done.
+    // PEND-35 Tier 2.1: the batch IPC replaces the per-row set_todo_state loop.
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_todo_state') {
+      if (cmd === 'set_todo_state_batch') {
         return new Promise((resolve) => {
           resolveInvoke = resolve
         })
@@ -5594,21 +5581,8 @@ describe('BlockTree batch toolbar (#657)', () => {
     expect(screen.getByRole('button', { name: 'DONE' })).toBeDisabled()
     expect(screen.getByRole('button', { name: /Delete/i })).toBeDisabled()
 
-    // Resolve the pending invoke calls to clean up
-    resolveInvoke({
-      id: 'A',
-      block_type: 'content',
-      content: 'Alpha',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-      is_conflict: false,
-      conflict_type: null,
-      todo_state: 'TODO',
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-    })
+    // Resolve the pending invoke call (returns the affected count) to clean up.
+    resolveInvoke(2)
   })
 })
 

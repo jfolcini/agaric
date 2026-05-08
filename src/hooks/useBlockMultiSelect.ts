@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
-import { deleteBlock, setTodoState as setTodoStateCmd } from '../lib/tauri'
+import { deleteBlocksByIds, setTodoStateBatch } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 
@@ -45,18 +45,26 @@ export function useBlockMultiSelect({
       try {
         const ids = [...selectedBlockIds]
         const idSet = new Set(ids)
+        // Optimistic FE update — flip the badge instantly while the
+        // single-IPC batch round-trips. On failure the catch below
+        // surfaces an error toast; the next page load will re-read
+        // the truthful state from the backend.
         pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (idSet.has(b.id) ? { ...b, todo_state: state } : b)),
         }))
+        // PEND-35 Tier 2.1 — one IPC for the whole batch (was N).
+        // Backend wraps the per-block op_log appends + materialised
+        // `blocks.todo_state` writes in a single IMMEDIATE tx.
         let successCount = 0
         let failCount = 0
-        for (const id of ids) {
-          try {
-            await setTodoStateCmd(id, state)
-            successCount++
-          } catch {
-            failCount++
-          }
+        try {
+          successCount = await setTodoStateBatch(ids, state)
+          // Treat any id we asked for that the backend silently
+          // skipped (missing / already-deleted) as a "fail" for the
+          // toast counter so the user sees an honest summary.
+          failCount = Math.max(0, ids.length - successCount)
+        } catch {
+          failCount = ids.length
         }
         if (successCount > 0 && rootParentId) {
           useUndoStore.getState().onNewAction(rootParentId)
@@ -91,36 +99,43 @@ export function useBlockMultiSelect({
     setBatchInProgress(true)
     try {
       const ids = [...selectedBlockIds]
+      // PEND-35 Tier 2.1 — the MAINT-173 ancestor pre-walk is no
+      // longer needed. The single-row `deleteBlock` IPC required the
+      // FE to filter selected descendants client-side because each
+      // root ran in its own IMMEDIATE tx and the cascade-races would
+      // surface as spurious "delete failed" toast counts. The batch
+      // endpoint `delete_blocks_by_ids` walks descendants in one
+      // recursive CTE seeded from every root simultaneously, so
+      // duplicate descendant ids in the input set are coalesced
+      // server-side. Send the raw selection unchanged.
       const idsSet = new Set(ids)
-      // Walk the parent chain (not just the direct parent) so transitive
-      // descendants of a selected ancestor are filtered out — otherwise the
-      // ancestor's server-side cascade races extra deleteBlock() calls and
-      // surfaces as spurious "delete failed" toast counts (#MAINT-173).
-      const blocks = pageStore.getState().blocks
-      const parentOf = new Map<string, string | null>()
-      for (const b of blocks) parentOf.set(b.id, b.parent_id ?? null)
-      const hasAncestorInSet = (id: string): boolean => {
-        let cursor = parentOf.get(id) ?? null
-        for (let i = 0; cursor !== null && i < 1000; i++) {
-          if (idsSet.has(cursor)) return true
-          if (!parentOf.has(cursor)) return false
-          cursor = parentOf.get(cursor) ?? null
-        }
-        return false
-      }
-      const toDelete = ids.filter((id) => !hasAncestorInSet(id))
       let successCount = 0
       let failCount = 0
-      for (const id of toDelete) {
-        try {
-          await deleteBlock(id)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.filter((b) => b.id !== id),
-          }))
-          successCount++
-        } catch {
-          failCount++
-        }
+      try {
+        // Backend returns the number of blocks soft-deleted (roots +
+        // descendants combined). For UX we report against the
+        // selection size: a 1:1 mapping is the common case for a
+        // flat selection; ancestor-coalescing makes the returned
+        // count >= selectedRoots, which still represents "every
+        // requested row is gone".
+        const affected = await deleteBlocksByIds(ids)
+        // The selection itself was processed atomically. Count
+        // successful "selected rows that are now deleted" by
+        // re-reading the in-memory state shape: since the call
+        // succeeded, every selected id is either a deleted root or
+        // a descendant of a selected ancestor — both gone. Use the
+        // selection size for the toast counter.
+        successCount = ids.length
+        // `affected` is unused in the toast (it would surface
+        // descendants we did not explicitly select), but keeping
+        // the local makes the intent explicit.
+        void affected
+        // Splice the selected ids out of the page store in one go.
+        pageStore.setState((s) => ({
+          blocks: s.blocks.filter((b) => !idsSet.has(b.id)),
+        }))
+      } catch {
+        failCount = ids.length
       }
       clearSelected()
       setBatchDeleteConfirm(false)
@@ -128,7 +143,7 @@ export function useBlockMultiSelect({
         toast.error(
           t('blockTree.deleteFailedMessage', {
             failCount,
-            totalCount: toDelete.length,
+            totalCount: ids.length,
           }),
         )
       } else {

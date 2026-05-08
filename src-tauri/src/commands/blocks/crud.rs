@@ -702,6 +702,252 @@ pub async fn delete_block_inner(
     })
 }
 
+/// PEND-35 Tier 2.1 — batch variant of [`delete_block_inner`].
+///
+/// Soft-deletes every block in `block_ids` plus all their descendants
+/// (via a single recursive CTE seeded from every root) inside one
+/// `BEGIN IMMEDIATE` transaction. Replaces the per-row IPC loop the
+/// FE used to drive in `useBlockMultiSelect.handleBatchDelete` —
+/// 50 selected rows previously took 50 round-trips, 50 writer-lock
+/// acquisitions, and 50 op_log append windows. The new path is one
+/// of each.
+///
+/// **CTE shape**: a `WITH RECURSIVE` whose seed selects every id from
+/// the input list (via `json_each`) that resolves to a non-deleted,
+/// non-conflict block, and whose recursive arm walks `parent_id`
+/// downward with the canonical AGENTS.md invariant #9 filters
+/// (`is_conflict = 0 AND deleted_at IS NULL` in the recursive member,
+/// `depth < 100` bound). Because the seed already covers every root
+/// simultaneously, an ancestor's subtree subsumes any selected
+/// descendant — the FE's MAINT-173 ancestor-pre-walk becomes
+/// unnecessary (descendant ids that are also in the input set produce
+/// the same union via the recursive walk).
+///
+/// **Tolerance for missing / already-deleted rows**: ids that don't
+/// resolve, or are soft-deleted at probe time, are silently dropped
+/// from the seed. The batch is best-effort across the surviving
+/// subset (mirrors `set_todo_state_batch_inner`'s lenient policy and
+/// matches multi-select-against-concurrent-delete reality). The
+/// returned count is the number of `blocks` rows whose `deleted_at`
+/// flipped from NULL to non-NULL.
+///
+/// **Op log shape**: one `DeleteBlock` op is appended per resolved
+/// ROOT (the inputs minus the misses), NOT per descendant — the
+/// recursive UPDATE captures the cascade. Mirrors the single-row
+/// `delete_block_inner` shape (one op, descendants_affected reflects
+/// the cascade), scaled. `reparent_orphan_conflict_copies` runs once
+/// per root to keep conflict-copy parents healthy, and
+/// `tag_inheritance::remove_subtree_inherited` runs once per root for
+/// the same reason (orphan inherited tag rows must be swept whether
+/// the cascade root was reached via single-delete or batch-delete).
+///
+/// **Space-block guard**: the single-row path refuses to delete a
+/// non-empty space (FEAT-3p6). The batch path enforces the same guard
+/// per root — if any root in the batch is a non-empty space, the
+/// whole tx aborts with `InvalidOperation` (the safer choice: a
+/// "delete everything but skip the space" outcome would silently
+/// surface as data the user thought they deleted).
+#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+pub async fn delete_blocks_by_ids_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<String>,
+) -> Result<i64, AppError> {
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    if block_ids.len() > crate::commands::properties::MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::Validation(format!(
+            "block_ids length {} exceeds maximum {}",
+            block_ids.len(),
+            crate::commands::properties::MAX_BATCH_BLOCK_IDS,
+        )));
+    }
+
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — uppercase normalisation
+    // before the SQL membership probe.
+    let block_ids: Vec<String> = block_ids
+        .into_iter()
+        .map(|id| id.to_ascii_uppercase())
+        .collect();
+    let ids_json = serde_json::to_string(&block_ids)?;
+
+    let mut tx = CommandTx::begin_immediate(pool, "delete_blocks_by_ids").await?;
+
+    // Resolve the live root set INSIDE the tx so a row that was
+    // soft-deleted between FE selection and this call drops out
+    // cleanly. `is_conflict = 0` filter applies (invariant #9 — we
+    // never bulk-soft-delete a conflict copy this way; the FE / sync
+    // path that produced the conflict has its own resolution flow).
+    let live_roots: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT id AS "id!: String" FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?1))
+             AND deleted_at IS NULL
+             AND is_conflict = 0"#,
+        ids_json,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    if live_roots.is_empty() {
+        // Every requested id is missing or already deleted. Commit the
+        // (empty) tx so any reads it took settle, return zero.
+        tx.commit_and_dispatch(materializer).await?;
+        return Ok(0);
+    }
+
+    // FEAT-3p6 mirror — refuse the batch if any root is a non-empty
+    // space. Same reasoning as `delete_block_inner`: a partial delete
+    // would silently leak orphan pages whose `space` ref dangles. We
+    // surface the FIRST offending space + its child count so the
+    // operator sees actionable detail.
+    for root in &live_roots {
+        let is_space_block = sqlx::query_scalar!(
+            "SELECT 1 AS \"flag!: i64\" FROM block_properties \
+             WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
+            root,
+        )
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some();
+        if is_space_block {
+            let child_count: i64 = sqlx::query_scalar!(
+                "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
+                 WHERE b.deleted_at IS NULL \
+                 AND b.is_conflict = 0 \
+                 AND EXISTS ( \
+                     SELECT 1 FROM block_properties p \
+                     WHERE p.block_id = b.id \
+                     AND p.key = 'space' \
+                     AND p.value_ref = ? \
+                 )",
+                root,
+            )
+            .fetch_one(&mut **tx)
+            .await?;
+            if child_count > 0 {
+                return Err(AppError::InvalidOperation(format!(
+                    "cannot delete space '{root}': it contains {child_count} pages"
+                )));
+            }
+        }
+    }
+
+    // Single timestamp for op_log + cascade UPDATE so reverse_delete_block
+    // can match `op_record.created_at` against `blocks.deleted_at`.
+    let now = now_rfc3339();
+
+    // Append one `DeleteBlock` op per root (NOT per descendant — the
+    // cascade is captured by the recursive UPDATE below). This mirrors
+    // the single-row path's op_log shape (one op, cascade rolls up via
+    // the materialised state) so revert / undo replay against the same
+    // rows behaves identically regardless of whether they were deleted
+    // via the single or batch path.
+    for root in &live_roots {
+        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::from_trusted(root),
+        });
+        let op_record =
+            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        let op_record = Arc::new(op_record);
+        tx.enqueue_background(Arc::clone(&op_record));
+    }
+
+    // Re-parent orphan conflict copies before the cascade UPDATE for
+    // each root, mirroring `delete_block_inner`'s M-81 handling. The
+    // helper itself is idempotent + scoped to one seed; running it
+    // per root preserves the per-subtree semantic without needing a
+    // multi-root variant.
+    for root in &live_roots {
+        crate::soft_delete::reparent_orphan_conflict_copies(&mut tx, device_id, root, &now).await?;
+    }
+
+    // One recursive CTE seeded from every root in `live_roots` (via
+    // `json_each`). `b.deleted_at IS NULL AND b.is_conflict = 0`
+    // applies to BOTH the seed and the recursive arm: roots already
+    // tombstoned drop out (idempotency), and conflict copies are
+    // skipped per invariant #9. `d.depth < 100` bounds runaway
+    // recursion on corrupted parent_id chains.
+    //
+    // The seed-from-many shape is the key insight from the PEND-35
+    // audit (Tier 2.1): the FE's MAINT-173 ancestor-pre-walk used
+    // to filter selected descendants client-side because each root
+    // ran in its own tx; a single CTE that already unions every
+    // root's subtree subsumes the same set without the JS pre-walk.
+    let live_roots_json = serde_json::to_string(&live_roots)?;
+    let result = sqlx::query(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+               AND deleted_at IS NULL \
+               AND is_conflict = 0 \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET deleted_at = ?2 \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+    )
+    .bind(&live_roots_json)
+    .bind(&now)
+    .execute(&mut **tx)
+    .await?;
+
+    // PEND-26 N2 — surface a per-root saturation warn so a
+    // pathological tree under any single root in the batch is still
+    // observable. The check itself is cheap (one CTE re-walk per root,
+    // no UPDATE) and runs only when the cascade actually fired.
+    for root in &live_roots {
+        if crate::block_descendants::cascade_depth_saturated(&mut **tx, root).await? {
+            tracing::warn!(
+                block_id = %root,
+                op = "delete_blocks_by_ids",
+                "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+                 below depth 100 were not soft-deleted. Tree is pathologically deep.",
+            );
+        }
+    }
+
+    // P-4 — sweep inherited tag rows for every root. Per-root call
+    // (the helper takes a single seed); the SQL it emits is bounded
+    // by the same depth-100 invariant.
+    for root in &live_roots {
+        crate::tag_inheritance::remove_subtree_inherited(&mut tx, root).await?;
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    // Return the number of blocks the cascade soft-deleted (roots +
+    // descendants combined). Callers can compare against
+    // `block_ids.len()` to compute "skipped because missing".
+    Ok(result.rows_affected().cast_signed())
+}
+
+/// Tauri command: batch-delete blocks by ids (PEND-35 Tier 2.1).
+///
+/// Delegates to [`delete_blocks_by_ids_inner`]. Single IMMEDIATE tx
+/// covers the whole batch — collapses the legacy N-IPC loop in
+/// `useBlockMultiSelect.handleBatchDelete` into one round-trip and
+/// one writer-lock window. Returns the number of blocks soft-deleted
+/// (roots + descendants combined).
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_blocks_by_ids(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_ids: Vec<String>,
+) -> Result<i64, AppError> {
+    delete_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 /// Restore a soft-deleted block and its descendants.
 ///
 /// Validates the block exists and is deleted with the expected `deleted_at`
@@ -1469,6 +1715,476 @@ pub async fn purge_all_deleted_inner(
     })
 }
 
+/// PEND-35 Tier 2.2 — cap on `restore_blocks_by_ids` / `purge_blocks_by_ids`
+/// input list. Reused from the multi-select task-ops batch (Tier 2.1) so
+/// every batch endpoint shares one knob. Each element binds to a
+/// `json_each(?)` parameter; SQLite's `SQLITE_MAX_VARIABLE_NUMBER` defaults
+/// to 32766 so we'd be nowhere near it at 1000, but the cap exists to
+/// protect against a runaway frontend selecting 100k rows and stalling a
+/// writer transaction.
+use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
+
+/// PEND-35 Tier 2.2 — restore N soft-deleted blocks (and their cascaded
+/// descendants) in a single IMMEDIATE transaction.
+///
+/// Mirrors [`restore_all_deleted_inner`]'s body but scopes the work to the
+/// supplied id list via `WHERE id IN (SELECT value FROM json_each(?1))`.
+/// The TrashView batch-restore action loops `restore_block_inner` once per
+/// selected row today (50 IMMEDIATE txs for a 50-row selection); this
+/// command collapses that to a single round trip and a single op_log
+/// scope.
+///
+/// Each input id is treated as a *root* of a soft-delete cascade — the
+/// frontend's batch action is sourced from `listBlocks({showDeleted:true})`
+/// which already returns roots only. The descendant walk uses the standard
+/// CTE (filters `is_conflict = 0`) so conflict copies retain their
+/// independent lifecycle (invariant #9). Restoration filters
+/// `deleted_at IS NOT NULL` so non-deleted ids in the input are silently
+/// no-ops (matches the "all" variant's behaviour against a mixed table).
+///
+/// Returns the number of blocks whose `deleted_at` was actually cleared
+/// (roots + descendants), NOT the input list length.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`] entries
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn restore_blocks_by_ids_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<String>,
+) -> Result<BulkTrashResponse, AppError> {
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::Validation(format!(
+            "block_ids list too large: {} > {}",
+            block_ids.len(),
+            MAX_BATCH_BLOCK_IDS
+        )));
+    }
+
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. ULIDs are
+    // stored uppercase; SQLite text comparison is byte-exact, so a
+    // lowercase caller would silently get zero matches.
+    let block_ids: Vec<String> = block_ids
+        .into_iter()
+        .map(|id| id.to_ascii_uppercase())
+        .collect();
+    let ids_json = serde_json::to_string(&block_ids)?;
+
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "restore_blocks_by_ids").await?;
+
+    // Resolve which input ids are actually soft-deleted "roots" — a
+    // present, deleted block. Skips ids that are alive or missing
+    // (mirrors `restore_all_deleted_inner`'s no-throw policy on its
+    // sweep). Each surviving root contributes one `RestoreBlock` op.
+    let roots = sqlx::query!(
+        "SELECT b.id, b.deleted_at FROM blocks b \
+         WHERE b.id IN (SELECT value FROM json_each(?1)) \
+           AND b.deleted_at IS NOT NULL",
+        ids_json,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    if roots.is_empty() {
+        return Ok(BulkTrashResponse { affected_count: 0 });
+    }
+
+    let now = now_rfc3339();
+
+    // FEAT-5i — snapshot each root's pre-restore dates inside the tx.
+    let gcal_hook_active = materializer.is_gcal_hook_active();
+    let mut gcal_snapshots: Vec<Option<crate::gcal_push::dirty_producer::BlockDateSnapshot>> =
+        Vec::with_capacity(roots.len());
+    for root in &roots {
+        if gcal_hook_active {
+            gcal_snapshots.push(Some(
+                crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &root.id).await?,
+            ));
+        } else {
+            gcal_snapshots.push(None);
+        }
+    }
+
+    // One RestoreBlock op per root for sync compatibility (mirrors
+    // `restore_all_deleted_inner`).
+    let mut op_records: Vec<Arc<crate::op_log::OpRecord>> = Vec::new();
+    for root in &roots {
+        let deleted_at_ref = root
+            .deleted_at
+            .clone()
+            .expect("query guarantees deleted_at IS NOT NULL");
+        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::from_trusted(&root.id),
+            deleted_at_ref,
+        });
+        let op_record =
+            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        let op_record = Arc::new(op_record);
+        tx.enqueue_background(Arc::clone(&op_record));
+        op_records.push(op_record);
+    }
+
+    // Restore: clear `deleted_at` on every root + its descendants. The
+    // descendant walk seeds from the input id set via `json_each(?1)`
+    // (multi-root variant of `descendants_cte_standard!()`). Conflict
+    // copies are filtered (invariant #9), `depth < 100` bounds runaway
+    // recursion, and the final `deleted_at IS NOT NULL` predicate is
+    // a paranoia guard against alive descendants whose parent was the
+    // selected root (shouldn't happen for cascaded subtrees, but keeps
+    // the UPDATE idempotent against repeats).
+    let restore_sql = "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.is_conflict = 0 AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NOT NULL";
+    let result = sqlx::query(restore_sql)
+        .bind(&ids_json)
+        .execute(&mut **tx)
+        .await?;
+    let count = result.rows_affected();
+
+    // Recompute tag inheritance for each restored root subtree.
+    for root in &roots {
+        crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
+    }
+
+    // Commit + drain enqueued background dispatches.
+    tx.commit_and_dispatch(materializer).await?;
+
+    // FEAT-5i — notify GCal connector post-commit, one event per root.
+    for (op_record, snapshot) in op_records.iter().zip(gcal_snapshots.iter()) {
+        if let Some(snap) = snapshot {
+            materializer.notify_gcal_for_op(op_record, snap);
+        }
+    }
+
+    Ok(BulkTrashResponse {
+        affected_count: count,
+    })
+}
+
+/// PEND-35 Tier 2.2 — permanently purge N soft-deleted blocks (and their
+/// cascaded descendants) in a single IMMEDIATE transaction.
+///
+/// Mirrors [`purge_all_deleted_inner`]'s ~13-table cleanup chain but
+/// scopes each `DELETE` to descendants of the input id list via a
+/// multi-root recursive CTE. The TrashView batch-purge action loops
+/// `purge_block_inner` once per selected row today (50 IMMEDIATE txs,
+/// each running the full cleanup chain); this command collapses that to
+/// a single round trip and runs each cleanup-chain query exactly once.
+///
+/// Each input id must already be soft-deleted (the TrashView only
+/// surfaces deleted rows). Non-deleted or missing ids in the input are
+/// silently dropped (mirrors the "all" variant's `WHERE deleted_at IS
+/// NOT NULL` skip semantics). The descendant walk uses the purge variant
+/// of the recursive CTE — it deliberately includes conflict copies
+/// (invariant #9 documented exception) so every trace of the subtree is
+/// erased.
+///
+/// Returns the number of `blocks` rows physically removed.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`] entries
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn purge_blocks_by_ids_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<String>,
+) -> Result<BulkTrashResponse, AppError> {
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::Validation(format!(
+            "block_ids list too large: {} > {}",
+            block_ids.len(),
+            MAX_BATCH_BLOCK_IDS
+        )));
+    }
+
+    let block_ids: Vec<String> = block_ids
+        .into_iter()
+        .map(|id| id.to_ascii_uppercase())
+        .collect();
+    let ids_json = serde_json::to_string(&block_ids)?;
+
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "purge_blocks_by_ids").await?;
+
+    // Audit Validator I11 note: the "all" variant's root-selection step
+    // (`SELECT roots WHERE deleted_at IS NOT NULL AND parent NOT cascade`)
+    // is replaced here by the simpler "input list filtered to actually
+    // soft-deleted rows" lookup — the input IS the root set. Non-deleted
+    // / missing ids get silently skipped, matching the "all" variant's
+    // implicit behaviour against a mixed table.
+    let roots = sqlx::query!(
+        "SELECT b.id FROM blocks b \
+         WHERE b.id IN (SELECT value FROM json_each(?1)) \
+           AND b.deleted_at IS NOT NULL",
+        ids_json,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    if roots.is_empty() {
+        return Ok(BulkTrashResponse { affected_count: 0 });
+    }
+
+    // PEND-26 N2 — refuse to purge if ANY root's subtree saturates the
+    // depth-100 cap; mirroring the single-row guard. We check
+    // per-root because the cap is per-walk; a single deep tree in the
+    // batch would silently leak descendants past depth 100.
+    for root in &roots {
+        if crate::block_descendants::cascade_depth_saturated(&mut **tx, &root.id).await? {
+            return Err(AppError::Validation(format!(
+                "block '{}' subtree is too deep to purge (>=99 levels); \
+                 the recursive cascade would hit the depth-100 cap and \
+                 leave descendants below depth 100 dangling. Purge in \
+                 chunks instead.",
+                root.id,
+            )));
+        }
+    }
+
+    // Emit one PurgeBlock op per root.
+    let now = now_rfc3339();
+    for root in &roots {
+        let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::from_trusted(&root.id),
+        });
+        let op_record =
+            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        tx.enqueue_background(op_record);
+    }
+
+    // Defer FK checks until commit — the entire subtree(s) will be gone
+    // by then so no constraints will be violated.
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut **tx)
+        .await?;
+
+    // Multi-root descendant CTE — variant of `descendants_cte_purge!()`
+    // seeded from `json_each(?1)`. Like the single-root purge CTE this
+    // does NOT filter `is_conflict = 0` (PURGE is the documented
+    // exception to invariant #9). `depth < 100` still bounds runaway
+    // recursion. Kept inline as a `&str` so each `sqlx::query(...)` call
+    // can `concat!` against per-table tail clauses without macro
+    // expansion gymnastics.
+    let cte = "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE d.depth < 100 \
+         ) ";
+
+    // block_tags
+    sqlx::query(&format!(
+        "{cte}DELETE FROM block_tags \
+         WHERE block_id IN (SELECT id FROM descendants) \
+            OR tag_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // block_tag_inherited
+    sqlx::query(&format!(
+        "{cte}DELETE FROM block_tag_inherited \
+         WHERE block_id IN (SELECT id FROM descendants) \
+            OR tag_id IN (SELECT id FROM descendants) \
+            OR inherited_from IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // block_properties: owned by descendants
+    sqlx::query(&format!(
+        "{cte}DELETE FROM block_properties \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // block_properties: value_ref pointing into the subtree (NULLify)
+    sqlx::query(&format!(
+        "{cte}UPDATE block_properties SET value_ref = NULL \
+         WHERE value_ref IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // block_links: either end may be in the subtree
+    sqlx::query(&format!(
+        "{cte}DELETE FROM block_links \
+         WHERE source_id IN (SELECT id FROM descendants) \
+            OR target_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // agenda_cache
+    sqlx::query(&format!(
+        "{cte}DELETE FROM agenda_cache \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // tags_cache (keyed on tag_id)
+    sqlx::query(&format!(
+        "{cte}DELETE FROM tags_cache \
+         WHERE tag_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // pages_cache (keyed on page_id)
+    sqlx::query(&format!(
+        "{cte}DELETE FROM pages_cache \
+         WHERE page_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // Collect attachment paths BEFORE deleting rows so the post-commit
+    // unlink loop has the on-disk paths.
+    let attachment_rows: Vec<String> = sqlx::query_scalar::<_, String>(&format!(
+        "{cte}SELECT fs_path FROM attachments \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    // attachments
+    sqlx::query(&format!(
+        "{cte}DELETE FROM attachments \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // block_drafts
+    sqlx::query(&format!(
+        "{cte}DELETE FROM block_drafts \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // Nullify conflict_source refs from blocks outside the subtree
+    sqlx::query(&format!(
+        "{cte}UPDATE blocks SET conflict_source = NULL \
+         WHERE conflict_source IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // fts_blocks — FTS5 virtual table, no FK, must be cleaned explicitly
+    sqlx::query(&format!(
+        "{cte}DELETE FROM fts_blocks \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // page_aliases (keyed on page_id)
+    sqlx::query(&format!(
+        "{cte}DELETE FROM page_aliases \
+         WHERE page_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // projected_agenda_cache
+    sqlx::query(&format!(
+        "{cte}DELETE FROM projected_agenda_cache \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    // Delete blocks themselves (deferred FK lets this single DELETE sweep
+    // the whole multi-root subtree).
+    let result = sqlx::query(&format!(
+        "{cte}DELETE FROM blocks \
+         WHERE id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&ids_json)
+    .execute(&mut **tx)
+    .await?;
+
+    let count = result.rows_affected();
+
+    // Commit + drain enqueued background dispatches.
+    tx.commit_and_dispatch(materializer).await?;
+
+    // L-36: Post-commit attachment-file unlink runs on a blocking thread
+    // (mirrors `purge_all_deleted_inner`).
+    tokio::task::spawn_blocking(move || {
+        for path in &attachment_rows {
+            let p = std::path::Path::new(path.as_str());
+            if p.is_absolute()
+                || p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                let (path_hash, ext) = anonymize_attachment_path(path);
+                tracing::warn!(
+                    path_hash = %path_hash,
+                    extension = %ext,
+                    "skipping attachment deletion: unsafe path"
+                );
+                continue;
+            }
+            if let Err(e) = std::fs::remove_file(path) {
+                let (path_hash, ext) = anonymize_attachment_path(path);
+                tracing::warn!(
+                    path_hash = %path_hash,
+                    extension = %ext,
+                    error = %e,
+                    "failed to remove attachment file after purge"
+                );
+            }
+        }
+    });
+
+    Ok(BulkTrashResponse {
+        affected_count: count,
+    })
+}
+
 /// Snapshot of a `property_definitions` row's validation-relevant fields.
 ///
 /// PEND-28a M2: pre-fetched by the caller of [`set_property_in_tx`] and
@@ -2032,6 +2748,38 @@ pub async fn purge_all_deleted(
     materializer: State<'_, Materializer>,
 ) -> Result<BulkTrashResponse, AppError> {
     purge_all_deleted_inner(&pool.0, device_id.as_str(), &materializer)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in one IPC.
+/// Delegates to [`restore_blocks_by_ids_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn restore_blocks_by_ids(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_ids: Vec<String>,
+) -> Result<BulkTrashResponse, AppError> {
+    restore_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in one IPC.
+/// Delegates to [`purge_blocks_by_ids_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn purge_blocks_by_ids(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_ids: Vec<String>,
+) -> Result<BulkTrashResponse, AppError> {
+    purge_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
         .await
         .map_err(sanitize_internal_error)
 }
