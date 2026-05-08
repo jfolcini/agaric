@@ -167,7 +167,7 @@ plumbing (`SpaceScope` threading) and could batch.
 | **Recommendation** | **CREATE** three commands: |
 | | • `get_blocks(ids: Vec<String>) -> Vec<BlockRow>` — full-row batch using same `json_each(?)` pattern as `batch_resolve`. |
 | | • `first_op_device_for_blocks(block_ids) -> HashMap<String, String>` — single SQL using `idx_op_log_block_id` (migration 0030). Or extend `BlockRow` returned by `get_conflicts` to include `origin_device_id` and drop the second IPC entirely. |
-| | • `resolve_conflicts_batch(actions: Vec<{block_id, parent_id, action: keep|discard, content?}>)` — one tx covering all keeps and discards. |
+| | • `resolve_conflicts_batch(actions: Vec<{block_id, parent_id, action: keep \| discard, content?}>)` — one tx covering all keeps and discards. |
 | **Validator verdict** | N9, N10, N11 all TRUE |
 
 ### 2.4 Property fan-out per visible row
