@@ -47,15 +47,16 @@ import { useConflictSelection } from '../hooks/useConflictSelection'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { announce } from '../lib/announcer'
-import type { BlockRow, DeleteResponse } from '../lib/tauri'
+import type { BlockRow, ConflictResolveAction, DeleteResponse } from '../lib/tauri'
 import {
   deleteBlock,
   editBlock,
-  getBlock,
-  getBlockHistory,
+  firstOpDeviceForBlocks,
+  getBlocks,
   getConflicts,
   getDeviceId,
   listPeerRefs,
+  resolveConflictsBatch,
   restoreBlock,
 } from '../lib/tauri'
 import { useTabsStore } from '../stores/tabs'
@@ -139,7 +140,8 @@ export function ConflictList(): React.ReactElement {
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
 
-  // Fetch original blocks for comparison when new conflict blocks arrive
+  // PEND-35 Tier 2.3 — fetch original blocks for comparison via the
+  // single-IPC `getBlocks(ids)` batch (was: per-row `getBlock` fan-out).
   useEffect(() => {
     const parentIds = blocks
       .map((b) => b.parent_id)
@@ -150,18 +152,27 @@ export function ConflictList(): React.ReactElement {
     let cancelled = false
     for (const pid of uniqueIds) fetchedParentsRef.current.add(pid)
 
-    Promise.allSettled(
-      uniqueIds.map((pid) => getBlock(pid).then((orig) => [pid, orig] as const)),
-    ).then((results) => {
-      if (cancelled) return
-      setOriginals((prev) => {
-        const next = new Map(prev)
-        for (const r of results) {
-          if (r.status === 'fulfilled') next.set(r.value[0], r.value[1])
-        }
-        return next
+    getBlocks(uniqueIds)
+      .then((rows) => {
+        if (cancelled) return
+        setOriginals((prev) => {
+          const next = new Map(prev)
+          // Defensive: a missing-or-shape-mismatched response (e.g. test
+          // mock returning `undefined`) should leave originals untouched
+          // rather than throwing during the state update.
+          if (!Array.isArray(rows)) return next
+          for (const row of rows) {
+            next.set(row.id, row)
+          }
+          return next
+        })
       })
-    })
+      .catch((err: unknown) => {
+        // Backend failures here are non-critical — the conflict list still
+        // renders, just without the "original" comparison. Match the prior
+        // best-effort policy of the per-row Promise.allSettled fan-out.
+        logger.warn('ConflictList', 'failed to batch-fetch parent blocks', undefined, err)
+      })
 
     return () => {
       cancelled = true
@@ -196,36 +207,23 @@ export function ConflictList(): React.ReactElement {
     }
   }, [reload])
 
-  // Fetch source device info for each conflict block (#651 C-3)
+  // PEND-35 Tier 2.3 — fetch source device info via the single-IPC
+  // `firstOpDeviceForBlocks(blockIds)` batch (was:
+  // `Promise.all(blocks.map(b => getBlockHistory({blockId, limit:1})))`).
+  // The backend reads MIN(seq) per block via the indexed
+  // `op_log.block_id` column (migration 0030).
   useEffect(() => {
     if (blocks.length === 0) return
     let stale = false
 
     async function fetchDeviceInfo() {
       try {
-        // Fetch first history entry for each conflict block
-        const deviceIdsByBlock = new Map<string, string>()
-        await Promise.all(
-          blocks.map(async (block) => {
-            try {
-              const hist = await getBlockHistory({ blockId: block.id, limit: 1 })
-              if (hist.items.length > 0) {
-                deviceIdsByBlock.set(block.id, hist.items[0]?.device_id as string)
-              }
-            } catch (err) {
-              // Silently skip blocks where history is unavailable
-              logger.warn(
-                'ConflictList',
-                'failed to load block history for device-name resolution',
-                { blockId: block.id },
-                err,
-              )
-            }
-          }),
-        )
-
-        // Get device name mapping
-        const [peers, localId] = await Promise.all([listPeerRefs(), getDeviceId()])
+        const blockIds = blocks.map((b) => b.id)
+        const [deviceIdsByBlock, peers, localId] = await Promise.all([
+          firstOpDeviceForBlocks(blockIds),
+          listPeerRefs(),
+          getDeviceId(),
+        ])
 
         const nameMap = new Map<string, string>()
         for (const peer of peers) {
@@ -236,7 +234,7 @@ export function ConflictList(): React.ReactElement {
         // Build blockId -> deviceName map
         if (!stale) {
           const result = new Map<string, string>()
-          for (const [blockId, deviceId] of deviceIdsByBlock) {
+          for (const [blockId, deviceId] of Object.entries(deviceIdsByBlock)) {
             const name = nameMap.get(deviceId)
             if (name) {
               result.set(blockId, name)
@@ -399,56 +397,104 @@ export function ConflictList(): React.ReactElement {
     [setBlocks, t],
   )
 
+  // PEND-35 Tier 2.3 — collapse the per-row `editBlock` + `deleteBlock`
+  // IPC loop into a single `resolveConflictsBatch(actions)` IPC backed
+  // by a single IMMEDIATE tx on the backend. 50 conflicts went from
+  // ~100 IPCs to 1. The UX-264 progress indicator stays as a single
+  // spinner — backend atomicity is all-or-nothing, so per-row
+  // intermediate counts no longer mean anything.
   const handleBatchConfirm = useCallback(async () => {
     const selectedBlocks = blocks.filter((b) => selectedIds.has(b.id))
-    let failCount = 0
     const savedBatchAction = batchAction
     const total = selectedBlocks.length
-    // UX-264: surface progress as we iterate so users with 50+ conflicts see
-    // "Resolving 3 of 50…" rather than just a spinner.
+    if (total === 0 || savedBatchAction == null) {
+      clearSelection()
+      setBatchAction(null)
+      return
+    }
+    // Surface a single spinner state via batchProgress (the existing
+    // intermediate-progress UI). With one IPC there are no intermediate
+    // updates — batchProgress goes from `null` → {0,total} → `null`.
     setBatchProgress({ current: 0, total })
-    for (let i = 0; i < selectedBlocks.length; i++) {
-      const block = selectedBlocks[i] as BlockRow
-      setBatchProgress({ current: i + 1, total })
-      try {
-        if (savedBatchAction === 'keep') {
-          if (block.parent_id && block.content != null) {
-            await editBlock(block.parent_id, block.content)
-          }
-          await deleteBlock(block.id)
-          setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-        } else {
-          await deleteBlock(block.id)
-          setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+
+    const actions: ConflictResolveAction[] = []
+    const skipped: string[] = []
+    for (const block of selectedBlocks) {
+      if (savedBatchAction === 'keep') {
+        if (block.parent_id == null || block.content == null) {
+          // Skip rows with no parent or no content — `keep` is meaningless
+          // there. Mirrors the prior loop's implicit no-op.
+          skipped.push(block.id)
+          continue
         }
-      } catch (err) {
-        failCount++
-        logger.warn(
-          'ConflictList',
-          'failed to apply batch action to a conflict',
-          { blockId: block.id, action: savedBatchAction },
-          err,
-        )
+        actions.push({
+          blockId: block.id,
+          parentId: block.parent_id,
+          action: 'keep',
+          content: block.content,
+        })
+      } else {
+        actions.push({
+          blockId: block.id,
+          // `parent_id` is unused for `discard` server-side but the wire
+          // shape requires it; pass empty string when missing so the
+          // serialiser stays happy without changing the action shape.
+          parentId: block.parent_id ?? '',
+          action: 'discard',
+          content: null,
+        })
       }
     }
+
+    let success = false
+    try {
+      if (actions.length > 0) {
+        await resolveConflictsBatch(actions)
+      }
+      // All-or-nothing on the backend: prune every action's block_id
+      // from the local list and let the count assertions reflect the
+      // batch.
+      const resolvedIds = new Set(actions.map((a) => a.blockId))
+      setBlocks((prev) => prev.filter((b) => !resolvedIds.has(b.id)))
+      success = true
+    } catch (err) {
+      logger.warn(
+        'ConflictList',
+        'failed to apply batch action via resolveConflictsBatch',
+        { count: actions.length, action: savedBatchAction },
+        err,
+      )
+    }
+
     setBatchProgress(null)
     clearSelection()
     setBatchAction(null)
-    if (failCount > 0) {
-      toast.error(t('conflict.batchError', { failCount, count: selectedBlocks.length }), {
+
+    if (!success) {
+      // The backend rolled back the entire batch — every selected row is
+      // still a conflict. Surface the same error toast shape the
+      // previous per-row path used (failCount = total) so existing tests
+      // for the error UX still pin.
+      toast.error(t('conflict.batchError', { failCount: total, count: total }), {
         duration: 5000,
         action: {
           label: t('action.retry'),
           onClick: () => setBatchAction(savedBatchAction),
         },
       })
-    } else {
-      const msg =
-        savedBatchAction === 'keep'
-          ? t('conflict.batchKeptCount', { count: selectedBlocks.length })
-          : t('conflict.batchDiscardedCount', { count: selectedBlocks.length })
-      toast.success(msg)
-      announce(msg)
+      return
+    }
+    const msg =
+      savedBatchAction === 'keep'
+        ? t('conflict.batchKeptCount', { count: actions.length })
+        : t('conflict.batchDiscardedCount', { count: actions.length })
+    toast.success(msg)
+    announce(msg)
+    if (skipped.length > 0) {
+      logger.warn('ConflictList', 'skipped batch-keep entries lacking parent_id or content', {
+        skippedCount: skipped.length,
+        action: savedBatchAction,
+      })
     }
   }, [blocks, selectedIds, batchAction, setBlocks, clearSelection, t])
 

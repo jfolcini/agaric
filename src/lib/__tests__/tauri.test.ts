@@ -39,6 +39,7 @@ import {
   exportPageMarkdown,
   fetchLinkMetadata,
   firstChildForBlocks,
+  firstOpDeviceForBlocks,
   flushAllDrafts,
   flushDraft,
   getBacklinks,
@@ -46,6 +47,7 @@ import {
   getBatchProperties,
   getBlock,
   getBlockHistory,
+  getBlocks,
   getCompactionStatus,
   getConflicts,
   getDeviceId,
@@ -54,6 +56,7 @@ import {
   getPageAliases,
   getPeerRef,
   getProperties,
+  getProperty,
   getPropertyDef,
   getStatus,
   importMarkdown,
@@ -84,6 +87,7 @@ import {
   readLogsForReport,
   redoPageOp,
   removeTag,
+  resolveConflictsBatch,
   resolvePageByAlias,
   restoreAllDeleted,
   restoreBlock,
@@ -1070,6 +1074,45 @@ describe('getProperties', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'BLK001' })
     expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getProperty (PEND-35 Tier 2.4c)
+// ---------------------------------------------------------------------------
+
+describe('getProperty', () => {
+  it('invokes get_property with blockId + key and unwraps the row', async () => {
+    const expected = {
+      key: 'image_width',
+      value_text: '50',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getProperty('BLK001', 'image_width')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
+      blockId: 'BLK001',
+      key: 'image_width',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns null when the backend has no row for (blockId, key)', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    const result = await getProperty('BLK001', 'journal_template')
+
+    expect(result).toBeNull()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
+      blockId: 'BLK001',
+      key: 'journal_template',
+    })
   })
 })
 
@@ -2480,6 +2523,96 @@ describe('firstChildForBlocks', () => {
 })
 
 // ---------------------------------------------------------------------------
+// PEND-35 Tier 2.3 — getBlocks / firstOpDeviceForBlocks / resolveConflictsBatch
+// ---------------------------------------------------------------------------
+
+describe('getBlocks', () => {
+  it('invokes get_blocks with the ids array', async () => {
+    const expected = [
+      {
+        id: 'B1',
+        block_type: 'content',
+        content: 'one',
+        parent_id: null,
+        position: null,
+        deleted_at: null,
+        is_conflict: false,
+        conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+        page_id: null,
+      },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getBlocks(['B1', 'B2', 'B3'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_blocks', {
+      ids: ['B1', 'B2', 'B3'],
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns the array unchanged from the IPC', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+    expect(await getBlocks(['MISSING'])).toEqual([])
+  })
+})
+
+describe('firstOpDeviceForBlocks', () => {
+  it('invokes first_op_device_for_blocks with the blockIds array', async () => {
+    const expected = { B1: 'device-A', B2: 'device-B' }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await firstOpDeviceForBlocks(['B1', 'B2'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('first_op_device_for_blocks', {
+      blockIds: ['B1', 'B2'],
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('round-trips an empty input as an empty record', async () => {
+    mockedInvoke.mockResolvedValueOnce({})
+
+    const result = await firstOpDeviceForBlocks([])
+
+    expect(mockedInvoke).toHaveBeenCalledWith('first_op_device_for_blocks', { blockIds: [] })
+    expect(result).toEqual({})
+  })
+})
+
+describe('resolveConflictsBatch', () => {
+  it('invokes resolve_conflicts_batch with the actions list', async () => {
+    const expected = { resolved: 2, failed: 0 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const actions = [
+      { blockId: 'C1', parentId: 'P1', action: 'keep' as const, content: 'new content' },
+      { blockId: 'C2', parentId: 'P2', action: 'discard' as const, content: null },
+    ]
+    const result = await resolveConflictsBatch(actions)
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('resolve_conflicts_batch', { actions })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns the result object unchanged from the IPC', async () => {
+    mockedInvoke.mockResolvedValueOnce({ resolved: 0, failed: 0 })
+    expect(
+      await resolveConflictsBatch([
+        { blockId: 'X', parentId: 'Y', action: 'discard', content: null },
+      ]),
+    ).toEqual({ resolved: 0, failed: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // listProjectedAgenda
 // ---------------------------------------------------------------------------
 
@@ -3371,6 +3504,7 @@ describe('cross-cutting', () => {
     await setProperty({ blockId: 'id', key: 'k' })
     await deleteProperty('id', 'k')
     await getProperties('id')
+    await getProperty('id', 'k')
     await getBatchProperties(['id'])
     await countAgendaBatch({ dates: ['2025-01-15'] })
     await countBacklinksBatch({ pageIds: ['id'] })
@@ -3432,6 +3566,7 @@ describe('cross-cutting', () => {
       'set_property',
       'delete_property',
       'get_properties',
+      'get_property',
       'get_batch_properties',
       'count_agenda_batch',
       'count_backlinks_batch',

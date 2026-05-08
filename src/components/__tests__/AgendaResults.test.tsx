@@ -50,10 +50,12 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
 }))
 
 const mockGetProperties = vi.fn().mockResolvedValue([])
+const mockGetBatchProperties = vi.fn().mockResolvedValue({})
 const mockBatchResolve = vi.fn().mockResolvedValue([])
 
 vi.mock('../../lib/tauri', () => ({
   getProperties: (...args: unknown[]) => mockGetProperties(...args),
+  getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
   batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
   getBlock: vi.fn(),
   setDueDate: vi.fn(),
@@ -107,6 +109,7 @@ describe('AgendaResults', () => {
     vi.clearAllMocks()
     mockInvalidationKey = 0
     mockGetProperties.mockResolvedValue([])
+    mockGetBatchProperties.mockResolvedValue({})
     mockBatchResolve.mockResolvedValue([])
     useNavigationStore.setState({
       currentView: 'journal',
@@ -572,15 +575,17 @@ describe('AgendaResults', () => {
 
   // 15. Dependency indicator renders in metadata when block has blocked_by property
   it('renders dependency indicator when block has blocked_by property', async () => {
-    mockGetProperties.mockResolvedValue([
-      {
-        key: 'blocked_by',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: 'BLOCKER1',
-      },
-    ])
+    mockGetBatchProperties.mockResolvedValue({
+      B1: [
+        {
+          key: 'blocked_by',
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: 'BLOCKER1',
+        },
+      ],
+    })
     mockBatchResolve.mockResolvedValue([
       { id: 'BLOCKER1', content: 'Blocking task', block_type: 'block', deleted: false },
     ])
@@ -597,47 +602,70 @@ describe('AgendaResults', () => {
 
   // 16. No dependency indicator when block has no blocked_by property
   it('does not render dependency indicator when block has no blocked_by property', async () => {
-    mockGetProperties.mockResolvedValue([])
+    mockGetBatchProperties.mockResolvedValue({ B1: [] })
 
     const blocks = [makeBlock({ id: 'B1', content: 'Normal task' })]
     render(<AgendaResults {...defaultProps({ blocks })} />)
 
     await waitFor(() => {
-      expect(mockGetProperties).toHaveBeenCalledWith('B1')
+      expect(mockGetBatchProperties).toHaveBeenCalledWith(['B1'])
     })
 
     expect(screen.queryByTestId('dependency-indicator')).not.toBeInTheDocument()
   })
 
-  // PEND-27 P6: cache must be cleared on a property-change event so the
-  // dependency indicator picks up fresh data after a property edit.
-  it('PEND-27 P6: clears properties cache on block:properties-changed event', async () => {
-    mockGetProperties.mockResolvedValue([])
+  // PEND-35 Tier 2.4a: a single `getBatchProperties` IPC fires for N
+  // agenda rows — replaces the previous N per-row `getProperties` IPCs.
+  it('PEND-35 Tier 2.4a: fires one getBatchProperties IPC for N rendered rows', async () => {
+    mockGetBatchProperties.mockResolvedValue({})
+    const blocks = Array.from({ length: 50 }, (_, i) =>
+      makeBlock({ id: `B${i + 1}`, content: `Task ${i + 1}` }),
+    )
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    await waitFor(() => {
+      expect(mockGetBatchProperties).toHaveBeenCalled()
+    })
+
+    // Exactly one batch IPC for all 50 rows (was 50 separate IPCs).
+    expect(mockGetBatchProperties).toHaveBeenCalledTimes(1)
+    const expectedIds = blocks.map((b) => b.id)
+    expect(mockGetBatchProperties).toHaveBeenCalledWith(expectedIds)
+    // Regression guard: the per-block fallback path must NOT fire when
+    // the provider is mounted at the AgendaResults parent.
+    expect(mockGetProperties).not.toHaveBeenCalled()
+  })
+
+  // PEND-27 P6: properties batch must be invalidated on a
+  // property-change event so the dependency indicator picks up fresh
+  // data after a property edit. PEND-35 Tier 2.4a moved the
+  // invalidation signal from a `propertiesCacheRef.clear()` effect to
+  // the `BatchPropertiesProvider`'s `invalidationKey` prop.
+  it('PEND-27 P6: refetches batch properties on block:properties-changed event', async () => {
+    mockGetBatchProperties.mockResolvedValue({})
 
     const blocks = [makeBlock({ id: 'B1', content: 'Cached task' })]
     const { rerender } = render(<AgendaResults {...defaultProps({ blocks })} />)
 
-    // Initial mount fetches properties for B1.
+    // Initial mount fires one batch IPC for the visible rows.
     await waitFor(() => {
-      expect(mockGetProperties).toHaveBeenCalledWith('B1')
+      expect(mockGetBatchProperties).toHaveBeenCalledWith(['B1'])
     })
-    expect(mockGetProperties).toHaveBeenCalledTimes(1)
+    expect(mockGetBatchProperties).toHaveBeenCalledTimes(1)
 
-    // Unmount the indicator (empty list) and remount with the same block.
-    // Without invalidation, the cached entry survives the ref so no new
-    // IPC fires.
-    rerender(<AgendaResults {...defaultProps({ blocks: [] })} />)
+    // Re-rendering with the same blocks (same membership) does NOT
+    // refetch — the provider's stable membership key ignores reference
+    // changes when contents are identical.
     rerender(<AgendaResults {...defaultProps({ blocks })} />)
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(mockGetProperties).toHaveBeenCalledTimes(1)
+    expect(mockGetBatchProperties).toHaveBeenCalledTimes(1)
 
     // Simulate a `block:properties-changed` event: the hook bumps
-    // invalidationKey, which must cause AgendaResults to clear the cache.
+    // invalidationKey, which must trigger a batch refetch.
     mockInvalidationKey = 1
-    rerender(<AgendaResults {...defaultProps({ blocks: [] })} />)
     rerender(<AgendaResults {...defaultProps({ blocks })} />)
     await waitFor(() => {
-      expect(mockGetProperties).toHaveBeenCalledTimes(2)
+      expect(mockGetBatchProperties).toHaveBeenCalledTimes(2)
     })
   })
 

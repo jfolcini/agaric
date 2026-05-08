@@ -104,13 +104,46 @@ const originalBlock = {
  * Helper: set up invoke mock that dispatches by command name.
  * Accepts a map of command → return value (or array of values for sequential calls).
  * Falls back to undefined for unknown commands.
+ *
+ * PEND-35 Tier 2.3 — `get_blocks` and `first_op_device_for_blocks` are
+ * the new batch IPCs that replace the per-row `get_block` /
+ * `get_block_history` fan-outs. To keep the existing test seeds
+ * working unchanged, the helper auto-derives sensible defaults:
+ *
+ *   - `get_blocks` defaults to `[get_block-value]` when `get_block` is
+ *     provided but `get_blocks` isn't; otherwise `[]`.
+ *   - `first_op_device_for_blocks` defaults to `{}` (matches the
+ *     "no device info" branch the per-row fan-out used to fall into
+ *     when `get_block_history` was unstubbed).
+ *
+ * Tests that need finer-grained control simply pass `get_blocks: [...]`
+ * or `first_op_device_for_blocks: {...}` explicitly to override.
  */
 function mockInvokeByCommand(commands: Record<string, unknown | unknown[]>) {
   const callCounts: Record<string, number> = {}
+  // Auto-fill PEND-35 Tier 2.3 batch defaults from the legacy single-row
+  // stubs so existing tests pass unchanged. Explicit batch values in
+  // `commands` always win.
+  const augmented: Record<string, unknown | unknown[]> = { ...commands }
+  if (!('get_blocks' in augmented) && 'get_block' in augmented) {
+    const single = augmented['get_block']
+    augmented['get_blocks'] = single == null ? [] : [single]
+  } else if (!('get_blocks' in augmented)) {
+    augmented['get_blocks'] = []
+  }
+  if (!('first_op_device_for_blocks' in augmented)) {
+    augmented['first_op_device_for_blocks'] = {}
+  }
   mockedInvoke.mockImplementation(async (cmd: string) => {
     callCounts[cmd] = (callCounts[cmd] ?? 0) + 1
-    const val = commands[cmd]
+    const val = augmented[cmd]
     if (Array.isArray(val)) {
+      // For batch-shaped commands the array IS the response — for
+      // sequential-call fixtures the array is a per-call queue. The
+      // caller distinguishes by setting an explicit array on a
+      // batch-shaped command (e.g. `get_blocks: [row1, row2]`); we
+      // treat batch-shaped commands' arrays as the single response.
+      if (cmd === 'get_blocks') return val
       const idx = callCounts[cmd] - 1
       if (idx < val.length) return val[idx]
       return undefined
@@ -499,6 +532,8 @@ describe('ConflictList', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') return {}
       if (cmd === 'edit_block') throw new Error('permission denied')
       return undefined
     })
@@ -526,6 +561,8 @@ describe('ConflictList', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') return {}
       if (cmd === 'delete_block') throw new Error('db locked')
       return undefined
     })
@@ -720,8 +757,9 @@ describe('ConflictList', () => {
     expect(screen.getByText('Incoming:')).toBeInTheDocument()
     expect(screen.getByText('new version')).toBeInTheDocument()
 
-    // Verify get_block was called with the parent_id
-    expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: 'ORIG001' })
+    // PEND-35 Tier 2.3 — parents fetch is now a single-IPC `get_blocks(ids)`
+    // batch (was: per-row `get_block`).
+    expect(mockedInvoke).toHaveBeenCalledWith('get_blocks', { ids: ['ORIG001'] })
   })
 
   it('shows fallback text when original block fetch fails', async () => {
@@ -1117,6 +1155,8 @@ describe('ConflictList', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') return {}
       if (cmd === 'edit_block')
         return { id: 'ORIG001', block_type: 'content', content: 'incoming changes' }
       if (cmd === 'delete_block') throw new Error('storage full')
@@ -1578,6 +1618,8 @@ describe('ConflictList', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') return {}
       if (cmd === 'edit_block')
         return { id: 'ORIG001', block_type: 'content', content: 'incoming changes' }
       if (cmd === 'delete_block') {
@@ -1737,6 +1779,20 @@ describe('ConflictList', () => {
   // --- #651 C-2 Type-specific rendering ---
 
   it('renders property diff for Property conflict type (#651 C-2)', async () => {
+    const origRow = {
+      id: 'ORIG_PROP',
+      block_type: 'content',
+      content: 'same content',
+      parent_id: null,
+      position: 1,
+      deleted_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: 'TODO',
+      priority: 'B',
+      due_date: null,
+      scheduled_date: null,
+    }
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'get_conflicts') {
@@ -1761,22 +1817,9 @@ describe('ConflictList', () => {
           has_more: false,
         }
       }
-      if (cmd === 'get_block') {
-        return {
-          id: 'ORIG_PROP',
-          block_type: 'content',
-          content: 'same content',
-          parent_id: null,
-          position: 1,
-          deleted_at: null,
-          is_conflict: false,
-          conflict_type: null,
-          todo_state: 'TODO',
-          priority: 'B',
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
+      // PEND-35 Tier 2.3 — single-IPC batch replaces per-row get_block.
+      if (cmd === 'get_blocks') return [origRow]
+      if (cmd === 'first_op_device_for_blocks') return {}
       return null
     })
 
@@ -1792,6 +1835,20 @@ describe('ConflictList', () => {
   })
 
   it('renders move diff for Move conflict type (#651 C-2)', async () => {
+    const origRow = {
+      id: 'NEW_PARENT',
+      block_type: 'content',
+      content: 'moved block',
+      parent_id: 'OLD_PARENT',
+      position: 1,
+      deleted_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'get_conflicts') {
@@ -1816,22 +1873,9 @@ describe('ConflictList', () => {
           has_more: false,
         }
       }
-      if (cmd === 'get_block') {
-        return {
-          id: 'NEW_PARENT',
-          block_type: 'content',
-          content: 'moved block',
-          parent_id: 'OLD_PARENT',
-          position: 1,
-          deleted_at: null,
-          is_conflict: false,
-          conflict_type: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
+      // PEND-35 Tier 2.3 — single-IPC batch replaces per-row get_block.
+      if (cmd === 'get_blocks') return [origRow]
+      if (cmd === 'first_op_device_for_blocks') return {}
       return null
     })
 
@@ -1846,6 +1890,20 @@ describe('ConflictList', () => {
   })
 
   it('falls back to text rendering when Property conflict has no detectable diffs (#651 C-2)', async () => {
+    const origRow = {
+      id: 'ORIG_SAME',
+      block_type: 'content',
+      content: 'identical content',
+      parent_id: null,
+      position: 1,
+      deleted_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: 'TODO',
+      priority: 'A',
+      due_date: null,
+      scheduled_date: null,
+    }
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'get_conflicts') {
@@ -1870,22 +1928,9 @@ describe('ConflictList', () => {
           has_more: false,
         }
       }
-      if (cmd === 'get_block') {
-        return {
-          id: 'ORIG_SAME',
-          block_type: 'content',
-          content: 'identical content',
-          parent_id: null,
-          position: 1,
-          deleted_at: null,
-          is_conflict: false,
-          conflict_type: null,
-          todo_state: 'TODO',
-          priority: 'A',
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
+      // PEND-35 Tier 2.3 — single-IPC batch replaces per-row get_block.
+      if (cmd === 'get_blocks') return [origRow]
+      if (cmd === 'first_op_device_for_blocks') return {}
       return null
     })
 
@@ -1972,12 +2017,8 @@ describe('ConflictList', () => {
     mockInvokeByCommand({
       get_conflicts: page,
       get_block: originalBlock,
-      edit_block: { id: 'ORIG001', block_type: 'content', content: 'conflict 1' },
-      delete_block: {
-        block_id: 'C1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      },
+      // PEND-35 Tier 2.3 — single-IPC batch resolves both rows server-side.
+      resolve_conflicts_batch: { resolved: 2, failed: 0 },
     })
 
     render(<ConflictList />)
@@ -2000,13 +2041,20 @@ describe('ConflictList', () => {
     const confirmBtn = screen.getByRole('button', { name: /Yes, keep all/i })
     await user.click(confirmBtn)
 
-    // Verify API calls for both
+    // PEND-35 Tier 2.3 — assert exactly ONE resolve_conflicts_batch IPC
+    // (was: per-row edit_block + delete_block calls). The action list
+    // carries both rows.
     await waitFor(() => {
-      const editCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'edit_block')
-      const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')
-      expect(editCalls.length).toBeGreaterThanOrEqual(2)
-      expect(deleteCalls.length).toBeGreaterThanOrEqual(2)
+      const batchCalls = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'resolve_conflicts_batch',
+      )
+      expect(batchCalls.length).toBe(1)
+      const args = (batchCalls[0] as unknown[])[1] as { actions: unknown[] }
+      expect(args.actions).toHaveLength(2)
     })
+    // Single-IPC contract: NO per-row IPCs after this batch path.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
   it('batch discard confirms and removes selected conflicts (#651 C-8)', async () => {
@@ -2022,11 +2070,8 @@ describe('ConflictList', () => {
     mockInvokeByCommand({
       get_conflicts: page,
       get_block: originalBlock,
-      delete_block: {
-        block_id: 'C1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      },
+      // PEND-35 Tier 2.3 — single-IPC batch.
+      resolve_conflicts_batch: { resolved: 2, failed: 0 },
     })
 
     render(<ConflictList />)
@@ -2047,11 +2092,17 @@ describe('ConflictList', () => {
     const confirmBtn = screen.getByRole('button', { name: /Yes, discard all/i })
     await user.click(confirmBtn)
 
-    // Verify deleteBlock called for each
+    // PEND-35 Tier 2.3 — assert exactly ONE resolve_conflicts_batch IPC
+    // for both rows (was: per-row delete_block fan-out).
     await waitFor(() => {
-      const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')
-      expect(deleteCalls.length).toBeGreaterThanOrEqual(2)
+      const batchCalls = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'resolve_conflicts_batch',
+      )
+      expect(batchCalls.length).toBe(1)
+      const args = (batchCalls[0] as unknown[])[1] as { actions: unknown[] }
+      expect(args.actions).toHaveLength(2)
     })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
   it('batch toolbar hidden when no selection (#651 C-8)', async () => {
@@ -2100,7 +2151,13 @@ describe('ConflictList', () => {
     })
   })
 
-  it('shows partial failure toast when batch keep has mixed results (#651 C-8)', async () => {
+  it('shows error toast when batch keep fails atomically (#651 C-8)', async () => {
+    // PEND-35 Tier 2.3 — the batch resolve is all-or-nothing now: any
+    // failure inside the IPC rolls back every row. The legacy
+    // partial-failure test (1 of 2 mid-loop) is no longer reachable.
+    // What we DO assert is that a backend error surfaces as an error
+    // toast that pins `failCount = total = count`, matching the FE's
+    // "every selected conflict is still a conflict" recovery shape.
     const user = userEvent.setup()
     const page = {
       items: [
@@ -2110,18 +2167,12 @@ describe('ConflictList', () => {
       next_cursor: null,
       has_more: false,
     }
-    let editCallCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return page
       if (cmd === 'get_block') return originalBlock
-      if (cmd === 'edit_block') {
-        editCallCount++
-        if (editCallCount > 1) throw new Error('db locked')
-        return { id: 'ORIG001', block_type: 'content', content: 'conflict 1' }
-      }
-      if (cmd === 'delete_block') {
-        return { block_id: 'C1', deleted_at: '2025-01-15T00:00:00Z', descendants_affected: 0 }
-      }
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') return {}
+      if (cmd === 'resolve_conflicts_batch') throw new Error('db locked')
       return undefined
     })
 
@@ -2141,10 +2192,114 @@ describe('ConflictList', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        t('conflict.batchError', { failCount: 1, count: 2 }),
+        // failCount equals total under all-or-nothing rollback.
+        t('conflict.batchError', { failCount: 2, count: 2 }),
         expect.objectContaining({ duration: 5000 }),
       )
     })
+  })
+
+  // --- PEND-35 Tier 2.3 regression pins ---
+
+  it('PEND-35 Tier 2.3 — parents fetch fires ONE get_blocks IPC (not per-row get_block)', async () => {
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', parent_id: 'P1', content: 'c1' }),
+        makeConflict({ id: 'C2', parent_id: 'P2', content: 'c2' }),
+        makeConflict({ id: 'C3', parent_id: 'P3', content: 'c3' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    const parentRow = (id: string) => ({ ...originalBlock, id })
+    mockInvokeByCommand({
+      get_conflicts: page,
+      // Explicitly seed `get_blocks` so the helper's auto-default is overridden.
+      get_blocks: [parentRow('P1'), parentRow('P2'), parentRow('P3')],
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('c1')
+
+    await waitFor(() => {
+      const getBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_blocks')
+      expect(getBlocksCalls.length).toBe(1)
+    })
+    // Crucial pin: the legacy per-row `get_block` IPC is GONE for the
+    // parents-fetch path.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('get_block', expect.anything())
+  })
+
+  it('PEND-35 Tier 2.3 — device-id fetch fires ONE first_op_device_for_blocks IPC', async () => {
+    const page = {
+      items: [makeConflict({ id: 'C1', content: 'c1' }), makeConflict({ id: 'C2', content: 'c2' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+      first_op_device_for_blocks: { C1: 'DEVICE_LOCAL', C2: 'DEVICE_LOCAL' },
+      list_peer_refs: [],
+      get_device_id: 'DEVICE_LOCAL',
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('c1')
+
+    await waitFor(() => {
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'first_op_device_for_blocks')
+      expect(calls.length).toBe(1)
+    })
+    // Pin: `get_block_history` is NOT called for the device-name badge.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('get_block_history', expect.anything())
+  })
+
+  it('PEND-35 Tier 2.3 — batch confirm fires ONE resolve_conflicts_batch IPC', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'c1' }),
+        makeConflict({ id: 'C2', content: 'c2' }),
+        makeConflict({ id: 'C3', content: 'c3' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+      resolve_conflicts_batch: { resolved: 3, failed: 0 },
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('c1')
+
+    // Select all three.
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+    await user.click(checkboxes[2] as HTMLElement)
+
+    await user.click(screen.getByRole('button', { name: /Keep all/i }))
+    await user.click(screen.getByRole('button', { name: /Yes, keep all/i }))
+
+    await waitFor(() => {
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'resolve_conflicts_batch')
+      expect(calls.length).toBe(1)
+      const args = (calls[0] as unknown[])[1] as { actions: Array<Record<string, unknown>> }
+      expect(args.actions).toHaveLength(3)
+      // Each action must carry the keep shape.
+      for (const a of args.actions) {
+        expect(a['action']).toBe('keep')
+      }
+    })
+    // Pin: per-row legacy IPCs are GONE.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
   // --- #651 C-3 Source device info ---
@@ -2158,20 +2313,11 @@ describe('ConflictList', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return page
       if (cmd === 'get_block') return originalBlock
-      if (cmd === 'get_block_history') {
-        return {
-          items: [
-            {
-              device_id: 'DEVICE_ABC',
-              seq: 1,
-              op_type: 'CreateBlock',
-              payload: '{}',
-              created_at: '2026-04-03T00:00:00Z',
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'get_blocks') return [originalBlock]
+      // PEND-35 Tier 2.3 — single-IPC batch replaces the per-row
+      // get_block_history fan-out for the device-name badge.
+      if (cmd === 'first_op_device_for_blocks') {
+        return { C1: 'DEVICE_ABC' }
       }
       if (cmd === 'list_peer_refs') {
         return [
@@ -2205,20 +2351,9 @@ describe('ConflictList', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return page
       if (cmd === 'get_block') return originalBlock
-      if (cmd === 'get_block_history') {
-        return {
-          items: [
-            {
-              device_id: 'UNKNOWN_DEVICE_ID_LONG',
-              seq: 1,
-              op_type: 'CreateBlock',
-              payload: '{}',
-              created_at: '2026-04-03T00:00:00Z',
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') {
+        return { C2: 'UNKNOWN_DEVICE_ID_LONG' }
       }
       if (cmd === 'list_peer_refs') return []
       if (cmd === 'get_device_id') return 'DEVICE_LOCAL'
@@ -2239,6 +2374,11 @@ describe('ConflictList', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return page
       if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') {
+        return { C3: 'DEVICE_LOCAL' }
+      }
+      // Keep the legacy stub so the dropped fan-out still no-ops cleanly.
       if (cmd === 'get_block_history') {
         return {
           items: [
@@ -2556,12 +2696,8 @@ describe('ConflictList', () => {
     mockInvokeByCommand({
       get_conflicts: page,
       get_block: originalBlock,
-      edit_block: { id: 'ORIG001', block_type: 'content', content: 'conflict 1' },
-      delete_block: {
-        block_id: 'C1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      },
+      // PEND-35 Tier 2.3 — single-IPC batch.
+      resolve_conflicts_batch: { resolved: 2, failed: 0 },
     })
 
     render(<ConflictList />)
@@ -2599,11 +2735,7 @@ describe('ConflictList', () => {
     mockInvokeByCommand({
       get_conflicts: page,
       get_block: originalBlock,
-      delete_block: {
-        block_id: 'C1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      },
+      resolve_conflicts_batch: { resolved: 2, failed: 0 },
     })
 
     render(<ConflictList />)
@@ -2775,9 +2907,15 @@ describe('ConflictList', () => {
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
   })
 
-  // UX-264: while a batch keep/discard is iterating through 50+ conflicts,
-  // users should see "Resolving N of M…" rather than just a spinner.
-  it('shows batch progress text while iterating (UX-264)', async () => {
+  // PEND-35 Tier 2.3 — the per-row IPC loop is gone; the FE fires a
+  // single `resolveConflictsBatch` IPC. The UX-264 progress indicator
+  // remains as a single "0 of N" spinner stub for accessibility (the
+  // batch is fast enough that intermediate counts no longer mean
+  // anything). We assert: (a) the progress element shows up while the
+  // IPC is in flight, with role=status / aria-live=polite, and (b) it
+  // disappears once the batch completes. Per-row "Resolving K of N"
+  // pacing is no longer reachable.
+  it('shows batch progress while resolveConflictsBatch is in flight (UX-264)', async () => {
     const user = userEvent.setup()
     const conflicts = [
       makeConflict({ id: 'C1', content: 'c1' }),
@@ -2788,28 +2926,17 @@ describe('ConflictList', () => {
     ]
     const page = { items: conflicts, next_cursor: null, has_more: false }
 
-    // Hold the FIRST delete_block so we can observe the progress mid-flight
-    // before any block is removed (which would mutate the items list and
-    // trigger useListMultiSelect's auto-clear effect).
-    let resolveFirstDelete: (() => void) | undefined
-    const firstDeletePromise = new Promise<{
-      block_id: string
-      deleted_at: string
-      descendants_affected: number
-    }>((resolve) => {
-      resolveFirstDelete = () =>
-        resolve({ block_id: 'C1', deleted_at: '2025-01-15T00:00:00Z', descendants_affected: 0 })
+    // Hold the batch IPC so we can observe the progress mid-flight.
+    let resolveBatch: ((v: { resolved: number; failed: number }) => void) | undefined
+    const batchPromise = new Promise<{ resolved: number; failed: number }>((resolve) => {
+      resolveBatch = resolve
     })
-
-    let deleteCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return page
       if (cmd === 'get_block') return originalBlock
-      if (cmd === 'delete_block') {
-        deleteCount++
-        if (deleteCount === 1) return firstDeletePromise
-        return { block_id: 'CX', deleted_at: '2025-01-15T00:00:00Z', descendants_affected: 0 }
-      }
+      if (cmd === 'get_blocks') return [originalBlock]
+      if (cmd === 'first_op_device_for_blocks') return {}
+      if (cmd === 'resolve_conflicts_batch') return batchPromise
       return undefined
     })
 
@@ -2817,27 +2944,25 @@ describe('ConflictList', () => {
 
     await screen.findByText('c1')
 
-    // Select one then "Select all" to grab all five.
+    // Select all five.
     const checkboxes = screen.getAllByRole('checkbox')
     await user.click(checkboxes[0] as HTMLElement)
     const selectAllBtn = screen.getByRole('button', { name: /Select all/i })
     await user.click(selectAllBtn)
 
-    // Open + confirm the Discard-all batch dialog (Discard path is simpler:
-    // only delete_block is awaited per item, so the deferred-delete trick
-    // pauses the loop deterministically).
     await user.click(screen.getByRole('button', { name: /Discard all/i }))
     expect(screen.getByText(t('conflict.discardAllSelectedTitle'))).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Yes, discard all/i }))
 
-    // The 1st delete is hung, so progress must show "Resolving 1 of 5…".
+    // While the batch IPC is in flight, the progress element renders
+    // with the all-or-nothing 0/total stub.
     const progress = await screen.findByTestId('conflict-batch-progress')
-    expect(progress).toHaveTextContent(t('conflicts.batchProgress', { current: 1, total: 5 }))
+    expect(progress).toHaveTextContent(t('conflicts.batchProgress', { current: 0, total: 5 }))
     expect(progress.getAttribute('role')).toBe('status')
     expect(progress.getAttribute('aria-live')).toBe('polite')
 
-    // Release the hung delete to let the rest finish.
-    resolveFirstDelete?.()
+    // Release the batch IPC.
+    resolveBatch?.({ resolved: 5, failed: 0 })
 
     // Progress disappears once the batch completes.
     await waitFor(() => {

@@ -1,6 +1,6 @@
 # PEND-35 — Tauri command audit: where the frontend is doing work the database/backend should do
 
-> **Status (session 691):** Tier 1 (6) + Tier 3 (4) fully shipped. Tier 2 partial — 9 fully shipped (2.1, 2.2, 2.5, 2.6, 2.7, 2.8, 2.9, 2.11, 2.12) + 2.10a partial (2.10b remains). Tier 4: 4.5 shipped. **7 items remain across Tier 2 + Tier 4** — 2.3 (ConflictList 3 N+1s), 2.4 (property fan-out), 2.10b (filtered_blocks_query AND-intersection), 4.1, 4.2, 4.3, 4.4.
+> **Status (session 692):** Tier 1 (6) + Tier 3 (4) fully shipped. Tier 2 partial — 11 fully shipped (2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.11, 2.12) + 2.10a partial (2.10b remains). Tier 4: 4.5 shipped. **5 items remain** — 2.10b (filtered_blocks_query AND-intersection), 4.1, 4.2, 4.3, 4.4.
 
 ## Origin
 
@@ -62,7 +62,7 @@ validation; **Tier 1 (6 items) shipped in session 687** and **Tier 3
 | Tier | Count | Theme |
 | --- | --- | --- |
 | ~~**1 — Correctness / security**~~ | ~~6~~ ✅ | ~~Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters~~ — **shipped session 687** |
-| **2 — Hot-path performance (N+1, FE intersection)** | 12 (10 ✅ / 1 partial / 1 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). **Shipped session 690:** 2.7 (attachments dedup), 2.8 (templates pushdown + first_child_for_blocks), 2.9 (GraphView blockType), 2.10a (agenda fan-out collapse). **Shipped session 691:** 2.1 (multi-select set_todo_state_batch + delete_blocks_by_ids), 2.2 (trash restore_blocks_by_ids + purge_blocks_by_ids). **Open:** 2.3 ConflictList 3 N+1s, 2.4 property fan-out, 2.10b filtered_blocks_query. |
+| **2 — Hot-path performance (N+1, FE intersection)** | 12 (11 ✅ / 1 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). **Shipped session 690:** 2.7 (attachments dedup), 2.8 (templates pushdown + first_child_for_blocks), 2.9 (GraphView blockType), 2.10a (agenda fan-out collapse). **Shipped session 691:** 2.1 (multi-select set_todo_state_batch + delete_blocks_by_ids), 2.2 (trash restore_blocks_by_ids + purge_blocks_by_ids). **Shipped session 692:** 2.3 (ConflictList 3 N+1s collapsed via get_blocks + first_op_device_for_blocks + resolve_conflicts_batch), 2.4 (BatchPropertiesProvider for AgendaResults + SpaceManageDialog batch hoist + 5 single-key callsites use new get_property). **Open:** 2.10b filtered_blocks_query. |
 | ~~**3 — Indexes & SQL anti-patterns**~~ | ~~4~~ ✅ | ~~`json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown~~ — **shipped session 688** |
 | **4 — Minor / low-confidence** | 5 | Single-row reloads, template-loop creates, growing-window history fetches |
 
@@ -93,29 +93,17 @@ All six items landed in one batch (one PR-equivalent commit):
 
 `restore_blocks_by_ids(ids)` and `purge_blocks_by_ids(ids)` added. Single `BEGIN IMMEDIATE` tx covers all. The ~13-table purge cleanup chain runs ONCE per batch via `WHERE id IN (SELECT id FROM descendants)` (16 queries total — verified by review). Single-row `restore_block` / `purge_block` and the "all" variants stay registered for non-batch callers. IPC delta: 50-block purge went from 50 IPCs → 1 IPC.
 
-### 2.3 ConflictList: 2N IPCs + N+1 + N+1 in three separate places
+### ~~2.3 ConflictList: 2N IPCs + N+1 + N+1 in three separate places~~ — shipped session 692
 
-| What | Detail |
-| --- | --- |
-| **Symptoms** | Three N+1s in one component: |
-| 2.3a | **Parents fetched per conflict** — `Promise.allSettled(uniqueIds.map(getBlock))` at `src/components/ConflictList.tsx:129-140`. `batch_resolve` only returns id/title/type/deleted, insufficient for `ConflictTypeRenderer` which reads `todo_state`, `priority`, `due_date`, `scheduled_date`, `content`, `parent_id`, `position` (`src/components/ConflictTypeRenderer.tsx:44-72,129-148`). |
-| 2.3b | **Device id fetched per conflict** — `Promise.all(blocks.map(b => getBlockHistory({blockId: b.id, limit: 1})))` at `src/components/ConflictList.tsx:184-201` to read first op's `device_id` only. |
-| 2.3c | **Batch confirm = 2N IPCs** — `for (...)` loop calling `editBlock(parent_id, content)` then `deleteBlock(conflict_id)` per row at `src/components/ConflictList.tsx:378-429`. UX-264 progress bar comment exists *because* of latency. |
-| **Recommendation** | **CREATE** three commands: |
-| | • `get_blocks(ids: Vec<String>) -> Vec<BlockRow>` — full-row batch using same `json_each(?)` pattern as `batch_resolve`. |
-| | • `first_op_device_for_blocks(block_ids) -> HashMap<String, String>` — single SQL using `idx_op_log_block_id` (migration 0030). Or extend `BlockRow` returned by `get_conflicts` to include `origin_device_id` and drop the second IPC entirely. |
-| | • `resolve_conflicts_batch(actions: Vec<{block_id, parent_id, action: keep \| discard, content?}>)` — one tx covering all keeps and discards. |
-| **Validator verdict** | N9, N10, N11 all TRUE |
+Three new Tauri commands added: `get_blocks(ids) -> Vec<BlockRow>` (full-row batch including deleted/conflict rows for ConflictTypeRenderer), `first_op_device_for_blocks(block_ids) -> HashMap<String, String>` (uses native `op_log.block_id` + MIN(seq) correlated subquery), `resolve_conflicts_batch(actions)` (one BEGIN IMMEDIATE tx, all-or-nothing rollback, mirrors the per-action semantics of `edit_block_inner` for keep / `delete_block_inner` for discard). ConflictList.tsx's three N+1 patterns each collapsed to ONE batch IPC. IPC delta: 50 conflicts went from ~150 IPCs → 3 IPCs.
 
-### 2.4 Property fan-out per visible row
+### ~~2.4 Property fan-out per visible row~~ — shipped session 692
 
-| What | Detail |
-| --- | --- |
-| 2.4a | **`DependencyIndicator` fires `getProperties` per agenda row.** `src/components/DependencyIndicator.tsx:49`, rendered per-row in `src/components/AgendaResults.tsx:291`. `propertiesCacheRef` only dedupes re-renders, not the per-block fan-out on initial mount. |
-| 2.4b | **`SpaceManageDialog` loops `getProperties(spaceId)` over every space** to read one key (`journal_template`). `src/components/SpaceManageDialog.tsx:710-756`. |
-| 2.4c | **`loadJournalTemplateForSpace` and other `find(p => p.key === '...')` callsites** read one well-known key per block. `src/lib/template-utils.ts:168-172`, `src/components/StaticBlock.tsx:129-146`, `src/hooks/useBlockProperties.ts:60`, `src/hooks/useBlockSlashCommands.ts:162`, `src/hooks/useCheckboxSyntax.ts:46`. |
-| **Recommendations** | (a) **USE** `get_batch_properties` hoisted in `AgendaResults` parent, or **CREATE** narrower `get_properties_by_keys(block_ids, keys)` that also resolves `value_ref` titles to drop the second `batchResolve`. <br> (b) **USE** `get_batch_properties(allSpaceIds)` — single IPC. <br> (c) **CREATE** `get_property(block_id, key) -> Option<PropertyRow>` (single PK lookup on `block_properties`). |
-| **Validator verdict** | N3, N4 TRUE |
+- **2.4a:** New `BatchPropertiesProvider` (modeled on `BatchAttachmentsProvider`) hoisted in `AgendaResults` over `allBlockIds`. `DependencyIndicator` reads via `useBatchProperties()?.get(blockId)` with fallback to per-block `getProperties()` when no provider. The provider has an `invalidationKey` prop tying into `useBlockPropertyEvents`'s monotonic counter + active space id — so stale data is cleared without extra parent-side cache-clear effects.
+- **2.4b:** `SpaceManageDialog` calls `getBatchProperties(allSpaceIds)` once instead of `Promise.all(spaces.map(getProperties))`.
+- **2.4c:** New `get_property(block_id, key)` PK SELECT command. Five callsites migrated from full-vocabulary fetch + JS `find()` to the dedicated single-key IPC: `template-utils.ts:loadJournalTemplateForSpace` (`journal_template`), `StaticBlock.tsx` image-resize (`image_width`), `useBlockProperties.ts:warnIfBlocked`, `useBlockSlashCommands.ts:warnIfBlocked`, `useCheckboxSyntax.ts` DONE-path (all 3 read `blocked_by`).
+
+IPC delta: 50 agenda rows went from 50 IPCs → 1 IPC; N spaces × `journal_template` from N IPCs → 1 IPC; the 5 single-key callsites each dropped from a full vocabulary fetch to a 1-row PK SELECT.
 
 ### ~~2.5 `searchPropertyKeys` bypasses the existing cache~~ — shipped session 689
 

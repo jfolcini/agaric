@@ -951,6 +951,15 @@ export const HANDLERS: Record<string, Handler> = {
     return [...blockProps.values()]
   },
 
+  // PEND-35 Tier 2.4c — single-key PK lookup. Returns the row or null.
+  get_property: (args) => {
+    const a = args as Record<string, unknown>
+    const blockId = a['blockId'] as string
+    const key = a['key'] as string
+    const propMap = properties.get(blockId)
+    return propMap?.get(key) ?? null
+  },
+
   get_batch_properties: (args) => {
     const a = args as Record<string, unknown>
     const blockIds = a['blockIds'] as string[]
@@ -2066,6 +2075,120 @@ export const HANDLERS: Record<string, Handler> = {
       result[rootId] = count
     }
     return result
+  },
+
+  // ---------------------------------------------------------------------------
+  // PEND-35 Tier 2.3 — three new ConflictList batch endpoints
+  // ---------------------------------------------------------------------------
+
+  // get_blocks(ids: string[]) -> BlockRow[]
+  //
+  // Mirrors `commands/blocks/queries.rs::get_blocks_inner`: returns the
+  // full BlockRow for every id present in the seed (NOT filtered by
+  // soft-delete / conflict status — the primary consumer is ConflictList,
+  // which renders conflict copies and possibly-deleted parents). Missing
+  // ids are silently omitted so callers map by id.
+  get_blocks: (args) => {
+    const a = args as Record<string, unknown>
+    const ids = (a['ids'] as string[]) ?? []
+    if (ids.length === 0) {
+      throw new Error('ids list cannot be empty')
+    }
+    const out: Record<string, unknown>[] = []
+    for (const id of ids) {
+      const row = blocks.get(id)
+      if (row) out.push(row)
+    }
+    return out
+  },
+
+  // first_op_device_for_blocks(blockIds) -> Record<string, string>
+  //
+  // Mirrors `commands/blocks/queries.rs::first_op_device_for_blocks_inner`:
+  // for each input block_id, returns the device_id of the op_log row with
+  // the smallest seq. Missing block_ids are simply omitted from the map.
+  first_op_device_for_blocks: (args) => {
+    const a = args as Record<string, unknown>
+    const blockIds = (a['blockIds'] as string[]) ?? []
+    if (blockIds.length === 0) return {}
+    const blockSet = new Set(blockIds)
+    // Pick the smallest-seq op per block_id. Tie-broken by device_id ASC,
+    // matching the SQL `MIN(device_id)` after the MIN(seq) filter. The
+    // backend stores block_id in a denormalized column; the mock keeps it
+    // inside the JSON payload (mock pushOp), so we parse it back out.
+    const best = new Map<string, { device_id: string; seq: number }>()
+    for (const op of opLog) {
+      let bid: string | undefined
+      try {
+        const parsed = JSON.parse(op.payload) as Record<string, unknown>
+        const v = parsed['block_id']
+        if (typeof v === 'string') bid = v
+      } catch {
+        // skip malformed payloads
+      }
+      if (bid == null || !blockSet.has(bid)) continue
+      const cur = best.get(bid)
+      if (
+        !cur ||
+        op.seq < cur.seq ||
+        (op.seq === cur.seq && op.device_id.localeCompare(cur.device_id) < 0)
+      ) {
+        best.set(bid, { device_id: op.device_id, seq: op.seq })
+      }
+    }
+    const out: Record<string, string> = {}
+    for (const [bid, v] of best) {
+      out[bid] = v.device_id
+    }
+    return out
+  },
+
+  // resolve_conflicts_batch(actions) -> { resolved, failed }
+  //
+  // Mirrors `commands/blocks/crud.rs::resolve_conflicts_batch_inner`: for
+  // each action, either edits the parent's content + soft-deletes the
+  // conflict copy (`keep`), or just soft-deletes the conflict copy
+  // (`discard`). Atomicity is best-effort in the mock — actions are
+  // applied sequentially and any failure throws (mirroring the
+  // all-or-nothing backend contract on first error).
+  resolve_conflicts_batch: (args) => {
+    const a = args as Record<string, unknown>
+    const actions = (a['actions'] as Array<Record<string, unknown>>) ?? []
+    if (actions.length === 0) {
+      throw new Error('actions list cannot be empty')
+    }
+    let resolved = 0
+    for (const action of actions) {
+      const blockId = action['blockId'] as string
+      const parentId = action['parentId'] as string
+      const kind = action['action'] as string
+      const content = action['content'] as string | null | undefined
+      if (kind !== 'keep' && kind !== 'discard') {
+        throw new Error(`unknown action '${kind}'`)
+      }
+      if (kind === 'keep') {
+        if (content == null) {
+          throw new Error("'keep' requires non-null content")
+        }
+        const parent = blocks.get(parentId)
+        if (!parent || parent['deleted_at']) {
+          throw new Error(`block '${parentId}' (not found or deleted)`)
+        }
+        parent['content'] = content
+        pushOp('edit_block', { block_id: parentId, to_text: content })
+      }
+      const conflict = blocks.get(blockId)
+      if (!conflict) {
+        throw new Error(`block '${blockId}' not found`)
+      }
+      if (conflict['deleted_at']) {
+        throw new Error(`block '${blockId}' is already deleted`)
+      }
+      conflict['deleted_at'] = new Date().toISOString()
+      pushOp('delete_block', { block_id: blockId })
+      resolved++
+    }
+    return { resolved, failed: 0 }
   },
 
   // ---------------------------------------------------------------------------

@@ -4994,6 +4994,177 @@ async fn get_property_def_returns_none_for_missing_key() {
 }
 
 // ======================================================================
+// PEND-35 Tier 2.4c — get_property (single-key PK lookup)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_property_returns_some_for_present_key() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "single-prop probe".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "image_width".into(),
+        Some("75".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Seed an unrelated key so we exercise the WHERE filter (not just
+    // "any row for this block").
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "accent_color".into(),
+        Some("blue".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let row = get_property_inner(&pool, &block.id, "image_width")
+        .await
+        .unwrap()
+        .expect("present key must yield Some(row)");
+    assert_eq!(row.key, "image_width");
+    assert_eq!(row.value_text.as_deref(), Some("75"));
+    assert!(row.value_num.is_none());
+    assert!(row.value_date.is_none());
+    assert!(row.value_ref.is_none());
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_property_returns_none_for_missing_key() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "single-prop missing".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Seed one key that is NOT the one we are about to query, to make
+    // sure the absent-key branch is what we are exercising.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "accent_color".into(),
+        Some("rose".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = get_property_inner(&pool, &block.id, "journal_template")
+        .await
+        .unwrap();
+    assert!(
+        result.is_none(),
+        "missing key must surface as Ok(None), got {result:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_property_normalizes_lowercase_block_id() {
+    // AGENTS.md invariant #8: ULIDs on disk are uppercase. The single-
+    // key lookup must accept lowercase input and still match the row.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "case-normalisation probe".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "journal_template".into(),
+        Some("## Daily".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let lower = block.id.to_ascii_lowercase();
+    assert_ne!(
+        lower, block.id,
+        "fixture must produce a non-trivial uppercase ULID for the case-normalisation test"
+    );
+
+    let row = get_property_inner(&pool, &lower, "journal_template")
+        .await
+        .unwrap()
+        .expect("lowercase block_id must still resolve to the canonical row");
+    assert_eq!(row.value_text.as_deref(), Some("## Daily"));
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // PEND-35 Tier 2.1 — set_todo_state_batch
 // ======================================================================
 

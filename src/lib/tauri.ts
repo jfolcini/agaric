@@ -9,6 +9,8 @@ export type {
   BacklinkSort,
   BlockRow,
   CompareOp,
+  ConflictResolveAction,
+  ConflictResolveBatchResult,
   DateRange,
   DeleteResponse,
   DiffSpan,
@@ -37,6 +39,8 @@ import type {
   BacklinkQueryResponse,
   BacklinkSort,
   BlockRow,
+  ConflictResolveAction,
+  ConflictResolveBatchResult,
   DateRange,
   DeleteResponse,
   DiffSpan,
@@ -243,6 +247,78 @@ export async function trashDescendantCounts(rootIds: string[]): Promise<Record<s
  */
 export async function firstChildForBlocks(blockIds: string[]): Promise<Record<string, BlockRow>> {
   return unwrap(await commands.firstChildForBlocks(blockIds))
+}
+
+/**
+ * PEND-35 Tier 2.3 — batch-fetch full BlockRows by id.
+ *
+ * Sibling of `batchResolve` returning the full 13-column `BlockRow`
+ * (not just the lightweight `id / title / block_type / deleted`
+ * projection). Consumers that need `todo_state`, `priority`, `due_date`,
+ * `scheduled_date`, `content`, `parent_id`, `position`, etc. — e.g.
+ * ConflictTypeRenderer — collapse a per-row `getBlock` IPC fan-out into
+ * a single query.
+ *
+ * Soft-deleted and conflict-copy rows are INCLUDED (unlike `batchResolve`
+ * which filters `is_conflict = 0`). The primary caller is `ConflictList`
+ * which surfaces conflict rows themselves and their possibly-deleted
+ * parents — filtering would defeat the use-case.
+ *
+ * IDs that don't exist are silently omitted from the response — callers
+ * must map by `id` and treat missing keys as "unknown / lost". Returned
+ * rows are NOT guaranteed to be in input order. Empty input rejects with
+ * `AppError::Validation` (mirrors `batchResolve`).
+ */
+export async function getBlocks(ids: string[]): Promise<BlockRow[]> {
+  return unwrap(await commands.getBlocks(ids))
+}
+
+/**
+ * PEND-35 Tier 2.3 — batch-fetch the first-op `device_id` per block.
+ *
+ * For each input `block_id`, returns the `device_id` of the **first**
+ * op_log row touching that block (lowest `seq`). Block IDs with no
+ * op_log rows (e.g. conflict copies created by sync replay rather than
+ * a local `create_block`) are simply omitted — callers treat missing
+ * keys as "unknown origin".
+ *
+ * Replaces `Promise.all(blocks.map(b => getBlockHistory({blockId, limit:1})))`
+ * in `ConflictList` (the "From: <device>" badge fan-out) with one
+ * round-trip. Single SQL using the `idx_op_log_block_id` index from
+ * migration 0030.
+ *
+ * Empty input returns an empty record (not an error). Above 1000 ids
+ * rejects with `AppError::Validation`.
+ */
+export async function firstOpDeviceForBlocks(blockIds: string[]): Promise<Record<string, string>> {
+  return unwrap(await commands.firstOpDeviceForBlocks(blockIds))
+}
+
+/**
+ * PEND-35 Tier 2.3 — atomically resolve a batch of conflicts in a single
+ * IPC.
+ *
+ * Each action is `{ blockId, parentId, action: 'keep' | 'discard', content?:
+ * string }`. `keep` writes the conflict's content to the parent and
+ * soft-deletes the conflict copy; `discard` soft-deletes the conflict
+ * copy without touching the parent. Replaces the FE per-row
+ * `editBlock` + `deleteBlock` IPC loop in
+ * `ConflictList::handleBatchConfirm` (50 conflicts = 100 IPCs) with one
+ * round-trip and one writer-lock window.
+ *
+ * Atomicity contract: all-or-nothing. Any error inside the batch rolls
+ * back the entire transaction (no half-resolved conflicts). On success
+ * `resolved == actions.length`; `failed` is reserved (always 0 today)
+ * for a future per-action savepoint variant.
+ *
+ * Validation failures (empty list, oversize > 1000, unknown action,
+ * `keep` without content) reject the whole call with
+ * `AppError::Validation`.
+ */
+export async function resolveConflictsBatch(
+  actions: ConflictResolveAction[],
+): Promise<ConflictResolveBatchResult> {
+  return unwrap(await commands.resolveConflictsBatch(actions))
 }
 
 /** List blocks with optional filters and cursor-based pagination.
@@ -631,6 +707,21 @@ export async function deleteProperty(blockId: string, key: string): Promise<void
 /** Get all properties for a block. */
 export async function getProperties(blockId: string): Promise<PropertyRow[]> {
   return unwrap(await commands.getProperties(blockId))
+}
+
+/** Get a single property row by `(block_id, key)` primary key
+ * (PEND-35 Tier 2.4c).
+ *
+ * Returns the row, or `null` when no property exists for `key` on the
+ * given block. Replaces the pattern of calling `getProperties(blockId)`
+ * (which ships every row across the IPC boundary) just to read one
+ * well-known key — `loadJournalTemplateForSpace`, the `StaticBlock`
+ * `image_width` read, and the three `blocked_by` dependency probes
+ * (gutter cycle, slash command, checkbox syntax) all migrated to this
+ * dedicated PK lookup.
+ */
+export async function getProperty(blockId: string, key: string): Promise<PropertyRow | null> {
+  return unwrap(await commands.getProperty(blockId, key))
 }
 
 /** Batch-fetch properties for multiple blocks in a single IPC call. */

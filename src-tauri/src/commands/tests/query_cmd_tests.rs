@@ -3778,3 +3778,244 @@ async fn pend18_query_by_property_scope_parity() {
     );
     assert_eq!(active_a.items[0].id, "P18_QP_A");
 }
+
+// ======================================================================
+// PEND-35 Tier 2.3 — get_blocks (full BlockRow batch)
+// ======================================================================
+
+/// Seeds 5 blocks with diverse types/states + asserts the inner returns
+/// every row with the full BlockRow shape preserved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_returns_full_rows_for_n_ids() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "GB_PAGE", "page", "the page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "GB_C1",
+        "content",
+        "child one",
+        Some("GB_PAGE"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "GB_C2",
+        "content",
+        "child two",
+        Some("GB_PAGE"),
+        Some(2),
+    )
+    .await;
+    // Stamp non-default columns on GB_C2 so the test pins that
+    // `todo_state`/`priority`/`due_date`/`scheduled_date` survive the round-trip.
+    sqlx::query(
+        "UPDATE blocks SET todo_state = 'TODO', priority = 'A', \
+         due_date = '2026-05-08', scheduled_date = '2026-05-09' WHERE id = 'GB_C2'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_block(&pool, "GB_TAG", "tag", "tag block", None, None).await;
+    insert_block(&pool, "GB_GONE", "content", "deleted", None, None).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = 'GB_GONE'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rows = get_blocks_inner(
+        &pool,
+        vec![
+            "GB_PAGE".into(),
+            "GB_C1".into(),
+            "GB_C2".into(),
+            "GB_TAG".into(),
+            "GB_GONE".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 5, "all 5 ids resolve to a row");
+
+    // Map by id so we can pin specific fields without depending on row order.
+    let by_id: std::collections::HashMap<String, _> =
+        rows.into_iter().map(|r| (r.id.clone(), r)).collect();
+
+    let c2 = by_id.get("GB_C2").expect("GB_C2 returned");
+    assert_eq!(c2.block_type, "content");
+    assert_eq!(c2.content.as_deref(), Some("child two"));
+    assert_eq!(c2.parent_id.as_deref(), Some("GB_PAGE"));
+    assert_eq!(c2.position, Some(2));
+    assert_eq!(c2.todo_state.as_deref(), Some("TODO"));
+    assert_eq!(c2.priority.as_deref(), Some("A"));
+    assert_eq!(c2.due_date.as_deref(), Some("2026-05-08"));
+    assert_eq!(c2.scheduled_date.as_deref(), Some("2026-05-09"));
+}
+
+/// PEND-35 Tier 2.3 — `get_blocks_inner` MUST return soft-deleted rows
+/// AND `is_conflict = 1` rows (unlike `batch_resolve_inner` which
+/// filters them). The conflict-resolution UI surfaces conflict rows
+/// themselves and possibly-deleted parents; filtering would defeat
+/// the use-case.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_includes_deleted_and_conflicts() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "GB_DEL", "content", "deleted", None, Some(1)).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-04-01T00:00:00Z' WHERE id = 'GB_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_block(&pool, "GB_CFL", "content", "conflict copy", None, Some(2)).await;
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'GB_CFL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rows = get_blocks_inner(&pool, vec!["GB_DEL".into(), "GB_CFL".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        2,
+        "soft-deleted + conflict rows BOTH return (unlike batch_resolve)"
+    );
+
+    let by_id: std::collections::HashMap<String, _> =
+        rows.into_iter().map(|r| (r.id.clone(), r)).collect();
+    assert!(
+        by_id["GB_DEL"].deleted_at.is_some(),
+        "deleted row carries its tombstone"
+    );
+    assert!(
+        by_id["GB_CFL"].is_conflict,
+        "conflict row carries is_conflict = true"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_rejects_empty_oversize() {
+    let (pool, _dir) = test_pool().await;
+    let empty = get_blocks_inner(&pool, vec![]).await;
+    assert!(
+        matches!(empty, Err(crate::error::AppError::Validation(_))),
+        "empty input must reject with Validation"
+    );
+
+    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let big = get_blocks_inner(&pool, oversize).await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation(_))),
+        "oversize input must reject with Validation"
+    );
+}
+
+// ======================================================================
+// PEND-35 Tier 2.3 — first_op_device_for_blocks
+// ======================================================================
+
+/// Seed multiple ops on the same block from different devices in
+/// non-monotonic insertion order; assert the device_id for the lowest
+/// `seq` is what the helper returns. Pins the MIN(seq) semantic per
+/// the audit (the FE consumer wants the *first* device that touched
+/// the block, not the latest editor).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_op_device_for_blocks_returns_first_seq() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "FOD_BLK", "content", "x", None, Some(1)).await;
+
+    // Three ops, deliberately inserted out-of-order so the test confirms
+    // ORDER BY seq (not insertion order) wins.
+    let rows = [
+        ("device-bbb", 5_i64, "edit_block"),
+        ("device-aaa", 1_i64, "create_block"),
+        ("device-ccc", 9_i64, "edit_block"),
+    ];
+    for (dev, seq, op) in rows {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(dev)
+        .bind(seq)
+        .bind(format!("h-{dev}-{seq}"))
+        .bind(op)
+        .bind(r#"{"block_id":"FOD_BLK"}"#)
+        .bind("2026-04-01T00:00:00Z")
+        .bind("FOD_BLK")
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let map = first_op_device_for_blocks_inner(&pool, vec!["FOD_BLK".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        map.get("FOD_BLK").map(String::as_str),
+        Some("device-aaa"),
+        "MIN(seq) device wins; got {map:?}"
+    );
+}
+
+/// Block ids with no op_log rows must be silently omitted from the
+/// returned map (mirrors the docstring contract). Mixing known +
+/// unknown ids exercises both branches.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_op_device_for_blocks_skips_unknown_blocks() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "FOD_KNOWN", "content", "x", None, Some(1)).await;
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("dev-known")
+    .bind(1_i64)
+    .bind("hk")
+    .bind("create_block")
+    .bind(r#"{"block_id":"FOD_KNOWN"}"#)
+    .bind("2026-04-01T00:00:00Z")
+    .bind("FOD_KNOWN")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let map = first_op_device_for_blocks_inner(
+        &pool,
+        vec!["FOD_KNOWN".into(), "FOD_GHOST_NO_OPS".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(map.len(), 1, "only the known block id appears in the map");
+    assert!(map.contains_key("FOD_KNOWN"));
+    assert!(
+        !map.contains_key("FOD_GHOST_NO_OPS"),
+        "block with no ops must be silently omitted"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_op_device_for_blocks_empty_input_returns_empty_map() {
+    let (pool, _dir) = test_pool().await;
+    let map = first_op_device_for_blocks_inner(&pool, vec![])
+        .await
+        .unwrap();
+    assert!(
+        map.is_empty(),
+        "empty input must short-circuit to an empty map (no DB hit)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_op_device_for_blocks_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let result = first_op_device_for_blocks_inner(&pool, oversize).await;
+    assert!(
+        matches!(result, Err(crate::error::AppError::Validation(_))),
+        "oversize list must reject with Validation, got {result:?}"
+    );
+}

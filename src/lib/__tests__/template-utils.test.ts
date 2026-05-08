@@ -494,74 +494,68 @@ describe('expandTemplateVariables', () => {
 
 describe('loadJournalTemplateForSpace', () => {
   it('returns null when the journal_template property is absent', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      // unrelated rows only
-      {
-        key: 'accent_color',
-        value_text: 'accent-blue',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-      },
-      { key: 'is_space', value_text: 'true', value_num: null, value_date: null, value_ref: null },
-    ])
+    // PEND-35 Tier 2.4c — backend returns `null` for the missing row
+    // (single-key PK lookup), not an empty list of unrelated rows.
+    mockedInvoke.mockResolvedValueOnce(null)
 
     const result = await loadJournalTemplateForSpace('SPACE_1')
 
     expect(result).toBeNull()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'SPACE_1' })
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
+      blockId: 'SPACE_1',
+      key: 'journal_template',
+    })
   })
 
   it('returns value_text when journal_template is set', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      {
-        key: 'journal_template',
-        value_text: '## Standup\n- TODOs',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-      },
-    ])
+    // PEND-35 Tier 2.4c — single-row return shape from `get_property`.
+    mockedInvoke.mockResolvedValueOnce({
+      key: 'journal_template',
+      value_text: '## Standup\n- TODOs',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+    })
 
     const result = await loadJournalTemplateForSpace('SPACE_1')
 
     expect(result).toBe('## Standup\n- TODOs')
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
+      blockId: 'SPACE_1',
+      key: 'journal_template',
+    })
   })
 
-  it('ignores rows for other keys when finding journal_template', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      {
-        key: 'accent_color',
-        value_text: 'accent-rose',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-      },
-      {
-        key: 'journal_template',
-        value_text: 'Daily focus',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-      },
-      { key: 'is_space', value_text: 'true', value_num: null, value_date: null, value_ref: null },
-    ])
+  it('reads journal_template directly via PK lookup', async () => {
+    // PEND-35 Tier 2.4c — the SQL WHERE-key filter is the backend's
+    // job; the FE just trusts the row it gets back. This test pins
+    // that the `journal_template` row is read directly via the PK
+    // lookup (no client-side `find` over the full vocabulary).
+    mockedInvoke.mockResolvedValueOnce({
+      key: 'journal_template',
+      value_text: 'Daily focus',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+    })
 
     const result = await loadJournalTemplateForSpace('SPACE_1')
 
     expect(result).toBe('Daily focus')
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
+      blockId: 'SPACE_1',
+      key: 'journal_template',
+    })
   })
 
   it('returns null when value_text is null', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      {
-        key: 'journal_template',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-      },
-    ])
+    mockedInvoke.mockResolvedValueOnce({
+      key: 'journal_template',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+    })
 
     const result = await loadJournalTemplateForSpace('SPACE_1')
 

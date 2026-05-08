@@ -2541,17 +2541,21 @@ describe('JournalPage', () => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') return templateListBlocksResponse(args)
-        if (cmd === 'get_properties') {
-          if (opts.perSpaceTemplate == null) return []
-          return [
-            {
-              key: 'journal_template',
-              value_text: opts.perSpaceTemplate,
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            },
-          ]
+        if (cmd === 'get_property') {
+          // PEND-35 Tier 2.4c: single-key PK lookup. Returns PropertyRow | null.
+          const a = (args as { blockId: string; key: string } | undefined) ?? {
+            blockId: '',
+            key: '',
+          }
+          if (a.key !== 'journal_template' || opts.perSpaceTemplate == null) return null
+          return {
+            key: 'journal_template',
+            value_text: opts.perSpaceTemplate,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          }
         }
         if (cmd === 'query_by_property') {
           if (opts.legacyTemplatePage) return templateQueryByPropertyResponse(args)
@@ -2590,9 +2594,12 @@ describe('JournalPage', () => {
         )
       })
 
-      // Per-space property lookup hits get_properties with the space id.
+      // Per-space property lookup hits get_property with the space id + key.
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'SPACE_TEST' })
+        expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
+          blockId: 'SPACE_TEST',
+          key: 'journal_template',
+        })
       })
 
       // Two blocks created from the markdown lines.

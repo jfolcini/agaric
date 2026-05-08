@@ -104,6 +104,7 @@ macro_rules! agaric_commands {
             $crate::commands::set_scheduled_date,
             $crate::commands::delete_property,
             $crate::commands::get_properties,
+            $crate::commands::get_property,
             $crate::commands::get_batch_properties,
             $crate::commands::list_page_history,
             $crate::commands::revert_ops,
@@ -182,6 +183,18 @@ macro_rules! agaric_commands {
             // First-child-per-parent batch (PEND-35 Tier 2.8) — collapses the
             // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.
             $crate::commands::first_child_for_blocks,
+            // PEND-35 Tier 2.3 — three new ConflictList batch endpoints
+            // collapse the 2N+N+1+N+1 IPCs to 3:
+            //   • get_blocks(ids) — full BlockRow batch (parents fetch).
+            //   • first_op_device_for_blocks(block_ids) — first-op device
+            //     id map (the "From: <device>" badge), single SQL via the
+            //     idx_op_log_block_id index from migration 0030.
+            //   • resolve_conflicts_batch(actions) — atomic keep/discard
+            //     batch in one IMMEDIATE tx, replacing the 2N edit+delete
+            //     IPC loop in handleBatchConfirm.
+            $crate::commands::get_blocks,
+            $crate::commands::first_op_device_for_blocks,
+            $crate::commands::resolve_conflicts_batch,
             // Link metadata (UX-165)
             $crate::commands::fetch_link_metadata,
             $crate::commands::get_link_metadata,

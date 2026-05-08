@@ -36,7 +36,7 @@ import {
   addAttachment,
   deleteProperty,
   editBlock,
-  getProperties,
+  getProperty,
   setPriority as setPriorityCmd,
   setProperty,
   setTodoState as setTodoStateCmd,
@@ -159,9 +159,11 @@ function openDatePicker(ctx: SlashCommandContext, mode: DatePickerMode): void {
 }
 
 function warnIfBlocked(ctx: SlashCommandContext): void {
-  getProperties(ctx.blockId)
-    .then((props) => {
-      const hasBlockedBy = props.some((p) => p.key === 'blocked_by' && p.value_ref != null)
+  // PEND-35 Tier 2.4c — single-key PK lookup against the `blocked_by`
+  // row instead of fetching every property on the block.
+  getProperty(ctx.blockId, 'blocked_by')
+    .then((row) => {
+      const hasBlockedBy = row != null && row.value_ref != null
       if (hasBlockedBy) toast.warning(ctx.t('dependency.dependencyWarning'))
     })
     .catch((err) => {
