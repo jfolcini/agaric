@@ -40,6 +40,16 @@ pub struct ParityEvent {
     /// composite or the `hash` column; Phase-1 day-1 doesn't
     /// constrain the shape.
     pub op_id: String,
+    /// The space ULID this op belongs to — same partition key the
+    /// `LoroEngineRegistry` uses to pick the per-space engine.
+    /// Day-4 added: lets the persistent sink record the space
+    /// without re-resolving the block on flush.
+    pub space_id: String,
+    /// The diffy op_type (`"create_block"` / `"edit_block"` / …).
+    /// Day-4 added: matches the `op_log.op_type` column so the
+    /// flushed sink rows can be `GROUP BY op_type` for per-op-type
+    /// divergence rates without re-parsing the payload.
+    pub op_type: String,
     /// The diffy result, stringified for log readability.  The
     /// authoritative form (full `MergeOutcome`) is captured
     /// elsewhere; this is a compact summary suitable for tail-N
@@ -52,8 +62,11 @@ pub struct ParityEvent {
     /// equality; for `edit_block` it's the post-merge content
     /// equality after canonicalising line endings.
     pub r#match: bool,
-    /// Wall-clock timestamp in seconds-since-Unix-epoch.  i64
-    /// matches the rest of the codebase's timestamp convention.
+    /// Wall-clock timestamp in milliseconds-since-Unix-epoch.
+    /// Day-4 changed the unit from seconds to ms so the value
+    /// matches `SystemTime::now().duration_since(UNIX_EPOCH).as_millis()`
+    /// (what `merge::shadow_apply` already populates) and the
+    /// `merge_parity_log.created_at` column convention.
     pub timestamp: i64,
 }
 
@@ -133,6 +146,29 @@ impl ShadowParitySampler {
         state.events.iter().cloned().collect()
     }
 
+    /// Drain the ring's current contents, oldest-first, leaving the
+    /// ring empty.  Used by the persistent sink (`parity_sink::
+    /// flush_to_sqlite`) so events that have been written to SQLite
+    /// don't get flushed twice.
+    ///
+    /// Lifetime counters (`total_pushed`, `total_diverged`) are NOT
+    /// reset — they're cumulative since process start, not "since
+    /// last drain".  A future "snapshot stats" command exposes them
+    /// alongside whatever the ring currently holds.
+    pub fn drain(&self) -> Vec<ParityEvent> {
+        let mut state = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        let cap = state.events.capacity();
+        // `std::mem::take` would replace with `VecDeque::default()`
+        // (capacity 0); that costs us the pre-allocated buffer the
+        // ring relies on for its O(1) push amortisation.  Construct
+        // a fresh `VecDeque` with the same capacity instead.
+        let drained = std::mem::replace(&mut state.events, VecDeque::with_capacity(cap));
+        drained.into_iter().collect()
+    }
+
     /// Total number of events ever pushed (including evicted ones).
     pub fn total_pushed(&self) -> u64 {
         match self.inner.lock() {
@@ -169,6 +205,8 @@ mod tests {
     fn ev(op_id: &str, m: bool) -> ParityEvent {
         ParityEvent {
             op_id: op_id.into(),
+            space_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            op_type: "create_block".into(),
             diffy_result: "diffy".into(),
             loro_result: "loro".into(),
             r#match: m,
@@ -209,5 +247,38 @@ mod tests {
         let snap = s.snapshot();
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].op_id, "b");
+    }
+
+    /// Day-4: `drain` returns oldest-first and empties the ring while
+    /// preserving the lifetime counters.  The persistent sink
+    /// (`parity_sink::flush_to_sqlite`) relies on both halves of this
+    /// contract — the order so the SQLite rows land in chronological
+    /// order, the empty-ring postcondition so events aren't flushed
+    /// twice.
+    #[test]
+    fn drain_returns_oldest_first_and_empties_ring() {
+        let s = ShadowParitySampler::with_capacity(8);
+        s.record(ev("a", true));
+        s.record(ev("b", false));
+        s.record(ev("c", true));
+
+        let drained = s.drain();
+        assert_eq!(drained.len(), 3);
+        assert_eq!(drained[0].op_id, "a");
+        assert_eq!(drained[1].op_id, "b");
+        assert_eq!(drained[2].op_id, "c");
+
+        // Ring is empty after drain.
+        assert!(s.snapshot().is_empty());
+
+        // Lifetime counters are preserved.
+        assert_eq!(s.total_pushed(), 3);
+        assert_eq!(s.total_diverged(), 1);
+
+        // Subsequent record + drain works against the fresh buffer.
+        s.record(ev("d", true));
+        let next = s.drain();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].op_id, "d");
     }
 }

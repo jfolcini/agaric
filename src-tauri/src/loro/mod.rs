@@ -28,10 +28,11 @@
 //!
 //! ## What's NOT here yet (future Phase-1 days)
 //!
-//! - The persistent parity sink (e.g. `merge_parity_log` SQLite table).
-//!   The in-memory ring buffer exists so the apply path has somewhere
-//!   to write today; the persistent sink is item 6 on the readiness
-//!   checklist.
+//! - Periodic flush wiring for the persistent parity sink.  Day-4
+//!   landed the data layer (`parity_sink::flush_to_sqlite` /
+//!   `parity_sink::purge_old` + migration `0051_pend_09_merge_parity_log.sql`);
+//!   day-5 wires the flush into a background task and day-6 adds the
+//!   bucket A/B/C/D classifier.  Day-7+ wires the retention purge.
 //! - The remaining ~5 unported integration parity tests + proptest
 //!   augmentation (items 7-8 on the checklist).
 //! - The `xxhash-rust` peer-id swap (item 1 / Q13).
@@ -48,6 +49,9 @@ pub mod envelope;
 
 #[cfg(feature = "loro-shadow")]
 pub mod parity;
+
+#[cfg(feature = "loro-shadow")]
+pub mod parity_sink;
 
 #[cfg(feature = "loro-shadow")]
 pub mod registry;
