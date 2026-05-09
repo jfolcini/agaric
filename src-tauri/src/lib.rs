@@ -933,6 +933,14 @@ pub fn run() {
             #[cfg(feature = "loro-shadow")]
             let pool_for_loro_flush = pools.write.clone();
 
+            // PEND-09 Phase 2 day-6 — clone the device_id for the boot
+            // rehydration pass that loads every persisted LoroDoc
+            // snapshot from `loro_doc_state` into the registry.  Done
+            // before the rest of the cutover wiring so the registry
+            // is populated before any op-apply runs.
+            #[cfg(feature = "loro-shadow")]
+            let device_id_for_loro_rehydrate = device_id.clone();
+
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
@@ -962,7 +970,30 @@ pub fn run() {
                 );
                 if let Some(state) = crate::loro::shared::get() {
                     let pool_for_flush = pool_for_loro_flush;
+                    let rehydrate_device_id = device_id_for_loro_rehydrate;
                     tauri::async_runtime::spawn(async move {
+                        // PEND-09 Phase 2 day-6 — boot rehydration.
+                        // Decision: option (c) from the day-6 spec —
+                        // pre-populate the registry from `loro_doc_state`
+                        // BEFORE entering the periodic flush loop, so
+                        // `for_space` stays sync and merely pulls from
+                        // the now-populated registry.  Errors are caught
+                        // + logged inside `rehydrate_registry`; a single
+                        // bad space never blocks the rest.
+                        let n = crate::loro::snapshot::rehydrate_registry(
+                            &pool_for_flush,
+                            &state.registry,
+                            &rehydrate_device_id,
+                        )
+                        .await;
+                        if n > 0 {
+                            tracing::info!(
+                                rehydrated_spaces = n,
+                                "loro-shadow: rehydrated per-space LoroDoc snapshots from \
+                                 loro_doc_state",
+                            );
+                        }
+
                         crate::loro::flush_task::run_periodic_flush(
                             pool_for_flush,
                             state,
@@ -972,13 +1003,17 @@ pub fn run() {
                             std::time::Duration::from_secs(
                                 crate::loro::flush_task::PURGE_INTERVAL_SECS,
                             ),
+                            std::time::Duration::from_secs(
+                                crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
+                            ),
                         )
                         .await;
                     });
                     tracing::info!(
                         flush_secs = crate::loro::flush_task::FLUSH_INTERVAL_SECS,
                         purge_secs = crate::loro::flush_task::PURGE_INTERVAL_SECS,
-                        "loro-shadow: parity flush + purge task spawned",
+                        snapshot_secs = crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
+                        "loro-shadow: parity flush + purge + snapshot task spawned",
                     );
                 }
             }
