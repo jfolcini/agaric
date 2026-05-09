@@ -337,7 +337,7 @@ no-op on unknown block, matching SQL's UPDATE-zero-rows behaviour).
 **The load-bearing day.** Adds a `loro_authoritative` runtime
 flag, defaulting **off**. Source: a new `app_settings` row (key
 `pend09.loro_authoritative`, value `'0'` or `'1'`), backed by a
-new migration `0054_pend_09_app_settings.sql` (table does not
+new migration `0053_pend_09_app_settings.sql` (table does not
 exist today — see §5.1 for schema), readable from the
 materializer hot path through a `OnceLock<AtomicBool>` cache so
 the lookup is sub-100 µs (target: ≤1 µs cached). When ON:
@@ -366,14 +366,28 @@ must close before day 9 lands.
 
 ### Day 10 — Partial index on `merge_parity_log.bucket IS NULL`
 
-Closes the Phase-1 §7.5 deferred follow-up. New migration
-`0053_pend_09_parity_log_pending_bucket.sql`: `CREATE INDEX
-idx_merge_parity_log_pending_bucket ON merge_parity_log(bucket)
-WHERE bucket IS NULL`. Makes the day-6 classifier's `WHERE bucket
-IS NULL` query probe an index instead of full-scanning. Day 10,
-not day 9, because the optimisation is cheap and the post-cutover
-write rate is no different from today's. SQLite has supported
-partial indexes since 3.8.0 (2013).
+**Closed 2026-05-09.** Migration
+`0054_pend_09_classifier_partial_index.sql`: `CREATE INDEX
+idx_merge_parity_log_unbucketed ON merge_parity_log (id) WHERE
+bucket IS NULL`. Closes the Phase-1 §7 item 5 follow-up
+(`pending/PEND-09-PHASE-1-REPORT.md` lines 391-398) — the day-6
+classifier's `WHERE bucket IS NULL` SELECT now probes a partial
+index instead of full-scanning `merge_parity_log`. The index is
+keyed on `id` because the SELECT reads `id` for the subsequent
+UPDATE; partial-index rows count <1% of the table in steady
+state, so on-disk size stays minimal. Final migration number is
+`0054` (not `0053` as listed in §8.3 below — day 9's
+`app_settings` took `0053` because day 9 landed before day 10 in
+this implementation). New regression test
+`classify_unbucketed_uses_partial_index_for_query` in
+`src/loro/classifier.rs` runs `EXPLAIN QUERY PLAN` against the
+exact production query and asserts the index name appears in the
+plan; the planner output is `SCAN merge_parity_log USING INDEX
+idx_merge_parity_log_unbucketed`. Test count: default 3769
+(unchanged — the migration runs on every DB but the classifier
+is feature-gated, so no new default-build test); `--features
+loro-shadow` 3857 → 3858. SQLite has supported partial indexes
+since 3.8.0 (2013).
 
 ### Day 11+ — Cutover soak
 
@@ -422,8 +436,8 @@ Phase 2 is **reversible up through day 11+**. Each step's rollback:
 | 7 | Parity-report | `git revert` | CLI command | None |
 | 8 | Spike archive | `git revert` (re-add workspace member) | Spike crate | None |
 | 8.5 | Tag/link coverage | `git revert` | Engine extensions | None |
-| 9 | Cutover toggle | `git revert`; or simpler — flip the flag (§5). Migration `0054_pend_09_app_settings.sql` is **sticky** but harmless when unused (single empty table). | All | None (SQL state identical because materializer projects from Loro into the same rows; rebuild from `op_log` is invariant) |
-| 10 | Partial index | `git revert` | Index | None |
+| 9 | Cutover toggle | `git revert`; or simpler — flip the flag (§5). Migration `0053_pend_09_app_settings.sql` is **sticky** but harmless when unused (single empty table). | All | None (SQL state identical because materializer projects from Loro into the same rows; rebuild from `op_log` is invariant) |
+| 10 | Partial index | `git revert` of code; **migration 0054 sticky** but harmless when unused (index sits on an empty `merge_parity_log` table in default builds — zero rows to maintain) | Index | None |
 | 11+ | D-bucket sighting | Flip the flag (§5); no code revert needed; file a bug | All | None (zero data lost — `op_log` is unchanged) |
 
 **Net data risk: zero.** The fundamental safety property is that
@@ -460,9 +474,9 @@ commit must therefore include a small migration creating the
 table:
 
 ```sql
--- src-tauri/migrations/0054_pend_09_app_settings.sql (number
--- recomputed at day-9; placeholder uses next-after-day-10 since
--- day 6 takes 0052 and day 10 takes 0053).
+-- src-tauri/migrations/0053_pend_09_app_settings.sql (final
+-- number — day 9 landed before day 10, so app_settings took
+-- 0053 and day 10's partial index took 0054; see §8.3 below).
 CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -563,7 +577,8 @@ the diffy code path (the flag becomes unconditional).
 After the same one-full-release window, the parity log has
 fulfilled its purpose. Migration
 `0055_pend_09_drop_merge_parity_log.sql` drops the table + the
-four indexes (per `0051` and `0053`). The
+four indexes (three from `0051` plus `idx_merge_parity_log_unbucketed`
+from `0054`). The
 classifier (`classifier.rs`, ~554 LOC), parity sink
 (`parity_sink.rs`, ~390 LOC), and proptest harness
 (`parity_proptest.rs`, ~496 LOC) all become deletable.
@@ -584,9 +599,9 @@ Per `pending/PEND-09-crdt-migration.md` lines 67-68 + 145, the
 column drop is migration `0043_drop_is_conflict.sql` in the
 original plan. Renumber to actual
 (`0056_pend_09_drop_is_conflict.sql`) given Phase 1 + Phase 2 +
-Phase 3.1 + Phase 3.2 used 0051, 0052 (Gate 6), 0053 (day 10),
-0054 (day-9 `app_settings` per §5.1), 0055 (Phase 3.2 parity-log
-drop). Reference counts (2026-05-09):
+Phase 3.1 + Phase 3.2 used 0051, 0052 (Gate 6), 0053 (day-9
+`app_settings` per §5.1), 0054 (day-10 partial index), 0055
+(Phase 3.2 parity-log drop). Reference counts (2026-05-09):
 
 | Scope | Count | Command |
 | ----- | ----- | ------- |
@@ -791,10 +806,15 @@ Phase 2 + Phase 3 migration sequence (verified 2026-05-09 against
 | Migration | Day | Purpose |
 | --------- | --- | ------- |
 | `0052_pend_09_loro_doc_state.sql` | day 6 (Gate 6) | snapshot table |
-| `0053_pend_09_parity_log_pending_bucket.sql` | day 10 | partial index |
-| `0054_pend_09_app_settings.sql` | day 9 (§5.1) | kill-switch table |
+| `0053_pend_09_app_settings.sql` | day 9 (§5.1) | kill-switch table |
+| `0054_pend_09_classifier_partial_index.sql` | day 10 | partial index |
 | `0055_pend_09_drop_merge_parity_log.sql` | Phase 3 | parity-log reap |
 | `0056_pend_09_drop_is_conflict.sql` | Phase 3 | column drop |
+
+(Day 10 lands at 0054 — the pre-cutover-plan §3 day-10 entry
+optimistically reserved 0053 for it, but day 9 landed first.
+0053 reconciliation noted in `0053_pend_09_app_settings.sql`
+lines 29-36.)
 
 Ordering assumes Phase 3 ships after Phase 2; if a future Phase
 2.5 introduces an intervening migration (e.g. an unrelated PEND

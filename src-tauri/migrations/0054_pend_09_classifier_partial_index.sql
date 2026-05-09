@@ -1,0 +1,67 @@
+-- PEND-09 Phase 2 day-10 — partial index for the bucket classifier.
+--
+-- Closes the Phase-1 §7 follow-up flagged in `PEND-09-PHASE-1-REPORT.md`
+-- lines 391-398: the day-6 classifier's
+--
+--     SELECT id, diffy_result, loro_result, matched
+--     FROM merge_parity_log
+--     WHERE bucket IS NULL
+--     LIMIT 4000
+--
+-- (see `src-tauri/src/loro/classifier.rs::classify_unbucketed`) was
+-- falling back to a full table scan because the day-4 schema's only
+-- relevant index, `idx_merge_parity_log_matched`, is keyed on
+-- `matched`, not `bucket`.  At Phase-1 volumes (~10K rows over a 30-day
+-- retention window) the full scan was tolerable; at Phase-2 cutover
+-- volumes — every materializer apply lands one row, regardless of
+-- divergence — the cost would be O(N_total_events) per flush tick.
+-- A partial index keyed on the rows the classifier needs to look at
+-- (typically <1% of the table once steady state is reached) makes the
+-- query an index seek and keeps the on-disk size of the index minimal.
+--
+-- ## Why a partial index, not a full one
+--
+-- The classifier filters strictly on `bucket IS NULL`.  In steady
+-- state, the vast majority of rows have a non-NULL bucket assigned by
+-- a previous flush tick, so a regular `(bucket)` index would store
+-- 99%+ of its entries for rows the classifier will never look at.
+-- The partial index `WHERE bucket IS NULL` indexes only the pending
+-- subset — the classifier's working set — so size on disk stays
+-- proportional to backlog, not table size.
+--
+-- ## Why `(id)` not `(bucket)`
+--
+-- The classifier reads `id` for the subsequent UPDATE and reads
+-- `diffy_result` / `loro_result` / `matched` from the row.  Indexing
+-- on `id` lets the planner use the partial index for the `WHERE`
+-- match and then probe the table by rowid for the remaining columns;
+-- indexing on `bucket` (a constant-NULL column under the partial
+-- predicate) would carry no information beyond the index's own
+-- existence.  `id` is also the natural sort key if a future revision
+-- of the classifier adds `ORDER BY id` for deterministic processing.
+--
+-- ## Predicate-shape contract
+--
+-- SQLite's planner uses a partial index only when the query's WHERE
+-- clause matches the index's predicate exactly.  The classifier's
+-- query uses `bucket IS NULL` (literal, no IFNULL / COALESCE
+-- rewrites); this migration's predicate must stay textually identical
+-- (`WHERE bucket IS NULL`) for the planner to pick it up.  The
+-- regression test `classify_unbucketed_uses_partial_index_for_query`
+-- in `src/loro/classifier.rs` runs `EXPLAIN QUERY PLAN` against the
+-- exact production query and asserts the index name appears in the
+-- plan; it fails loudly if a future schema or query edit drifts
+-- either side of the contract.
+--
+-- ## Default-build safety
+--
+-- The migration is generic — it runs on every database, including
+-- default (non-`loro-shadow`) builds.  In default builds `merge_parity_log`
+-- exists (created by migration 0051) but is never written to (the
+-- classifier and the parity sink are both feature-gated), so the
+-- partial index is created on an empty table and stays empty.  No
+-- runtime cost beyond the one-time CREATE INDEX at migration time.
+
+CREATE INDEX idx_merge_parity_log_unbucketed
+  ON merge_parity_log (id)
+  WHERE bucket IS NULL;
