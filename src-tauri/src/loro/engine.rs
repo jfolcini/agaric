@@ -13,9 +13,24 @@
 //! - `apply_delete_block` (soft-delete via `deleted_at`)
 //! - `apply_move_block` (reparent + position update)
 //!
+//! Plus the Phase-2 day-8.5 op-coverage extension required before the
+//! day-9 cutover toggle (without these, projecting from Loro would
+//! produce stale `block_tags` / trash / property-deletion state):
+//!
+//! - `apply_add_tag` / `apply_remove_tag`
+//! - `apply_restore_block` (undelete)
+//! - `apply_purge_block` (hard-delete)
+//! - `apply_delete_property`
+//!
+//! `AddAttachment` / `DeleteAttachment` are intentionally out of
+//! scope: those ops carry file blobs that live outside the CRDT
+//! state.  `block_links` is also not here — it is a derived cache
+//! re-parsed from `blocks.content`, no engine support needed.
+//!
 //! Plus the read-back surface needed for shadow-mode parity checks:
 //! `read_block`, `read_property`, `read_parent`, `read_position`,
-//! `read_deleted`, `count_alive_blocks`, `list_children_walk`.
+//! `read_deleted`, `read_tags`, `count_alive_blocks`,
+//! `list_children_walk`.
 //!
 //! And the sync surface: `export_snapshot` / `import` for round-tripping
 //! Loro docs over the wire (Phase 2 / sync wiring) and for
@@ -46,7 +61,7 @@
 //!    measurement (see SPIKE-REPORT.md §4.2).  Phase 1 builds against
 //!    one engine.
 
-use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroValue, PeerID};
+use loro::{ExportMode, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, PeerID};
 
 use crate::error::AppError;
 
@@ -98,6 +113,28 @@ const BLOCKS_ROOT: &str = "blocks";
 /// a `LoroMap<key, value>` with LWW semantics — overwriting a key on
 /// two peers concurrently resolves via Loro's per-key LWW.
 const BLOCK_PROPERTIES_ROOT: &str = "block_properties";
+
+/// Top-level LoroMap key holding per-block tag associations.  Each
+/// value is a `LoroList<String>` of `tag_id` strings (ULIDs).
+///
+/// **Why LoroList over LoroMap-as-set** (Phase-2 day-8.5 decision):
+/// the SQL `block_tags` table is a `(block_id, tag_id)` set with no
+/// per-tag scalar payload — so either shape works at the read
+/// boundary.  LoroList gives:
+///   1. The simplest read API (`for_each` over scalar strings) for
+///      `read_tags` parity.
+///   2. Concurrent AddTag(X) and RemoveTag(X) on two peers converge
+///      naturally — Loro's list-CRDT keeps the first-applied insert
+///      and drops subsequent removals of an already-removed element
+///      (idempotent remove); this matches `INSERT OR IGNORE` /
+///      `DELETE` SQL semantics.
+///   3. Avoids the LoroMap-keyed-by-tag_id route, which would need a
+///      sentinel value (`true` / `Null`) that adds noise without
+///      buying any merge guarantee.
+///
+/// Drawback: AddTag must walk the list to dedupe — O(N_tags_on_block).
+/// Acceptable: typical blocks carry <10 tags.
+const BLOCK_TAGS_ROOT: &str = "block_tags";
 
 // Field keys inside a per-block LoroMap.  Kept as &'static str
 // constants so the round-trip read path uses the same key strings
@@ -447,6 +484,190 @@ impl LoroEngine {
         Ok(())
     }
 
+    /// Mirrors `DeleteProperty` — removes the `(block_id, key)` entry
+    /// from the per-block props LoroMap entirely (distinct from
+    /// `apply_set_property(value=None)` which writes an explicit Null).
+    ///
+    /// Idempotent:
+    ///   * key absent on this block -> Ok(()) no-op.
+    ///   * block has never had any properties -> Ok(()) no-op.
+    ///
+    /// Phase-2 day-8.5: gap-fill before the day-9 cutover toggle.
+    pub fn apply_delete_property(&mut self, block_id: &str, key: &str) -> Result<(), AppError> {
+        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
+        let Some(voc) = props_root.get(block_id) else {
+            // No props ever written for this block — idempotent no-op.
+            return Ok(());
+        };
+        let block_props: LoroMap = voc
+            .into_container()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: delete_property block {block_id} props slot is not a container"
+                ))
+            })?
+            .into_map()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: delete_property block {block_id} props is not a LoroMap"
+                ))
+            })?;
+        if block_props.get(key).is_none() {
+            // Key was never set (or already deleted) — idempotent no-op.
+            return Ok(());
+        }
+        block_props.delete(key).map_err(|e| {
+            AppError::Validation(format!(
+                "loro: delete_property block {block_id} key {key}: {e}"
+            ))
+        })?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Mirrors `AddTag` — associates `tag_id` with `block_id` in the
+    /// `block_tags` map.  See the `BLOCK_TAGS_ROOT` docstring for the
+    /// LoroList-vs-LoroMap data-shape decision.
+    ///
+    /// Idempotent: if `tag_id` is already present in the block's tag
+    /// list, the call is a no-op.  This matches the SQL
+    /// `INSERT OR IGNORE INTO block_tags ...` semantics in
+    /// `commands/tags.rs::add_tag_inner`.
+    pub fn apply_add_tag(&mut self, block_id: &str, tag_id: &str) -> Result<(), AppError> {
+        let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
+        let block_tags = tags_get_or_create_list(&tags_root, block_id, "add_tag")?;
+
+        // Manual dedup — LoroList does not enforce uniqueness.  Walk
+        // the list once and bail if `tag_id` is already present.
+        if list_contains_string(&block_tags, tag_id) {
+            return Ok(());
+        }
+
+        block_tags.push(LoroValue::from(tag_id)).map_err(|e| {
+            AppError::Validation(format!(
+                "loro: add_tag block {block_id} tag {tag_id}: push: {e}"
+            ))
+        })?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Mirrors `RemoveTag` — dissociates `tag_id` from `block_id`.
+    ///
+    /// Idempotent: if `tag_id` is not present (or the block has no
+    /// tags map at all) the call is a no-op.  Matches the SQL
+    /// `DELETE FROM block_tags ...` (which is itself idempotent — a
+    /// DELETE matching zero rows is not an error).
+    pub fn apply_remove_tag(&mut self, block_id: &str, tag_id: &str) -> Result<(), AppError> {
+        let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
+        let Some(voc) = tags_root.get(block_id) else {
+            // No tag list for this block — idempotent no-op.
+            return Ok(());
+        };
+        let block_tags: LoroList = voc
+            .into_container()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: remove_tag block {block_id} tags slot is not a container"
+                ))
+            })?
+            .into_list()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: remove_tag block {block_id} tags is not a LoroList"
+                ))
+            })?;
+        let Some(pos) = list_find_string(&block_tags, tag_id) else {
+            // Tag absent — idempotent no-op.
+            return Ok(());
+        };
+        block_tags.delete(pos, 1).map_err(|e| {
+            AppError::Validation(format!(
+                "loro: remove_tag block {block_id} tag {tag_id} at {pos}: {e}"
+            ))
+        })?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Mirrors `RestoreBlock` — undeletes a soft-deleted block by
+    /// clearing its `deleted_at` field to LoroValue::Null.
+    ///
+    /// `read_deleted` already treats `Null` as "not deleted" (matching
+    /// `apply_create_block`, which never writes the field), so a
+    /// post-restore `read_deleted` returns `false`.
+    ///
+    /// Idempotent: re-applying on an already-restored block is a
+    /// no-op (Null over Null).  Errors only if the block id is
+    /// missing from the engine entirely.
+    ///
+    /// Concurrent-restore semantics: two devices restoring the same
+    /// block converge on `deleted_at = Null` via Loro's per-key LWW.
+    /// If one device deletes while another restores, LWW picks the
+    /// later-Lamport-ts write — same shape as the
+    /// `apply_delete_block` doc.
+    pub fn apply_restore_block(&mut self, block_id: &str) -> Result<(), AppError> {
+        // Silent no-op when the block is absent — mirrors SQL
+        // `apply_restore_block_tx`'s UPDATE-matching-zero-rows
+        // semantics.  After cutover, a RestoreBlock op for a block
+        // purged on a peer must not propagate as a hard error.
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        if blocks.get(block_id).is_none() {
+            return Ok(());
+        }
+        let block_map = self.get_block_map(block_id, "restore block")?;
+        block_map
+            .insert(FIELD_DELETED_AT, LoroValue::Null)
+            .map_err(|e| {
+                AppError::Validation(format!(
+                    "loro: restore block {block_id}: clear deleted_at: {e}"
+                ))
+            })?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Mirrors `PurgeBlock` — hard-deletes the block from the
+    /// `blocks` LoroMap entirely, plus its `block_properties` and
+    /// `block_tags` entries (matches the SQL purge cascade in
+    /// `materializer/handlers.rs::apply_purge_block_tx`).
+    ///
+    /// Note: this engine is per-block-id only — it does NOT walk
+    /// descendants.  The materializer's purge cascade enumerates the
+    /// descendant set via the recursive CTE and dispatches one
+    /// `PurgeBlock` per descendant; each descendant's own apply call
+    /// reaches this method.  The day-9 cutover keeps the same
+    /// dispatch shape, so per-block scope is correct.
+    ///
+    /// Idempotent: if the block is already absent (concurrent purge,
+    /// or never created), all three deletions are no-ops.
+    pub fn apply_purge_block(&mut self, block_id: &str) -> Result<(), AppError> {
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        if blocks.get(block_id).is_some() {
+            blocks.delete(block_id).map_err(|e| {
+                AppError::Validation(format!("loro: purge block {block_id}: blocks.delete: {e}"))
+            })?;
+        }
+        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
+        if props_root.get(block_id).is_some() {
+            props_root.delete(block_id).map_err(|e| {
+                AppError::Validation(format!(
+                    "loro: purge block {block_id}: block_properties.delete: {e}"
+                ))
+            })?;
+        }
+        let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
+        if tags_root.get(block_id).is_some() {
+            tags_root.delete(block_id).map_err(|e| {
+                AppError::Validation(format!(
+                    "loro: purge block {block_id}: block_tags.delete: {e}"
+                ))
+            })?;
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
     /// Read a block back from the doc.  Returns `Ok(None)` when the
     /// block_id is absent.  Returns `Err(AppError::Validation)` when
     /// a key is present but its value has the wrong shape (writer /
@@ -536,6 +757,58 @@ impl LoroEngine {
     pub fn read_position(&self, block_id: &str) -> Result<i64, AppError> {
         let block_map = self.get_block_map(block_id, "read position")?;
         read_i64(&block_map, FIELD_POSITION)
+    }
+
+    /// Read the current tag list for `block_id`.  Returns an empty
+    /// vector (not `None`) when the block has never had any tags or
+    /// when its list has been emptied — the SQL projection that this
+    /// mirrors uses `LEFT JOIN block_tags`, so "no row" and "no tag"
+    /// flatten to the same shape at the read boundary.
+    ///
+    /// Phase-2 day-8.5: companion to `apply_add_tag` / `apply_remove_tag`,
+    /// used by the engine unit tests and parity-check paths.
+    pub fn read_tags(&self, block_id: &str) -> Result<Vec<String>, AppError> {
+        let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
+        let Some(voc) = tags_root.get(block_id) else {
+            return Ok(Vec::new());
+        };
+        let block_tags: LoroList = voc
+            .into_container()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_tags block {block_id} tags slot is not a container"
+                ))
+            })?
+            .into_list()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_tags block {block_id} tags is not a LoroList"
+                ))
+            })?;
+        let mut out: Vec<String> = Vec::with_capacity(block_tags.len());
+        let mut err: Option<AppError> = None;
+        block_tags.for_each(|voc| {
+            if err.is_some() {
+                return;
+            }
+            match voc.into_value() {
+                Ok(LoroValue::String(s)) => out.push((*s).clone()),
+                Ok(other) => {
+                    err = Some(AppError::Validation(format!(
+                        "loro: read_tags block {block_id}: expected String tag, got {other:?}"
+                    )));
+                }
+                Err(_) => {
+                    err = Some(AppError::Validation(format!(
+                        "loro: read_tags block {block_id}: tag value is not a scalar"
+                    )));
+                }
+            }
+        });
+        if let Some(e) = err {
+            return Err(e);
+        }
+        Ok(out)
     }
 
     /// True iff `deleted_at` has been set on this block (any non-null value).
@@ -826,6 +1099,67 @@ fn read_i64(map: &LoroMap, key: &str) -> Result<i64, AppError> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tag-list helpers (Phase-2 day-8.5).  Centralised so `apply_add_tag` /
+// `apply_remove_tag` / `read_tags` share one source of truth for the
+// LoroList<String> -> String mapping.
+// ---------------------------------------------------------------------------
+
+/// Walk a `LoroList` looking for an exact-string match; on any
+/// non-string element this returns `false` (the writer only ever
+/// pushes strings — a non-string element would be a writer/reader
+/// drift, but at the contains check we degrade gracefully so a
+/// corrupted list does not crash the apply path).
+fn list_contains_string(list: &LoroList, needle: &str) -> bool {
+    list_find_string(list, needle).is_some()
+}
+
+/// Return the index of the first `LoroValue::String` element matching
+/// `needle`, or `None` if absent.  Walks the list via `len()` + `get()`
+/// because `LoroList::for_each` exposes only the value, not the index.
+fn list_find_string(list: &LoroList, needle: &str) -> Option<usize> {
+    let len = list.len();
+    for idx in 0..len {
+        let Some(voc) = list.get(idx) else { continue };
+        if let Ok(LoroValue::String(s)) = voc.into_value() {
+            if s.as_str() == needle {
+                return Some(idx);
+            }
+        }
+    }
+    None
+}
+
+/// Get-or-create the per-block `LoroList` of tag_ids under the
+/// `block_tags` root.  `ctx` is the operation name (e.g. `"add_tag"`)
+/// for error-context prefixing.
+fn tags_get_or_create_list(
+    tags_root: &LoroMap,
+    block_id: &str,
+    ctx: &str,
+) -> Result<LoroList, AppError> {
+    match tags_root.get(block_id) {
+        Some(voc) => voc
+            .into_container()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: {ctx} block {block_id} tags slot is not a container"
+                ))
+            })?
+            .into_list()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: {ctx} block {block_id} tags is not a LoroList"
+                ))
+            }),
+        None => tags_root
+            .insert_container(block_id, LoroList::new())
+            .map_err(|e| {
+                AppError::Validation(format!("loro: {ctx}: create tags list for {block_id}: {e}"))
+            }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::peer_id_from_device_id;
@@ -868,6 +1202,291 @@ mod tests {
         assert_eq!(
             peer_id_from_device_id("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             0x11e7_9683_b730_ff1f_u64,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase-2 day-8.5 engine-coverage tests.
+//
+// Cover `apply_add_tag` / `apply_remove_tag` / `apply_restore_block` /
+// `apply_purge_block` / `apply_delete_property` — each new method gets
+// a happy-path test plus an idempotence test.  These run in the
+// default-feature build (no `loro-shadow` gate) because the engine
+// module itself is feature-gated at the parent (`src/loro/mod.rs`)
+// — so when this `#[cfg(test)]` module compiles, the feature is on.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod day_85_op_coverage_tests {
+    use super::LoroEngine;
+
+    const BLOCK_A: &str = "01HZ00000000000000000000AB";
+    const BLOCK_B: &str = "01HZ00000000000000000000CD";
+    const TAG_X: &str = "01HZ00000000000000000000T1";
+    const TAG_Y: &str = "01HZ00000000000000000000T2";
+
+    /// Helper: a fresh engine with one block already created so each
+    /// test can focus on the new method under test.
+    fn engine_with_block(block_id: &str) -> LoroEngine {
+        let mut engine = LoroEngine::new();
+        engine
+            .apply_create_block(block_id, "content", "hello", None, 0)
+            .expect("create block");
+        engine
+    }
+
+    // ── AddTag ────────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_add_tag_appends_to_block_tags() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add tag X");
+        engine.apply_add_tag(BLOCK_A, TAG_Y).expect("add tag Y");
+        let tags = engine.read_tags(BLOCK_A).expect("read tags");
+        assert_eq!(tags, vec![TAG_X.to_string(), TAG_Y.to_string()]);
+    }
+
+    #[test]
+    fn apply_add_tag_dedupes_existing_tag() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("first add");
+        // Second add of the same tag must be a no-op — list stays length 1.
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("dup add");
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("dup add #2");
+        let tags = engine.read_tags(BLOCK_A).expect("read tags");
+        assert_eq!(
+            tags,
+            vec![TAG_X.to_string()],
+            "duplicate AddTag must not append a second copy"
+        );
+    }
+
+    #[test]
+    fn read_tags_for_unknown_block_returns_empty() {
+        let engine = LoroEngine::new();
+        let tags = engine.read_tags(BLOCK_A).expect("read tags");
+        assert!(tags.is_empty());
+    }
+
+    // ── RemoveTag ─────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_remove_tag_removes_present_tag() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add X");
+        engine.apply_add_tag(BLOCK_A, TAG_Y).expect("add Y");
+        engine.apply_remove_tag(BLOCK_A, TAG_X).expect("remove X");
+        let tags = engine.read_tags(BLOCK_A).expect("read tags");
+        assert_eq!(tags, vec![TAG_Y.to_string()]);
+    }
+
+    #[test]
+    fn apply_remove_tag_is_noop_for_missing_tag() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add X");
+        // Removing a tag that's not on the block is a no-op (idempotent
+        // mirror of the SQL DELETE that matches zero rows).
+        engine
+            .apply_remove_tag(BLOCK_A, TAG_Y)
+            .expect("remove missing tag is a no-op");
+        let tags = engine.read_tags(BLOCK_A).expect("read tags");
+        assert_eq!(tags, vec![TAG_X.to_string()]);
+    }
+
+    #[test]
+    fn apply_remove_tag_is_noop_when_block_has_no_tag_list() {
+        let mut engine = engine_with_block(BLOCK_A);
+        // Block was never tagged — removing must still be a no-op,
+        // not an error (idempotent).
+        engine
+            .apply_remove_tag(BLOCK_A, TAG_X)
+            .expect("remove on empty must not error");
+        assert!(engine.read_tags(BLOCK_A).unwrap().is_empty());
+    }
+
+    // ── RestoreBlock ──────────────────────────────────────────────────
+
+    #[test]
+    fn apply_restore_block_clears_deleted_at() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine.apply_delete_block(BLOCK_A).expect("delete");
+        assert!(engine.read_deleted(BLOCK_A).unwrap(), "must be deleted");
+        engine.apply_restore_block(BLOCK_A).expect("restore");
+        assert!(
+            !engine.read_deleted(BLOCK_A).unwrap(),
+            "post-restore must not be flagged deleted"
+        );
+        // Block is still readable post-restore (restore must NOT
+        // remove the block from the doc).
+        let snap = engine.read_block(BLOCK_A).unwrap().expect("present");
+        assert_eq!(snap.content, "hello");
+    }
+
+    #[test]
+    fn apply_restore_block_is_noop_on_alive_block() {
+        let mut engine = engine_with_block(BLOCK_A);
+        // Block was never deleted — restoring must be safe (no-op).
+        engine
+            .apply_restore_block(BLOCK_A)
+            .expect("restore on alive block must not error");
+        assert!(!engine.read_deleted(BLOCK_A).unwrap());
+    }
+
+    #[test]
+    fn apply_restore_block_is_noop_on_unknown_block() {
+        // SQL semantics: `apply_restore_block_tx`'s UPDATE matches zero
+        // rows when the block_id is absent — that's not an error.
+        // Engine must align: a RestoreBlock op for a block purged on a
+        // peer must not propagate as a hard error post-cutover.
+        let mut engine = LoroEngine::new();
+        engine
+            .apply_restore_block(BLOCK_A)
+            .expect("restore unknown block must be a silent no-op");
+    }
+
+    // ── PurgeBlock ────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_purge_block_removes_block() {
+        let mut engine = engine_with_block(BLOCK_A);
+        // Seed properties + tag so we can assert purge cascades.
+        engine
+            .apply_set_property(BLOCK_A, "k", Some("v"))
+            .expect("set prop");
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add tag");
+
+        engine.apply_purge_block(BLOCK_A).expect("purge");
+
+        assert!(
+            engine.read_block(BLOCK_A).unwrap().is_none(),
+            "purged block must be absent"
+        );
+        assert!(
+            engine.read_property(BLOCK_A, "k").unwrap().is_none(),
+            "purged block's properties must be wiped"
+        );
+        assert!(
+            engine.read_tags(BLOCK_A).unwrap().is_empty(),
+            "purged block's tags must be wiped"
+        );
+    }
+
+    #[test]
+    fn apply_purge_block_is_noop_on_unknown_block() {
+        let mut engine = LoroEngine::new();
+        // Purge of an absent block is idempotent (matches concurrent
+        // purges converging on "gone").
+        engine
+            .apply_purge_block(BLOCK_A)
+            .expect("purge unknown must not error");
+        assert!(engine.read_block(BLOCK_A).unwrap().is_none());
+    }
+
+    #[test]
+    fn apply_purge_block_only_affects_target_block() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine
+            .apply_create_block(BLOCK_B, "content", "world", None, 1)
+            .expect("create B");
+        engine.apply_purge_block(BLOCK_A).expect("purge A");
+        assert!(engine.read_block(BLOCK_A).unwrap().is_none());
+        // BLOCK_B must survive untouched.
+        let snap_b = engine.read_block(BLOCK_B).unwrap().expect("B present");
+        assert_eq!(snap_b.content, "world");
+    }
+
+    // ── DeleteProperty ────────────────────────────────────────────────
+
+    #[test]
+    fn apply_delete_property_removes_key() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine
+            .apply_set_property(BLOCK_A, "priority", Some("high"))
+            .expect("set");
+        assert_eq!(
+            engine.read_property(BLOCK_A, "priority").unwrap(),
+            Some(Some("high".to_string()))
+        );
+        engine
+            .apply_delete_property(BLOCK_A, "priority")
+            .expect("delete");
+        // After delete the key must be entirely absent — distinct
+        // from `apply_set_property(value=None)` which would leave
+        // `Some(None)` (explicit-null clear).
+        assert_eq!(
+            engine.read_property(BLOCK_A, "priority").unwrap(),
+            None,
+            "deleted property key must be absent (Ok(None)), not present-as-null"
+        );
+    }
+
+    #[test]
+    fn apply_delete_property_is_noop_for_missing_key() {
+        let mut engine = engine_with_block(BLOCK_A);
+        // Block has no properties yet.
+        engine
+            .apply_delete_property(BLOCK_A, "nope")
+            .expect("delete missing must not error");
+        // Set one, then delete a different key.
+        engine
+            .apply_set_property(BLOCK_A, "priority", Some("high"))
+            .expect("set");
+        engine
+            .apply_delete_property(BLOCK_A, "other")
+            .expect("delete other-missing key must not error");
+        // Original key survives.
+        assert_eq!(
+            engine.read_property(BLOCK_A, "priority").unwrap(),
+            Some(Some("high".to_string()))
+        );
+    }
+
+    #[test]
+    fn apply_delete_property_distinct_from_set_property_null() {
+        // `set_property(value=None)` writes an explicit Null at the
+        // key — `read_property` returns `Some(None)`.
+        // `delete_property` removes the key entirely — `read_property`
+        // returns `None`.  This invariant is the reason both ops exist.
+        let mut engine_clear = engine_with_block(BLOCK_A);
+        engine_clear
+            .apply_set_property(BLOCK_A, "k", None)
+            .expect("clear");
+        assert_eq!(
+            engine_clear.read_property(BLOCK_A, "k").unwrap(),
+            Some(None),
+            "set_property(None) writes explicit-null"
+        );
+
+        let mut engine_delete = engine_with_block(BLOCK_A);
+        engine_delete
+            .apply_set_property(BLOCK_A, "k", Some("v"))
+            .expect("set");
+        engine_delete
+            .apply_delete_property(BLOCK_A, "k")
+            .expect("delete");
+        assert_eq!(
+            engine_delete.read_property(BLOCK_A, "k").unwrap(),
+            None,
+            "delete_property removes the key entirely"
+        );
+
+        // Transition: explicit-null -> delete_property must also
+        // collapse `Some(None)` to `None` (the key is gone, not just
+        // re-cleared).  This guards the `block_props.get(key).is_none()`
+        // early-return inside `apply_delete_property` from being
+        // "tightened" to bail on `LoroValue::Null` values, which
+        // would silently leak explicit-null entries past purge.
+        let mut engine_null_then_delete = engine_with_block(BLOCK_A);
+        engine_null_then_delete
+            .apply_set_property(BLOCK_A, "k", None)
+            .expect("clear");
+        engine_null_then_delete
+            .apply_delete_property(BLOCK_A, "k")
+            .expect("delete after explicit-null");
+        assert_eq!(
+            engine_null_then_delete.read_property(BLOCK_A, "k").unwrap(),
+            None,
+            "delete_property must remove key even when value is explicit-Null"
         );
     }
 }

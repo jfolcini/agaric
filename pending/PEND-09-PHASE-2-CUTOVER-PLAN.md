@@ -321,6 +321,19 @@ Attachments deferrable. Schedule may slip 1-2 days.
 
 ### Day 9 — The actual cutover toggle
 
+**Prerequisite caught by day-8.5 review:** the engine's
+`apply_restore_block` is per-block-id only, but SQL's
+`apply_restore_block_tx` walks the descendant CTE and restores every
+block in the matching `deleted_at_ref` cohort. Day 9 MUST either (a)
+make the materializer fan out RestoreBlock per descendant (mirroring
+the existing PurgeBlock cascade), (b) extend the engine to walk
+descendants in `apply_restore_block`, or (c) thread `deleted_at_ref`
+through and gate the engine walk on matching ref. Without this, a
+SQL restore of a 10-descendant subtree leaves 9 blocks still
+flagged `deleted_at != Null` in the Loro engine after cutover. Day-8.5
+already aligned the engine's missing-block semantics with SQL (silent
+no-op on unknown block, matching SQL's UPDATE-zero-rows behaviour).
+
 **The load-bearing day.** Adds a `loro_authoritative` runtime
 flag, defaulting **off**. Source: a new `app_settings` row (key
 `pend09.loro_authoritative`, value `'0'` or `'1'`), backed by a
