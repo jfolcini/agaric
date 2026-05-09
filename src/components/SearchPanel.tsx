@@ -9,12 +9,20 @@
  *
  * Opened via Ctrl+F (see `App.tsx` global handler around line 712, the
  * `focusSearch` `matchesShortcutBinding` branch — UX-260 sub-fix 6).
+ *
+ * PEND-30 D-3 — state-heavy logic decomposed into siblings under
+ * `./SearchPanel/`:
+ *  - `searchFilterReducer.ts` collapses the four applied-filter
+ *    `useState`s into a single typed reducer.
+ *  - `usePopoverEntity.ts` factors the page- and tag-popover state
+ *    machines (4 useStates each) behind one parameterised hook.
+ *  - `useAliasResolution.ts` owns the `[[alias]]` resolution effect.
  */
 
 import type { TFunction } from 'i18next'
 import { Search, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -35,20 +43,20 @@ import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow, TagCacheRow } from '../lib/tauri'
-import {
-  batchResolve,
-  getBlock,
-  listBlocks,
-  listTagsByPrefix,
-  resolvePageByAlias,
-  searchBlocks,
-} from '../lib/tauri'
+import { batchResolve, getBlock, listBlocks, listTagsByPrefix, searchBlocks } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { EmptyState } from './EmptyState'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
 import { SearchablePopover } from './SearchablePopover'
+import {
+  hasActiveFilters,
+  INITIAL_SEARCH_FILTER_STATE,
+  searchFilterReducer,
+} from './SearchPanel/searchFilterReducer'
+import { useAliasResolution } from './SearchPanel/useAliasResolution'
+import { usePopoverEntity } from './SearchPanel/usePopoverEntity'
 import { ViewHeader } from './ViewHeader'
 
 /** Returns true if the text contains CJK codepoints. */
@@ -109,28 +117,38 @@ export function SearchPanel(): React.ReactElement {
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const [recentPages, setRecentPages] = useState<RecentPage[]>([])
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
-  const [aliasMatch, setAliasMatch] = useState<BlockRow | null>(null)
-  const [aliasQuery, setAliasQuery] = useState<string>('')
 
-  // Filter state
-  const [filterPageId, setFilterPageId] = useState<string | null>(null)
-  const [filterPageTitle, setFilterPageTitle] = useState<string | null>(null)
-  const [filterTagIds, setFilterTagIds] = useState<string[]>([])
-  const [filterTagNames, setFilterTagNames] = useState<string[]>([])
+  // PEND-30 D-3 — applied-filter state moved to a typed reducer.
+  const [filterState, dispatchFilter] = useReducer(searchFilterReducer, INITIAL_SEARCH_FILTER_STATE)
+  const { filterPageId, filterPageTitle, filterTagIds, filterTagNames } = filterState
+  const hasFilters = hasActiveFilters(filterState)
 
-  // Page picker state
-  const [pagePopoverOpen, setPagePopoverOpen] = useState(false)
-  const [pageSearch, setPageSearch] = useState('')
-  const [pageSuggestions, setPageSuggestions] = useState<BlockRow[]>([])
-  const [pageSearchLoading, setPageSearchLoading] = useState(false)
+  // PEND-30 D-3 — page picker: scoped to the current space. The
+  // server-side `listBlocks` returns up to 20 pages; the client-side
+  // `matchesSearchFolded` filter applies UX-248 Unicode-aware folding
+  // so `İstanbul` ↔ `istanbul` etc. match consistently with PageBrowser
+  // and HighlightMatch.
+  const pagePopover = usePopoverEntity<BlockRow>({
+    logLabel: 'page',
+    extraDeps: [currentSpaceId],
+    searchFn: async (q) => {
+      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. `?? ''` is
+      // the pre-bootstrap no-match fallback (see SearchPanel main
+      // `queryFn`).
+      const res = await listBlocks({
+        blockType: 'page',
+        limit: 20,
+        spaceId: currentSpaceId ?? '',
+      })
+      return q ? res.items.filter((b) => matchesSearchFolded(b.content ?? '', q)) : res.items
+    },
+  })
 
-  // Tag picker state
-  const [tagPopoverOpen, setTagPopoverOpen] = useState(false)
-  const [tagSearch, setTagSearch] = useState('')
-  const [tagSuggestions, setTagSuggestions] = useState<TagCacheRow[]>([])
-  const [tagSearchLoading, setTagSearchLoading] = useState(false)
-
-  const hasFilters = filterPageId !== null || filterTagIds.length > 0
+  // PEND-30 D-3 — tag picker: server-side prefix matching, no extra deps.
+  const tagPopover = usePopoverEntity<TagCacheRow>({
+    logLabel: 'tag',
+    searchFn: (q) => listTagsByPrefix({ prefix: q, limit: 20 }),
+  })
 
   // Load recent pages from localStorage on mount
   useEffect(() => {
@@ -190,55 +208,8 @@ export function SearchPanel(): React.ReactElement {
       })
   }, [results])
 
-  // Alias resolution: supplement FTS results with alias matches
-  useEffect(() => {
-    if (!debouncedQuery.trim()) {
-      setAliasMatch(null)
-      setAliasQuery('')
-      return
-    }
-    let cancelled = false
-    // PEND-35 Tier 1.2 — pass `spaceId: currentSpaceId` so an alias
-    // pointing at a foreign-space page does not surface here. Mirrors
-    // the FEAT-3p4 active-space scoping the prefix picker already uses.
-    resolvePageByAlias({ alias: debouncedQuery.trim(), spaceId: currentSpaceId })
-      .then(async (result) => {
-        if (cancelled) return
-        if (!result) {
-          setAliasMatch(null)
-          setAliasQuery('')
-          return
-        }
-        const [pageId] = result
-        if (results.some((r) => r.id === pageId)) {
-          setAliasMatch(null)
-          setAliasQuery('')
-          return
-        }
-        try {
-          const block = await getBlock(pageId)
-          if (!cancelled) {
-            setAliasMatch(block)
-            setAliasQuery(debouncedQuery.trim())
-          }
-        } catch {
-          if (!cancelled) {
-            setAliasMatch(null)
-            setAliasQuery('')
-          }
-        }
-      })
-      .catch((err) => {
-        logger.warn('SearchPanel', 'alias resolution failed', { query: debouncedQuery.trim() }, err)
-        if (!cancelled) {
-          setAliasMatch(null)
-          setAliasQuery('')
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [debouncedQuery, results, currentSpaceId])
+  // PEND-30 D-3 — alias resolution lifted into its own hook.
+  const { aliasMatch, aliasQuery } = useAliasResolution(debouncedQuery, results, currentSpaceId)
 
   const debounced = useDebouncedCallback((value: string) => {
     setTyping(false)
@@ -261,8 +232,8 @@ export function SearchPanel(): React.ReactElement {
       setItems([])
       setSearched(false)
       setTyping(false)
-      setAliasMatch(null)
-      setAliasQuery('')
+      // Alias state clears automatically: `useAliasResolution` re-runs
+      // when `debouncedQuery` becomes '' and resets the match.
       return
     }
 
@@ -340,75 +311,18 @@ export function SearchPanel(): React.ReactElement {
     [navigateToPage],
   )
 
-  // Page picker: search pages on input change (scoped to the current space)
-  useEffect(() => {
-    if (!pagePopoverOpen) return
-    setPageSearchLoading(true)
-    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. `?? ''` is the
-    // pre-bootstrap no-match fallback (see SearchPanel main `queryFn`).
-    listBlocks({
-      blockType: 'page',
-      limit: 20,
-      spaceId: currentSpaceId ?? '',
-    })
-      .then((res) => {
-        // UX-248 — Unicode-aware fold so `İstanbul` ↔ `istanbul`
-        // etc. match consistently with PageBrowser and HighlightMatch.
-        const filtered = pageSearch
-          ? res.items.filter((b) => matchesSearchFolded(b.content ?? '', pageSearch))
-          : res.items
-        setPageSuggestions(filtered)
-      })
-      .catch((err) => {
-        logger.warn('SearchPanel', 'page resolution failed', undefined, err)
-        setPageSuggestions([])
-      })
-      .finally(() => setPageSearchLoading(false))
-  }, [pagePopoverOpen, pageSearch, currentSpaceId])
-
-  // Tag picker: search tags on input change
-  useEffect(() => {
-    if (!tagPopoverOpen) return
-    setTagSearchLoading(true)
-    listTagsByPrefix({ prefix: tagSearch, limit: 20 })
-      .then((tags) => setTagSuggestions(tags))
-      .catch((err) => {
-        logger.warn('SearchPanel', 'tag resolution failed', undefined, err)
-        setTagSuggestions([])
-      })
-      .finally(() => setTagSearchLoading(false))
-  }, [tagPopoverOpen, tagSearch])
-
   function handleSelectPage(page: BlockRow) {
-    setFilterPageId(page.id)
-    setFilterPageTitle(page.content ?? 'Untitled')
-    setPagePopoverOpen(false)
-    setPageSearch('')
-  }
-
-  function handleRemovePageFilter() {
-    setFilterPageId(null)
-    setFilterPageTitle(null)
+    dispatchFilter({
+      type: 'set-page-filter',
+      pageId: page.id,
+      pageTitle: page.content ?? 'Untitled',
+    })
+    pagePopover.reset()
   }
 
   function handleSelectTag(tag: TagCacheRow) {
-    if (filterTagIds.includes(tag.tag_id)) return
-    setFilterTagIds((prev) => [...prev, tag.tag_id])
-    setFilterTagNames((prev) => [...prev, tag.name])
-    setTagPopoverOpen(false)
-    setTagSearch('')
-  }
-
-  function handleRemoveTag(index: number) {
-    setFilterTagIds((prev) => prev.filter((_, i) => i !== index))
-    setFilterTagNames((prev) => prev.filter((_, i) => i !== index))
-  }
-
-  function handleClearAllFilters() {
-    setFilterPageId(null)
-    setFilterPageTitle(null)
-    setFilterTagIds([])
-    setFilterTagNames([])
+    dispatchFilter({ type: 'add-tag-filter', tagId: tag.tag_id, tagName: tag.name })
+    tagPopover.reset()
   }
 
   // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so
@@ -485,7 +399,7 @@ export function SearchPanel(): React.ReactElement {
             {t('search.inPage', { name: filterPageTitle })}
             <button
               type="button"
-              onClick={handleRemovePageFilter}
+              onClick={() => dispatchFilter({ type: 'clear-page-filter' })}
               className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5"
               aria-label={t('search.removePageFilter')}
             >
@@ -499,7 +413,7 @@ export function SearchPanel(): React.ReactElement {
             #{name}
             <button
               type="button"
-              onClick={() => handleRemoveTag(index)}
+              onClick={() => dispatchFilter({ type: 'remove-tag-filter', index })}
               className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]"
               aria-label={t('search.removeTagFilter', { name })}
             >
@@ -509,15 +423,15 @@ export function SearchPanel(): React.ReactElement {
         ))}
 
         <SearchablePopover<BlockRow>
-          open={pagePopoverOpen}
-          onOpenChange={setPagePopoverOpen}
-          items={pageSuggestions}
-          isLoading={pageSearchLoading}
+          open={pagePopover.open}
+          onOpenChange={pagePopover.setOpen}
+          items={pagePopover.suggestions}
+          isLoading={pagePopover.loading}
           onSelect={handleSelectPage}
           renderItem={(page) => page.content ?? 'Untitled'}
           keyExtractor={(page) => page.id}
-          searchValue={pageSearch}
-          onSearchChange={setPageSearch}
+          searchValue={pagePopover.query}
+          onSearchChange={pagePopover.setQuery}
           searchPlaceholder={t('search.searchPages')}
           emptyMessage={t('search.noPagesFound')}
           triggerLabel={t('search.addPage')}
@@ -526,15 +440,15 @@ export function SearchPanel(): React.ReactElement {
         />
 
         <SearchablePopover<TagCacheRow>
-          open={tagPopoverOpen}
-          onOpenChange={setTagPopoverOpen}
-          items={tagSuggestions}
-          isLoading={tagSearchLoading}
+          open={tagPopover.open}
+          onOpenChange={tagPopover.setOpen}
+          items={tagPopover.suggestions}
+          isLoading={tagPopover.loading}
           onSelect={handleSelectTag}
           renderItem={(tag) => `#${tag.name}`}
           keyExtractor={(tag) => tag.tag_id}
-          searchValue={tagSearch}
-          onSearchChange={setTagSearch}
+          searchValue={tagPopover.query}
+          onSearchChange={tagPopover.setQuery}
           searchPlaceholder={t('search.searchTags')}
           emptyMessage={t('search.noTagsFound')}
           triggerLabel={t('search.addTag')}
@@ -544,7 +458,7 @@ export function SearchPanel(): React.ReactElement {
         {hasFilters && (
           <button
             type="button"
-            onClick={handleClearAllFilters}
+            onClick={() => dispatchFilter({ type: 'clear-all' })}
             className="text-xs text-muted-foreground hover:text-foreground underline ml-1 rounded-sm focus-ring-visible"
           >
             {t('search.clearAll')}
