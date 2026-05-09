@@ -691,6 +691,69 @@ pub fn run() {
             // hooks it.
             materializer.set_app_data_dir(app_data_dir.clone());
 
+            // PEND-09 Phase 2 day-9 — boot ordering for the cutover toggle.
+            //
+            // The day-6 review flagged that `rehydrate_registry` was
+            // running inside a `tauri::async_runtime::spawn` later in
+            // setup, which is fire-and-forget — for shadow mode that
+            // was tolerable (Loro state is observation-only) but for
+            // cutover the per-space `LoroEngine` registry MUST be
+            // populated before the materializer dispatches its first
+            // op.  Recovery (`recover_at_boot` below) replays
+            // unmaterialised ops through the materializer, so any op
+            // it replays would race the rehydrate spawn and land in an
+            // empty engine.
+            //
+            // Fix: run the shadow-state init + rehydrate + cutover-flag
+            // load synchronously (via `block_on`) BEFORE recovery.  The
+            // boot-latency cost is one `loro_doc_state` table scan +
+            // one `app_settings` row read — single-digit ms at typical
+            // workspace scales (cutover plan §5.1 sizing).  The
+            // periodic flush task itself is still spawned later (it's
+            // a long-running background task; blocking on it would
+            // pin boot indefinitely).
+            #[cfg(feature = "loro-shadow")]
+            {
+                let installed = crate::loro::shared::init();
+                tracing::info!(
+                    installed,
+                    "loro-shadow: process-global ShadowState init complete (synchronous, pre-recovery)",
+                );
+                if let Some(state) = crate::loro::shared::get() {
+                    let n = tauri::async_runtime::block_on(
+                        crate::loro::snapshot::rehydrate_registry(
+                            &pools.write,
+                            &state.registry,
+                            &device_id,
+                        ),
+                    );
+                    if n > 0 {
+                        tracing::info!(
+                            rehydrated_spaces = n,
+                            "loro-shadow: rehydrated per-space LoroDoc snapshots from \
+                             loro_doc_state (pre-recovery)",
+                        );
+                    }
+                }
+
+                // PEND-09 Phase 2 day-9 — populate the cutover toggle
+                // cache from the `app_settings` row seeded by migration
+                // `0053`.  Sub-100 µs reads on the hot path are
+                // contractual (cutover plan §5.2); a synchronous boot
+                // read avoids the lazy-first-read race with the
+                // materializer's first op.  Errors on this read fall
+                // through to default-off (logged inside
+                // `init_cutover_flag` itself); we do not abort boot.
+                if let Err(e) = tauri::async_runtime::block_on(
+                    crate::loro::cutover::init_cutover_flag(&pools.write),
+                ) {
+                    tracing::warn!(
+                        error = %e,
+                        "loro-shadow: init_cutover_flag failed; cutover toggle defaults to off",
+                    );
+                }
+            }
+
             // Run crash recovery before anything else
             // Recovery needs write access
             let report = tauri::async_runtime::block_on(recovery::recover_at_boot(
@@ -935,13 +998,11 @@ pub fn run() {
             #[cfg(feature = "loro-shadow")]
             let pool_for_loro_flush = pools.write.clone();
 
-            // PEND-09 Phase 2 day-6 — clone the device_id for the boot
-            // rehydration pass that loads every persisted LoroDoc
-            // snapshot from `loro_doc_state` into the registry.  Done
-            // before the rest of the cutover wiring so the registry
-            // is populated before any op-apply runs.
-            #[cfg(feature = "loro-shadow")]
-            let device_id_for_loro_rehydrate = device_id.clone();
+            // PEND-09 Phase 2 day-9 — boot rehydration moved earlier in
+            // setup (pre-recovery, synchronous via `block_on`).  The
+            // earlier site uses `device_id` directly before the move
+            // into `app.manage(DeviceId::new(device_id))`, so the local
+            // clone the spawn-version needed is no longer required.
 
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
@@ -950,52 +1011,25 @@ pub fn run() {
             app.manage(PersistedCert::new(sync_cert));
             app.manage(materializer);
 
-            // PEND-09 Phase 1 day-2 — initialise the process-global
-            // shadow-mode state so `merge::shadow_apply` has a registry +
-            // sampler to write into.  Idempotent; gated on the
-            // `loro-shadow` feature so default builds compile this out
-            // entirely (zero-overhead when off).
+            // PEND-09 Phase 1 day-5 — spawn the periodic flush + purge +
+            // snapshot task that drains the in-memory parity sampler
+            // into `merge_parity_log` and ages out rows past the 30-day
+            // retention window.  Fire-and-forget; cancels cleanly when
+            // the runtime shuts down (the inner `tokio::time::interval`
+            // drops with the future).  Errors `tracing::warn!` and
+            // continue.
             //
-            // PEND-09 Phase 1 day-5 — also spawn the periodic
-            // flush + purge task that drains the in-memory parity
-            // sampler into `merge_parity_log` and ages out rows past
-            // the 30-day retention window.  The task is fire-and-
-            // forget; it cancels cleanly when the runtime shuts down
-            // (the inner `tokio::time::interval` drops with the
-            // future).  Errors `tracing::warn!` and continue.
+            // PEND-09 Phase 2 day-9 — the shadow-state init + LoroDoc
+            // rehydrate that previously lived inside this spawn moved
+            // earlier in setup (synchronous, before recovery) so the
+            // registry is populated before any op flows through.  See
+            // the pre-recovery block above for the reasoning.  Only the
+            // long-running flush task remains here.
             #[cfg(feature = "loro-shadow")]
             {
-                let installed = crate::loro::shared::init();
-                tracing::info!(
-                    installed,
-                    "loro-shadow: process-global ShadowState init complete",
-                );
                 if let Some(state) = crate::loro::shared::get() {
                     let pool_for_flush = pool_for_loro_flush;
-                    let rehydrate_device_id = device_id_for_loro_rehydrate;
                     tauri::async_runtime::spawn(async move {
-                        // PEND-09 Phase 2 day-6 — boot rehydration.
-                        // Decision: option (c) from the day-6 spec —
-                        // pre-populate the registry from `loro_doc_state`
-                        // BEFORE entering the periodic flush loop, so
-                        // `for_space` stays sync and merely pulls from
-                        // the now-populated registry.  Errors are caught
-                        // + logged inside `rehydrate_registry`; a single
-                        // bad space never blocks the rest.
-                        let n = crate::loro::snapshot::rehydrate_registry(
-                            &pool_for_flush,
-                            &state.registry,
-                            &rehydrate_device_id,
-                        )
-                        .await;
-                        if n > 0 {
-                            tracing::info!(
-                                rehydrated_spaces = n,
-                                "loro-shadow: rehydrated per-space LoroDoc snapshots from \
-                                 loro_doc_state",
-                            );
-                        }
-
                         crate::loro::flush_task::run_periodic_flush(
                             pool_for_flush,
                             state,

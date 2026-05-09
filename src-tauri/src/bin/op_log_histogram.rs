@@ -974,6 +974,67 @@ mod tests {
     // 4. End-to-end DB round-trip — covers the SQL ordering contract
     // -----------------------------------------------------------------------
 
+    /// PEND-09 Phase 2 day-9 — locks the read-only contract on the
+    /// histogram bin's pool.  The bin opens `notes.db` with
+    /// `SqliteConnectOptions::read_only(true)` so it can run safely
+    /// against a live DB while the main app is writing; this test
+    /// asserts that an INSERT through that pool hard-fails (not just
+    /// silently no-ops or warns).  The day-4 reviewer flagged the
+    /// read-only contract was doc-only; this test makes it
+    /// load-bearing.
+    ///
+    /// SQLite's read-only mode rejects writes at the engine level,
+    /// not the schema level — so even an INSERT into the canonical
+    /// `op_log` table (or any other writable schema) errors out with
+    /// `attempt to write a readonly database`.
+    #[tokio::test]
+    async fn read_only_pool_rejects_writes() {
+        // 1. Build a fresh DB in read-write mode and run all migrations
+        //    so `op_log` exists with the correct schema.
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("readonly_test.db");
+        let _rw_pool = init_pool(&db_path).await.expect("init_pool migrations");
+
+        // 2. Open a SECOND pool against the same file with
+        //    `read_only(true)` — the same path the bin uses.
+        let opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .read_only(true);
+        let ro_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .expect("open ro pool");
+
+        // 3. Attempt an INSERT through the read-only pool.  Mirrors
+        //    the `insert_op` helper above (same column shape) so the
+        //    only difference vs. a successful insert is the pool's
+        //    read-only flag.
+        let result = sqlx::query(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, NULL, ?, ?, ?, '2026-05-09T00:00:00Z')",
+        )
+        .bind("dev-readonly")
+        .bind(1_i64)
+        .bind("hash-ro-1")
+        .bind("edit_block")
+        .bind("{}")
+        .execute(&ro_pool)
+        .await;
+
+        // 4. The query MUST fail.  Don't pin the exact SQLite error
+        //    message string (cross-version drift); assert `Err` and
+        //    that the message mentions readonly so a future SQLite
+        //    upgrade that changes the wording is the only thing that
+        //    can break this test.
+        let err = result.expect_err("INSERT must fail on read-only pool");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("readonly") || msg.contains("read-only") || msg.contains("read only"),
+            "expected a read-only-database error, got: {err}",
+        );
+    }
+
     /// The histogram must be deterministically ordered: count DESC then
     /// op_type ASC. Insert two op types with the same count and assert
     /// op_type asc breaks the tie.
