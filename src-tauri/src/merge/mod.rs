@@ -22,6 +22,15 @@ pub use detect::merge_text;
 pub use resolve::{create_conflict_copy, resolve_property_conflict};
 pub use types::{MergeOutcome, MergeResult, PropertyConflictResolution};
 
+// PEND-09 Phase 1 day-3 — re-export the shadow-mode dispatcher so the
+// materializer (`materializer::handlers::apply_op`) and any other
+// per-op call sites can reach it without depending on the
+// `merge::apply` private module path.  Feature-gated: with
+// `loro-shadow` off the symbol does not compile, mirroring
+// `shadow_apply` below.
+#[cfg(feature = "loro-shadow")]
+pub(crate) use apply::shadow_dispatch_for_record;
+
 // Test-only alias: the existing test suite was written against the old
 // name `merge_block`. Production callers MUST use `merge_block_text_only`
 // so the text-only scope is explicit at the call site (M-73). This alias
@@ -69,21 +78,13 @@ pub(crate) use apply::merge_block_text_only as merge_block;
 ///
 /// Returns nothing because the diffy result remains authoritative for
 /// Phase 1; this hook records observations only.
-// `dead_code` allow: with `loro-shadow` off this stub has no callers
-// (the only call sites in `merge::apply` are themselves `#[cfg]`-gated
-// behind the feature).  The body discards its parameters via `let _ =
-// (...)` so `unused_variables` would not strictly fire, but the
-// allowlist is kept so future parameter changes don't require a churn.
-#[allow(unused_variables, dead_code)]
-#[cfg(not(feature = "loro-shadow"))]
-pub(crate) fn shadow_apply(op_id: &str, op: &crate::op::OpPayload, device_id: &str) {
-    // No-op stub for the feature-off build.  The real signature of
-    // the feature-on variant carries more parameters; we don't expose
-    // them here so the call site can be `#[cfg(feature = "loro-shadow")]`
-    // -gated cleanly without a phantom signature on the off side.
-    let _ = (op_id, op, device_id);
-}
-
+// PEND-09 Phase 1 day-3 — the off-side `(op_id, op, device_id)` stub
+// was deleted; the day-2 reviewer flagged the divergent two-signature
+// shape as fragile under day-3 envelope work.  The single feature-on
+// definition below is the only surface that ever exists.  Every caller
+// in the codebase is itself `#[cfg(feature = "loro-shadow")]`-gated
+// (see `merge/apply.rs` and `materializer/handlers.rs`), so removing
+// the off-side stub has no effect on the feature-off build.
 #[cfg(feature = "loro-shadow")]
 pub(crate) fn shadow_apply(
     op_id: &str,
