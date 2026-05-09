@@ -426,12 +426,224 @@ The 38 untested cases break down to approximately:
     concrete shape of that decision.  Day-4 work: write the
     resolution rule into the Phase 1 design doc (section TBD).
 
+## Day 4 (2026-05-09)
+
+### Replay benchmark — wall clock, doc size, peak heap
+
+Built a new binary `src-tauri/crates/loro-spike/src/bin/replay_bench.rs`.
+It synthesises a deterministic 100K-op stream and replays it through
+`LoroEngine`, measuring wall-clock, peak RSS (Linux `/proc/self/statm`),
+final snapshot bytes, and alive-block count.  Verification phase
+samples 100 random created block_ids + 20 random deleted block_ids and
+asserts each is readable / marked-deleted respectively.
+
+**Reference run** on the dev machine, `cargo run --release -p loro-spike
+--bin replay_bench`:
+
+```text
+seed                = 0x9e3779b97f4a7c15
+total ops           = 100000
+commit cadence (K)  = 1000
+page roots          = 16
+rss sample every    = 10000 ops
+
+bootstrap: 16 pages created, alive count = 16
+rss at start         = 4628480 bytes (4.41 MiB)
+  [  10000 ops]  elapsed =     0.05s  rss =  17.66 MiB
+  [  20000 ops]  elapsed =     0.12s  rss =  30.56 MiB
+  [  30000 ops]  elapsed =     0.23s  rss =  45.27 MiB
+  [  40000 ops]  elapsed =     0.35s  rss =  56.72 MiB
+  [  50000 ops]  elapsed =     0.51s  rss =  74.51 MiB
+  [  60000 ops]  elapsed =     0.69s  rss =  85.95 MiB
+  [  70000 ops]  elapsed =     0.89s  rss =  97.32 MiB
+  [  80000 ops]  elapsed =     1.12s  rss = 108.75 MiB
+  [  90000 ops]  elapsed =     1.40s  rss = 131.30 MiB
+  [ 100000 ops]  elapsed =     1.68s  rss = 144.32 MiB
+
+apply elapsed      = 1.677s (0.028 min)
+doc snapshot bytes = 6714140 (6.40 MiB)
+alive blocks       = 25145
+peak rss           = 151330816 bytes (144.32 MiB)
+alive sanity check : OK (16 bootstrap + 30091 creates - 4962 deletes = 25145)
+
+sample creates: 100/100 readable, 0 errors
+sample deletes: 20/20 confirmed deleted
+```
+
+### Op-mix synthesised
+
+Distribution requested vs actually drawn (the small drift comes from
+the synth path demoting non-create ops to creates when the workload is
+empty — only ever fires on the first ~handful of ops):
+
+| Op shape | Target | Actual count / 100K |
+| -------- | ------ | ------------------- |
+| `apply_create_block` | 30% | 30 091 |
+| `apply_edit_content` | 50% | 49 917 |
+| `apply_set_property` | 10% | 9 964 |
+| `apply_move_block` | 5% | 5 066 |
+| `apply_delete_block` | 5% | 4 962 |
+
+Block ids = `BLK_{op_index:08}` for creates; parent ids drawn from a
+16-element page-root pool created up-front (`PAGE_0000` … `PAGE_0015`).
+Property key cycle: `priority`, `todo_state`, `due_date`,
+`scheduled_date`.  Edit splices use Unicode-scalar offsets in
+`[0, len_unicode]` with `delete_len ∈ [0, min(4, len-offset)]` and
+short replacements (`"fix"`, `"tweak "`, `"x"`, …).  Determinism: a
+single 64-bit xorshift* RNG seeded with `0x9e3779b97f4a7c15` (SHA-1
+"hash" of "PEND-09 day 4" — actually the Knuth golden-ratio constant,
+chosen because it has good bit-mixing properties as a non-zero
+xorshift seed).
+
+### Commit cadence chosen
+
+**K = 1000** (i.e. an explicit `commit()` flush every 1000 ops).
+Caveat to record honestly: in the day-1 implementation, every
+`apply_*` method already calls `doc.commit()` internally, so the K=1000
+flush in the bench loop is a no-op against an already-committed state.
+The bench's wall-clock numbers therefore reflect **per-op commits** —
+the pessimistic case in open question 6 — and they still beat the kill
+criterion by 350×.  That is the headline finding: even at the
+pessimistic commit cadence Loro replays 100K ops in 1.7s.  Batching
+larger transactions might trim further but is no longer load-bearing
+for the kill-criterion verdict.
+
+Open question 6 stays open for Phase 1 (real commit cadence will be
+driven by op_log batch boundaries, not by the spike's choice), but
+day 4 has demonstrated that the answer doesn't gate the spike.
+
+### Kill criterion #3 verdict — NOT FIRE
+
+Quoted thresholds from PEND-09-crdt-migration.md line 79:
+
+> "Thresholds (revised, with stated rationale): under 10 min wall-clock
+> and under 2 GB peak heap on the developer's reference machine."
+
+Quoted measurements:
+
+- "apply elapsed = **1.677s**" → far under 10 min (600s).  Margin: ~358×.
+- "peak rss = **151330816 bytes (144.32 MiB)**" → far under 2 GB
+  (2 147 483 648 B).  Margin: ~14×.
+- "sample creates: **100/100 readable**, 0 errors" — correctness
+  preserved end-to-end.
+- "sample deletes: **20/20 confirmed deleted**" — soft-delete flag
+  survives the apply loop.
+- "alive sanity check: OK (16 bootstrap + 30091 creates - 4962
+  deletes = 25145)" — engine's view of alive-block count matches the
+  workload's bookkeeping exactly.
+
+**Verdict: kill criterion #3 does NOT fire.  Spike continues.**
+
+### Caveats
+
+- **Hardware caveat.**  The reference machine in this measurement is
+  the CI-equivalent dev box this spike is running on, not a customer
+  device.  Even a 50× slowdown on slower hardware would still come in
+  comfortably under the 10-minute threshold; the margin is wide enough
+  that the result is robust to the hardware-variance question.
+- **Linux-only RSS.**  `/proc/self/statm` is Linux-specific.  On macOS
+  or Windows the bench prints `peak_rss_bytes = n/a` and skips the
+  RSS half of the kill-criterion check.  Re-running on Mac before
+  Phase 1 sign-off is on the to-do list.
+- **Page size assumption.**  RSS reading multiplies the resident-pages
+  field by a hard-coded 4096-byte page (no `libc` dep).  All x86_64
+  Linux kernels we care about use 4 KiB pages; ARM Linux with 16 KiB
+  pages would over-count by 4×.  Re-confirm on ARM if/when we benchmark
+  there.
+- **Op shape is synthetic.**  The 30/50/10/5/5 mix is the day-4
+  deliverable's stated proxy for the production op-log distribution.
+  We don't yet have a histogram from a real `notes.db` op_log; that's
+  the prerequisite the plan calls out at line 205 of the migration
+  doc ("verify against your `notes.db` pre-spike to size the
+  threshold realistically").  If the actual mix is significantly
+  different — e.g. edit-heavy and create-light — the wall-clock could
+  be different, but the order-of-magnitude headroom we have means the
+  kill criterion still wouldn't fire.
+- **Splice realism.**  Edit ops splice 0-4 unicode scalars and insert
+  a 1-6-char replacement.  Real editor edits can be much larger
+  (paste, autocomplete) but those are also rarer.  The cumulative
+  content growth across 50 K edits is bounded; the final 6.4 MiB
+  snapshot encodes ~25 K alive blocks plus all per-block LoroText
+  histories — typical block content ends up ~50-100 chars after
+  many small edits, which is in the same ballpark as production
+  block content lengths.
+
+### Open question 1 — per-space doc sizing — partial answer
+
+The plan asks (open question 1, see "Open questions for next session(s)"
+below): how big does a per-space Loro doc get at 10K / 100K blocks?
+This bench writes ~30K creates with a high churn of edits, ending at
+~25K alive blocks — broadly in the 10K-100K window.  Final snapshot
+size: **6.40 MiB** for ~25K alive blocks ≈ **260 bytes per alive
+block**, *including* all the deleted blocks' tombstones, all the edit
+history, all the move history, and all the property writes.
+
+That number is far below the plan's 10K-block load-time concern
+("a 10K-block space's Loro doc could be ~100MB" — speculative pre-
+spike figure).  Linear extrapolation (260 B/block × 100K blocks ≈
+26 MiB) suggests a 100K-block space-doc fits in well under 30 MiB.
+Caveats: this bench's content is short procedural strings, not real
+markdown notes.  The per-block content overhead at production-typical
+50-500-char content needs a follow-up measurement (open question 9).
+But the headline takeaway is the same: **a per-space-doc design at
+this volume does not blow the size budget** — the plan's
+500ms-load-time concern is highly unlikely to fire.
+
+### Surprises
+
+- **No heap cliffs.**  RSS grew almost-linearly from 4.4 MiB to 144 MiB
+  across the 100K-op apply loop.  No discontinuity at any 10K-op
+  checkpoint.  Loro's internal data structures are amortising
+  uniformly.
+- **No tail-latency at commit boundaries.**  Per-op `apply_*` paths
+  already commit, so the K=1000 nominal commit cadence in the bench
+  is a no-op.  The wall-clock-per-10K-ops grows steadily as the doc
+  fills (~50ms for the first 10K, ~280ms for the last 10K) — that's
+  expected as the LoroMap's internal state grows; not a perf cliff,
+  just sub-linear growth in per-op work.
+- **The day-4 result is so far under threshold the kill question
+  becomes "could anything reasonable push us past 10 min?"**  Answer:
+  even at 100× overhead vs this run we're at ~3 min.  The criterion
+  exists to catch a Loro perf cliff; this spike has not found one.
+- **Snapshot size of 6.4 MiB for 100K ops** is small enough that the
+  Phase-2 `loro_doc_state` blob column in `notes.db` won't need
+  special handling for typical workloads.  Encoding a 6.4 MiB blob
+  through SQLite is well-understood territory.
+
+### Open questions touched today
+
+- **Open question 4** (op-log import benchmark — was: "100K-op replay
+  timing + heap, kill criterion 3").  **RESOLVED.**  Wall-clock 1.7s,
+  peak RSS 144 MiB, both far under thresholds.  Removed from the
+  carry-over list below.
+- **Open question 1** (per-space doc sizing at 10K + 100K) — **largely
+  answered.**  ~260 bytes per alive block; 100K alive blocks ≈ 26 MiB.
+  Open caveat: this bench's content is short; need a follow-up at
+  realistic content lengths (which is now part of question 9, not
+  question 1).
+- **Open question 6** (commit cadence) — **partially answered.**
+  K=1000 is fine as a working choice.  The deeper finding is that
+  even at "commit-after-every-op" (the implicit current behaviour)
+  the throughput is 60K ops/sec, so commit cadence is no longer
+  load-bearing.  Real Phase 1 cadence will be driven by op_log batch
+  boundaries.
+
+### LoroEngine extensions added today
+
+| Method | Purpose |
+| ------ | ------- |
+| `count_alive_blocks() -> usize` | O(N) iteration over the `blocks` LoroMap, filters out rows whose `deleted_at` is set; returns the count. Used by the bench as a sanity check vs `bootstrap + creates - deletes`. |
+
+No other production-code or test-code changes.  No Cargo.toml changes.
+Loro stays at 1.12.
+
 ## Open questions for next session(s) (carry-over)
 
-1. **Per-space doc sizing.**  Plan calls for one doc per space; need a
-   benchmark at 10K and 100K blocks before Phase 1 to confirm load
-   times stay under ~500ms (PEND-09 risks table).  Day-1 has only the
-   3-block baseline.
+1. **Per-space doc sizing.**  Plan calls for one doc per space.
+   **Day 4 partial answer: ~260 B/alive-block at the synthetic-content
+   workload, so 100K blocks ≈ 26 MiB — well under load-time concern.**
+   Outstanding: re-measure with production-realistic content lengths
+   (50-500 chars/block) — see question 9.
 2. **`LoroTree` head-to-head.**  Build a parallel `LoroTree`-shaped
    prototype and measure (a) doc size for the same workload, (b)
    parent_id reparent semantics under concurrent edits, (c) read-path
@@ -439,16 +651,17 @@ The 38 untested cases break down to approximately:
 3. ~~**`merge/tests.rs` corpus port.**~~  **Day-3: 15/53 sampled,
    bucket distribution recorded above, kill criterion #2 not fired.**
    Full port + proptest augmentation remains.
-4. **Op-log import benchmark.**  100K-op replay timing + heap (kill
-   criterion 3: <10 min wall-clock, <2 GB peak heap).  Prerequisite:
-   measure the user's actual op-log volume and scale the threshold.
+4. ~~**Op-log import benchmark.**~~  **Day-4: 100K-op replay in
+   1.677s wall-clock, 144 MiB peak RSS.  Kill criterion #3 NOT FIRED
+   (margin: 358× on time, 14× on heap).**  See Day-4 section above.
 5. ~~**`LoroText` for `content`.**~~  **Resolved on day 2** — switched
    in, round-trip green, concurrent-edit convergence proven, size
    overhead at 3-block baseline recorded.  See "Day 2" section above.
 6. **`commit()` cadence.**  `apply_create_block` calls `doc.commit()`
-   after every block, which is the pessimistic case.  Need to measure
-   whether batching commits changes export size + replay cost
-   meaningfully before settling on a cadence.
+   after every block.  **Day-4 finding:** at that pessimistic cadence
+   throughput is 60K ops/sec, so cadence is no longer load-bearing
+   for kill-criterion purposes.  Phase 1 will pick a cadence driven by
+   op_log batch boundaries; spike can leave this open.
 7. **Peer-id strategy.**  Day-1 uses Loro's auto-assigned peer id.
    Production wants something derived from device_id (already
    available in agaric) so that op streams are attributable.  Need to
@@ -460,8 +673,19 @@ The 38 untested cases break down to approximately:
    the current SQL-table read path.
 9. **Per-block LoroText overhead at scale.**  +17% at 3 blocks is
    tolerable; need 10K-block measurement with realistic content
-   lengths to see if the fixed per-container overhead dominates.  See
-   day-2 notes above.
+   lengths to see if the fixed per-container overhead dominates.
+   **Day-4 partial:** at synthetic short-content the overhead amortises
+   to ~260 B/block — fine.  Real workload re-measurement still wanted.
 10. **Edit-coordinate coercion.**  Spike uses Unicode-scalar offsets.
     Need to confirm production FE bridge can supply USV offsets or
     document the UTF-16 / UTF-8 coercion path.  See day-2 notes.
+11. **(NEW, day 4) Cross-platform RSS measurement.**  The bench is
+    Linux-only via `/proc/self/statm`.  Mac builds report `n/a` and
+    skip the heap half of the kill-criterion check.  Add a libc-free
+    macOS measurement (probably `mach_task_basic_info` via a thin
+    `task_info` wrapper) before Phase 1 sign-off.  Cheap follow-up.
+12. **(NEW, day 4) Real-op-log distribution.**  The bench's
+    30/50/10/5/5 op-mix is the day-4 deliverable's stated proxy.
+    PEND-09 line 205 calls out "verify against your `notes.db`
+    pre-spike."  Sample the user's actual op_log histogram before
+    Phase 1 to confirm the proxy is in the right ballpark.

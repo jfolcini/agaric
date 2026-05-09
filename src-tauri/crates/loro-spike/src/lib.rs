@@ -375,6 +375,70 @@ impl LoroEngine {
         }
     }
 
+    /// Day-4 addition for the replay benchmark.  Iterates the top-level
+    /// `blocks` LoroMap and counts entries whose `deleted_at` slot is
+    /// either absent or `LoroValue::Null` — i.e. blocks that have NOT
+    /// been soft-deleted.  Used by `replay_bench` to compare the count of
+    /// synthesised creates minus deletes against the engine's view, as a
+    /// cheap sanity check that nothing dropped on the floor during the
+    /// 100K-op replay.
+    ///
+    /// Cost is O(N_blocks) per call — only called a handful of times by
+    /// the bench (start, every 10K ops, end), so iteration cost is in
+    /// the noise compared to the apply loop.
+    pub fn count_alive_blocks(&self) -> Result<usize> {
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        let mut alive = 0usize;
+        let mut err: Option<anyhow::Error> = None;
+        // `LoroMap::for_each` takes `FnMut(&str, ValueOrContainer)` and
+        // visits every key in insertion order.  We can't return early
+        // from inside the closure, so capture the first error and check
+        // after the loop.
+        blocks.for_each(|key, voc| {
+            if err.is_some() {
+                return;
+            }
+            // Each value is the per-block LoroMap container.
+            let container = match voc.into_container() {
+                Ok(c) => c,
+                Err(_) => {
+                    err = Some(anyhow!("count_alive: block {key} value is not a container"));
+                    return;
+                }
+            };
+            let block_map: LoroMap = match container.into_map() {
+                Ok(m) => m,
+                Err(_) => {
+                    err = Some(anyhow!(
+                        "count_alive: block {key} container is not a LoroMap"
+                    ));
+                    return;
+                }
+            };
+            // Mirrors `read_deleted`'s logic — absent or Null = alive.
+            let deleted = match block_map.get(FIELD_DELETED_AT) {
+                None => false,
+                Some(field_voc) => match field_voc.into_value() {
+                    Ok(LoroValue::Null) => false,
+                    Ok(_) => true,
+                    Err(_) => {
+                        err = Some(anyhow!(
+                            "count_alive: block {key} deleted_at is not a scalar"
+                        ));
+                        return;
+                    }
+                },
+            };
+            if !deleted {
+                alive += 1;
+            }
+        });
+        if let Some(e) = err {
+            return Err(e);
+        }
+        Ok(alive)
+    }
+
     /// Internal helper — fetch the per-block LoroMap by id with a
     /// uniform error-context prefix so each caller doesn't repeat the
     /// boilerplate.
