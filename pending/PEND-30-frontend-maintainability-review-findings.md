@@ -1,6 +1,6 @@
 # PEND-30 — Frontend maintainability review: confirmed non-nit findings
 
-> **Status (session 694):** M-1 / M-2 / L-1 / L-2 / L-4 / L-5 closed in session 660. **D-3 (SearchPanel decomposition) shipped session 694** — `useReducer` for applied-filter state + `usePopoverEntity<T>` factory for the two near-mirror popovers + `useAliasResolution` hook; `SearchPanel.tsx` 672 → 590 LOC (12% reduction); +36 new tests. **L-3 (`EDITOR_PORTAL_SELECTORS` → `[data-editor-overlay]` attribute migration) deferred per user decision** — the plan's 30-min estimate undercounts the surface (7+ overlay components plus the third-party `react-day-picker` `.rdp` class that cannot be tagged); rescheduling for a dedicated session if/when the next overlay is added. **D-1 / D-2 / D-4 (decomposition opportunities) intentionally not bundled** by the plan; tracked here so future maintainability passes don't re-discover them.
+> **Status (session 695):** ALL DECOMPOSITION ITEMS SHIPPED. M-1 / M-2 / L-1 / L-2 / L-4 / L-5 closed in session 660. **D-3** shipped session 694 (SearchPanel.tsx 672 → 590 LOC + reducer/popover-factory/alias hooks; +36 tests). **D-1 / D-2 / D-4** shipped session 695 in parallel: D-1 SortableBlock 32 → 14 props (context-first + `TestBlockActionsOverride` test wrapper), D-2 SpaceManageDialog 795 → 389 LOC outer + 5 sub-components in `SpaceManageDialog/` (journalTemplateInitializedRef flag eliminated; localStorage onboarding key promoted to stable token), D-4 useBlockSlashCommands 575 → 184 LOC + 4 category sub-hooks + biome-ignore exemption gone. **Only L-3 remains deferred** per third-party `react-day-picker .rdp` class blocker.
 
 ## Origin
 
@@ -46,10 +46,10 @@ opportunities** worth tracking even though they are not bugs.
 | **L-3** | LOW | `useEditorBlur.EDITOR_PORTAL_SELECTORS` is a hardcoded list of 8 CSS selectors — every new editor overlay must remember to add itself, no automatic enrolment | S (~30 min) | low | low | ready |
 | **L-4** | LOW | `cleanupOrphanedPopups` is exported and called *reactively* (on new-popup mount), but never from the roving editor's teardown path — a 5th defensive layer for the B-77 stack | trivial (~10 min) | low | low | ready |
 | **L-5** | LOW | `PageBrowser`'s `useVirtualizer.estimateSize` is an inline arrow function recreated every render — wrap in `useCallback` | trivial (~5 min) | low | low | ready |
-| **D-1** | DECOMP | `SortableBlock` declares 32 props (validated) and uses `mergeActions`/`mergeResolvers` to merge prop overrides with context — boilerplate that exists only because tests want isolated mounts; switch to context-first with prop overrides only as test escape hatches | M (3-5 h) | low | medium | ready (low priority) |
-| **D-2** | DECOMP | `SpaceManageDialog.tsx` is 795 lines (validated); the inner `SpaceRowEditor` mixes inline name editing, accent picker, journal-template sync (with a `useRef` "initialised" flag), delete-with-emptiness-probe, and onboarding-hint banner | M-L (4-7 h) | low | medium | ready (low priority) |
+| ~~**D-1**~~ ✅ | DECOMP | ~~`SortableBlock` declares 32 props~~ — **shipped session 695** (32 → 14 props; context-first; `TestBlockActionsOverride` wrapper for tests; `mergeActions`/`mergeResolvers` deleted) | ~~M (3-5 h)~~ | low | medium | ✅ shipped |
+| ~~**D-2**~~ ✅ | DECOMP | ~~`SpaceManageDialog.tsx` is 795 lines~~ — **shipped session 695** (834 → 389 LOC outer + 5 sub-components in `SpaceManageDialog/`; `journalTemplateInitializedRef` eliminated; localStorage key promoted to stable token; +42 tests) | ~~M-L (4-7 h)~~ | low | medium | ✅ shipped |
 | ~~**D-3**~~ ✅ | DECOMP | ~~`SearchPanel.tsx` is 672 lines with 22 `useState` calls and 7 `useEffect` blocks~~ — **shipped session 694** (672 → 590 LOC; reducer + popover factory + alias hook; +36 tests) | ~~M-L (4-7 h)~~ | low | medium | ✅ shipped |
-| **D-4** | DECOMP | `useBlockSlashCommands.ts` is 575 lines orchestrating 20+ slash-command handlers with a `biome-ignore useExhaustiveDependencies` because the dep list would be unmanageable | M (3-5 h) | low | medium | ready (low priority) |
+| ~~**D-4**~~ ✅ | DECOMP | ~~`useBlockSlashCommands.ts` is 575 lines~~ — **shipped session 695** (575 → 184 LOC + 4 category sub-hooks; `biome-ignore useExhaustiveDependencies` exemption eliminated; +62 tests) | ~~M (3-5 h)~~ | low | medium | ✅ shipped |
 
 (M-1 / M-2 = real maintainability bugs worth fixing now. L-1 .. L-5 = real
 but small enough to bundle as one cleanup commit. D-1 .. D-4 = decomposition
@@ -282,62 +282,21 @@ These are tracked here so the next maintainability review doesn't
 re-discover them. Each is independently scoped; there is no urgency.
 Leave them alone unless the area is being touched anyway.
 
-### D-1 — `SortableBlock` has 32 props + `mergeActions` / `mergeResolvers` boilerplate
+### ~~D-1 — `SortableBlock` has 32 props + `mergeActions` / `mergeResolvers` boilerplate~~ — shipped session 695
 
-**File:** <ref_snippet file="/home/javier/dev/agaric/src/components/SortableBlock.tsx" lines="44-99" />
+`SortableBlockProps` dropped from 32 → 14 fields. The 14 action callbacks + 4 resolvers were removed; `SortableBlock` now reads `BlockActionsContext` and `BlockResolversContext` directly. `mergeActions` and `mergeResolvers` deleted entirely (verified zero callers post-refactor). Tests that need to inject specific callbacks wrap `<SortableBlock>` in a new `<TestBlockActionsOverride actions={…} resolvers={…}>` component (45 such tests migrated). `SortableBlock.tsx`: 529 → 408 LOC (-121).
 
-`SortableBlockProps` declares **32 props** (validated by counting the
-interface body — the original reviewer estimated "30+", a separate
-validator subagent over-counted to 56 by including unrelated lines, the
-true count is 32). Of those, 14 are action callbacks, 4 are resolvers,
-the rest are display state.
+### ~~D-2 — `SpaceManageDialog.tsx` is 795 lines~~ — shipped session 695
 
-The component then uses `mergeActions(propActions, ctxActions)` (line 112)
-and `mergeResolvers` (line 139) to overlay explicit-prop values on top
-of context values. The comment at lines 102-110 explains the rationale:
-"Explicit props (when provided by tests that mount SortableBlock
-standalone) win over context values; production code lets every entry
-come from `BlockActionsProvider` (MAINT-118)."
+Decomposed into a sibling `src/components/SpaceManageDialog/` folder with 5 focused sub-components:
 
-**Refactor sketch:** keep the contexts (`BlockActionsContext`,
-`BlockResolversContext`) as the only source of truth for production
-code, and introduce a tiny `<TestBlockActionsOverride value={…}>`
-wrapper component for tests that want to inject specific callbacks.
-The `mergeActions` / `mergeResolvers` functions disappear, the props
-interface drops 18 fields, and tests that mount `SortableBlock`
-standalone gain a one-line override pattern instead of needing to pass
-a 14-callback object.
+* `SpaceNameEditor.tsx` (96 LOC) — inline name editing with blur / Enter commit.
+* `SpaceAccentPicker.tsx` (117 LOC) — 6-swatch picker with debounced save.
+* `SpaceJournalTemplateEditor.tsx` (161 LOC) — markdown textarea using `useState` lazy initializer; **the `journalTemplateInitializedRef` flag is GONE** (the gate moved to the parent `SpaceRowEditor`, which renders the editor only when `initialJournalTemplate !== undefined`).
+* `SpaceDeleteButton.tsx` (168 LOC) — delete button + emptiness probe + confirmation dialog.
+* `SpaceOnboardingHint.tsx` (128 LOC) — onboarding banner with `ONBOARDING_STORAGE_KEY = 'agaric:space-onboarding-seen-v1'` as a stable token (preserves the historical i18n-derived key value, so existing dismissals carry over).
 
-Cost: ~3-5 h including test migration.
-
-### D-2 — `SpaceManageDialog.tsx` is 795 lines
-
-**File:** <ref_file file="/home/javier/dev/agaric/src/components/SpaceManageDialog.tsx" />
-
-(Total line count validated: **795**; the original review undercounted at
-"655", and even that was already flagged as too large.)
-
-The inner `SpaceRowEditor` orchestrates five orthogonal features:
-
-1. Inline name editing with blur / Enter commit
-2. Accent-color picker (6-swatch grid, debounced save)
-3. Journal-template textarea (markdown, per-space override, with a
-   `journalTemplateInitializedRef` flag papering over a
-   prop-vs-state-sync awkwardness — that flag is the canary that the
-   state model is wrong)
-4. Delete button with emptiness probe + confirmation dialog
-5. Onboarding-hint banner (localStorage-driven, key derived from i18n
-   string at runtime — also a smell)
-
-**Refactor sketch:** extract `SpaceNameEditor`, `SpaceAccentPicker`,
-`SpaceJournalTemplateEditor`, `SpaceDeleteButton`, and lift the
-onboarding hint to a sibling `SpaceOnboardingHint` rendered at the
-dialog level. Each subcomponent owns its own state machine; the
-`journalTemplateInitializedRef` flag disappears because the new
-sub-component owns the initial-value-vs-controlled-value problem in
-one place.
-
-Cost: ~4-7 h including test migration.
+The slimmed `SpaceManageDialog.tsx` is 389 LOC (was 834); `SpaceRowEditor.tsx` rump is 79 LOC. +42 new sub-component tests.
 
 ### ~~D-3 — `SearchPanel.tsx` is 672 lines, 22 `useState`, 7 `useEffect`~~ — shipped session 694
 
@@ -349,23 +308,11 @@ Final shape (`src/components/SearchPanel/`):
 
 `SearchPanel.tsx`: 672 → 590 LOC (12%; the audit's 40% target was undercut by JSDoc preserved verbatim + the chip-bar/status JSX block which isn't a state-extraction target). +36 new tests across 3 files.
 
-### D-4 — `useBlockSlashCommands.ts` is 575 lines
+### ~~D-4 — `useBlockSlashCommands.ts` is 575 lines~~ — shipped session 695
 
-**File:** <ref_file file="/home/javier/dev/agaric/src/hooks/useBlockSlashCommands.ts" />
+Split into 4 sub-hooks under `src/hooks/useBlockSlashCommands/` by command category: `useSlashCommandTemplate.ts` (45 LOC), `useSlashCommandDate.ts` (27), `useSlashCommandProperty.ts` (262), `useSlashCommandStructural.ts` (88). Plus shared `types.ts` (57) + `helpers.ts` (70) + `types-public.ts` (35).
 
-Single `useCallback` returning a dispatch table for 20+ slash-command
-kinds. The `useExhaustiveDependencies` Biome rule is ignored on the
-main callback because the dep list would be unmanageable; the hook
-relies on a hand-rolled ref-update protocol to keep the callback
-reading "current" closures.
-
-**Refactor sketch:** split by command category into
-`useSlashCommandTemplate`, `useSlashCommandDate`,
-`useSlashCommandProperty`, `useSlashCommandStructural`. The top-level
-`useBlockSlashCommands` becomes a 30-line dispatcher that calls into
-the sub-hooks. Each sub-hook gets a normal, biome-clean dep array.
-
-Cost: ~3-5 h.
+Top-level `useBlockSlashCommands.ts`: 575 → 184 LOC. The dispatcher's `useCallback` deps are `[focusedBlockId]` only (the rest flow through a single bundled `inputsRef` retained at the dispatcher boundary for MAINT-10 identity-stability). **The `biome-ignore lint/correctness/useExhaustiveDependencies` exemption is GONE** — each sub-hook returns a `useMemo`-stable dispatch table with empty deps. Heading h1-h6 encoded as 6 exact entries (not regex). +62 new tests.
 
 ---
 

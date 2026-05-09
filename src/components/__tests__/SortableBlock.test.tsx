@@ -210,6 +210,7 @@ vi.mock('../../hooks/useBlockSwipeActions', () => ({
 
 import userEvent from '@testing-library/user-event'
 import { SortableBlock } from '../SortableBlock'
+import { TestBlockActionsOverride } from './_test-utils/TestBlockActionsOverride'
 
 // Create a minimal mock sortable return value
 function makeSortable() {
@@ -418,13 +419,14 @@ describe('SortableBlock', () => {
     const onDelete = vi.fn()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={onDelete}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -445,13 +447,14 @@ describe('SortableBlock', () => {
     const onDelete = vi.fn()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_42"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={onDelete}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
+        <SortableBlock
+          blockId="BLOCK_42"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -474,13 +477,14 @@ describe('SortableBlock', () => {
     const onDelete = vi.fn()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={onDelete}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -506,13 +510,14 @@ describe('SortableBlock', () => {
     const user = userEvent.setup()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_KB"
-        content="keyboard test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={onDelete}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
+        <SortableBlock
+          blockId="BLOCK_KB"
+          content="keyboard test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -572,13 +577,14 @@ describe('SortableBlock history button', () => {
 
   it('renders history button when onShowHistory is provided', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
@@ -591,13 +597,14 @@ describe('SortableBlock history button', () => {
     const onShowHistory = vi.fn()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_42"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onShowHistory={onShowHistory}
-      />,
+      <TestBlockActionsOverride actions={{ onShowHistory: onShowHistory }}>
+        <SortableBlock
+          blockId="BLOCK_42"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
@@ -609,13 +616,14 @@ describe('SortableBlock history button', () => {
 
   it('history button has correct hover opacity classes', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
@@ -632,13 +640,14 @@ describe('SortableBlock gutter button pointer-events', () => {
 
   it('delete button has pointer-events-none when invisible (opacity-0)', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_PE"
-        content="pointer-events test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_PE"
+          content="pointer-events test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -665,13 +674,14 @@ describe('SortableBlock gutter button pointer-events', () => {
 
   it('history button has pointer-events-none when invisible (opacity-0)', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_PE"
-        content="pointer-events test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_PE"
+          content="pointer-events test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
@@ -682,14 +692,14 @@ describe('SortableBlock gutter button pointer-events', () => {
 
   it('gutter div has relative z-10 so overflowing buttons paint above siblings', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_Z"
-        content="z-index test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_Z"
+          content="z-index test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const dragHandle = screen.getByTestId('drag-handle')
@@ -824,14 +834,15 @@ describe('SortableBlock collapse/expand chevron', () => {
     const onToggle = vi.fn()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_42"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        hasChildren
-        onToggleCollapse={onToggle}
-      />,
+      <TestBlockActionsOverride actions={{ onToggleCollapse: onToggle }}>
+        <SortableBlock
+          blockId="BLOCK_42"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          hasChildren
+        />
+      </TestBlockActionsOverride>,
     )
 
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
@@ -972,14 +983,15 @@ describe('SortableBlock task marker', () => {
     const onToggleTodo = vi.fn()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_42"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        todoState="TODO"
-        onToggleTodo={onToggleTodo}
-      />,
+      <TestBlockActionsOverride actions={{ onToggleTodo: onToggleTodo }}>
+        <SortableBlock
+          blockId="BLOCK_42"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          todoState="TODO"
+        />
+      </TestBlockActionsOverride>,
     )
 
     const marker = screen.getByRole('button', { name: /task: todo/i })
@@ -1242,13 +1254,14 @@ describe('gutter alignment', () => {
   it('delete button has p-0.5 for alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     render(
-      <SortableBlock
-        blockId="B1"
-        content="test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="B1"
+          content="test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
     const deleteBtn = screen.getByRole('button', { name: /delete/i })
     expect(deleteBtn.className).toContain('p-0.5')
@@ -1345,14 +1358,15 @@ describe('SortableBlock priority badge', () => {
     const onTogglePriority = vi.fn()
 
     render(
-      <SortableBlock
-        blockId="BLOCK_42"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        priority="1"
-        onTogglePriority={onTogglePriority}
-      />,
+      <TestBlockActionsOverride actions={{ onTogglePriority: onTogglePriority }}>
+        <SortableBlock
+          blockId="BLOCK_42"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          priority="1"
+        />
+      </TestBlockActionsOverride>,
     )
 
     const badge = screen.getByRole('button', { name: /priority P1/i })
@@ -1595,13 +1609,14 @@ describe('SortableBlock visibility controls', () => {
 
   it('delete handle has opacity-0 class (hidden by default)', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -1610,13 +1625,14 @@ describe('SortableBlock visibility controls', () => {
 
   it('delete handle has group-hover:opacity-100 class for hover reveal', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -1655,13 +1671,14 @@ describe('SortableBlock visibility controls', () => {
 
   it('history button has no per-button coarse-pointer classes for touch devices', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
@@ -1671,13 +1688,14 @@ describe('SortableBlock visibility controls', () => {
 
   it('delete handle has no per-button coarse-pointer classes for touch devices', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -1813,13 +1831,14 @@ describe('SortableBlock inline controls', () => {
 
   it('gutter uses gap-1 between grip and delete', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const gutter = container.querySelector('.w-\\[68px\\]')
@@ -1828,13 +1847,14 @@ describe('SortableBlock inline controls', () => {
 
   it('gutter has no flex-1 spacer between grip and delete', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const gutter = container.querySelector('.w-\\[68px\\]')
@@ -1848,14 +1868,15 @@ describe('SortableBlock inline controls', () => {
 
   it('inline controls use gap-1 between items', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        priority="1"
-        onTogglePriority={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onTogglePriority: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          priority="1"
+        />
+      </TestBlockActionsOverride>,
     )
 
     const inlineControls = container.querySelector('.inline-controls')
@@ -1864,16 +1885,17 @@ describe('SortableBlock inline controls', () => {
 
   it('alignment handled by items-center instead of per-element mt-1', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={true}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-        onToggleTodo={vi.fn()}
-        priority="1"
-        onTogglePriority={vi.fn()}
-      />,
+      <TestBlockActionsOverride
+        actions={{ onDelete: vi.fn(), onToggleTodo: vi.fn(), onTogglePriority: vi.fn() }}
+      >
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor()}
+          priority="1"
+        />
+      </TestBlockActionsOverride>,
     )
 
     const grip = container.querySelector('.drag-handle')
@@ -1951,13 +1973,14 @@ describe('SortableBlock a11y enhancements', () => {
 
   it('delete button has focus-ring class', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -1995,15 +2018,16 @@ describe('SortableBlock a11y enhancements', () => {
 
   it('all buttons have active:scale-95 class', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-        hasChildren
-        priority="1"
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          hasChildren
+          priority="1"
+        />
+      </TestBlockActionsOverride>,
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
@@ -2033,13 +2057,14 @@ describe('SortableBlock a11y enhancements', () => {
 
   it('delete button has focus-visible:opacity-100 class', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -2098,13 +2123,14 @@ describe('SortableBlock long-press and context menu', () => {
 
   it('long-press touch opens context menu after 400ms delay', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2132,13 +2158,14 @@ describe('SortableBlock long-press and context menu', () => {
 
   it('touch move beyond threshold cancels long-press', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2164,13 +2191,14 @@ describe('SortableBlock long-press and context menu', () => {
 
   it('touch end before delay clears the long-press timer', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2194,13 +2222,14 @@ describe('SortableBlock long-press and context menu', () => {
 
   it('right-click opens context menu', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2212,13 +2241,14 @@ describe('SortableBlock long-press and context menu', () => {
 
   it('context menu receives correct blockId', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_42"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_42"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2230,13 +2260,14 @@ describe('SortableBlock long-press and context menu', () => {
 
   it('context menu closes when onClose callback is triggered', () => {
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2270,13 +2301,14 @@ describe('SortableBlock drag cancels long-press', () => {
     mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
 
     const { container, rerender } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2294,13 +2326,14 @@ describe('SortableBlock drag cancels long-press', () => {
     // Re-render with isDragging = true (simulates dnd-kit activating drag)
     mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
     rerender(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     // Advance past the original long-press delay
@@ -2317,13 +2350,14 @@ describe('SortableBlock drag cancels long-press', () => {
     mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
 
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -2347,13 +2381,14 @@ describe('SortableBlock drag cancels long-press', () => {
     mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
 
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
@@ -3920,13 +3955,14 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
 
   it('history button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_MOBILE"
-        content="mobile test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_MOBILE"
+          content="mobile test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
@@ -3938,13 +3974,14 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
 
   it('delete button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_MOBILE"
-        content="mobile test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_MOBILE"
+          content="mobile test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
@@ -3956,14 +3993,14 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
 
   it('gutter container has touch-collapse classes', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_MOBILE"
-        content="mobile test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_MOBILE"
+          content="mobile test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const dragHandle = screen.getByTestId('drag-handle')
@@ -4118,16 +4155,17 @@ describe('SortableBlock error paths', () => {
     const onToggleTodo = vi.fn()
 
     const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_ERR_4"
-        content="still works"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        todoState="TODO"
-        onToggleTodo={onToggleTodo}
-        priority="1"
-        dueDate="2026-12-25"
-      />,
+      <TestBlockActionsOverride actions={{ onToggleTodo: onToggleTodo }}>
+        <SortableBlock
+          blockId="BLOCK_ERR_4"
+          content="still works"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          todoState="TODO"
+          priority="1"
+          dueDate="2026-12-25"
+        />
+      </TestBlockActionsOverride>,
     )
 
     // Task marker still works
@@ -4253,14 +4291,14 @@ describe('UX-230 responsive layout', () => {
 
   it('gutter collapses below md (not sm), matching the mobile breakpoint', () => {
     render(
-      <SortableBlock
-        blockId="BLOCK_UX230_G"
-        content="ux230 gutter"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-        onShowHistory={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_UX230_G"
+          content="ux230 gutter"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     // The gutter is the parent of the drag handle, and also carries the
@@ -4326,13 +4364,14 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
     }))
 
     render(
-      <SortableBlock
-        blockId="BLOCK_SWIPE"
-        content="swipe test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const overlay = screen.getByTestId('swipe-delete-action')
@@ -4354,13 +4393,14 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
     }))
 
     render(
-      <SortableBlock
-        blockId="BLOCK_SWIPE"
-        content="swipe test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const overlay = screen.getByTestId('swipe-delete-action')
@@ -4381,13 +4421,14 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
     }))
 
     render(
-      <SortableBlock
-        blockId="BLOCK_SWIPE"
-        content="swipe test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const hint = screen.getByTestId('swipe-release-hint')
@@ -4405,13 +4446,14 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
     }))
 
     render(
-      <SortableBlock
-        blockId="BLOCK_SWIPE"
-        content="swipe test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     const hint = screen.getByTestId('swipe-release-hint')
@@ -4441,13 +4483,14 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
     }))
 
     render(
-      <SortableBlock
-        blockId="BLOCK_SWIPE"
-        content="swipe test"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        onDelete={vi.fn()}
-      />,
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
     )
 
     expect(screen.queryByTestId('swipe-delete-action')).not.toBeInTheDocument()

@@ -14,11 +14,16 @@ import {
 } from '../../stores/page-blocks'
 import { useUndoStore } from '../../stores/undo'
 import {
+  mergeSlashHandlerTables,
   SLASH_COMMANDS,
   searchPropertyKeys,
   searchSlashCommands,
   useBlockSlashCommands,
 } from '../useBlockSlashCommands'
+import { useSlashCommandDate } from '../useBlockSlashCommands/useSlashCommandDate'
+import { useSlashCommandProperty } from '../useBlockSlashCommands/useSlashCommandProperty'
+import { useSlashCommandStructural } from '../useBlockSlashCommands/useSlashCommandStructural'
+import { useSlashCommandTemplate } from '../useBlockSlashCommands/useSlashCommandTemplate'
 
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('../../lib/logger', () => ({
@@ -658,5 +663,114 @@ describe('useBlockSlashCommands handleSlashCommand stability (#MAINT-10)', () =>
       await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
     })
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_UPDATED')
+  })
+})
+
+// PEND-30 D-4 — dispatcher regression test. Asserts that every PickerItem id
+// produced by `SLASH_COMMANDS` (plus the dynamic `table:N:M` and the `h1..h6`
+// heading family) resolves to exactly one handler in the merged dispatch
+// table — no missing kinds, no exact-key collisions across sub-hooks, no
+// prefix double-routing. Pins the cross-sub-hook contract that the four
+// category hooks together cover the full command catalog.
+describe('useBlockSlashCommands dispatcher coverage (#PEND-30 D-4)', () => {
+  function getMergedTables() {
+    const { result } = renderHook(
+      () => {
+        const template = useSlashCommandTemplate({
+          focusedBlockId: 'BLOCK_1',
+          rootParentId: 'PAGE_1',
+          blocks: [],
+          load: async () => {},
+          t: (k: string) => k,
+        })
+        const date = useSlashCommandDate()
+        const property = useSlashCommandProperty()
+        const structural = useSlashCommandStructural()
+        return mergeSlashHandlerTables(template.tables, date, property, structural)
+      },
+      { wrapper },
+    )
+    return result.current
+  }
+
+  it('every SLASH_COMMANDS id resolves to a handler', () => {
+    const tables = getMergedTables()
+    // `effort` and `repeat` are intentional menu-expand markers in
+    // `SLASH_COMMANDS` — picking them surfaces the sub-options
+    // (`effort-15m`, `repeat-daily`, …) via `searchSlashCommands`. The
+    // bare ids carry no direct handler, mirroring the pre-D-4 dispatch
+    // table. Excluded from the coverage assertion below.
+    const MENU_EXPAND_IDS = new Set(['effort', 'repeat'])
+    for (const cmd of SLASH_COMMANDS) {
+      if (MENU_EXPAND_IDS.has(cmd.id)) continue
+      const exactHit = tables.exact[cmd.id]
+      const prefixHit = tables.prefix.find(([p]) => cmd.id.startsWith(p))
+      expect(Boolean(exactHit) || Boolean(prefixHit), `no handler for /${cmd.id}`).toBe(true)
+    }
+  })
+
+  it('h1..h6 are all registered as exact handlers', () => {
+    const tables = getMergedTables()
+    for (let n = 1; n <= 6; n++) {
+      expect(tables.exact[`h${n}`], `missing h${n}`).toBeDefined()
+    }
+  })
+
+  it('dynamic table:N:M id matches the table prefix', () => {
+    const tables = getMergedTables()
+    const hit = tables.prefix.find(([p]) => 'table:3:4'.startsWith(p))
+    expect(hit?.[0]).toBe('table:')
+  })
+
+  it('exact handlers are disjoint across sub-hooks (no double-registered kind)', () => {
+    // Re-merging the same tables would throw via mergeSlashHandlerTables's
+    // duplicate-key guard, but we also assert it directly so the test
+    // narrates the contract.
+    const seen = new Set<string>()
+    const { result } = renderHook(
+      () => ({
+        template: useSlashCommandTemplate({
+          focusedBlockId: 'BLOCK_1',
+          rootParentId: 'PAGE_1',
+          blocks: [],
+          load: async () => {},
+          t: (k: string) => k,
+        }).tables,
+        date: useSlashCommandDate(),
+        property: useSlashCommandProperty(),
+        structural: useSlashCommandStructural(),
+      }),
+      { wrapper },
+    )
+    for (const tbl of [
+      result.current.template,
+      result.current.date,
+      result.current.property,
+      result.current.structural,
+    ]) {
+      for (const key of Object.keys(tbl.exact)) {
+        expect(seen.has(key), `duplicate exact handler for /${key}`).toBe(false)
+        seen.add(key)
+      }
+    }
+  })
+
+  it('mergeSlashHandlerTables throws on duplicate exact keys', () => {
+    expect(() =>
+      mergeSlashHandlerTables(
+        { exact: { todo: () => undefined }, prefix: [] },
+        { exact: { todo: () => undefined }, prefix: [] },
+      ),
+    ).toThrow(/duplicate exact handler/)
+  })
+
+  it('prefix order is preserved in the merge (specificity wins)', () => {
+    // `repeat-limit-` must be matched before the broader `repeat-` prefix.
+    const tables = getMergedTables()
+    const repeatLimitIdx = tables.prefix.findIndex(([p]) => p === 'repeat-limit-')
+    const repeatIdx = tables.prefix.findIndex(([p]) => p === 'repeat-')
+    expect(repeatLimitIdx).toBeGreaterThanOrEqual(0)
+    expect(repeatIdx).toBeGreaterThanOrEqual(0)
+    expect(repeatLimitIdx).toBeLessThan(repeatIdx)
   })
 })
