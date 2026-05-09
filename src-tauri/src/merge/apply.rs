@@ -74,14 +74,11 @@ pub async fn merge_block_text_only(
             let record =
                 dag::append_merge_op(pool, device_id, merge_payload, parent_entries).await?;
 
-            // PEND-09 Phase 1 day-2 — shadow-mode dual-write.  Diffy
-            // is authoritative; we mirror the merged op onto the
-            // per-space `LoroEngine` and log a parity event.  No-op
-            // when `loro-shadow` is off (compile-time elided).
-            #[cfg(feature = "loro-shadow")]
-            {
-                shadow_dispatch_for_record(pool, &record).await;
-            }
+            // Shadow dispatch for the clean-merge record happens in the
+            // materializer (`materializer::handlers::apply_op`) once the
+            // caller enqueues `MaterializeTask::ApplyOp(record)`.  Doing
+            // it there avoids double-dispatch and ensures Loro only sees
+            // ops whose enclosing tx has committed.
 
             tracing::info!(block_id, "merge completed — clean merge applied");
             Ok(MergeOutcome::Merged(record))
@@ -122,13 +119,15 @@ pub async fn merge_block_text_only(
             let _merge_record =
                 dag::append_merge_op(pool, device_id, merge_payload, parent_entries).await?;
 
-            // PEND-09 Phase 1 day-2 — shadow-mode dual-write for the
-            // conflict-copy + merge-on-original pair.  Mirror both
-            // ops onto the per-space `LoroEngine`.  No-op when
-            // `loro-shadow` is off.
+            // Shadow dispatch for `conflict_op` happens in the
+            // materializer once the caller enqueues
+            // `MaterializeTask::ApplyOp(conflict_block_op)`.  The
+            // merge-on-original record is NEVER enqueued — it lives
+            // only in `op_log` to unify the divergent heads — so we
+            // dispatch it here directly.  No-op when `loro-shadow`
+            // is off (compile-time elided).
             #[cfg(feature = "loro-shadow")]
             {
-                shadow_dispatch_for_record(pool, &conflict_op).await;
                 shadow_dispatch_for_record(pool, &_merge_record).await;
             }
 
@@ -155,7 +154,7 @@ pub async fn merge_block_text_only(
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "loro-shadow")]
-async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
+pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
     let Some(state) = crate::loro::shared::get() else {
         // Shadow state not initialised (e.g. unit-test environments
         // that exercise `merge_block_text_only` without going through

@@ -28,12 +28,6 @@
 //!
 //! ## What's NOT here yet (future Phase-1 days)
 //!
-//! - The `loro_batch` op-log payload envelope (`loro_version`,
-//!   `payload_version`, `original_op_type`).  See SPIKE-REPORT.md §6
-//!   item 4.
-//! - The shadow-mode dual-write call sites inside `merge/`.  Today's
-//!   [`crate::merge::shadow_apply`] is a stub that compiles and is
-//!   wired to nowhere; day-2/3 hangs it off the real entry points.
 //! - The persistent parity sink (e.g. `merge_parity_log` SQLite table).
 //!   The in-memory ring buffer exists so the apply path has somewhere
 //!   to write today; the persistent sink is item 6 on the readiness
@@ -48,6 +42,9 @@
 
 #[cfg(feature = "loro-shadow")]
 pub mod engine;
+
+#[cfg(feature = "loro-shadow")]
+pub mod envelope;
 
 #[cfg(feature = "loro-shadow")]
 pub mod parity;

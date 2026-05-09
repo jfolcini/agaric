@@ -95,6 +95,22 @@ pub(super) async fn handle_foreground_task(
                 advance_apply_cursor(&mut tx, seq).await?;
             }
             tx.commit().await?;
+
+            // PEND-09 Phase 1 day-3 — shadow-mode dual-write hook on
+            // the batched materializer path.  Walks the batch AFTER
+            // `tx.commit` so any record whose sibling rolled the tx
+            // back is not visible here (an Err inside the loop above
+            // returns early before we reach this point).  See the
+            // single-op `apply_op` path for the rationale; this is
+            // the same hook applied per-record.  No-op when
+            // `loro-shadow` is off.
+            #[cfg(feature = "loro-shadow")]
+            {
+                for record in records.iter() {
+                    crate::merge::shadow_dispatch_for_record(pool, record).await;
+                }
+            }
+
             notify_gcal_for_events(gcal_handle, pending_events);
             Ok(())
         }
@@ -143,6 +159,19 @@ pub(super) async fn apply_op(
     // together; the cursor never points ahead of materialised state.
     advance_apply_cursor(&mut tx, record.seq).await?;
     tx.commit().await?;
+
+    // PEND-09 Phase 1 day-3 — shadow-mode dual-write hook on the
+    // materializer hot path.  Dispatched AFTER `tx.commit` so the
+    // per-space `LoroEngine` only ever observes durably-applied ops
+    // (a rolled-back tx must not leak into Loro's in-process state).
+    // No-op when `loro-shadow` is off (compile-time elided); even with
+    // the feature on, `shadow_dispatch_for_record` swallows its own
+    // errors and never propagates failure back to the materializer.
+    #[cfg(feature = "loro-shadow")]
+    {
+        crate::merge::shadow_dispatch_for_record(pool, record).await;
+    }
+
     notify_gcal_for_events(
         gcal_handle,
         vec![DeferredNotification {
