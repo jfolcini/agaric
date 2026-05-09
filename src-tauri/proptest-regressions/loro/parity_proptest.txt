@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cd4596cfcff29159368e682d277ab5a88e08fe050ed6044fc4a6a5453e8a4462 # shrinks to a_block_ids = ["01HZ00000000000000000000AB"], b_block_ids = ["01HZ00000000000000000000CD"]
+cc c415cea5bd41d6dd7b0f4ab173e34db7b35899e201f6e78f0ef6a6a023447b85 # shrinks to a_pos = 0, b_pos = 1
+cc 9396e05266878cc8728c494e3a3d6de756a3a7e389ac2fb31bc4cb61e5295bc1 # shrinks to a_edits = [""], b_edits = ["0"]
