@@ -16,7 +16,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { EDITOR_PORTAL_SELECTORS } from '../../hooks/useEditorBlur'
+import { EDITOR_PORTAL_SELECTOR } from '../../hooks/useEditorBlur'
 import { EditableBlock } from '../EditableBlock'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
@@ -724,22 +724,11 @@ describe('EditableBlock', () => {
     })
   })
 
-  // ── EDITOR_PORTAL_SELECTORS constant ──────────────────────────────
+  // ── EDITOR_PORTAL_SELECTOR constant (PEND-30 L-3) ─────────────────
 
-  describe('EDITOR_PORTAL_SELECTORS', () => {
-    it('is exported and contains at least 5 entries', () => {
-      expect(Array.isArray(EDITOR_PORTAL_SELECTORS)).toBe(true)
-      expect(EDITOR_PORTAL_SELECTORS.length).toBeGreaterThanOrEqual(5)
-    })
-
-    it('includes expected selectors for suggestion popup and date picker', () => {
-      expect(EDITOR_PORTAL_SELECTORS).toContain('.suggestion-popup')
-      expect(EDITOR_PORTAL_SELECTORS).toContain('.date-picker-popup')
-      expect(EDITOR_PORTAL_SELECTORS).toContain('[data-editor-portal]')
-    })
-
-    it('includes .block-context-menu selector (B-15)', () => {
-      expect(EDITOR_PORTAL_SELECTORS).toContain('.block-context-menu')
+  describe('EDITOR_PORTAL_SELECTOR', () => {
+    it('is exported as the single canonical attribute selector', () => {
+      expect(EDITOR_PORTAL_SELECTOR).toBe('[data-editor-portal]')
     })
 
     it('handleBlur does not unmount when relatedTarget is inside a suggestion popup', () => {
@@ -758,6 +747,7 @@ describe('EditableBlock', () => {
       // Simulate relatedTarget being inside a suggestion popup
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.setAttribute('data-editor-portal', '')
       const btn = document.createElement('button')
       popup.appendChild(btn)
       document.body.appendChild(popup)
@@ -931,6 +921,7 @@ describe('EditableBlock', () => {
       // Simulate a visible suggestion popup being open in the DOM
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
@@ -993,6 +984,7 @@ describe('EditableBlock', () => {
       // Visible popup in the DOM — should early return WITHOUT saving
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
@@ -1024,6 +1016,7 @@ describe('EditableBlock', () => {
       // Visible popup in DOM — triggers early return
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 

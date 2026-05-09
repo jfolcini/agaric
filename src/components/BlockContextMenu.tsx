@@ -452,6 +452,7 @@ export function BlockContextMenu({
       )}
       style={{ left: computedPos.x, top: computedPos.y }}
       onKeyDown={handleKeyDown}
+      data-editor-portal=""
     >
       {groups.map((group, groupIdx) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: groups are static per render, never reorder

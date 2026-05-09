@@ -204,7 +204,7 @@ export const SuggestionList = ({
   )
 
   return (
-    <div className="suggestion-list rounded-lg border bg-popover p-1 shadow-md">
+    <div className="suggestion-list rounded-lg border bg-popover p-1 shadow-md" data-editor-portal>
       <ScrollArea className="max-h-[min(300px,40vh)]">
         <div
           ref={listRef}

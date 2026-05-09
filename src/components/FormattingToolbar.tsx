@@ -551,6 +551,7 @@ export function FormattingToolbar({
         aria-controls={blockId ? `editor-${blockId}` : undefined}
         className="formatting-toolbar relative flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px"
         data-testid="formatting-toolbar"
+        data-editor-portal=""
       >
         {visible.map((item) => (
           <span key={`v-${item.key}`} className="inline-flex">
