@@ -46,33 +46,45 @@
 //!    one engine.
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroValue, PeerID};
-use std::hash::{Hash, Hasher};
 
 use crate::error::AppError;
 
-/// Phase-0 spike note: day-6 (notebook Q7).  Map an external
-/// `device_id` string (production uses a canonical UUID-v4 — see
-/// `src/device.rs:83-99`) into a `loro::PeerID` (`u64`).
+/// Map an external `device_id` string (production uses a canonical
+/// UUID-v4 — see `src/device.rs:83-99`) into a `loro::PeerID` (`u64`).
 ///
-/// This implementation hashes through `std::hash::DefaultHasher`
-/// (currently SipHash-1-3 in stable Rust), inheriting the spike's
-/// math: collision probability for `n = 10_000` devices ≈ 2.7e-12
-/// (birthday-bound on a 2^64 space).  The stdlib reserves the right
-/// to change `DefaultHasher`'s algorithm across compiler versions —
-/// notebook Q13 in SPIKE-REPORT.md flags swapping to
-/// `xxhash-rust = "0.8"` before Phase 2 sign-off so peer ids stay
-/// deterministic across Rust upgrades.
+/// # Stability contract — DO NOT CHANGE WITHOUT A COORDINATED MIGRATION
 ///
-/// Phase-1 day-1 inherits the spike's hasher unchanged because the
-/// peer id is only ever read by Loro itself (which doesn't care about
-/// cross-Rust-version stability of the hashing function — only that a
-/// given live process produces a unique id).  The xxhash swap becomes
-/// load-bearing once peer ids start *persisting* across process
-/// lifetimes (Phase 2's `loro_doc_state` snapshots).
+/// The output of this function is load-bearing across **every device,
+/// every Rust toolchain version, and every process restart**.  Loro
+/// credits operations in its op-log to a `PeerID`; if the hash of a
+/// given `device_id` ever changes, that device's already-stored op
+/// history would be re-credited to a different peer on its next run,
+/// breaking the CRDT's causal-ordering invariants and causing sync
+/// chaos with peers that still see the old `PeerID`.
+///
+/// To preserve that contract:
+/// - `xxh3_64` is the chosen algorithm.  It is deterministic (seed
+///   defaults to 0), versioned, and follows the official xxHash
+///   specification — independent of any future Rust toolchain bump.
+///   The previous spike implementation used `std::hash::DefaultHasher`
+///   (SipHash-1-3); the stdlib reserves the right to change that
+///   algorithm across versions, which this swap eliminates.
+/// - The `peer_id_from_device_id_is_stable_against_known_values`
+///   regression test below pins the bytes-in / u64-out mapping for a
+///   fixed input.  Any change that breaks that test is a wire-format
+///   change and requires the team's review (and, post-Phase-2, a real
+///   data-migration plan).
+///
+/// # Collision math
+///
+/// Birthday-bound for `n` independent draws over a 2^64 space:
+/// collision probability ≈ `n² / 2^65`.  For `n = 10_000` devices
+/// that's ≈ 2.7e-12; for `n = 1_000_000` devices ≈ 2.7e-8 — well
+/// below "ever happens in practice" thresholds.  Loro's documented
+/// requirement is "Never reuse the same PeerID across concurrent
+/// writers"; the birthday bound is the quantitative case that we won't.
 pub fn peer_id_from_device_id(device_id: &str) -> PeerID {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    device_id.hash(&mut hasher);
-    hasher.finish()
+    xxhash_rust::xxh3::xxh3_64(device_id.as_bytes())
 }
 
 /// Top-level LoroMap key holding the per-block sub-maps.
@@ -809,5 +821,51 @@ fn read_i64(map: &LoroMap, key: &str) -> Result<i64, AppError> {
         other => Err(AppError::Validation(format!(
             "loro: key {key}: expected I64, got {other:?}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::peer_id_from_device_id;
+
+    #[test]
+    fn peer_id_from_device_id_is_deterministic() {
+        // Same input → same output, repeatedly, within a single run.
+        // Combined with `xxh3_64`'s spec-pinned algorithm (see the
+        // function's stability-contract docstring) this also implies
+        // determinism across runs / Rust toolchains.
+        assert_eq!(
+            peer_id_from_device_id("DEV-A"),
+            peer_id_from_device_id("DEV-A")
+        );
+        assert_ne!(
+            peer_id_from_device_id("DEV-A"),
+            peer_id_from_device_id("DEV-B")
+        );
+    }
+
+    #[test]
+    fn peer_id_from_device_id_is_stable_against_known_values() {
+        // Locks the bytes-in / u64-out mapping against accidental
+        // hash-function changes (e.g. a future `xxhash-rust` upgrade
+        // that silently re-tunes `xxh3_64`, or someone swapping the
+        // algorithm without realising the wire-format consequences
+        // documented on `peer_id_from_device_id`).
+        //
+        // Updating this test value is a coordinated-migration event
+        // — every existing device's stored op history is credited to
+        // the OLD peer id, so changing the function changes the
+        // identity of every existing peer.  Do NOT update this
+        // expected value without a team review and a documented
+        // migration plan.
+        //
+        // Fixed input — a representative ULID, matching the shape of
+        // production `device_id` UUID-v4 strings.  The expected
+        // u64 is the pre-computed `xxh3_64` of that input's bytes
+        // (seed = 0, the library's default).
+        assert_eq!(
+            peer_id_from_device_id("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            0x11e7_9683_b730_ff1f_u64,
+        );
     }
 }
