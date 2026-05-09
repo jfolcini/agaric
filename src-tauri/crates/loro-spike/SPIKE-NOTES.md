@@ -1087,14 +1087,20 @@ blocks under a PAGE_ROOT).
 
 ### Comparison vs SQL band
 
-Absolute SQL numbers are NOT measured from this spike crate (no
-SQLite dep — that's a hard constraint per the spike's "do not pull
-in SQLite into the spike crate" rule).  The qualitative comparison
-band, drawn from the existing `src-tauri/benches/pagination_bench.rs`
-shape and from typical SQLite-WAL latencies on warm pools:
+> **Day 10 update (2026-05-09).**  ~~Absolute SQL numbers are NOT
+> measured from this spike crate~~ — they ARE measured now, in the
+> agaric-side bench `src-tauri/benches/loro_vs_sql_reads.rs`.  See
+> the **Day 10** section below for the head-to-head head numbers.
+> The qualitative band below is preserved for historical context but
+> is **superseded** by the day-10 measurement.  In particular: the
+> day-7 hypothesised **~250-2500× slower** for shape (B) was wrong by
+> two orders of magnitude — the actual SQL/Loro ratio at "drain all
+> children" scope is **~3×** (not 250-2500×) because the SQL side
+> also has to materialise ~1574 rows/walk, which dominates over the
+> covering-index lookup cost the qualitative band assumed.
 
-| Read shape | Production SQL (typical) | Loro spike (measured) | Ratio |
-| ---------- | ------------------------ | --------------------- | ----- |
+| Read shape | Production SQL (typical, day-7 estimate) | Loro spike (measured) | Day-7 ratio (estimate) |
+| ---------- | ---------------------------------------- | --------------------- | ---------------------- |
 | Single-row `WHERE id = ?` | ~10-50 µs (B-tree lookup) | **2.29 µs** | **~5-20× faster** |
 | `WHERE parent_id = ?` (with `idx_blocks_parent_covering`) | ~10-100 µs (covering index) | **24.83 ms** *(no index)* | **~250-2500× slower** |
 | Property point lookup `(block_id, key)` | ~10-50 µs | **0.88 µs** | **~10-50× faster** |
@@ -1125,14 +1131,21 @@ with confidence:
   `parent_id` index — and it's the answer the plan anticipated when
   it framed the threshold check as "redesign the read path before
   Phase 1."  The naïve walk is not viable as a hot-path query.
-- **The +10 % threshold is somewhat ill-defined for this spike**
+- ~~**The +10 % threshold is somewhat ill-defined for this spike**
   because we lack a paired SQL bench inside the same crate (by
-  design — adding SQLite to the spike was out of scope).  The
-  numbers above are real Loro measurements; the SQL band is drawn
-  from the production `pagination_bench.rs` shape and from typical
-  SQLite-WAL latency expectations.  Tighter cross-comparison would
-  require running both engines through the same harness — a Phase
-  1 task once the engine is wired into the materializer.
+  design — adding SQLite to the spike was out of scope).~~
+  **RESOLVED on day 10.**  A paired SQL bench was added on the
+  agaric side at `src-tauri/benches/loro_vs_sql_reads.rs` (running
+  the same three read shapes against an apples-to-apples populated
+  SQLite DB at 25 145 alive blocks).  The qualitative band above is
+  superseded — see the **Day 10** section for hard numbers.  The
+  day-7 verdict on shapes (A) and (C) holds (Loro ~10-30× faster
+  than indexed SQL); the verdict on shape (B) is **revised** —
+  Loro's naïve walk is **~3× slower** than paginated SQL at
+  apples-to-apples scope, not 250-2500× as estimated.  The +10 %
+  threshold is comfortably MET on (A) and (C) and BREACHED on (B),
+  but at a much smaller margin than the day-7 qualitative band
+  suggested.
 
 **Headline:** Loro's per-key reads stay well within an order of
 magnitude of indexed-SQL reads (in fact, they're faster).  The
@@ -1230,7 +1243,360 @@ side-index is logged as a future option, not a Phase-1 commitment.
   NOT depend on it; SQL projection serves all `list_children`
   queries via the existing covering index.
 
-## Open questions for next session(s) (carry-over)
+## Day 9 (2026-05-09) — full corpus port
+
+Day 3 ported 15/55 production tests (1 day's sample) and gave a
+preliminary verdict on kill criterion #2.  Day 9 closes the loop:
+ports the remaining portable tests, documents the unportable ones,
+and sizes the verdict at full sample.
+
+### What was ported today
+
+19 new `#[test]` cases added to
+`src-tauri/crates/loro-spike/tests/parity_corpus.rs`, in two new
+categories:
+
+| # | Test (parity_corpus.rs) | Source (`merge/tests.rs`) | Bucket | Notes |
+| - | --------------------------------------------------- | -------------------------- | ------ | ----- |
+| 16 | `parity_text_no_lca_uses_create_content` | `merge_text_no_lca_uses_create_content` (line 261) | A | both peers append a different line at end-of-`base\ntext\n`; Loro: `"base\ntext\nfrom A\nfrom B\n"` |
+| 17 | `parity_text_fast_forward_one_side_no_edits` | `merge_text_fast_forward_one_side_no_edits` (line 1534) | A | one peer never edits; merged = the other peer's content |
+| 18 | `parity_text_identical_single_line_edits` | `merge_text_identical_single_line_edits` (line 1655) | **C** | both peers edit `original` → `changed` independently → Loro: `"changedchanged"` (canonical RGA pitfall, same shape as test #9) |
+| 19 | `parity_text_both_sides_remain_empty` | `merge_text_both_sides_remain_empty` (line 1701) | A | empty + identical no-op edits → empty |
+| 20 | `parity_block_clean_merge` | `merge_block_clean_merge` (line 932) | A | non-overlapping line edits merge byte-identical to diffy: `"LINE1\nline2\nLINE3\n"` |
+| 21 | `parity_block_already_up_to_date` | `merge_block_already_up_to_date` (line 915) | A | degenerate; both heads same; content unchanged after sync |
+| 22 | `parity_property_earlier_timestamp_loses` | `resolve_property_conflict_earlier_timestamp_loses` (line 790) | **C** | diffy: A wins on later ts; Loro: Lamport tiebreak picks `"low"` (peer-A) — Lamport vs ts disagree |
+| 23 | `parity_property_same_timestamp_larger_device_id_wins` | `resolve_property_conflict_same_timestamp_larger_device_id_wins` (line 807) | **C** | diffy: device-id tiebreak; Loro: Lamport tiebreak |
+| 24 | `parity_property_same_device_higher_seq_wins` | `resolve_property_conflict_same_timestamp_same_device_higher_seq_wins` (line 821) | A | single-peer sequential writes → second wins on both engines |
+| 25 | `parity_property_same_device_same_ts_is_commutative` | `resolve_property_conflict_same_device_same_ts_is_commutative` (line 836) | A | same device, two seqs; later seq wins; engine returns `"high"` deterministically |
+| 26 | `parity_property_numeric_values_lww` | `resolve_property_conflict_with_numeric_values` (line 1182) | **C** | encoded as decimal string; Lamport vs ts disagree |
+| 27 | `parity_property_commutative_different_devices` | `resolve_property_conflict_is_commutative_different_devices` (line 1417) | **C** | commutativity is automatic in CRDTs; Lamport tiebreak picks the winner |
+| 28 | `parity_property_all_null_values_commutative` | `resolve_property_conflict_all_null_values_commutative` (line 1439) | A | both peers null-clear; final value is null on both engines |
+| 29 | `parity_property_identical_ops_commutative` | `resolve_property_conflict_identical_ops_commutative` (line 1512) | A | single physical write + idempotent re-import → value preserved |
+| 30 | `parity_property_identical_values_both_sides` | `resolve_property_conflict_identical_values_both_sides` (line 1800) | A | both peers wrote `"done"`; winner is `"done"` regardless of tiebreak rule |
+| 31 | `parity_property_identical_values_same_timestamp` | `resolve_property_conflict_identical_values_same_timestamp` (line 1832) | A | both peers wrote `"red"`; winner is `"red"` |
+| 32 | `parity_property_z_timestamps_parsed_correctly` | `resolve_property_conflict_z_timestamps_parsed_correctly` (line 2255) | **C** | Lamport vs ts disagree (Loro picks `"val_a"`) |
+| 33 | `parity_property_mixed_utc_suffixes_treated_as_equal` | `resolve_property_conflict_mixed_utc_suffixes_treated_as_equal` (line 2269) | **C** | Loro doesn't parse timestamps; Lamport tiebreak |
+| 34 | `parity_property_plus_zero_offset_later_wins` | `resolve_property_conflict_plus_zero_offset_later_wins` (line 2291) | **C** | Lamport vs ts disagree |
+
+### Bucket distribution at full sample
+
+| Day | Tests added | A | B | C | D |
+| --- | ----------- | - | - | - | - |
+| 3 | 15 | 9 | 4 | 2 | 0 |
+| 9 | 19 | 11 | 0 | 8 | 0 |
+| **Total** | **34** | **20** | **4** | **10** | **0** |
+
+- Strict A+B = 24/34 = **70.6%** at full portable sample.
+- A+B+C = 34/34 = **100%** convergent / lossless / deterministic.
+- D = 0/34.
+
+### Verdict on kill criterion #2 at full sample
+
+**NOT FIRED.**  The kill criterion language reads:
+
+> "(a) byte-identical, (b) different but documented as acceptable, (c)
+> acceptable but each case documented, (d) MUST BE 0."
+
+Plain reading of the four-bucket scheme:
+
+- 20 A's are case (a) — byte-identical to diffy.
+- 4 B's are case (b) — different shape (no conflict copy) but
+  documented (diffy would split into a conflict copy; Loro merges
+  cleanly with both contributions present).
+- 10 C's are case (c) — different LWW winner because Loro's tiebreak
+  is Lamport-keyed and diffy's is timestamp-keyed.  Each documented
+  in the table above.  No data invented; no data lost; both peers
+  always converge.
+- **0 D's** — the hard floor is cleared.
+
+The 70.6% strict-A+B figure is **lower** than the 95% target the
+day-3 entry sketched at sample size, but the target was stated in
+day-3 as a guideline, not a hard threshold; the actual kill
+criterion is "(d) must be 0", which IS cleared.  The C bucket is
+larger than originally projected because the property-LWW corpus
+turns out to be *the* shape where Loro's Lamport-keyed LWW most
+visibly diverges from diffy's timestamp-keyed LWW — exactly the
+divergence the plan's open question 5 calls out and accepts ("LWW
+resolution rules explicit + documented" — the documented rule
+*differs* between the two engines; the plan accepts the
+divergence).
+
+The C-bucket cases break down as:
+
+- **8 property-LWW cases** where the timestamp-derived winner and
+  the Lamport-derived winner happen to disagree.  This is the
+  documented tradeoff in the plan (open question 5); see also
+  Day-3 test #14's writeup.
+- **2 text-identical-edit cases** (#9, #18) where both peers issue
+  the same character splice without causal linkage and Loro keeps
+  both runs.  Documented as the canonical RGA pitfall — Phase-1
+  shadow-mode parity logging will tell us how often this shape
+  surfaces in real workloads.
+
+### Tests not ported because the underlying mechanism doesn't exist under CRDT semantics
+
+19 production tests are unportable.  Each has the underlying
+invariant satisfied by the CRDT's structure rather than by an
+explicit assertion — there is no "resolve" or "create_conflict_copy"
+function to call on a Loro doc, so the test's assertion shape is not
+meaningful.  Consolidated parity test
+`parity_concurrent_edits_same_line_different_words` (day-3 test #5)
+already covers the headline observable: Loro never produces a
+conflict copy under any concurrent edit shape.
+
+**Conflict-copy mechanism (12 tests; the migration deletes the
+mechanism wholesale):**
+
+- `create_conflict_copy_creates_block_with_conflict_flag` (line 325) —
+  diffy creates a sibling block with `is_conflict=1`; under Loro no
+  sibling is created, so the test's assertion shape is not meaningful.
+- `create_conflict_copy_stores_conflict_type` (line 383) — asserts
+  the conflict-copy row's `conflict_type` column; Loro has no
+  conflict-copy row.
+- `create_conflict_copy_preserves_parent_id` (line 406) — asserts
+  the conflict-copy inherits parent_id; Loro has no conflict-copy.
+- `create_conflict_copy_fails_for_missing_block` (line 440) — error
+  path for the conflict-copy creator; Loro has no creator.
+- `create_conflict_copy_avoids_position_collision` (line 462) —
+  asserts the conflict-copy gets a non-colliding position; Loro
+  doesn't write conflict-copy positions.
+- `create_conflict_copy_ignores_sentinel_siblings_in_max_scan` (line 495) —
+  asserts the position-scan logic; same — no scan in Loro.
+- `conflict_copy_includes_tags` (line 541) — asserts the conflict-
+  copy carries the original's tags; Loro has no copy.
+- `conflict_copy_excludes_soft_deleted_and_conflict_tags` (line 581) —
+  asserts which tags get carried; same.
+- `conflict_copy_includes_properties` (line 644) — asserts properties
+  carry over; same.
+- `conflict_copy_includes_task_fields` (line 685) — asserts task
+  fields carry over; same.
+- `create_conflict_copy_null_position` (line 1339) — asserts null-
+  position normalisation in the conflict-copy creator; same.
+- `merge_block_conflict_creates_copy` (line 1017) — asserts the full
+  merge-then-create-conflict-copy pipeline; the day-3 test #5
+  observable already proves Loro never enters that pipeline.
+- `merge_block_conflict_original_gets_ours_content` (line 2137) —
+  asserts the original block's content is preserved alongside the
+  conflict copy's "theirs"; under Loro there is no copy and the
+  merged content already contains both contributions in one block.
+- `conflict_merge_keeps_ours_not_ancestor` (line 2048) — asserts
+  the merge op's `to_text` is "ours" (not the ancestor) when the
+  conflict-copy path fires; under Loro there is no merge op
+  (state is the doc; the equivalent behaviour is preserved by Loro
+  doing per-character merging).
+
+**Chain-walk error paths (4 tests; Loro doesn't walk a chain):**
+
+- `find_lca_unexpected_op_type_in_chain_returns_error` (line 1858) —
+  asserts the diffy chain-walker rejects a non-edit_block op kind.
+  Loro has no chain-walker — the doc holds the merged state directly,
+  there is no LCA-finding step.
+- `merge_text_no_lca_walks_to_create_root` (line 1913) — asserts the
+  fallback chain-walk reaches the create_block root.  Loro has no
+  fallback walk.
+- `chain_walk_detects_cycle` (line 1985) — asserts cycle-rejection
+  in the chain-walker; same.
+- `max_chain_walk_iterations_is_bounded` (line 2120) — asserts an
+  iteration cap on the chain-walker; same.
+- `merge_text_broken_chain_no_create_block_returns_error` (line 2210) —
+  asserts the chain-walker errors when no create_block is reachable.
+  Loro stores the create_block content as the LoroText container's
+  initial state — there is no chain to break.
+- `merge_missing_lca_falls_back_to_create_content` (line 2683) —
+  asserts the no-LCA fallback uses the create_block content as
+  ancestor.  Loro has no LCA concept.
+- `merge_text_no_lca_fallback_actually_exercised` (line 1578) —
+  exercises the no-LCA path with disjoint chains; same — the
+  no-LCA concept does not exist under CRDT semantics.
+
+(7 chain-walk tests, listed; the day-3 disposition rounded to "~5".
+Same conclusion either way — none translate.)
+
+**Resolver-input validation error paths (3 tests; Loro doesn't have a
+resolve function):**
+
+- `resolve_property_conflict_rejects_non_set_property_op_a` (line 852) —
+  asserts the diffy resolver errors on a non-`set_property` op kind.
+  Loro doesn't expose a "resolve" entry point — properties land via
+  per-key LWW on the LoroMap, no caller-visible op-type discrimination.
+- `resolve_property_conflict_rejects_non_set_property_op_b` (line 875) —
+  same shape, second arg.
+- `resolve_property_conflict_rejects_malformed_payload` (line 893) —
+  asserts the resolver errors on malformed JSON.  Loro doesn't carry
+  a JSON envelope; there is no payload-parse step.
+
+The **plan's headline observable** ("Loro produces fewer conflict
+copies than diffy") is preserved end-to-end by the day-3 ported
+B-bucket cases (#5, #6, #7, #8) — those four tests prove the migration
+collapses the diffy "create conflict copy" path into a clean
+character-level merge.  Re-porting the same observable 12 more times
+through every conflict-copy-mechanism shape is not load-bearing
+evidence; the headline is established.
+
+### LoroEngine extensions added today
+
+**None.**  All 19 new tests are expressed via the existing
+`apply_*` and `read_*` methods (`apply_create_block`,
+`apply_edit_content`, `apply_set_property`, `apply_delete_block`,
+`apply_move_block`, `read_block`, `read_property`, `read_parent`,
+`read_deleted`, `export_snapshot`, `import`).
+
+The `apply_set_property` signature is unchanged — numeric-value
+tests (`parity_property_numeric_values_lww`) encode the numeric as
+its decimal string repr.  The LWW resolution shape is independent
+of the value type, so this is a faithful model — the test exercises
+the same resolver path the production numeric test does.
+
+### Open questions touched today
+
+- ~~**Q3 (`merge/tests.rs` corpus port).**~~  **Day-9: full portable
+  subset ported (34 tests across 2 days; 19 unportable cases
+  documented as no-longer-applicable).  Bucket distribution
+  20A / 4B / 10C / 0D.  Kill criterion #2 NOT FIRED at full
+  sample.**  See sections above.
+
+## Day 10 (2026-05-09) — paired SQL read bench
+
+Day 7 measured Loro's three read shapes against a "qualitative band"
+of "typical SQL is ~10-50 µs" because the spike crate has no SQLite
+dep (by design).  Today's deliverable closes that loop with a paired
+SQL bench on the agaric side, where the production SQLite stack
+already lives.
+
+New bench: `src-tauri/benches/loro_vs_sql_reads.rs` (registered as
+`[[bench]] name = "loro_vs_sql_reads"`).  It bootstraps a fresh
+SQLite DB with all production migrations applied, populates it to
+match the day-7 shape (16 page roots + 25 145 alive content blocks +
+10 000 `block_properties` rows across 4 non-reserved keys), then runs
+the same three read shapes the day-7 spike measured.  No Loro dep
+added to the agaric crate; no production code touched.
+
+### Three read shapes — head-to-head
+
+Reference run on the same machine that produced the day-7 numbers
+(`cargo bench --bench loro_vs_sql_reads`):
+
+```text
+bootstrap: 16 page roots + 25145 alive blocks + 10000 property rows
+bootstrap done in 0.610s
+
+| shape | reads | total | per-read |
+| --------------------------------------- | ------- | --------- | ------------ |
+| (A) SELECT WHERE id = ? | 10000 | 0.243s | 24.28 µs |
+| (B1) list_children first-page (lim 200) | 1000 | 0.953s | 952.85 µs |
+| (B2) list_children drain-all | 1000 | 8.050s | 8.050 ms |
+| (C) block_properties WHERE id, key | 1000 | 0.025s | 24.51 µs |
+```
+
+### Loro vs SQL — apples-to-apples
+
+| Read shape | Loro day-7 (measured) | SQL day-10 (measured) | Ratio | Verdict |
+| ---------- | --------------------- | --------------------- | ----- | ------- |
+| **(A)** Single-row keyed lookup (block by id) | **2.29 µs** | **24.28 µs** | **Loro 10.6× faster** | (A) **favours Loro** ✓ |
+| **(B1)** First page of children (limit = 200) | n/a (Loro doesn't paginate) | **952.85 µs/call** | — | SQL paginates; Loro doesn't |
+| **(B2)** Drain all children (≈1 574 rows/walk) | **24.83 ms/walk** | **8.05 ms/walk** | **SQL 3.1× faster** | (B) **favours SQL** ✓ |
+| **(C)** Property point-lookup `(block_id, key)` | **0.88 µs** | **24.51 µs** | **Loro 27.9× faster** | (C) **favours Loro** ✓ |
+
+Notes on the comparison:
+
+- **Shape (A) and (C) verdict matches the day-7 hypothesis** —
+  Loro's in-memory keyed read beats SQLite's indexed disk read by
+  ~10× and ~28× respectively.  At 24.28 µs/read for SQL shape (A)
+  and 24.51 µs/read for SQL shape (C), the SQL side lands almost
+  exactly in the middle of the day-7 qualitative band ("~10-50 µs").
+  No surprise.
+- **Shape (B) verdict is REVISED.**  Day-7 hypothesised "Loro is
+  ~250-2500× slower than indexed SQL" based on a qualitative band of
+  "10-100 µs/call" for indexed `WHERE parent_id = ?`.  The actual
+  drain-all SQL time is **8.05 ms/walk**, not 100 µs — because at
+  ~1 574 rows/walk, SQL is materialising 8 paginated round-trips and
+  ~1 574 row decodes regardless of how cheap the index lookup itself
+  is.  The Loro/SQL ratio at apples-to-apples scope is **~3×**, not
+  ~250-2500×.  The day-7 estimate compared a single-page covering-
+  index lookup against Loro's full-doc materialisation walk; the
+  apples-to-apples comparison (drain all children on both sides)
+  cuts that ratio by two orders of magnitude.
+- **Shape (B1) is the production reality.**  Production code never
+  drains all children for a hot-path query — it paginates at
+  `MAX_PAGE_SIZE = 200` and lets the FE request the next page.  At
+  952.85 µs/call (SQL, first 200 rows) the indexed-covering
+  comparison the day-7 band sketched lines up correctly: indexed
+  SQL serves a first-page query in **~1 ms**, vs Loro's
+  **~25 ms** full walk for the same parent.  Ratio at first-page
+  scope: **Loro is ~26× slower than SQL.**
+
+### Updated verdict on the +10 % threshold (Q8)
+
+Day 7's framing said: *"If reads regress >10 % vs current SQL-table
+reads, redesign the read path before Phase 1."*  With hard SQL
+numbers in hand:
+
+- **(A) `read_block`: PASSES the +10 % threshold by a wide margin.**
+  Loro 2.29 µs vs SQL 24.28 µs — Loro is **10.6× faster**.  No
+  redesign needed; if anything, Loro is the better read engine for
+  this shape.
+- **(C) `read_property`: PASSES the +10 % threshold by a wider
+  margin still.**  Loro 0.88 µs vs SQL 24.51 µs — Loro is **27.9×
+  faster**.  Same conclusion.
+- **(B) `list_children`-walk: BREACHES the +10 % threshold, but at
+  ~3× (drain-all) or ~26× (first-page) — NOT the 250-2500× the
+  day-7 qualitative band suggested.**  Loro 24.83 ms vs SQL 8.05 ms
+  drain-all (3× slower); Loro 24.83 ms vs SQL 0.95 ms first-page
+  (26× slower).  This is still a clear breach of the +10 %
+  threshold and confirms day-7's architectural verdict — **SQL stays
+  as the materializer's read cache; the naïve LoroMap walk is not
+  viable as a hot-path query** — but the gap is much smaller than
+  the day-7 qualitative band painted.  A side-index inside the Loro
+  engine (`parent_id -> Vec<block_id>`) would close the gap to
+  parity-or-better at the cost of additional engine code; logged as
+  a Phase-1.5 option in day-7's notes and unchanged today.
+
+### Surprises
+
+- **Shape (B) ratio is 3×, not 250-2500×.**  The day-7 qualitative
+  band over-estimated SQL's parent-id query speed by ~80×.  Reason:
+  the band assumed an indexed lookup at K=10-100 rows (typical for
+  a UI page-of-children query), not the K=1 574 mean we actually
+  see in the day-7 doc shape.  Once K is large, SQL pays the
+  per-row materialisation cost regardless of how good the index is,
+  and that cost dominates over the index-walk savings.  Production
+  code rarely drains all children of a popular parent in one shot;
+  the day-7 spike's "collect every child" walk shape is itself
+  somewhat artificial.  Both numbers (drain-all 8 ms, first-page
+  0.95 ms) are now in the SPIKE-NOTES so future readers can pick
+  the comparison shape that matches their use-case.
+- **Shape (A) and (C) numbers landed exactly inside the day-7
+  qualitative band.**  Both at ~24 µs/read; the day-7 band guessed
+  "~10-50 µs (B-tree lookup)" — bullseye on the midpoint.  No
+  surprise here, but it does tell us the day-7 estimate was
+  accurate for the keyed-lookup shape — only the parent_id-walk
+  shape was mis-estimated.
+- **SQL bootstrap is fast.**  Bulk-inserting 25 145 blocks +
+  10 000 property rows + 16 page roots through transaction-batched
+  `sqlx::query()` calls finishes in 610 ms.  Comparable to the
+  Loro doc's 1 734 ms bootstrap (100K op-replay), though the Loro
+  bootstrap does ~4× more work (it includes Edit / Move / Delete
+  ops on top of Create).
+- **Property hit rate is low (~10 %).**  Random `(block_id, key)`
+  draws at 25 145 blocks × 4 keys = 100 580 cells with 10 000
+  populated rows = 9.9 % cell-fill — the bench observes 104 hits
+  / 1 000 reads (10.4 %, matches the expected fill).  Both Loro and
+  SQL have to handle the miss-path cheaply; both do.
+
+### LoroEngine extensions added today
+
+**None.**  This bench is purely SQL-side and lives in the agaric
+crate; no Loro change.
+
+### Open questions touched today
+
+- ~~**Q8 (Materializer read path) — qualitative-only caveat.**~~
+  **RESOLVED on day 10.**  Hard SQL numbers paired with the day-7
+  Loro numbers in `src-tauri/benches/loro_vs_sql_reads.rs`.  Day-7
+  architectural verdict (SQL as read cache, Loro as truth-of-state
+  for sync) is **unchanged**; only the magnitude estimate for shape
+  (B) is revised (3-26× slower, not 250-2500× slower).  See
+  sections above.
 
 1. **Per-space doc sizing.**  Plan calls for one doc per space.
    **Day 4 partial answer: ~260 B/alive-block at the synthetic-content
@@ -1242,9 +1608,12 @@ side-index is logged as a future option, not a Phase-1 commitment.
    bytes (+15 %), peak RSS (+13 %); state-level reparent semantics are
    equivalent.  Recommendation: stay with `LoroMap` for Phase 1+.**
    See Day-5 section above.
-3. ~~**`merge/tests.rs` corpus port.**~~  **Day-3: 15/53 sampled,
-   bucket distribution recorded above, kill criterion #2 not fired.**
-   Full port + proptest augmentation remains.
+3. ~~**`merge/tests.rs` corpus port.**~~  **Day-9: full portable
+   subset ported (34 tests; 19 unportable cases documented as
+   no-longer-applicable).  Bucket distribution 20A / 4B / 10C /
+   0D.  Kill criterion #2 NOT FIRED at full sample.**  See Day-9
+   section above.  Proptest augmentation remains as a separate
+   open item if Phase 1 wants additional fuzz coverage.
 4. ~~**Op-log import benchmark.**~~  **Day-4: 100K-op replay in
    1.677s wall-clock, 144 MiB peak RSS.  Kill criterion #3 NOT FIRED
    (margin: 358× on time, 14× on heap).**  See Day-4 section above.
@@ -1261,15 +1630,18 @@ side-index is logged as a future option, not a Phase-1 commitment.
    probability at agaric's scale is ~1e-13.  Three unit tests cover
    determinism, spread, and snapshot-swap convergence.**  See Day-6
    section above.
-8. ~~**Materializer read path.**~~  **Day-7: read-path benchmark
-   measured three shapes against a 25 145-block populated doc.
-   Shape (A) `read_block` 2.29 µs/read; shape (B) naïve
-   `list_children`-equivalent walk (no parent_id index) 24.83
-   ms/walk; shape (C) `read_property` 0.88 µs/read.  Loro per-key
-   reads BEAT indexed SQL; the naïve secondary-key walk is ~3
-   orders of magnitude slower than indexed SQL.  Verdict: keep
-   SQL as the materializer's read cache; Loro is the
-   truth-of-state for sync only.**  See Day-7 section above.
+8. ~~**Materializer read path.**~~  **Day-7 + Day-10: read-path
+   benchmark measured three shapes against a 25 145-block populated
+   doc, plus a paired SQL bench on the agaric side.  Shape (A)
+   `read_block` 2.29 µs (Loro) vs 24.28 µs (SQL) — Loro 10.6×
+   faster; shape (B) `list_children` walk 24.83 ms (Loro) vs 8.05 ms
+   (SQL drain-all) / 0.95 ms (SQL first-page) — SQL 3-26× faster;
+   shape (C) `read_property` 0.88 µs (Loro) vs 24.51 µs (SQL) — Loro
+   27.9× faster.  Day-7's qualitative "~250-2500× slower" estimate
+   for shape (B) was **revised down** by Day-10's hard numbers to
+   ~3-26×, but the architectural verdict is unchanged: keep SQL as
+   the materializer's read cache; Loro is the truth-of-state for
+   sync only.**  See Day-7 + Day-10 sections above.
 9. **Per-block LoroText overhead at scale.**  +17% at 3 blocks is
    tolerable; need 10K-block measurement with realistic content
    lengths to see if the fixed per-container overhead dominates.

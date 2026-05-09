@@ -289,7 +289,7 @@ spike's view of each phase:
 | 1 — Shadow | 3-4 weeks | **3-4 weeks unchanged.** | Day-7 architecture decision (SQL stays as read cache) means the materializer fan-out in Phase 1 is a write-side change only — that's slightly simpler than a hypothetical "rewrite all reads" version, but the dominant cost is dual-write logic + parity sampling + debugging CRDT divergence under real workloads, which is unchanged by the spike. The 14-item readiness checklist (§6) is the concrete scope. |
 | 2 — Cutover | 3-4 weeks | **3-4 weeks unchanged.** | Spike doesn't materially change this. Highest-risk phase remains the legacy-op-log → Loro-doc one-shot replay; needs verification + DB backup + reversal rehearsal. The day-4 replay-bench shape is reusable as the basis for the production replay-and-verify path. |
 | 3 — Cleanup | 2-3 weeks | **2-3 weeks unchanged.** | 612 references, codemod + manual review. Tedious but mechanical, as the plan says. |
-| 4 — UX (optional) | 1 week | **1 week unchanged.** | |
+| 4 — UX (optional) | 1 week | **1 week unchanged.** | — |
 
 **Refined calendar: 9-12 weeks** (assuming the spike's 1-week early
 finish is absorbed as buffer rather than schedule-shortener). Effort

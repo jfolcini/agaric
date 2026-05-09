@@ -60,7 +60,7 @@ Only `BacklinkFilterBuilder` and `GraphFilterBar` use the shared `FilterPill` / 
 These cost almost nothing to fix and reduce future agent confusion.
 
 | ID | Where | Drift |
-|---|---|---|
+| --- | --- | --- |
 | **D1** | UX.md:110 vs `index.css:206-210` | Doc lists `task-todo` token; CSS only has `task-done/doing/cancelled/custom`. Newcomer reaching for `bg-task-todo` will silently fail. |
 | **D2** | UX.md:148 vs `index.css:847-853` | Doc says "md breakpoint" for responsive headings; CSS uses `max-width:640px` (sm). |
 | **D3** | UX.md:211 vs `index.css:881` | Doc says ProseMirror `px-3 py-1.5`; actual is `px-3 py-1`. |
