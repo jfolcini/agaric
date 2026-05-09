@@ -69,7 +69,10 @@ event), so Tier 3's deferral has been the right call.
 
 ## Related
 
-- [`PEND-06-channel-adoption.md`](PEND-06-channel-adoption.md) —
-  Tier 1+2 shipped. Tier 3's pre-work spec lives there.
+- PEND-06 (`pending/PEND-06-channel-adoption.md`) — Tier 1+2 shipped
+  in sessions 685-686 (sync progress + file-transfer per-frame
+  progress over `Channel<T>`); plan file retired post-shipping.
+  Tier 3's pre-work spec lived in that doc; consult `git log` for
+  the original recommendation if needed.
 - `src-tauri/src/commands/import_cmds.rs` — current single-transaction
   implementation.

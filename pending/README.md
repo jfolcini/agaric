@@ -8,7 +8,6 @@
 
 | ID | Title | Cost | Status |
 | --- | --- | --- | --- |
-| PEND-06 | Tauri 2 `Channel<T>` adoption for streaming progress | M-L (10-19h) | **Tier 1 + Tier 2 shipped** (sync progress + file transfer per-frame). Tier 3 (import progress) split out to PEND-38. Plan kept as historical record. |
 | PEND-09 | CRDT migration (Loro), merge-layer only | L (11-15 weeks) | ready as a **planned spike + multi-phase migration** |
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
 | PEND-30 | Frontend maintainability review — JS / TS findings | trivial (L-3) + M-L (D-1..D-4 if taken later) | partial — L-3 (portal selector migration) deferred; D-1..D-4 decomposition opportunities tracked for future passes |
