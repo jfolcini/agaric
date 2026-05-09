@@ -15,6 +15,13 @@ pub mod hash;
 pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;
+// PEND-09 Phase 1 day-1 — production-side scaffold for the Loro CRDT
+// migration.  The module body is gated on `feature = "loro-shadow"`;
+// with the feature off (default) the inner declarations do not
+// compile, so the module is empty for production builds.  See
+// `src/loro/mod.rs` for the gate and `crates/loro-spike/SPIKE-REPORT.md`
+// §6 for the Phase-1 readiness checklist this module addresses.
+pub mod loro;
 pub mod materializer;
 pub mod mcp;
 pub mod merge;

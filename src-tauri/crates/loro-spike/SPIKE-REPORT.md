@@ -222,12 +222,22 @@ Concrete preconditions for starting Phase 1 (Shadow). Every item is
 one Phase-1-entry task; none are blockers if they slip but each one
 is cheap. In rough sequencing order:
 
-1. **Add the dep.** `src-tauri/Cargo.toml` gains `loro = "1.12"` (caret-1, matching the spike). Also `xxhash-rust = "0.8"` for the peer-id hash (replaces the spike's `std::hash::DefaultHasher`, see notebook Q13).
+> **Phase-1 day-1 (2026-05-09) — partial check-off.**  Items 1, 3, 5,
+> and 6 below are partially or fully addressed by the day-1 scaffold
+> commit (✅ markers inline).  Original wording is preserved verbatim
+> for the historical record; the trailing parenthetical on each
+> ✅-tagged item describes the day-1 delta (what landed and what
+> didn't).  See `src-tauri/src/loro/` (the new production module),
+> `src-tauri/Cargo.toml` (the optional `loro = "1.12"` dep + the
+> `loro-shadow` feature flag), and `src-tauri/src/merge/mod.rs` (the
+> `pub(crate) fn shadow_apply` stub) for the landed code.
+
+1. ✅ **Add the dep.** `src-tauri/Cargo.toml` gains `loro = "1.12"` (caret-1, matching the spike). Also `xxhash-rust = "0.8"` for the peer-id hash (replaces the spike's `std::hash::DefaultHasher`, see notebook Q13). _(Day-1: `loro = "1.12"` landed as `optional = true`, gated behind the new `loro-shadow` cargo feature so the default build is byte-identical to today's.  `xxhash-rust` swap deferred — Phase-1 day-1 inherits the spike's `DefaultHasher`-based `peer_id_from_device_id` unchanged; the swap becomes load-bearing once peer ids start persisting across process lifetimes, i.e. Phase 2.)_
 2. **Sample the real op-log histogram.** Run the user's actual `notes.db` op_log through a one-off counting script; confirm the 30/50/10/5/5 spike proxy is in the right ballpark, OR re-run the day-4 replay bench with the real distribution to confirm the kill-criterion margin is robust to it (notebook Q12).
-3. **Stand up `src-tauri/src/loro/`** as a new module — `LoroEngine` struct, `apply_op`, `export_batch`, `import_batch`, lifted from the spike crate's `src/lib.rs` (815 LOC). Add the `xxhash-rust`-based `peer_id_from_device_id`. Drop the `TreeEngine` (Day-5 verdict — not needed).
+3. ✅ **Stand up `src-tauri/src/loro/`** as a new module — `LoroEngine` struct, `apply_op`, `export_batch`, `import_batch`, lifted from the spike crate's `src/lib.rs` (815 LOC). Add the `xxhash-rust`-based `peer_id_from_device_id`. Drop the `TreeEngine` (Day-5 verdict — not needed). _(Day-1: `src-tauri/src/loro/{mod.rs, engine.rs, parity.rs, tests.rs}` created.  `engine.rs` ports the spike's six apply methods + read surface + `export_snapshot`/`import` (~600 LOC), adapted to `Result<T, AppError>` from the spike's `anyhow::Result`.  `TreeEngine` not ported per Day-5 verdict.  Module is gated `#[cfg(feature = "loro-shadow")]` — empty when the feature is off.)_
 4. **Define the `loro_batch` payload envelope.** Includes `loro_version: u32` (mitigates kill-criterion-4's YELLOW flag), `payload_version: u32`, `original_op_type: Option<OpType>` (dispatcher routing — plan Q7), and the Loro-exported batch bytes.
-5. **Wire shadow-mode dual-write.** `src-tauri/src/merge/mod.rs` gains a wrapper that calls both diffy and Loro on every op; diffy result is authoritative; Loro result is logged.
-6. **Design the parity-logging sink.** Either a new SQLite table (`merge_parity_log`) or an in-memory ring buffer flushed periodically; columns / fields = (op_id, diffy_result_hash, loro_result_hash, bucket_a/b/c/d classification, free-text divergence). Decide retention policy (e.g. 30 days rolling).
+5. ✅ **Wire shadow-mode dual-write.** `src-tauri/src/merge/mod.rs` gains a wrapper that calls both diffy and Loro on every op; diffy result is authoritative; Loro result is logged. _(Day-1: `pub(crate) fn shadow_apply(op_id: &str)` stub landed in `merge/mod.rs`.  No-op when `loro-shadow` is off; even with the feature on, the body is a placeholder — wiring at real call sites + the actual dual-write logic is days 2-3 work.  The point of day-1 is the call shape exists and compiles; the public surface of `merge/` is unchanged (the new fn is `pub(crate)`).)_
+6. ✅ **Design the parity-logging sink.** Either a new SQLite table (`merge_parity_log`) or an in-memory ring buffer flushed periodically; columns / fields = (op_id, diffy_result_hash, loro_result_hash, bucket_a/b/c/d classification, free-text divergence). Decide retention policy (e.g. 30 days rolling). _(Day-1: in-memory ring buffer landed in `src/loro/parity.rs` as `ShadowParitySampler` (default capacity 1024).  `ParityEvent { op_id, diffy_result, loro_result, match, timestamp }` matches the day-1 spec; the bucket A/B/C/D classification + free-text divergence + retention policy + persistent SQLite sink all remain to be decided in later Phase-1 days.)_
 7. **Port the remaining ~5 integration shapes** from `merge/tests.rs` (the day-3 unported list) into `src-tauri/src/merge/parity_tests.rs`. These are the ones that exercise multi-block merge under realistic load — bucket A/B confirmation, not new D risk.
 8. **Add proptest-augmented parity tests.** Plan risks table: "Augment `merge/tests.rs` with proptest-generated random concurrent op streams" — spike skipped this for time-box reasons. Phase 1 entry is the right place.
 9. **Document the LWW resolution rule** (concurrent-reparent + concurrent-property-write) in the Phase-1 design doc per plan Q5 + notebook Q12. Decision: Lamport-keyed LWW; loser's intent dropped from materialised state; LoroTree intent-preservation is NOT exposed in Phase 1.
@@ -350,7 +360,7 @@ out by design or by the spike's environment.
     sampling"). Spike can't measure what only real users + real
     devices + real cross-device sync produce.
 12. **Tree-op conflict UX exposure (loser-of-reparent visibility).**
-    Day 5 confirmed LoroTree's oplog *could* surface this via Loro's
+    Day 5 confirmed LoroTree's oplog _could_ surface this via Loro's
     checkout API; the actual UI work is Phase-4 optional polish.
 
 ## 10. Final recommendation
