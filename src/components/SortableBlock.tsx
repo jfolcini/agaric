@@ -19,9 +19,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBatchAttachments } from '../hooks/useBatchAttachments'
-import { type BlockActions, useBlockActions } from '../hooks/useBlockActions'
+import { useBlockActions } from '../hooks/useBlockActions'
 import { useBlockContextMenu } from '../hooks/useBlockContextMenu'
-import { type BlockResolvers, useBlockResolvers } from '../hooks/useBlockResolvers'
+import { useBlockResolvers } from '../hooks/useBlockResolvers'
 import { useBlockSwipeActions } from '../hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '../hooks/useBlockTouchLongPress'
 import { usePropertyDefForEdit } from '../hooks/usePropertyDefForEdit'
@@ -48,104 +48,24 @@ interface SortableBlockProps {
   /** Depth in the block tree (0 = root level). */
   depth?: number | undefined
   rovingEditor: RovingEditorHandle
-  onNavigate?: ((id: string) => void) | undefined
-  onDelete?: ((blockId: string) => void) | undefined
-  /** Indent: make block a child of its previous sibling. */
-  onIndent?: ((blockId: string) => void) | undefined
-  /** Dedent: move block up one level to grandparent. */
-  onDedent?: ((blockId: string) => void) | undefined
-  resolveBlockTitle?: ((id: string) => string) | undefined
-  resolveTagName?: ((id: string) => string) | undefined
-  resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
-  resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Whether this block has children in the tree. */
   hasChildren?: boolean | undefined
   /** Whether any block in the tree has children (for caret placeholder alignment). */
   anyBlockHasChildren?: boolean | undefined
   /** Whether this block is currently collapsed. */
   isCollapsed?: boolean | undefined
-  /** Callback to toggle collapse state. */
-  onToggleCollapse?: ((blockId: string) => void) | undefined
   /** Current task state: 'TODO', 'DOING', 'DONE', or null/undefined for no task. */
   todoState?: (string | null) | undefined
-  /** Callback to cycle task state. */
-  onToggleTodo?: ((blockId: string) => void) | undefined
   /** Priority level: '1' (high), '2' (medium), '3' (low), or null/undefined. */
   priority?: (string | null) | undefined
-  /** Callback to cycle priority: none → 1 → 2 → 3 → none. */
-  onTogglePriority?: ((blockId: string) => void) | undefined
   /** Due date in YYYY-MM-DD format, or null/undefined if not set. */
   dueDate?: (string | null) | undefined
   /** Scheduled date in YYYY-MM-DD format, or null/undefined if not set. */
   scheduledDate?: (string | null) | undefined
   /** Custom properties to display as inline chips. */
   properties?: Array<{ key: string; value: string }> | undefined
-  /** Move block up among siblings. */
-  onMoveUp?: ((blockId: string) => void) | undefined
-  /** Move block down among siblings. */
-  onMoveDown?: ((blockId: string) => void) | undefined
-  /** Merge block with its previous sibling. */
-  onMerge?: ((blockId: string) => void) | undefined
-  /** Show block history sheet */
-  onShowHistory?: ((blockId: string) => void) | undefined
-  /** Show block properties drawer */
-  onShowProperties?: ((blockId: string) => void) | undefined
-  /** Zoom in to show only this block's children */
-  onZoomIn?: ((blockId: string) => void) | undefined
   /** Whether this block is part of a multi-selection. */
   isSelected?: boolean | undefined
-  /** Ctrl+Click / Shift+Click selection callback. */
-  onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
-}
-
-/**
- * Merge per-block action callbacks from explicit props and context.
- *
- * Explicit props (when provided by tests that mount SortableBlock
- * standalone) win over context values; production code lets every
- * entry come from `BlockActionsProvider` (MAINT-118).
- *
- * Lifted out of `SortableBlockInner` to keep its cognitive-complexity
- * score under Biome's threshold — the 14 `??` short-circuits would
- * otherwise dominate the inner function.
- */
-function mergeActions(propActions: Partial<BlockActions>, ctx: BlockActions): BlockActions {
-  return {
-    onNavigate: propActions.onNavigate ?? ctx.onNavigate,
-    onDelete: propActions.onDelete ?? ctx.onDelete,
-    onIndent: propActions.onIndent ?? ctx.onIndent,
-    onDedent: propActions.onDedent ?? ctx.onDedent,
-    onToggleCollapse: propActions.onToggleCollapse ?? ctx.onToggleCollapse,
-    onToggleTodo: propActions.onToggleTodo ?? ctx.onToggleTodo,
-    onTogglePriority: propActions.onTogglePriority ?? ctx.onTogglePriority,
-    onMoveUp: propActions.onMoveUp ?? ctx.onMoveUp,
-    onMoveDown: propActions.onMoveDown ?? ctx.onMoveDown,
-    onMerge: propActions.onMerge ?? ctx.onMerge,
-    onShowHistory: propActions.onShowHistory ?? ctx.onShowHistory,
-    onShowProperties: propActions.onShowProperties ?? ctx.onShowProperties,
-    onZoomIn: propActions.onZoomIn ?? ctx.onZoomIn,
-    onSelect: propActions.onSelect ?? ctx.onSelect,
-  }
-}
-
-/**
- * Same prop-vs-context merge for the four block / tag display
- * resolvers. The prop bag is typed with explicit `| undefined` per key
- * to satisfy `exactOptionalPropertyTypes` when callers spread props
- * that may not be wired.
- */
-type ResolverPropBag = { [K in keyof BlockResolvers]?: BlockResolvers[K] | undefined }
-
-function mergeResolvers(
-  propResolvers: ResolverPropBag,
-  ctx: BlockResolvers | null,
-): ResolverPropBag {
-  return {
-    resolveBlockTitle: propResolvers.resolveBlockTitle ?? ctx?.resolveBlockTitle,
-    resolveTagName: propResolvers.resolveTagName ?? ctx?.resolveTagName,
-    resolveBlockStatus: propResolvers.resolveBlockStatus ?? ctx?.resolveBlockStatus,
-    resolveTagStatus: propResolvers.resolveTagStatus ?? ctx?.resolveTagStatus,
-  }
 }
 
 function SortableBlockInner({
@@ -154,42 +74,24 @@ function SortableBlockInner({
   isFocused,
   depth = 0,
   rovingEditor,
-  onNavigate: onNavigateProp,
-  onDelete: onDeleteProp,
-  onIndent: onIndentProp,
-  onDedent: onDedentProp,
-  resolveBlockTitle: resolveBlockTitleProp,
-  resolveTagName: resolveTagNameProp,
-  resolveBlockStatus: resolveBlockStatusProp,
-  resolveTagStatus: resolveTagStatusProp,
   hasChildren = false,
   anyBlockHasChildren = false,
   isCollapsed = false,
-  onToggleCollapse: onToggleCollapseProp,
   todoState,
-  onToggleTodo: onToggleTodoProp,
   priority,
-  onTogglePriority: onTogglePriorityProp,
   dueDate,
   scheduledDate,
   properties,
-  onMoveUp: onMoveUpProp,
-  onMoveDown: onMoveDownProp,
-  onMerge: onMergeProp,
-  onShowHistory: onShowHistoryProp,
-  onShowProperties: onShowPropertiesProp,
-  onZoomIn: onZoomInProp,
   isSelected,
-  onSelect: onSelectProp,
 }: SortableBlockProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // ── Action / resolver resolution (MAINT-118) ─────────────────────
-  // Production wires callbacks via BlockActionsProvider /
-  // BlockResolversProvider at the BlockTree boundary; the wrapper
-  // chain (BlockListRenderer → SortableBlockWrapper) no longer drills
-  // them as props. Tests that mount SortableBlock standalone may pass
-  // props directly — explicit props win over context lookups.
+  // ── Action / resolver resolution (MAINT-118 + PEND-30 D-1) ───────
+  // Production and tests both wire callbacks via BlockActionsProvider /
+  // BlockResolversProvider — production at the BlockTree boundary,
+  // tests via the `<TestBlockActionsOverride>` wrapper. SortableBlock
+  // no longer accepts these as props (D-1 dropped 14 action + 4
+  // resolver props from the interface).
   const {
     onNavigate,
     onDelete,
@@ -205,38 +107,15 @@ function SortableBlockInner({
     onShowProperties,
     onZoomIn: onZoomInResolved,
     onSelect,
-  } = mergeActions(
-    {
-      onNavigate: onNavigateProp,
-      onDelete: onDeleteProp,
-      onIndent: onIndentProp,
-      onDedent: onDedentProp,
-      onToggleCollapse: onToggleCollapseProp,
-      onToggleTodo: onToggleTodoProp,
-      onTogglePriority: onTogglePriorityProp,
-      onMoveUp: onMoveUpProp,
-      onMoveDown: onMoveDownProp,
-      onMerge: onMergeProp,
-      onShowHistory: onShowHistoryProp,
-      onShowProperties: onShowPropertiesProp,
-      onZoomIn: onZoomInProp,
-      onSelect: onSelectProp,
-    },
-    useBlockActions(),
-  )
+  } = useBlockActions()
   // Context menu zoom is gated by hasChildren (was previously gated in
   // SortableBlockWrapper before the props chain was collapsed).
   const onZoomIn = hasChildren ? onZoomInResolved : undefined
-  const { resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus } =
-    mergeResolvers(
-      {
-        resolveBlockTitle: resolveBlockTitleProp,
-        resolveTagName: resolveTagNameProp,
-        resolveBlockStatus: resolveBlockStatusProp,
-        resolveTagStatus: resolveTagStatusProp,
-      },
-      useBlockResolvers(),
-    )
+  const resolvers = useBlockResolvers()
+  const resolveBlockTitle = resolvers?.resolveBlockTitle
+  const resolveTagName = resolvers?.resolveTagName
+  const resolveBlockStatus = resolvers?.resolveBlockStatus
+  const resolveTagStatus = resolvers?.resolveTagStatus
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: blockId,
   })
