@@ -1,6 +1,6 @@
 # PEND-30 — Frontend maintainability review: confirmed non-nit findings
 
-> **Status (session 660):** M-1 / M-2 / L-1 / L-2 / L-4 / L-5 closed in commit landing this session. **L-3 (`EDITOR_PORTAL_SELECTORS` → `[data-editor-overlay]` attribute migration) deferred per user decision** — the plan's 30-min estimate undercounts the surface (7+ overlay components plus the third-party `react-day-picker` `.rdp` class that cannot be tagged); rescheduling for a dedicated session if/when the next overlay is added. **D-1 / D-2 / D-3 / D-4 (decomposition opportunities) intentionally not bundled** by the plan; tracked here so future maintainability passes don't re-discover them.
+> **Status (session 694):** M-1 / M-2 / L-1 / L-2 / L-4 / L-5 closed in session 660. **D-3 (SearchPanel decomposition) shipped session 694** — `useReducer` for applied-filter state + `usePopoverEntity<T>` factory for the two near-mirror popovers + `useAliasResolution` hook; `SearchPanel.tsx` 672 → 590 LOC (12% reduction); +36 new tests. **L-3 (`EDITOR_PORTAL_SELECTORS` → `[data-editor-overlay]` attribute migration) deferred per user decision** — the plan's 30-min estimate undercounts the surface (7+ overlay components plus the third-party `react-day-picker` `.rdp` class that cannot be tagged); rescheduling for a dedicated session if/when the next overlay is added. **D-1 / D-2 / D-4 (decomposition opportunities) intentionally not bundled** by the plan; tracked here so future maintainability passes don't re-discover them.
 
 ## Origin
 
@@ -48,7 +48,7 @@ opportunities** worth tracking even though they are not bugs.
 | **L-5** | LOW | `PageBrowser`'s `useVirtualizer.estimateSize` is an inline arrow function recreated every render — wrap in `useCallback` | trivial (~5 min) | low | low | ready |
 | **D-1** | DECOMP | `SortableBlock` declares 32 props (validated) and uses `mergeActions`/`mergeResolvers` to merge prop overrides with context — boilerplate that exists only because tests want isolated mounts; switch to context-first with prop overrides only as test escape hatches | M (3-5 h) | low | medium | ready (low priority) |
 | **D-2** | DECOMP | `SpaceManageDialog.tsx` is 795 lines (validated); the inner `SpaceRowEditor` mixes inline name editing, accent picker, journal-template sync (with a `useRef` "initialised" flag), delete-with-emptiness-probe, and onboarding-hint banner | M-L (4-7 h) | low | medium | ready (low priority) |
-| **D-3** | DECOMP | `SearchPanel.tsx` is 672 lines with 22 `useState` calls and 7 `useEffect` blocks (validated) — filter state alone is ~9 useStates that belong in a `useReducer`, and the page-popover / tag-popover trees are near-mirror duplicates | M-L (4-7 h) | low | medium | ready (low priority) |
+| ~~**D-3**~~ ✅ | DECOMP | ~~`SearchPanel.tsx` is 672 lines with 22 `useState` calls and 7 `useEffect` blocks~~ — **shipped session 694** (672 → 590 LOC; reducer + popover factory + alias hook; +36 tests) | ~~M-L (4-7 h)~~ | low | medium | ✅ shipped |
 | **D-4** | DECOMP | `useBlockSlashCommands.ts` is 575 lines orchestrating 20+ slash-command handlers with a `biome-ignore useExhaustiveDependencies` because the dep list would be unmanageable | M (3-5 h) | low | medium | ready (low priority) |
 
 (M-1 / M-2 = real maintainability bugs worth fixing now. L-1 .. L-5 = real
@@ -339,29 +339,15 @@ one place.
 
 Cost: ~4-7 h including test migration.
 
-### D-3 — `SearchPanel.tsx` is 672 lines, 22 `useState`, 7 `useEffect`
+### ~~D-3 — `SearchPanel.tsx` is 672 lines, 22 `useState`, 7 `useEffect`~~ — shipped session 694
 
-**File:** <ref_file file="/home/javier/dev/agaric/src/components/SearchPanel.tsx" />
+Final shape (`src/components/SearchPanel/`):
 
-(Validated: **22 useState** at lines 99-130, **7 useEffect** blocks. The
-original review undercounted both — claimed "13 useState + 6 useEffect"
-— but the conclusion stands.)
+* `searchFilterReducer.ts` — `SearchFilterState` + `SearchFilterAction` discriminated union covers the 4 applied-filter slots (`filterPageId / filterPageTitle / filterTagIds / filterTagNames`). Popover-internal state is *not* in the reducer (review confirmed: separate state machine with natural temporal boundaries).
+* `usePopoverEntity<T>({searchFn, logLabel, extraDeps})` — factory hook drives both page + tag popovers. Adds an in-flight cancellation flag the original lacked (review found this is exercised by a load-bearing test).
+* `useAliasResolution(query, results, currentSpaceId)` — alias-match logic with synchronous empty-query guard (no 1-frame stale flash; review caught + fixed).
 
-State organisation is the actual problem:
-
-* **9 useStates** describe filter state (page filter, tag filter,
-  page-popover state, tag-popover state). These belong in **one
-  `useReducer`** with a typed `FilterAction` union.
-* The page-popover and tag-popover blocks (4 useStates each) are
-  near-mirror duplicates that differ only in the IPC call. Extract
-  `usePagePopover()` / `useTagPopover()` (or a single
-  `useEntityPopover(searchFn)` factory).
-* Alias resolution (lines 193-228) is independent enough to live in
-  `useAliasResolution(query)` and return `{ aliasMatch, aliasQuery }`.
-
-Cost: ~4-7 h. **Net code shrinkage** rather than expansion: the
-`useReducer` plus two popover hooks plus an alias hook should reduce
-the panel from 672 lines to ~400.
+`SearchPanel.tsx`: 672 → 590 LOC (12%; the audit's 40% target was undercut by JSDoc preserved verbatim + the chip-bar/status JSX block which isn't a state-extraction target). +36 new tests across 3 files.
 
 ### D-4 — `useBlockSlashCommands.ts` is 575 lines
 

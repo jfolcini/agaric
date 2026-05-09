@@ -2,11 +2,61 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 693 (Session 693: PEND-35 final batch — Tier 2.10b (`filtered_blocks_query` AND-intersection in SQL via EXISTS subqueries; closes the JS silent-cap regression at top-200 of any sub-query) + Tier 4.1+4.2 (FE store splices) + Tier 4.3 (`create_blocks_batch` + template-utils refactor) + Tier 4.4 (`find_undo_group` + undo store refactor). **PEND-35 audit fully closed: 27/27 items shipped across 7 sessions (687-693).** Session 692: PEND-35 Tier 2.3 + 2.4 — ConflictList N+1 collapse (3 new commands `get_blocks`, `first_op_device_for_blocks`, `resolve_conflicts_batch` collapse 50-conflict view from ~150 IPCs → 3) + property fan-out fixes (new `BatchPropertiesProvider` hoisted in AgendaResults; SpaceManageDialog uses single batch IPC; new `get_property` command for 5 single-key callsites). Session 691: PEND-35 Tier 2.1 + 2.2 — multi-select batch family. Four new `*_by_ids(Vec<String>)` Tauri commands close every multi-select user-action gap: `set_todo_state_batch`, `delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`. Each batch runs in one BEGIN IMMEDIATE tx + one op_log scope, eliminating writer-lock serialization. The `delete_blocks_by_ids` CTE seeds from ALL roots in one walk so the MAINT-173 ancestor pre-walk in `useBlockMultiSelect.ts` could be removed. IPC delta on a 50-row selection: 50 IPCs → 1 IPC for each of mark-done / delete / restore / purge. Session 690: PEND-35 Tier 2 (4 more items: 2.7 attachments dedup — count provider/command deleted, counts derive from list batch via new `getCount` method; 2.8 templates SQL pushdown + new `first_child_for_blocks` window-function batch endpoint; 2.9 GraphView `blockType:'page'` pushdown via Tier 3.4; 2.10a per-value/per-day fan-out collapsed via `valueTextIn`/`valueDateRange`) + Tier 4.5 (`list_page_links` accepts `tag_ids` filter via UNION ALL across `block_tags`/`block_tag_inherited`/`block_tag_refs`). Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
+**Sessions:** 1 – 694 (Session 694: PEND-30 D-3 — `SearchPanel.tsx` decomposed (672 → 590 LOC, 12% reduction). Three extractions: `searchFilterReducer` (typed action union for the 4 applied-filter slots), `usePopoverEntity<T>` factory (drives both page + tag popovers from one hook), `useAliasResolution` (alias-match logic with synchronous empty-query guard — review caught + fixed a 1-frame stale-flash regression). +36 new tests. Plus PEND-06 plan file retired (Tier 1+2 shipped in sessions 685-686, Tier 3 → PEND-38). Session 693: PEND-35 final batch — Tier 2.10b (`filtered_blocks_query` AND-intersection in SQL via EXISTS subqueries; closes the JS silent-cap regression at top-200 of any sub-query) + Tier 4.1+4.2 (FE store splices) + Tier 4.3 (`create_blocks_batch` + template-utils refactor) + Tier 4.4 (`find_undo_group` + undo store refactor). **PEND-35 audit fully closed: 27/27 items shipped across 7 sessions (687-693).** Session 692: PEND-35 Tier 2.3 + 2.4 — ConflictList N+1 collapse (3 new commands `get_blocks`, `first_op_device_for_blocks`, `resolve_conflicts_batch` collapse 50-conflict view from ~150 IPCs → 3) + property fan-out fixes (new `BatchPropertiesProvider` hoisted in AgendaResults; SpaceManageDialog uses single batch IPC; new `get_property` command for 5 single-key callsites). Session 691: PEND-35 Tier 2.1 + 2.2 — multi-select batch family. Four new `*_by_ids(Vec<String>)` Tauri commands close every multi-select user-action gap: `set_todo_state_batch`, `delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`. Each batch runs in one BEGIN IMMEDIATE tx + one op_log scope, eliminating writer-lock serialization. The `delete_blocks_by_ids` CTE seeds from ALL roots in one walk so the MAINT-173 ancestor pre-walk in `useBlockMultiSelect.ts` could be removed. IPC delta on a 50-row selection: 50 IPCs → 1 IPC for each of mark-done / delete / restore / purge. Session 690: PEND-35 Tier 2 (4 more items: 2.7 attachments dedup — count provider/command deleted, counts derive from list batch via new `getCount` method; 2.8 templates SQL pushdown + new `first_child_for_blocks` window-function batch endpoint; 2.9 GraphView `blockType:'page'` pushdown via Tier 3.4; 2.10a per-value/per-day fan-out collapsed via `valueTextIn`/`valueDateRange`) + Tier 4.5 (`list_page_links` accepts `tag_ids` filter via UNION ALL across `block_tags`/`block_tag_inherited`/`block_tag_refs`). Session 689: PEND-35 Tier 2 small-wins (4 of 12 items) — 2.5 (extract `usePropertyKeysCache` to module-level helper, slash-commands routes through it), 2.6 (`get_property_def(key)` PK lookup replaces `listPropertyDefs+find` in 2 callsites), 2.11 (`count_conflicts(scope) -> i64` replaces `getConflicts({limit:100})` polling for badge), 2.12 (`flush_all_drafts()` consolidated boot recovery in one BEGIN IMMEDIATE tx). Session 688: PEND-35 Tier 3 — four indexes/SQL fixes (op_log JSON-extract → native column + migration 0048; idx_blocks_conflict migration 0049; idx_tags_cache_name_nocase migration 0050; block_type + value_text_in + value_date_range pushdown + `ExtraQueryFilters` bundle). Session 687: PEND-35 Tier 1 — six correctness/security fixes (cross-space leaks + paging-broken-by-FE-filter). Session 686: PEND-06 Tier 2 file-transfer per-frame progress over Channel<T>. Session 685: PEND-29 B-1 BulletList extension removal. Session 684: PEND-31 UnfinishedTasks pagination cap fix. Session 682: five S-cost frontend maintenance fixes (MAINT-197 / 211 / 221 / 222 / 206). Session 681: five S-cost maintenance fixes (MAINT-199 / 204 / 210 / 217 / 224). Session 680: four S-cost frontend bug fixes (MAINT-200 / 201 / 202 / 205). Session 679: PEND-15 Phase 0 + PEND-12 KILL + MAINT-227 / 172 / 225 / 223 + PEND-15 Phase 2 foundation + FEATURE-MAP catch-up.) | **Latest entry:** 2026-05-08 | **Previously resolved counter:** 1176+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 694 — PEND-30 D-3: SearchPanel decomposition (2026-05-09)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-09 |
+| **Subagents** | 1 build + 1 review |
+| **Items closed** | PEND-30 D-3 |
+| **Items modified** | PEND-30 (D-3 row + section retired); PEND-06 plan file deleted (Tier 1+2 already shipped, Tier 3 → PEND-38). PEND-38 "Related" link to PEND-06 updated to point at git log. |
+| **Tests added** | +36 frontend (18 reducer + 9 popover + 9 alias) |
+| **Files touched** | 6 new + 1 modified |
+
+**Summary:** Decomposed `src/components/SearchPanel.tsx` per the PEND-30 D-3 plan. Three concrete extractions: (1) `searchFilterReducer.ts` with typed `SearchFilterState` + `SearchFilterAction` discriminated union for the 4 applied-filter slots (`filterPageId / filterPageTitle / filterTagIds / filterTagNames`); (2) `usePopoverEntity<T>` factory hook driving both the page picker and tag picker from one shared implementation (added an in-flight cancellation flag the original lacked); (3) `useAliasResolution(query, results, currentSpaceId)` hook capturing the alias-match logic from the inline lines 193-228. SearchPanel.tsx slimmed from 672 → 590 LOC (12% reduction; the audit's hoped-for 40% was undercut by JSDocs preserved verbatim plus the chip-bar/status JSX block which isn't a state-extraction target). Hooks placed in `src/components/SearchPanel/` (component-local) rather than `src/hooks/` — promotable when a second caller appears.
+
+The reviewer caught one subtle behavioral regression: the original `handleInputChange` cleared `setAliasMatch(null)` synchronously when the user emptied the input, but `useAliasResolution`'s effect runs post-paint, leaving a 1-frame flash of the stale alias card. Fixed by adding a synchronous empty-query guard inside the hook so the rendered output flips to `null` instantly while the effect still authoritatively resets internal state.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Unchanged (PEND-30 audit, not REVIEW-LATER)
+- **Previously resolved:** Unchanged
+
+**Files touched (this session):**
+- `src/components/SearchPanel.tsx` — slimmed from 672 → 590 LOC (-82 lines).
+- `src/components/SearchPanel/searchFilterReducer.ts` (new, 98 LOC).
+- `src/components/SearchPanel/usePopoverEntity.ts` (new, 121 LOC).
+- `src/components/SearchPanel/useAliasResolution.ts` (new, 113 LOC; +synchronous empty-query guard from reviewer).
+- `src/components/SearchPanel/__tests__/searchFilterReducer.test.ts` (new, 18 tests).
+- `src/components/SearchPanel/__tests__/usePopoverEntity.test.tsx` (new, 9 tests).
+- `src/components/SearchPanel/__tests__/useAliasResolution.test.ts` (new, 9 tests).
+- `pending/PEND-30-frontend-maintainability-review-findings.md` — D-3 row + section retired.
+- `pending/PEND-06-channel-adoption.md` (deleted; commit 48642d37).
+- `pending/PEND-38-import-progress-channel.md` — "Related" link to deleted PEND-06 updated.
+- `pending/README.md` — PEND-06 row removed.
+
+**Verification:**
+- `npx vitest run src/components/__tests__/SearchPanel src/components/SearchPanel` — 105 tests pass (4 files).
+- `npx vitest run` — 9719 tests pass across 392 files.
+- `npx tsc -b` — clean.
+- `npx vite build` — production bundle clean.
+- `prek run --all-files` — pending (run at commit time).
+
+**Process notes:**
+- 1 build subagent + 1 review subagent. Build took ~13 minutes; review took ~6 minutes including mutation-testing one assertion per file (load-bearing verdict: PASS).
+- The reviewer's 1-frame-flash catch is exactly the kind of subtle behavioral regression that orchestrator-direct refactors can introduce — the build agent acknowledged the issue in a JSDoc trailer but dismissed it; the reviewer caught the user-visible cost and fixed it. Confirms PROMPT.md's no-self-reviews rule is load-bearing for behavior-preserving refactors.
+
+**Lessons learned (for future sessions):**
+- Behavior-preserving refactors that turn synchronous imperative state-clears into post-paint effect-driven clears MUST include a synchronous derived-output guard, OR the reviewer will catch a 1-frame flash regression. Worth adding to any future `useReducer` / `useEffect` extraction prompt template.
+- LOC reduction targets in audits should be treated as aspirational. The actual reduction depends heavily on what fraction of the original LOC is JSDoc (preserved) vs. state machinery (extractable). 12% is honest for D-3; 40% would have required pruning JSDocs that document load-bearing constraints.
+
+**Commit plan:** single commit.
+
+---
 ## Session 693 — PEND-35 final batch: 2.10b + 4.1-4.4 — audit fully closed (2026-05-09)
 
 | Metadata | Value |
