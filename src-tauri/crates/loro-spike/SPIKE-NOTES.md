@@ -637,6 +637,240 @@ this volume does not blow the size budget** — the plan's
 No other production-code or test-code changes.  No Cargo.toml changes.
 Loro stays at 1.12.
 
+## Day 5 (2026-05-09)
+
+### TreeEngine prototype shape
+
+New module `src-tauri/crates/loro-spike/src/tree_engine.rs` (re-exported
+from `lib.rs`).  Same surface API as `LoroEngine` for the methods the
+day-4 replay benchmark exercises (`apply_create_block`,
+`apply_move_block`, `apply_delete_block`, `apply_edit_content`,
+`apply_set_property`, `read_block` / `read_parent` / `read_position` /
+`read_deleted` / `read_property`, `count_alive_blocks`,
+`export_snapshot`, `import`).
+
+**Mapping shape: HYBRID — per-node meta-map + side-table id_index.**
+
+Loro's `LoroTree::create` returns an auto-assigned `TreeID`
+(`{peer_id, counter}`).  The rest of the world (op_log, materializer,
+sync layer) keeps referencing blocks by their string ids
+(`"BLK_00000123"`, `"PAGE_0007"`).  We need a stable
+`block_id_str <-> TreeID` mapping.
+
+- **Per-node fields** (`block_type`, `content` LoroText, `position`,
+  `deleted_at`, `properties`) live in the **per-node meta map** that
+  Loro itself manages via `LoroTree::get_meta(tree_id) -> LoroMap`
+  (`crates/loro/src/lib.rs:2989`).  This is the API Loro documents
+  for "annotate a tree node with structured data" — using it keeps
+  the engine idiomatic and means properties travel with the node
+  if Phase 1 ever switches to hard delete.
+- **Reverse lookup**: a top-level `id_index` LoroMap holds
+  `block_id_str -> TreeID-as-string` (Loro's `TreeID: Display`
+  produces `counter@peer_hex`, parseable via
+  `TreeID::try_from(&str)`).  Necessary because Loro doesn't index
+  tree nodes by arbitrary external string keys; without this, every
+  `apply_*(block_id, ...)` would have to scan all tree nodes for the
+  matching meta `block_id` field — O(N) instead of O(1).
+
+Rationale for hybrid over pure-meta or pure-side-table: meta-map is
+the natural per-node data shape; side-table is unavoidable for the
+external-id reverse lookup.  Both are LoroMap-backed so Loro's
+per-key LWW handles concurrent creates of the same `block_id`
+cleanly (both peers converge on the same id_index entry).
+
+**Soft delete preserved.**  `apply_delete_block` does NOT call
+`tree.delete(target)` (which would HARD-delete the node — move it to
+`DELETED_TREE_ROOT`).  Instead it sets a `deleted_at` flag in the
+meta map, matching the production data shape (`Block::deleted_at`).
+Soft-delete keeps the block readable for audit / undo paths the
+production code depends on, and makes `read_deleted` apples-to-apples
+between `LoroEngine` and `TreeEngine`.
+
+**Position is a scalar in the meta map, not a fractional index.**
+`tree.enable_fractional_index(0)` would let us use `create_at` /
+`mov_to`, but that changes the semantics enough (sibling-ordering
+rules, doc-size growth — see Loro's
+[movable-tree blog post](https://loro.dev/blog/movable-tree)) that
+mixing the two adds noise to the head-to-head benchmark.  Phase 1
+might revisit this.
+
+### Head-to-head benchmark — LoroMap vs LoroTree
+
+Same machine, same SEED, same op-stream
+(30% create / 50% edit / 10% set_property / 5% move / 5% delete),
+both binaries run back-to-back in `--release`.
+
+| Metric | LoroEngine (LoroMap) | TreeEngine (LoroTree) | Delta |
+| ------ | --------------------- | --------------------- | ----- |
+| apply elapsed | **1.686 s** | **1.772 s** | **+5.1 %** (slower) |
+| doc snapshot bytes | **6 717 224 B** (6.41 MiB) | **7 757 931 B** (7.40 MiB) | **+15.5 %** |
+| peak RSS (Linux statm) | **151 322 624 B** (144.31 MiB) | **171 327 488 B** (163.39 MiB) | **+13.2 %** |
+| alive blocks (sanity) | 25 145 | 25 145 | identical |
+| sample creates verified | 100 / 100 | 100 / 100 | identical |
+| sample deletes verified | 20 / 20 | 20 / 20 | identical |
+
+LoroTree is **uniformly slightly worse** on every measured axis.  No
+axis where it wins.  The deltas are small (single-digit on time,
+mid-teens on size + RSS) but they are real and they are consistent.
+
+The +15 % snapshot growth most likely reflects the cost of the
+parent-pointer history that LoroTree records for every move — every
+`tree.mov(target, parent)` is a `TreeOp::Move` op in the doc's oplog
+including the fractional position even though we're not exercising
+fractional indices (default position values still get stored).  The
+LoroMap engine spends two `LoroMap::insert` calls per move
+(parent_id + position) and Loro merges those into the LoroMap's
+LWW-per-key history more compactly than the dedicated tree CRDT
+encoding.
+
+Read-path cost wasn't separately measured (it's amortised into the
+verification phase, which both engines complete with 100/100
+correctness).  No correctness regression on either engine.
+
+### Concurrent-reparent semantics
+
+The PEND-09 plan calls out "concurrent reparent — what happens when
+two peers reparent the same block to different parents?" as open
+question 5 in `pending/PEND-09-crdt-migration.md`.  The day-3
+parity-corpus port already answered this for `LoroEngine`
+(`parity_concurrent_reparent_different_parents`): both peers
+converge on a single parent via LoroMap LWW per key; the loser's
+intent is silently overwritten and not recoverable from the
+post-merge LoroMap state.
+
+New test `tests/concurrent_reparent_tree.rs` runs the same scenario
+against `TreeEngine`:
+
+1. Both peers seed `CHILD` under `PAGE_X`.
+2. A reparents `CHILD` → `PAGE_Y`.
+3. B reparents `CHILD` → `PAGE_Z`.
+4. Snapshot exchange.
+5. Assertion: both engines converge on the same parent.
+
+Result on Loro 1.12: **both peers converge on `PAGE_Y`** (which is
+the converger picked by the LoroTree CRDT's tiebreak rule).  An
+additional 3-peer variant (`tree_concurrent_reparent_three_peers_converges`)
+also converges on `PAGE_Y`.  The CRDT is deterministic given the
+peer-id ordering.
+
+**Verdict on intent preservation**: the *current state* of the doc
+is LWW-equivalent to LoroMap+scalar — only one parent wins, the
+losers' intents do not appear in `read_parent("CHILD")`.  HOWEVER:
+because `LoroTree`'s movable-tree CRDT records `TreeOp::Move` as a
+distinct op kind in the doc's oplog
+(`loro-internal/src/container/tree/tree_op.rs`), the loser's move
+*is* preserved in the operation history and is potentially
+surfaceable through Loro's checkout / time-travel API.  In contrast,
+the LoroMap+scalar engine records the loser's reparent as a
+LoroMap-key write whose op-kind is identical to *every other LoroMap
+write* — there's no structural way to distinguish "this overwrite
+was a reparent" from "this overwrite was a property-set".
+
+So the practical answer is: **state-level semantics are the same
+(LWW one-parent-wins).**  The structural difference is that
+LoroTree's oplog *could* be queried later to reconstruct "who
+attempted to move CHILD where" — but exposing that to the UI would
+require dedicated checkout / oplog-walking code that is well out of
+Phase-1 scope.  For shadow-mode parity logging in Phase 1, both
+engines are equivalent: the loser's intent is dropped from the
+materialised state on both sides.
+
+### Recommendation: stay with LoroMap for Phase 1+
+
+**Verdict: stay with `LoroMap`.**  The plan's default holds.
+
+Reasoning, in order of weight:
+
+1. **No measurable upside.**  LoroTree is uniformly slightly worse
+   on every measured axis (apply time, snapshot bytes, peak RSS) —
+   small deltas, but no axis where it wins.  The migration cost
+   (rewiring the engine, re-porting the day-3 parity corpus, new
+   read-path code) is paid in exchange for a regression on every
+   measurable dimension.
+2. **Reparent semantics are equivalent.**  The big *theoretical*
+   reason to prefer LoroTree was concurrent-reparent semantics:
+   maybe the dedicated movable-tree CRDT could preserve the loser's
+   intent in a way LoroMap+scalar can't.  Empirically: both engines
+   produce LWW-one-parent-wins state-level semantics; the structural
+   difference (Tree.Move op kind in the oplog) is not load-bearing
+   for any Phase-1 user-visible feature.
+3. **`LoroMap`+scalar is simpler.**  No fractional-index machinery,
+   no side-table id_index, no `TreeID <-> block_id_str` parsing.
+   The day-1 `LoroEngine` code is 558 lines; `TreeEngine` is 480
+   lines plus the 30-line side-table dance and 25 lines of
+   `parent_block_id_of` translation that a LoroMap engine doesn't
+   need.  Less code = fewer Phase-1 bug surfaces.
+4. **Cycle detection is still our responsibility either way.**  The
+   plan's invariant ("a block can't become its own ancestor") is
+   maintained at the application layer, and that layer is the same
+   for either engine — the LoroTree CRDT does *not* prevent move
+   cycles by itself in the general case (Loro's blog post on
+   movable-tree explicitly mentions cycle-resolution on
+   convergence, but the resolution rule is what it is — not
+   something we can opt out of even with LoroTree).
+5. **No format-stability concern in either direction.**  Both
+   `LoroMap` and `LoroTree` are stable in the 1.x format (see
+   day-1 finding); we are NOT picking based on relative format
+   stability.
+
+If a Phase-1 use-case emerges that genuinely benefits from
+LoroTree-shaped storage (e.g. surfacing the move history in the
+UI as an audit log, or relying on Loro's tree-aware checkout
+semantics for time-travel), revisit then — switching is a Phase-1.5
+refactor of a few-hundred lines.
+
+### Surprises
+
+- **TreeEngine wasn't *much* slower.**  Going in I expected the
+  per-op `tree.get_meta(tid)` lookup + side-table `id_index.get` to
+  add a meaningful constant per op compared to LoroMap's single
+  `blocks.get(block_id)`.  Empirically the overhead is ~5 % on
+  apply time and ~13 % on RSS — meaningful but not order-of-
+  magnitude.  The CRDT machinery for move-history is more
+  expensive than the lookup overhead.
+- **Loro's `TreeID: Display` round-trips through `try_from(&str)`
+  cleanly.**  No bespoke serialisation code needed — the side-table
+  could just store the `TreeID` as its string form and parse on
+  read.  That removed the only piece of design work I expected to
+  be fiddly.
+- **Three-way concurrent reparent still picks `PAGE_Y`.**  I
+  half-expected the higher-contention variant to expose a
+  non-determinism somewhere, but Loro's tiebreak rule is fully
+  deterministic given the peer-id space.  Convergence held.
+- **Zero correctness regressions on the head-to-head verification.**
+  Both engines pass the same 100-create / 20-delete sample-read
+  check.  The "soft-delete via meta flag" choice means
+  `read_deleted` semantics are identical between the two engines
+  even though the underlying delete mechanism differs.
+
+### TreeEngine extensions / boilerplate
+
+| Method | Purpose |
+| ------ | ------- |
+| `apply_create_block` | `tree.create(parent_tree_id)` + populate meta map (block_id, block_type, content as LoroText, position) + write to `id_index` side-table |
+| `apply_move_block` | `tree.mov(target, parent_tree_id)` + `meta.insert(position)` |
+| `apply_delete_block` | `meta.insert(deleted_at)` — soft delete; `tree.delete` deliberately not used |
+| `apply_edit_content` | meta-map content `LoroText::splice` (USV offsets) — same as `LoroEngine` |
+| `apply_set_property` | per-node `properties` LoroMap nested in meta — one level deeper than `LoroEngine`'s top-level `block_properties` |
+| `read_*` | meta-map field reads + `tree.parent(tid)` for parent translation back to external block_id |
+| `count_alive_blocks` | iterate `tree.nodes()` + filter on meta `deleted_at` |
+
+No production-code changes.  No `Cargo.toml` changes.  Loro stays
+at 1.12.
+
+### Open questions touched today
+
+- **(SPIKE-NOTES Q2 / "LoroTree head-to-head"): RESOLVED.**
+  TreeEngine prototyped, head-to-head benchmarked, concurrent-reparent
+  semantics measured.  Recommendation: stay with `LoroMap`.  See above.
+- **(plan Q5 — concurrent-reparent semantics): RESOLVED for both
+  engines.**  Both pick LWW-one-parent-wins at the state level;
+  LoroTree records the loser's intent as a distinct `TreeOp::Move`
+  op in the oplog (potentially surfaceable via Loro's checkout API)
+  whereas LoroMap+scalar records it as an indistinguishable
+  LoroMap-key write.  Phase 1 doesn't need this distinction; if a
+  Phase-1.5 audit-log feature wants it, switch then.
+
 ## Open questions for next session(s) (carry-over)
 
 1. **Per-space doc sizing.**  Plan calls for one doc per space.
@@ -644,10 +878,11 @@ Loro stays at 1.12.
    workload, so 100K blocks ≈ 26 MiB — well under load-time concern.**
    Outstanding: re-measure with production-realistic content lengths
    (50-500 chars/block) — see question 9.
-2. **`LoroTree` head-to-head.**  Build a parallel `LoroTree`-shaped
-   prototype and measure (a) doc size for the same workload, (b)
-   parent_id reparent semantics under concurrent edits, (c) read-path
-   cost.  Plan stays with `LoroMap` unless `LoroTree` wins decisively.
+2. ~~**`LoroTree` head-to-head.**~~  **Day-5: TreeEngine prototyped,
+   benchmarked, measured.  LoroMap wins on apply-time (+5 %), snapshot
+   bytes (+15 %), peak RSS (+13 %); state-level reparent semantics are
+   equivalent.  Recommendation: stay with `LoroMap` for Phase 1+.**
+   See Day-5 section above.
 3. ~~**`merge/tests.rs` corpus port.**~~  **Day-3: 15/53 sampled,
    bucket distribution recorded above, kill criterion #2 not fired.**
    Full port + proptest augmentation remains.
