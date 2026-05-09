@@ -250,34 +250,73 @@ pub async fn project_purge_block_to_sql(
 // Day-11 stubs — wired in day-12+
 // ---------------------------------------------------------------------------
 
-/// **Day-11 stub** — `DeleteBlock` projection.  TODO(day-12): wire to
-/// `UPDATE blocks SET deleted_at = ?` mirroring `apply_delete_block_tx`'s
-/// per-block-id update.  The descendant cascade stays SQL-side.
+/// Project a `DeleteBlock` engine state into SQL.  The engine's
+/// `apply_delete_block` writes a fixed-marker `deleted_at` value (the
+/// CRDT only needs to know "deleted vs not"); the SQL side stamps the
+/// real timestamp from `record.created_at` so `block_lifecycle`
+/// reports / restore-cohort lookups remain accurate.  The caller passes
+/// the timestamp string explicitly rather than reading it back from
+/// the engine — see `apply_delete_block_via_loro` for the wiring.
 ///
-/// Currently unreachable (the `apply_op_tx` branch for DeleteBlock
-/// still calls the diffy-side path); a future caller wiring the engine
-/// path must implement this helper.
-#[allow(dead_code)]
+/// **Cascade scope.**  This projection only updates the per-block row.
+/// The diffy-side `apply_delete_block_tx` walks the descendant CTE and
+/// soft-deletes every active descendant in one UPDATE; the cutover-on
+/// path keeps that cascade behaviour by running the same CTE-driven
+/// UPDATE here.  The engine's `apply_delete_block` is per-block-id only,
+/// so the engine-side fan-out for descendants is a separate concern
+/// (today's diffy path only calls the engine on the seed; a complete
+/// cutover-on cascade fanout is a follow-up — same shape as
+/// `dispatch_restore_descendants_shadow`).  Day-12 keeps the projection
+/// behaviour SQL-equivalent to the diffy path.
+///
+/// **Idempotence.**  The `WHERE deleted_at IS NULL` filter on the CTE
+/// makes a re-apply a no-op for rows already soft-deleted at any earlier
+/// timestamp.
 pub async fn project_delete_block_to_sql(
-    _conn: &mut SqliteConnection,
-    _block_id: &str,
-    _deleted_at: &str,
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    deleted_at: &str,
 ) -> Result<(), AppError> {
-    // TODO(day-12): mirror apply_delete_block_tx's UPDATE.
-    Err(AppError::Validation(
-        "project_delete_block_to_sql: not yet implemented (day-11 stub)".into(),
+    sqlx::query(concat!(
+        crate::descendants_cte_active!(),
+        "UPDATE blocks SET deleted_at = ? \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
     ))
+    .bind(block_id)
+    .bind(deleted_at)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
-/// **Day-11 stub** — `MoveBlock` projection.  TODO(day-12).
-#[allow(dead_code)]
+/// Project a `MoveBlock` engine state into SQL.  Mirrors the per-block
+/// `UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?` shape
+/// of `apply_move_block_tx`.  The snapshot's `parent_id` / `position`
+/// fields are the source of truth — the engine's per-key LWW resolves
+/// concurrent reparents on the engine side, and we project that
+/// post-LWW state here.
+///
+/// **Sibling-shift.**  The diffy-side `apply_move_block_tx` does NOT
+/// shift sibling positions either: a `MoveBlock` op's `new_position` is
+/// taken at face value, with whatever ordering collisions accepting the
+/// LWW outcome.  Loro's per-key LWW means two devices moving distinct
+/// blocks to the same position resolve to the same final state on both
+/// sides (same `(parent_id, position)` per block), and a single SQL row
+/// per block keeps the projection 1:1 with the engine state.  Net: no
+/// sibling-shift on either side.  Position uniqueness is not enforced
+/// in the schema; concurrent moves to the same position are an
+/// application-layer concern.
 pub async fn project_move_block_to_sql(
-    _conn: &mut SqliteConnection,
-    _snapshot: &BlockSnapshot,
+    conn: &mut SqliteConnection,
+    snapshot: &BlockSnapshot,
 ) -> Result<(), AppError> {
-    Err(AppError::Validation(
-        "project_move_block_to_sql: not yet implemented (day-11 stub)".into(),
-    ))
+    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+        .bind(snapshot.parent_id.as_deref())
+        .bind(snapshot.position)
+        .bind(&snapshot.block_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 /// **Day-11 stub** — `RestoreBlock` projection.  TODO(day-12).
@@ -631,5 +670,129 @@ mod tests {
         .await
         .expect("fetch post");
         assert_eq!(post, (0, 0, 0), "purge must cascade to all three tables");
+    }
+
+    #[tokio::test]
+    async fn project_delete_block_writes_deleted_at() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', 'soon-deleted', NULL, 0, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let deleted_at = "2026-05-10T12:00:00Z";
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_block_to_sql(&mut conn, BLOCK_A, deleted_at)
+            .await
+            .expect("project delete");
+        drop(conn);
+
+        let row: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(row.0.as_deref(), Some(deleted_at));
+    }
+
+    #[tokio::test]
+    async fn project_delete_block_idempotent() {
+        // A second call with a later timestamp must NOT clobber the
+        // first soft-delete's timestamp — mirrors the diffy-side
+        // `WHERE deleted_at IS NULL` filter.  The cohort identity in
+        // RestoreBlock relies on the same timestamp persisting across
+        // re-applies of the delete op.
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', 'doomed', NULL, 0, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let first_ts = "2026-05-10T12:00:00Z";
+        let second_ts = "2026-05-11T15:00:00Z";
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_block_to_sql(&mut conn, BLOCK_A, first_ts)
+            .await
+            .expect("first delete");
+        project_delete_block_to_sql(&mut conn, BLOCK_A, second_ts)
+            .await
+            .expect("second delete (should no-op)");
+        drop(conn);
+
+        let row: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(
+            row.0.as_deref(),
+            Some(first_ts),
+            "WHERE deleted_at IS NULL filter must keep the first timestamp"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_move_block_updates_parent_and_position() {
+        let (pool, _dir) = fresh_pool().await;
+        // Seed a parent and a child.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'page', 'old-parent', NULL, 0, 0)",
+        )
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', 'child', ?, 3, 0)",
+        )
+        .bind(BLOCK_A)
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Move BLOCK_A to (parent=None, position=42).
+        let snap = snapshot(BLOCK_A, "content", "child", None, 42);
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_move_block_to_sql(&mut conn, &snap)
+            .await
+            .expect("project move");
+        drop(conn);
+
+        let row: (Option<String>, i64) =
+            sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch row");
+        assert_eq!(row.0, None, "parent_id must be cleared");
+        assert_eq!(row.1, 42);
+
+        // Move BLOCK_A back under BLOCK_B at position 7.
+        let snap2 = snapshot(BLOCK_A, "content", "child", Some(BLOCK_B), 7);
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_move_block_to_sql(&mut conn, &snap2)
+            .await
+            .expect("project move 2");
+        drop(conn);
+
+        let row: (Option<String>, i64) =
+            sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch row 2");
+        assert_eq!(row.0.as_deref(), Some(BLOCK_B));
+        assert_eq!(row.1, 7);
     }
 }
