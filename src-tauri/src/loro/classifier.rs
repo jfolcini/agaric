@@ -159,6 +159,20 @@ const UPDATE_CHUNK_IDS: usize = 200;
 /// don't hurt CPU.
 const SELECT_CHUNK_ROWS: i64 = 4_000;
 
+/// The classifier's production SELECT.  Centralised so the
+/// `classify_unbucketed_uses_partial_index_for_query` regression test
+/// can EXPLAIN-plan the *exact* string the production code runs —
+/// ensuring any drift in predicate shape (e.g. a refactor to
+/// `IFNULL(bucket, NULL) IS NULL`) is caught by the test rather than
+/// silently bypassing the partial index `idx_merge_parity_log_unbucketed`
+/// (migration 0054).  Predicate shape (`WHERE bucket IS NULL`) must
+/// match the index's predicate textually for the SQLite planner to
+/// pick it up.
+const SELECT_UNBUCKETED_SQL: &str = "SELECT id, diffy_result, loro_result, matched \
+     FROM merge_parity_log \
+     WHERE bucket IS NULL \
+     LIMIT ?";
+
 /// Scan `merge_parity_log` for rows where `bucket IS NULL`, classify
 /// each one with [`classify`], and write the result back to the
 /// `bucket` column.  Returns per-bucket counts.
@@ -184,20 +198,13 @@ pub async fn classify_unbucketed(pool: &SqlitePool) -> Result<ClassifyStats, App
         // classifier doesn't care about order — each row is classified
         // independently — and an unordered scan lets SQLite walk the
         // partial index `idx_merge_parity_log_unbucketed` (migration
-        // 0054) directly without a sort step.  Predicate shape
-        // (`WHERE bucket IS NULL`) must stay textually identical to
-        // the index's predicate for the planner to pick it up — see
-        // the `classify_unbucketed_uses_partial_index_for_query`
-        // regression test below.
-        let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(
-            "SELECT id, diffy_result, loro_result, matched \
-             FROM merge_parity_log \
-             WHERE bucket IS NULL \
-             LIMIT ?",
-        )
-        .bind(SELECT_CHUNK_ROWS)
-        .fetch_all(pool)
-        .await?;
+        // 0054) directly without a sort step.  Query string lives in
+        // `SELECT_UNBUCKETED_SQL` so the day-10 EXPLAIN-plan test
+        // exercises the same literal string this loop runs.
+        let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(SELECT_UNBUCKETED_SQL)
+            .bind(SELECT_CHUNK_ROWS)
+            .fetch_all(pool)
+            .await?;
 
         if rows.is_empty() {
             break;
@@ -608,21 +615,19 @@ mod tests {
             .await;
         }
 
-        // Mirror the production SELECT in `classify_unbucketed`
-        // exactly — EXPLAIN QUERY PLAN reflects the literal query
-        // string, so any drift here would silently invalidate the
-        // assertion below.
-        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
-            "EXPLAIN QUERY PLAN \
-             SELECT id, diffy_result, loro_result, matched \
-             FROM merge_parity_log \
-             WHERE bucket IS NULL \
-             LIMIT ?",
-        )
-        .bind(SELECT_CHUNK_ROWS)
-        .fetch_all(&pool)
-        .await
-        .expect("explain query plan");
+        // Run EXPLAIN QUERY PLAN against the *literal* production
+        // SELECT (`SELECT_UNBUCKETED_SQL`).  Building the EXPLAIN
+        // string by prepending to the constant guarantees the test
+        // tracks any future predicate-shape drift in the classifier;
+        // duplicating the SQL inline here would let a refactor to
+        // e.g. `IFNULL(bucket, NULL) IS NULL` silently bypass the
+        // partial index without failing this test.
+        let explain_sql = format!("EXPLAIN QUERY PLAN {SELECT_UNBUCKETED_SQL}");
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(&explain_sql)
+            .bind(SELECT_CHUNK_ROWS)
+            .fetch_all(&pool)
+            .await
+            .expect("explain query plan");
 
         let detail = plan
             .iter()
