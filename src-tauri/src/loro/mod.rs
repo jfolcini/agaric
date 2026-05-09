@@ -32,8 +32,9 @@
 //!   data layer (`parity_sink::flush_to_sqlite` plus `parity_sink::purge_old`,
 //!   plus migration `0051_pend_09_merge_parity_log.sql`); day-5 wired the
 //!   periodic flush plus purge into a tokio background task spawned at app
-//!   setup (`flush_task::run_periodic_flush`); day-6 adds the bucket
-//!   classifier on top.
+//!   setup (`flush_task::run_periodic_flush`); day-6 added the bucket
+//!   classifier (`classifier::classify_unbucketed`) — runs on every flush
+//!   tick to fill the `bucket` column of newly-flushed rows.
 //! - The remaining ~5 unported integration parity tests + proptest
 //!   augmentation (items 7-8 on the checklist).
 //! - The `xxhash-rust` peer-id swap (item 1 / Q13).
@@ -41,6 +42,9 @@
 //! - The `loro_doc_state` table schema (item 12, Phase-2 entry).
 //!
 //! Each is tracked in the spike report's §6 readiness checklist.
+
+#[cfg(feature = "loro-shadow")]
+pub mod classifier;
 
 #[cfg(feature = "loro-shadow")]
 pub mod engine;
