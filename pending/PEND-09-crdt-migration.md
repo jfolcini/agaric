@@ -125,7 +125,7 @@ If any kill criterion fires: archive the prototype crate as `pending/PEND-09-spi
 
 **Phase 0 — Spike (new code, no production impact):**
 
-- New crate: `src-tauri/crates/loro-spike/` (Rust workspace member). Self-contained: depends on `loro 0.x`, exposes a CLI that takes a path to `notes.db` and runs the parity tests.
+- New crate: `src-tauri/crates/loro-spike/` (Rust workspace member). Self-contained: depends on `loro 0.x`, exposes a CLI that takes a path to `notes.db` and runs the parity tests. (Archived in Phase-2 day-8 — see git tag `pend-09/spike-archive`; the spike's notes/report live at `pending/PEND-09-SPIKE-{NOTES,REPORT}.md`.)
 
 **Phase 1 — Shadow:**
 

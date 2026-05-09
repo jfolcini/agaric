@@ -1,7 +1,8 @@
 //! PEND-09 Phase 0 day-10 — paired SQL read benchmark.
 //!
-//! Day-7's `read_path_bench` (in the loro-spike crate) measured Loro's three
-//! materializer read shapes on a populated 25K-block doc:
+//! Day-7's `read_path_bench` (in the now-archived loro-spike crate; see
+//! git tag `pend-09/spike-archive`) measured Loro's three materializer
+//! read shapes on a populated 25K-block doc:
 //!
 //! - (A) per-id `read_block` (single-row keyed lookup) — 2.29 µs/read
 //! - (B) `list_children`-equivalent walk (no parent_id index) — 24.83 ms/walk
@@ -511,11 +512,12 @@ fn main() {
 
     // ---- Day-7 Loro reference numbers (quoted, NOT re-measured) ------
     //
-    // The Loro spike crate is a separate cargo workspace member; we
-    // honour the "do not add loro to agaric deps" rule.  These numbers
-    // come from the day-7 reference run logged in
-    // crates/loro-spike/SPIKE-NOTES.md.
-    println!("---- day-7 Loro reference (quoted from SPIKE-NOTES.md) ----");
+    // The Loro spike crate was a separate cargo workspace member during
+    // Phase 0 (archived in Phase-2 day-8; see git tag
+    // `pend-09/spike-archive`); we honour the "do not add loro to agaric
+    // deps" rule.  These numbers come from the day-7 reference run
+    // logged in `pending/PEND-09-SPIKE-NOTES.md`.
+    println!("---- day-7 Loro reference (quoted from pending/PEND-09-SPIKE-NOTES.md) ----");
     println!("| (A) Loro read_block                     | 10000 |  0.023s   |    2.29 µs   |");
     println!("| (B) Loro list_children-walk             |  1000 | 24.832s   |   24.83 ms   |");
     println!("| (C) Loro read_property                  |  1000 |  0.001s   |    0.88 µs   |");

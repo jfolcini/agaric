@@ -35,7 +35,7 @@ Three things flip on the same `loro_authoritative=true` toggle:
    (`todo_state`, `priority`, `due_date`, `scheduled_date` per
    `pending/PEND-09-crdt-migration.md` lines 17-36 + Q10) become
    **derived** from the LoroDoc; SQL stays as the read cache
-   (Phase-0 day-7 verdict, `SPIKE-REPORT.md` §4.4) but its data flows
+   (Phase-0 day-7 verdict, `pending/PEND-09-SPIKE-REPORT.md` §4.4) but its data flows
    **out** of Loro instead of being computed by diffy.
 3. **The diffy code path is feature-gated for fallback only.** The
    `merge::apply::shadow_dispatch_for_record` call site
@@ -135,7 +135,7 @@ Owners are "the maintainer" throughout (solo-maintainer codebase per
 
 - **Requirement.** A one-off `agaric debug op-log-histogram`
   command run against the maintainer's real `notes.db`. Confirms
-  the spike's 30/50/10/5/5 op-mix proxy (`SPIKE-REPORT.md` §3 row
+  the spike's 30/50/10/5/5 op-mix proxy (`pending/PEND-09-SPIKE-REPORT.md` §3 row
   "Plan 9") is in the right ballpark, OR re-runs the day-4 replay
   bench with the real distribution.
 - **Closing artifact.** Phase-2 day-4 commit. Histogram pasted
@@ -152,8 +152,10 @@ Owners are "the maintainer" throughout (solo-maintainer codebase per
   Windows. Kill-criterion check passes on at least Linux + macOS.
 - **Closing artifact.** Phase-2 day-5 commit (§3).
 - **Verification.** `cargo run --release -p loro-spike --bin
-  replay_bench` reports a non-zero RSS reading and the same
-  single-digit-MiB ballpark on each platform.
+  replay_bench` (run before the day-8 archive — the spike crate is
+  now archived; see git tag `pend-09/spike-archive`) reports a
+  non-zero RSS reading and the same single-digit-MiB ballpark on
+  each platform.
 - **Note.** The wide kill-criterion margin (14×) means the verdict
   is robust to platform variance; this is sign-off completeness,
   not risk reduction.
@@ -170,7 +172,7 @@ Owners are "the maintainer" throughout (solo-maintainer codebase per
 - **Verification.** New migration runs cleanly on fresh boot;
   feature-on test count grows by 1-2.
 - **Sizing.** Spike day-4 measured ~6.4 MiB at 25K alive blocks
-  (`SPIKE-REPORT.md` §3 row "Plan 3"); 100K alive blocks
+  (`pending/PEND-09-SPIKE-REPORT.md` §3 row "Plan 3"); 100K alive blocks
   extrapolates to ≈26 MiB. SQLite-blob storage is unproblematic.
 
 ### Gate 7 — `agaric debug parity-report` diagnostic
@@ -190,17 +192,22 @@ Owners are "the maintainer" throughout (solo-maintainer codebase per
 
 - **Requirement.** `src-tauri/crates/loro-spike/` removed from the
   workspace. `SPIKE-NOTES.md` and `SPIKE-REPORT.md` preserved at
-  `pending/PEND-09-spike-{notes,report}.md` so citations remain
-  resolvable.
+  `pending/PEND-09-SPIKE-NOTES.md` and
+  `pending/PEND-09-SPIKE-REPORT.md` so citations remain resolvable.
 - **Closing artifact.** Phase-2 day-8 commit.
 - **Verification.** `cargo build` (default + `--features
-  loro-shadow`) clean; `cargo nextest run -p agaric` 3734; `grep
+  loro-shadow`) clean; `cargo nextest run -p agaric` 3768; `grep
   -rn loro-spike src-tauri/Cargo.toml` empty.
 - **Why archive, not delete.** The spike's binaries
   (`replay_bench`, `tree_replay_bench`, `commit_cadence_bench`,
-  `read_path_bench` per `SPIKE-REPORT.md` §11) remain useful as
+  `read_path_bench` per `pending/PEND-09-SPIKE-REPORT.md` §11) remain useful as
   reproduction harnesses. A git tag `pend-09/spike-archive` on
-  commit `fcdae147` is sufficient — no tarball needed.
+  commit `3e8a1267` is sufficient — no tarball needed. (The
+  task-spec originally suggested `fcdae147` (last spike-touching
+  commit at plan-write time); the tag landed on `3e8a1267` since
+  Phase-2 days 5 and 7 added two more commits touching
+  `crates/loro-spike/SPIKE-REPORT.md` between plan-write and
+  archive.)
 
 ## 3. Cutover sequence
 
@@ -271,11 +278,14 @@ human-readable formatter is nice-to-have. Three new IPC tests.
 
 Closes Gate 8. Removes `src-tauri/crates/loro-spike/` from
 `src-tauri/Cargo.toml` workspace members. Moves `SPIKE-NOTES.md` +
-`SPIKE-REPORT.md` to `pending/PEND-09-spike-{notes,report}.md`.
+`SPIKE-REPORT.md` to `pending/PEND-09-SPIKE-NOTES.md` +
+`pending/PEND-09-SPIKE-REPORT.md`.
 Updates cite-paths in this doc, in
 `pending/PEND-09-PHASE-1-REPORT.md`, and in
-`pending/PEND-09-crdt-migration.md`. Tags commit `fcdae147` as
-`pend-09/spike-archive` for historical reference.
+`pending/PEND-09-crdt-migration.md`. Tags commit `3e8a1267` as
+`pend-09/spike-archive` for historical reference (see Gate 8 in §2
+for why the tag landed on `3e8a1267` rather than the originally
+proposed `fcdae147`).
 
 ### Day 8.5 (likely needed) — Tag engine coverage
 
@@ -690,14 +700,14 @@ Gate 6 mandates the table; the cadence + retention is undecided.
 
 - **(a) Snapshot every N ops.** Predictable upper bound on rebuild
   cost and storage growth (≈26 MiB per 100K-block-equivalent
-  snapshot per `SPIKE-REPORT.md` §3 Q3). N = 1000 is plausible.
+  snapshot per `pending/PEND-09-SPIKE-REPORT.md` §3 Q3). N = 1000 is plausible.
 - **(b) Snapshot every M minutes.** Predictable wall-clock storage
   growth; less predictable rebuild cost. M = 60 minutes is
   plausible.
 - **(c) Snapshot on shutdown only.** Simplest; rebuild cost is
   the whole `op_log` for that space on first boot
   post-snapshot-loss. At 100K-op replay = 1.677 s
-  (`SPIKE-REPORT.md` §2 row 3), acceptable for a solo workstation.
+  (`pending/PEND-09-SPIKE-REPORT.md` §2 row 3), acceptable for a solo workstation.
 
 **Soft recommendation.** (c) for cutover-day-9 scope; revisit in
 Phase 3 if the maintainer's `op_log` grows past ~50K rows per
@@ -837,7 +847,7 @@ Always-on once day 6 lands.
 
 ### 8.7 What if Loro 2.0 ships during Phase 2?
 
-Phase-0 kill criterion 4 (`SPIKE-REPORT.md` §2 row 4) flagged
+Phase-0 kill criterion 4 (`pending/PEND-09-SPIKE-REPORT.md` §2 row 4) flagged
 this as YELLOW — within-1.x format-stability is strong, but the
 2.0 transition is "not under contract". Mitigation is the
 `loro_version: u8` envelope field (bumping to v2 at Gate 3); a

@@ -2,7 +2,7 @@
 
 ## Scope
 
-This doc captures the **front-end ↔ back-end edit-coordinate boundary**: who owns the in-progress edit while a user is typing, what happens when a remote sync arrives mid-edit, and where the authority transfers. It is the design-doc artefact called for by `src-tauri/crates/loro-spike/SPIKE-REPORT.md` §6 readiness checklist item 10 (line 244) — "Confirm the FE edit-coordinate space" — and by spike notebook Q10 (`SPIKE-NOTES.md` day-2; restated in `SPIKE-REPORT.md` §3 row "Notebook 10").
+This doc captures the **front-end ↔ back-end edit-coordinate boundary**: who owns the in-progress edit while a user is typing, what happens when a remote sync arrives mid-edit, and where the authority transfers. It is the design-doc artefact called for by `pending/PEND-09-SPIKE-REPORT.md` §6 readiness checklist item 10 (line 244) — "Confirm the FE edit-coordinate space" — and by spike notebook Q10 (`pending/PEND-09-SPIKE-NOTES.md` day-2; restated in `pending/PEND-09-SPIKE-REPORT.md` §3 row "Notebook 10").
 
 It does **not** cover the LWW resolution rule for property + move conflicts (see `pending/PEND-09-lww-resolution-rule.md`) and does not cover the materializer's own apply pipeline.
 
@@ -41,7 +41,7 @@ The TipTap editor itself is **not** unmounted by the sync handler. Its in-memory
 
 ## Why FE-authoritative locally
 
-- **Keystroke-rate IPC roundtrips are not viable.** Every TipTap doc transaction would otherwise need to round-trip through Tauri IPC + SQLite + materialiser before the FE could redraw. Even at sub-ms IPC, the resulting input lag (waiting for the BE to confirm the cursor position) destroys typing fluency. We measured this informally during the spike's day-2 LoroText demo (see `SPIKE-REPORT.md` §4.3).
+- **Keystroke-rate IPC roundtrips are not viable.** Every TipTap doc transaction would otherwise need to round-trip through Tauri IPC + SQLite + materialiser before the FE could redraw. Even at sub-ms IPC, the resulting input lag (waiting for the BE to confirm the cursor position) destroys typing fluency. We measured this informally during the spike's day-2 LoroText demo (see `pending/PEND-09-SPIKE-REPORT.md` §4.3).
 - **Operational-transform / CRDT-for-cursors is over-engineering for our latency targets.** Agaric is offline-first, sync-on-meet (mDNS + WiFi); we are not Google Docs. The user is the same person on both ends; "two simultaneous typists at sub-second latency" is not a target use case. Yjs's `Y.RelativePosition` and Loro's `Cursor` would each cost a non-trivial integration (cursor mapping, peer-id plumbing into the editor) for a benefit (cross-device cursor preservation under concurrent typing) that does not match agaric's UX promise.
 - **The flush boundary is a natural breakpoint.** Users blur a block when they finish editing it (move to the next, click elsewhere, switch tabs). That is exactly when a remote merge becomes well-defined: the user's local intent has been committed, and the merge layer can three-way-merge it against any concurrent remote edit. The blur boundary buys us a non-realtime convergence story without the full RTC stack.
 
@@ -85,17 +85,17 @@ In Phase 1 (shadow mode, the present), the FE never sees Loro state — Loro run
 
 In Phase 2 (cutover), Loro becomes the BE source of truth. The FE flush path still goes through `editBlock` IPC → typed `edit_block` op (until Phase 2 also rewrites the IPC surface, which is a separate decision); the materialiser will project from the Loro doc into the same `blocks.content` row the FE reads. The FE coord-space contract is unchanged.
 
-In Phase 2.5 / Phase 3, **a future revisit may want richer merge semantics on the FE.** Specifically, `LoroText` supports character-level merge (`SPIKE-REPORT.md` §4.3 demonstrates two peers converging on `"The slow brown dog"` from divergent edits to `"The quick brown fox"`). If we wanted the user to see the remote's in-band insertions appear in their in-progress edit (Notion-style live merge), we would need to:
+In Phase 2.5 / Phase 3, **a future revisit may want richer merge semantics on the FE.** Specifically, `LoroText` supports character-level merge (`pending/PEND-09-SPIKE-REPORT.md` §4.3 demonstrates two peers converging on `"The slow brown dog"` from divergent edits to `"The quick brown fox"`). If we wanted the user to see the remote's in-band insertions appear in their in-progress edit (Notion-style live merge), we would need to:
 
 - Subscribe the FE editor to Loro doc updates (a `subscribe()` callback on the per-space `LoroDoc`).
-- Bridge Loro's USV-coordinate edits (`LoroText::insert/delete/splice` — see `SPIKE-REPORT.md` §4.3 closing paragraph and notebook Q10) into TipTap's UTF-16 ProseMirror transactions; TipTap / contenteditable typically emits UTF-16, Loro speaks USV.
+- Bridge Loro's USV-coordinate edits (`LoroText::insert/delete/splice` — see `pending/PEND-09-SPIKE-REPORT.md` §4.3 closing paragraph and notebook Q10) into TipTap's UTF-16 ProseMirror transactions; TipTap / contenteditable typically emits UTF-16, Loro speaks USV.
 - Track cursor position via Loro `Cursor` (or our own `RelativePosition` analogue) to keep the user's caret stable through remote insertions.
 
-This is the **flagged-for-Phase-2 work** that `SPIKE-REPORT.md` §6 item 10 calls out. It is **not** Phase 1 scope. Phase 1's deliverable is "the FE coord-space contract is documented and the BE shadow-engine doesn't disturb it" — both true today.
+This is the **flagged-for-Phase-2 work** that `pending/PEND-09-SPIKE-REPORT.md` §6 item 10 calls out. It is **not** Phase 1 scope. Phase 1's deliverable is "the FE coord-space contract is documented and the BE shadow-engine doesn't disturb it" — both true today.
 
 ## See also
 
-- `src-tauri/crates/loro-spike/SPIKE-REPORT.md` §6 readiness item 10 — the open question this doc answers.
-- `src-tauri/crates/loro-spike/SPIKE-REPORT.md` §3 row "Notebook 10" — the USV vs UTF-16 coordinate-coercion question for the eventual FE-side Loro bridge.
+- `pending/PEND-09-SPIKE-REPORT.md` §6 readiness item 10 — the open question this doc answers.
+- `pending/PEND-09-SPIKE-REPORT.md` §3 row "Notebook 10" — the USV vs UTF-16 coordinate-coercion question for the eventual FE-side Loro bridge.
 - `pending/PEND-09-lww-resolution-rule.md` — companion doc covering property + move LWW.
-- `src-tauri/crates/loro-spike/SPIKE-REPORT.md` §4.3 — the LoroText character-merge demo motivating Phase 2's live-merge possibility.
+- `pending/PEND-09-SPIKE-REPORT.md` §4.3 — the LoroText character-merge demo motivating Phase 2's live-merge possibility.

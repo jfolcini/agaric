@@ -4,9 +4,11 @@ Two-week (planned 3-4 week) Phase 1 closure deliverable.
 Day 1 → day 10 complete on 2026-05-09.
 Synthesis deliverable; the user reads this to decide whether to greenlight
 Phase 2 (Cutover). All claims cited back to the running notebook in
-`src-tauri/crates/loro-spike/SPIKE-NOTES.md`, the spike's
-`SPIKE-REPORT.md`, the day-9 design docs in `pending/`, and the nine
-daily Phase-1 commits enumerated in §2 below.
+`pending/PEND-09-SPIKE-NOTES.md`, the spike's
+`pending/PEND-09-SPIKE-REPORT.md` (both moved out of the now-archived
+`src-tauri/crates/loro-spike/` in Phase-2 day-8 — see git tag
+`pend-09/spike-archive`), the day-9 design docs in `pending/`, and the
+nine daily Phase-1 commits enumerated in §2 below.
 
 ## 1. TL;DR
 
@@ -59,7 +61,7 @@ verdict: clean throughout, `loro` dependency NOT in default `cargo
 tree`. `--features loro-shadow` build verdict: clean throughout,
 `loro v1.12.x` + `xxhash-rust v0.8.x` at depth 1.
 
-**Cross-reference to SPIKE-REPORT §6 readiness checklist (14 items).**
+**Cross-reference to `pending/PEND-09-SPIKE-REPORT.md` §6 readiness checklist (14 items).**
 Items 1, 3, 4, 5, 6, 8, 9, 10 closed in Phase 1 (citations in the
 table above). Item 7 (port the remaining ~5 integration shapes from
 `merge/tests.rs`) was closed pre-Phase-1 in commit `87803fb9` —
@@ -79,21 +81,21 @@ Re-walk of the original `pending/PEND-09-crdt-migration.md` Risks table
 
 | Plan risk (line) | Phase-1 status | Closing artifact / remaining exposure |
 | ---------------- | -------------- | ------------------------------------- |
-| Loro pre-1.0 breaking changes (108) | **Closed** | Spike kill-criterion #4 + day-1 dep landed at `loro = "1.12"` caret-1; SPIKE-REPORT §2 row 4. No 1.x → 2.x transition in the Phase-1 window. |
+| Loro pre-1.0 breaking changes (108) | **Closed** | Spike kill-criterion #4 + day-1 dep landed at `loro = "1.12"` caret-1; `pending/PEND-09-SPIKE-REPORT.md` §2 row 4. No 1.x → 2.x transition in the Phase-1 window. |
 | Loro serialization format changes between versions (109) | **Closed for 1.x** | Spike day-1 evidence; `loro_version: u8 = 1` field on the `LoroBatch` envelope (`src-tauri/src/loro/envelope.rs`) is the documented mitigation lever for the eventual 2.x migration. |
 | Op-log → Loro import bug causes silent data loss (110) | **Mitigated** (partial) | Shadow-mode dual-write is operational at every `apply_op` site (day-2 + day-3 commits); parity sink with bucket classifier is operational (day-4 + day-6); proptest streams report zero D (day-8). **Remaining exposure:** the actual production-soak data has not yet been collected — no real `notes.db` parity rows exist. Phase 2 day-1 prerequisite. |
-| Loro perf cliff at large doc sizes (111) | **Closed for the spike-measured envelope** | Day-4 spike replay bench: 1.677 s wall-clock + 144 MiB peak RSS at 100K ops; SPIKE-REPORT §2 row 3. Phase 1 added no perf regressions because Loro is off the read hot path (SPIKE-REPORT §4.4). **Remaining exposure:** real-content lengths (50-500 chars typical, kilobyte-paste outliers) re-measurement deferred to Phase-2 day-1 (notebook Q9). |
+| Loro perf cliff at large doc sizes (111) | **Closed for the spike-measured envelope** | Day-4 spike replay bench: 1.677 s wall-clock + 144 MiB peak RSS at 100K ops; `pending/PEND-09-SPIKE-REPORT.md` §2 row 3. Phase 1 added no perf regressions because Loro is off the read hot path (`pending/PEND-09-SPIKE-REPORT.md` §4.4). **Remaining exposure:** real-content lengths (50-500 chars typical, kilobyte-paste outliers) re-measurement deferred to Phase-2 day-1 (notebook Q9). |
 | User loses awareness of concurrent edits (112) | **Phase-4 detail; no Phase-1 action** | Spike confirmed Loro silently merges character-level edits — exactly the user-visible promise. Phase 4 optional "recent merges" indicator is the right place for this. No Phase-1 surface. |
 | Snapshot format change breaks recovery on legacy snapshots (113) | **Open** | Phase-2 cutover detail. The plan's "old `merge/` engine in binary as fallback for ≥1 release" remains the correct discipline; the cutover plan in §4 below names this as a Phase-2 day-1 deliverable. |
 | Block tree invariant maintenance bugs (siblings same position; cycle) (114) | **Mitigated** | Spike day-5 confirmed both LoroMap+scalar and LoroTree leave invariant maintenance to the app layer. Phase-1 dual-write inherits the existing `merge::apply` invariant maintenance unchanged; no app-layer regression. **Remaining exposure:** the existing app-layer validation has been audited only against single-author streams (day-8 proptest); two-device concurrent reparent → cycle proptest deferred. |
 | Materializer assumes `is_conflict` exists during Phase 1-2 (115) | **As-planned** | `is_conflict` column unchanged. Phase 1 makes no schema change to `blocks`. Phase 3 drops it per plan. |
-| Materializer hot-path read cost from Loro doc (116) | **Closed** | Spike day-7 verdict — SQL stays as the read cache, Loro is sync truth-of-state. Phase 1 dual-write is write-side only; no read path was changed. SPIKE-REPORT §4.4. |
+| Materializer hot-path read cost from Loro doc (116) | **Closed** | Spike day-7 verdict — SQL stays as the read cache, Loro is sync truth-of-state. Phase 1 dual-write is write-side only; no read path was changed. `pending/PEND-09-SPIKE-REPORT.md` §4.4. |
 | Existing `is_conflict=1` rows in production (117) | **Open** | Phase-2 detail per plan Q8. Conversion rule (delete vs concat-into-merge-result vs keep-as-legacy) needs UX sign-off before Phase 2. Listed in §4 below. |
 | Op-type dispatcher breaks when every op_type=='loro_batch' (118) | **Mitigated** (schema landed; not yet wired) | Day-3 `LoroBatch` envelope at `src-tauri/src/loro/envelope.rs` carries `original_op_type: String`. **Remaining exposure:** the `payload: serde_json::Value` field still carries the typed payload; the cutover swaps that to `loro_bytes: Vec<u8>`. Schema is forward-compatible (envelope can carry both fields during a transition window). |
 | Test corpus may be insufficient to catch CRDT-specific bugs (119) | **Mitigated** | Day-8 proptest landed (3 cases × 256 = 768 randomised single-author streams). **Remaining exposure:** two-device concurrent-merge streams deferred. Listed in §4 below. |
 | `OpTransfer` opaque payload prevents debugging (120) | **Mitigated** | Day-3 envelope carries `payload_version: u8` for forward-compat decoding. **Remaining exposure:** `agaric debug parity-report`-style diagnostic command not yet built (open question §7). |
 | Tree-op conflict resolution semantics under LWW (121) | **Closed** | Day-9 design doc `pending/PEND-09-lww-resolution-rule.md` documents wallclock UTC + device_id lex (+ `seq` for property only) tiebreak rule; cites both the SQL implementation (`merge/resolve.rs:213-297`, `sync_protocol/operations.rs:699-822`) and the spike-side equivalence. Optional "remote-overrode-your-move" awareness log is Phase-4 polish. |
-| Per-space doc size grows unbounded with usage (122) | **Closed for the spike envelope** | Day-4 extrapolation: 100K alive blocks ≈ 26 MiB; SPIKE-REPORT §2 row 3 + §3 Q3. **Remaining exposure:** production content lengths re-measurement (Phase-2 day-1, notebook Q9). |
+| Per-space doc size grows unbounded with usage (122) | **Closed for the spike envelope** | Day-4 extrapolation: 100K alive blocks ≈ 26 MiB; `pending/PEND-09-SPIKE-REPORT.md` §2 row 3 + §3 Q3. **Remaining exposure:** production content lengths re-measurement (Phase-2 day-1, notebook Q9). |
 
 **Summary:** 5 closed, 6 mitigated (residual exposure documented in §4),
 3 open and explicitly Phase-2 day-1 territory. None of the 14 risks in
@@ -120,7 +122,7 @@ sequencing order:
    the day-4 replay bench with the real distribution to confirm the
    kill-criterion margin (358× wall-clock, 14× heap) is robust to it.
    Closing artifact: histogram pasted into the cutover-day-1 commit
-   message. Was scheduled for Phase 1 entry per SPIKE-REPORT §6 item 2;
+   message. Was scheduled for Phase 1 entry per `pending/PEND-09-SPIKE-REPORT.md` §6 item 2;
    slipped to Phase 2 entry without consequence (margins are wide
    enough).
 3. **`loro_doc_state` storage decision (plan Q4).** Plan recommends
@@ -150,7 +152,7 @@ sequencing order:
    artifact: a fourth proptest in `parity_proptest.rs`, `two_peer_concurrent_edit_stream_never_hits_bucket_d`, structurally similar to the spike's
    `tests/concurrent_edit.rs` + `tests/concurrent_reparent_tree.rs` but with
    the production `LoroEngine`.
-6. **macOS RSS measurement on the day-4 replay bench.** SPIKE-REPORT §6
+6. **macOS RSS measurement on the day-4 replay bench.** `pending/PEND-09-SPIKE-REPORT.md` §6
    item 11 + §9 item 4. The `mach_task_basic_info` wrapper is a small
    amount of unsafe code with no extra dep; the wide kill-criterion
    margin (14×) means the verdict is robust to platform variance, but
@@ -159,7 +161,7 @@ sequencing order:
    to the RSS reader; one re-run of `cargo run --release -p loro-spike
    --bin replay_bench` on a Mac with the result pasted into the
    cutover-day-1 commit message.
-7. **Spike-crate archive step.** SPIKE-REPORT §6 item 14 — when Phase 1
+7. **Spike-crate archive step.** `pending/PEND-09-SPIKE-REPORT.md` §6 item 14 — when Phase 1
    lands, archive `src-tauri/crates/loro-spike/` (either to a
    `pending/PEND-09-spike-archive.tar.gz` blob, or convert to a git tag
    `pend-09/spike-archive` and remove the workspace member) so the
@@ -211,7 +213,7 @@ internalise before the cutover commit:
 
 1. **The diffy-vs-Loro LWW semantic mismatch (wallclock vs Lamport) is
    C-bucket and inherent.** Spike day-3 corpus port surfaced two C-bucket
-   cases; one of them is the LWW tiebreak (SPIKE-REPORT §2 row 2). The
+   cases; one of them is the LWW tiebreak (`pending/PEND-09-SPIKE-REPORT.md` §2 row 2). The
    day-9 `pending/PEND-09-lww-resolution-rule.md` doc is the load-bearing
    reference: agaric production uses **wallclock UTC RFC 3339** (via
    `crate::now_rfc3339()` at `src-tauri/src/lib.rs:288-290`) with

@@ -1,5 +1,14 @@
 # PEND-09 Phase 0 — Loro spike notebook
 
+> **Archive note (Phase-2 day-8, Gate 8).** This notebook originally lived
+> at `src-tauri/crates/loro-spike/SPIKE-NOTES.md`. The spike crate was
+> archived in Phase-2 day-8 — the directory is gone, but the final source
+> is preserved at the annotated git tag `pend-09/spike-archive` (commit
+> `3e8a1267`). All in-doc references to `src-tauri/crates/loro-spike/...`
+> paths point at archived files; recover via
+> `git show pend-09/spike-archive:src-tauri/crates/loro-spike/<path>`.
+> Companion synthesis report moved to `pending/PEND-09-SPIKE-REPORT.md`.
+
 Running notebook for the 2-week hard time-boxed spike.  Sections grow as
 the spike proceeds; day-1 entries are below.
 

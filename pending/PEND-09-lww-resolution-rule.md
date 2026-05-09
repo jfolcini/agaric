@@ -2,7 +2,7 @@
 
 ## Scope
 
-This doc captures the project's **Last-Writer-Wins (LWW) rule** for two specific kinds of concurrent operation: `set_property` writes to the same `(block_id, key)` pair, and `move_block` ops on the same block. It is the design-doc artefact called for by `pending/PEND-09-crdt-migration.md` Q5 (line 201) and the Phase-1 readiness checklist item 9 in `src-tauri/crates/loro-spike/SPIKE-REPORT.md` §6 (line 243).
+This doc captures the project's **Last-Writer-Wins (LWW) rule** for two specific kinds of concurrent operation: `set_property` writes to the same `(block_id, key)` pair, and `move_block` ops on the same block. It is the design-doc artefact called for by `pending/PEND-09-crdt-migration.md` Q5 (line 201) and the Phase-1 readiness checklist item 9 in `pending/PEND-09-SPIKE-REPORT.md` §6 (line 243).
 
 It does **not** cover three-way text merge (that's `merge_block_text_only`'s job; it produces a conflict copy if diffy can't resolve cleanly), nor any other class of concurrent operation. Items explicitly out of scope are listed in the "When the rule does NOT fire" section below.
 
@@ -39,9 +39,9 @@ The detection logic does **not** walk the DAG explicitly. It relies on a simpler
 
 Nothing. The losing write is materialised away — overwritten by a fresh `set_property` op carrying the winner's value (`operations.rs:675-683`). There is no toast, no badge, no "your edit was overridden" dialogue. The new op enters the `op_log` like any other write, propagates to the other device on the next sync, and converges both devices' materialised state on the winner.
 
-This is the same UX surface as Phase 0 + Phase 1 of the Loro migration: `LoroMap` + scalar value uses LWW with key-write timestamps, and produces no user-visible conflict event for property writes. The user's only signal that the rule fired is the absence of a property value they thought they set — and even that is only visible if they happen to look. (The `src-tauri/crates/loro-spike/SPIKE-NOTES.md` day-3 corpus confirms ~17 of the 53 `merge/tests.rs` cases exercise LWW-tiebreak paths and all converge silently.)
+This is the same UX surface as Phase 0 + Phase 1 of the Loro migration: `LoroMap` + scalar value uses LWW with key-write timestamps, and produces no user-visible conflict event for property writes. The user's only signal that the rule fired is the absence of a property value they thought they set — and even that is only visible if they happen to look. (The `pending/PEND-09-SPIKE-NOTES.md` day-3 corpus confirms ~17 of the 53 `merge/tests.rs` cases exercise LWW-tiebreak paths and all converge silently.)
 
-A future "remote-overrode-your-move" awareness log is logged as a Phase-4 polish in `pending/PEND-09-crdt-migration.md:121` and `SPIKE-REPORT.md` §5 (the LWW-tree-op risk row); it is **not** part of the Phase-1 surface.
+A future "remote-overrode-your-move" awareness log is logged as a Phase-4 polish in `pending/PEND-09-crdt-migration.md:121` and `pending/PEND-09-SPIKE-REPORT.md` §5 (the LWW-tree-op risk row); it is **not** part of the Phase-1 surface.
 
 ## What this is NOT
 
@@ -61,11 +61,11 @@ A future "remote-overrode-your-move" awareness log is logged as a Phase-4 polish
 
 ## Loro-side equivalence
 
-`SPIKE-REPORT.md` §3 Q5 (line 45) is the load-bearing reference:
+`pending/PEND-09-SPIKE-REPORT.md` §3 Q5 (line 45) is the load-bearing reference:
 
 > LoroMap+scalar: LWW one-parent-wins (`parity_concurrent_reparent_different_parents`). LoroTree: also LWW one-parent-wins at the state level (`tree_concurrent_reparent_two_peers_converges` + 3-peer variant). Structurally LoroTree records `TreeOp::Move` as a distinct oplog op, potentially surfaceable via Loro's checkout API; LoroMap+scalar records it as an indistinguishable LoroMap-key write. Phase 1 picks LoroMap+scalar (see §4); the LWW resolution rule will be documented in the Phase-1 design doc per plan risks table.
 
-So: `LoroMap` + scalar value uses **LWW with key-write timestamps**. In normal cases (`SPIKE-REPORT.md` §2 row 2: bucket A = byte-identical or B = Loro better), Loro's per-key LWW resolves to the same winner the SQL dispatcher does, because the timestamps Loro stamps on key writes are derived from the same underlying clock the `created_at` column carries. The day-3 parity port (`SPIKE-REPORT.md` §3 Q5; `src-tauri/crates/loro-spike/tests/parity_corpus.rs`) confirms this: 13/15 cases A+B, two C cases documented as expected CRDT semantics (RGA-CRDT identical-edit doubling and Lamport-vs-wallclock LWW tiebreak — neither a property/move LWW disagreement).
+So: `LoroMap` + scalar value uses **LWW with key-write timestamps**. In normal cases (`pending/PEND-09-SPIKE-REPORT.md` §2 row 2: bucket A = byte-identical or B = Loro better), Loro's per-key LWW resolves to the same winner the SQL dispatcher does, because the timestamps Loro stamps on key writes are derived from the same underlying clock the `created_at` column carries. The day-3 parity port (`pending/PEND-09-SPIKE-REPORT.md` §3 Q5; spike `tests/parity_corpus.rs`, archived — see git tag `pend-09/spike-archive`) confirms this: 13/15 cases A+B, two C cases documented as expected CRDT semantics (RGA-CRDT identical-edit doubling and Lamport-vs-wallclock LWW tiebreak — neither a property/move LWW disagreement).
 
 Phase 1 dual-writes both engines; the existing diffy-based dispatcher remains authoritative. Phase 2 cutover hands authority to Loro, at which point `resolve_property_conflict` and the `operations.rs` dispatchers become deletable. The wallclock-based timebase semantics survive the cutover unchanged — Loro's internal LWW is timestamp-driven, and the timestamps come from the same `now_rfc3339()` source.
 
@@ -80,12 +80,12 @@ Phase 1 dual-writes both engines; the existing diffy-based dispatcher remains au
 ## Edge cases
 
 - **Wallclock skew across devices.** The rule trusts each device's wallclock at op-append time. A device whose clock is 30s fast will reliably "win" LWW races against a device whose clock is correct, even when the user interaction order on the slow device came later in real time. There is no NTP dependency in the codebase. Mitigation: the user owns both devices in agaric's offline-occasional-sync model, so skew is bounded by OS clock-sync (typically sub-second on modern OSes) and the user is the same person on both sides.
-- **Identical timestamps + Lamport-tiebreak claim.** The phrase "Lamport-vs-wallclock LWW tiebreak" appears in `SPIKE-REPORT.md` §2 (kill criterion 2) as a documented C-bucket case in the day-3 corpus port. The agaric production rule does **not** use Lamport — it uses `device_id` lex compare as the first tiebreaker (`resolve.rs:271-274`), `seq` as the second (`resolve.rs:275-278`). The C-bucket label in the spike refers to a corpus test where Loro's internal tiebreak (which is closer to Lamport-of-write-order) picked a different winner than the production rule did. Both winners are CRDT-correct; production reproducibility is preserved because both the SQL path and (post-cutover) Loro use a deterministic tiebreaker, just not the same one. Phase 2 cutover may need a one-shot "re-run LWW with Loro's rule" pass on legacy `is_conflict=1` rows; this is captured as `pending/PEND-09-crdt-migration.md` Q8.
+- **Identical timestamps + Lamport-tiebreak claim.** The phrase "Lamport-vs-wallclock LWW tiebreak" appears in `pending/PEND-09-SPIKE-REPORT.md` §2 (kill criterion 2) as a documented C-bucket case in the day-3 corpus port. The agaric production rule does **not** use Lamport — it uses `device_id` lex compare as the first tiebreaker (`resolve.rs:271-274`), `seq` as the second (`resolve.rs:275-278`). The C-bucket label in the spike refers to a corpus test where Loro's internal tiebreak (which is closer to Lamport-of-write-order) picked a different winner than the production rule did. Both winners are CRDT-correct; production reproducibility is preserved because both the SQL path and (post-cutover) Loro use a deterministic tiebreaker, just not the same one. Phase 2 cutover may need a one-shot "re-run LWW with Loro's rule" pass on legacy `is_conflict=1` rows; this is captured as `pending/PEND-09-crdt-migration.md` Q8.
 - **Clock drift backward.** A device whose clock jumps backward (e.g. NTP correction, or user manually setting the date) can produce a `created_at` smaller than its previous op's `created_at`. The rule still works — later real-world writes on that device will still beat the device's own earlier writes once the clock catches up — but during the drift window, the device may "lose" races against its previous self. The op_log's per-device `seq` is monotonic regardless of wallclock (`op_log::append_local_op_in_tx`), so the seq tiebreaker is the safety net for the same-device-same-ms-after-drift edge case. There is **no** "is the new `created_at` plausibly later than the previous one?" guard — by design, since the user's clock is the authority.
 - **`created_at` parse failure.** `resolve_property_conflict` falls back to lexicographic string compare with a `tracing::warn!` if either timestamp fails RFC 3339 parsing (`resolve.rs:257-265`). Given the `Z`-suffix invariant enforced at write time, this should be unreachable in practice; it's a defence-in-depth log, not a behaviour the rule depends on.
 
 ## See also
 
 - `pending/PEND-09-crdt-migration.md` Risks table (line 105) and Q5 (line 201) — the open question this doc answers.
-- `src-tauri/crates/loro-spike/SPIKE-REPORT.md` §3 Q5, §5 (the LWW-tree-op risk row) — the spike-side equivalence.
+- `pending/PEND-09-SPIKE-REPORT.md` §3 Q5, §5 (the LWW-tree-op risk row) — the spike-side equivalence.
 - `pending/PEND-09-fe-edit-coordinate-space.md` — companion doc covering the FE-vs-BE edit-coordinate boundary.

@@ -11,9 +11,11 @@
 //! needed by `merge::shadow_apply` to drive a `LoroEngine` alongside
 //! the existing diffy merge:
 //!
-//! * [`engine::LoroEngine`] — the CRDT engine ported from
-//!   `crates/loro-spike/src/lib.rs`, adapted to use [`crate::error::AppError`]
-//!   instead of `anyhow::Result` (the spike's throwaway error type).
+//! * [`engine::LoroEngine`] — the CRDT engine ported from the
+//!   spike's `src/lib.rs` (the spike crate was archived in Phase-2
+//!   day-8; see git tag `pend-09/spike-archive`), adapted to use
+//!   [`crate::error::AppError`] instead of `anyhow::Result` (the
+//!   spike's throwaway error type).
 //! * [`engine::BlockSnapshot`] — the read-back projection of a block
 //!   from the Loro doc, sufficient for parity-equality checks.
 //! * [`engine::peer_id_from_device_id`] — derives a stable Loro
