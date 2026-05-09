@@ -113,9 +113,14 @@ pub(crate) fn shadow_apply(
     let engine = guard.engine_mut();
 
     // Dispatch on op_type and capture a small, human-readable
-    // summary string.  We dispatch the FIVE op types the spike's
-    // engine supports (CreateBlock / EditBlock / DeleteBlock /
-    // MoveBlock / SetProperty); other op types log + skip.
+    // summary string.  Phase-2 day-8.5 expanded coverage to TEN op
+    // types (the original five — CreateBlock / EditBlock / DeleteBlock /
+    // MoveBlock / SetProperty — plus AddTag / RemoveTag / RestoreBlock /
+    // PurgeBlock / DeleteProperty).  AddAttachment / DeleteAttachment
+    // remain log+skip — those are file-blob ops and the file lives
+    // outside the CRDT state, so the engine has nothing useful to
+    // mirror (see SPIKE-REPORT.md and PEND-09 Phase-2 cutover plan §3
+    // day-8.5).
     let dispatch_result: Result<String, crate::error::AppError> = match op {
         crate::op::OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(|id| id.as_str());
@@ -176,16 +181,32 @@ pub(crate) fn shadow_apply(
                     )
                 })
         }
-        // Other op types (RestoreBlock / PurgeBlock / AddTag / RemoveTag /
-        // DeleteProperty / AddAttachment / DeleteAttachment) are not
-        // yet on the spike's engine surface.  Log + skip — Day-3+
-        // either expands the engine or filters these out at call sites
-        // before they reach `shadow_apply`.
+        crate::op::OpPayload::AddTag(p) => engine
+            .apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())
+            .map(|_| format!("add_tag:{}:{}", p.block_id.as_str(), p.tag_id.as_str())),
+        crate::op::OpPayload::RemoveTag(p) => engine
+            .apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())
+            .map(|_| format!("remove_tag:{}:{}", p.block_id.as_str(), p.tag_id.as_str())),
+        crate::op::OpPayload::RestoreBlock(p) => engine
+            .apply_restore_block(p.block_id.as_str())
+            .map(|_| format!("restore:{}", p.block_id.as_str())),
+        crate::op::OpPayload::PurgeBlock(p) => engine
+            .apply_purge_block(p.block_id.as_str())
+            .map(|_| format!("purge:{}", p.block_id.as_str())),
+        crate::op::OpPayload::DeleteProperty(p) => engine
+            .apply_delete_property(p.block_id.as_str(), &p.key)
+            .map(|_| format!("delete_property:{}:{}", p.block_id.as_str(), p.key)),
+        // AddAttachment / DeleteAttachment are out of scope per Phase-2
+        // day-8.5: attachments are file-blobs that live outside CRDT
+        // state — the file body sits on disk under `app_data_dir`,
+        // not inside the per-space LoroDoc.  Phase 3 may revisit if
+        // attachment metadata (filename / mime) needs CRDT-style
+        // merge; today the materializer's row-level write is enough.
         other => {
             tracing::debug!(
                 op_id,
                 op_type = %other.op_type_str(),
-                "shadow_apply: op type not supported by spike engine; skipping",
+                "shadow_apply: op type out of scope (attachment file-blob); skipping",
             );
             return;
         }
@@ -266,6 +287,23 @@ pub(crate) fn diffy_summary_for(op: &crate::op::OpPayload) -> String {
                 p.key,
                 value.as_deref().unwrap_or("<null>")
             )
+        }
+        // Phase-2 day-8.5 — typed summaries for the five newly-mirrored
+        // op types (AddTag / RemoveTag / RestoreBlock / PurgeBlock /
+        // DeleteProperty).  `unsupported:` is now reachable only for
+        // the attachment ops (AddAttachment / DeleteAttachment), which
+        // are intentionally out of CRDT scope — see `shadow_apply`'s
+        // dispatch comment.
+        crate::op::OpPayload::AddTag(p) => {
+            format!("add_tag:{}:{}", p.block_id.as_str(), p.tag_id.as_str())
+        }
+        crate::op::OpPayload::RemoveTag(p) => {
+            format!("remove_tag:{}:{}", p.block_id.as_str(), p.tag_id.as_str())
+        }
+        crate::op::OpPayload::RestoreBlock(p) => format!("restore:{}", p.block_id.as_str()),
+        crate::op::OpPayload::PurgeBlock(p) => format!("purge:{}", p.block_id.as_str()),
+        crate::op::OpPayload::DeleteProperty(p) => {
+            format!("delete_property:{}:{}", p.block_id.as_str(), p.key)
         }
         other => format!("unsupported:{}", other.op_type_str()),
     }

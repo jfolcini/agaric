@@ -238,8 +238,9 @@ mod shadow_apply_unit_tests {
     use crate::loro::shared::ShadowState;
     use crate::merge::shadow_apply;
     use crate::op::{
-        CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-        SetPropertyPayload,
+        AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
+        DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
+        PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
     };
     use crate::space::SpaceId;
     use crate::ulid::BlockId;
@@ -458,5 +459,239 @@ mod shadow_apply_unit_tests {
             );
         }
         assert_eq!(state.sampler.total_diverged(), 0);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase-2 day-8.5 — dispatcher coverage for the five newly-mirrored
+    // op types (AddTag / RemoveTag / RestoreBlock / PurgeBlock /
+    // DeleteProperty).  Each test seeds the engine with a CreateBlock,
+    // dispatches the new op via `shadow_apply`, and asserts the engine
+    // reflects the mutation (mutation-test of the dispatcher arm).
+    // ---------------------------------------------------------------------
+
+    /// Valid ULID fixture for the tag-id position.  Distinct from
+    /// `BLOCK_1` / `BLOCK_2` so a swapped (block_id, tag_id) bug
+    /// surfaces as a wrong-id assertion.
+    const TAG_ULID: &str = "01HZ00000000000000000000T1";
+
+    fn add_tag_op(block_id: &str, tag_id: &str) -> OpPayload {
+        OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted(block_id),
+            tag_id: BlockId::from_trusted(tag_id),
+        })
+    }
+
+    fn remove_tag_op(block_id: &str, tag_id: &str) -> OpPayload {
+        OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: BlockId::from_trusted(block_id),
+            tag_id: BlockId::from_trusted(tag_id),
+        })
+    }
+
+    fn restore_op(block_id: &str) -> OpPayload {
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::from_trusted(block_id),
+            // `deleted_at_ref` is not consulted by the engine (LWW
+            // happens at the LoroValue level); supply a placeholder.
+            deleted_at_ref: "2025-01-15T12:00:00Z".into(),
+        })
+    }
+
+    fn purge_op(block_id: &str) -> OpPayload {
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::from_trusted(block_id),
+        })
+    }
+
+    fn delete_prop_op(block_id: &str, key: &str) -> OpPayload {
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::from_trusted(block_id),
+            key: key.into(),
+        })
+    }
+
+    /// Helper: drive an op through `shadow_apply` using the dispatcher's
+    /// own diffy_summary as the diffy side (so the parity event is a
+    /// match).  Mirrors the pattern from the existing tests.
+    fn dispatch(state: &ShadowState, space: &SpaceId, op_id: &str, op: &OpPayload) {
+        let summary = super::super::diffy_summary_for(op);
+        shadow_apply(op_id, op, DEVICE_ID, space, summary, state);
+    }
+
+    #[test]
+    fn shadow_apply_dispatches_add_tag() {
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+        // Seed: block must exist before tags are applied.
+        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
+        dispatch(&state, &space, "DEV/2", &add_tag_op(BLOCK_1, TAG_ULID));
+
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let tags = guard.engine_mut().read_tags(BLOCK_1).expect("read_tags");
+        assert_eq!(
+            tags,
+            vec![BlockId::from_trusted(TAG_ULID).as_str().to_string()]
+        );
+    }
+
+    #[test]
+    fn shadow_apply_dispatches_remove_tag() {
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
+        dispatch(&state, &space, "DEV/2", &add_tag_op(BLOCK_1, TAG_ULID));
+        dispatch(&state, &space, "DEV/3", &remove_tag_op(BLOCK_1, TAG_ULID));
+
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let tags = guard.engine_mut().read_tags(BLOCK_1).expect("read_tags");
+        assert!(tags.is_empty(), "tag must be removed");
+    }
+
+    #[test]
+    fn shadow_apply_dispatches_restore_block() {
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
+        dispatch(&state, &space, "DEV/2", &delete_op(BLOCK_1));
+        dispatch(&state, &space, "DEV/3", &restore_op(BLOCK_1));
+
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        assert!(
+            !guard
+                .engine_mut()
+                .read_deleted(BLOCK_1)
+                .expect("read_deleted"),
+            "post-restore must not be flagged deleted"
+        );
+    }
+
+    #[test]
+    fn shadow_apply_dispatches_purge_block() {
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
+        dispatch(&state, &space, "DEV/2", &purge_op(BLOCK_1));
+
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        assert!(
+            guard.engine_mut().read_block(BLOCK_1).unwrap().is_none(),
+            "purged block must be absent from engine"
+        );
+    }
+
+    #[test]
+    fn shadow_apply_dispatches_delete_property() {
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
+        dispatch(&state, &space, "DEV/2", &set_prop_op(BLOCK_1, "k", "v"));
+        dispatch(&state, &space, "DEV/3", &delete_prop_op(BLOCK_1, "k"));
+
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        assert_eq!(
+            guard.engine_mut().read_property(BLOCK_1, "k").unwrap(),
+            None,
+            "delete_property must remove the key entirely"
+        );
+    }
+
+    /// All five new dispatch arms produce a parity event whose
+    /// diffy_summary matches the loro_summary exactly (same shape as
+    /// the existing five-op test).
+    #[test]
+    fn shadow_apply_records_match_for_new_op_types() {
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Seed sequence so each op has a valid target.
+        let seed = vec![
+            ("DEV/0", create_op(BLOCK_1, "seed")),
+            ("DEV/1", set_prop_op(BLOCK_1, "k", "v")),
+        ];
+        for (id, op) in &seed {
+            dispatch(&state, &space, id, op);
+        }
+        let baseline = state.sampler.total_pushed();
+
+        let new_ops = vec![
+            ("DEV/2", add_tag_op(BLOCK_1, TAG_ULID)),
+            ("DEV/3", remove_tag_op(BLOCK_1, TAG_ULID)),
+            ("DEV/4", delete_prop_op(BLOCK_1, "k")),
+            ("DEV/5", delete_op(BLOCK_1)),
+            ("DEV/6", restore_op(BLOCK_1)),
+            ("DEV/7", purge_op(BLOCK_1)),
+        ];
+        for (id, op) in &new_ops {
+            dispatch(&state, &space, id, op);
+        }
+
+        // One parity event per dispatch (no skipped arms).
+        assert_eq!(
+            state.sampler.total_pushed(),
+            baseline + new_ops.len() as u64,
+            "every new op type must produce exactly one parity event"
+        );
+
+        // Every event for the new ops must have matched (we passed
+        // the diffy_summary the dispatcher itself produces).
+        let snap = state.sampler.snapshot();
+        for ev in &snap[snap.len() - new_ops.len()..] {
+            assert!(
+                ev.r#match,
+                "new-op self-summary must match: op_type={} diffy={} loro={}",
+                ev.op_type, ev.diffy_result, ev.loro_result,
+            );
+        }
+        assert_eq!(state.sampler.total_diverged(), 0);
+    }
+
+    /// Attachment ops are intentionally out of scope per Phase-2
+    /// day-8.5 (file-blob ops live outside CRDT state).  The
+    /// dispatcher must skip them — no parity event recorded, no
+    /// engine mutation.
+    #[test]
+    fn shadow_apply_skips_attachment_ops() {
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
+        let baseline = state.sampler.total_pushed();
+
+        let add_att = OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: BlockId::test_id("A1"),
+            block_id: BlockId::from_trusted(BLOCK_1),
+            mime_type: "image/png".into(),
+            filename: "p.png".into(),
+            size_bytes: 1,
+            fs_path: "/tmp/p.png".into(),
+        });
+        let del_att = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: BlockId::test_id("A1"),
+            fs_path: "/tmp/p.png".into(),
+        });
+        dispatch(&state, &space, "DEV/2", &add_att);
+        dispatch(&state, &space, "DEV/3", &del_att);
+
+        // Both attachment ops must have been skipped — no new parity
+        // events past the baseline.
+        assert_eq!(
+            state.sampler.total_pushed(),
+            baseline,
+            "attachment ops must be log-and-skip (no parity event)"
+        );
     }
 }
