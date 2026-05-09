@@ -871,6 +871,170 @@ at 1.12.
   LoroMap-key write.  Phase 1 doesn't need this distinction; if a
   Phase-1.5 audit-log feature wants it, switch then.
 
+## Day 6 (2026-05-09)
+
+Two short open questions bundled together: peer-id strategy (Q7) and
+commit cadence (Q6).  Both are quick once the Loro 1.12 surface is in
+hand.
+
+### Peer-id strategy (Q7) — RESOLVED
+
+**Production input shape.**  `device_id` in agaric is a canonical
+UUID-v4 string in lowercase-hyphenated form (see
+`src-tauri/src/device.rs:83-99`, `get_or_create_device_id`).  The id is
+generated once on first launch and never regenerated — it is the
+device's permanent identity in the op log.
+
+**Loro input shape.**  `loro::PeerID` is a transparent `u64` alias
+(`loro-common/src/lib.rs:28`: `pub type PeerID = u64;`).
+[`LoroDoc::set_peer_id`](https://github.com/loro-dev/loro/blob/main/crates/loro/src/lib.rs#L985)
+takes that `u64` and returns `LoroResult<()>`; the docs warn:
+
+> "Pitfalls: Never reuse the same PeerID across concurrent writers
+> (multiple tabs/devices). Duplicate PeerIDs can produce conflicting
+> OpIDs and corrupt the document."
+
+So we need a deterministic, well-spread `String -> u64` mapping.
+
+**Hash chosen: `std::hash::DefaultHasher` (SipHash-1-3).**  A single
+free function `peer_id_from_device_id(device_id: &str) -> PeerID` lives
+in `src/lib.rs`; both `LoroEngine::with_peer_id` and
+`TreeEngine::with_peer_id` route through it before calling
+`doc.set_peer_id(...)`.
+
+Why not `xxhash-rust`?  Quicker hashes exist, but Q7 only needs a few
+draws per process lifetime (one per engine construction); the hash is
+nowhere near a hot path.  `std::hash` is in the standard library — no
+new Cargo dep, satisfying the spike's constraint.
+
+Why deterministic across runs?  `DefaultHasher::new()` uses a fixed
+seed per the standard library docs — same input bytes, same digest, on
+the same compiler version.  The docs reserve the right to change the
+algorithm across stdlib versions.  For a *spike* that's fine; for
+production the natural follow-up is to pin `xxhash-rust` for
+cross-stdlib-version stability.  Captured as new question 13 below.
+
+**Collision math (the headline reassurance).**  Birthday-bound for `n`
+independent draws over a `2^64` space:
+
+```text
+P(collision) ≈ n² / 2 · 2^64 = n² / 2^65
+```
+
+For `n` = a "few thousand devices" the math:
+
+| Devices `n` | `P(collision)` |
+| --------------- | --------------------------- |
+| 10 | ~1.4e-18  (effectively zero) |
+| 1 000 | ~1.4e-14 |
+| 10 000 | ~2.7e-12 |
+| 100 000 | ~2.7e-10 |
+| 1 000 000 | ~2.7e-08 |
+
+At "few thousand devices" — agaric's plausible scale — collision
+probability is ~1e-13 / ~1e-14: lower than the per-device probability
+of cosmic-ray-induced bit flip in the same hour.  Loro's "never reuse
+PeerID" caveat is satisfied probabilistically in the strongest sense
+the universe permits.
+
+**Tests added** (`tests/round_trip.rs`):
+
+1. `peer_id_from_device_id_is_deterministic_across_instances` — same
+   device_id ⇒ same peer_id, twice over, on both `LoroEngine` and
+   `TreeEngine`.
+2. `peer_id_from_device_id_spreads_distinct_inputs` — two distinct
+   UUID-shaped device_ids hash to distinct peer_ids.
+3. `with_peer_id_engines_round_trip_via_snapshot_swap` — two engines
+   with stable peer_ids exchange snapshots, both peers see both
+   blocks, post-merge snapshots are byte-identical.  Confirms that
+   pinning peer_id doesn't break Loro's eventual-consistency property.
+
+All three pass green.
+
+### Commit cadence (Q6) — RESOLVED
+
+**Method.**  Added `apply_*_no_commit` variants of every `apply_*`
+method on `LoroEngine` (the existing public methods now route through
+private `_inner` helpers and add `doc.commit()` afterwards; the new
+public no-commit variants call the same `_inner` and skip the commit).
+A public `commit()` method exposes `LoroDoc::commit_then_renew` so the
+bench loop can drive its own cadence.
+
+New binary `src/bin/commit_cadence_bench.rs` runs the day-4 30/50/10/5/5
+op-mix at 10K ops at four cadences.  Bootstrap (16 page roots) is
+outside the timed region; one final `commit()` after the loop ensures
+the snapshot reflects every op regardless of K.
+
+**Results** (representative `cargo run --release ... commit_cadence_bench`):
+
+| K (every) | wall-clock (s) | snapshot bytes | alive blocks |
+| --------- | -------------- | -------------- | ------------ |
+| 1 (per-op) | 0.053 | 660 195 | 2 627 |
+| 10 | 0.044 | 660 903 | 2 627 |
+| 1 000 | 0.041 | 663 787 | 2 627 |
+| 10 000 (1×end) | 0.047 | 660 780 | 2 627 |
+
+Speed-up vs per-op baseline: K=10 ≈ 1.20×, K=1000 ≈ 1.29×, K=10000 ≈
+1.13×.  Variance run-to-run is ±10-15 % at this 10K scale (sub-50 ms
+absolute times); the deltas are dominated by noise.
+
+**Trade-off discussion.**
+
+- **Wall-clock.**  Worst-case (per-op) finishes 10K ops in ~50 ms.
+  Best-case (K=1000) finishes in ~40 ms.  The absolute delta is ≤15 ms
+  per 10K ops.  Extrapolated to a 100K-op replay (day-4 territory),
+  the cadence question would buy or cost roughly a tenth of a second.
+  Day-4's 100K replay finished in 1.7 s; a 10 % swing on that is
+  noise-floor-level.  **The "batched commits are >2× faster" condition
+  in the deliverable is NOT met** — they're ~1.2× faster, with
+  per-cadence variance of similar magnitude.
+- **Snapshot bytes.**  All four cadences produce snapshots within
+  ~0.5 % of each other (660-664 KB).  No size regression for either
+  end of the spectrum.  The K=1000 row is a hair larger because Loro's
+  internal change-batching captures slightly more transitive history
+  per commit, but the difference (~3 KB / 10K ops) is in the noise.
+- **Crash semantics.**  Per-op commits localise blast radius: a crash
+  loses *at most* the in-flight op.  Batched commits (K=1000 or
+  K=10000) lose up to K-1 ops — for K=10000 that's the entire batch.
+  The migration plan stores the canonical state in the existing
+  `op_log` table; the Loro doc is a derived read-side cache.  Even at
+  K=10000, a crash mid-batch is recoverable by replaying the lost ops
+  from the op_log on next boot.  So the crash-safety axis isn't a
+  hard blocker, but it tilts the recommendation toward simpler
+  cadences when the perf delta is in the noise.
+
+**Recommendation: keep per-op commits for Phase 1 cutover.**  The perf
+delta does not exceed the deliverable's "2×" threshold; the simplicity
+upside is real (no "what if we crashed mid-batch" reasoning, no need
+to track unflushed-op count, no cadence tuning needed); and the day-4
+result already showed that even at the pessimistic per-op cadence we
+are 350× under kill-criterion #3's 10-minute wall-clock floor.
+
+If a future profile flags `LoroDoc::commit` as a hot spot in a real
+workload (say, the >10K-ops bulk-import path the materializer might
+trigger), revisit batched commits *for that specific path* with an
+explicit `apply_*_no_commit + commit()` pair.  The plumbing is now in
+place; no further engine changes are required to opt in.
+
+### Open questions touched today
+
+- ~~**Q6 (`commit()` cadence).**~~  **RESOLVED.**  Per-cadence wall-
+  clock variance (≤30 % at 10K ops) is below the 2× threshold; snapshot
+  bytes invariant within 0.5 %.  Recommendation: keep per-op commits
+  for Phase 1.  See above.
+- ~~**Q7 (peer-id strategy).**~~  **RESOLVED.**  `LoroEngine::with_peer_id`
+  / `TreeEngine::with_peer_id` constructors hash production `device_id`
+  via `std::hash::DefaultHasher` (SipHash-1-3) into a `u64`; collision
+  probability at agaric's scale is ~1e-13.  Three unit tests cover
+  determinism, spread, and snapshot-swap convergence.  See above.
+- **(NEW, day 6) Hash stability across stdlib versions.**
+  `DefaultHasher` is "currently SipHash-1-3" but the algorithm is not
+  contractually fixed across compiler versions.  For production, pin
+  `xxhash-rust = "0.8"` (or similar) so a Rust compiler upgrade can't
+  re-roll every device's peer_id.  Day-6 stays on `DefaultHasher`
+  because (a) the spike is throwaway and (b) the bench-only behaviour
+  needs determinism within a single build only.  Phase 1 tracker.
+
 ## Open questions for next session(s) (carry-over)
 
 1. **Per-space doc sizing.**  Plan calls for one doc per space.
@@ -892,16 +1056,16 @@ at 1.12.
 5. ~~**`LoroText` for `content`.**~~  **Resolved on day 2** — switched
    in, round-trip green, concurrent-edit convergence proven, size
    overhead at 3-block baseline recorded.  See "Day 2" section above.
-6. **`commit()` cadence.**  `apply_create_block` calls `doc.commit()`
-   after every block.  **Day-4 finding:** at that pessimistic cadence
-   throughput is 60K ops/sec, so cadence is no longer load-bearing
-   for kill-criterion purposes.  Phase 1 will pick a cadence driven by
-   op_log batch boundaries; spike can leave this open.
-7. **Peer-id strategy.**  Day-1 uses Loro's auto-assigned peer id.
-   Production wants something derived from device_id (already
-   available in agaric) so that op streams are attributable.  Need to
-   confirm `LoroDoc::set_peer_id` is the right API and that the
-   peer-id space is wide enough.
+6. ~~**`commit()` cadence.**~~  **Day-6: 4-cadence benchmark
+   (K = 1, 10, 1 000, 10 000) at 10K ops finds per-cadence variance
+   ≤30 %, snapshot bytes invariant within 0.5 %.  Recommendation: keep
+   per-op commits for Phase 1.**  See Day-6 section above.
+7. ~~**Peer-id strategy.**~~  **Day-6: `LoroEngine::with_peer_id` /
+   `TreeEngine::with_peer_id` hash the production `device_id` (UUID-v4
+   string) via `std::hash::DefaultHasher` into a `u64`.  Collision
+   probability at agaric's scale is ~1e-13.  Three unit tests cover
+   determinism, spread, and snapshot-swap convergence.**  See Day-6
+   section above.
 8. **Materializer read path.**  Plan mentions the >10% perf regression
    threshold (PEND-09 risks).  Spike needs to compare in-memory Loro
    handle reads vs serialize-each-apply and benchmark both against
@@ -924,3 +1088,10 @@ at 1.12.
     PEND-09 line 205 calls out "verify against your `notes.db`
     pre-spike."  Sample the user's actual op_log histogram before
     Phase 1 to confirm the proxy is in the right ballpark.
+13. **(NEW, day 6) Hash stability across stdlib versions.**  Day-6
+    uses `std::hash::DefaultHasher` (SipHash-1-3 in current stable
+    Rust) for the `device_id -> peer_id` mapping — fine for the
+    spike, but stdlib reserves the right to change the algorithm
+    across compiler versions.  For production, switch to a stable
+    third-party hash (`xxhash-rust = "0.8"` is a natural fit:
+    deterministic, fast, no heavy crypto deps).  Phase 1 tracker.

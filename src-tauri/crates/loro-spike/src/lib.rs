@@ -16,8 +16,43 @@
 pub mod tree_engine;
 pub use tree_engine::{TreeBlockSnapshot, TreeEngine};
 
+use std::hash::{Hash, Hasher};
+
 use anyhow::{anyhow, Context, Result};
-use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroValue};
+use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroValue, PeerID};
+
+/// Day-6 (Q7): map an external `device_id` string (production uses a
+/// canonical UUID-v4) into a `loro::PeerID` (`u64`).
+///
+/// We use `std::hash::DefaultHasher` (currently SipHash-1-3 in stable
+/// Rust).  Properties we need:
+///
+/// - **Deterministic across runs.**  `DefaultHasher::new()` seeds to a
+///   fixed key per the standard library docs; the same input bytes
+///   produce the same digest, run after run, on the same compiler
+///   version.  Caveat: the docs reserve the right to change the algorithm
+///   across stdlib versions.  For a *spike* that's fine (the spike is
+///   throwaway code); for production we'd pin a specific hash like
+///   `xxhash-rust` for cross-version stability.  Documented as a
+///   follow-up.
+/// - **Spread.**  SipHash is a well-mixed pseudorandom function — output
+///   bits are independent for the purposes of collision counting.
+/// - **No heavy dep.**  `std::hash` is in the standard library; no
+///   `blake3`, `sha2`, etc.
+///
+/// **Collision math.**  Birthday-bound for `n` independent draws over a
+/// `2^64` space: collision probability ≈ `n² / 2^65`.  For `n = 10_000`
+/// devices that's `10^8 / 3.7e19 ≈ 2.7e-12` — i.e. effectively zero.
+/// For `n = 1_000_000` devices it's still ~`2.7e-8`, well below "ever
+/// happens in practice" thresholds.  Loro's documented requirement is
+/// "Never reuse the same PeerID across concurrent writers" (loro 1.12
+/// `crates/loro/src/lib.rs:980-983`); the birthday-bound math is the
+/// quantitative case that we won't.
+pub fn peer_id_from_device_id(device_id: &str) -> PeerID {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    device_id.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Top-level LoroMap key holding the per-block sub-maps.
 ///
@@ -69,6 +104,55 @@ impl LoroEngine {
         }
     }
 
+    /// Day-6 (Q7): construct a `LoroEngine` whose Loro peer id is derived
+    /// deterministically from a production `device_id` string.  See
+    /// [`peer_id_from_device_id`] for the hash + collision math.
+    ///
+    /// Panics only if Loro's `set_peer_id` rejects the value, which the
+    /// 1.12 source treats as an internal-invariant violation only (the
+    /// `LoroResult` wraps an error chain, but `set_peer_id` of a fresh
+    /// doc cannot fail in practice — Loro fails it only on a doc that
+    /// has already produced ops with a different peer id, which can't
+    /// happen on a freshly-constructed `LoroDoc`).
+    pub fn with_peer_id(device_id: &str) -> Self {
+        let doc = LoroDoc::new();
+        let peer = peer_id_from_device_id(device_id);
+        doc.set_peer_id(peer)
+            .expect("set_peer_id on fresh LoroDoc must succeed");
+        Self { doc }
+    }
+
+    /// Read back the engine's current Loro peer id.  Useful for tests
+    /// asserting that two engines with the same `device_id` got the same
+    /// peer id.
+    pub fn peer_id(&self) -> PeerID {
+        self.doc.peer_id()
+    }
+
+    /// Day-6 (Q6): explicit `commit()` flush, exposed so the cadence
+    /// benchmark (`commit_cadence_bench`) can drive its own batching
+    /// boundaries instead of relying on the per-op flushes inside the
+    /// `apply_*_no_commit` helpers below.
+    pub fn commit(&mut self) {
+        self.doc.commit();
+    }
+
+    /// Day-6 (Q6) variant — same as `apply_create_block` but does NOT
+    /// call `doc.commit()`.  Used by the commit-cadence benchmark to
+    /// measure batched-commit cost vs the default per-op cadence.  Caller
+    /// is responsible for flushing via `LoroEngine::commit()` at whatever
+    /// boundary they prefer.
+    pub fn apply_create_block_no_commit(
+        &mut self,
+        block_id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        position: i64,
+    ) -> Result<()> {
+        self.apply_create_block_inner(block_id, block_type, content, parent_id, position)
+    }
+
     /// Insert a block into the doc under the `"blocks"` root LoroMap.
     ///
     /// Returns an error rather than panicking on Loro API failures so
@@ -76,6 +160,24 @@ impl LoroEngine {
     /// panics for internal-invariant violations only (see loro/AGENTS.md
     /// "Internal Invariant Preservation Over Graceful Degradation").
     pub fn apply_create_block(
+        &mut self,
+        block_id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        position: i64,
+    ) -> Result<()> {
+        self.apply_create_block_inner(block_id, block_type, content, parent_id, position)?;
+        // commit() flushes the implicit transaction so the change is
+        // visible to subsequent reads + included in any export.
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Shared body — does the writes but not the commit.  Both
+    /// `apply_create_block` and `apply_create_block_no_commit` route
+    /// through here so the two paths can't drift.
+    fn apply_create_block_inner(
         &mut self,
         block_id: &str,
         block_type: &str,
@@ -118,10 +220,6 @@ impl LoroEngine {
         block_map
             .insert(FIELD_POSITION, LoroValue::from(position))
             .with_context(|| format!("create block {block_id}: set position"))?;
-
-        // commit() flushes the implicit transaction so the change is
-        // visible to subsequent reads + included in any export.
-        self.doc.commit();
         Ok(())
     }
 
@@ -189,6 +287,29 @@ impl LoroEngine {
         range_len: usize,
         replacement: &str,
     ) -> Result<()> {
+        self.apply_edit_content_inner(block_id, range_start, range_len, replacement)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Day-6 (Q6) commit-cadence variant — see [`apply_create_block_no_commit`].
+    pub fn apply_edit_content_no_commit(
+        &mut self,
+        block_id: &str,
+        range_start: usize,
+        range_len: usize,
+        replacement: &str,
+    ) -> Result<()> {
+        self.apply_edit_content_inner(block_id, range_start, range_len, replacement)
+    }
+
+    fn apply_edit_content_inner(
+        &mut self,
+        block_id: &str,
+        range_start: usize,
+        range_len: usize,
+        replacement: &str,
+    ) -> Result<()> {
         let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
         let block_value = blocks
             .get(block_id)
@@ -226,7 +347,6 @@ impl LoroEngine {
         content_text
             .splice(range_start, range_len, replacement)
             .map_err(|e| anyhow!("edit content: block {block_id} splice failed: {e}"))?;
-        self.doc.commit();
         Ok(())
     }
 
@@ -254,11 +374,21 @@ impl LoroEngine {
     /// the same "deleted" state via LWW (both peers write the same value
     /// — Loro's set-and-forget semantics for scalars handle this idempotently).
     pub fn apply_delete_block(&mut self, block_id: &str) -> Result<()> {
+        self.apply_delete_block_inner(block_id)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Day-6 (Q6) commit-cadence variant.
+    pub fn apply_delete_block_no_commit(&mut self, block_id: &str) -> Result<()> {
+        self.apply_delete_block_inner(block_id)
+    }
+
+    fn apply_delete_block_inner(&mut self, block_id: &str) -> Result<()> {
         let block_map = self.get_block_map(block_id, "delete block")?;
         block_map
             .insert(FIELD_DELETED_AT, LoroValue::from("2025-01-15T12:00:00Z"))
             .with_context(|| format!("delete block {block_id}: set deleted_at"))?;
-        self.doc.commit();
         Ok(())
     }
 
@@ -268,6 +398,27 @@ impl LoroEngine {
     /// `insert` is LWW per key); the loser's intent is dropped, which
     /// matches the plan's stated tradeoff.
     pub fn apply_move_block(
+        &mut self,
+        block_id: &str,
+        new_parent_id: Option<&str>,
+        new_position: i64,
+    ) -> Result<()> {
+        self.apply_move_block_inner(block_id, new_parent_id, new_position)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Day-6 (Q6) commit-cadence variant.
+    pub fn apply_move_block_no_commit(
+        &mut self,
+        block_id: &str,
+        new_parent_id: Option<&str>,
+        new_position: i64,
+    ) -> Result<()> {
+        self.apply_move_block_inner(block_id, new_parent_id, new_position)
+    }
+
+    fn apply_move_block_inner(
         &mut self,
         block_id: &str,
         new_parent_id: Option<&str>,
@@ -284,7 +435,6 @@ impl LoroEngine {
         block_map
             .insert(FIELD_POSITION, LoroValue::from(new_position))
             .with_context(|| format!("move block {block_id}: set position"))?;
-        self.doc.commit();
         Ok(())
     }
 
@@ -292,6 +442,27 @@ impl LoroEngine {
     /// corpus port).  Stores under the top-level `block_properties` map,
     /// nested by block_id then key.  LWW per (block_id, key).
     pub fn apply_set_property(
+        &mut self,
+        block_id: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<()> {
+        self.apply_set_property_inner(block_id, key, value)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Day-6 (Q6) commit-cadence variant.
+    pub fn apply_set_property_no_commit(
+        &mut self,
+        block_id: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<()> {
+        self.apply_set_property_inner(block_id, key, value)
+    }
+
+    fn apply_set_property_inner(
         &mut self,
         block_id: &str,
         key: &str,
@@ -320,7 +491,6 @@ impl LoroEngine {
         block_props
             .insert(key, v)
             .with_context(|| format!("set_property: block {block_id} key {key}"))?;
-        self.doc.commit();
         Ok(())
     }
 
