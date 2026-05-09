@@ -405,3 +405,14 @@ path = "src/bin/agaric-mcp.rs"
 [[bin]]
 name = "audit_cross_space_refs"
 path = "src/bin/audit_cross_space_refs.rs"
+
+# PEND-09 Phase 2 day-4 — read-only diagnostic that prints a histogram of
+# the user's `op_log` table (count + percentage per op_type) and compares
+# the result against the spike's synthetic 30/50/10/5/5 op-mix proxy.
+# Closes Phase-2 Gate 4 ("op-log volume sampling") per
+# `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §2 + §3 day 4. The binary
+# opens the DB with `SqliteConnectOptions::read_only(true)` so it can
+# never accidentally write to the user's data — safe to run on a live DB.
+[[bin]]
+name = "op_log_histogram"
+path = "src/bin/op_log_histogram.rs"
