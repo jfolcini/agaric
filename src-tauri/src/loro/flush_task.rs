@@ -1,5 +1,6 @@
 //! Background tokio task that periodically drains the in-memory
-//! parity sampler ring into `merge_parity_log` and purges rows past
+//! parity sampler ring into `merge_parity_log`, classifies the
+//! freshly-flushed rows into A/B/C/D buckets, and purges rows past
 //! the default 30-day retention window.
 //!
 //! ## Why a separate task (not piggy-backed on the materializer)
@@ -34,6 +35,7 @@ use std::time::Duration;
 
 use sqlx::SqlitePool;
 
+use crate::loro::classifier::classify_unbucketed;
 use crate::loro::parity_sink::{default_retention_cutoff_ms, flush_to_sqlite, purge_old};
 use crate::loro::shared::ShadowState;
 
@@ -98,6 +100,35 @@ pub async fn run_periodic_flush(
                 tracing::warn!(
                     error = %e,
                     "loro-shadow: parity flush_to_sqlite failed; continuing",
+                );
+            }
+        }
+
+        // Day-6: classify the freshly-flushed rows on the same tick so
+        // a tail-latency dashboard can colour them by bucket without
+        // waiting for a separate cadence.  No-op when nothing is
+        // pending — see `classify_unbucketed` docs.  We deliberately
+        // chose to piggy-back on the flush tick rather than introduce
+        // a third interval constant: classification per row is a
+        // string-prefix check + an indexed UPDATE, the
+        // `WHERE bucket IS NULL` filter makes the empty-pending case
+        // a single index probe, and chaining the two cadences avoids
+        // a window where flushed-but-unclassified rows accumulate.
+        match classify_unbucketed(&pool).await {
+            Ok(s) if s.total() == 0 => { /* idle classifier, no log spam */ }
+            Ok(s) => {
+                tracing::debug!(
+                    a = s.a,
+                    b = s.b,
+                    c = s.c,
+                    d = s.d,
+                    "loro-shadow: parity classifier filled buckets",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "loro-shadow: parity classify_unbucketed failed; continuing",
                 );
             }
         }
