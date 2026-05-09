@@ -548,6 +548,91 @@ impl LoroEngine {
         }
     }
 
+    /// Day-7 (Q8) addition for the read-path benchmark.  Walks the
+    /// top-level `blocks` LoroMap and collects every block_id whose
+    /// `parent_id` field equals `parent_id` AND whose `deleted_at` is
+    /// unset (or explicitly null).  Mirrors the SQL `list_children`
+    /// hot-path read shape (`pagination::hierarchy::list_children`)
+    /// without any side-index — the LoroMap is keyed by block_id, NOT
+    /// by parent_id, so this walk is O(N_blocks) per call.
+    ///
+    /// This is the deliberate **worst-case** Loro shape: production has
+    /// `idx_blocks_parent_covering(parent_id, deleted_at, position, id)`
+    /// and gets O(log N + K) for the same query.  Day-7 measures how bad
+    /// the no-index case is so we can decide whether Phase 1 needs a
+    /// `parent_id -> Vec<block_id>` side index inside the engine, or
+    /// whether SQL stays as the materializer's read cache and Loro is
+    /// only the truth-of-state for sync.  See SPIKE-NOTES.md Day-7
+    /// "Architecture implication".
+    pub fn list_children_walk(&self, parent_id: &str) -> Result<Vec<String>> {
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        let mut out: Vec<String> = Vec::new();
+        let mut err: Option<anyhow::Error> = None;
+        blocks.for_each(|key, voc| {
+            if err.is_some() {
+                return;
+            }
+            let container = match voc.into_container() {
+                Ok(c) => c,
+                Err(_) => {
+                    err = Some(anyhow!(
+                        "list_children_walk: block {key} value is not a container"
+                    ));
+                    return;
+                }
+            };
+            let block_map: LoroMap = match container.into_map() {
+                Ok(m) => m,
+                Err(_) => {
+                    err = Some(anyhow!(
+                        "list_children_walk: block {key} container is not a LoroMap"
+                    ));
+                    return;
+                }
+            };
+            // Mirror the SQL `deleted_at IS NULL` clause from
+            // `pagination::hierarchy::list_children`.
+            let deleted = match block_map.get(FIELD_DELETED_AT) {
+                None => false,
+                Some(field_voc) => match field_voc.into_value() {
+                    Ok(LoroValue::Null) => false,
+                    Ok(_) => true,
+                    Err(_) => {
+                        err = Some(anyhow!(
+                            "list_children_walk: block {key} deleted_at is not a scalar"
+                        ));
+                        return;
+                    }
+                },
+            };
+            if deleted {
+                return;
+            }
+            // parent_id equality.
+            let matches_parent = match block_map.get(FIELD_PARENT_ID) {
+                None => false,
+                Some(field_voc) => match field_voc.into_value() {
+                    Ok(LoroValue::Null) => false,
+                    Ok(LoroValue::String(s)) => s.as_str() == parent_id,
+                    Ok(_) => false,
+                    Err(_) => {
+                        err = Some(anyhow!(
+                            "list_children_walk: block {key} parent_id is not a scalar"
+                        ));
+                        return;
+                    }
+                },
+            };
+            if matches_parent {
+                out.push(key.to_string());
+            }
+        });
+        if let Some(e) = err {
+            return Err(e);
+        }
+        Ok(out)
+    }
+
     /// Day-4 addition for the replay benchmark.  Iterates the top-level
     /// `blocks` LoroMap and counts entries whose `deleted_at` slot is
     /// either absent or `LoroValue::Null` — i.e. blocks that have NOT
