@@ -69,8 +69,13 @@ describe('loadTemplatePages', () => {
 })
 
 describe('insertTemplateBlocks', () => {
-  it('creates blocks from template children', async () => {
-    // listBlocks(TMPL) → 2 children
+  it('creates blocks from template children via a single batch IPC', async () => {
+    // PEND-35 Tier 4.3 — `insertTemplateBlocks` walks the template
+    // subtree (listBlocks per source parent), accumulates one
+    // `CreateBlockSpec` per descendant, and fires ONE
+    // `create_blocks_batch` per depth level. For a flat template with
+    // two siblings we expect ONE list_blocks (the template root) and
+    // ONE create_blocks_batch (depth 0).
     mockedInvoke.mockResolvedValueOnce({
       items: [
         {
@@ -85,26 +90,25 @@ describe('insertTemplateBlocks', () => {
       next_cursor: null,
       has_more: false,
     })
-    // createBlock for TC1 → NEW1
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW1',
-      block_type: 'content',
-      content: '## Attendees',
-    })
-    // listBlocks(TC1) → no grandchildren
+    // listBlocks(TC1) → no grandchildren (recursion still happens to
+    // discover descendants before the batch fires)
     mockedInvoke.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
-    // createBlock for TC2 → NEW2
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW2', block_type: 'content', content: '## Agenda' })
     // listBlocks(TC2) → no grandchildren
     mockedInvoke.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
+    // create_blocks_batch → both blocks created in one IPC, returned
+    // in input order.
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW1', block_type: 'content', content: '## Attendees' },
+      { id: 'NEW2', block_type: 'content', content: '## Agenda' },
+    ])
 
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
@@ -116,23 +120,36 @@ describe('insertTemplateBlocks', () => {
         limit: 500,
       }),
     )
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({
-        content: '## Attendees',
-        parentId: 'PARENT',
-      }),
-    )
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({
-        content: '## Agenda',
-        parentId: 'PARENT',
-      }),
-    )
+    // ONE create_blocks_batch call carrying both specs in input order.
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(1)
+    expect(batchCalls[0]?.[1]).toMatchObject({
+      specs: [
+        expect.objectContaining({
+          blockType: 'content',
+          content: '## Attendees',
+          parentId: 'PARENT',
+        }),
+        expect.objectContaining({
+          blockType: 'content',
+          content: '## Agenda',
+          parentId: 'PARENT',
+        }),
+      ],
+    })
+
+    // Anti-backslide guard: NO per-block `create_block` IPC fires under
+    // the batch path (mirrors the Tier 2.1+2.2 anti-regression pattern).
+    const perBlockCreateCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(perBlockCreateCalls).toHaveLength(0)
   })
 
   it('insertTemplateBlocks copies nested children recursively', async () => {
+    // PEND-35 Tier 4.3 — for a template with depth 2 (TMPL → A → B)
+    // the batch fires once per depth level: depth 0 creates A, depth 1
+    // creates B with `parentId = NEW_A` resolved from the previous
+    // batch's response.
+    //
     // listBlocks(TMPL) → 1 child (A)
     mockedInvoke.mockResolvedValueOnce({
       items: [
@@ -140,12 +157,6 @@ describe('insertTemplateBlocks', () => {
       ],
       next_cursor: null,
       has_more: false,
-    })
-    // createBlock for A → NEW_A
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW_A',
-      block_type: 'content',
-      content: 'Heading A',
     })
     // listBlocks(A) → 1 grandchild (B)
     mockedInvoke.mockResolvedValueOnce({
@@ -155,99 +166,83 @@ describe('insertTemplateBlocks', () => {
       next_cursor: null,
       has_more: false,
     })
-    // createBlock for B → NEW_B (parentId should be NEW_A)
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW_B',
-      block_type: 'content',
-      content: 'Sub-bullet B',
-    })
     // listBlocks(B) → no children
     mockedInvoke.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
+    // create_blocks_batch (depth 0) → returns NEW_A
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW_A', block_type: 'content', content: 'Heading A' },
+    ])
+    // create_blocks_batch (depth 1) → returns NEW_B
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW_B', block_type: 'content', content: 'Sub-bullet B' },
+    ])
 
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     // Both blocks were created
     expect(ids).toEqual(['NEW_A', 'NEW_B'])
 
-    // createBlock was called exactly twice
-    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(createCalls).toHaveLength(2)
+    // ONE batch call PER DEPTH LEVEL (two depths → two batches).
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(2)
 
-    // B's copy has the correct parentId (A's copy's ID)
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({
-        content: 'Sub-bullet B',
-        parentId: 'NEW_A',
-      }),
-    )
+    // Anti-backslide guard: zero per-block `create_block` calls.
+    const perBlockCreateCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(perBlockCreateCalls).toHaveLength(0)
+
+    // Depth 1 batch must reference NEW_A as the parent (forward
+    // reference from depth-0 batch response).
+    const depthOneSpecs = (batchCalls[1]?.[1] as { specs: Array<{ parentId: string }> }).specs
+    expect(depthOneSpecs[0]?.parentId).toBe('NEW_A')
 
     // listBlocks was called 3 times (template children, A's children, B's children)
     const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
     expect(listCalls).toHaveLength(3)
   })
 
-  it('continues copying after a single block creation failure', async () => {
+  it('returns ids accumulated up to the failing batch level', async () => {
+    // PEND-35 Tier 4.3 — atomicity changed: a per-batch failure logs a
+    // warning and returns the already-landed prefix from earlier
+    // levels. (Each level is its own all-or-nothing tx; failures
+    // aren't backed out across levels because the previous-level
+    // commit already happened.)
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    // listBlocks(TMPL) → 3 children (A, B, C)
+    // listBlocks(TMPL) → 1 root (A)
     mockedInvoke.mockResolvedValueOnce({
-      items: [
-        { id: 'A', block_type: 'content', content: 'Block A', parent_id: 'TMPL', position: 0 },
-        { id: 'B', block_type: 'content', content: 'Block B', parent_id: 'TMPL', position: 1 },
-        { id: 'C', block_type: 'content', content: 'Block C', parent_id: 'TMPL', position: 2 },
-      ],
+      items: [{ id: 'A', block_type: 'content', content: 'A', parent_id: 'TMPL', position: 0 }],
       next_cursor: null,
       has_more: false,
     })
-    // createBlock for A → NEW_A (success)
+    // listBlocks(A) → 1 child (B)
     mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW_A',
-      block_type: 'content',
-      content: 'Block A',
+      items: [{ id: 'B', block_type: 'content', content: 'B', parent_id: 'A', position: 0 }],
+      next_cursor: null,
+      has_more: false,
     })
-    // listBlocks(A) → no children
+    // listBlocks(B) → empty
     mockedInvoke.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
-    // createBlock for B → FAIL
-    mockedInvoke.mockRejectedValueOnce(new Error('create_block failed'))
-    // createBlock for C → NEW_C (success)
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW_C',
-      block_type: 'content',
-      content: 'Block C',
-    })
-    // listBlocks(C) → no children
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    // depth 0 → success
+    mockedInvoke.mockResolvedValueOnce([{ id: 'NEW_A', block_type: 'content', content: 'A' }])
+    // depth 1 → fail
+    mockedInvoke.mockRejectedValueOnce(new Error('batch insert failed'))
 
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
-    // B was skipped; A and C were created
-    expect(ids).toEqual(['NEW_A', 'NEW_C'])
-    expect(ids).toHaveLength(2)
-
-    // createBlock was called 3 times (A success, B fail, C success)
-    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(createCalls).toHaveLength(3)
-
-    // Warning was logged for the failed block (via structured logger)
+    // A landed from depth 0; depth-1 failure is logged but doesn't
+    // throw — the partial result is returned.
+    expect(ids).toEqual(['NEW_A'])
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('template block copy failed; skipping'),
+      expect.stringContaining('template batch insert failed at depth level'),
     )
-    // Source block id is included as structured context
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"sourceBlockId":"B"'))
-
     warnSpy.mockRestore()
   })
 
@@ -261,8 +256,10 @@ describe('insertTemplateBlocks', () => {
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     expect(ids).toEqual([])
-    // Only the list_blocks call should happen
+    // Only the list_blocks call should happen — no batch IPC.
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(0)
   })
 })
 
@@ -564,46 +561,45 @@ describe('loadJournalTemplateForSpace', () => {
 })
 
 describe('insertTemplateBlocksFromString', () => {
-  it('creates one block per non-empty line', async () => {
-    // createBlock for line 1
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW1',
-      block_type: 'content',
-      content: 'Morning standup',
-    })
-    // createBlock for line 2
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW2',
-      block_type: 'content',
-      content: 'TODOs',
-    })
+  it('creates one block per non-empty line via a single batch IPC', async () => {
+    // PEND-35 Tier 4.3 — N markdown lines collapse to ONE
+    // `create_blocks_batch` IPC. The previous N `create_block` IPCs
+    // are gone.
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW1', block_type: 'content', content: 'Morning standup' },
+      { id: 'NEW2', block_type: 'content', content: 'TODOs' },
+    ])
 
     const ids = await insertTemplateBlocksFromString('Morning standup\nTODOs', 'PARENT')
 
     expect(ids).toEqual(['NEW1', 'NEW2'])
-    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(createCalls).toHaveLength(2)
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({
-        blockType: 'content',
-        content: 'Morning standup',
-        parentId: 'PARENT',
-      }),
-    )
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({
-        blockType: 'content',
-        content: 'TODOs',
-        parentId: 'PARENT',
-      }),
-    )
+    // Exactly ONE create_blocks_batch call carrying both lines.
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(1)
+    expect(batchCalls[0]?.[1]).toMatchObject({
+      specs: [
+        expect.objectContaining({
+          blockType: 'content',
+          content: 'Morning standup',
+          parentId: 'PARENT',
+        }),
+        expect.objectContaining({
+          blockType: 'content',
+          content: 'TODOs',
+          parentId: 'PARENT',
+        }),
+      ],
+    })
+    // Anti-backslide guard: NO per-line `create_block` IPC fires.
+    const perLineCreateCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(perLineCreateCalls).toHaveLength(0)
   })
 
   it('expands template variables on each line', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW1', block_type: 'content', content: '' })
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW2', block_type: 'content', content: '' })
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW1', block_type: 'content', content: '' },
+      { id: 'NEW2', block_type: 'content', content: '' },
+    ])
 
     const now = new Date()
     const yyyy = now.getFullYear()
@@ -615,54 +611,55 @@ describe('insertTemplateBlocksFromString', () => {
       pageTitle: 'My Daily',
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({ content: `Date: ${today}` }),
-    )
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
-      expect.objectContaining({ content: 'Page: My Daily' }),
-    )
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(1)
+    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> }).specs
+    expect(specs[0]?.content).toBe(`Date: ${today}`)
+    expect(specs[1]?.content).toBe('Page: My Daily')
   })
 
   it('skips blank lines and surrounding whitespace', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW1', block_type: 'content', content: 'A' })
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW2', block_type: 'content', content: 'B' })
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW1', block_type: 'content', content: 'A' },
+      { id: 'NEW2', block_type: 'content', content: 'B' },
+    ])
 
     // Leading blank, trailing blank, internal blank line, whitespace-only line.
     const ids = await insertTemplateBlocksFromString('\n\n  \nA\n\n   \nB\n\n', 'PARENT')
 
     expect(ids).toEqual(['NEW1', 'NEW2'])
-    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(createCalls).toHaveLength(2)
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(1)
+    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> }).specs
+    expect(specs).toHaveLength(2)
   })
 
-  it('continues on per-line errors and logs a warning', async () => {
+  it('returns empty list and logs a warning when the batch IPC fails', async () => {
+    // PEND-35 Tier 4.3 — atomicity flipped from per-line to per-batch.
+    // A batch failure rolls the whole template back; the wrapper logs
+    // and returns `[]` rather than partially landing the prefix.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    // First line fails, second succeeds, third succeeds.
-    mockedInvoke.mockRejectedValueOnce(new Error('create_block failed'))
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW2', block_type: 'content', content: 'B' })
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW3', block_type: 'content', content: 'C' })
+    mockedInvoke.mockRejectedValueOnce(new Error('batch insert failed'))
 
     const ids = await insertTemplateBlocksFromString('A\nB\nC', 'PARENT')
 
-    expect(ids).toEqual(['NEW2', 'NEW3'])
-    // Three create_block calls (one failed, two succeeded).
-    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(createCalls).toHaveLength(3)
-    // The structured logger emits a single warn for the failed line.
+    expect(ids).toEqual([])
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(1)
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('journal template line insert failed; skipping'),
+      expect.stringContaining('journal template batch insert failed'),
     )
 
     warnSpy.mockRestore()
   })
 
-  it('returns an empty array for an empty template string', async () => {
+  it('returns an empty array for an empty template string without firing any IPC', async () => {
     const ids = await insertTemplateBlocksFromString('   \n\n  ', 'PARENT')
     expect(ids).toEqual([])
-    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(createCalls).toHaveLength(0)
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(0)
+    const perLineCreateCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(perLineCreateCalls).toHaveLength(0)
   })
 })

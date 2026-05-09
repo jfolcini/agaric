@@ -63,6 +63,12 @@ macro_rules! agaric_commands {
     () => {
         ::tauri_specta::collect_commands![
             $crate::commands::create_block,
+            // PEND-35 Tier 4.3 — atomic batch-create for templates: a
+            // 10-line journal template that previously fired 10
+            // `create_block` IPCs now fires 1, with one IMMEDIATE tx
+            // and one op_log scope covering every block + its
+            // properties.
+            $crate::commands::create_blocks_batch,
             $crate::commands::edit_block,
             $crate::commands::delete_block,
             // PEND-35 Tier 2.1 — multi-select batch delete: collapses
@@ -90,6 +96,13 @@ macro_rules! agaric_commands {
             $crate::commands::search_blocks,
             $crate::commands::query_by_tags,
             $crate::commands::query_by_property,
+            // PEND-35 Tier 2.10b — AND-intersected property + tag query
+            // resolved entirely in SQL via composed `EXISTS` subqueries.
+            // Replaces the FE `useQueryExecution.fetchFilteredQuery` shape
+            // that fanned out one IPC per sub-filter (each capped at 200
+            // rows) and intersected in JS — silently dropping any AND-set
+            // member outside the top-200 of any one sub-query.
+            $crate::commands::filtered_blocks_query,
             $crate::commands::list_unfinished_tasks,
             $crate::commands::list_tags_by_prefix,
             $crate::commands::list_tags_for_block,
@@ -110,6 +123,11 @@ macro_rules! agaric_commands {
             $crate::commands::revert_ops,
             $crate::commands::undo_page_op,
             $crate::commands::redo_page_op,
+            // PEND-35 Tier 4.4 — single-IPC undo-group sizing: replaces
+            // the FE's growing-window `list_page_history` re-fetch loop
+            // after every Ctrl+Z with one recursive-CTE query that
+            // walks consecutive same-device + within-window ops.
+            $crate::commands::find_undo_group,
             $crate::commands::compute_edit_diff,
             $crate::commands::compute_block_vs_current_diff,
             $crate::commands::query_backlinks_filtered,

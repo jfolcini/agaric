@@ -860,9 +860,14 @@ describe('buildFilters', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – multi-filter (filtered)', () => {
-  it('single property shorthand filter works (backward compat)', async () => {
+  // PEND-35 Tier 2.10b: shorthand `property:key=value` and `tag:prefix`
+  // syntax (and their AND combinations) parse to `type: 'filtered'` and
+  // dispatch to a single `filtered_blocks_query` IPC. The legacy
+  // per-sub-filter `query_by_property` / `query_by_tags` fan-out + JS
+  // intersection no longer exists.
+  it('single property shorthand filter dispatches to filtered_blocks_query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return {
           items: [
             makeBlock({
@@ -886,122 +891,82 @@ describe('QueryResult – multi-filter (filtered)', () => {
     expect(await screen.findByText(/TODO task/)).toBeInTheDocument()
     expect(screen.getByText('1 result')).toBeInTheDocument()
 
-    // Verify query_by_property was called with correct params
-    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      key: 'todo_state',
-      valueText: 'TODO',
-      valueDate: null,
-      operator: 'eq',
-      cursor: null,
-      limit: 200,
-      scope: { kind: 'global' },
-      extraFilters: null,
-    })
+    // Verify filtered_blocks_query was called with the marshalled
+    // FilteredBlocksPropertyFilter shape.
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'filtered_blocks_query',
+      expect.objectContaining({
+        propertyFilters: [
+          expect.objectContaining({
+            key: 'todo_state',
+            valueText: 'TODO',
+            operator: 'eq',
+          }),
+        ],
+        scope: { kind: 'global' },
+      }),
+    )
   })
 
   it('multiple property filters produce AND semantics', async () => {
-    // Block B1 matches both filters, B2 matches only todo_state, B3 matches only priority
-    const todoBlocks = [
-      makeBlock({
-        id: 'B1',
-        content: 'High-pri TODO',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'TODO',
-        priority: '1',
-      }),
-      makeBlock({
-        id: 'B2',
-        content: 'Low-pri TODO',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'TODO',
-        priority: '3',
-      }),
-    ]
-    const priorityBlocks = [
-      makeBlock({
-        id: 'B1',
-        content: 'High-pri TODO',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'TODO',
-        priority: '1',
-      }),
-      makeBlock({
-        id: 'B3',
-        content: 'High-pri DONE',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'DONE',
-        priority: '1',
-      }),
-    ]
-
-    mockedInvoke.mockImplementation((async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'query_by_property') {
-        if ((args as { key: string }).key === 'todo_state') {
-          return { items: todoBlocks, next_cursor: null, has_more: false }
-        }
-        if ((args as { key: string }).key === 'priority') {
-          return { items: priorityBlocks, next_cursor: null, has_more: false }
+    // PEND-35 Tier 2.10b — AND-intersection is now SQL-side. The mock
+    // returns the post-intersection result set directly; there is no
+    // per-sub-filter fan-out to model.
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return {
+          items: [
+            makeBlock({
+              id: 'B1',
+              content: 'High-pri TODO',
+              parent_id: 'P1',
+              page_id: 'P1',
+              todo_state: 'TODO',
+              priority: '1',
+            }),
+          ],
+          next_cursor: null,
+          has_more: false,
         }
       }
       if (cmd === 'batch_resolve') return []
       return null
-    }) as never)
+    })
 
     render(<QueryResult expression="property:todo_state=TODO property:priority=1" />)
 
-    // Only B1 (intersection) should appear
+    // Only the post-intersection row appears.
     expect(await screen.findByText(/High-pri TODO/)).toBeInTheDocument()
     expect(screen.getByText('1 result')).toBeInTheDocument()
 
-    // B2 and B3 should NOT appear
-    expect(screen.queryByText(/Low-pri TODO/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/High-pri DONE/)).not.toBeInTheDocument()
+    // Both property filters are forwarded in a single IPC.
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'filtered_blocks_query',
+      expect.objectContaining({
+        propertyFilters: [
+          expect.objectContaining({ key: 'todo_state', valueText: 'TODO', operator: 'eq' }),
+          expect.objectContaining({ key: 'priority', valueText: '1', operator: 'eq' }),
+        ],
+      }),
+    )
   })
 
-  it('tag + property combination works', async () => {
-    const tagBlocks = [
-      makeBlock({
-        id: 'B1',
-        content: 'Tagged TODO',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'TODO',
-      }),
-      makeBlock({
-        id: 'B2',
-        content: 'Tagged DONE',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'DONE',
-      }),
-    ]
-    const propertyBlocks = [
-      makeBlock({
-        id: 'B1',
-        content: 'Tagged TODO',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'TODO',
-      }),
-      makeBlock({
-        id: 'B3',
-        content: 'Untagged TODO',
-        parent_id: 'P1',
-        page_id: 'P1',
-        todo_state: 'TODO',
-      }),
-    ]
-
+  it('tag + property combination dispatches a single filtered_blocks_query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
-        return { items: tagBlocks, next_cursor: null, has_more: false }
-      }
-      if (cmd === 'query_by_property') {
-        return { items: propertyBlocks, next_cursor: null, has_more: false }
+      if (cmd === 'filtered_blocks_query') {
+        return {
+          items: [
+            makeBlock({
+              id: 'B1',
+              content: 'Tagged TODO',
+              parent_id: 'P1',
+              page_id: 'P1',
+              todo_state: 'TODO',
+            }),
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -1009,18 +974,26 @@ describe('QueryResult – multi-filter (filtered)', () => {
 
     render(<QueryResult expression="tag:project-x property:todo_state=TODO" />)
 
-    // Only B1 (in both sets) should appear
     expect(await screen.findByText(/Tagged TODO/)).toBeInTheDocument()
     expect(screen.getByText('1 result')).toBeInTheDocument()
 
-    // B2 (tag only) and B3 (property only) should NOT appear
-    expect(screen.queryByText(/Tagged DONE/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Untagged TODO/)).not.toBeInTheDocument()
+    // Both tag + property filters are forwarded in one IPC.
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'filtered_blocks_query',
+      expect.objectContaining({
+        propertyFilters: [
+          expect.objectContaining({ key: 'todo_state', valueText: 'TODO', operator: 'eq' }),
+        ],
+        tagFilters: expect.objectContaining({
+          prefixes: ['project-x'],
+        }),
+      }),
+    )
   })
 
   it('renders results from filtered query in table mode', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return {
           items: [
             makeBlock({
@@ -1053,19 +1026,13 @@ describe('QueryResult – multi-filter (filtered)', () => {
     expect(within(table).getByText('TODO')).toBeInTheDocument()
   })
 
-  it('shows empty state when filtered results have no intersection', async () => {
-    const set1 = [makeBlock({ id: 'B1', content: 'Only in set 1', parent_id: 'P1', page_id: 'P1' })]
-    const set2 = [makeBlock({ id: 'B2', content: 'Only in set 2', parent_id: 'P1', page_id: 'P1' })]
-
-    let callCount = 0
+  it('shows empty state when filtered query returns no rows', async () => {
+    // PEND-35 Tier 2.10b — empty state simply means the SQL EXISTS
+    // intersection produced zero rows. No per-sub-filter mocking
+    // needed.
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
-        callCount++
-        return {
-          items: callCount === 1 ? set1 : set2,
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [], next_cursor: null, has_more: false }
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -1114,6 +1081,8 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when filtered property query rejects', async () => {
+    // PEND-35 Tier 2.10b: shorthand `property:` routes through
+    // `filtered_blocks_query` (single IPC).
     mockedInvoke.mockRejectedValueOnce(new Error('Filter query broken'))
 
     render(<QueryResult expression="property:todo_state=TODO" />)
@@ -1122,36 +1091,16 @@ describe('QueryResult – error paths', () => {
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
   })
 
-  it('shows error when one sub-query in multi-filter rejects', async () => {
-    // property filter succeeds, tag filter rejects — Promise.all propagates
-    mockedInvoke
-      .mockResolvedValueOnce({
-        items: [
-          {
-            id: 'B1',
-            block_type: 'content',
-            content: 'Should not appear',
-            parent_id: null,
-            position: 1,
-            deleted_at: null,
-            is_conflict: false,
-            conflict_type: null,
-            todo_state: 'TODO',
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-            page_id: null,
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
-      .mockRejectedValueOnce(new Error('Tag index corrupted'))
+  it('shows error when filtered_blocks_query rejects for tag+property combo', async () => {
+    // PEND-35 Tier 2.10b: tag + property filters now collapse into a
+    // single `filtered_blocks_query` IPC. A rejection of that one IPC
+    // surfaces as the error message — no Promise.all fan-out exists.
+    mockedInvoke.mockRejectedValueOnce(new Error('Filtered query rejected'))
 
     render(<QueryResult expression="tag:project-x property:todo_state=TODO" />)
 
-    expect(await screen.findByText('Tag index corrupted')).toBeInTheDocument()
-    expect(screen.queryByText(/Should not appear/)).not.toBeInTheDocument()
+    expect(await screen.findByText('Filtered query rejected')).toBeInTheDocument()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
   })
 
   it('shows error when batchResolve rejects after successful tag query', async () => {
@@ -1366,7 +1315,7 @@ describe('QueryResult – expression pills', () => {
 
   it('renders property filter pills for filtered queries', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null
@@ -1389,10 +1338,7 @@ describe('QueryResult – expression pills', () => {
 
   it('renders tag filter pills', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
-        return { items: [], next_cursor: null, has_more: false }
-      }
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null
@@ -1449,9 +1395,13 @@ describe('QueryResult – expression pills', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – operator syntax', () => {
-  it('passes operator "gt" to query_by_property for property:due_date>today', async () => {
+  // PEND-35 Tier 2.10b: shorthand `property:key{op}value` parses as
+  // `type: 'filtered'` and forwards each filter inside the
+  // `filtered_blocks_query` IPC's `propertyFilters` array. The operator
+  // travels in the marshalled `FilteredBlocksPropertyFilter.operator`.
+  it('forwards operator "gt" inside filtered_blocks_query for property:due_date>today', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null
@@ -1461,24 +1411,29 @@ describe('QueryResult – operator syntax', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'query_by_property',
+        'filtered_blocks_query',
         expect.objectContaining({
-          key: 'due_date',
-          operator: 'gt',
+          propertyFilters: [
+            expect.objectContaining({
+              key: 'due_date',
+              operator: 'gt',
+            }),
+          ],
         }),
       )
     })
 
     // Verify "today" was resolved to an ISO date string
-    const call = mockedInvoke.mock.calls.find((c) => c[0] === 'query_by_property')
-    const args = call?.[1] as Record<string, unknown>
-    expect(args['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(args['valueText']).toBeNull()
+    const call = mockedInvoke.mock.calls.find((c) => c[0] === 'filtered_blocks_query')
+    const args = call?.[1] as { propertyFilters: Array<Record<string, unknown>> }
+    const pf = args.propertyFilters[0] as Record<string, unknown>
+    expect(pf['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(pf['valueText']).toBeNull()
   })
 
-  it('passes operator "lte" to query_by_property for property:due_date<=2025-12-31', async () => {
+  it('forwards operator "lte" inside filtered_blocks_query for property:due_date<=2025-12-31', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null
@@ -1488,11 +1443,15 @@ describe('QueryResult – operator syntax', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'query_by_property',
+        'filtered_blocks_query',
         expect.objectContaining({
-          key: 'due_date',
-          operator: 'lte',
-          valueDate: '2025-12-31',
+          propertyFilters: [
+            expect.objectContaining({
+              key: 'due_date',
+              operator: 'lte',
+              valueDate: '2025-12-31',
+            }),
+          ],
         }),
       )
     })
@@ -1500,7 +1459,7 @@ describe('QueryResult – operator syntax', () => {
 
   it('backward compatible: property:key=value still works with operator "eq"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return {
           items: [
             makeBlock({ id: 'B1', content: 'Eq result', parent_id: null, todo_state: 'TODO' }),
@@ -1518,18 +1477,22 @@ describe('QueryResult – operator syntax', () => {
     expect(await screen.findByText(/Eq result/)).toBeInTheDocument()
 
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'query_by_property',
+      'filtered_blocks_query',
       expect.objectContaining({
-        key: 'todo_state',
-        valueText: 'TODO',
-        operator: 'eq',
+        propertyFilters: [
+          expect.objectContaining({
+            key: 'todo_state',
+            valueText: 'TODO',
+            operator: 'eq',
+          }),
+        ],
       }),
     )
   })
 
   it('resolves relative date "today" to ISO date string', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null
@@ -1538,18 +1501,19 @@ describe('QueryResult – operator syntax', () => {
     render(<QueryResult expression="property:due_date>today" />)
 
     await waitFor(() => {
-      const call = mockedInvoke.mock.calls.find((c) => c[0] === 'query_by_property')
+      const call = mockedInvoke.mock.calls.find((c) => c[0] === 'filtered_blocks_query')
       expect(call).toBeDefined()
-      const args = call?.[1] as Record<string, unknown>
+      const args = call?.[1] as { propertyFilters: Array<Record<string, unknown>> }
+      const pf = args.propertyFilters[0] as Record<string, unknown>
       // "today" should be resolved to an ISO date (YYYY-MM-DD)
-      expect(args['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-      expect(args['valueText']).toBeNull()
+      expect(pf['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(pf['valueText']).toBeNull()
     })
   })
 
   it('pills display operator symbol for gt', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null
@@ -1565,7 +1529,7 @@ describe('QueryResult – operator syntax', () => {
 
   it('pills display ≤ symbol for lte operator', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null
@@ -1581,7 +1545,7 @@ describe('QueryResult – operator syntax', () => {
 
   it('pills display ≠ symbol for neq operator', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'filtered_blocks_query') {
         return { items: [], next_cursor: null, has_more: false }
       }
       return null

@@ -336,6 +336,28 @@ function templateCreateBlockResponse(args: unknown, todayStr: string): unknown {
   return emptyPage
 }
 
+/**
+ * PEND-35 Tier 4.3: `create_blocks_batch` response. Returns one
+ * BlockRow per spec, mirroring the per-spec creation that the legacy
+ * per-line `create_block` loop produced. Test code can find the spec
+ * for a given content string via the same `mockedInvoke.mock.calls`
+ * filter pattern, just looking inside `args.specs[*]` instead of the
+ * top-level args.
+ */
+function templateCreateBlocksBatchResponse(args: unknown): unknown {
+  const params = args as
+    | { specs?: Array<{ blockType: string; content?: string; parentId?: string }> }
+    | undefined
+  const specs = params?.specs ?? []
+  return specs.map((s) => ({
+    id: `NEW-${s.content?.replace(/\s+/g, '-') ?? 'block'}`,
+    block_type: s.blockType,
+    content: s.content ?? '',
+    parent_id: s.parentId,
+    position: 0,
+  }))
+}
+
 /** Dispatcher used by the `auto-create applies journal template` test. */
 function makeJournalTemplateMockImpl(todayStr: string) {
   return async (cmd: string, args?: unknown): Promise<unknown> => {
@@ -347,6 +369,10 @@ function makeJournalTemplateMockImpl(todayStr: string) {
     // `create_page_in_space`. The IPC returns the new page ULID as a
     // plain string (see backend `create_page_in_space` Tauri command).
     if (cmd === 'create_page_in_space') return 'DP-TMPL'
+    // PEND-35 Tier 4.3 — `insertTemplateBlocks` issues one
+    // `create_blocks_batch` IPC per depth level instead of N
+    // `create_block` calls.
+    if (cmd === 'create_blocks_batch') return templateCreateBlocksBatchResponse(args)
     if (cmd === 'create_block') return templateCreateBlockResponse(args, todayStr)
     return emptyPage
   }
@@ -2490,35 +2516,30 @@ describe('JournalPage', () => {
         )
       })
 
+      // PEND-35 Tier 4.3 — `insertTemplateBlocks` collapses the per-child
+      // `create_block` loop into a single `create_blocks_batch` per
+      // depth level. The two top-level template children land in one
+      // batch; assert on the `specs` array.
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
-          expect.objectContaining({
-            blockType: 'content',
-            content: '## Morning Review',
-            parentId: 'DP-TMPL',
-          }),
-        )
+        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+        expect(batchCalls.length).toBeGreaterThan(0)
       })
+      const batchCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
+      const batchSpecs = (batchCall?.[1] as { specs: Array<Record<string, unknown>> }).specs
+      const morningReview = batchSpecs.find((s) => s['content'] === '## Morning Review')
+      const tasks = batchSpecs.find((s) => s['content'] === '## Tasks')
+      expect(morningReview).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
+      expect(tasks).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
 
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
-          expect.objectContaining({
-            blockType: 'content',
-            content: '## Tasks',
-            parentId: 'DP-TMPL',
-          }),
+      // No empty-content content specs should appear (regression guard
+      // for the legacy "extra blank seed block" bug).
+      const emptyBlockSpecs = mockedInvoke.mock.calls
+        .filter(([cmd]) => cmd === 'create_blocks_batch')
+        .flatMap(
+          ([, args]) => (args as { specs: Array<{ blockType: string; content: string }> }).specs,
         )
-      })
-
-      const emptyBlockCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' &&
-          (args as { blockType: string; content: string }).blockType === 'content' &&
-          (args as { blockType: string; content: string }).content === '',
-      )
-      expect(emptyBlockCalls).toHaveLength(0)
+        .filter((s) => s.blockType === 'content' && s.content === '')
+      expect(emptyBlockSpecs).toHaveLength(0)
     })
   })
 
@@ -2562,6 +2583,12 @@ describe('JournalPage', () => {
           return emptyPage
         }
         if (cmd === 'create_page_in_space') return 'DP-PS'
+        if (cmd === 'create_blocks_batch') {
+          // PEND-35 Tier 4.3 — `insertTemplateBlocksFromString`
+          // (per-space) and `insertTemplateBlocks` (legacy page) both
+          // call this batch IPC. Return one BlockRow per spec.
+          return templateCreateBlocksBatchResponse(args)
+        }
         if (cmd === 'create_block') {
           const params = args as { blockType: string; content?: string; parentId?: string }
           return {
@@ -2602,27 +2629,31 @@ describe('JournalPage', () => {
         })
       })
 
-      // Two blocks created from the markdown lines.
+      // PEND-35 Tier 4.3 — `insertTemplateBlocksFromString` collapses
+      // the per-line `create_block` loop into a single
+      // `create_blocks_batch` IPC. Both lines must land in one batch's
+      // `specs` array.
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
+        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+        expect(batchCalls.length).toBeGreaterThan(0)
+      })
+      const batchSpecs = mockedInvoke.mock.calls
+        .filter(([cmd]) => cmd === 'create_blocks_batch')
+        .flatMap(([, args]) => (args as { specs: Array<Record<string, unknown>> }).specs)
+      expect(batchSpecs).toEqual(
+        expect.arrayContaining([
           expect.objectContaining({
             blockType: 'content',
             content: 'Morning standup',
             parentId: 'DP-PS',
           }),
-        )
-      })
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
           expect.objectContaining({
             blockType: 'content',
             content: 'TODOs',
             parentId: 'DP-PS',
           }),
-        )
-      })
+        ]),
+      )
     })
 
     it('per-space journal template takes precedence over legacy global journal-template', async () => {
@@ -2635,30 +2666,29 @@ describe('JournalPage', () => {
 
       renderJournal()
 
-      // The per-space content blocks must land...
+      // PEND-35 Tier 4.3 — both surfaces use `create_blocks_batch`.
+      // The per-space content blocks must land in some batch's specs.
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
+        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+        expect(batchCalls.length).toBeGreaterThan(0)
+      })
+      const allBatchSpecs = mockedInvoke.mock.calls
+        .filter(([cmd]) => cmd === 'create_blocks_batch')
+        .flatMap(([, args]) => (args as { specs: Array<Record<string, unknown>> }).specs)
+      expect(allBatchSpecs).toEqual(
+        expect.arrayContaining([
           expect.objectContaining({ content: 'Morning standup' }),
-        )
-      })
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
           expect.objectContaining({ content: 'TODOs' }),
-        )
-      })
+        ]),
+      )
 
       // ...and the legacy template's children (`## Morning Review`,
       // `## Tasks`) must NOT have been copied. Ensures the
       // pre-existing legacy `insertTemplateBlocks` path was skipped.
-      const legacyContentCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' &&
-          ((args as { content?: string }).content === '## Morning Review' ||
-            (args as { content?: string }).content === '## Tasks'),
+      const legacyContentSpecs = allBatchSpecs.filter(
+        (s) => s['content'] === '## Morning Review' || s['content'] === '## Tasks',
       )
-      expect(legacyContentCalls).toHaveLength(0)
+      expect(legacyContentSpecs).toHaveLength(0)
     })
 
     it('falls back to legacy journal-template when per-space property absent', async () => {
@@ -2669,7 +2699,8 @@ describe('JournalPage', () => {
       renderJournal()
 
       // Legacy path: query_by_property('journal-template') is hit AND
-      // its child blocks (`## Morning Review`, `## Tasks`) are copied.
+      // its child blocks (`## Morning Review`, `## Tasks`) are copied
+      // via PEND-35 Tier 4.3's `create_blocks_batch`.
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'query_by_property',
@@ -2680,23 +2711,18 @@ describe('JournalPage', () => {
         )
       })
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
-          expect.objectContaining({
-            blockType: 'content',
-            content: '## Morning Review',
-          }),
-        )
+        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+        expect(batchCalls.length).toBeGreaterThan(0)
       })
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
-          expect.objectContaining({
-            blockType: 'content',
-            content: '## Tasks',
-          }),
-        )
-      })
+      const legacyBatchSpecs = mockedInvoke.mock.calls
+        .filter(([cmd]) => cmd === 'create_blocks_batch')
+        .flatMap(([, args]) => (args as { specs: Array<Record<string, unknown>> }).specs)
+      expect(legacyBatchSpecs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ blockType: 'content', content: '## Morning Review' }),
+          expect.objectContaining({ blockType: 'content', content: '## Tasks' }),
+        ]),
+      )
     })
   })
 

@@ -1404,15 +1404,17 @@ describe('PageBlockStore', () => {
   // moveUp
   // ---------------------------------------------------------------------------
   describe('moveUp', () => {
-    it('calls move_block with prevSibling.position - 1, then reloads', async () => {
+    it('calls move_block with prevSibling.position - 1, then splices locally (PEND-35 Tier 4.1)', async () => {
       const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      // move_block
-      mockedInvoke.mockResolvedValueOnce({})
-      // list_blocks (reload)
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      // move_block — echoes new position back so FE can splice
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: null,
+        new_position: -1,
+      })
 
       await store.getState().moveUp('B')
 
@@ -1421,10 +1423,13 @@ describe('PageBlockStore', () => {
         newParentId: null,
         newPosition: -1, // prevSibling(A).position(0) - 1
       })
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ parentId: 'PAGE_1' }),
-      )
+      // PEND-35 Tier 4.1 — same-parent moveUp must NOT trigger a re-list IPC.
+      expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
+      // The blocks array is reordered locally with the echoed position.
+      const blocks = store.getState().blocks
+      expect(blocks[0]?.id).toBe('B')
+      expect(blocks[0]?.position).toBe(-1)
+      expect(blocks[1]?.id).toBe('A')
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
 
@@ -1462,10 +1467,12 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 3, parent_id: 'PARENT', depth: 1 })
       store.setState({ blocks: [blockA, blockB] })
 
-      // move_block
-      mockedInvoke.mockResolvedValueOnce({})
-      // list_blocks (reload)
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      // move_block — echoes new position
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'PARENT',
+        new_position: -1,
+      })
 
       await store.getState().moveUp('B')
 
@@ -1474,6 +1481,32 @@ describe('PageBlockStore', () => {
         newParentId: 'PARENT',
         newPosition: -1, // prevSibling(A).position(0) - 1
       })
+      // Tier 4.1 — same-parent path skips re-list.
+      expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
+    })
+
+    it('falls back to full reload if backend echoes a different parent (Tier 4.1 cross-parent guard)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      // move_block returns a parent_id different from what we asked for —
+      // shouldn't happen in practice for moveUp, but the guard exists so
+      // descendant chains stay consistent if it ever does.
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'OTHER',
+        new_position: -1,
+      })
+      // list_blocks (fallback reload)
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await store.getState().moveUp('B')
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: 'PAGE_1' }),
+      )
     })
   })
 
@@ -1481,15 +1514,17 @@ describe('PageBlockStore', () => {
   // moveDown
   // ---------------------------------------------------------------------------
   describe('moveDown', () => {
-    it('calls move_block with nextSibling.position + 1, then reloads', async () => {
+    it('calls move_block with nextSibling.position + 1, then splices locally (PEND-35 Tier 4.1)', async () => {
       const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      // move_block
-      mockedInvoke.mockResolvedValueOnce({})
-      // list_blocks (reload)
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      // move_block — echoes new position
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        new_parent_id: null,
+        new_position: 6,
+      })
 
       await store.getState().moveDown('A')
 
@@ -1498,10 +1533,12 @@ describe('PageBlockStore', () => {
         newParentId: null,
         newPosition: 6, // nextSibling(B).position(5) + 1
       })
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ parentId: 'PAGE_1' }),
-      )
+      // PEND-35 Tier 4.1 — same-parent moveDown must NOT trigger a re-list IPC.
+      expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
+      const blocks = store.getState().blocks
+      expect(blocks[0]?.id).toBe('B')
+      expect(blocks[1]?.id).toBe('A')
+      expect(blocks[1]?.position).toBe(6)
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
 
@@ -1532,6 +1569,61 @@ describe('PageBlockStore', () => {
 
       await expect(store.getState().moveDown('A')).resolves.toBeUndefined()
       expect(store.getState().blocks).toHaveLength(2)
+    })
+
+    it('falls back to full reload if backend echoes a different parent (Tier 4.1 cross-parent guard)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        new_parent_id: 'OTHER',
+        new_position: 6,
+      })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await store.getState().moveDown('A')
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: 'PAGE_1' }),
+      )
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // appendBlock (PEND-35 Tier 4.2)
+  // ---------------------------------------------------------------------------
+  describe('appendBlock', () => {
+    it('pushes the row to blocks and rebuilds blocksById (no IPC)', () => {
+      store.setState({ blocks: [] })
+
+      const row = makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 0 })
+      // Drop `depth` from the BlockRow input — appendBlock supplies depth = 0.
+      const { depth: _depth, ...rowWithoutDepth } = row
+
+      store.getState().appendBlock(rowWithoutDepth)
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+      const blocks = store.getState().blocks
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0]?.id).toBe('NEW')
+      expect(blocks[0]?.depth).toBe(0)
+      expect(store.getState().blocksById.get('NEW')?.id).toBe('NEW')
+    })
+
+    it('appends to an existing block list without disturbing prior entries', () => {
+      const existing = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, depth: 0 })
+      store.setState({ blocks: [existing] })
+
+      const row = makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 })
+      const { depth: _depth, ...rowWithoutDepth } = row
+
+      store.getState().appendBlock(rowWithoutDepth)
+
+      const blocks = store.getState().blocks
+      expect(blocks.map((b) => b.id)).toEqual(['A', 'B'])
     })
   })
 

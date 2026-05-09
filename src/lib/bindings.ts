@@ -13,6 +13,17 @@ export const commands = {
 	 *  `block_type == "page"` and ignored otherwise.
 	 */
 	createBlock: (blockType: string, content: string, parentId: string | null, position: number | null, scope: SpaceScope) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("create_block", { blockType, content, parentId, position, scope })),
+	/**
+	 *  Tauri command: atomically create a batch of blocks. Delegates to
+	 *  [`create_blocks_batch_inner`].
+	 *
+	 *  PEND-35 Tier 4.3 — collapses the per-block `create_block` IPC loop
+	 *  in `src/lib/template-utils.ts::insertTemplateBlocks` /
+	 *  `insertTemplateBlocksFromString` into one round-trip and one
+	 *  writer-lock window. A 10-line template that previously fired 10
+	 *  IPCs now fires 1.
+	 */
+	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("create_blocks_batch", { specs })),
 	// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 	editBlock: (blockId: string, toText: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("edit_block", { blockId, toText })),
 	// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
@@ -135,6 +146,34 @@ export const commands = {
 	 */
 	valueDateRange: [string, string] | null,
 } | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, extraFilters })),
+	/**
+	 *  Tauri command: AND-intersect property + tag predicates in SQL.
+	 *  Delegates to [`filtered_blocks_query_inner`].
+	 *
+	 *  Replaces the FE pattern of fan-out IPCs (one `query_by_property` /
+	 *  `query_by_tags` per sub-filter, each capped at 200 rows) followed by
+	 *  JS-side intersection capped at 50 rows. The composed-EXISTS shape
+	 *  fixes the silent-cap regression where any AND-set member outside
+	 *  the top-200 of any one sub-query was dropped before the
+	 *  intersection ran.
+	 */
+	filteredBlocksQuery: (propertyFilters: PropertyFilter[], tagFilters: {
+	// Explicit tag-block ULIDs.
+	tagIds?: string[],
+	// Tag-name prefixes (resolved via `tags_cache.name LIKE ?`).
+	prefixes?: string[],
+	/**
+	 *  `"and"` for intersection across all tag matches, anything else
+	 *  (default `"or"`) for union.
+	 */
+	mode?: string,
+	/**
+	 *  Whether to include inherited tags (`block_tag_inherited`) in
+	 *  addition to direct (`block_tags`) and inline-ref
+	 *  (`block_tag_refs`) associations. Defaults to `false`.
+	 */
+	includeInherited?: boolean,
+} | null, blockType: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("filtered_blocks_query", { propertyFilters, tagFilters, blockType, scope, cursor, limit })),
 	// Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`].
 	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
 	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
@@ -210,6 +249,12 @@ export const commands = {
 	undoPageOp: (pageId: string, undoDepth: number) => typedError<UndoResult, AppErrorSchema>(__TAURI_INVOKE("undo_page_op", { pageId, undoDepth })),
 	// Tauri command: redo page op. Delegates to [`redo_page_op_inner`].
 	redoPageOp: (undoDeviceId: string, undoSeq: number) => typedError<UndoResult, AppErrorSchema>(__TAURI_INVOKE("redo_page_op", { undoDeviceId, undoSeq })),
+	/**
+	 *  Tauri command: compute the size of the consecutive same-device,
+	 *  within-window undo group starting at the Nth-most-recent undoable op.
+	 *  Delegates to [`find_undo_group_inner`]. PEND-35 Tier 4.4.
+	 */
+	findUndoGroup: (pageId: string, depth: number, windowMs: number) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("find_undo_group", { pageId, depth, windowMs })),
 	/**
 	 *  Tauri command: compute word-level diff for an edit_block history entry.
 	 *  Delegates to [`compute_edit_diff_inner`].
@@ -913,6 +958,51 @@ export type ConflictResolveBatchResult = {
 	failed: number,
 };
 
+/**
+ *  One row of [`create_blocks_batch_inner`]'s input list.
+ *
+ *  Mirrors the per-block argument set the FE used to send to `create_block`
+ *  once per descendant / per markdown line in `template-utils.ts`. The
+ *  `properties` map carries arbitrary `key -> value_text` pairs that land
+ *  as `SetProperty` ops inside the same transaction (mirrors
+ *  `import_markdown_inner`'s precedent — see `pages.rs:622-637`). Reserved
+ *  keys (`todo_state` / `priority` / `due_date` / `scheduled_date`) route
+ *  through the same `set_property_in_tx` helper so they hit the right
+ *  columns on `blocks` instead of `block_properties`.
+ */
+export type CreateBlockSpec = {
+	/**
+	 *  `"content"`, `"tag"`, or `"page"`. Validated per-spec by
+	 *  [`create_block_in_tx`] — an unknown value rolls back the whole
+	 *  batch with [`AppError::Validation`].
+	 */
+	blockType: string,
+	/**
+	 *  Block content (markdown / plain text). Validated against
+	 *  `MAX_CONTENT_LENGTH` per spec.
+	 */
+	content: string,
+	/**
+	 *  Optional parent block id. When `Some`, the parent must resolve
+	 *  to a live (non-deleted, non-conflict) block — including parents
+	 *  created EARLIER in the same batch. When `None`, the new block is
+	 *  top-level.
+	 */
+	parentId: string | null,
+	/**
+	 *  Optional 1-based position. When `None`, the backend appends after
+	 *  the last sibling (same convention as `create_block_inner`).
+	 */
+	position: number | null,
+	/**
+	 *  Optional `key -> value_text` map. Each entry expands to a
+	 *  `SetProperty` op inside the same transaction. Empty map → no
+	 *  property ops appended. Mirror of the (key, value) loop in
+	 *  `import_markdown_inner` for parsed markdown property lines.
+	 */
+	properties?: { [key in string]: string },
+};
+
 // A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format.
 export type DateRange = {
 	start: string,
@@ -1188,6 +1278,49 @@ export type PropertyDefinition = {
 	value_type: string,
 	options: string | null,
 	created_at: string,
+};
+
+/**
+ *  One property predicate for [`filtered_blocks_query_inner`].
+ *
+ *  Mirrors the per-call shape of [`query_by_property_inner`] so a caller
+ *  migrating from the JS-side AND-intersection (`Promise.all` over N
+ *  `query_by_property` IPCs) can replay each sub-filter unchanged. Each
+ *  instance becomes ONE `EXISTS (SELECT 1 FROM block_properties bp …)`
+ *  subquery in the composed SQL — the AND-intersection is the
+ *  structural conjunction of the EXISTS clauses (no JS post-filter, no
+ *  silent row cap).
+ *
+ *  At most one of `value_text` / `value_text_in` / `value_date` /
+ *  `value_date_range` should be supplied per filter; mixing them is
+ *  rejected with [`AppError::Validation`] at the boundary (mirrors the
+ *  `query_by_property` contract).
+ */
+export type PropertyFilter = {
+	/**
+	 *  Property key — `block_properties.key` or a reserved column name
+	 *  (`todo_state`, `priority`, `due_date`, `scheduled_date`).
+	 */
+	key: string,
+	/**
+	 *  Single text-value equality / comparison. Mutually exclusive with
+	 *  `value_text_in`.
+	 */
+	valueText: string | null,
+	/**
+	 *  Set-membership over text values, bound as a JSON array via
+	 *  `json_each(?N)`. Empty = treated as `None`.
+	 */
+	valueTextIn?: string[],
+	// Single date-value equality / comparison.
+	valueDate: string | null,
+	// Half-open `[from, to)` date range.
+	valueDateRange: [string, string] | null,
+	/**
+	 *  Comparison operator — `"eq"`, `"neq"`, `"lt"`, `"gt"`, `"lte"`,
+	 *  `"gte"`. Defaults to `"eq"` for any unrecognised value.
+	 */
+	operator?: string,
 };
 
 export type PropertyRow = {
@@ -1486,6 +1619,33 @@ export type TagCacheRow = {
 	name: string,
 	usage_count: number,
 	updated_at: string,
+};
+
+/**
+ *  Tag predicate for [`filtered_blocks_query_inner`].
+ *
+ *  Mirrors the [`query_by_tags_inner`] arg shape. When `mode = "and"`
+ *  every supplied tag (id or prefix) must match; `"or"` (default) is
+ *  the union. The predicate is composed into ONE `AND EXISTS (…)`
+ *  subquery in the parent SQL — the JS-side AND-intersection between
+ *  property and tag sub-results disappears.
+ */
+export type TagFilterExpr = {
+	// Explicit tag-block ULIDs.
+	tagIds?: string[],
+	// Tag-name prefixes (resolved via `tags_cache.name LIKE ?`).
+	prefixes?: string[],
+	/**
+	 *  `"and"` for intersection across all tag matches, anything else
+	 *  (default `"or"`) for union.
+	 */
+	mode?: string,
+	/**
+	 *  Whether to include inherited tags (`block_tag_inherited`) in
+	 *  addition to direct (`block_tags`) and inline-ref
+	 *  (`block_tag_refs`) associations. Defaults to `false`.
+	 */
+	includeInherited?: boolean,
 };
 
 export type TagResponse = {

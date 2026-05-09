@@ -257,24 +257,20 @@ describe('PageEditor', () => {
     })
   })
 
-  it('Add block button creates first block when no blocks exist', async () => {
+  it('Add block button creates first block when no blocks exist (PEND-35 Tier 4.2 — splice, no re-list)', async () => {
     const user = userEvent.setup()
 
     // Store starts empty (per-page store is fresh)
 
-    // Mock createBlock response for the new block
+    // Mock createBlock response for the new block. PEND-35 Tier 4.2 —
+    // there is no longer a follow-up list_blocks IPC; the row is spliced
+    // into the local store via pageStore.appendBlock(row).
     mockedInvoke.mockResolvedValueOnce({
       id: 'B1',
       block_type: 'content',
       content: '',
       parent_id: 'PAGE_1',
       position: 0,
-    })
-    // Mock the subsequent load(pageId) call
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B1', content: '', parent_id: 'PAGE_1', position: 0 })],
-      next_cursor: null,
-      has_more: false,
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -291,6 +287,17 @@ describe('PageEditor', () => {
         scope: { kind: 'global' },
       })
     })
+
+    // Tier 4.2 — empty-page first-block-create must NOT re-fetch the page.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
+
+    // The new block is spliced into the local store and surfaces via the
+    // registered store. focused id is set to the new block.
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    })
+    const stored = pageBlockRegistry.get('PAGE_1')?.getState().blocks ?? []
+    expect(stored.map((b) => b.id)).toEqual(['B1'])
   })
 
   it('Add block button creates top-level block when page has nested blocks', async () => {
@@ -472,18 +479,14 @@ describe('PageEditor BlockTree auto-creation prop', () => {
 
     // Per-page store starts empty
 
-    // Mock createBlock and subsequent load
+    // Mock createBlock only — PEND-35 Tier 4.2 splices the returned row
+    // into the per-page store instead of triggering a follow-up list_blocks.
     mockedInvoke.mockResolvedValueOnce({
       id: 'FIRST_BLOCK',
       block_type: 'content',
       content: '',
       parent_id: 'PAGE_1',
       position: 0,
-    })
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'FIRST_BLOCK', content: '', parent_id: 'PAGE_1', position: 0 })],
-      next_cursor: null,
-      has_more: false,
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -500,6 +503,9 @@ describe('PageEditor BlockTree auto-creation prop', () => {
         scope: { kind: 'global' },
       })
     })
+
+    // Tier 4.2 — no re-list IPC.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
 
     // Should focus the new block
     await waitFor(() => {

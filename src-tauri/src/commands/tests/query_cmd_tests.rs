@@ -4019,3 +4019,532 @@ async fn first_op_device_for_blocks_rejects_oversize() {
         "oversize list must reject with Validation, got {result:?}"
     );
 }
+
+// ======================================================================
+// PEND-35 Tier 2.10b — filtered_blocks_query_inner
+// ======================================================================
+//
+// AND-intersection of property + tag predicates resolved entirely in
+// SQL. Replaces the FE `useQueryExecution.fetchFilteredQuery` shape that
+// fanned out one IPC per sub-filter (each capped at 200 rows) and
+// intersected the IDs in JS. Tests below pin three semantic guarantees:
+//
+//   1. AND across multiple property filters (intersection, not union)
+//   2. AND across property + tag filters
+//   3. **Silent-cap regression** — the load-bearing fix: an AND-set
+//      member outside the top-200 of any one sub-query was silently
+//      dropped under the old shape; the new SQL pushdown returns it.
+//   4. Empty-input rejection (validation, not silent full-table scan)
+//   5. Cursor pagination across the filtered set
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_and_intersection_two_properties() {
+    let (pool, _dir) = test_pool().await;
+
+    // Three blocks:
+    //   FBQ_BOTH    — has both `status:active` AND `priority:high`
+    //   FBQ_STATUS  — has only `status:active`
+    //   FBQ_PRIO    — has only `priority:high`
+    insert_block(&pool, "FBQ_BOTH", "content", "both", None, Some(1)).await;
+    insert_block(&pool, "FBQ_STATUS", "content", "status only", None, Some(2)).await;
+    insert_block(&pool, "FBQ_PRIO", "content", "prio only", None, Some(3)).await;
+
+    insert_property(&pool, "FBQ_BOTH", "status", "active").await;
+    insert_property(&pool, "FBQ_BOTH", "priority_label", "high").await;
+    insert_property(&pool, "FBQ_STATUS", "status", "active").await;
+    insert_property(&pool, "FBQ_PRIO", "priority_label", "high").await;
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![
+            PropertyFilter {
+                key: "status".into(),
+                value_text: Some("active".into()),
+                value_text_in: Vec::new(),
+                value_date: None,
+                value_date_range: None,
+                operator: "eq".into(),
+            },
+            PropertyFilter {
+                key: "priority_label".into(),
+                value_text: Some("high".into()),
+                value_text_in: Vec::new(),
+                value_date: None,
+                value_date_range: None,
+                operator: "eq".into(),
+            },
+        ],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBQ_BOTH"].into_iter().collect(),
+        "AND-intersection must keep only blocks satisfying every filter; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_property_plus_tag() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FBT_TAG", "tag", "project", None, None).await;
+    insert_block(&pool, "FBT_BOTH", "content", "both", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "FBT_PROP_ONLY",
+        "content",
+        "prop only",
+        None,
+        Some(2),
+    )
+    .await;
+    insert_block(&pool, "FBT_TAG_ONLY", "content", "tag only", None, Some(3)).await;
+
+    insert_property(&pool, "FBT_BOTH", "status", "active").await;
+    insert_property(&pool, "FBT_PROP_ONLY", "status", "active").await;
+    insert_tag_assoc(&pool, "FBT_BOTH", "FBT_TAG").await;
+    insert_tag_assoc(&pool, "FBT_TAG_ONLY", "FBT_TAG").await;
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "status".into(),
+            value_text: Some("active".into()),
+            value_text_in: Vec::new(),
+            value_date: None,
+            value_date_range: None,
+            operator: "eq".into(),
+        }],
+        Some(TagFilterExpr {
+            tag_ids: vec!["FBT_TAG".into()],
+            prefixes: Vec::new(),
+            mode: "or".into(),
+            include_inherited: false,
+        }),
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBT_BOTH"].into_iter().collect(),
+        "property+tag AND must keep only blocks satisfying both predicates; got {ids:?}"
+    );
+}
+
+/// **Load-bearing regression test** for the silent-cap bug PEND-35
+/// Tier 2.10b fixes.
+///
+/// The old shape (`useQueryExecution.fetchFilteredQuery`) issued one
+/// IPC per sub-filter with `FILTERED_SUBQUERY_LIMIT = 200`, then
+/// intersected the resulting block-id sets in JS. Any AND-set member
+/// whose ULID sorted outside the top-200 of any one sub-query was
+/// silently absent from that sub-query's response — and therefore
+/// missing from the JS intersection. Even a perfectly valid match
+/// disappeared from results.
+///
+/// The fix pushes the AND-intersection into SQL via composed `EXISTS`
+/// subqueries; SQLite walks the full universe so the row cap (now
+/// only the requested page limit) applies AFTER the intersection, not
+/// per-sub-query.
+///
+/// This test seeds 250 blocks where ULID `Z…` (highest sort key) is the
+/// ONLY block matching both predicates, plus 249 blocks satisfying just
+/// the `noise` property. Under the old shape, the noise sub-query's
+/// 200-row cap pushed the `Z…` ULID off the end and the intersection
+/// returned empty. Under the new shape, the ID is returned because the
+/// AND-intersection happens before the row cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_silent_cap_regression() {
+    let (pool, _dir) = test_pool().await;
+
+    // Seed 249 "noise" blocks with ULIDs `01...A`..`01...IO` (low
+    // sort keys) carrying ONLY the `noise:on` property — they
+    // satisfy the noise filter but NOT the rare-tag filter.
+    //
+    // Then seed one block at ULID `ZZZZZZZZZZZZZZZZZZZZZZZZZZ` (top
+    // sort key, bigger than every noise block) carrying BOTH
+    // `noise:on` AND `target:rare` — the only AND-set member, and
+    // the one the old shape would silently drop because it sorts
+    // past the noise sub-query's 200-row cap.
+    for i in 0..249 {
+        let id = format!("01FBQCAP{:018}", i);
+        insert_block(&pool, &id, "content", "noise", None, Some(i64::from(i))).await;
+        insert_property(&pool, &id, "noise", "on").await;
+    }
+
+    let rare_id = "ZZZZZZZZZZZZZZZZZZZZZZZZZZ";
+    insert_block(&pool, rare_id, "content", "rare match", None, Some(9999)).await;
+    insert_property(&pool, rare_id, "noise", "on").await;
+    insert_property(&pool, rare_id, "target", "rare").await;
+
+    // Caller requests the default page size — the previous JS shape
+    // would have capped each sub-query at 200 rows BEFORE intersecting,
+    // dropping the rare ULID. The new SQL shape applies the row cap
+    // only to the post-intersection page so the rare ID survives.
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![
+            PropertyFilter {
+                key: "noise".into(),
+                value_text: Some("on".into()),
+                value_text_in: Vec::new(),
+                value_date: None,
+                value_date_range: None,
+                operator: "eq".into(),
+            },
+            PropertyFilter {
+                key: "target".into(),
+                value_text: Some("rare".into()),
+                value_text_in: Vec::new(),
+                value_date: None,
+                value_date_range: None,
+                operator: "eq".into(),
+            },
+        ],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![rare_id],
+        "rare AND-set member past row 200 of one sub-query must be returned (silent-cap regression)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_empty_filters_rejected() {
+    let (pool, _dir) = test_pool().await;
+
+    // No property filter, no tag filter, no block_type — caller almost
+    // certainly meant `list_blocks`. Reject loudly so the caller sees
+    // the misuse instead of silently scanning every active block.
+    let result = filtered_blocks_query_inner(
+        &pool,
+        Vec::new(),
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await;
+
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("at least one"),
+                "empty-filter validation message should describe the contract; got {msg:?}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_cursor_pagination() {
+    let (pool, _dir) = test_pool().await;
+
+    // 5 blocks all carrying `kind:taggable`. Paginate across with limit=2
+    // and assert the cursor walks the filtered set in id-asc order.
+    for i in 0..5 {
+        let id = format!("FBQPAG{:020}", i);
+        insert_block(&pool, &id, "content", "row", None, Some(i64::from(i))).await;
+        insert_property(&pool, &id, "kind", "taggable").await;
+    }
+
+    let make_filter = || {
+        vec![PropertyFilter {
+            key: "kind".into(),
+            value_text: Some("taggable".into()),
+            value_text_in: Vec::new(),
+            value_date: None,
+            value_date_range: None,
+            operator: "eq".into(),
+        }]
+    };
+
+    let p1 = filtered_blocks_query_inner(
+        &pool,
+        make_filter(),
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(p1.items.len(), 2, "page 1 size");
+    assert!(p1.has_more, "page 1 should have_more");
+    assert!(p1.next_cursor.is_some(), "page 1 should produce a cursor");
+
+    let p2 = filtered_blocks_query_inner(
+        &pool,
+        make_filter(),
+        None,
+        None,
+        &SpaceScope::Global,
+        p1.next_cursor.clone(),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(p2.items.len(), 2, "page 2 size");
+    assert!(p2.has_more, "page 2 should have_more");
+
+    let p3 = filtered_blocks_query_inner(
+        &pool,
+        make_filter(),
+        None,
+        None,
+        &SpaceScope::Global,
+        p2.next_cursor.clone(),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(p3.items.len(), 1, "page 3 (final) size");
+    assert!(!p3.has_more, "page 3 should not have_more");
+    assert!(p3.next_cursor.is_none(), "final page yields no cursor");
+
+    // Walked-set must be the full seeded set, in ascending id order.
+    let mut walked: Vec<&str> = Vec::new();
+    for r in [&p1, &p2, &p3] {
+        walked.extend(r.items.iter().map(|b| b.id.as_str()));
+    }
+    let mut sorted = walked.clone();
+    sorted.sort();
+    assert_eq!(
+        walked, sorted,
+        "pagination must yield ids in ascending order"
+    );
+    assert_eq!(walked.len(), 5, "every seeded block should be walked");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_value_text_in_intersects() {
+    // Tier 3.4 set-membership pushdown participates in the AND with
+    // other filters. Pin the predicate composition.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FBVTI_HIT", "content", "hit", None, Some(1)).await;
+    insert_block(&pool, "FBVTI_MISS", "content", "miss", None, Some(2)).await;
+    insert_property(&pool, "FBVTI_HIT", "k", "alpha").await;
+    insert_property(&pool, "FBVTI_MISS", "k", "gamma").await;
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "k".into(),
+            value_text: None,
+            value_text_in: vec!["alpha".into(), "beta".into()],
+            value_date: None,
+            value_date_range: None,
+            operator: "eq".into(),
+        }],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBVTI_HIT"].into_iter().collect(),
+        "value_text_in must filter via SET membership; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_value_date_range_half_open() {
+    // Half-open `[from, to)` — rows on `to` are excluded. Mirrors the
+    // Tier 3.4 contract on `query_by_property_inner`.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FBDR_IN", "content", "in", None, Some(1)).await;
+    insert_block(&pool, "FBDR_BOUNDARY", "content", "on `to`", None, Some(2)).await;
+    insert_block(&pool, "FBDR_OUT", "content", "out", None, Some(3)).await;
+    insert_property_date(&pool, "FBDR_IN", "due", "2026-01-15").await;
+    insert_property_date(&pool, "FBDR_BOUNDARY", "due", "2026-02-01").await;
+    insert_property_date(&pool, "FBDR_OUT", "due", "2026-02-15").await;
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "due".into(),
+            value_text: None,
+            value_text_in: Vec::new(),
+            value_date: None,
+            value_date_range: Some(("2026-01-01".into(), "2026-02-01".into())),
+            operator: "eq".into(),
+        }],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBDR_IN"].into_iter().collect(),
+        "value_date_range must be half-open `[from, to)`; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_block_type_pushdown() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FBBT_PG", "page", "page row", None, Some(1)).await;
+    insert_block(&pool, "FBBT_CT", "content", "content row", None, Some(2)).await;
+    insert_property(&pool, "FBBT_PG", "k", "v").await;
+    insert_property(&pool, "FBBT_CT", "k", "v").await;
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "k".into(),
+            value_text: Some("v".into()),
+            value_text_in: Vec::new(),
+            value_date: None,
+            value_date_range: None,
+            operator: "eq".into(),
+        }],
+        None,
+        Some("page".into()),
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBBT_PG"].into_iter().collect(),
+        "block_type pushdown must restrict to the requested type; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_reserved_key_routes_to_column() {
+    // Reserved keys (todo_state, priority, due_date, scheduled_date)
+    // live as columns on `blocks`, not in `block_properties`. The
+    // filter must route to the column predicate, not generate a
+    // (silently empty) EXISTS over `block_properties`.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FBR_TODO", "content", "todo", None, Some(1)).await;
+    insert_block(&pool, "FBR_DONE", "content", "done", None, Some(2)).await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = 'FBR_TODO'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = 'FBR_DONE'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "todo_state".into(),
+            value_text: Some("TODO".into()),
+            value_text_in: Vec::new(),
+            value_date: None,
+            value_date_range: None,
+            operator: "eq".into(),
+        }],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBR_TODO"].into_iter().collect(),
+        "reserved-key filter must route to b.todo_state; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_excludes_deleted_and_conflict() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FBE_LIVE", "content", "live", None, Some(1)).await;
+    insert_block(&pool, "FBE_DEL", "content", "deleted", None, Some(2)).await;
+    insert_block(&pool, "FBE_CONF", "content", "conflict", None, Some(3)).await;
+    insert_property(&pool, "FBE_LIVE", "k", "v").await;
+    insert_property(&pool, "FBE_DEL", "k", "v").await;
+    insert_property(&pool, "FBE_CONF", "k", "v").await;
+
+    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'FBE_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'FBE_CONF'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "k".into(),
+            value_text: Some("v".into()),
+            value_text_in: Vec::new(),
+            value_date: None,
+            value_date_range: None,
+            operator: "eq".into(),
+        }],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBE_LIVE"].into_iter().collect(),
+        "soft-deleted and conflict-copy blocks must be excluded; got {ids:?}"
+    );
+}

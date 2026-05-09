@@ -108,7 +108,7 @@ function PageEditorInner({
     } else {
       // No blocks yet — create a first block under this page.
       // createBelow needs an afterBlockId, so for the empty case we call
-      // createBlock from the Tauri API directly and reload.
+      // createBlock from the Tauri API directly.
       try {
         const { createBlock } = await import('../lib/tauri')
         const result = await createBlock({
@@ -116,8 +116,11 @@ function PageEditorInner({
           content: '',
           parentId: pageId,
         })
-        // Reload blocks via the store to pick up the new block
-        await pageStore.getState().load()
+        // PEND-35 Tier 4.2 — splice the returned row into the local store
+        // instead of re-fetching the full page. The backend response
+        // already carries the canonical BlockRow, so the second
+        // `list_blocks` IPC was pure waste.
+        pageStore.getState().appendBlock(result)
         setFocused(result.id)
       } catch {
         toast.error(t('error.createBlockFailed'))

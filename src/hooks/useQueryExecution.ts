@@ -2,18 +2,18 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, use
 import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
-import type { BlockRow } from '@/lib/tauri'
-import { batchResolve, listBlocks, queryByProperty, queryByTags } from '@/lib/tauri'
+import type { BlockRow, FilteredBlocksPropertyFilter } from '@/lib/tauri'
+import {
+  batchResolve,
+  filteredBlocksQuery,
+  listBlocks,
+  queryByProperty,
+  queryByTags,
+} from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of items per paginated request. */
 const PAGE_SIZE = 50
-
-/** Cap on the number of rows returned by an AND-intersected filtered query. */
-const FILTERED_QUERY_MAX_ROWS = 50
-
-/** Per-sub-query fetch size for a filtered (AND) query. */
-const FILTERED_SUBQUERY_LIMIT = 200
 
 interface UseQueryExecutionOptions {
   expression: string
@@ -107,70 +107,55 @@ export async function fetchBacklinksQuery(
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
-/** Execute each property/tag filter in parallel and AND-intersect the results. */
+/** PEND-35 Tier 2.10b — AND-intersect property + tag predicates in SQL.
+ *
+ *  Single IPC into [`filteredBlocksQuery`] which composes one
+ *  `EXISTS (SELECT 1 FROM block_properties …)` subquery per property
+ *  filter and one `EXISTS (… block_tags … UNION block_tag_refs …)`
+ *  per tag filter. The AND between them is the structural conjunction
+ *  of the EXISTS clauses — SQLite walks the full universe so the
+ *  result row cap (now only the page limit) applies AFTER the
+ *  intersection, NOT per-sub-query.
+ *
+ *  Replaces the legacy fan-out shape that issued one IPC per
+ *  sub-filter with `FILTERED_SUBQUERY_LIMIT = 200` and intersected the
+ *  result-id sets in JS with `FILTERED_QUERY_MAX_ROWS = 50`. Any
+ *  AND-set member outside the top-200 of any one sub-query was
+ *  silently dropped — see PEND-35 Tier 2.10b for the full audit.
+ */
 export async function fetchFilteredQuery(
   propertyFilters: PropertyFilter[],
   tagFilters: string[],
   spaceId?: string | null,
+  pageCursor?: string,
 ): Promise<QueryFetchResult> {
-  const queryPromises: Promise<BlockRow[]>[] = []
+  if (propertyFilters.length === 0 && tagFilters.length === 0) {
+    // Pre-Tier-2.10b returned an empty result here without an IPC. The
+    // backend would now reject the empty-input case with `Validation`,
+    // so preserve the legacy short-circuit so consumers can still ask
+    // "are there any active filters?" without paying a round-trip.
+    return { items: [], nextCursor: null, hasMore: false }
+  }
 
-  for (const pf of propertyFilters) {
+  const marshalledFilters: FilteredBlocksPropertyFilter[] = propertyFilters.map((pf) => {
     const resolvedDate = parseDate(pf.value)
-    const op = pf.operator ?? 'eq'
-    queryPromises.push(
-      queryByProperty({
-        key: pf.key,
-        ...(resolvedDate ? { valueDate: resolvedDate } : { valueText: pf.value }),
-        operator: op,
-        limit: FILTERED_SUBQUERY_LIMIT,
-        spaceId: spaceId ?? null,
-      }).then((resp) => resp.items),
-    )
-  }
-
-  for (const tf of tagFilters) {
-    queryPromises.push(
-      queryByTags({
-        tagIds: [],
-        prefixes: [tf],
-        mode: 'or',
-        limit: FILTERED_SUBQUERY_LIMIT,
-        spaceId: spaceId ?? null,
-      }).then((resp) => resp.items),
-    )
-  }
-
-  const resultSets = await Promise.all(queryPromises)
-  const items = intersectResultSets(resultSets)
-  return { items, nextCursor: null, hasMore: false }
-}
-
-/** AND-intersect an array of result sets: keep only blocks present in ALL sets. */
-function intersectResultSets(resultSets: BlockRow[][]): BlockRow[] {
-  if (resultSets.length === 0) return []
-  if (resultSets.length === 1) return resultSets[0] as BlockRow[]
-
-  const blockMap = new Map<string, BlockRow>()
-  for (const rs of resultSets) {
-    for (const b of rs) {
-      if (!blockMap.has(b.id)) blockMap.set(b.id, b)
+    return {
+      key: pf.key,
+      ...(resolvedDate ? { valueDate: resolvedDate } : { valueText: pf.value }),
+      operator: pf.operator ?? 'eq',
     }
-  }
-
-  const idSets = resultSets.map((rs) => new Set(rs.map((b) => b.id)))
-  const intersectedIds = idSets.reduce((acc, set) => {
-    const result = new Set<string>()
-    for (const id of acc) {
-      if (set.has(id)) result.add(id)
-    }
-    return result
   })
 
-  return [...intersectedIds]
-    .map((id) => blockMap.get(id))
-    .filter((b): b is BlockRow => b != null)
-    .slice(0, FILTERED_QUERY_MAX_ROWS)
+  const resp = await filteredBlocksQuery({
+    propertyFilters: marshalledFilters,
+    ...(tagFilters.length > 0 && {
+      tagFilters: { tagIds: [], prefixes: tagFilters, mode: 'or' },
+    }),
+    spaceId: spaceId ?? null,
+    cursor: pageCursor,
+    limit: PAGE_SIZE,
+  })
+  return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
 type ParsedQuery = ReturnType<typeof parseQueryExpression>
@@ -192,7 +177,12 @@ export async function dispatchQuery(
     case 'property':
       return await fetchPropertyQuery(parsed.params, pageCursor, spaceId)
     case 'filtered':
-      return await fetchFilteredQuery(parsed.propertyFilters, parsed.tagFilters, spaceId)
+      return await fetchFilteredQuery(
+        parsed.propertyFilters,
+        parsed.tagFilters,
+        spaceId,
+        pageCursor,
+      )
     case 'backlinks':
       return await fetchBacklinksQuery(parsed.params, pageCursor, spaceId)
     default:

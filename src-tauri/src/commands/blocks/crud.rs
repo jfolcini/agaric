@@ -3107,6 +3107,171 @@ pub async fn resolve_conflicts_batch(
         .map_err(sanitize_internal_error)
 }
 
+// ===========================================================================
+// PEND-35 Tier 4.3 — create_blocks_batch
+// ===========================================================================
+
+/// One row of [`create_blocks_batch_inner`]'s input list.
+///
+/// Mirrors the per-block argument set the FE used to send to `create_block`
+/// once per descendant / per markdown line in `template-utils.ts`. The
+/// `properties` map carries arbitrary `key -> value_text` pairs that land
+/// as `SetProperty` ops inside the same transaction (mirrors
+/// `import_markdown_inner`'s precedent — see `pages.rs:622-637`). Reserved
+/// keys (`todo_state` / `priority` / `due_date` / `scheduled_date`) route
+/// through the same `set_property_in_tx` helper so they hit the right
+/// columns on `blocks` instead of `block_properties`.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateBlockSpec {
+    /// `"content"`, `"tag"`, or `"page"`. Validated per-spec by
+    /// [`create_block_in_tx`] — an unknown value rolls back the whole
+    /// batch with [`AppError::Validation`].
+    pub block_type: String,
+    /// Block content (markdown / plain text). Validated against
+    /// `MAX_CONTENT_LENGTH` per spec.
+    pub content: String,
+    /// Optional parent block id. When `Some`, the parent must resolve
+    /// to a live (non-deleted, non-conflict) block — including parents
+    /// created EARLIER in the same batch. When `None`, the new block is
+    /// top-level.
+    pub parent_id: Option<String>,
+    /// Optional 1-based position. When `None`, the backend appends after
+    /// the last sibling (same convention as `create_block_inner`).
+    pub position: Option<i64>,
+    /// Optional `key -> value_text` map. Each entry expands to a
+    /// `SetProperty` op inside the same transaction. Empty map → no
+    /// property ops appended. Mirror of the (key, value) loop in
+    /// `import_markdown_inner` for parsed markdown property lines.
+    #[serde(default)]
+    pub properties: std::collections::HashMap<String, String>,
+}
+
+/// PEND-35 Tier 4.3 — atomically create N blocks (with optional
+/// per-block properties) in a single `BEGIN IMMEDIATE` transaction.
+///
+/// Replaces the per-block `create_block` IPC loop the FE used to drive
+/// in `template-utils.ts::insertTemplateBlocks` /
+/// `insertTemplateBlocksFromString` (one IPC per descendant / per
+/// markdown line). The new path is one IPC, one writer-lock window, one
+/// op_log scope.
+///
+/// Per-spec semantics: each entry in `specs` runs through
+/// [`create_block_in_tx`] (the same helper [`import_markdown_inner`] uses,
+/// see `pages.rs:607`), accumulating `(BlockRow, OpRecord)` pairs. After
+/// the `CreateBlock` op is appended, every `(key, value)` pair in
+/// `properties` runs through [`set_property_in_tx`] — same precedent as
+/// the markdown-import loop (`pages.rs:622-637`). All ops enqueue for
+/// background dispatch; one `commit_and_dispatch` at the end drains them
+/// in FIFO order.
+///
+/// **Atomicity contract — all-or-nothing:** any error inside the loop
+/// (e.g. invalid `block_type`, missing parent, oversize content,
+/// property validation rejection) propagates via `?` and rolls the
+/// entire transaction back. No partial commits, no half-written
+/// templates.
+///
+/// **Order:** the returned `Vec<BlockRow>` is in input order (1:1 with
+/// `specs`). Callers (template insertion) rely on this to map their
+/// template-line index → returned block id.
+///
+/// **Validation:**
+/// - Empty `specs` list → [`AppError::Validation`].
+/// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`] → [`AppError::Validation`].
+///
+/// **Forward references:** a spec's `parent_id` may reference a block
+/// id created EARLIER in the same batch. `create_block_in_tx`'s parent
+/// validation runs against the live transaction state, so a row
+/// inserted at index `i` is visible to the parent probe at index
+/// `j > i`.
+#[instrument(skip(pool, device_id, materializer, specs), err)]
+pub async fn create_blocks_batch_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    specs: Vec<CreateBlockSpec>,
+) -> Result<Vec<BlockRow>, AppError> {
+    if specs.is_empty() {
+        return Err(AppError::Validation("specs list cannot be empty".into()));
+    }
+    if specs.len() > MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::Validation(format!(
+            "specs length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
+            specs.len(),
+        )));
+    }
+
+    let mut tx = CommandTx::begin_immediate(pool, "create_blocks_batch").await?;
+
+    let mut created: Vec<BlockRow> = Vec::with_capacity(specs.len());
+
+    for spec in specs {
+        // L-30 contract — any failure here rolls back the whole tx via
+        // `?`. Mirrors `import_markdown_inner`'s per-block loop.
+        let (block, block_op) = create_block_in_tx(
+            &mut tx,
+            device_id,
+            spec.block_type,
+            spec.content,
+            spec.parent_id,
+            spec.position,
+        )
+        .await?;
+        tx.enqueue_background(block_op);
+
+        // Properties — same shape as `import_markdown_inner`
+        // (`pages.rs:622-637`). Each (key, value_text) pair becomes one
+        // `SetProperty` op inside this same transaction. Reserved keys
+        // (`todo_state` / `priority` / `due_date` / `scheduled_date`)
+        // route through the column-write branch of `set_property_in_tx`
+        // automatically — the helper handles the dispatch, the wire
+        // shape stays a flat `value_text`.
+        for (key, value) in &spec.properties {
+            let (_block, prop_op) = set_property_in_tx(
+                &mut tx,
+                device_id,
+                block.id.clone(),
+                key,
+                Some(value.clone()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
+            tx.enqueue_background(prop_op);
+        }
+
+        created.push(block);
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(created)
+}
+
+/// Tauri command: atomically create a batch of blocks. Delegates to
+/// [`create_blocks_batch_inner`].
+///
+/// PEND-35 Tier 4.3 — collapses the per-block `create_block` IPC loop
+/// in `src/lib/template-utils.ts::insertTemplateBlocks` /
+/// `insertTemplateBlocksFromString` into one round-trip and one
+/// writer-lock window. A 10-line template that previously fired 10
+/// IPCs now fires 1.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn create_blocks_batch(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    specs: Vec<CreateBlockSpec>,
+) -> Result<Vec<BlockRow>, AppError> {
+    create_blocks_batch_inner(&pool.0, device_id.as_str(), &materializer, specs)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 /// Render an attachment path for structured logs without leaking the raw
 /// filename.
 ///
