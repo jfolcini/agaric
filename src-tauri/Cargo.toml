@@ -79,7 +79,7 @@ mcp_rmcp_spike = ["dep:rmcp"]
 # happens by enabling this feature in CI builds once Phase 1 reaches
 # its parity-sampling milestone; until then it stays opt-in for
 # developers running `cargo build --features loro-shadow`.
-loro-shadow = ["dep:loro"]
+loro-shadow = ["dep:loro", "dep:xxhash-rust"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -249,6 +249,19 @@ rmcp = { version = "1.6", optional = true, features = ["client"] }
 # feature flag retires.  Not part of any coupled dep stack per
 # AGENTS.md §"Coupled Dependency Updates".
 loro = { version = "1.12", optional = true }
+
+# PEND-09 Phase 1 day-7 — deterministic, cross-Rust-version-stable u64
+# hash for `peer_id_from_device_id`.  `std::hash::DefaultHasher`
+# (SipHash-1-3) is documented as not stable across stdlib versions, and
+# Loro's PeerID is load-bearing once peer ids start persisting across
+# process lifetimes (Phase 2 `loro_doc_state` snapshots) and across
+# devices that sync the same doc.  `xxh3_64` is deterministic
+# (seed defaults to 0), versioned, and follows the official xxHash
+# specification — pinning the algorithm here means a future Rustc
+# upgrade will not silently re-credit op history to a different peer.
+# Optional + gated behind `loro-shadow` so the default build does not
+# link `xxhash-rust`.
+xxhash-rust = { version = "0.8", features = ["xxh3"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }

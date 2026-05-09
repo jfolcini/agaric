@@ -17,11 +17,12 @@
 //! * [`engine::BlockSnapshot`] — the read-back projection of a block
 //!   from the Loro doc, sufficient for parity-equality checks.
 //! * [`engine::peer_id_from_device_id`] — derives a stable Loro
-//!   `PeerID` from the device's UUID-v4 `device_id`.  Phase 1 day-1
-//!   inherits the spike's `std::hash::DefaultHasher` implementation;
-//!   notebook Q13 in the spike report flags swapping to
-//!   `xxhash-rust = "0.8"` before Phase 2 sign-off so peer ids stay
-//!   deterministic across Rust compiler upgrades.
+//!   `PeerID` from the device's UUID-v4 `device_id` via `xxh3_64`
+//!   (Phase-1 day-7 swap from the spike's `std::hash::DefaultHasher`,
+//!   per readiness-checklist item 1 / notebook Q13).  The hash is
+//!   deterministic across runs, devices, and Rust toolchain versions;
+//!   see the function's stability-contract docstring before changing
+//!   it.
 //! * [`parity::ShadowParitySampler`] — in-memory ring buffer for the
 //!   first parity-logging sink.  No DB table yet; that's a later
 //!   Phase-1 day's deliverable.
@@ -37,7 +38,6 @@
 //!   tick to fill the `bucket` column of newly-flushed rows.
 //! - The remaining ~5 unported integration parity tests + proptest
 //!   augmentation (items 7-8 on the checklist).
-//! - The `xxhash-rust` peer-id swap (item 1 / Q13).
 //! - The macOS RSS measurement in the replay benchmark (item 11).
 //! - The `loro_doc_state` table schema (item 12, Phase-2 entry).
 //!
