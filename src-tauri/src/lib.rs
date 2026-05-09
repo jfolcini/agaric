@@ -933,6 +933,20 @@ pub fn run() {
             app.manage(PersistedCert::new(sync_cert));
             app.manage(materializer);
 
+            // PEND-09 Phase 1 day-2 — initialise the process-global
+            // shadow-mode state so `merge::shadow_apply` has a registry +
+            // sampler to write into.  Idempotent; gated on the
+            // `loro-shadow` feature so default builds compile this out
+            // entirely (zero-overhead when off).
+            #[cfg(feature = "loro-shadow")]
+            {
+                let installed = crate::loro::shared::init();
+                tracing::info!(
+                    installed,
+                    "loro-shadow: process-global ShadowState init complete",
+                );
+            }
+
             // Sync state (#275, #278)
             app.manage(commands::PairingState(std::sync::Mutex::new(None)));
             app.manage(scheduler);

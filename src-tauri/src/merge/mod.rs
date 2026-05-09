@@ -30,50 +30,240 @@ pub use types::{MergeOutcome, MergeResult, PropertyConflictResolution};
 pub(crate) use apply::merge_block_text_only as merge_block;
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 1 day-1 — shadow-mode dual-write hook.
+// PEND-09 Phase 1 day-2 — shadow-mode dual-write hook.
 //
-// `shadow_apply` is the call site that, once Phase 1 progresses, will
-// run every applied op through both the diffy merge layer AND the
-// Loro `LoroEngine`, log the per-op parity result, and return the
-// diffy result as authoritative.  Today's day-1 stub establishes the
-// call shape and the feature-flag gating only — the actual dual-write
-// logic + the wiring at real call sites is later-day work
-// (SPIKE-REPORT.md §6 item 5).
+// `shadow_apply` is the call site that runs every applied op through
+// both the diffy merge layer AND the per-space Loro `LoroEngine`,
+// logs a per-op parity event into the in-memory ring buffer, and
+// returns the diffy result as authoritative (Phase 1 is "shadow mode" —
+// diffy stays the source of truth for the entire phase).
 //
 // **No-op when `loro-shadow` is off.**  The function exists as
-// `pub(crate)` regardless of feature so the call sites that *will*
-// invoke it (in later Phase-1 days) don't need their own `#[cfg]`
-// gates.  The body is the only thing that varies by feature.
+// `pub(crate)` regardless of feature so the call sites that invoke it
+// (currently `merge::apply::merge_block_text_only`, future per-op
+// apply paths) don't need their own `#[cfg]` gates.  The body is the
+// only thing that varies by feature.
 // ---------------------------------------------------------------------------
 
 /// Shadow-mode dual-write entry point.
 ///
 /// `op_id` is a caller-supplied identity (production will pass the
-/// op_log row's `(device_id, seq)` composite or `hash`).  Today's
-/// stub only does anything when the `loro-shadow` feature is on, and
-/// even then is a no-op placeholder — it doesn't actually run a
-/// LoroEngine apply yet.  The point of the day-1 deliverable is the
-/// call shape exists and compiles; days 2-3 wire it to real call
-/// sites and exercise the real engine.
+/// op_log row's `(device_id, seq)` composite formatted as `"DEV/SEQ"`).
+/// `op` is the typed payload that diffy just produced; we mirror it
+/// onto the per-space `LoroEngine` and record a [`ParityEvent`].
 ///
-/// Returns nothing because the diffy result remains authoritative
-/// for Phase 1; this hook records observations only.
-// `dead_code` allow: day-1 lands the call shape only.  Real call
-// sites get wired in days 2-3 (SPIKE-REPORT.md §6 item 5).  The
-// allow attribute disappears the moment a real caller appears.
+/// `space_id` is the engine partition key — every op carries an
+/// implicit space (its block's owning page resolves to one space)
+/// and the registry holds one engine per space.
+///
+/// `device_id` is the production UUID-v4 device id.  It's threaded
+/// through to [`LoroEngine::with_peer_id`] so the engine's Loro
+/// peer id is stable across the process lifetime.
+///
+/// `diffy_result_summary` is a small human-readable string (e.g. for
+/// CreateBlock the resulting block_id; for EditBlock the post-content's
+/// first 50 chars) used for the parity event's `diffy_result` column.
+/// Today's "match" is coarse: string-equality on the diffy and Loro
+/// summaries.  Day-4 (persistent SQLite parity sink) will refine the
+/// summary shape and the match semantics.
+///
+/// Returns nothing because the diffy result remains authoritative for
+/// Phase 1; this hook records observations only.
+// `dead_code` allow: with `loro-shadow` off this stub has no callers
+// (the only call sites in `merge::apply` are themselves `#[cfg]`-gated
+// behind the feature).  The body discards its parameters via `let _ =
+// (...)` so `unused_variables` would not strictly fire, but the
+// allowlist is kept so future parameter changes don't require a churn.
 #[allow(unused_variables, dead_code)]
-pub(crate) fn shadow_apply(op_id: &str) {
-    #[cfg(feature = "loro-shadow")]
-    {
-        // Day-2/3 work: build/look-up the per-space `LoroEngine`
-        // handle, dispatch the op, and write to the parity sampler.
-        // Today the stub is intentionally empty — wiring the engine
-        // requires the `loro_batch` payload envelope (item 4 on the
-        // SPIKE-REPORT.md §6 readiness checklist), which is also
-        // later-day work.
-        //
-        // Touching `op_id` here keeps the parameter live under the
-        // feature flag without committing to a concrete sink.
-        let _ = op_id;
+#[cfg(not(feature = "loro-shadow"))]
+pub(crate) fn shadow_apply(op_id: &str, op: &crate::op::OpPayload, device_id: &str) {
+    // No-op stub for the feature-off build.  The real signature of
+    // the feature-on variant carries more parameters; we don't expose
+    // them here so the call site can be `#[cfg(feature = "loro-shadow")]`
+    // -gated cleanly without a phantom signature on the off side.
+    let _ = (op_id, op, device_id);
+}
+
+#[cfg(feature = "loro-shadow")]
+pub(crate) fn shadow_apply(
+    op_id: &str,
+    op: &crate::op::OpPayload,
+    device_id: &str,
+    space_id: &crate::space::SpaceId,
+    diffy_result_summary: String,
+    state: &crate::loro::shared::ShadowState,
+) {
+    use crate::loro::parity::ParityEvent;
+
+    let crate::loro::shared::ShadowState { registry, sampler } = state;
+
+    let mut guard = match registry.for_space(space_id, device_id) {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::warn!(
+                space_id = %space_id,
+                device_id,
+                error = %e,
+                "shadow_apply: registry.for_space failed; skipping",
+            );
+            return;
+        }
+    };
+    let engine = guard.engine_mut();
+
+    // Dispatch on op_type and capture a small, human-readable
+    // summary string.  We dispatch the FIVE op types the spike's
+    // engine supports (CreateBlock / EditBlock / DeleteBlock /
+    // MoveBlock / SetProperty); other op types log + skip.
+    let dispatch_result: Result<String, crate::error::AppError> = match op {
+        crate::op::OpPayload::CreateBlock(p) => {
+            let parent = p.parent_id.as_ref().map(|id| id.as_str());
+            let position = p.position.unwrap_or(0);
+            engine
+                .apply_create_block(
+                    p.block_id.as_str(),
+                    &p.block_type,
+                    &p.content,
+                    parent,
+                    position,
+                )
+                .map(|_| format!("create:{}", p.block_id.as_str()))
+        }
+        crate::op::OpPayload::EditBlock(p) => engine
+            .apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)
+            .map(|_| {
+                let head: String = p.to_text.chars().take(50).collect();
+                format!("edit:{}:{}", p.block_id.as_str(), head)
+            }),
+        crate::op::OpPayload::DeleteBlock(p) => engine
+            .apply_delete_block(p.block_id.as_str())
+            .map(|_| format!("delete:{}", p.block_id.as_str())),
+        crate::op::OpPayload::MoveBlock(p) => {
+            let parent = p.new_parent_id.as_ref().map(|id| id.as_str());
+            engine
+                .apply_move_block(p.block_id.as_str(), parent, p.new_position)
+                .map(|_| {
+                    format!(
+                        "move:{}:{}:{}",
+                        p.block_id.as_str(),
+                        parent.unwrap_or("<root>"),
+                        p.new_position
+                    )
+                })
+        }
+        crate::op::OpPayload::SetProperty(p) => {
+            // Spike's engine accepts string values; production
+            // SetProperty has multiple typed columns.  Stringify the
+            // single set field to fit the spike's surface.  Day-4 will
+            // refine the encoding (likely a typed enum on the engine
+            // side) — for now we collapse to a single string.
+            let value: Option<String> = p
+                .value_text
+                .clone()
+                .or_else(|| p.value_num.map(|n| n.to_string()))
+                .or_else(|| p.value_date.clone())
+                .or_else(|| p.value_ref.clone())
+                .or_else(|| p.value_bool.map(|b| b.to_string()));
+            engine
+                .apply_set_property(p.block_id.as_str(), &p.key, value.as_deref())
+                .map(|_| {
+                    format!(
+                        "set_property:{}:{}={}",
+                        p.block_id.as_str(),
+                        p.key,
+                        value.as_deref().unwrap_or("<null>")
+                    )
+                })
+        }
+        // Other op types (RestoreBlock / PurgeBlock / AddTag / RemoveTag /
+        // DeleteProperty / AddAttachment / DeleteAttachment) are not
+        // yet on the spike's engine surface.  Log + skip — Day-3+
+        // either expands the engine or filters these out at call sites
+        // before they reach `shadow_apply`.
+        other => {
+            tracing::debug!(
+                op_id,
+                op_type = %other.op_type_str(),
+                "shadow_apply: op type not supported by spike engine; skipping",
+            );
+            return;
+        }
+    };
+
+    let loro_result_summary = match &dispatch_result {
+        Ok(summary) => summary.clone(),
+        Err(e) => format!("error:{e}"),
+    };
+
+    // Coarse match: the diffy + loro summaries are stringified the
+    // same way (e.g. both start with "create:<block_id>"), so a
+    // string-equality is a usable first signal.  Day-4 refines this
+    // to a content-aware comparison.
+    let r#match = diffy_result_summary == loro_result_summary;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    sampler.record(ParityEvent {
+        op_id: op_id.to_string(),
+        diffy_result: diffy_result_summary,
+        loro_result: loro_result_summary,
+        r#match,
+        timestamp,
+    });
+
+    if !r#match {
+        tracing::debug!(
+            op_id,
+            "shadow_apply: parity diverged (expected during early shadow mode)",
+        );
+    }
+}
+
+/// Build the same compact "summary" string `shadow_apply` produces
+/// from the typed op, for the `diffy_result` side of the parity event.
+/// Exposed as a sibling helper so callers in `merge/apply.rs` can
+/// build the diffy summary using the same shape that the Loro side
+/// emits — a perfect-string-match parity event means both layers
+/// agreed at the structural level.
+///
+/// Used only with `loro-shadow` on; with the feature off this helper
+/// is dead code and the gate hides it.
+#[cfg(feature = "loro-shadow")]
+pub(crate) fn diffy_summary_for(op: &crate::op::OpPayload) -> String {
+    match op {
+        crate::op::OpPayload::CreateBlock(p) => format!("create:{}", p.block_id.as_str()),
+        crate::op::OpPayload::EditBlock(p) => {
+            let head: String = p.to_text.chars().take(50).collect();
+            format!("edit:{}:{}", p.block_id.as_str(), head)
+        }
+        crate::op::OpPayload::DeleteBlock(p) => format!("delete:{}", p.block_id.as_str()),
+        crate::op::OpPayload::MoveBlock(p) => {
+            let parent = p.new_parent_id.as_ref().map(|id| id.as_str());
+            format!(
+                "move:{}:{}:{}",
+                p.block_id.as_str(),
+                parent.unwrap_or("<root>"),
+                p.new_position
+            )
+        }
+        crate::op::OpPayload::SetProperty(p) => {
+            let value: Option<String> = p
+                .value_text
+                .clone()
+                .or_else(|| p.value_num.map(|n| n.to_string()))
+                .or_else(|| p.value_date.clone())
+                .or_else(|| p.value_ref.clone())
+                .or_else(|| p.value_bool.map(|b| b.to_string()));
+            format!(
+                "set_property:{}:{}={}",
+                p.block_id.as_str(),
+                p.key,
+                value.as_deref().unwrap_or("<null>")
+            )
+        }
+        other => format!("unsupported:{}", other.op_type_str()),
     }
 }

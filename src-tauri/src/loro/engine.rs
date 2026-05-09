@@ -231,6 +231,68 @@ impl LoroEngine {
         Ok(())
     }
 
+    /// Replace a block's `content` LoroText with `new_content` by
+    /// computing the longest common Unicode-scalar prefix + suffix vs
+    /// the engine's current content and splicing only the differing
+    /// middle.
+    ///
+    /// Ported from the spike's `apply_edit_via_diff_splice` (see
+    /// `crates/loro-spike/tests/parity_corpus.rs` ~line 100).  Production
+    /// `EditBlock` ops carry a `to_text` snapshot of the whole new
+    /// content (line-granularity diffy diffs the LCA against this
+    /// string).  Loro wants character-level splices so two peers'
+    /// concurrent edits land at non-overlapping character ranges when
+    /// the new_content strings differ at non-overlapping regions —
+    /// that's the headline win of the migration.
+    ///
+    /// Returns `Err(AppError::Validation)` if the block is missing.
+    pub fn apply_edit_via_diff_splice(
+        &mut self,
+        block_id: &str,
+        new_content: &str,
+    ) -> Result<(), AppError> {
+        let current = self
+            .read_block(block_id)?
+            .ok_or_else(|| {
+                AppError::Validation(format!(
+                    "loro: apply_edit_via_diff_splice: block {block_id} not found"
+                ))
+            })?
+            .content;
+
+        // Common prefix + suffix in Unicode scalars.  Iterate over
+        // `chars()` for both strings in lockstep to get USV indices that
+        // match `LoroText::splice`'s expected coordinate system.
+        let cur_chars: Vec<char> = current.chars().collect();
+        let new_chars: Vec<char> = new_content.chars().collect();
+
+        let mut prefix = 0usize;
+        while prefix < cur_chars.len()
+            && prefix < new_chars.len()
+            && cur_chars[prefix] == new_chars[prefix]
+        {
+            prefix += 1;
+        }
+
+        let mut suffix = 0usize;
+        while suffix < cur_chars.len() - prefix
+            && suffix < new_chars.len() - prefix
+            && cur_chars[cur_chars.len() - 1 - suffix] == new_chars[new_chars.len() - 1 - suffix]
+        {
+            suffix += 1;
+        }
+
+        let range_start = prefix;
+        let range_len = cur_chars.len() - prefix - suffix;
+        let replacement: String = new_chars[prefix..new_chars.len() - suffix].iter().collect();
+
+        if range_len == 0 && replacement.is_empty() {
+            return Ok(()); // identical strings; no-op
+        }
+
+        self.apply_edit_content(block_id, range_start, range_len, &replacement)
+    }
+
     /// Splice an edit into a block's `content` LoroText.
     ///
     /// Mirrors what an editor's edit callback would natively produce:
