@@ -22,12 +22,19 @@ use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroValue};
 /// `loro_doc.getMap("blocks")` -> `LoroMap<block_id, BlockData>`.
 const BLOCKS_ROOT: &str = "blocks";
 
+/// Top-level LoroMap key holding per-block properties.  Each value is a
+/// `LoroMap<key, value>` with LWW semantics — overwriting a key on two
+/// peers concurrently resolves via Loro's per-key LWW.  Day-3 addition
+/// for the `set_property` op shape in `merge/tests.rs`.
+const BLOCK_PROPERTIES_ROOT: &str = "block_properties";
+
 // Field keys inside a per-block LoroMap.  Kept as &'static str constants
 // so the round-trip read path uses the same key strings the writer used.
 const FIELD_BLOCK_TYPE: &str = "block_type";
 const FIELD_CONTENT: &str = "content";
 const FIELD_PARENT_ID: &str = "parent_id";
 const FIELD_POSITION: &str = "position";
+const FIELD_DELETED_AT: &str = "deleted_at";
 
 /// Minimal projection of a production `Block` row sufficient to verify
 /// round-trip equality.  Day-1 spike does not model the full ~10-field
@@ -220,6 +227,169 @@ impl LoroEngine {
         Ok(())
     }
 
+    /// Replace a block's `content` LoroText wholesale.  Mirrors the
+    /// production `EditBlock` op which takes a `to_text` snapshot of the
+    /// block's whole content (line-granularity diffy diffs the LCA
+    /// against this string).  Implemented as `splice(0, len_unicode,
+    /// new_content)` so Loro records a single character-level operation
+    /// rather than a "set" — concurrent calls on two peers still merge
+    /// at the character level.
+    pub fn apply_edit_block(&mut self, block_id: &str, new_content: &str) -> Result<()> {
+        let block_map = self.get_block_map(block_id, "edit block")?;
+        let content_text = block_map_get_text(&block_map, FIELD_CONTENT, block_id, "edit block")?;
+        let len = content_text.len_unicode();
+        content_text
+            .splice(0, len, new_content)
+            .map_err(|e| anyhow!("edit_block: block {block_id} splice failed: {e}"))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Soft-delete a block — mirrors `DeleteBlock`.  Spike doesn't model
+    /// real timestamps; we set `deleted_at` to a fixed marker and let
+    /// production logic re-stamp later.  Concurrent deletes converge on
+    /// the same "deleted" state via LWW (both peers write the same value
+    /// — Loro's set-and-forget semantics for scalars handle this idempotently).
+    pub fn apply_delete_block(&mut self, block_id: &str) -> Result<()> {
+        let block_map = self.get_block_map(block_id, "delete block")?;
+        block_map
+            .insert(FIELD_DELETED_AT, LoroValue::from("2025-01-15T12:00:00Z"))
+            .with_context(|| format!("delete block {block_id}: set deleted_at"))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Mirrors `MoveBlock` — update both `parent_id` and `position`
+    /// scalars on the block's LoroMap.  Two devices reparenting the same
+    /// block to *different* parents resolves via LWW (Loro's LoroMap
+    /// `insert` is LWW per key); the loser's intent is dropped, which
+    /// matches the plan's stated tradeoff.
+    pub fn apply_move_block(
+        &mut self,
+        block_id: &str,
+        new_parent_id: Option<&str>,
+        new_position: i64,
+    ) -> Result<()> {
+        let block_map = self.get_block_map(block_id, "move block")?;
+        let parent_value = match new_parent_id {
+            Some(p) => LoroValue::from(p),
+            None => LoroValue::Null,
+        };
+        block_map
+            .insert(FIELD_PARENT_ID, parent_value)
+            .with_context(|| format!("move block {block_id}: set parent_id"))?;
+        block_map
+            .insert(FIELD_POSITION, LoroValue::from(new_position))
+            .with_context(|| format!("move block {block_id}: set position"))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Mirrors `SetProperty` (string values only — sufficient for the
+    /// corpus port).  Stores under the top-level `block_properties` map,
+    /// nested by block_id then key.  LWW per (block_id, key).
+    pub fn apply_set_property(
+        &mut self,
+        block_id: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<()> {
+        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
+        // Ensure the per-block sub-map exists.  Re-using an attached
+        // container is fine; `insert_container` returns the existing one
+        // if it's already present? — actually it errors, so we read first.
+        let block_props: LoroMap = match props_root.get(block_id) {
+            Some(voc) => voc
+                .into_container()
+                .map_err(|_| {
+                    anyhow!("set_property: block {block_id} props slot is not a container")
+                })?
+                .into_map()
+                .map_err(|_| anyhow!("set_property: block {block_id} props is not a LoroMap"))?,
+            None => props_root
+                .insert_container(block_id, LoroMap::new())
+                .with_context(|| format!("set_property: create props map for {block_id}"))?,
+        };
+        let v = match value {
+            Some(s) => LoroValue::from(s),
+            None => LoroValue::Null,
+        };
+        block_props
+            .insert(key, v)
+            .with_context(|| format!("set_property: block {block_id} key {key}"))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Read a property back; returns `None` for an unset key (no entry
+    /// in the map) and `Some(None)` for an explicit-null clear.
+    pub fn read_property(&self, block_id: &str, key: &str) -> Result<Option<Option<String>>> {
+        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
+        let Some(voc) = props_root.get(block_id) else {
+            return Ok(None);
+        };
+        let block_props: LoroMap = voc
+            .into_container()
+            .map_err(|_| anyhow!("read_property: block {block_id} props slot is not a container"))?
+            .into_map()
+            .map_err(|_| anyhow!("read_property: block {block_id} props is not a LoroMap"))?;
+        let Some(value_voc) = block_props.get(key) else {
+            return Ok(None);
+        };
+        let value = value_voc
+            .into_value()
+            .map_err(|_| anyhow!("read_property: {block_id}/{key} expected scalar"))?;
+        match value {
+            LoroValue::Null => Ok(Some(None)),
+            LoroValue::String(s) => Ok(Some(Some((*s).clone()))),
+            other => Err(anyhow!(
+                "read_property: {block_id}/{key} expected String|Null, got {other:?}"
+            )),
+        }
+    }
+
+    /// Read the current parent_id scalar of a block.  Returns `None`
+    /// if the block is missing or its slot is null.
+    pub fn read_parent(&self, block_id: &str) -> Result<Option<String>> {
+        let block_map = self.get_block_map(block_id, "read parent")?;
+        read_optional_string(&block_map, FIELD_PARENT_ID)
+    }
+
+    /// Read the current position scalar.
+    pub fn read_position(&self, block_id: &str) -> Result<i64> {
+        let block_map = self.get_block_map(block_id, "read position")?;
+        read_i64(&block_map, FIELD_POSITION)
+    }
+
+    /// True iff `deleted_at` has been set on this block (any non-null value).
+    pub fn read_deleted(&self, block_id: &str) -> Result<bool> {
+        let block_map = self.get_block_map(block_id, "read deleted")?;
+        match block_map.get(FIELD_DELETED_AT) {
+            None => Ok(false),
+            Some(voc) => {
+                let value = voc.into_value().map_err(|_| {
+                    anyhow!("read_deleted: block {block_id} deleted_at is not a scalar")
+                })?;
+                Ok(!matches!(value, LoroValue::Null))
+            }
+        }
+    }
+
+    /// Internal helper — fetch the per-block LoroMap by id with a
+    /// uniform error-context prefix so each caller doesn't repeat the
+    /// boilerplate.
+    fn get_block_map(&self, block_id: &str, ctx: &str) -> Result<LoroMap> {
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        let block_value = blocks
+            .get(block_id)
+            .ok_or_else(|| anyhow!("{ctx}: block {block_id} not found"))?;
+        block_value
+            .into_container()
+            .map_err(|_| anyhow!("{ctx}: block {block_id} value is not a container"))?
+            .into_map()
+            .map_err(|_| anyhow!("{ctx}: block {block_id} container is not a LoroMap"))
+    }
+
     /// Export the doc as a self-contained snapshot byte string.  Useful
     /// for size measurement + later round-trip-via-bytes tests.
     pub fn export_snapshot(&self) -> Result<Vec<u8>> {
@@ -292,6 +462,26 @@ fn read_optional_string(map: &LoroMap, key: &str) -> Result<Option<String>> {
         LoroValue::String(s) => Ok(Some((*s).clone())),
         other => Err(anyhow!("key {key}: expected String|Null, got {other:?}")),
     }
+}
+
+/// Fetch a nested LoroText container by key from a per-block LoroMap,
+/// with a uniform error-context shape.  Used by `apply_edit_block` and
+/// (indirectly) by `apply_edit_content` — both need a writable handle
+/// onto the `content` field.
+fn block_map_get_text(
+    block_map: &LoroMap,
+    field: &str,
+    block_id: &str,
+    ctx: &str,
+) -> Result<LoroText> {
+    let value = block_map
+        .get(field)
+        .ok_or_else(|| anyhow!("{ctx}: block {block_id} has no {field} field"))?;
+    value
+        .into_container()
+        .map_err(|_| anyhow!("{ctx}: block {block_id} {field} slot is not a container"))?
+        .into_text()
+        .map_err(|_| anyhow!("{ctx}: block {block_id} {field} is not a LoroText"))
 }
 
 fn read_i64(map: &LoroMap, key: &str) -> Result<i64> {
