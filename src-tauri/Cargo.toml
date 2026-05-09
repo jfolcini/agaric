@@ -1,12 +1,14 @@
-# Cargo workspace root.  PEND-09 Phase 0 introduces the `loro-spike` crate
+# Cargo workspace root.  PEND-09 Phase 0 introduced the `loro-spike` crate
 # under `crates/loro-spike` as an isolated, throwaway evaluation of the Loro
-# CRDT library (see pending/PEND-09-crdt-migration.md).  The agaric package
-# itself stays as a workspace member so all existing build/test workflows
-# (`cargo build`, `cargo nextest run -p agaric`, `cargo tauri build`) keep
-# working unchanged.  Loro is intentionally NOT a dependency of the agaric
-# package — it lives only in the spike crate's deps.
+# CRDT library (see `pending/PEND-09-crdt-migration.md`); Phase 1 ported the
+# necessary engine code into `src-tauri/src/loro/`.  The spike was archived
+# in Phase 2 day-8 (Gate 8 of `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md`):
+# the directory is gone, the verdict lives at
+# `pending/PEND-09-SPIKE-REPORT.md` + `pending/PEND-09-SPIKE-NOTES.md`,
+# and the final-state source is preserved at the annotated git tag
+# `pend-09/spike-archive` (commit `3e8a1267`).
 [workspace]
-members = [".", "crates/loro-spike"]
+members = ["."]
 
 [package]
 name = "agaric"
@@ -74,7 +76,8 @@ mcp_rmcp_spike = ["dep:rmcp"]
 # byte-identical to today's behaviour, the `loro` crate is not linked,
 # and `src/loro/` compiles to an empty module.  The feature is the
 # entire control surface for Phase 1 — flipping it on enables the
-# `LoroEngine` port from `crates/loro-spike/`, the in-memory parity
+# `LoroEngine` port (originally from `crates/loro-spike/`; archived
+# in Phase 2 day-8 — see git tag `pend-09/spike-archive`), the in-memory parity
 # sampler, and the `merge::shadow_apply` hook.  Production rollout
 # happens by enabling this feature in CI builds once Phase 1 reaches
 # its parity-sampling milestone; until then it stays opt-in for
@@ -242,9 +245,10 @@ rmcp = { version = "1.6", optional = true, features = ["client"] }
 # canonical entry point for the eventual cutover, but Phase-1-day-1
 # scaffolding takes the strict zero-default-impact stance: nothing
 # changes in the produced binary unless `--features loro-shadow` is
-# passed.  Caret-1 mirrors `crates/loro-spike/Cargo.toml`; the spike's
-# format-stability finding (kill criterion #4) is the basis for the
-# 1.x pin.  When Phase 2 cutover lands and the materializer routes
+# passed.  Caret-1 mirrors what the (now-archived) spike crate pinned
+# (see git tag `pend-09/spike-archive` for `crates/loro-spike/Cargo.toml`);
+# the spike's format-stability finding (kill criterion #4) is the basis
+# for the 1.x pin.  When Phase 2 cutover lands and the materializer routes
 # every op through Loro, this becomes a non-optional dep and the
 # feature flag retires.  Not part of any coupled dep stack per
 # AGENTS.md §"Coupled Dependency Updates".
@@ -386,8 +390,10 @@ name = "property_def_bench"
 harness = false
 
 # PEND-09 Phase 0 day-10 — paired SQL read benchmark mirroring the
-# loro-spike read_path_bench (day-7).  Throwaway in spirit; lives only
-# until the spike's open question 8 is closed in the SPIKE-NOTES.
+# (now-archived) spike's `read_path_bench` (day-7); see git tag
+# `pend-09/spike-archive` for the original source.  Throwaway in
+# spirit; lives only until the spike's open question 8 is closed
+# in `pending/PEND-09-SPIKE-NOTES.md`.
 [[bench]]
 name = "loro_vs_sql_reads"
 harness = false

@@ -1,5 +1,6 @@
 //! `LoroEngine` — production-side port of the Phase-0 spike's CRDT
-//! engine (`crates/loro-spike/src/lib.rs`).
+//! engine (originally `crates/loro-spike/src/lib.rs`; the spike crate
+//! was archived in Phase-2 day-8 — see git tag `pend-09/spike-archive`).
 //!
 //! ## What this is
 //!
@@ -249,7 +250,8 @@ impl LoroEngine {
     /// middle.
     ///
     /// Ported from the spike's `apply_edit_via_diff_splice` (see
-    /// `crates/loro-spike/tests/parity_corpus.rs` ~line 100).  Production
+    /// the archived `tests/parity_corpus.rs` ~line 100; git tag
+    /// `pend-09/spike-archive`).  Production
     /// `EditBlock` ops carry a `to_text` snapshot of the whole new
     /// content (line-granularity diffy diffs the LCA against this
     /// string).  Loro wants character-level splices so two peers'

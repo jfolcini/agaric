@@ -3,8 +3,9 @@
 //! Days 1-7 landed the spike port + shadow-mode wiring + envelope +
 //! persistent SQLite parity sink + flush task + bucket A/B/C/D
 //! classifier + xxh3-64 peer-id swap.  Days prior also brought a
-//! hand-curated 53-case parity corpus across in `crates/loro-spike/
-//! tests/parity_corpus.rs` and a 5-shape integration suite in
+//! hand-curated 53-case parity corpus across the spike's
+//! `tests/parity_corpus.rs` (now archived; see git tag
+//! `pend-09/spike-archive`) and a 5-shape integration suite in
 //! `merge/apply.rs::shadow_apply_unit_tests`.  Both prove kill
 //! criterion #2 (the headline "D bucket = 0" gate) over the cases
 //! their authors thought of.
