@@ -5359,3 +5359,311 @@ async fn resolve_conflicts_batch_rejects_unknown_action() {
         "unknown action must reject with Validation, got {result:?}"
     );
 }
+
+// ======================================================================
+// PEND-35 Tier 4.3 — create_blocks_batch
+// ======================================================================
+
+/// PEND-35 Tier 4.3 — N input specs land as N blocks AND N op_log
+/// rows that all share a single contiguous seq range (one tx, no
+/// foreign tx interleaving). Mirrors the
+/// `delete_blocks_by_ids_writes_one_op_per_root_in_one_tx` pattern.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+
+    let n: usize = 5;
+    let specs: Vec<crate::commands::CreateBlockSpec> = (0..n)
+        .map(|i| crate::commands::CreateBlockSpec {
+            block_type: "content".into(),
+            content: format!("line {i}"),
+            parent_id: None,
+            position: None,
+            properties: std::collections::HashMap::new(),
+        })
+        .collect();
+
+    let created = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs)
+        .await
+        .unwrap();
+    assert_eq!(created.len(), n, "returned vec length matches input length");
+
+    // Block rows persisted.
+    for (i, row) in created.iter().enumerate() {
+        let persisted: Option<String> =
+            sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(&row.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            persisted,
+            Some(format!("line {i}")),
+            "block {i} content must be persisted"
+        );
+    }
+
+    // Op_log rows: exactly N create_block ops, all in one contiguous
+    // seq range from `pre_max + 1` to `pre_max + n`.
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .into();
+    assert_eq!(
+        post_max - pre_max,
+        n as i64,
+        "exactly N seq slots consumed under one IMMEDIATE tx; \
+         pre={pre_max} post={post_max}"
+    );
+
+    let create_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE device_id = ? AND op_type = 'create_block' AND seq > ?",
+        DEV,
+        pre_max,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        create_count, n as i64,
+        "exactly N create_block op_log rows under this batch"
+    );
+}
+
+/// PEND-35 Tier 4.3 — an invalid `block_type` mid-batch must roll the
+/// whole transaction back. After the call returns Err, neither the
+/// blocks table nor the op_log carries any rows from the attempted
+/// batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_atomic_rollback() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let pre_block_count: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let pre_op_count: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE device_id = ?", DEV)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // Spec 0 is valid, spec 1 has an unknown block_type, spec 2 is
+    // valid but should never run because spec 1 aborts the tx via `?`.
+    let specs = vec![
+        crate::commands::CreateBlockSpec {
+            block_type: "content".into(),
+            content: "valid first".into(),
+            parent_id: None,
+            position: None,
+            properties: std::collections::HashMap::new(),
+        },
+        crate::commands::CreateBlockSpec {
+            block_type: "not_a_real_type".into(),
+            content: "this errors".into(),
+            parent_id: None,
+            position: None,
+            properties: std::collections::HashMap::new(),
+        },
+        crate::commands::CreateBlockSpec {
+            block_type: "content".into(),
+            content: "valid third".into(),
+            parent_id: None,
+            position: None,
+            properties: std::collections::HashMap::new(),
+        },
+    ];
+
+    let result = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "invalid block_type must reject with Validation, got {result:?}"
+    );
+
+    let post_block_count: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let post_op_count: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE device_id = ?", DEV)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        pre_block_count, post_block_count,
+        "atomic rollback: zero new rows in `blocks` (the valid first spec must NOT survive)"
+    );
+    assert_eq!(
+        pre_op_count, post_op_count,
+        "atomic rollback: zero new rows in `op_log` (no partial create_block ops persisted)"
+    );
+}
+
+/// PEND-35 Tier 4.3 — empty input rejects with Validation; oversize
+/// input rejects with Validation. Mirror of
+/// `delete_blocks_by_ids_rejects_empty_list` /
+/// `…_rejects_oversize_list`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_rejects_empty_oversize() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let empty = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, vec![]).await;
+    assert!(
+        matches!(empty, Err(AppError::Validation(_))),
+        "empty list must reject with Validation, got {empty:?}"
+    );
+
+    let oversize: Vec<crate::commands::CreateBlockSpec> = (0
+        ..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| crate::commands::CreateBlockSpec {
+            block_type: "content".into(),
+            content: format!("c{i}"),
+            parent_id: None,
+            position: None,
+            properties: std::collections::HashMap::new(),
+        })
+        .collect();
+    let result = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, oversize).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversize list must reject with Validation, got {result:?}"
+    );
+}
+
+/// PEND-35 Tier 4.3 — each spec carries `properties`. After commit,
+/// every spec's block exists AND its properties land in either
+/// `block_properties` (non-reserved keys) or the corresponding column
+/// on `blocks` (reserved keys: `todo_state` / `priority` / `due_date`
+/// / `scheduled_date`). Mirrors `import_markdown_inner`'s
+/// per-block + per-property loop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_with_properties() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut props_a: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // Reserved → blocks column. Property def for `priority` only
+    // accepts `1` / `2` / `3` (see `crate::commands::properties` defaults),
+    // so we use `1` here rather than the alphabetic `A` from earlier
+    // schemas.
+    props_a.insert("priority".into(), "1".into());
+    props_a.insert("project".into(), "agaric".into()); // non-reserved → block_properties
+
+    let mut props_b: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    props_b.insert("todo_state".into(), "TODO".into()); // reserved → blocks column
+
+    let specs = vec![
+        crate::commands::CreateBlockSpec {
+            block_type: "content".into(),
+            content: "with reserved + non-reserved props".into(),
+            parent_id: None,
+            position: None,
+            properties: props_a,
+        },
+        crate::commands::CreateBlockSpec {
+            block_type: "content".into(),
+            content: "todo block".into(),
+            parent_id: None,
+            position: None,
+            properties: props_b,
+        },
+    ];
+
+    let created = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs)
+        .await
+        .unwrap();
+    assert_eq!(created.len(), 2);
+
+    let id_a = &created[0].id;
+    let id_b = &created[1].id;
+
+    // Reserved key on block A: `priority` lives on the blocks row.
+    let prio_a: Option<String> = sqlx::query_scalar("SELECT priority FROM blocks WHERE id = ?")
+        .bind(id_a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        prio_a,
+        Some("1".into()),
+        "priority must land on blocks.priority via reserved-key dispatch"
+    );
+
+    // Non-reserved on block A: `project` lives on block_properties.
+    let project_a: Option<String> = sqlx::query_scalar(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'project'",
+    )
+    .bind(id_a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        project_a,
+        Some("agaric".into()),
+        "non-reserved key must land in block_properties.value_text"
+    );
+
+    // Reserved on block B: `todo_state` lives on blocks row.
+    let todo_b: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(id_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        todo_b,
+        Some("TODO".into()),
+        "todo_state must land on blocks.todo_state via reserved-key dispatch"
+    );
+
+    // Op_log: 2 create_block + 3 set_property (priority, project for A
+    // + todo_state for B). All under one device. Verify the count
+    // matches the property + block ops we sent.
+    let create_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE device_id = ? AND op_type = 'create_block' \
+           AND (block_id = ? OR block_id = ?)",
+        DEV,
+        id_a,
+        id_b,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(create_count, 2, "exactly 2 create_block ops");
+
+    let set_prop_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE device_id = ? AND op_type = 'set_property' \
+           AND (block_id = ? OR block_id = ?)",
+        DEV,
+        id_a,
+        id_b,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        set_prop_count, 3,
+        "exactly 3 set_property ops (priority + project for A, todo_state for B)"
+    );
+}

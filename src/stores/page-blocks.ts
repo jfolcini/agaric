@@ -94,6 +94,17 @@ export interface PageBlockState {
   moveUp: (blockId: string) => Promise<void>
   /** Move block down among its siblings (swap with next sibling). */
   moveDown: (blockId: string) => Promise<void>
+
+  /**
+   * PEND-35 Tier 4.2 — append a single backend-returned `BlockRow` to the
+   * in-memory flat tree at depth 0 (top-level child of this page).
+   *
+   * Used by callers that already have the freshly-created row in hand and
+   * would otherwise re-fetch the entire page just to surface it. Pure FE
+   * splice — no IPC, no undo notification (the calling create path owns
+   * both side effects).
+   */
+  appendBlock: (row: BlockRow) => void
 }
 
 // ── Recursive subtree loader ─────────────────────────────────────────────
@@ -543,8 +554,40 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const newPosition = (prevSibling.position ?? 0) - 1
 
       try {
-        await moveBlock(blockId, parentId, newPosition)
-        await get().load()
+        // PEND-35 Tier 4.1 — splice locally instead of full re-list.
+        // The MoveResponse echoes the canonical (parent_id, position) the
+        // backend committed, so we can mirror the `reorder` path at :432-441
+        // without a follow-up `list_blocks` IPC. Same-parent only — moveUp
+        // never crosses parents (it walks the sibling list at fixed depth).
+        const resp = await moveBlock(blockId, parentId, newPosition)
+
+        // Defensive: if the backend echoes a different parent (shouldn't
+        // happen for moveUp, but the response shape allows it), fall back
+        // to the full reload path so descendant chains stay consistent.
+        if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
+          await get().load()
+        } else {
+          // Locate the moved block and its predecessor in the flat tree
+          // (which may include descendants between them). Swap the two
+          // sibling subtrees so visual order matches the new positions.
+          const oldIndex = blocks.findIndex((b) => b.id === blockId)
+          const prevIndex = blocks.findIndex((b) => b.id === prevSibling.id)
+          if (oldIndex < 0 || prevIndex < 0) {
+            // Shouldn't happen — fall back to full reload.
+            await get().load()
+          } else {
+            const movedDescendants = getDragDescendants(blocks, blockId)
+            const movedSet = new Set([blockId, ...movedDescendants])
+            const movedItems = blocks
+              .filter((b) => movedSet.has(b.id))
+              .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
+            const remaining = blocks.filter((b) => !movedSet.has(b.id))
+            const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
+            const newBlocks = [...remaining]
+            newBlocks.splice(insertAt, 0, ...movedItems)
+            set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+          }
+        }
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to move block up', { blockId }, err)
@@ -569,13 +612,55 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const newPosition = (nextSibling.position ?? 0) + 1
 
       try {
-        await moveBlock(blockId, parentId, newPosition)
-        await get().load()
+        // PEND-35 Tier 4.1 — splice locally instead of full re-list.
+        // See moveUp comment for rationale; same-parent reorder only.
+        const resp = await moveBlock(blockId, parentId, newPosition)
+
+        if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
+          await get().load()
+        } else {
+          const oldIndex = blocks.findIndex((b) => b.id === blockId)
+          const nextIndex = blocks.findIndex((b) => b.id === nextSibling.id)
+          if (oldIndex < 0 || nextIndex < 0) {
+            await get().load()
+          } else {
+            // Move the block AND its descendants past nextSibling AND its
+            // descendants. Build moved + remaining, then re-insert moved
+            // right after nextSibling's last descendant in `remaining`.
+            const movedDescendants = getDragDescendants(blocks, blockId)
+            const movedSet = new Set([blockId, ...movedDescendants])
+            const movedItems = blocks
+              .filter((b) => movedSet.has(b.id))
+              .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
+            const remaining = blocks.filter((b) => !movedSet.has(b.id))
+            const nextDescendants = getDragDescendants(remaining, nextSibling.id)
+            let insertAt = remaining.findIndex((b) => b.id === nextSibling.id) + 1
+            while (
+              insertAt < remaining.length &&
+              nextDescendants.has((remaining[insertAt] as FlatBlock).id)
+            ) {
+              insertAt++
+            }
+            const newBlocks = [...remaining]
+            newBlocks.splice(insertAt, 0, ...movedItems)
+            set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+          }
+        }
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to move block down', { blockId }, err)
         toast.error(i18n.t('error.moveBlockDownFailed'))
       }
+    },
+
+    appendBlock: (row: BlockRow) => {
+      const { blocks } = get()
+      // Depth 0 — the caller (PageEditor empty-page first-block-create)
+      // creates directly under this page's `rootParentId`, which is the
+      // top-level depth in the flat tree.
+      const newBlock: FlatBlock = { ...row, depth: 0 }
+      const newBlocks = [...blocks, newBlock]
+      set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
     },
   }))
 

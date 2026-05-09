@@ -65,16 +65,17 @@ pub use attachments::{
 };
 pub use blocks::{
     batch_resolve, batch_resolve_inner, create_block, create_block_inner,
-    create_block_inner_with_space, delete_block, delete_block_inner, delete_blocks_by_ids,
-    delete_blocks_by_ids_inner, edit_block, edit_block_inner, first_child_for_blocks,
-    first_child_for_blocks_inner, first_op_device_for_blocks, first_op_device_for_blocks_inner,
-    get_active_block_inner, get_block, get_block_inner, get_blocks, get_blocks_inner, list_blocks,
-    list_blocks_inner, move_block, move_block_inner, purge_all_deleted, purge_all_deleted_inner,
-    purge_block, purge_block_inner, purge_blocks_by_ids, purge_blocks_by_ids_inner,
-    resolve_conflicts_batch, resolve_conflicts_batch_inner, restore_all_deleted,
-    restore_all_deleted_inner, restore_block, restore_block_inner, restore_blocks_by_ids,
-    restore_blocks_by_ids_inner, trash_descendant_counts, trash_descendant_counts_inner,
-    ConflictResolveAction, ConflictResolveBatchResult,
+    create_block_inner_with_space, create_blocks_batch, create_blocks_batch_inner, delete_block,
+    delete_block_inner, delete_blocks_by_ids, delete_blocks_by_ids_inner, edit_block,
+    edit_block_inner, first_child_for_blocks, first_child_for_blocks_inner,
+    first_op_device_for_blocks, first_op_device_for_blocks_inner, get_active_block_inner,
+    get_block, get_block_inner, get_blocks, get_blocks_inner, list_blocks, list_blocks_inner,
+    move_block, move_block_inner, purge_all_deleted, purge_all_deleted_inner, purge_block,
+    purge_block_inner, purge_blocks_by_ids, purge_blocks_by_ids_inner, resolve_conflicts_batch,
+    resolve_conflicts_batch_inner, restore_all_deleted, restore_all_deleted_inner, restore_block,
+    restore_block_inner, restore_blocks_by_ids, restore_blocks_by_ids_inner,
+    trash_descendant_counts, trash_descendant_counts_inner, ConflictResolveAction,
+    ConflictResolveBatchResult, CreateBlockSpec,
 };
 pub use bug_report::{
     collect_bug_report_metadata, collect_bug_report_metadata_inner, read_logs_for_report,
@@ -96,9 +97,10 @@ pub use gcal::{
 };
 pub use history::{
     apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
-    compute_edit_diff, compute_edit_diff_inner, list_page_history, list_page_history_inner,
-    redo_page_op, redo_page_op_inner, restore_page_to_op, restore_page_to_op_inner, revert_ops,
-    revert_ops_inner, undo_page_op, undo_page_op_inner,
+    compute_edit_diff, compute_edit_diff_inner, find_undo_group, find_undo_group_inner,
+    list_page_history, list_page_history_inner, redo_page_op, redo_page_op_inner,
+    restore_page_to_op, restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_op,
+    undo_page_op_inner,
 };
 pub use journal::{
     get_journal_page_by_date, get_journal_page_by_date_inner, journal_for_date_inner,
@@ -136,11 +138,12 @@ pub use properties::{
 };
 pub use queries::{
     count_backlinks_batch, count_backlinks_batch_inner, count_conflicts, count_conflicts_inner,
-    get_backlinks, get_backlinks_inner, get_conflicts, get_conflicts_inner, get_status,
-    get_status_inner, list_backlinks_grouped, list_backlinks_grouped_inner, list_unfinished_tasks,
-    list_unfinished_tasks_inner, list_unlinked_references, list_unlinked_references_inner,
-    query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
-    query_by_property_inner, search_blocks, search_blocks_inner,
+    filtered_blocks_query, filtered_blocks_query_inner, get_backlinks, get_backlinks_inner,
+    get_conflicts, get_conflicts_inner, get_status, get_status_inner, list_backlinks_grouped,
+    list_backlinks_grouped_inner, list_unfinished_tasks, list_unfinished_tasks_inner,
+    list_unlinked_references, list_unlinked_references_inner, query_backlinks_filtered,
+    query_backlinks_filtered_inner, query_by_property, query_by_property_inner, search_blocks,
+    search_blocks_inner, PropertyFilter, TagFilterExpr,
 };
 pub use spaces::{
     create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,
@@ -173,8 +176,8 @@ pub use attachments::{
 };
 #[doc(hidden)]
 pub use blocks::{
-    __specta__fn__batch_resolve, __specta__fn__create_block, __specta__fn__delete_block,
-    __specta__fn__delete_blocks_by_ids, __specta__fn__edit_block,
+    __specta__fn__batch_resolve, __specta__fn__create_block, __specta__fn__create_blocks_batch,
+    __specta__fn__delete_block, __specta__fn__delete_blocks_by_ids, __specta__fn__edit_block,
     __specta__fn__first_child_for_blocks, __specta__fn__first_op_device_for_blocks,
     __specta__fn__get_block, __specta__fn__get_blocks, __specta__fn__list_blocks,
     __specta__fn__move_block, __specta__fn__purge_all_deleted, __specta__fn__purge_block,
@@ -201,8 +204,8 @@ pub use gcal::{
 #[doc(hidden)]
 pub use history::{
     __specta__fn__compute_block_vs_current_diff, __specta__fn__compute_edit_diff,
-    __specta__fn__list_page_history, __specta__fn__redo_page_op, __specta__fn__restore_page_to_op,
-    __specta__fn__revert_ops, __specta__fn__undo_page_op,
+    __specta__fn__find_undo_group, __specta__fn__list_page_history, __specta__fn__redo_page_op,
+    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_op,
 };
 #[doc(hidden)]
 pub use journal::{
@@ -240,10 +243,11 @@ pub use properties::{
 #[doc(hidden)]
 pub use queries::{
     __specta__fn__count_backlinks_batch, __specta__fn__count_conflicts,
-    __specta__fn__get_backlinks, __specta__fn__get_conflicts, __specta__fn__get_status,
-    __specta__fn__list_backlinks_grouped, __specta__fn__list_unfinished_tasks,
-    __specta__fn__list_unlinked_references, __specta__fn__query_backlinks_filtered,
-    __specta__fn__query_by_property, __specta__fn__search_blocks,
+    __specta__fn__filtered_blocks_query, __specta__fn__get_backlinks, __specta__fn__get_conflicts,
+    __specta__fn__get_status, __specta__fn__list_backlinks_grouped,
+    __specta__fn__list_unfinished_tasks, __specta__fn__list_unlinked_references,
+    __specta__fn__query_backlinks_filtered, __specta__fn__query_by_property,
+    __specta__fn__search_blocks,
 };
 #[doc(hidden)]
 pub use spaces::{
@@ -275,10 +279,10 @@ pub use attachments::{
 };
 #[doc(hidden)]
 pub use blocks::{
-    __cmd__batch_resolve, __cmd__create_block, __cmd__delete_block, __cmd__delete_blocks_by_ids,
-    __cmd__edit_block, __cmd__first_child_for_blocks, __cmd__first_op_device_for_blocks,
-    __cmd__get_block, __cmd__get_blocks, __cmd__list_blocks, __cmd__move_block,
-    __cmd__purge_all_deleted, __cmd__purge_block, __cmd__purge_blocks_by_ids,
+    __cmd__batch_resolve, __cmd__create_block, __cmd__create_blocks_batch, __cmd__delete_block,
+    __cmd__delete_blocks_by_ids, __cmd__edit_block, __cmd__first_child_for_blocks,
+    __cmd__first_op_device_for_blocks, __cmd__get_block, __cmd__get_blocks, __cmd__list_blocks,
+    __cmd__move_block, __cmd__purge_all_deleted, __cmd__purge_block, __cmd__purge_blocks_by_ids,
     __cmd__resolve_conflicts_batch, __cmd__restore_all_deleted, __cmd__restore_block,
     __cmd__restore_blocks_by_ids, __cmd__trash_descendant_counts,
 };
@@ -298,8 +302,9 @@ pub use gcal::{
 };
 #[doc(hidden)]
 pub use history::{
-    __cmd__compute_block_vs_current_diff, __cmd__compute_edit_diff, __cmd__list_page_history,
-    __cmd__redo_page_op, __cmd__restore_page_to_op, __cmd__revert_ops, __cmd__undo_page_op,
+    __cmd__compute_block_vs_current_diff, __cmd__compute_edit_diff, __cmd__find_undo_group,
+    __cmd__list_page_history, __cmd__redo_page_op, __cmd__restore_page_to_op, __cmd__revert_ops,
+    __cmd__undo_page_op,
 };
 #[doc(hidden)]
 pub use journal::{
@@ -331,8 +336,8 @@ pub use properties::{
 };
 #[doc(hidden)]
 pub use queries::{
-    __cmd__count_backlinks_batch, __cmd__count_conflicts, __cmd__get_backlinks,
-    __cmd__get_conflicts, __cmd__get_status, __cmd__list_backlinks_grouped,
+    __cmd__count_backlinks_batch, __cmd__count_conflicts, __cmd__filtered_blocks_query,
+    __cmd__get_backlinks, __cmd__get_conflicts, __cmd__get_status, __cmd__list_backlinks_grouped,
     __cmd__list_unfinished_tasks, __cmd__list_unlinked_references, __cmd__query_backlinks_filtered,
     __cmd__query_by_property, __cmd__search_blocks,
 };

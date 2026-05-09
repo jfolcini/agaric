@@ -612,6 +612,120 @@ pub async fn redo_page_op_inner(
     })
 }
 
+/// PEND-35 Tier 4.4 — Compute the size of the consecutive same-device,
+/// within-window undo group starting at the Nth-most-recent **undoable** op
+/// of a page.
+///
+/// Mirrors the frontend grouping semantics that previously required
+/// `list_page_history` re-fetches with a growing window after every
+/// Ctrl+Z:
+///
+/// * "Undoable" excludes ops whose `op_type` starts with `undo_` or
+///   `redo_` (those are reverse ops appended by [`undo_page_op_inner`] /
+///   [`redo_page_op_inner`] and are not themselves undoable from the
+///   user's POV).
+/// * `depth = 0` seeds at the most-recent undoable op for the page.
+///   `depth = N` seeds at the (N+1)-th most-recent.
+/// * Walking forward in newest-first order, the group extends to the
+///   next op whenever it is by the same `device_id` AND its `created_at`
+///   is within `window_ms` of the previous op in the chain. The group
+///   ends as soon as either condition fails or the page runs out of ops.
+/// * Returns at least 1 (the seed itself) — never 0 unless the seed
+///   doesn't exist (handled below by the caller; no-op = single
+///   undo).
+///
+/// The query mirrors the standard page-scoped recursive CTE used by
+/// `list_page_history` / `undo_page_op_inner`: `is_conflict = 0 +
+/// depth < 100` for the page-blocks recursion, plus a second
+/// recursive CTE that walks the ordered op stream until the group
+/// boundary is reached. The walk is bounded by `count <= 1000` to match
+/// the `undo_depth` ceiling enforced in [`undo_page_op_inner`].
+///
+/// Returns `i32` (FE callers store group sizes as JS numbers; the
+/// 1000-row ceiling fits comfortably).
+///
+/// # Errors
+///
+/// * `AppError::Validation` — `depth < 0` or `window_ms < 0`.
+/// * Database errors propagated from sqlx.
+#[instrument(skip(pool), err)]
+pub async fn find_undo_group_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+    depth: i64,
+    window_ms: i64,
+) -> Result<i32, AppError> {
+    if depth < 0 {
+        return Err(AppError::Validation("depth must be non-negative".into()));
+    }
+    if window_ms < 0 {
+        return Err(AppError::Validation(
+            "window_ms must be non-negative".into(),
+        ));
+    }
+
+    // Two-stage CTE:
+    //   1. `page_blocks` — page subtree (matches `list_page_history` / `undo_page_op_inner`).
+    //   2. `ordered_ops` — undoable ops for those blocks, numbered newest-first.
+    //   3. `walk` — recursive same-device + within-window walk seeded at row N+1.
+    //
+    // SQLite stores `created_at` as RFC 3339 with `Z` suffix (lex-monotonic
+    // L-98 invariant). `julianday()` parses this format directly; the
+    // `* 86400000` conversion yields milliseconds for the window comparison.
+    //
+    // The walk's `count <= 1000` matches the `undo_depth` ceiling in
+    // `undo_page_op_inner`, bounding worst-case recursion against a
+    // pathological burst of same-device ops.
+    let seed_rn: i64 = depth + 1; // depth=0 → rn=1 (newest)
+    let count: Option<i64> = sqlx::query_scalar(
+        "WITH RECURSIVE page_blocks(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ?1 AND is_conflict = 0 \
+             UNION ALL \
+             SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
+             WHERE b.is_conflict = 0 AND pb.depth < 100 \
+         ), \
+         ordered_ops AS ( \
+             SELECT \
+                 ROW_NUMBER() OVER (ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC) AS rn, \
+                 ol.device_id, ol.seq, ol.created_at \
+             FROM op_log ol \
+             WHERE ol.block_id IN (SELECT id FROM page_blocks) \
+               AND ol.op_type NOT LIKE 'undo\\_%' ESCAPE '\\' \
+               AND ol.op_type NOT LIKE 'redo\\_%' ESCAPE '\\' \
+         ), \
+         walk(rn, device_id, created_at, count_so_far) AS ( \
+             SELECT rn, device_id, created_at, 1 \
+             FROM ordered_ops \
+             WHERE rn = ?2 \
+             UNION ALL \
+             SELECT o.rn, o.device_id, o.created_at, w.count_so_far + 1 \
+             FROM walk w \
+             JOIN ordered_ops o ON o.rn = w.rn + 1 \
+             WHERE o.device_id = w.device_id \
+               AND (julianday(w.created_at) - julianday(o.created_at)) * 86400000.0 <= ?3 \
+               AND w.count_so_far < 1000 \
+         ) \
+         SELECT MAX(count_so_far) FROM walk",
+    )
+    .bind(page_id)
+    .bind(seed_rn)
+    .bind(window_ms)
+    .fetch_one(pool)
+    .await?;
+
+    // `MAX(count_so_far)` is NULL when the seed row doesn't exist (depth
+    // exceeds the page's undoable-op count). In that case there's no
+    // group — the FE caller will skip extending and just record 1.
+    //
+    // The cast to i32 is bounded by the recursive walk's `count_so_far <
+    // 1000` predicate so it can never truncate. The explicit `.min(i32::MAX
+    // as i64)` defends against a future relaxation of that bound; the
+    // `try_from(...).unwrap_or(i32::MAX)` form keeps clippy's
+    // `cast_possible_truncation` lint quiet without an `#[allow]`.
+    let raw = count.unwrap_or(0).max(0).min(i32::MAX as i64);
+    Ok(i32::try_from(raw).unwrap_or(i32::MAX))
+}
+
 /// Tauri command: list page history. Delegates to [`list_page_history_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
@@ -710,6 +824,23 @@ pub async fn redo_page_op(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: compute the size of the consecutive same-device,
+/// within-window undo group starting at the Nth-most-recent undoable op.
+/// Delegates to [`find_undo_group_inner`]. PEND-35 Tier 4.4.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn find_undo_group(
+    pool: State<'_, ReadPool>,
+    page_id: String,
+    depth: i64,
+    window_ms: i64,
+) -> Result<i32, AppError> {
+    find_undo_group_inner(&pool.0, &page_id, depth, window_ms)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Compute a word-level diff for an `edit_block` op by looking up the prior

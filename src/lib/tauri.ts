@@ -11,6 +11,7 @@ export type {
   CompareOp,
   ConflictResolveAction,
   ConflictResolveBatchResult,
+  CreateBlockSpec,
   DateRange,
   DeleteResponse,
   DiffSpan,
@@ -41,6 +42,7 @@ import type {
   BlockRow,
   ConflictResolveAction,
   ConflictResolveBatchResult,
+  CreateBlockSpec,
   DateRange,
   DeleteResponse,
   DiffSpan,
@@ -127,6 +129,35 @@ export async function createBlock(params: {
       toSpaceScope(params.spaceId),
     ),
   )
+}
+
+/**
+ * PEND-35 Tier 4.3 — atomically create N blocks (with optional per-block
+ * properties) in a single backend IMMEDIATE transaction.
+ *
+ * Replaces the per-block `createBlock` IPC loop in
+ * `template-utils.ts::insertTemplateBlocks` /
+ * `insertTemplateBlocksFromString` (one IPC per descendant / per markdown
+ * line). The new path is one IPC, one writer-lock window, one op_log
+ * scope. A 10-line journal template that previously fired 10 IPCs now
+ * fires 1.
+ *
+ * **All-or-nothing atomicity**: any error inside the batch (invalid
+ * `blockType`, missing parent, oversize content, property validation
+ * rejection) rolls the whole transaction back. Returns the created
+ * `BlockRow`s in input order — callers map their template-line index to
+ * the returned block.
+ *
+ * **Forward references**: a spec's `parentId` may point to a block id
+ * created EARLIER in the same batch (e.g. a child whose parent was just
+ * inserted at the previous index). The backend's parent-existence probe
+ * runs against the live transaction state.
+ *
+ * **Validation failures**: empty list / oversize list (>1000) reject
+ * with `AppError::Validation`.
+ */
+export async function createBlocksBatch(specs: CreateBlockSpec[]): Promise<BlockRow[]> {
+  return unwrap(await commands.createBlocksBatch(specs))
 }
 
 /** Edit a block's text content. */
@@ -1013,6 +1044,99 @@ export async function queryByProperty(params: {
   )
 }
 
+/** Per-call property predicate accepted by [`filteredBlocksQuery`].
+ *
+ * Mirrors the Rust [`PropertyFilter`] struct shape (one EXISTS subquery
+ * per filter). Distinct from the parser-side `PropertyFilter` in
+ * `query-utils.ts` (which carries `{ key, value, operator }` for the
+ * legacy fan-out shape) — the latter is translated into this shape at
+ * the IPC boundary by `useQueryExecution`.
+ */
+export interface FilteredBlocksPropertyFilter {
+  key: string
+  valueText?: string | null
+  valueTextIn?: string[]
+  valueDate?: string | null
+  valueDateRange?: [string, string] | null
+  /** 'eq' | 'neq' | 'lt' | 'gt' | 'lte' | 'gte' (default: 'eq'). */
+  operator?: string
+}
+
+/** Tag predicate accepted by [`filteredBlocksQuery`]. Mirrors the Rust
+ *  [`TagFilterExpr`] struct.
+ */
+export interface FilteredBlocksTagFilter {
+  tagIds?: string[]
+  prefixes?: string[]
+  /** 'and' for intersection, anything else (default 'or') for union. */
+  mode?: string
+  includeInherited?: boolean
+}
+
+/** PEND-35 Tier 2.10b — AND-intersect property + tag predicates in SQL.
+ *
+ * Replaces the legacy `useQueryExecution.fetchFilteredQuery` shape that
+ * fanned out one `queryByProperty` / `queryByTags` IPC per sub-filter
+ * (each capped at 200 rows) and intersected the resulting block-id sets
+ * in JS (capped at 50 rows). Any AND-set member outside the top-200 of
+ * any one sub-query was silently dropped — the load-bearing regression
+ * this command fixes.
+ *
+ * Each `propertyFilters[i]` becomes one `EXISTS (SELECT 1 FROM
+ * block_properties …)` subquery composed into the parent SQL; the AND
+ * across filters is the structural conjunction of those EXISTS clauses
+ * (no JS post-filter, no per-sub-query row cap). `tagFilters` follows
+ * the same shape (one `EXISTS` over `block_tags` / `block_tag_refs`
+ * UNION). The composed query honours the page `cursor` / `limit` so
+ * pagination walks the post-intersection set.
+ *
+ * At least one of `propertyFilters` / `tagFilters` / `blockType` must
+ * be supplied — empty inputs are rejected with `Validation` so a
+ * misconfigured caller surfaces loudly rather than silently scanning
+ * every active block.
+ */
+export async function filteredBlocksQuery(params: {
+  propertyFilters?: FilteredBlocksPropertyFilter[]
+  tagFilters?: FilteredBlocksTagFilter | undefined
+  blockType?: string | undefined
+  spaceId?: string | null | undefined
+  cursor?: string | undefined
+  limit?: number | undefined
+}): Promise<PageResponse<BlockRow>> {
+  // Marshal property filters into the camelCase Rust struct shape on
+  // the IPC boundary. `valueTextIn` defaults to `[]` (matches the
+  // Rust `#[serde(default)]` on `Vec<String>`); empty arrays are
+  // semantically equivalent to "no IN-set predicate".
+  const marshalledProps = (params.propertyFilters ?? []).map((pf) => ({
+    key: pf.key,
+    valueText: pf.valueText ?? null,
+    valueTextIn: pf.valueTextIn ?? [],
+    valueDate: pf.valueDate ?? null,
+    valueDateRange: pf.valueDateRange ?? null,
+    operator: pf.operator ?? 'eq',
+  }))
+  const marshalledTags = params.tagFilters
+    ? {
+        tagIds: params.tagFilters.tagIds ?? [],
+        prefixes: params.tagFilters.prefixes ?? [],
+        mode: params.tagFilters.mode ?? 'or',
+        includeInherited: params.tagFilters.includeInherited ?? false,
+      }
+    : null
+  return unwrap(
+    await commands.filteredBlocksQuery(
+      // The bindings.ts type uses an inline shape for PropertyFilter;
+      // the marshalled object is structurally compatible.
+      marshalledProps as Parameters<typeof commands.filteredBlocksQuery>[0],
+      marshalledTags as Parameters<typeof commands.filteredBlocksQuery>[1],
+      params.blockType ?? null,
+      toSpaceScope(params.spaceId),
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Undo / Redo commands
 // ---------------------------------------------------------------------------
@@ -1036,6 +1160,35 @@ export async function undoPageOp(params: {
   undoDepth: number
 }): Promise<UndoResult> {
   return unwrap(await commands.undoPageOp(params.pageId, params.undoDepth))
+}
+
+/**
+ * PEND-35 Tier 4.4 — Compute the size of the consecutive same-device,
+ * within-window undo group starting at the Nth-most-recent undoable op
+ * of a page.
+ *
+ * Replaces the FE's pre-existing growing-window `listPageHistory`
+ * re-fetch (executed after every Ctrl+Z) with a single backend query.
+ * The undo store calls this once per Ctrl+Z to know how many ops to
+ * revert as a group; it then issues `undoPageOp` `groupSize` times.
+ *
+ * Semantics mirrored from the prior FE-side filter:
+ *   - "Undoable" excludes ops whose `op_type` starts with `undo_` /
+ *     `redo_` (those are reverse ops, never user-undoable).
+ *   - `depth = 0` seeds at the most-recent undoable op for the page.
+ *   - The group extends backward (older direction) one op at a time
+ *     until either `device_id` differs or the gap exceeds `windowMs`.
+ *
+ * Returns >= 1 normally; returns 0 when the seed op doesn't exist
+ * (depth exceeds the page's undoable-op count) — callers should
+ * fall back to a single undo (groupSize = 1) in that case.
+ */
+export async function findUndoGroup(params: {
+  pageId: string
+  depth: number
+  windowMs: number
+}): Promise<number> {
+  return unwrap(await commands.findUndoGroup(params.pageId, params.depth, params.windowMs))
 }
 
 /** Redo a previously undone op by reversing it again. */

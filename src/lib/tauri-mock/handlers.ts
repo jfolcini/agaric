@@ -197,6 +197,89 @@ export const HANDLERS: Record<string, Handler> = {
     return row
   },
 
+  // PEND-35 Tier 4.3 — atomic batch-create. Mirrors the existing
+  // `create_block` mock once per input spec, plus a `set_property` op
+  // per (key, value) pair in the spec's `properties` map. The real
+  // backend wraps the whole batch in one IMMEDIATE transaction; the
+  // mock here is sequential (good enough for the FE shape — atomicity
+  // is exercised by the Rust tests). Returns the created BlockRows in
+  // INPUT ORDER so callers can map template-line index → block id.
+  create_blocks_batch: (args) => {
+    const a = args as Record<string, unknown>
+    const specs = (a['specs'] as Array<Record<string, unknown>>) ?? []
+    if (specs.length === 0) {
+      throw new Error('specs list cannot be empty')
+    }
+    const out: Record<string, unknown>[] = []
+    for (const spec of specs) {
+      const id = fakeId()
+      const parentId = (spec['parentId'] as string | null) ?? null
+      let position = spec['position'] as number | undefined
+      if (position == null) {
+        const siblings = [...blocks.values()].filter(
+          (b) => b['parent_id'] === parentId && !b['deleted_at'],
+        )
+        position = siblings.length
+      }
+      const blockType = spec['blockType'] as string
+      const row: Record<string, unknown> = {
+        id,
+        block_type: blockType,
+        content: (spec['content'] as string) ?? null,
+        parent_id: parentId,
+        page_id: blockType === 'page' ? id : parentId,
+        position,
+        deleted_at: null,
+        is_conflict: false,
+        conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }
+      blocks.set(id, row)
+      pushOp('create_block', {
+        block_id: id,
+        content: row['content'],
+        parent_id: parentId,
+        block_type: blockType,
+        position,
+      })
+      // Apply any per-spec properties (mirrors `set_property_in_tx`
+      // dispatch — reserved keys land on the block row, others go to
+      // the properties map).
+      const props = (spec['properties'] as Record<string, string> | undefined) ?? {}
+      for (const [key, value] of Object.entries(props)) {
+        if (key === 'todo_state') row['todo_state'] = value
+        else if (key === 'priority') row['priority'] = value
+        else if (key === 'due_date') row['due_date'] = value
+        else if (key === 'scheduled_date') row['scheduled_date'] = value
+        else {
+          if (!properties.has(id)) properties.set(id, new Map())
+          properties.get(id)?.set(key, {
+            block_id: id,
+            key,
+            value_text: value,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          })
+        }
+        pushOp('set_property', {
+          block_id: id,
+          key,
+          value_text: value,
+          value_number: null,
+          value_date: null,
+          value_ref: null,
+        })
+      }
+      out.push(row)
+    }
+    return out
+  },
+
   // ---------------------------------------------------------------------------
   // Spaces — FEAT-3 Phase 1 / Phase 2
   // ---------------------------------------------------------------------------
@@ -596,6 +679,44 @@ export const HANDLERS: Record<string, Handler> = {
     return { items, next_cursor: null, has_more: false }
   },
 
+  // PEND-35 Tier 4.4 — mirror `find_undo_group_inner` semantics so
+  // browser-mode FE tests observe the same group sizing the real
+  // backend produces. Walks the in-memory `opLog` newest-first,
+  // filtering out `undo_*` / `redo_*` ops, seeds at index `depth`,
+  // and counts consecutive same-device + within-window ops.
+  find_undo_group: (args) => {
+    const a = (args ?? {}) as Record<string, unknown>
+    const depth = (a['depth'] as number) ?? 0
+    const windowMs = (a['windowMs'] as number) ?? 0
+
+    // Newest-first ordering on (created_at DESC, seq DESC).
+    const undoableOps = [...opLog]
+      .filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'))
+      .sort((a2, b2) => {
+        if (a2.created_at !== b2.created_at) return a2.created_at < b2.created_at ? 1 : -1
+        return b2.seq - a2.seq
+      })
+
+    if (depth < 0 || depth >= undoableOps.length) return 0
+
+    const seed = undoableOps[depth] as (typeof undoableOps)[number]
+    let count = 1
+    let prevTs = new Date(seed.created_at).getTime()
+    let prevDevice = seed.device_id
+
+    for (let i = depth + 1; i < undoableOps.length && count < 1000; i++) {
+      const op = undoableOps[i] as (typeof undoableOps)[number]
+      const ts = new Date(op.created_at).getTime()
+      if (op.device_id !== prevDevice) break
+      if (Math.abs(prevTs - ts) > windowMs) break
+      count += 1
+      prevTs = ts
+      prevDevice = op.device_id
+    }
+
+    return count
+  },
+
   revert_ops: (args) => {
     const a = args as Record<string, unknown>
     const ops = a['ops'] as Array<{ device_id: string; seq: number }>
@@ -850,6 +971,137 @@ export const HANDLERS: Record<string, Handler> = {
       // Default: AND — block must have ALL specified tags
       return allTagIds.every((tid) => tags.has(tid))
     })
+    return { items, next_cursor: null, has_more: false }
+  },
+
+  // PEND-35 Tier 2.10b — AND-intersected property + tag query that the
+  // backend resolves entirely in SQL via composed `EXISTS` subqueries.
+  // The mock exists so FE tests can assert the IPC fires and observe
+  // the post-intersection result; cursor pagination is intentionally
+  // skipped (the backend semantic the audit cares about is "no silent
+  // row cap" / "single round-trip", not "the mock paginates").
+  filtered_blocks_query: (args) => {
+    const a = args as Record<string, unknown>
+    const propertyFilters = (a['propertyFilters'] as Record<string, unknown>[] | null) ?? []
+    const tagFilters = (a['tagFilters'] as Record<string, unknown> | null) ?? null
+    const blockType = (a['blockType'] as string | null) ?? null
+
+    const ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
+      todo_state: 'text',
+      priority: 'text',
+      due_date: 'date',
+      scheduled_date: 'date',
+    }
+
+    /**
+     * Evaluate one PropertyFilter against a block — mirrors the
+     * EXISTS-subquery semantics the backend emits per filter (or, for
+     * reserved keys, the direct column predicate routing).
+     */
+    const propertyFilterMatches = (
+      b: Record<string, unknown>,
+      pf: Record<string, unknown>,
+    ): boolean => {
+      const key = pf['key'] as string
+      const valueText = (pf['valueText'] as string | null) ?? null
+      const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
+      const valueDate = (pf['valueDate'] as string | null) ?? null
+      const valueDateRange = (pf['valueDateRange'] as [string, string] | null) ?? null
+      const operator = ((pf['operator'] as string | null) ?? 'eq').toLowerCase()
+
+      const cmp = (lhs: string, rhs: string): boolean => {
+        switch (operator) {
+          case 'neq':
+            return lhs !== rhs
+          case 'lt':
+            return lhs < rhs
+          case 'gt':
+            return lhs > rhs
+          case 'lte':
+            return lhs <= rhs
+          case 'gte':
+            return lhs >= rhs
+          default:
+            return lhs === rhs
+        }
+      }
+
+      const blockProps = properties.get(b['id'] as string)
+      const prop = blockProps?.get(key)
+      const rowKind = ROW_FIELD_KEYS[key]
+      // Resolve the candidate text/date for comparison from either
+      // block_properties or the row-level reserved column.
+      let pText: string | null = null
+      let pDate: string | null = null
+      if (prop) {
+        pText = (prop['value_text'] as string | null) ?? null
+        pDate = (prop['value_date'] as string | null) ?? null
+      } else if (rowKind !== undefined) {
+        const v = (b[key] as string | null | undefined) ?? null
+        if (rowKind === 'text') pText = v
+        else pDate = v
+      } else {
+        return false // key absent
+      }
+
+      if (valueTextIn && valueTextIn.length > 0) {
+        if (pText == null || !valueTextIn.includes(pText)) return false
+      }
+      if (valueDateRange) {
+        if (pDate == null) return false
+        const [from, to] = valueDateRange
+        if (!(pDate >= from && pDate < to)) return false
+      }
+      if (valueText !== null) {
+        if (pText == null || !cmp(pText, valueText)) return false
+      }
+      if (valueDate !== null) {
+        if (pDate == null || !cmp(pDate, valueDate)) return false
+      }
+      return true
+    }
+
+    const tagFilterMatches = (b: Record<string, unknown>): boolean => {
+      if (!tagFilters) return true
+      const tagIds = (tagFilters['tagIds'] as string[] | null) ?? []
+      const prefixes = (tagFilters['prefixes'] as string[] | null) ?? []
+      const mode = ((tagFilters['mode'] as string | null) ?? 'or').toLowerCase()
+      if (tagIds.length === 0 && prefixes.length === 0) return true
+
+      // Resolve prefixes to tag-block ids by content prefix-match
+      // (mirrors the backend's `tags_cache.name LIKE ?` semantics —
+      // the mock has no tags_cache table so we walk tag blocks).
+      const resolvedFromPrefix: string[] = []
+      for (const prefix of prefixes) {
+        const lp = prefix.toLowerCase()
+        for (const [, blk] of blocks) {
+          if (
+            blk['block_type'] === 'tag' &&
+            !blk['deleted_at'] &&
+            ((blk['content'] as string) ?? '').toLowerCase().startsWith(lp)
+          ) {
+            resolvedFromPrefix.push(blk['id'] as string)
+          }
+        }
+      }
+      const allIds = [...tagIds, ...resolvedFromPrefix]
+      const tags = blockTags.get(b['id'] as string)
+      if (!tags || tags.size === 0) return false
+      if (mode === 'and') return allIds.every((tid) => tags.has(tid))
+      return allIds.some((tid) => tags.has(tid))
+    }
+
+    const items = [...blocks.values()].filter((b) => {
+      if (b['deleted_at']) return false
+      if (b['is_conflict']) return false
+      if (blockType !== null && b['block_type'] !== blockType) return false
+      for (const pf of propertyFilters) {
+        if (!propertyFilterMatches(b, pf)) return false
+      }
+      if (!tagFilterMatches(b)) return false
+      return true
+    })
+    items.sort((x, y) => (x['id'] as string).localeCompare(y['id'] as string))
     return { items, next_cursor: null, has_more: false }
   },
 

@@ -76,24 +76,20 @@ describe('useQueryExecution', () => {
     expect(result.current.error).toBeNull()
   })
 
-  it('handles filtered query with AND intersection', async () => {
-    const todoBlocks = [
+  // PEND-35 Tier 2.10b — filtered queries collapse from N IPCs (one
+  // per sub-filter) + JS intersection to ONE IPC into
+  // `filtered_blocks_query`. Pre-Tier-2.10b this test mocked
+  // `query_by_property` twice and asserted the JS-side intersection;
+  // post-fix the backend resolves the AND in SQL so the mock returns
+  // the post-intersection set directly.
+  it('handles filtered query with AND intersection (single IPC, no JS intersect)', async () => {
+    const intersected = [
       makeBlock({ id: 'B1', content: 'Match', todo_state: 'TODO', priority: '1' }),
-      makeBlock({ id: 'B2', content: 'No match', todo_state: 'TODO', priority: '3' }),
-    ]
-    const priorityBlocks = [
-      makeBlock({ id: 'B1', content: 'Match', todo_state: 'TODO', priority: '1' }),
-      makeBlock({ id: 'B3', content: 'Other', todo_state: 'DONE', priority: '1' }),
     ]
 
-    mockedInvoke.mockImplementation((async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'query_by_property') {
-        if ((args as { key: string }).key === 'todo_state') {
-          return { items: todoBlocks, next_cursor: null, has_more: false }
-        }
-        if ((args as { key: string }).key === 'priority') {
-          return { items: priorityBlocks, next_cursor: null, has_more: false }
-        }
+    mockedInvoke.mockImplementation((async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: intersected, next_cursor: null, has_more: false }
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -107,10 +103,18 @@ describe('useQueryExecution', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    // Only B1 should be in the intersection
     expect(result.current.results).toHaveLength(1)
     expect(result.current.results[0]?.id).toBe('B1')
     expect(result.current.error).toBeNull()
+
+    // Exactly ONE filter IPC fires (was N pre-Tier-2.10b).
+    const filterCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'filtered_blocks_query')
+    expect(filterCalls).toHaveLength(1)
+    // No fan-out to the legacy single-filter endpoints.
+    const propertyCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_property')
+    const tagCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags')
+    expect(propertyCalls).toHaveLength(0)
+    expect(tagCalls).toHaveLength(0)
   })
 
   it('fetches backlinks query results', async () => {
@@ -508,8 +512,14 @@ describe('fetchBacklinksQuery', () => {
   })
 })
 
+// PEND-35 Tier 2.10b — `fetchFilteredQuery` no longer fans out one
+// IPC per sub-filter and intersects in JS; it delegates to the new
+// `filtered_blocks_query` IPC which composes the AND in SQL via
+// EXISTS subqueries. Pre-Tier-2.10b the FE silently dropped any
+// AND-set member outside the top-200 of any one sub-query because the
+// 200-row sub-query cap was applied BEFORE the JS intersection.
 describe('fetchFilteredQuery', () => {
-  it('returns empty result when no filters are supplied', async () => {
+  it('short-circuits to empty result when no filters are supplied (no IPC)', async () => {
     const result = await fetchFilteredQuery([], [])
 
     expect(result.items).toHaveLength(0)
@@ -518,7 +528,7 @@ describe('fetchFilteredQuery', () => {
     expect(mockedInvoke).not.toHaveBeenCalled()
   })
 
-  it('returns a single result set unchanged when only one filter is supplied', async () => {
+  it('passes a single property filter to filtered_blocks_query', async () => {
     const blocks = [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' })]
     mockedInvoke.mockResolvedValueOnce({ items: blocks, next_cursor: null, has_more: false })
 
@@ -526,26 +536,23 @@ describe('fetchFilteredQuery', () => {
 
     expect(result.items).toHaveLength(2)
     expect(result.items.map((b) => b.id)).toEqual(['B1', 'B2'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    const [cmd, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cmd).toBe('filtered_blocks_query')
+    const propertyFilters = args['propertyFilters'] as Array<Record<string, unknown>>
+    expect(propertyFilters).toHaveLength(1)
+    expect(propertyFilters[0]?.['key']).toBe('priority')
+    expect(propertyFilters[0]?.['valueText']).toBe('1')
+    expect(propertyFilters[0]?.['operator']).toBe('eq')
   })
 
-  it('AND-intersects multiple result sets', async () => {
-    const todoBlocks = [
-      makeBlock({ id: 'B1', todo_state: 'TODO' }),
-      makeBlock({ id: 'B2', todo_state: 'TODO' }),
-    ]
-    const priorityBlocks = [
-      makeBlock({ id: 'B1', priority: '1' }),
-      makeBlock({ id: 'B3', priority: '1' }),
-    ]
-
-    mockedInvoke.mockImplementation((async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'query_by_property') {
-        const key = (args as { key: string }).key
-        if (key === 'todo_state') return { items: todoBlocks, next_cursor: null, has_more: false }
-        if (key === 'priority') return { items: priorityBlocks, next_cursor: null, has_more: false }
-      }
-      return { items: [], next_cursor: null, has_more: false }
-    }) as never)
+  it('issues ONE IPC with composed property filters (no fan-out, no JS intersect)', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeBlock({ id: 'B1' })],
+      next_cursor: null,
+      has_more: false,
+    })
 
     const result = await fetchFilteredQuery(
       [
@@ -557,10 +564,21 @@ describe('fetchFilteredQuery', () => {
 
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.id).toBe('B1')
+
+    // ONE IPC — was N (one per sub-filter) pre-Tier-2.10b.
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    const [cmd, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cmd).toBe('filtered_blocks_query')
+    const filters = args['propertyFilters'] as Array<Record<string, unknown>>
+    expect(filters).toHaveLength(2)
+    expect(filters.map((f) => f['key']).sort()).toEqual(['priority', 'todo_state'])
+    // Legacy fan-out endpoints must NOT be touched.
+    expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_property')).toHaveLength(0)
+    expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags')).toHaveLength(0)
   })
 
-  it('issues parallel tag queries for tagFilters', async () => {
-    mockedInvoke.mockResolvedValue({
+  it('bundles tag filters into a single tagFilters arg (no parallel tag IPCs)', async () => {
+    mockedInvoke.mockResolvedValueOnce({
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
@@ -569,18 +587,59 @@ describe('fetchFilteredQuery', () => {
     const result = await fetchFilteredQuery([], ['alpha', 'beta'])
 
     expect(result.items).toHaveLength(1)
-    const tagCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags')
-    expect(tagCalls).toHaveLength(2)
-    const prefixes = tagCalls.map((c) => (c[1] as { prefixes: string[] }).prefixes[0])
-    expect(prefixes.sort()).toEqual(['alpha', 'beta'])
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    const [cmd, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cmd).toBe('filtered_blocks_query')
+    const tagFilters = args['tagFilters'] as Record<string, unknown>
+    expect(tagFilters).toBeTruthy()
+    expect(tagFilters['prefixes']).toEqual(['alpha', 'beta'])
+    expect(tagFilters['mode']).toBe('or')
   })
 
-  it('propagates backend rejection from any sub-query', async () => {
+  it('propagates backend rejection from the single IPC', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('sub-query failed'))
 
     await expect(
       fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], []),
     ).rejects.toThrow('sub-query failed')
+  })
+
+  // **Load-bearing regression test** for the silent-cap bug PEND-35
+  // Tier 2.10b fixes. Pre-fix: each sub-query was capped at 200 rows
+  // BEFORE the JS-side intersection — any AND-set member outside any
+  // one sub-query's top-200 was silently dropped. Post-fix: the
+  // backend composes the AND in SQL so the cap (now only the page
+  // limit) applies AFTER the intersection. The mock returns the
+  // post-intersection block directly; the test asserts the FE no
+  // longer applies a JS-side intersection (which it cannot, having
+  // no per-sub-query result sets to intersect anymore).
+  it('silent-cap regression: relies on backend AND-intersection (no JS post-filter)', async () => {
+    // The backend has already done the intersection — there is no
+    // way the FE could "drop" a row past row 200 because the FE
+    // never sees the per-sub-query unfiltered results. We assert
+    // this by returning a row from the mock and verifying the FE
+    // surfaces it verbatim, even with multiple input sub-filters.
+    const rareMatch = makeBlock({
+      id: 'ZZZZZZZZZZZZZZZZZZZZZZZZZZ', // top-of-sort-key ULID
+      content: 'rare AND-set member',
+    })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [rareMatch],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const result = await fetchFilteredQuery(
+      [
+        { key: 'noise', value: 'on', operator: 'eq' },
+        { key: 'target', value: 'rare', operator: 'eq' },
+      ],
+      [],
+    )
+
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]?.id).toBe('ZZZZZZZZZZZZZZZZZZZZZZZZZZ')
+    expect(mockedInvoke).toHaveBeenCalledOnce()
   })
 })
 
@@ -627,7 +686,7 @@ describe('dispatchQuery', () => {
     )
   })
 
-  it('routes filtered queries to fan out sub-queries', async () => {
+  it('routes filtered queries to a single filtered_blocks_query IPC (Tier 2.10b)', async () => {
     mockedInvoke.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 
     await dispatchQuery({
@@ -637,8 +696,12 @@ describe('dispatchQuery', () => {
       tagFilters: ['alpha'],
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', expect.anything())
-    expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', expect.anything())
+    // ONE IPC — composes property + tag filters into a single SQL
+    // EXISTS-chain on the backend.
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('filtered_blocks_query', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('query_by_property', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('query_by_tags', expect.anything())
   })
 
   it('throws QueryValidationError for unknown query types', async () => {

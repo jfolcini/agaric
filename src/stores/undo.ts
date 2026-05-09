@@ -16,7 +16,7 @@ import { create } from 'zustand'
 import { t } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { OpRef, UndoResult } from '../lib/tauri'
-import { listPageHistory, redoPageOp, undoPageOp } from '../lib/tauri'
+import { findUndoGroup, redoPageOp, undoPageOp } from '../lib/tauri'
 
 export type { OpRef, UndoResult }
 
@@ -262,51 +262,47 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         // Capture the initial undo depth before any undo calls
         const initialDepth = getOrCreatePage(get().pages, pageId).undoDepth
 
-        // Perform the first single undo
-        const firstResult = await performSingleUndo(pageId)
-        if (!firstResult) return null
-
-        // Try to extend the group by checking history timestamps
+        // PEND-35 Tier 4.4 — ask the backend for the full group size
+        // BEFORE issuing any undos. Replaces the prior `listPageHistory`
+        // re-fetch with a growing window after each Ctrl+Z (one IPC per
+        // op, payload growing as the user holds undo) with a single
+        // recursive-CTE query that walks consecutive same-device,
+        // within-window ops in SQL.
         let groupSize = 1
         try {
-          const history = await listPageHistory({
+          const backendGroupSize = await findUndoGroup({
             pageId,
-            limit: Math.max(50, (initialDepth + 20) * 2),
+            depth: initialDepth,
+            windowMs: UNDO_GROUP_WINDOW_MS,
           })
-
-          // Filter to undoable ops (exclude undo/redo reverse ops, matching backend logic)
-          const undoableOps = history.items.filter(
-            (o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'),
-          )
-
-          // The first undo targeted the op at index initialDepth (newest-first order)
-          let lastUndoneIndex = initialDepth
-
-          // Keep undoing consecutive ops within the time window by the same device
-          while (lastUndoneIndex + 1 < undoableOps.length) {
-            const lastOp = undoableOps[lastUndoneIndex] as (typeof undoableOps)[number]
-            const nextOp = undoableOps[lastUndoneIndex + 1] as (typeof undoableOps)[number]
-
-            if (!isWithinUndoGroup(lastOp.created_at, nextOp.created_at)) break
-            if (lastOp.device_id !== nextOp.device_id) break
-
-            const result = await performSingleUndo(pageId)
-            if (!result) break
-
-            groupSize++
-            lastUndoneIndex++
-          }
+          // Backend returns 0 when the seed op doesn't exist — fall
+          // back to a single undo (groupSize stays at 1).
+          if (backendGroupSize >= 1) groupSize = backendGroupSize
         } catch (err) {
-          logger.error('UndoStore', 'history fetch failed', { pageId }, err)
-          // History fetch failed — graceful fallback, just the single undo
+          logger.error('UndoStore', 'find_undo_group failed', { pageId }, err)
+          // Group sizing failed — graceful fallback, just the single undo.
           toast.warning(t('undo.batchUnavailable'))
         }
 
-        // Record group size for redo (always, even for single ops)
+        // Perform `groupSize` single undos. Each one increments
+        // undoDepth, so the backend `undo_depth` parameter naturally
+        // walks newest-first through the same set of ops the
+        // `find_undo_group` recursive CTE walked.
+        let firstResult: UndoResult | null = null
+        let actualGroupSize = 0
+        for (let i = 0; i < groupSize; i++) {
+          const result = await performSingleUndo(pageId)
+          if (!result) break
+          if (i === 0) firstResult = result
+          actualGroupSize++
+        }
+        if (!firstResult) return null
+
+        // Record actual group size for redo (always, even for single ops)
         set((state) => ({
           pages: setPageState(state.pages, pageId, (current) =>
             current
-              ? { ...current, redoGroupSizes: [...current.redoGroupSizes, groupSize] }
+              ? { ...current, redoGroupSizes: [...current.redoGroupSizes, actualGroupSize] }
               : current,
           ),
         }))

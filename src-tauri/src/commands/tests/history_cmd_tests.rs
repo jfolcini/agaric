@@ -355,3 +355,313 @@ async fn compute_block_vs_current_diff_returns_not_found_for_soft_deleted_block(
         "soft-deleted block must yield NotFound with a 'soft-deleted' diagnostic, got: {result:?}"
     );
 }
+
+// ======================================================================
+// find_undo_group_inner (PEND-35 Tier 4.4)
+// ======================================================================
+//
+// `find_undo_group_inner` collapses the FE's growing-window
+// `list_page_history` re-fetch (executed after every Ctrl+Z) into a
+// single recursive-CTE query that returns the count of consecutive
+// same-device, within-window ops starting at the Nth-most-recent
+// undoable op for a page. The tests below cover the four boundary
+// conditions the FE previously implemented in JS:
+//   1. isolated op (no neighbors within window) → 1
+//   2. consecutive same-device ops within window → N
+//   3. device-id boundary stops the group at the head segment
+//   4. window-gap stops the group before the over-window op
+//   5. depth > 0 — group is computed starting at the (depth+1)-th op
+
+/// Helper: seed a page block plus a child block, then append `n`
+/// `EditBlock` ops on the child with the supplied `(device_id,
+/// timestamp_ms)` pairs (relative to a fixed base). Returns the page id
+/// so the caller can pass it to `find_undo_group_inner`. Each op is
+/// appended via `op_log::append_local_op_at` so the indexed
+/// `op_log.block_id` column is populated automatically (matching the
+/// real ingestion path).
+async fn seed_page_with_ops(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    ops: &[(&str, i64)], // (device_id, offset_ms_from_base)
+) -> (String, String) {
+    let page = create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "page".into(),
+        "Test Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let child = create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        "child".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Base timestamp far in the future so the test ops sort after the
+    // synthetic create_block ops above (whose `created_at = now_rfc3339`).
+    let base_secs: i64 = 4_102_444_800; // 2100-01-01T00:00:00Z
+
+    for (i, (device_id, offset_ms)) in ops.iter().enumerate() {
+        // Build a unique "edited" content per op so each op is a
+        // distinct row (op_log PK is `(device_id, seq)` so duplicates
+        // on the same device would collide anyway, but this also keeps
+        // the test readable).
+        let payload = OpPayload::EditBlock(crate::op::EditBlockPayload {
+            block_id: BlockId::from_trusted(&child.id),
+            to_text: format!("edit-{i}"),
+            prev_edit: None,
+        });
+        // RFC3339 with millisecond precision and 'Z' suffix
+        // (lex-monotonic invariant L-98). Convert offset_ms to
+        // (seconds, ms-fragment).
+        let total_ms = base_secs * 1000 + offset_ms;
+        let secs = total_ms / 1000;
+        let ms = (total_ms % 1000) as i32;
+        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, ms as u32 * 1_000_000)
+            .expect("valid timestamp");
+        let ts = dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+        op_log::append_local_op_at(pool, device_id, payload, ts)
+            .await
+            .unwrap();
+    }
+
+    (page.id, child.id)
+}
+
+/// Single op, no neighbors → group of 1.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_returns_one_for_isolated_op() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _child_id) = seed_page_with_ops(&pool, &mat, &[("dev1", 0)]).await;
+
+    let group = find_undo_group_inner(&pool, &page_id, 0, 500)
+        .await
+        .unwrap();
+    // Note: the create_block ops for page+child also count toward the
+    // page's undoable history (and they're authored by DEV, not dev1).
+    // The most-recent op is dev1's edit, so the seed is dev1; the next
+    // older op is DEV's create_child, which breaks the device match.
+    assert_eq!(group, 1, "isolated op should yield a group of 1");
+}
+
+/// Five consecutive same-device ops within window → group of 5.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_groups_consecutive_same_device() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // 5 ops at 0, 100, 200, 300, 400 ms — all by dev1, all within 500 ms.
+    let (page_id, _child_id) = seed_page_with_ops(
+        &pool,
+        &mat,
+        &[
+            ("dev1", 0),
+            ("dev1", 100),
+            ("dev1", 200),
+            ("dev1", 300),
+            ("dev1", 400),
+        ],
+    )
+    .await;
+
+    let group = find_undo_group_inner(&pool, &page_id, 0, 500)
+        .await
+        .unwrap();
+    assert_eq!(group, 5, "5 consecutive same-device ops → group of 5");
+}
+
+/// Same-device ops separated by a foreign-device op → only the head
+/// segment counts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_stops_at_device_boundary() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Newest first: dev1@400, dev1@300, dev2@200, dev1@100, dev1@0.
+    // Group at depth=0 = dev1@400, dev1@300 (then dev2 breaks).
+    let (page_id, _child_id) = seed_page_with_ops(
+        &pool,
+        &mat,
+        &[
+            ("dev1", 0),
+            ("dev1", 100),
+            ("dev2", 200),
+            ("dev1", 300),
+            ("dev1", 400),
+        ],
+    )
+    .await;
+
+    let group = find_undo_group_inner(&pool, &page_id, 0, 500)
+        .await
+        .unwrap();
+    assert_eq!(
+        group, 2,
+        "device boundary should end the group at the head segment"
+    );
+}
+
+/// One op falls outside the window → group ends before that op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_stops_at_window_gap() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Newest first: dev1@1000, dev1@900, dev1@100, dev1@0.
+    // Walk: 1000 → 900 (Δ=100, in-window) → 100 (Δ=800, OUT of 500ms
+    // window) → STOP. Group = 2.
+    let (page_id, _child_id) = seed_page_with_ops(
+        &pool,
+        &mat,
+        &[("dev1", 0), ("dev1", 100), ("dev1", 900), ("dev1", 1000)],
+    )
+    .await;
+
+    let group = find_undo_group_inner(&pool, &page_id, 0, 500)
+        .await
+        .unwrap();
+    assert_eq!(
+        group, 2,
+        "window gap should stop the group before the over-window op"
+    );
+}
+
+/// `depth = 2` — group is computed starting at the 3rd-most-recent op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_at_nonzero_depth() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Newest first (offsets in ms):
+    //   rn=1: dev2@500   ← depth=0 seed (excluded for depth=2)
+    //   rn=2: dev2@400   ← depth=1 seed (excluded for depth=2)
+    //   rn=3: dev1@300   ← depth=2 seed
+    //   rn=4: dev1@200   ← Δ=100, in-window, same device → include
+    //   rn=5: dev1@100   ← Δ=100, in-window, same device → include
+    //   rn=6: dev1@0     ← Δ=100, in-window, same device → include
+    //   rn=7: DEV   (synthetic create_child) ← device differs → STOP
+    // Expected group at depth=2 = 4.
+    let (page_id, _child_id) = seed_page_with_ops(
+        &pool,
+        &mat,
+        &[
+            ("dev1", 0),
+            ("dev1", 100),
+            ("dev1", 200),
+            ("dev1", 300),
+            ("dev2", 400),
+            ("dev2", 500),
+        ],
+    )
+    .await;
+
+    let group = find_undo_group_inner(&pool, &page_id, 2, 500)
+        .await
+        .unwrap();
+    assert_eq!(
+        group, 4,
+        "depth=2 should seed at the 3rd-most-recent op and walk forward (older)"
+    );
+}
+
+/// Negative `depth` is rejected with a `Validation` error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_rejects_negative_depth() {
+    let (pool, _dir) = test_pool().await;
+    let result = find_undo_group_inner(&pool, "any-page", -1, 500).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(ref m)) if m.contains("depth")),
+        "expected Validation error for negative depth, got: {result:?}"
+    );
+}
+
+/// Negative `window_ms` is rejected with a `Validation` error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_rejects_negative_window_ms() {
+    let (pool, _dir) = test_pool().await;
+    let result = find_undo_group_inner(&pool, "any-page", 0, -1).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(ref m)) if m.contains("window_ms")),
+        "expected Validation error for negative window_ms, got: {result:?}"
+    );
+}
+
+/// Returns 0 when the seed depth exceeds the page's undoable-op count
+/// (no row at rn = depth+1). FE uses this signal to fall back to a
+/// single undo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_returns_zero_when_seed_missing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _child_id) = seed_page_with_ops(&pool, &mat, &[("dev1", 0)]).await;
+
+    let group = find_undo_group_inner(&pool, &page_id, 999, 500)
+        .await
+        .unwrap();
+    assert_eq!(group, 0, "depth beyond the page's op count should return 0");
+}
+
+/// `op_type LIKE 'undo_%'` / `'redo_%'` rows are NOT counted as
+/// undoable — they're reverse ops as recognised by the FE filter. The
+/// real backend `undo_page_op_inner` / `redo_page_op_inner` paths
+/// store the reverse using its bare `op_type` (e.g. `edit_block`), so
+/// production data does not actually contain `undo_*`-prefixed op
+/// types. This test inserts a synthetic `undo_edit_block` row directly
+/// so the SQL filter is exercised end-to-end — and adds a regression
+/// guard against a future change that DOES start writing prefixed
+/// op_types (e.g. for richer history-panel UX).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_skips_undo_and_redo_ops() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two consecutive same-device user edits forming a group of 2.
+    let (page_id, child_id) = seed_page_with_ops(&pool, &mat, &[("dev1", 0), ("dev1", 100)]).await;
+
+    // Now insert a synthetic `undo_edit_block` row authored by `dev2`
+    // newer than both user edits. Without the SQL filter, depth=0 would
+    // seed at THIS row (op_type=undo_edit_block, device=dev2) and the
+    // group would collapse to 1 (the next op is dev1 → device break).
+    // With the filter, the synthetic row is excluded; depth=0 seeds at
+    // the dev1@100 user edit and the group is 2.
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+    )
+    .bind("dev2")
+    .bind(1_i64)
+    .bind("synthetic-hash")
+    .bind("undo_edit_block")
+    .bind(format!(r#"{{"block_id":"{child_id}","to_text":"x"}}"#))
+    .bind("2100-01-01T00:00:00.500Z") // newer than both user edits
+    .bind(&child_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let group = find_undo_group_inner(&pool, &page_id, 0, 500)
+        .await
+        .unwrap();
+    assert_eq!(
+        group, 2,
+        "undo_*-prefixed rows must be filtered out — group should be \
+         the 2 user edits, not collapsed by the synthetic undo row"
+    );
+}

@@ -1,6 +1,6 @@
 # PEND-35 — Tauri command audit: where the frontend is doing work the database/backend should do
 
-> **Status (session 692):** Tier 1 (6) + Tier 3 (4) fully shipped. Tier 2 partial — 11 fully shipped (2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.11, 2.12) + 2.10a partial (2.10b remains). Tier 4: 4.5 shipped. **5 items remain** — 2.10b (filtered_blocks_query AND-intersection), 4.1, 4.2, 4.3, 4.4.
+> **Status (session 693):** ALL 27 ITEMS SHIPPED. Tier 1 (6/6) + Tier 2 (12/12) + Tier 3 (4/4) + Tier 4 (5/5). Audit closed. This file may be deleted in a future session-log cleanup once any followups are confirmed clean.
 
 ## Origin
 
@@ -62,7 +62,7 @@ validation; **Tier 1 (6 items) shipped in session 687** and **Tier 3
 | Tier | Count | Theme |
 | --- | --- | --- |
 | ~~**1 — Correctness / security**~~ | ~~6~~ ✅ | ~~Cross-space data leaks, missing space property on import, paging silently broken under FE-side filters~~ — **shipped session 687** |
-| **2 — Hot-path performance (N+1, FE intersection)** | 12 (11 ✅ / 1 open) | Multi-select loops, conflict resolution loops, FE-side AND-intersection with silent row caps, fan-out per visible row. **Shipped session 689:** 2.5 (cache), 2.6 (get_property_def), 2.11 (count_conflicts), 2.12 (flush_all_drafts). **Shipped session 690:** 2.7 (attachments dedup), 2.8 (templates pushdown + first_child_for_blocks), 2.9 (GraphView blockType), 2.10a (agenda fan-out collapse). **Shipped session 691:** 2.1 (multi-select set_todo_state_batch + delete_blocks_by_ids), 2.2 (trash restore_blocks_by_ids + purge_blocks_by_ids). **Shipped session 692:** 2.3 (ConflictList 3 N+1s collapsed via get_blocks + first_op_device_for_blocks + resolve_conflicts_batch), 2.4 (BatchPropertiesProvider for AgendaResults + SpaceManageDialog batch hoist + 5 single-key callsites use new get_property). **Open:** 2.10b filtered_blocks_query. |
+| ~~**2 — Hot-path performance (N+1, FE intersection)**~~ | ~~12~~ ✅ | All 12 items shipped across sessions 689 (2.5/2.6/2.11/2.12), 690 (2.7/2.8/2.9/2.10a), 691 (2.1/2.2), 692 (2.3/2.4), 693 (2.10b). The final 2.10b adds `filtered_blocks_query` — a single SQL-side AND-intersection via EXISTS subqueries, replacing the JS intersection that silently capped results past the top-200 of any sub-query. |
 | ~~**3 — Indexes & SQL anti-patterns**~~ | ~~4~~ ✅ | ~~`json_extract` bypassing native column, missing partial index, BINARY index can't satisfy NOCASE LIKE, missing block_type pushdown~~ — **shipped session 688** |
 | **4 — Minor / low-confidence** | 5 | Single-row reloads, template-loop creates, growing-window history fetches |
 
@@ -157,15 +157,13 @@ These signature expansions enable Tier 2.8 / 2.9 / 2.10 callsite cleanups withou
 
 ---
 
-## Tier 4 — Minor / low-confidence (defer or batch)
+## ~~Tier 4 — Minor / low-confidence~~ — all shipped
 
-| # | Site | Recommendation |
-| --- | --- | --- |
-| 4.1 | `src/stores/page-blocks.ts:545-573` (`moveUp`/`moveDown` after same-parent reorder calls `get().load()` — full re-list) | Use `move_block` response fields to splice locally, mirroring the `reorder` path at `:432-441`. |
-| 4.2 | `src/components/PageEditor.tsx:113-121` (empty-page first block reloads page after `createBlock`) | Use the returned `BlockRow` directly via a `pageStore.appendBlock(row)` setter. |
-| 4.3 | Template insertion loops `create_block` per descendant / per markdown line (`src/lib/template-utils.ts:130-219`) | **CREATE** `create_blocks_batch(blocks) -> Vec<BlockRow>`. |
-| 4.4 | Undo grouping re-fetches `list_page_history` with growing window after every Ctrl+Z (`src/stores/undo.ts:265-303`) | **CREATE** `find_undo_group(pageId, depth, window_ms) -> i32` or grow `undo_page_op` with `auto_group: bool`. |
-| ~~4.5~~ | ~~`list_page_links` ships every space-edge then GraphView discards by tag~~ | ✅ session 690 — `list_page_links_inner` accepts `tag_ids: Option<&[String]>` with `EXISTS UNION ALL block_tags / block_tag_inherited / block_tag_refs` semantics. |
+- ~~**4.1**~~ session 693: `page-blocks.ts moveUp/moveDown` splice locally using `move_block` response (cross-parent move keeps full-reload fallback for safety).
+- ~~**4.2**~~ session 693: `PageEditor` empty-page first-block uses new `pageStore.appendBlock(row)` setter instead of full page reload.
+- ~~**4.3**~~ session 693: New `create_blocks_batch(specs: Vec<CreateBlockSpec>) -> Vec<BlockRow>` command. `template-utils.ts` collapses N IPCs → 1 (single-level template) or D IPCs (D = subtree depth) for nested templates.
+- ~~**4.4**~~ session 693: New `find_undo_group(pageId, depth, window_ms) -> i32` command. Recursive CTE walks newest-first through op_log, returns count of consecutive same-device ops within `window_ms`. Replaces the growing-window `listPageHistory` re-fetch in `undo store`.
+- ~~**4.5**~~ session 690: `list_page_links_inner` accepts `tag_ids: Option<&[String]>` with `EXISTS UNION ALL block_tags / block_tag_inherited / block_tag_refs`.
 
 ---
 

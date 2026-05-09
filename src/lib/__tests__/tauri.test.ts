@@ -26,6 +26,7 @@ import {
   countBacklinksBatch,
   countConflicts,
   createBlock,
+  createBlocksBatch,
   createPageInSpace,
   createPropertyDef,
   deleteAttachment,
@@ -38,6 +39,8 @@ import {
   editBlock,
   exportPageMarkdown,
   fetchLinkMetadata,
+  filteredBlocksQuery,
+  findUndoGroup,
   firstChildForBlocks,
   firstOpDeviceForBlocks,
   flushAllDrafts,
@@ -184,6 +187,47 @@ describe('createBlock', () => {
   it('propagates errors from invoke', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('Validation error'))
     await expect(createBlock({ blockType: 'bad', content: '' })).rejects.toThrow('Validation error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createBlocksBatch (PEND-35 Tier 4.3)
+// ---------------------------------------------------------------------------
+
+describe('createBlocksBatch', () => {
+  it('invokes create_blocks_batch with the spec list and returns rows in input order', async () => {
+    const expected = [
+      { id: 'BLK1', block_type: 'content', content: 'line 1' },
+      { id: 'BLK2', block_type: 'content', content: 'line 2' },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const specs = [
+      {
+        blockType: 'content',
+        content: 'line 1',
+        parentId: 'PARENT01',
+        position: null,
+        properties: {},
+      },
+      {
+        blockType: 'content',
+        content: 'line 2',
+        parentId: 'PARENT01',
+        position: null,
+        properties: { project: 'agaric' },
+      },
+    ]
+    const result = await createBlocksBatch(specs)
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('create_blocks_batch', { specs })
+    expect(result).toEqual(expected)
+  })
+
+  it('propagates Validation errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('specs list cannot be empty'))
+    await expect(createBlocksBatch([])).rejects.toThrow('specs list cannot be empty')
   })
 })
 
@@ -699,6 +743,111 @@ describe('queryByTags', () => {
     await expect(queryByTags({ tagIds: ['TAG01'], prefixes: [], mode: 'and' })).rejects.toThrow(
       'query failed',
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// filteredBlocksQuery (PEND-35 Tier 2.10b)
+// ---------------------------------------------------------------------------
+
+describe('filteredBlocksQuery', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('marshals propertyFilters into the camelCase IPC shape', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await filteredBlocksQuery({
+      propertyFilters: [
+        { key: 'priority', valueText: '1', operator: 'eq' },
+        {
+          key: 'due_date',
+          valueDateRange: ['2026-01-01', '2026-02-01'],
+        },
+      ],
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    const [cmd, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cmd).toBe('filtered_blocks_query')
+    const filters = args['propertyFilters'] as Array<Record<string, unknown>>
+    expect(filters).toHaveLength(2)
+    expect(filters[0]).toMatchObject({
+      key: 'priority',
+      valueText: '1',
+      operator: 'eq',
+    })
+    expect(filters[0]?.['valueTextIn']).toEqual([])
+    expect(filters[1]?.['key']).toBe('due_date')
+    expect(filters[1]?.['valueDateRange']).toEqual(['2026-01-01', '2026-02-01'])
+    expect(args['tagFilters']).toBeNull()
+    expect(args['blockType']).toBeNull()
+    expect(args['scope']).toEqual({ kind: 'global' })
+  })
+
+  it('marshals tagFilters into the camelCase IPC shape with defaults', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await filteredBlocksQuery({
+      tagFilters: { prefixes: ['project/'] },
+    })
+
+    const [, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
+    const tagFilters = args['tagFilters'] as Record<string, unknown>
+    expect(tagFilters).toMatchObject({
+      tagIds: [],
+      prefixes: ['project/'],
+      mode: 'or',
+      includeInherited: false,
+    })
+  })
+
+  it('forwards blockType, spaceId, cursor, limit verbatim', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await filteredBlocksQuery({
+      propertyFilters: [{ key: 'k', valueText: 'v' }],
+      blockType: 'page',
+      spaceId: 'SPACE_42',
+      cursor: 'CURSOR123',
+      limit: 25,
+    })
+
+    const [, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
+    expect(args['blockType']).toBe('page')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
+    expect(args['cursor']).toBe('CURSOR123')
+    expect(args['limit']).toBe(25)
+  })
+
+  it('round-trips PageResponse from invoke', async () => {
+    const payload = {
+      items: [
+        {
+          id: 'B1',
+          block_type: 'content',
+          content: 'matched',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: 'next123',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(payload)
+
+    const result = await filteredBlocksQuery({
+      propertyFilters: [{ key: 'priority', valueText: '1' }],
+    })
+    expect(result).toEqual(payload)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('filter failed'))
+    await expect(
+      filteredBlocksQuery({ propertyFilters: [{ key: 'k', valueText: 'v' }] }),
+    ).rejects.toThrow('filter failed')
   })
 })
 
@@ -1351,6 +1500,46 @@ describe('undoPageOp', () => {
       undoDepth: 1,
     })
     expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findUndoGroup (PEND-35 Tier 4.4)
+// ---------------------------------------------------------------------------
+
+describe('findUndoGroup', () => {
+  it('invokes find_undo_group with pageId, depth and windowMs', async () => {
+    mockedInvoke.mockResolvedValueOnce(3)
+
+    const result = await findUndoGroup({
+      pageId: 'PAGE1',
+      depth: 0,
+      windowMs: 500,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('find_undo_group', {
+      pageId: 'PAGE1',
+      depth: 0,
+      windowMs: 500,
+    })
+    expect(result).toBe(3)
+  })
+
+  it('returns 1 when backend reports no batch (single op)', async () => {
+    mockedInvoke.mockResolvedValueOnce(1)
+
+    const result = await findUndoGroup({ pageId: 'PAGE1', depth: 5, windowMs: 500 })
+
+    expect(result).toBe(1)
+  })
+
+  it('returns 0 when seed op does not exist (depth out of range)', async () => {
+    mockedInvoke.mockResolvedValueOnce(0)
+
+    const result = await findUndoGroup({ pageId: 'PAGE1', depth: 999, windowMs: 500 })
+
+    expect(result).toBe(0)
   })
 })
 
@@ -3517,6 +3706,7 @@ describe('cross-cutting', () => {
     await queryByProperty({ key: 'k' })
     await undoPageOp({ pageId: 'id', undoDepth: 1 })
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
+    await findUndoGroup({ pageId: 'id', depth: 0, windowMs: 500 })
     await computeEditDiff({ deviceId: 'd', seq: 1 })
     await queryBacklinksFiltered({ blockId: 'id' })
     await listBacklinksGrouped({ blockId: 'id' })
@@ -3579,6 +3769,7 @@ describe('cross-cutting', () => {
       'query_by_property',
       'undo_page_op',
       'redo_page_op',
+      'find_undo_group',
       'compute_edit_diff',
       'query_backlinks_filtered',
       'list_backlinks_grouped',
