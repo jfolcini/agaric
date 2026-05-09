@@ -59,7 +59,28 @@ use crate::op_log::OpRecord;
 ///
 /// Bumped in lockstep with the `loro = "..."` pin in `Cargo.toml`.
 /// Read by [`LoroBatch::from`] when wrapping a fresh `OpRecord`.
-pub const CURRENT_LORO_VERSION: u8 = 1;
+///
+/// ## Version history
+///
+/// * `1` — Phase-1 day-3.  Envelope carries `(loro_version,
+///   payload_version, original_op_type, payload)` only — the typed
+///   `OpPayload` JSON `Value` is the on-the-wire body.  No
+///   Loro-exported bytes.
+/// * `2` — Phase-2 day-3 (this commit).  Envelopes can additionally
+///   carry Loro-exported `export(ExportMode::*)` bytes via the
+///   `loro_bytes` field.  The cutover writer (Phase-2 day 9) is what
+///   actually populates that field; today's bump is schema-only so
+///   the writer has fixed-shape data to land into.
+///
+/// **Backward compatibility.**  v1 envelopes remain readable
+/// indefinitely: the new `loro_bytes` field is `#[serde(default,
+/// skip_serializing_if = "Vec::is_empty")]`, so a v1 row's JSON (no
+/// `loro_bytes` key) deserialises into the v2 struct with
+/// `loro_bytes: Vec::new()`, and a v2 envelope constructed with
+/// empty bytes serialises identically to v1.  See the
+/// `loro_batch_v1_decodes_into_v2_struct_with_empty_bytes` and
+/// `loro_batch_v2_with_empty_bytes_serialises_as_v1` tests.
+pub const CURRENT_LORO_VERSION: u8 = 2;
 
 /// Current agaric `LoroBatch` envelope schema version.
 ///
@@ -95,18 +116,75 @@ pub struct LoroBatch {
     /// shape inside matches `serde_json::to_value(&op_payload)` for
     /// every variant of [`crate::op::OpPayload`].
     pub payload: serde_json::Value,
+
+    /// Loro-exported batch bytes for the op(s) in this row.
+    ///
+    /// Empty (`Vec::new()`) when the envelope was constructed from a
+    /// typed-only `OpRecord` — the Phase-1 path uses the typed
+    /// `payload` field above.  The Phase-2 cutover writer (day 9)
+    /// populates this with `LoroDoc::export(ExportMode::*)` bytes so
+    /// a remote peer can apply the batch via Loro's own import path
+    /// rather than re-running the diffy projection.
+    ///
+    /// ## Wire-format back-compat (v1 → v2)
+    ///
+    /// `#[serde(default)]` makes a v1 row (no `loro_bytes` key)
+    /// deserialise into the v2 struct with an empty `Vec<u8>`.
+    /// `skip_serializing_if = "Vec::is_empty"` makes a v2 envelope
+    /// with empty bytes serialise identically to v1 (no `loro_bytes`
+    /// key emitted).  The two together let us bump
+    /// [`CURRENT_LORO_VERSION`] to `2` without invalidating the
+    /// (empty, today) v1 corpus and without forcing a parallel
+    /// reader path.
+    ///
+    /// Plain `Vec<u8>` rather than `serde_bytes::ByteBuf` because
+    /// (a) JSON is the wire format today and JSON has no native
+    /// byte-string type — `serde_bytes` would still encode as a
+    /// JSON array — so the only saving is on a hypothetical future
+    /// non-JSON encoder; (b) avoiding a new dep keeps the default-
+    /// build dep graph unchanged.  Switching to `serde_bytes` later
+    /// is a non-breaking encoder swap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loro_bytes: Vec<u8>,
 }
 
 impl LoroBatch {
     /// Construct an envelope at the current versions, given the
-    /// original op-type string + decoded payload value.  Used by the
-    /// `TryFrom<&OpRecord>` impl below and any future direct callers.
+    /// original op-type string + decoded payload value.
+    ///
+    /// `loro_bytes` is initialised empty — same shape as Phase 1.
+    /// Use [`LoroBatch::with_loro_bytes`] when you have Loro-exported
+    /// bytes to attach (Phase-2 cutover writer; not yet wired).
     pub fn new(original_op_type: String, payload: serde_json::Value) -> Self {
         Self {
             loro_version: CURRENT_LORO_VERSION,
             payload_version: CURRENT_PAYLOAD_VERSION,
             original_op_type,
             payload,
+            loro_bytes: Vec::new(),
+        }
+    }
+
+    /// Construct an envelope at the current versions, given the
+    /// original op-type string, decoded payload value, AND a buffer
+    /// of Loro-exported batch bytes (typically the result of
+    /// `LoroDoc::export(ExportMode::updates(&since_vv))` or
+    /// `ExportMode::Snapshot`).
+    ///
+    /// Phase-2 cutover writer entry-point (day 9).  Day-3's job is to
+    /// land the constructor + the schema; no production call site
+    /// invokes it yet.
+    pub fn with_loro_bytes(
+        original_op_type: String,
+        payload: serde_json::Value,
+        loro_bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            loro_version: CURRENT_LORO_VERSION,
+            payload_version: CURRENT_PAYLOAD_VERSION,
+            original_op_type,
+            payload,
+            loro_bytes,
         }
     }
 }
@@ -117,6 +195,10 @@ impl LoroBatch {
 /// can call it from the persistent-parity-sink writer + day-5 can
 /// call it from the op_log row rewrite path without further design
 /// churn.
+///
+/// `loro_bytes` is left empty: this is the typed-only Phase-1 shape.
+/// Phase-2 cutover code that has Loro-exported bytes goes through
+/// [`LoroBatch::with_loro_bytes`] instead.
 ///
 /// Returns a `Result` because `OpRecord.payload` is a JSON string
 /// that may, in pathological cases, fail to parse — for example a
@@ -219,6 +301,191 @@ mod tests {
 
         let result = LoroBatch::try_from(&record);
         assert!(result.is_err(), "malformed JSON must yield Err");
+    }
+
+    /// Phase-2 day-3: a v2 envelope built with `with_loro_bytes`
+    /// survives a JSON round-trip with all five fields preserved
+    /// byte-identical, including the embedded `loro_bytes` buffer.
+    /// Locks the v2 wire shape in place.
+    #[test]
+    fn loro_batch_v2_roundtrip_with_bytes() {
+        let bytes: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03, 0xfe, 0xff, b'L', b'o', b'r', b'o'];
+        let original = LoroBatch::with_loro_bytes(
+            "create_block".to_string(),
+            serde_json::json!({
+                "block_id": "01HZ00000000000000000000AB",
+                "block_type": "content",
+                "content": "hello",
+                "parent_id": null,
+                "position": 0,
+            }),
+            bytes.clone(),
+        );
+
+        let encoded = serde_json::to_string(&original).expect("encode");
+        let decoded: LoroBatch = serde_json::from_str(&encoded).expect("decode");
+
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.loro_version, CURRENT_LORO_VERSION);
+        assert_eq!(
+            decoded.loro_version, 2,
+            "Phase-2 day-3 bumps loro_version to 2"
+        );
+        assert_eq!(decoded.payload_version, CURRENT_PAYLOAD_VERSION);
+        assert_eq!(decoded.original_op_type, "create_block");
+        assert_eq!(decoded.loro_bytes, bytes);
+        assert!(
+            !decoded.loro_bytes.is_empty(),
+            "loro_bytes must round-trip non-empty"
+        );
+
+        // `loro_bytes` shows up in the JSON because it's non-empty.
+        assert!(
+            encoded.contains("\"loro_bytes\""),
+            "non-empty loro_bytes must appear in serialised JSON: {encoded}"
+        );
+    }
+
+    /// Phase-2 day-3: wire-format BACK-COMPAT.  A real v1 byte
+    /// sequence — produced by serialising the actual Phase-1 day-3
+    /// struct shape (4 fields, no `loro_bytes`) — must deserialise
+    /// cleanly into the v2 struct with `loro_bytes: Vec::new()`.
+    ///
+    /// This test does NOT use a hand-typed JSON literal; it builds
+    /// a `V1Envelope` mirror struct, serialises it through the same
+    /// `serde_json` path the Phase-1 code used, and feeds the result
+    /// to the v2 deserialiser.  The mirror struct's field set,
+    /// field order, and field types match the v1 source exactly
+    /// (verified against `git show 16d369d2:.../envelope.rs`), so
+    /// this exercises a real v1 wire shape, not a synthetic one.
+    #[test]
+    fn loro_batch_v1_decodes_into_v2_struct_with_empty_bytes() {
+        /// Mirror of the Phase-1 day-3 `LoroBatch` struct.  Field
+        /// set + order + types match commit `16d369d2`'s envelope
+        /// definition.  Kept local to this test so a future schema
+        /// change here doesn't drift it out of sync silently.
+        #[derive(Serialize)]
+        struct V1Envelope {
+            loro_version: u8,
+            payload_version: u8,
+            original_op_type: String,
+            payload: serde_json::Value,
+        }
+
+        let v1 = V1Envelope {
+            loro_version: 1,
+            payload_version: 1,
+            original_op_type: "create_block".to_string(),
+            payload: serde_json::json!({
+                "block_id": "01HZ00000000000000000000AB",
+                "block_type": "content",
+                "content": "hello",
+                "parent_id": null,
+                "position": 0,
+            }),
+        };
+        let v1_json = serde_json::to_string(&v1).expect("v1 encode");
+
+        // Sanity: the v1 wire form has no loro_bytes key.
+        assert!(
+            !v1_json.contains("loro_bytes"),
+            "v1 wire form must not contain loro_bytes: {v1_json}"
+        );
+
+        // Decode the real v1 byte sequence into the v2 struct.
+        let decoded: LoroBatch = serde_json::from_str(&v1_json).expect("v1 → v2 decode");
+
+        assert_eq!(decoded.loro_version, 1, "v1 source pinned at 1");
+        assert_eq!(decoded.payload_version, 1);
+        assert_eq!(decoded.original_op_type, "create_block");
+        assert!(
+            decoded.loro_bytes.is_empty(),
+            "missing loro_bytes field must default to empty Vec"
+        );
+        // Inner payload survives intact.
+        assert_eq!(
+            decoded.payload.get("block_id").and_then(|v| v.as_str()),
+            Some("01HZ00000000000000000000AB")
+        );
+    }
+
+    /// Phase-2 day-3: a v2 envelope constructed with empty
+    /// `loro_bytes` serialises identically to v1 — the
+    /// `skip_serializing_if = "Vec::is_empty"` attribute drops the
+    /// key entirely.  This is what makes the bump non-breaking for
+    /// readers that already exist out in the wild.
+    #[test]
+    fn loro_batch_v2_with_empty_bytes_serialises_as_v1() {
+        // `LoroBatch::new` produces an empty `loro_bytes`.
+        let envelope = LoroBatch::new(
+            "create_block".to_string(),
+            serde_json::json!({
+                "block_id": "01HZ00000000000000000000AB",
+                "block_type": "content",
+                "content": "hello",
+                "parent_id": null,
+                "position": 0,
+            }),
+        );
+        assert!(envelope.loro_bytes.is_empty());
+
+        let encoded = serde_json::to_string(&envelope).expect("encode");
+
+        // Critical assertion: the empty `loro_bytes` must NOT appear
+        // in the serialised JSON.  If `skip_serializing_if` is ever
+        // dropped or the field renamed, this test fires.
+        assert!(
+            !encoded.contains("loro_bytes"),
+            "empty loro_bytes must be omitted from JSON (skip_serializing_if): {encoded}"
+        );
+
+        // The serialised JSON should match the v1 wire shape exactly
+        // for the same logical content.  Build a v1 mirror to compare
+        // against.  Using the same field ordering serde uses by
+        // source declaration.
+        #[derive(Serialize)]
+        struct V1Envelope {
+            loro_version: u8,
+            payload_version: u8,
+            original_op_type: String,
+            payload: serde_json::Value,
+        }
+        let v1 = V1Envelope {
+            loro_version: envelope.loro_version, // = 2 in this build
+            payload_version: envelope.payload_version,
+            original_op_type: envelope.original_op_type.clone(),
+            payload: envelope.payload.clone(),
+        };
+        let v1_encoded = serde_json::to_string(&v1).expect("v1 encode");
+        assert_eq!(
+            encoded, v1_encoded,
+            "v2-with-empty-bytes must serialise identically to a v1-shape struct \
+             with the same scalar fields"
+        );
+    }
+
+    /// Phase-2 day-3: the new `with_loro_bytes` constructor populates
+    /// every field correctly — including the new `loro_bytes` slot —
+    /// at the current schema versions.  Builder-shape sanity check.
+    #[test]
+    fn loro_batch_with_loro_bytes_constructor_populates_field() {
+        let bytes: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef];
+        let payload = serde_json::json!({
+            "block_id": "01HZ00000000000000000000AB",
+            "block_type": "content",
+            "content": "x",
+            "parent_id": null,
+            "position": 0,
+        });
+
+        let envelope =
+            LoroBatch::with_loro_bytes("create_block".to_string(), payload.clone(), bytes.clone());
+
+        assert_eq!(envelope.loro_version, CURRENT_LORO_VERSION);
+        assert_eq!(envelope.payload_version, CURRENT_PAYLOAD_VERSION);
+        assert_eq!(envelope.original_op_type, "create_block");
+        assert_eq!(envelope.payload, payload);
+        assert_eq!(envelope.loro_bytes, bytes);
     }
 
     /// An envelope produced from a record-with-typed-payload survives
