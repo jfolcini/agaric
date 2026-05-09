@@ -32,3 +32,12 @@ loro = "1.12"
 # Same version the agaric crate already uses — keeps the transitive
 # dep tree de-duplicated when both build into the same target dir.
 anyhow = "1"
+# Phase-2 day-5: cross-platform RSS measurement for the day-4 replay
+# bench (kill criterion #3).  Phase-0 used a Linux-only `/proc/self/statm`
+# parse, leaving macOS / Windows numbers unknown.  `memory-stats` wraps
+# `/proc/self/statm` on Linux, `task_info` (Mach) on macOS, and
+# `GetProcessMemoryInfo` on Windows behind a single `memory_stats()` API.
+# Tiny crate (~200 LOC), no transitive deps on Linux/macOS, MIT OR
+# Apache-2.0 (compatible with this crate's GPL-3.0-or-later).  Used only
+# in `src/bin/replay_bench.rs` — does not enter the agaric build.
+memory-stats = "1.2"
