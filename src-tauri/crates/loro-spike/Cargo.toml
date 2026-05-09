@@ -1,0 +1,34 @@
+# PEND-09 Phase 0 spike crate.  Throwaway evaluation of Loro as the CRDT
+# substrate for the agaric merge layer.  This crate is NOT consumed by
+# `agaric` — it is built and run on demand only:
+#   cargo build -p loro-spike
+#   cargo run   -p loro-spike
+#   cargo test  -p loro-spike
+# When the spike concludes the entire `crates/loro-spike/` directory is
+# either promoted into `src-tauri/src/loro/` (see plan, Phase 1) or
+# archived per the kill-criterion procedure in PEND-09-crdt-migration.md.
+[package]
+name = "loro-spike"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+description = "PEND-09 Phase 0 spike: Loro CRDT round-trip prototype"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[[bin]]
+name = "loro-spike"
+path = "src/main.rs"
+
+[dependencies]
+# Loro 1.x was released in late 2024; the 1.0 announcement explicitly
+# committed to a stable encoding format going forward (the prior v0.x
+# encoding was deprecated and finally removed in 1.10).  We pin caret-1
+# to track patches but stay within the stable-format major.  See
+# SPIKE-NOTES.md for the format-stability finding.
+loro = "1.12"
+# Same version the agaric crate already uses — keeps the transitive
+# dep tree de-duplicated when both build into the same target dir.
+anyhow = "1"
