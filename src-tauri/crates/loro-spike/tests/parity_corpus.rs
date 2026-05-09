@@ -781,3 +781,598 @@ fn parity_property_null_vs_value_lww() {
     );
     eprintln!("[parity] property_null_vs_value_lww: bucket A, val={a_val:?}");
 }
+
+// ===========================================================================
+// CATEGORY 6 (Day 9): full-corpus port — additional text-merge tests.
+// ===========================================================================
+
+/// Ports `merge_text_no_lca_uses_create_content` (tests.rs:261).
+///
+/// Both peers append a different line at the end of `"base\ntext\n"`.
+/// Production diffy accepts either Clean (both contained) or Conflict
+/// — its assertion is "both `from A` and `from B` are present".
+/// Loro: appends both at offset 10; the two contributions land
+/// adjacently, RGA tie-breaks by peer id.  Bucket A (or B if we treat
+/// the diffy-accepts-conflict shape as a conflict on the production
+/// side).
+#[test]
+fn parity_text_no_lca_uses_create_content() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "base\ntext\n", None, 0)
+            .expect("seed");
+    });
+
+    apply_edit_via_diff_splice(&mut a, "B1", "base\ntext\nfrom A\n").expect("A edit");
+    apply_edit_via_diff_splice(&mut b, "B1", "base\ntext\nfrom B\n").expect("B edit");
+
+    sync(&mut a, &mut b);
+
+    let merged = a.read_block("B1").unwrap().unwrap().content;
+    assert_eq!(
+        merged,
+        b.read_block("B1").unwrap().unwrap().content,
+        "engines must converge"
+    );
+    let bucket = classify_text(
+        &merged,
+        ExpectedDiffyResult::CleanContains(&["from A", "from B"]),
+    );
+    eprintln!("[parity] text_no_lca_uses_create_content: bucket {bucket:?}, merged={merged:?}");
+    assert_eq!(
+        bucket,
+        ParityBucket::A,
+        "expected A (both contributions present); merged={merged:?}"
+    );
+}
+
+/// Ports `merge_text_fast_forward_one_side_no_edits` (tests.rs:1534).
+///
+/// One side never edits — peer A sits at "original\n" while peer B
+/// edits to "updated by B\n".  Diffy: fast-forward — LCA == ours,
+/// so merged = theirs.  Loro: B's splice is the only divergent op,
+/// so after sync both peers see B's edit.  Bucket A.
+#[test]
+fn parity_text_fast_forward_one_side_no_edits() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "original\n", None, 0)
+            .expect("seed");
+    });
+
+    // A makes no edit; B replaces the content.
+    apply_edit_via_diff_splice(&mut b, "B1", "updated by B\n").expect("B edit");
+
+    sync(&mut a, &mut b);
+
+    let merged = a.read_block("B1").unwrap().unwrap().content;
+    assert_eq!(
+        merged,
+        b.read_block("B1").unwrap().unwrap().content,
+        "engines must converge"
+    );
+    let bucket = classify_text(&merged, ExpectedDiffyResult::Clean("updated by B\n"));
+    eprintln!("[parity] text_fast_forward_one_side_no_edits: bucket {bucket:?}, merged={merged:?}");
+    assert_eq!(bucket, ParityBucket::A, "expected A; merged={merged:?}");
+}
+
+/// Ports `merge_text_identical_single_line_edits` (tests.rs:1655).
+///
+/// Both peers replace `"original"` with `"changed"` independently.
+/// Diffy: clean merge to `"changed"`.
+/// Loro: same canonical CRDT pitfall as `parity_identical_concurrent_edits`
+/// — both peers issue the same diff-splice with no causal link, so
+/// Loro keeps both runs and produces `"changedchanged"`.  No data
+/// lost; both peers converge.  Bucket C — same expected-CRDT-semantics
+/// shape documented for test #9 on day 3.
+#[test]
+fn parity_text_identical_single_line_edits() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "original", None, 0)
+            .expect("seed");
+    });
+
+    apply_edit_via_diff_splice(&mut a, "B1", "changed").expect("A edit");
+    apply_edit_via_diff_splice(&mut b, "B1", "changed").expect("B edit");
+
+    sync(&mut a, &mut b);
+
+    let merged = a.read_block("B1").unwrap().unwrap().content;
+    assert_eq!(
+        merged,
+        b.read_block("B1").unwrap().unwrap().content,
+        "engines must converge"
+    );
+    // Diffy expects exactly "changed".  Loro keeps both peers' inserts
+    // (RGA semantics).  We accept any string that contains "changed"
+    // (so the contribution is not lost).
+    let bucket = if merged == "changed" {
+        ParityBucket::A
+    } else if merged.contains("changed") {
+        ParityBucket::C
+    } else {
+        ParityBucket::D
+    };
+    eprintln!("[parity] text_identical_single_line_edits: bucket {bucket:?}, merged={merged:?}");
+    assert!(
+        matches!(bucket, ParityBucket::A | ParityBucket::B | ParityBucket::C),
+        "expected A/B/C; merged={merged:?}"
+    );
+}
+
+/// Ports `merge_text_both_sides_remain_empty` (tests.rs:1701).
+///
+/// Both peers create with empty content and apply a no-op edit (still
+/// empty).  Diffy: clean merge to `""`.
+/// Loro: both peers' splices are no-ops on the empty LoroText; the
+/// merged content stays empty.  Bucket A.
+#[test]
+fn parity_text_both_sides_remain_empty() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "", None, 0)
+            .expect("seed");
+    });
+
+    // Both peers issue identical no-op edits.
+    apply_edit_via_diff_splice(&mut a, "B1", "").expect("A edit");
+    apply_edit_via_diff_splice(&mut b, "B1", "").expect("B edit");
+
+    sync(&mut a, &mut b);
+
+    let merged = a.read_block("B1").unwrap().unwrap().content;
+    let bucket = classify_text(&merged, ExpectedDiffyResult::Clean(""));
+    eprintln!("[parity] text_both_sides_remain_empty: bucket {bucket:?}, merged={merged:?}");
+    assert_eq!(bucket, ParityBucket::A, "expected A; merged={merged:?}");
+}
+
+/// Ports `merge_block_clean_merge` (tests.rs:932).
+///
+/// Three-line content; A edits line 1, B edits line 3.  Diffy:
+/// `MergeOutcome::Merged` — non-overlapping line edits merge cleanly
+/// into `"LINE1\nline2\nLINE3\n"`.
+/// Loro: character-level merge of two non-overlapping splices →
+/// byte-identical to diffy's clean merge.  Bucket A.
+#[test]
+fn parity_block_clean_merge() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "line1\nline2\nline3\n", None, 0)
+            .expect("seed");
+    });
+
+    apply_edit_via_diff_splice(&mut a, "B1", "LINE1\nline2\nline3\n").expect("A edit");
+    apply_edit_via_diff_splice(&mut b, "B1", "line1\nline2\nLINE3\n").expect("B edit");
+
+    sync(&mut a, &mut b);
+
+    let merged = a.read_block("B1").unwrap().unwrap().content;
+    assert_eq!(
+        merged,
+        b.read_block("B1").unwrap().unwrap().content,
+        "engines must converge"
+    );
+    let bucket = classify_text(&merged, ExpectedDiffyResult::Clean("LINE1\nline2\nLINE3\n"));
+    eprintln!("[parity] block_clean_merge: bucket {bucket:?}, merged={merged:?}");
+    assert_eq!(bucket, ParityBucket::A, "expected A; merged={merged:?}");
+}
+
+/// Ports `merge_block_already_up_to_date` (tests.rs:915).
+///
+/// Degenerate case — both heads point at the same op (no divergence).
+/// Diffy: `MergeOutcome::AlreadyUpToDate` — no resolution needed.
+/// Loro: a fresh seeded engine + a re-imported snapshot of itself is
+/// idempotent; the content is unchanged.  We model the up-to-date
+/// shape by seeding both peers identically and exchanging their
+/// snapshot without any divergent edit.  Bucket A.
+#[test]
+fn parity_block_already_up_to_date() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "shared content\n", None, 0)
+            .expect("seed");
+    });
+
+    // No divergent edits — just sync and verify content is unchanged.
+    sync(&mut a, &mut b);
+
+    let merged = a.read_block("B1").unwrap().unwrap().content;
+    assert_eq!(
+        merged,
+        b.read_block("B1").unwrap().unwrap().content,
+        "engines must converge"
+    );
+    let bucket = classify_text(&merged, ExpectedDiffyResult::Clean("shared content\n"));
+    eprintln!("[parity] block_already_up_to_date: bucket {bucket:?}, merged={merged:?}");
+    assert_eq!(bucket, ParityBucket::A, "expected A; merged={merged:?}");
+}
+
+// ===========================================================================
+// CATEGORY 7 (Day 9): full-corpus port — `resolve_property_conflict_*`
+// LWW edge cases.
+//
+// These production tests assert the diffy resolver's tiebreak rules
+// (timestamp -> device_id -> seq).  Loro's LWW is keyed by Lamport
+// order (peer_id + op-counter), which CAN pick a different winner
+// when timestamp and Lamport orderings disagree.  Each ported test:
+//
+// - Bucket A when the production winner happens to coincide with
+//   Loro's deterministic choice (e.g. sequential writes that follow
+//   the natural Lamport order).
+// - Bucket C when production picks by timestamp and Loro picks by
+//   peer-id: both are CRDT-correct, both deterministic, both
+//   convergent across peers — they just choose a different value.
+//   We verify convergence + that the surviving value is one of the
+//   two candidate writes (no data invented from thin air).
+// - Bucket A on identical-value tests (whichever Loro picks, the
+//   value is the same on both sides).
+//
+// Error-path tests (`*_rejects_*`) are NOT ported — see
+// SPIKE-NOTES.md "Tests not ported because the underlying mechanism
+// doesn't exist under CRDT semantics".
+// ===========================================================================
+
+/// Ports `resolve_property_conflict_earlier_timestamp_loses` (tests.rs:790).
+///
+/// Diffy: A has the LATER timestamp → A wins → "low".
+/// Loro: peers write concurrently; Lamport tiebreak (peer-id) picks
+/// the deterministic winner.  When the two orderings disagree we land
+/// in bucket C.  Convergence + value ∈ {"low","high"} is what matters.
+#[test]
+fn parity_property_earlier_timestamp_loses() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "priority", Some("low"))
+        .expect("A");
+    b.apply_set_property("B1", "priority", Some("high"))
+        .expect("B");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "priority").unwrap();
+    let b_val = b.read_property("B1", "priority").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    let winner = a_val.unwrap().unwrap();
+    assert!(
+        winner == "low" || winner == "high",
+        "winner must be one of {{low, high}}, got {winner:?}"
+    );
+    eprintln!(
+        "[parity] property_earlier_timestamp_loses: bucket C (Lamport vs ts disagree), winner={winner:?}"
+    );
+}
+
+/// Ports `resolve_property_conflict_same_timestamp_larger_device_id_wins` (tests.rs:807).
+///
+/// Diffy: same timestamp → device-id tiebreak (DEV_B > DEV_A) → "high".
+/// Loro: peer-id-based Lamport tiebreak — could pick either.  Bucket C.
+#[test]
+fn parity_property_same_timestamp_larger_device_id_wins() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "priority", Some("low"))
+        .expect("A");
+    b.apply_set_property("B1", "priority", Some("high"))
+        .expect("B");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "priority").unwrap();
+    let b_val = b.read_property("B1", "priority").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    let winner = a_val.unwrap().unwrap();
+    assert!(winner == "low" || winner == "high");
+    eprintln!(
+        "[parity] property_same_timestamp_larger_device_id_wins: bucket C, winner={winner:?}"
+    );
+}
+
+/// Ports `resolve_property_conflict_same_timestamp_same_device_higher_seq_wins`
+/// (tests.rs:821).
+///
+/// Diffy: same device, higher seq wins → "high".
+/// Loro: a single peer issuing two sequential writes — the second
+/// write Lamport-follows the first on the same peer, so Loro picks
+/// the second too.  Bucket A.
+#[test]
+fn parity_property_same_device_higher_seq_wins() {
+    let mut a = LoroEngine::new();
+    a.apply_create_block("B1", "content", "x", None, 0)
+        .expect("seed");
+
+    a.apply_set_property("B1", "priority", Some("low"))
+        .expect("A first");
+    a.apply_set_property("B1", "priority", Some("high"))
+        .expect("A second");
+
+    let val = a.read_property("B1", "priority").unwrap();
+    assert_eq!(
+        val,
+        Some(Some("high".into())),
+        "single-peer second write must win"
+    );
+    eprintln!("[parity] property_same_device_higher_seq_wins: bucket A, val={val:?}");
+}
+
+/// Ports `resolve_property_conflict_same_device_same_ts_is_commutative`
+/// (tests.rs:836).
+///
+/// Diffy: same device, two seqs (3 and 7), seq tiebreak picks 7.
+/// Loro: sequential writes on a single engine — second write wins.
+/// We model "seq=7 wins" by issuing the seq-7 value second.  Bucket A.
+#[test]
+fn parity_property_same_device_same_ts_is_commutative() {
+    let mut a = LoroEngine::new();
+    a.apply_create_block("B1", "content", "x", None, 0)
+        .expect("seed");
+
+    a.apply_set_property("B1", "priority", Some("low"))
+        .expect("A seq3");
+    a.apply_set_property("B1", "priority", Some("high"))
+        .expect("A seq7");
+
+    let val = a.read_property("B1", "priority").unwrap();
+    assert_eq!(
+        val,
+        Some(Some("high".into())),
+        "same-device sequential write: later wins"
+    );
+    eprintln!("[parity] property_same_device_same_ts_is_commutative: bucket A, val={val:?}");
+}
+
+/// Ports `resolve_property_conflict_with_numeric_values` (tests.rs:1182).
+///
+/// Diffy: B has later ts → 99.0 wins.
+/// Loro: numeric values are encoded as their decimal string repr in
+/// this spike (the engine's `apply_set_property` takes `Option<&str>`
+/// — numeric LWW is the same shape as text LWW, only the encoding
+/// differs, and the resolution rule is the same).  Convergence +
+/// value ∈ {"42","99"} required.  Bucket C (Lamport vs ts disagree).
+#[test]
+fn parity_property_numeric_values_lww() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "score", Some("42"))
+        .expect("A 42");
+    b.apply_set_property("B1", "score", Some("99"))
+        .expect("B 99");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "score").unwrap();
+    let b_val = b.read_property("B1", "score").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    let winner = a_val.unwrap().unwrap();
+    assert!(winner == "42" || winner == "99");
+    eprintln!("[parity] property_numeric_values_lww: bucket C, winner={winner:?}");
+}
+
+/// Ports `resolve_property_conflict_is_commutative_different_devices`
+/// (tests.rs:1417).
+///
+/// Diffy: different devices, same ts, device-id tiebreak → DEV_B wins.
+/// Loro: same shape as `parity_concurrent_property_writes_different_values`
+/// — both peers converge on a deterministic winner per peer-id.
+/// Trivially commutative on the CRDT side (the engine doesn't care
+/// about argument order — there is no "argument order" once the ops
+/// are in the doc).  Bucket C.
+#[test]
+fn parity_property_commutative_different_devices() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "priority", Some("low"))
+        .expect("A");
+    b.apply_set_property("B1", "priority", Some("high"))
+        .expect("B");
+
+    sync(&mut a, &mut b);
+
+    // Reverse-order sync (already done above; both engines have both ops).
+    let a_val = a.read_property("B1", "priority").unwrap();
+    let b_val = b.read_property("B1", "priority").unwrap();
+    assert_eq!(a_val, b_val, "commutativity: peers must converge");
+    eprintln!("[parity] property_commutative_different_devices: bucket C, winner={a_val:?}");
+}
+
+/// Ports `resolve_property_conflict_all_null_values_commutative` (tests.rs:1439).
+///
+/// Both peers issue null-clears on the same key.  Diffy: LWW picks one
+/// of them; the winner value is null on both sides.  Loro: same shape
+/// — both peers write null; the final value is null regardless of which
+/// peer "wins" because both values are null.  Bucket A (winning value
+/// matches diffy's expected null).
+#[test]
+fn parity_property_all_null_values_commutative() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+        e.apply_set_property("B1", "status", Some("seed"))
+            .expect("seed prio");
+    });
+
+    a.apply_set_property("B1", "status", None).expect("A null");
+    b.apply_set_property("B1", "status", None).expect("B null");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "status").unwrap();
+    let b_val = b.read_property("B1", "status").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    assert_eq!(
+        a_val,
+        Some(None),
+        "both peers cleared; winning value must be null-clear"
+    );
+    eprintln!("[parity] property_all_null_values_commutative: bucket A, val={a_val:?}");
+}
+
+/// Ports `resolve_property_conflict_identical_ops_commutative` (tests.rs:1512).
+///
+/// Production calls `resolve_property_conflict(&op, &op)` — the same
+/// physical op applied twice as both args.  In CRDT-land "the same op"
+/// is encoded as a single op-log entry; applying it twice is a no-op
+/// (Loro's op-log dedupes by op id).  We model "both peers see the
+/// same single write" by writing on one peer and syncing.  Bucket A.
+#[test]
+fn parity_property_identical_ops_commutative() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "priority", Some("medium"))
+        .expect("A");
+    sync(&mut a, &mut b);
+    // B re-imports the same snapshot — Loro's import is idempotent.
+    let a_bytes = a.export_snapshot().expect("export A");
+    b.import(&a_bytes).expect("B re-import");
+
+    let a_val = a.read_property("B1", "priority").unwrap();
+    let b_val = b.read_property("B1", "priority").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    assert_eq!(
+        a_val,
+        Some(Some("medium".into())),
+        "single-write value must survive idempotent re-import"
+    );
+    eprintln!("[parity] property_identical_ops_commutative: bucket A, val={a_val:?}");
+}
+
+/// Ports `resolve_property_conflict_identical_values_both_sides` (tests.rs:1800).
+///
+/// Both peers set the same key to the same value (e.g. "done").  Diffy:
+/// LWW picks one; the winning value is "done".  Loro: same — the two
+/// writes converge to a single value via per-key LWW; whichever Loro
+/// picks, the value is "done".  Bucket A.
+#[test]
+fn parity_property_identical_values_both_sides() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "status", Some("done"))
+        .expect("A");
+    b.apply_set_property("B1", "status", Some("done"))
+        .expect("B");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "status").unwrap();
+    let b_val = b.read_property("B1", "status").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    assert_eq!(
+        a_val,
+        Some(Some("done".into())),
+        "both peers wrote 'done'; winner is 'done' on either tiebreak rule"
+    );
+    eprintln!("[parity] property_identical_values_both_sides: bucket A, val={a_val:?}");
+}
+
+/// Ports `resolve_property_conflict_identical_values_same_timestamp` (tests.rs:1832).
+///
+/// Same as above but production also asserts that swapped-arg-order
+/// resolution returns the same winner (commutativity on the resolver).
+/// Loro: convergence is the CRDT primitive; commutativity is automatic.
+/// Bucket A.
+#[test]
+fn parity_property_identical_values_same_timestamp() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "color", Some("red")).expect("A");
+    b.apply_set_property("B1", "color", Some("red")).expect("B");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "color").unwrap();
+    let b_val = b.read_property("B1", "color").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge (and equal 'red')");
+    assert_eq!(a_val, Some(Some("red".into())));
+    eprintln!("[parity] property_identical_values_same_timestamp: bucket A, val={a_val:?}");
+}
+
+/// Ports `resolve_property_conflict_z_timestamps_parsed_correctly` (tests.rs:2255).
+///
+/// Diffy: B has a strictly later Z-suffix timestamp → B wins → "val_b".
+/// Loro doesn't parse timestamps — Lamport order picks a deterministic
+/// winner.  When the orderings disagree we're in bucket C.
+#[test]
+fn parity_property_z_timestamps_parsed_correctly() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "key", Some("val_a")).expect("A");
+    b.apply_set_property("B1", "key", Some("val_b")).expect("B");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "key").unwrap();
+    let b_val = b.read_property("B1", "key").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    let winner = a_val.unwrap().unwrap();
+    assert!(winner == "val_a" || winner == "val_b");
+    eprintln!("[parity] property_z_timestamps_parsed_correctly: bucket C, winner={winner:?}");
+}
+
+/// Ports `resolve_property_conflict_mixed_utc_suffixes_treated_as_equal`
+/// (tests.rs:2269).
+///
+/// Diffy: timestamps representing the same instant compare equal →
+/// device-id tiebreak.  Loro: no timestamp comparison; Lamport order
+/// picks a winner.  Bucket C.
+#[test]
+fn parity_property_mixed_utc_suffixes_treated_as_equal() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "key", Some("val_a")).expect("A");
+    b.apply_set_property("B1", "key", Some("val_b")).expect("B");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "key").unwrap();
+    let b_val = b.read_property("B1", "key").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    let winner = a_val.unwrap().unwrap();
+    assert!(winner == "val_a" || winner == "val_b");
+    eprintln!("[parity] property_mixed_utc_suffixes_treated_as_equal: bucket C, winner={winner:?}");
+}
+
+/// Ports `resolve_property_conflict_plus_zero_offset_later_wins` (tests.rs:2291).
+///
+/// Same shape as `parity_property_z_timestamps_parsed_correctly` —
+/// distinct timestamps, B's later, diffy picks B.  Loro: Lamport
+/// order.  Bucket C.
+#[test]
+fn parity_property_plus_zero_offset_later_wins() {
+    let (mut a, mut b) = two_peers_from_seed(|e| {
+        e.apply_create_block("B1", "content", "x", None, 0)
+            .expect("seed");
+    });
+
+    a.apply_set_property("B1", "key", Some("val_a")).expect("A");
+    b.apply_set_property("B1", "key", Some("val_b")).expect("B");
+
+    sync(&mut a, &mut b);
+
+    let a_val = a.read_property("B1", "key").unwrap();
+    let b_val = b.read_property("B1", "key").unwrap();
+    assert_eq!(a_val, b_val, "peers must converge");
+    let winner = a_val.unwrap().unwrap();
+    assert!(winner == "val_a" || winner == "val_b");
+    eprintln!("[parity] property_plus_zero_offset_later_wins: bucket C, winner={winner:?}");
+}
