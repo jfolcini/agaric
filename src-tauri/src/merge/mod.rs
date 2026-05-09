@@ -209,6 +209,8 @@ pub(crate) fn shadow_apply(
 
     sampler.record(ParityEvent {
         op_id: op_id.to_string(),
+        space_id: space_id.to_string(),
+        op_type: op.op_type_str().to_string(),
         diffy_result: diffy_result_summary,
         loro_result: loro_result_summary,
         r#match,
