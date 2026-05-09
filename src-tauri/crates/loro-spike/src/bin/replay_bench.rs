@@ -5,7 +5,9 @@
 //! notes) and applies it through `LoroEngine`, measuring:
 //!
 //! - wall-clock elapsed (`std::time::Instant`),
-//! - peak Linux RSS (`/proc/self/statm`, sampled at start, every 10K
+//! - peak resident-set size (cross-platform via the `memory-stats`
+//!   crate — `/proc/self/statm` on Linux, `task_info` (Mach) on macOS,
+//!   `GetProcessMemoryInfo` on Windows; sampled at start, every 10K
 //!   ops, and at the end),
 //! - final snapshot doc size (bytes),
 //! - alive-block count after replay (cheap iteration over the blocks
@@ -33,16 +35,24 @@
 //!
 //! Constraints honoured:
 //!
-//! - Loro stays at 1.12 (no Cargo.toml change).
+//! - Loro stays at 1.12 (no Cargo.toml change at Phase-0; Phase-2
+//!   day-5 added `memory-stats` for cross-platform RSS).
 //! - No production code touched.
 //! - The bench is a single Rust file; the only `LoroEngine` extension
 //!   is `count_alive_blocks` (added in `lib.rs`).
-//! - Linux-only RSS measurement is documented; on non-Linux hosts the
-//!   bench still runs but reports `peak_rss_bytes = None`.
+//! - RSS measurement is cross-platform (Linux / macOS / Windows) via
+//!   the `memory-stats` crate; if the OS refuses to provide a number
+//!   (extremely rare — typically only on exotic kernels) the bench
+//!   still runs and reports `peak_rss_kib = n/a`.
+//!
+//! Machine-readable output: the final stanza prints
+//! `peak_rss_kib=NNN`, `wall_clock_seconds=N.NNN`,
+//! `snapshot_bytes=NNN`, and `alive_blocks=NNN` on dedicated lines so
+//! a CI script can grep them without parsing the prose summary.
 
 use std::time::Instant;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use loro_spike::LoroEngine;
 
 // ---------------------------------------------------------------------------
@@ -122,37 +132,33 @@ impl XorShift64 {
 }
 
 // ---------------------------------------------------------------------------
-// Linux RSS sampling via /proc/self/statm.
+// Cross-platform RSS sampling via the `memory-stats` crate.
+//
+// Phase-0 day 4 used a Linux-only `/proc/self/statm` parse; the
+// kill-criterion-#3 verdict (144 MiB peak / 14× margin under the 2 GiB
+// floor) was therefore Linux-only.  Phase-2 day 5 swaps in
+// `memory-stats`, which wraps `/proc/self/statm` on Linux, `task_info`
+// (Mach) on macOS, and `GetProcessMemoryInfo` on Windows behind a
+// single API.  The bench now produces a comparable headline number on
+// all three desktop targets ahead of the cutover toggle ship.
 // ---------------------------------------------------------------------------
 
-/// Read resident-set-size (in bytes) from `/proc/self/statm` on Linux.
-/// Returns `Ok(None)` on non-Linux platforms or if the file is
-/// unavailable; returns `Err` only if the file exists but is malformed
-/// (which would indicate something more wrong than just "not Linux").
-fn read_rss_bytes() -> Result<Option<usize>> {
-    if cfg!(not(target_os = "linux")) {
-        return Ok(None);
-    }
-    let contents = match std::fs::read_to_string("/proc/self/statm") {
-        Ok(s) => s,
-        Err(_) => return Ok(None),
-    };
-    // statm format: "size resident shared text lib data dt" — values
-    // are in pages.  Resident is field index 1.
-    let mut iter = contents.split_ascii_whitespace();
-    let _size = iter
-        .next()
-        .ok_or_else(|| anyhow!("statm: missing size field"))?;
-    let resident_pages: usize = iter
-        .next()
-        .ok_or_else(|| anyhow!("statm: missing resident field"))?
-        .parse()
-        .with_context(|| "statm: resident not a usize")?;
-    // Page size: hardcoded to 4 KiB on x86_64 Linux, matching the
-    // `getconf PAGESIZE` value on every dev machine we care about.
-    // Avoiding `libc::sysconf` keeps the bench dependency-free.
-    let page_size: usize = 4_096;
-    Ok(Some(resident_pages * page_size))
+/// Read this process's resident-set-size, in KiB.
+///
+/// Returns `Ok(None)` only when the underlying OS hook refuses to
+/// supply a number — `memory-stats` returns `None` when its native
+/// query path fails (e.g. an exotic kernel without `/proc`, or a
+/// hardened sandbox that denies `task_info`).  On every supported
+/// desktop target (Linux, macOS, Windows) the call is expected to
+/// succeed; the `Option` return type is plumbed through the bench
+/// purely so the kill-criterion verdict can degrade gracefully ("can't
+/// observe → don't fire on missing data") rather than crash.
+///
+/// Units are KiB (kibibytes, 1024 bytes) — chosen so the
+/// `peak_rss_kib=NNN` machine-readable output line is a tidy integer.
+/// Internally `memory-stats` returns bytes; we divide by 1024.
+fn current_rss_kib() -> Result<Option<u64>> {
+    Ok(memory_stats::memory_stats().map(|s| (s.physical_mem / 1024) as u64))
 }
 
 // ---------------------------------------------------------------------------
@@ -542,8 +548,8 @@ fn main() -> Result<()> {
     );
 
     // 2. RSS at start (before the 100K-op apply loop starts).
-    let mut peak_rss: Option<usize> = None;
-    let rss_start = read_rss_bytes()?;
+    let mut peak_rss: Option<u64> = None;
+    let rss_start = current_rss_kib()?;
     if let Some(rss) = rss_start {
         peak_rss = Some(peak_rss.map_or(rss, |p| p.max(rss)));
     }
@@ -586,7 +592,7 @@ fn main() -> Result<()> {
         }
 
         if (op_index + 1) % RSS_SAMPLE_EVERY == 0 {
-            let now = read_rss_bytes()?;
+            let now = current_rss_kib()?;
             if let Some(rss) = now {
                 peak_rss = Some(peak_rss.map_or(rss, |p| p.max(rss)));
             }
@@ -603,7 +609,7 @@ fn main() -> Result<()> {
     let apply_elapsed = apply_start.elapsed();
 
     // 4. RSS at end + final snapshot.
-    let rss_end = read_rss_bytes()?;
+    let rss_end = current_rss_kib()?;
     if let Some(rss) = rss_end {
         peak_rss = Some(peak_rss.map_or(rss, |p| p.max(rss)));
     }
@@ -699,7 +705,10 @@ fn main() -> Result<()> {
     let wall_clock_seconds = apply_elapsed.as_secs_f64();
     let wall_clock_under_10min = wall_clock_seconds < 600.0;
     let rss_under_2gb = match peak_rss {
-        Some(rss) => rss < 2 * 1024 * 1024 * 1024,
+        // 2 GiB == 2 * 1024 * 1024 KiB.  Comparison is in KiB to match
+        // `current_rss_kib` units; the kill-criterion threshold itself
+        // is unchanged from Phase-0.
+        Some(rss_kib) => rss_kib < 2 * 1024 * 1024,
         None => true, // cannot observe, do not fire purely on missing data
     };
     println!(
@@ -724,17 +733,67 @@ fn main() -> Result<()> {
         overall_start.elapsed().as_secs_f64()
     );
 
+    // Machine-readable summary — one key=value per line so a CI script
+    // can grep without parsing the prose above.  RSS is in KiB so the
+    // value is a tidy integer; "n/a" means the OS hook returned None
+    // (extremely rare on the supported desktop targets).  Phase-2
+    // day-5: this stanza became the cross-platform verification anchor
+    // — replay the bench on macOS / Windows and grep `peak_rss_kib=`
+    // to confirm the kill-criterion-#3 margin holds.
+    println!();
+    println!("---- machine-readable summary ----");
+    println!("wall_clock_seconds={:.3}", wall_clock_seconds);
+    println!("snapshot_bytes={}", snapshot.len());
+    println!("alive_blocks={alive_count}");
+    match peak_rss {
+        Some(kib) => println!("peak_rss_kib={kib}"),
+        None => println!("peak_rss_kib=n/a"),
+    }
+
     if fired {
         std::process::exit(1);
     }
     Ok(())
 }
 
-/// Format an `Option<usize>` rss measurement as a human-readable
-/// string.  Returns "n/a" if the platform didn't supply one (non-Linux).
-fn fmt_rss(rss: Option<usize>) -> String {
-    match rss {
+/// Format an `Option<u64>` rss measurement (in KiB) as a human-readable
+/// string.  Returns "n/a" if `memory-stats` couldn't supply a number
+/// — extremely rare on the three supported desktop targets.
+fn fmt_rss(rss_kib: Option<u64>) -> String {
+    match rss_kib {
         None => "n/a".to_string(),
-        Some(n) => format!("{} bytes ({:.2} MiB)", n, n as f64 / 1_048_576.0),
+        Some(n) => format!("{} KiB ({:.2} MiB)", n, n as f64 / 1024.0),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Smoke tests — Phase-2 day-5.
+//
+// The spike crate is throwaway (frozen post-Phase-0), but the day-5
+// RSS swap still gets a CI-runnable smoke test so a future toolchain
+// upgrade that breaks `memory-stats` surfaces immediately rather than
+// during a manual bench run.  The test runs on whichever platform CI
+// dispatches it on — Linux today, future macOS / Windows runners
+// later — and implicitly verifies the API on the running platform.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `memory-stats` should return a positive RSS reading for the
+    /// running test process on every supported desktop target.  A
+    /// `None` here would indicate the OS hook was disabled or the
+    /// crate's platform support regressed; a zero reading would
+    /// indicate a measurement bug (the test process itself has a
+    /// non-trivial RSS).
+    #[test]
+    fn current_rss_kib_returns_positive_reading() {
+        let rss = current_rss_kib().expect("current_rss_kib should not error");
+        let kib = rss.expect("memory-stats should report a value on this platform");
+        assert!(
+            kib > 0,
+            "process RSS should be > 0 KiB; got {kib} (likely a measurement bug)",
+        );
     }
 }
