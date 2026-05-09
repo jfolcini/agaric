@@ -926,6 +926,13 @@ pub fn run() {
             // a cheap `Arc`-based clone.
             let materializer_for_gcal = materializer.clone();
 
+            // PEND-09 Phase 1 day-5 — clone the write pool BEFORE it
+            // moves into Tauri managed state so the periodic parity-
+            // flush task (spawned below) has its own handle.  Cheap:
+            // `SqlitePool` is an `Arc`-based clone.
+            #[cfg(feature = "loro-shadow")]
+            let pool_for_loro_flush = pools.write.clone();
+
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
@@ -938,6 +945,14 @@ pub fn run() {
             // sampler to write into.  Idempotent; gated on the
             // `loro-shadow` feature so default builds compile this out
             // entirely (zero-overhead when off).
+            //
+            // PEND-09 Phase 1 day-5 — also spawn the periodic
+            // flush + purge task that drains the in-memory parity
+            // sampler into `merge_parity_log` and ages out rows past
+            // the 30-day retention window.  The task is fire-and-
+            // forget; it cancels cleanly when the runtime shuts down
+            // (the inner `tokio::time::interval` drops with the
+            // future).  Errors `tracing::warn!` and continue.
             #[cfg(feature = "loro-shadow")]
             {
                 let installed = crate::loro::shared::init();
@@ -945,6 +960,27 @@ pub fn run() {
                     installed,
                     "loro-shadow: process-global ShadowState init complete",
                 );
+                if let Some(state) = crate::loro::shared::get() {
+                    let pool_for_flush = pool_for_loro_flush;
+                    tauri::async_runtime::spawn(async move {
+                        crate::loro::flush_task::run_periodic_flush(
+                            pool_for_flush,
+                            state,
+                            std::time::Duration::from_secs(
+                                crate::loro::flush_task::FLUSH_INTERVAL_SECS,
+                            ),
+                            std::time::Duration::from_secs(
+                                crate::loro::flush_task::PURGE_INTERVAL_SECS,
+                            ),
+                        )
+                        .await;
+                    });
+                    tracing::info!(
+                        flush_secs = crate::loro::flush_task::FLUSH_INTERVAL_SECS,
+                        purge_secs = crate::loro::flush_task::PURGE_INTERVAL_SECS,
+                        "loro-shadow: parity flush + purge task spawned",
+                    );
+                }
             }
 
             // Sync state (#275, #278)
