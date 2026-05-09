@@ -24,7 +24,7 @@ not theoretical — it is the same shape that already bit us once.
 Backend clamps in play (silent truncation ceilings):
 
 | Site | File | Ceiling |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `list_blocks_inner` | `src-tauri/src/commands/blocks/queries.rs:75` | **100** ← BUG-48 root |
 | Generic `PageRequest::new` | `src-tauri/src/pagination/mod.rs:511` | 200 |
 | `list_agenda` | `src-tauri/src/commands/agenda.rs:192` | 500 |
@@ -34,7 +34,7 @@ Backend clamps in play (silent truncation ceilings):
 Frontend "I want all" call sites that ignore those ceilings:
 
 | Severity | File:line | Limit asked | Pattern | Hazard |
-|----------|-----------|-------------|---------|--------|
+| ---------- | ----------- | ------------- | --------- | -------- |
 | HIGH | `src/stores/page-blocks.ts:125` | 500 | recursive subtree, no per-parent cursor | page editor truncates any parent with >100 children |
 | HIGH | `src/components/PropertyRowEditor.tsx:254` | 500 | one-shot list, JS `.filter()` | ref picker silently misses pages past 100 |
 | HIGH | `src/components/GraphView.helpers.ts:55, 62, 76` | 5000 | one-shot list | graph shows wrong subset at >100 pages |
@@ -235,7 +235,7 @@ constructor; the `#[tauri::command]` boundary takes the newtype.
 ## Cost / Impact / Risk summary
 
 | Phase | Cost | Impact | Risk |
-|-------|------|--------|------|
+| ------- | ------ | -------- | ------ |
 | 1 — strict clamp | S | HIGH (closes the silent-truncation class) | MEDIUM (must land with Phase 2 HIGH fixes) |
 | 2 — per-site conversions | ~1 week | HIGH (closes every known instance) | LOW per site |
 | 3 — typed boundary | M | MEDIUM (compile-time guarantee for the future) | MEDIUM (touches IPC wrappers) |
