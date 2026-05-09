@@ -163,14 +163,105 @@ pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRec
         return;
     };
 
-    let payload: OpPayload = match serde_json::from_str(&record.payload) {
-        Ok(p) => p,
-        Err(e) => {
+    // PEND-09 Phase 2 day-9.5 — fix latent JSON-parse bug.
+    //
+    // `OpPayload` is `#[serde(tag = "op_type")]` (internally tagged), but
+    // `op_log::serialize_inner_payload` strips the tag (it lives in the
+    // `op_log.op_type` column, not the JSON blob).  So a direct
+    // `from_str::<OpPayload>(&record.payload)` ALWAYS fails on production
+    // payloads — the parse demands the tag, but the JSON doesn't have it.
+    //
+    // Effect (Phase 1 day-2 .. day-9.5): every op flowing through this
+    // helper silently logged a warn and returned, NO ops reached the
+    // engine via this path.  Day-9 worked around it for `restore_block`
+    // by parsing the inner struct directly inside
+    // `dispatch_restore_descendants_shadow`; this fix unblocks every
+    // other op type.
+    //
+    // Pattern mirrors `materializer::handlers::apply_op_tx` — branch on
+    // `record.op_type` (the dedicated `op_log` column), parse the
+    // corresponding inner-only struct, then re-wrap as `OpPayload` so
+    // the rest of the function (block-id extraction, space resolve,
+    // `shadow_apply` call) is untouched.
+    let payload: OpPayload = match record.op_type.as_str() {
+        "create_block" => {
+            match serde_json::from_str::<crate::op::CreateBlockPayload>(&record.payload) {
+                Ok(p) => OpPayload::CreateBlock(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "edit_block" => {
+            match serde_json::from_str::<crate::op::EditBlockPayload>(&record.payload) {
+                Ok(p) => OpPayload::EditBlock(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "delete_block" => {
+            match serde_json::from_str::<crate::op::DeleteBlockPayload>(&record.payload) {
+                Ok(p) => OpPayload::DeleteBlock(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "restore_block" => {
+            match serde_json::from_str::<crate::op::RestoreBlockPayload>(&record.payload) {
+                Ok(p) => OpPayload::RestoreBlock(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "purge_block" => {
+            match serde_json::from_str::<crate::op::PurgeBlockPayload>(&record.payload) {
+                Ok(p) => OpPayload::PurgeBlock(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "move_block" => {
+            match serde_json::from_str::<crate::op::MoveBlockPayload>(&record.payload) {
+                Ok(p) => OpPayload::MoveBlock(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "add_tag" => match serde_json::from_str::<crate::op::AddTagPayload>(&record.payload) {
+            Ok(p) => OpPayload::AddTag(p),
+            Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+        },
+        "remove_tag" => {
+            match serde_json::from_str::<crate::op::RemoveTagPayload>(&record.payload) {
+                Ok(p) => OpPayload::RemoveTag(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "set_property" => {
+            match serde_json::from_str::<crate::op::SetPropertyPayload>(&record.payload) {
+                Ok(p) => OpPayload::SetProperty(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "delete_property" => {
+            match serde_json::from_str::<crate::op::DeletePropertyPayload>(&record.payload) {
+                Ok(p) => OpPayload::DeleteProperty(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "add_attachment" => {
+            match serde_json::from_str::<crate::op::AddAttachmentPayload>(&record.payload) {
+                Ok(p) => OpPayload::AddAttachment(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        "delete_attachment" => {
+            match serde_json::from_str::<crate::op::DeleteAttachmentPayload>(&record.payload) {
+                Ok(p) => OpPayload::DeleteAttachment(p),
+                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            }
+        }
+        other => {
+            // Unknown op_type — matches the pre-fix "unsupported" path
+            // (log + return, never break the diffy authoritative path).
             tracing::warn!(
                 device_id = %record.device_id,
                 seq = record.seq,
-                error = %e,
-                "shadow_dispatch: failed to parse op payload; skipping",
+                op_type = %other,
+                "shadow_dispatch: unknown op_type; skipping",
             );
             return;
         }
@@ -219,6 +310,21 @@ pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRec
         &space_id,
         diffy_summary,
         state,
+    );
+}
+
+/// PEND-09 Phase 2 day-9.5 — shared warn-and-return helper for the
+/// per-variant inner-payload parse arms in `shadow_dispatch_for_record`.
+/// Pulling the warn into a single function keeps the dispatcher's match
+/// arms uniform and the per-arm boilerplate to one line.
+#[cfg(feature = "loro-shadow")]
+fn shadow_dispatch_log_parse_err(record: &OpRecord, err: &serde_json::Error) {
+    tracing::warn!(
+        device_id = %record.device_id,
+        seq = record.seq,
+        op_type = %record.op_type,
+        error = %err,
+        "shadow_dispatch: failed to parse inner payload; skipping",
     );
 }
 
@@ -692,6 +798,235 @@ mod shadow_apply_unit_tests {
             state.sampler.total_pushed(),
             baseline,
             "attachment ops must be log-and-skip (no parity event)"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PEND-09 Phase 2 day-9.5 — regression coverage for the latent JSON-parse
+// bug in `shadow_dispatch_for_record`.
+//
+// Background: from Phase 1 day-2 (commit `dcfc3637`) until day-9.5, the
+// dispatcher attempted `serde_json::from_str::<OpPayload>(&record.payload)`,
+// but `op_log::serialize_inner_payload` strips the `op_type` tag (it lives
+// in the dedicated column).  `OpPayload` is internally tagged, so the
+// parse ALWAYS failed — every op silently logged a warn and returned.
+//
+// Day-9 worked around it for `restore_block` inside
+// `dispatch_restore_descendants_shadow` (parsing the inner struct
+// directly).  Day-9.5 fixes the upstream dispatcher so EVERY op type
+// flows through.
+//
+// These tests build real `OpRecord`s via `op_log::append_local_op`
+// (which exercises the same `serialize_inner_payload` path that
+// production uses) and assert the engine state is mutated by
+// `shadow_dispatch_for_record`.  A future change that regresses the
+// dispatcher (e.g. switches back to the tagged parse, or drops a
+// match arm) will fail these tests.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "loro-shadow"))]
+mod shadow_dispatch_for_record_regression {
+    use super::shadow_dispatch_for_record;
+    use crate::db::init_pool;
+    use crate::loro::shared::{install_for_test, ShadowState};
+    use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload, SetPropertyPayload};
+    use crate::op_log::append_local_op;
+    use crate::space::SpaceId;
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    const SPACE_ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const BLOCK_ULID: &str = "01HZ00000000000000000000AB";
+    const DEVICE_ID: &str = "device-shadow-regression";
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("shadow_dispatch.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+        (pool, dir)
+    }
+
+    /// Seed the SQL minimum that lets `resolve_block_space` resolve
+    /// `BLOCK_ULID` to `SPACE_ULID`:
+    ///   * a `blocks` row for the space (so the FK on
+    ///     `block_properties.value_ref` is satisfied)
+    ///   * a `blocks` row for the target block (so the
+    ///     `JOIN blocks tgt` in `resolve_block_space` returns a hit)
+    ///   * a `block_properties (key='space', value_ref=SPACE)` row on
+    ///     the target block (so the property lookup itself succeeds).
+    async fn seed_space_membership(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+        )
+        .bind(SPACE_ULID)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 is_conflict) \
+             VALUES (?, 'content', '', NULL, 0, ?, 0)",
+        )
+        .bind(BLOCK_ULID)
+        .bind(BLOCK_ULID)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(BLOCK_ULID)
+        .bind(SPACE_ULID)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Read the engine snapshot for `BLOCK_ULID` in `SPACE_ULID`.
+    fn engine_block_content(state: &ShadowState) -> Option<String> {
+        let space = SpaceId::from_trusted(SPACE_ULID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        guard
+            .engine_mut()
+            .read_block(BLOCK_ULID)
+            .expect("read_block")
+            .map(|s| s.content)
+    }
+
+    /// Engine-side property lookup, flattened to `Option<String>`:
+    ///   * `Ok(None)`        → key never set            → returns `None`
+    ///   * `Ok(Some(None))`  → key explicitly cleared   → returns `None`
+    ///   * `Ok(Some(Some(s)))` → key holds string `s`   → returns `Some(s)`
+    fn engine_property(state: &ShadowState, key: &str) -> Option<String> {
+        let space = SpaceId::from_trusted(SPACE_ULID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        guard
+            .engine_mut()
+            .read_property(BLOCK_ULID, key)
+            .expect("read_property")
+            .flatten()
+    }
+
+    /// PEND-09 Phase 2 day-9.5 — `CreateBlock` must reach the engine
+    /// when threaded through `shadow_dispatch_for_record`.
+    ///
+    /// Pre-fix this test failed: the JSON parse logged a warn and
+    /// returned without touching the engine, so `engine_block_content`
+    /// was `None`.
+    #[tokio::test]
+    async fn shadow_dispatch_for_record_applies_create_block() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_space_membership(&pool).await;
+        let state = install_for_test();
+
+        // Build a real OpRecord via the production write path so the
+        // payload column matches `serialize_inner_payload`'s shape
+        // exactly (no `op_type` tag).
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ULID),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "hello-from-record".into(),
+        });
+        let record = append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append");
+
+        // Sanity: the persisted payload must NOT carry the `op_type`
+        // tag (this is the precondition the day-9.5 fix targets — if a
+        // future change starts including the tag, the dispatcher's
+        // inner-only parse needs to be revisited).
+        assert!(
+            !record.payload.contains("\"op_type\""),
+            "op_log payload must not embed the op_type tag (regression: \
+             serialize_inner_payload changed shape, dispatcher parse needs review)"
+        );
+
+        // Drive the dispatcher.
+        shadow_dispatch_for_record(&pool, &record).await;
+
+        // Engine must now hold the block with the content from the
+        // payload.  This is the load-bearing assertion.
+        assert_eq!(
+            engine_block_content(state).as_deref(),
+            Some("hello-from-record"),
+            "shadow_dispatch_for_record must apply CreateBlock to the engine \
+             (regression: latent JSON-parse bug returned without applying)"
+        );
+    }
+
+    /// PEND-09 Phase 2 day-9.5 — `EditBlock` and `SetProperty` must
+    /// also reach the engine.  Two variants in one test to give the
+    /// regression net more breadth without spinning up two pools.
+    #[tokio::test]
+    async fn shadow_dispatch_for_record_applies_edit_and_set_property() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_space_membership(&pool).await;
+        let state = install_for_test();
+
+        // Seed the engine with the block (via the dispatcher, so we
+        // also cover CreateBlock as a side effect).
+        let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ULID),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "v1".into(),
+        });
+        let r1 = append_local_op(&pool, DEVICE_ID, create_payload)
+            .await
+            .expect("append create");
+        shadow_dispatch_for_record(&pool, &r1).await;
+        assert_eq!(
+            engine_block_content(state).as_deref(),
+            Some("v1"),
+            "seed CreateBlock must reach the engine"
+        );
+
+        // EditBlock — content must update.
+        let edit_payload = OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ULID),
+            to_text: "v2".into(),
+            prev_edit: None,
+        });
+        let r2 = append_local_op(&pool, DEVICE_ID, edit_payload)
+            .await
+            .expect("append edit");
+        shadow_dispatch_for_record(&pool, &r2).await;
+        assert_eq!(
+            engine_block_content(state).as_deref(),
+            Some("v2"),
+            "shadow_dispatch_for_record must apply EditBlock to the engine"
+        );
+
+        // SetProperty — property must appear.
+        let set_payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_ULID),
+            key: "priority".into(),
+            value_text: Some("high".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        });
+        let r3 = append_local_op(&pool, DEVICE_ID, set_payload)
+            .await
+            .expect("append set");
+        shadow_dispatch_for_record(&pool, &r3).await;
+        assert_eq!(
+            engine_property(state, "priority").as_deref(),
+            Some("high"),
+            "shadow_dispatch_for_record must apply SetProperty to the engine"
         );
     }
 }
