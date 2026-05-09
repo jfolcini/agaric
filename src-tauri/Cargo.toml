@@ -416,3 +416,15 @@ path = "src/bin/audit_cross_space_refs.rs"
 [[bin]]
 name = "op_log_histogram"
 path = "src/bin/op_log_histogram.rs"
+
+# PEND-09 Phase 2 day-7 — read-only diagnostic that prints a bucket-A/B/C/D
+# histogram + recent-divergent-ops tail from the `merge_parity_log` table,
+# closing Phase-2 Gate 7 (`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §2 +
+# §3 day 7).  Lets the maintainer observe shadow-mode parity state during
+# the 7-day soak without typing raw SQL.  Same `read_only(true)` opening
+# as `op_log_histogram` so the binary can never write to the user's data;
+# refuses to auto-create the table if missing (reports "was this DB built
+# with shadow mode?" and exits non-zero).
+[[bin]]
+name = "parity_report"
+path = "src/bin/parity_report.rs"
