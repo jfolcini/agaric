@@ -69,3 +69,14 @@ pub mod shared;
 
 #[cfg(all(test, feature = "loro-shadow"))]
 mod tests;
+
+// PEND-09 Phase 1 day-8 — proptest-augmented parity streams.  Replaces
+// the hand-curated 53-case parity corpus's "we thought of these
+// scenarios" with proptest's "the shrinker actively searches for
+// counter-examples".  Asserts kill-criterion #2 (bucket D must stay
+// at zero) over thousands of randomised single-author op streams.
+// See the file's module docstring for the why and the configuration
+// notes.  Two-device concurrent-merge proptest extension is scheduled
+// for a later Phase-1 day; see SPIKE-REPORT.md §6 item 8.
+#[cfg(all(test, feature = "loro-shadow"))]
+mod parity_proptest;
