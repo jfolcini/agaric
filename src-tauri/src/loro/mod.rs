@@ -67,6 +67,13 @@ pub mod registry;
 #[cfg(feature = "loro-shadow")]
 pub mod shared;
 
+// PEND-09 Phase 2 day-6 — per-space LoroDoc snapshot persistence.  The
+// `loro_doc_state` table is created by migration `0052`; this module
+// exposes save / load / scheduler helpers.  See the module docstring
+// for the (a / b / c) "how does the registry rehydrate" decision.
+#[cfg(feature = "loro-shadow")]
+pub mod snapshot;
+
 #[cfg(all(test, feature = "loro-shadow"))]
 mod tests;
 

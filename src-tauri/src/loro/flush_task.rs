@@ -52,6 +52,16 @@ pub const FLUSH_INTERVAL_SECS: u64 = 30;
 /// a per-flush purge would be.
 pub const PURGE_INTERVAL_SECS: u64 = 3_600;
 
+/// PEND-09 Phase 2 day-6 — cadence at which the per-space LoroDoc
+/// snapshot scheduler walks the registry and writes every engine's
+/// current state into `loro_doc_state` (see migration `0052`).  5
+/// minutes is the soft default from `PEND-09-PHASE-2-CUTOVER-PLAN.md`
+/// §8.1: short enough that "snapshot on shutdown only" never has more
+/// than ~5 minutes of unbacked op-log replay to do on the next boot;
+/// long enough that the snapshot's I/O / CPU cost is amortised over
+/// hundreds of materializer ticks at typical typing rates.
+pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
+
 /// Run the periodic flush + purge loop.  Never returns under normal
 /// operation; cancellable by dropping the spawned future (the inner
 /// `tokio::time::interval` drops with it).
@@ -68,6 +78,7 @@ pub async fn run_periodic_flush(
     state: &'static ShadowState,
     flush_interval: Duration,
     purge_interval: Duration,
+    snapshot_interval: Duration,
 ) {
     let mut interval = tokio::time::interval(flush_interval);
     // Skip the immediate first tick — `tokio::time::interval` fires
@@ -81,7 +92,9 @@ pub async fn run_periodic_flush(
     // gets "purge every flush" rather than divide-by-zero.
     let flush_ms = flush_interval.as_millis().max(1);
     let purge_ms = purge_interval.as_millis().max(1);
+    let snapshot_ms = snapshot_interval.as_millis().max(1);
     let ticks_per_purge: u128 = purge_ms.div_ceil(flush_ms);
+    let ticks_per_snapshot: u128 = snapshot_ms.div_ceil(flush_ms);
     let mut tick_count: u128 = 0;
 
     loop {
@@ -151,6 +164,20 @@ pub async fn run_periodic_flush(
                         "loro-shadow: parity purge_old failed; continuing",
                     );
                 }
+            }
+        }
+
+        // PEND-09 Phase 2 day-6 — periodic per-space snapshot.  Walks
+        // the registry and writes every engine's exported snapshot
+        // bytes into `loro_doc_state` so the next process boot can
+        // rehydrate without replaying the full op-log.  Per-space
+        // errors are caught + logged inside `save_all_engines`,
+        // mirroring the flush-error pattern: the scheduler MUST NOT
+        // crash the app on a transient SQL or Loro export failure.
+        if tick_count.is_multiple_of(ticks_per_snapshot) {
+            let saved = crate::loro::snapshot::save_all_engines(&pool, &state.registry).await;
+            if saved > 0 {
+                tracing::debug!(saved, "loro-shadow: per-space LoroDoc snapshots persisted",);
             }
         }
     }
@@ -231,6 +258,8 @@ mod tests {
                 // 1 s purge interval — well above the 100 ms sleep so
                 // this test never invokes purge_old.
                 Duration::from_secs(1),
+                // 1 s snapshot interval — same reasoning.
+                Duration::from_secs(1),
             )
             .await;
         });
@@ -273,6 +302,7 @@ mod tests {
                 pool_for_task,
                 state,
                 Duration::from_millis(20),
+                Duration::from_secs(1),
                 Duration::from_secs(1),
             )
             .await;
@@ -376,6 +406,10 @@ mod tests {
                 // Flush every 10 ms — purge fires every other tick.
                 Duration::from_millis(10),
                 Duration::from_millis(20),
+                // Snapshot interval kept large so this test exercises
+                // the purge branch without the snapshot scheduler
+                // racing.
+                Duration::from_secs(60),
             )
             .await;
         });
@@ -393,6 +427,77 @@ mod tests {
             vec!["NEW/1".to_string()],
             "only the recent row must survive the purge",
         );
+
+        handle.abort();
+    }
+
+    /// PEND-09 Phase 2 day-6 — fast snapshot cadence.  Pre-populate the
+    /// registry with one engine, run with a tiny snapshot interval,
+    /// verify a row appears in `loro_doc_state`.
+    #[tokio::test]
+    async fn run_periodic_flush_invokes_snapshot_scheduler() {
+        use crate::loro::engine::LoroEngine;
+        use crate::space::SpaceId;
+
+        let (pool, _dir) = fresh_pool().await;
+        let state = leak_state();
+
+        // Seed the registry with one engine that has measurable state.
+        let space = SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        {
+            let mut g = state
+                .registry
+                .for_space(&space, "device-1")
+                .expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK1", "content", "snapshot me", None, 0)
+                .expect("create");
+        }
+
+        let pool_for_task = pool.clone();
+        let handle = tokio::spawn(async move {
+            run_periodic_flush(
+                pool_for_task,
+                state,
+                Duration::from_millis(10),
+                // Purge interval kept large so this test only exercises
+                // the snapshot branch.
+                Duration::from_secs(60),
+                // Snapshot every 20 ms — fires multiple times within
+                // the 100 ms sleep below.
+                Duration::from_millis(20),
+            )
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state WHERE space_id = ?")
+                .bind(space.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+        assert_eq!(
+            count, 1,
+            "snapshot scheduler must persist a row for the seeded space"
+        );
+
+        // The persisted bytes must rehydrate into an engine with the
+        // same block visible (round-trip sanity).
+        let bytes: Vec<u8> =
+            sqlx::query_scalar("SELECT snapshot FROM loro_doc_state WHERE space_id = ?")
+                .bind(space.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("snapshot bytes");
+        let mut hydrated = LoroEngine::with_peer_id("device-1").expect("hydrated");
+        hydrated.import(&bytes).expect("import");
+        let snap = hydrated
+            .read_block("BLOCK1")
+            .expect("read")
+            .expect("present");
+        assert_eq!(snap.content, "snapshot me");
 
         handle.abort();
     }

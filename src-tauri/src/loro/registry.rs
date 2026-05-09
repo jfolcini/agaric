@@ -103,6 +103,48 @@ impl LoroEngineRegistry {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Install a pre-built [`LoroEngine`] under `space_id`, replacing
+    /// any existing entry.  Used by the boot rehydration pass
+    /// ([`crate::loro::snapshot::rehydrate_registry`]) to seed the
+    /// registry with engines whose `LoroDoc` has already been imported
+    /// from a persisted snapshot, so a subsequent
+    /// [`for_space`](Self::for_space) call observes a doc that is not
+    /// empty.
+    ///
+    /// PEND-09 Phase 2 day-6.  Decision rationale (option (c) from the
+    /// day-6 spec): keeping `for_space` synchronous and pre-populating
+    /// the registry on app boot avoids both the `for_space`-becomes-
+    /// async ripple (option (a)) and the `block_in_place` /
+    /// `block_on` hack (option (b)).
+    pub fn install_engine(&self, space_id: SpaceId, engine: LoroEngine) {
+        let mut guard = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard.insert(space_id, engine);
+    }
+
+    /// Snapshot every registered engine via [`LoroEngine::export_snapshot`]
+    /// and return the resulting `(space_id, Result<bytes, AppError>)`
+    /// pairs.  Per-engine errors are returned in the inner `Result` so
+    /// the caller can decide whether to log + continue (the periodic
+    /// scheduler) or abort (a debug "snapshot now" command).
+    ///
+    /// The export runs while holding the top-level mutex; see the
+    /// per-call discussion in
+    /// [`crate::loro::snapshot::save_all_engines`] for why that's the
+    /// right trade-off at the 5-minute scheduler cadence.
+    pub fn snapshot_all_engines(&self) -> Vec<(SpaceId, Result<Vec<u8>, AppError>)> {
+        let guard = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard
+            .iter()
+            .map(|(space_id, engine)| (space_id.clone(), engine.export_snapshot()))
+            .collect()
+    }
 }
 
 impl Default for LoroEngineRegistry {
@@ -180,6 +222,90 @@ mod tests {
         }
 
         assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn install_engine_seeds_registry_so_for_space_returns_pre_built_engine() {
+        // PEND-09 Phase 2 day-6 — the boot rehydration pass uses
+        // `install_engine` to inject engines whose docs were imported
+        // from a persisted snapshot.  A subsequent `for_space` call
+        // must observe the pre-built engine (NOT lazy-instantiate a
+        // fresh empty one).
+        let r = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let mut prebuilt = LoroEngine::with_peer_id("device-1").expect("prebuilt");
+        prebuilt
+            .apply_create_block("BLOCK1", "content", "from-snapshot", None, 0)
+            .expect("create");
+        r.install_engine(space.clone(), prebuilt);
+        assert_eq!(r.len(), 1, "install_engine must register the engine");
+
+        // for_space returns the pre-built engine — block is visible.
+        let mut g = r.for_space(&space, "device-1").expect("for_space");
+        let snap = g
+            .engine_mut()
+            .read_block("BLOCK1")
+            .expect("read")
+            .expect("present");
+        assert_eq!(
+            snap.content, "from-snapshot",
+            "for_space must return the installed engine, not a fresh one"
+        );
+    }
+
+    #[test]
+    fn install_engine_replaces_an_existing_engine() {
+        // Idempotency contract: a second `install_engine` for the same
+        // space replaces the first.  This is what the boot pass relies
+        // on if it ever re-runs (e.g. test harness re-init).
+        let r = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let mut first = LoroEngine::with_peer_id("device-1").expect("first");
+        first
+            .apply_create_block("BLOCK1", "content", "first", None, 0)
+            .expect("create");
+        r.install_engine(space.clone(), first);
+
+        let mut second = LoroEngine::with_peer_id("device-1").expect("second");
+        second
+            .apply_create_block("BLOCK2", "content", "second", None, 0)
+            .expect("create");
+        r.install_engine(space.clone(), second);
+
+        assert_eq!(r.len(), 1, "still one entry after replace");
+
+        // Only the second engine's blocks are visible.
+        let mut g = r.for_space(&space, "device-1").expect("for_space");
+        assert!(g.engine_mut().read_block("BLOCK1").unwrap().is_none());
+        assert!(g.engine_mut().read_block("BLOCK2").unwrap().is_some());
+    }
+
+    #[test]
+    fn snapshot_all_engines_returns_one_pair_per_space() {
+        let r = LoroEngineRegistry::new();
+        let a = SpaceId::from_trusted(SPACE_A);
+        let b = SpaceId::from_trusted(SPACE_B);
+        {
+            let mut g = r.for_space(&a, "device-1").expect("a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+                .expect("create");
+        }
+        {
+            let mut g = r.for_space(&b, "device-1").expect("b");
+            g.engine_mut()
+                .apply_create_block("BLOCK_B", "content", "in B", None, 0)
+                .expect("create");
+        }
+
+        let pairs = r.snapshot_all_engines();
+        assert_eq!(pairs.len(), 2, "two spaces, two snapshot pairs");
+        for (_space_id, result) in pairs {
+            let bytes = result.expect("export ok");
+            assert!(!bytes.is_empty(), "exported snapshot must be non-empty");
+        }
     }
 
     #[test]
