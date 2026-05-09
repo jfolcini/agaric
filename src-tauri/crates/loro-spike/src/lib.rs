@@ -13,6 +13,9 @@
 //! reparent semantics, the rest of the 12 op variants, and parity vs
 //! `merge/tests.rs` still land in later days of the 2-week time-box.
 
+pub mod tree_engine;
+pub use tree_engine::{TreeBlockSnapshot, TreeEngine};
+
 use anyhow::{anyhow, Context, Result};
 use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroValue};
 
