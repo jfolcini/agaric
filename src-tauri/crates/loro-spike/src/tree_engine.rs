@@ -42,7 +42,11 @@
 //! cheap (O(1) instead of O(N) tree scan).
 
 use anyhow::{anyhow, Context, Result};
-use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId};
+use loro::{
+    ExportMode, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, PeerID, TreeID, TreeParentId,
+};
+
+use crate::peer_id_from_device_id;
 
 /// Top-level `LoroTree` container under which all block tree nodes live.
 const TREE_ROOT: &str = "tree";
@@ -84,6 +88,22 @@ impl TreeEngine {
         Self {
             doc: LoroDoc::new(),
         }
+    }
+
+    /// Day-6 (Q7): construct a `TreeEngine` whose Loro peer id is derived
+    /// deterministically from a production `device_id` string.  See
+    /// [`crate::peer_id_from_device_id`] for the hash + collision math.
+    pub fn with_peer_id(device_id: &str) -> Self {
+        let doc = LoroDoc::new();
+        let peer = peer_id_from_device_id(device_id);
+        doc.set_peer_id(peer)
+            .expect("set_peer_id on fresh LoroDoc must succeed");
+        Self { doc }
+    }
+
+    /// Read back the engine's Loro peer id.
+    pub fn peer_id(&self) -> PeerID {
+        self.doc.peer_id()
     }
 
     /// Create a block as a tree node under `parent_id`.  When
