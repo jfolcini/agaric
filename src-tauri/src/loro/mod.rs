@@ -70,6 +70,16 @@ pub mod parity;
 #[cfg(feature = "loro-shadow")]
 pub mod parity_sink;
 
+// PEND-09 Phase 2 day-11 — projection helpers that write SQL rows
+// from post-apply Loro engine state.  Each per-op-type helper takes a
+// `&mut SqliteConnection` and a typed payload (or read-back snapshot)
+// and writes the SQL row mirroring the engine's view.  See the module
+// docstring for the day-11 conservative scope (Create / Edit /
+// SetProperty / Purge land with unit tests; remaining op types ship
+// as TODO stubs).
+#[cfg(feature = "loro-shadow")]
+pub mod projection;
+
 #[cfg(feature = "loro-shadow")]
 pub mod registry;
 

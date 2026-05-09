@@ -448,10 +448,29 @@ async fn apply_op_tx(
     match op_type {
         OpType::CreateBlock => {
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+            // PEND-09 Phase 2 day-11 — Option-A reorder branch.  When
+            // the cutover flag is on, route through the engine FIRST,
+            // then project from the engine's post-apply state into
+            // SQL.  When off (default), the diffy-side path runs
+            // unchanged.  See `pending/PEND-09-apply-op-reorder.md`.
+            #[cfg(feature = "loro-shadow")]
+            if crate::loro::cutover::is_loro_authoritative() {
+                apply_create_block_via_loro(conn, &record.device_id, &p).await?;
+            } else {
+                apply_create_block_tx(conn, p).await?;
+            }
+            #[cfg(not(feature = "loro-shadow"))]
             apply_create_block_tx(conn, p).await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
+            #[cfg(feature = "loro-shadow")]
+            if crate::loro::cutover::is_loro_authoritative() {
+                apply_edit_block_via_loro(conn, &record.device_id, &p).await?;
+            } else {
+                apply_edit_block_tx(conn, p).await?;
+            }
+            #[cfg(not(feature = "loro-shadow"))]
             apply_edit_block_tx(conn, p).await?;
         }
         OpType::DeleteBlock => {
@@ -539,6 +558,172 @@ async fn collect_restore_cohort(
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// PEND-09 Phase 2 day-11 — Option-A reorder for CreateBlock.
+///
+/// When `is_loro_authoritative()` is on, this function:
+/// 1. Resolves the block's space (parent_id-based for content blocks;
+///    self-id for pages).
+/// 2. Acquires the per-space [`crate::loro::engine::LoroEngine`] via
+///    the registry.
+/// 3. Applies `apply_create_block` to the engine.
+/// 4. Reads back the engine's `BlockSnapshot` for the freshly-created
+///    block.
+/// 5. Drops the registry guard (the `MutexGuard` is `!Send` so it
+///    cannot cross an `.await`).
+/// 6. Projects the snapshot into SQL via
+///    [`crate::loro::projection::project_create_block_to_sql`].
+/// 7. Calls `tag_inheritance::inherit_parent_tags` exactly as the
+///    diffy-side path does, so derived tag rows stay correct.
+///
+/// ## Atomic semantics
+///
+/// The SQL projection runs in the caller's transaction, so a
+/// projection failure rolls back atomically with the rest of the
+/// `apply_op_tx` work (cursor advance, etc.).  The engine's apply is
+/// NOT rolled back automatically — see
+/// `pending/PEND-09-apply-op-reorder.md` §5.
+///
+/// ## Space resolution
+///
+/// For a `CreateBlock`, the `parent_id` is the resolution anchor when
+/// present (content blocks descend from a page); otherwise the
+/// block's own id is used (page-create with no parent).  In the
+/// no-parent / fresh-page case the SetProperty(space) op hasn't been
+/// applied yet, so `resolve_block_space` returns `None` and the call
+/// falls back to the diffy-side path.  In practice, page-create ops
+/// carry a SetProperty(space) op next to them; the parent-based
+/// resolution works for content-block creates which is the common
+/// path.  See `pending/PEND-09-apply-op-reorder.md` §12 observation
+/// 2 for the day-12 follow-up on tightening this fallback.
+///
+/// ## Failure modes
+///
+/// - Space cannot be resolved (orphan block, no `space` property
+///   ancestor): the call falls back to the diffy-side path.  This is
+///   conservative — the engine path needs a space, the diffy path
+///   does not, and a rare orphan op should not block materialisation.
+/// - Engine `apply_create_block` errors (e.g. block already exists in
+///   the engine): the error propagates as `AppError::Validation`.
+/// - Projection errors propagate.
+#[cfg(feature = "loro-shadow")]
+async fn apply_create_block_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &CreateBlockPayload,
+) -> Result<(), AppError> {
+    use crate::loro::engine::BlockSnapshot;
+    use crate::loro::projection;
+    use crate::ulid::BlockId;
+
+    // Resolve space via parent_id (or self for a page-create that
+    // has no parent).  Falls back to the diffy-side path on any
+    // resolution failure.
+    let resolution_anchor: BlockId = match &p.parent_id {
+        Some(parent) => parent.clone(),
+        None => p.block_id.clone(),
+    };
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
+    else {
+        // Cannot resolve a space — fall back to the diffy path.
+        // For a fresh page-create op, the space property hasn't
+        // been written yet, so this branch will fire.  That's
+        // acceptable: the diffy-side path produces correct SQL
+        // and the cutover-soak's parity classifier surfaces any
+        // disagreement.
+        tracing::trace!(
+            block_id = p.block_id.as_str(),
+            "apply_create_block_via_loro: cannot resolve space; falling back to diffy path",
+        );
+        return apply_create_block_tx(conn, p.clone()).await;
+    };
+
+    // Acquire engine guard, apply, read-back, drop guard.  The guard
+    // is `!Send` so it cannot live across an `.await` — we keep all
+    // engine work inside this sync block.
+    let snapshot: BlockSnapshot = {
+        let Some(state) = crate::loro::shared::get() else {
+            // Shadow state not initialised (test or unusual boot).
+            // Fall back to diffy.
+            return apply_create_block_tx(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
+        let position = p.position.unwrap_or(0);
+        engine.apply_create_block(
+            p.block_id.as_str(),
+            &p.block_type,
+            &p.content,
+            parent,
+            position,
+        )?;
+        let snap_opt = engine.read_block(p.block_id.as_str())?;
+        drop(guard);
+        snap_opt.ok_or_else(|| {
+            AppError::Validation(format!(
+                "apply_create_block_via_loro: engine read_block returned None \
+                 immediately after apply_create_block for {}",
+                p.block_id.as_str()
+            ))
+        })?
+    };
+
+    // Project the engine's post-apply state into SQL.
+    projection::project_create_block_to_sql(conn, &snapshot).await?;
+
+    // Tag inheritance — same call as the diffy-side path.
+    let parent_str = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
+    tag_inheritance::inherit_parent_tags(&mut *conn, p.block_id.as_str(), parent_str).await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-11 — Option-A reorder for EditBlock.
+///
+/// Same shape as [`apply_create_block_via_loro`]: resolve space, take
+/// the engine guard inside a sync scope, apply
+/// `apply_edit_via_diff_splice`, read the post-apply snapshot, drop
+/// the guard, project.  Edit ops carry no `parent_id`, so the
+/// resolution anchor is the `block_id` itself (which already has a
+/// `parent_id` row in `blocks` — the resolution walks up from there).
+#[cfg(feature = "loro-shadow")]
+async fn apply_edit_block_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &EditBlockPayload,
+) -> Result<(), AppError> {
+    use crate::loro::engine::BlockSnapshot;
+    use crate::loro::projection;
+
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        tracing::trace!(
+            block_id = p.block_id.as_str(),
+            "apply_edit_block_via_loro: cannot resolve space; falling back to diffy path",
+        );
+        return apply_edit_block_tx(conn, p.clone()).await;
+    };
+
+    let snapshot: BlockSnapshot = {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_edit_block_tx(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)?;
+        let snap_opt = engine.read_block(p.block_id.as_str())?;
+        drop(guard);
+        snap_opt.ok_or_else(|| {
+            AppError::Validation(format!(
+                "apply_edit_block_via_loro: engine read_block returned None for {} \
+                 (the block must exist for an EditBlock op to make sense)",
+                p.block_id.as_str()
+            ))
+        })?
+    };
+
+    projection::project_edit_block_to_sql(conn, &snapshot).await?;
+    Ok(())
 }
 
 /// PEND-28a H2: per-variant body for [`OpType::CreateBlock`].
@@ -1684,5 +1869,295 @@ mod restore_cascade_tests {
                 "{id} must remain deleted on empty-fanout path",
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PEND-09 Phase 2 day-11 — `apply_op_tx` cutover-branch tests.
+//
+// Verifies the Option-A reorder branch wired into `apply_op_tx` for
+// CreateBlock + EditBlock.  Two flag values; same op; same SQL row
+// shape (the load-bearing invariant for the cutover).  Day-12+ extends
+// to other op types as the helpers wire in.
+//
+// `cfg(all(test, feature = "loro-shadow"))` keeps the default test
+// count unchanged.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "loro-shadow"))]
+mod cutover_branch_tests {
+    use crate::db::init_pool;
+    use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    const SPACE_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const PAGE_ID: &str = "01HZ00000000000000000000P5";
+    const BLOCK_ID: &str = "01HZ00000000000000000000B6";
+    const DEVICE_ID: &str = "device-cutover-branch";
+
+    async fn fresh_pool_with_page() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("cutover_branch.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+
+        // Seed a page with a `space` property so that
+        // resolve_block_space succeeds for CreateBlock with parent
+        // = PAGE_ID.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+        )
+        .bind(SPACE_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 is_conflict) \
+             VALUES (?, 'page', 'page-content', NULL, 0, ?, 0)",
+        )
+        .bind(PAGE_ID)
+        .bind(PAGE_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(PAGE_ID)
+        .bind(SPACE_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        (pool, dir)
+    }
+
+    /// Diffy-path control test: with the cutover flag OFF (default),
+    /// `apply_op_tx` for a CreateBlock op writes the same SQL row it
+    /// has always written.  The shadow state is also installed so that
+    /// we can affirmatively assert the engine path was NOT taken — if
+    /// this test passed without that assertion, a mutation of the
+    /// `if is_loro_authoritative()` branch to `if true` would silently
+    /// take the loro path (which falls back to diffy for create
+    /// projections that produce the same SQL) without detection.
+    #[tokio::test]
+    async fn apply_op_tx_uses_diffy_path_when_flag_off() {
+        let (pool, _dir) = fresh_pool_with_page().await;
+        // Explicit install of `false` so the test is robust against
+        // sibling tests that may have flipped the cache to true earlier
+        // in the same test process.
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+        // Install a shadow state so that a hypothetical loro-path
+        // run would actually reach the engine (rather than falling
+        // back to diffy via the `shared::get() == None` arm).  This
+        // makes the engine-state assertion below load-bearing.
+        let _state = crate::loro::shared::install_for_test();
+
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: Some(0),
+            content: "diffy-path content".into(),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append op");
+
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record)
+            .await
+            .expect("apply_op_tx");
+        tx.commit().await.expect("commit");
+
+        let row: (String, String) =
+            sqlx::query_as("SELECT content, block_type FROM blocks WHERE id = ?")
+                .bind(BLOCK_ID)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch row");
+        assert_eq!(row.0, "diffy-path content");
+        assert_eq!(row.1, "content");
+
+        // Affirmatively verify the loro path was NOT taken: the
+        // engine for this space must NOT contain the block.  If a
+        // future change accidentally routes the diffy-flag arm
+        // through the loro path, this assertion fires.
+        let state = crate::loro::shared::get().expect("shadow state installed above");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine_snap = guard
+            .engine_mut()
+            .read_block(BLOCK_ID)
+            .expect("engine read_block");
+        drop(guard);
+        assert!(
+            engine_snap.is_none(),
+            "diffy path must NOT touch the engine; engine_snap = {engine_snap:?}",
+        );
+    }
+
+    /// Loro-authoritative test: with the cutover flag ON, `apply_op_tx`
+    /// for a CreateBlock op routes through the engine + projection
+    /// helpers and produces the same SQL row shape the diffy path
+    /// would have.  The load-bearing invariant: cutover does not
+    /// change observable SQL output for single-author non-conflict ops.
+    #[tokio::test]
+    async fn apply_op_tx_uses_loro_path_when_flag_on() {
+        let (pool, _dir) = fresh_pool_with_page().await;
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        // The cutover branch reads the shadow-state global; install
+        // it for the test.
+        let _state = crate::loro::shared::install_for_test();
+
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: Some(7),
+            content: "loro-path content".into(),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append op");
+
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record)
+            .await
+            .expect("apply_op_tx");
+        tx.commit().await.expect("commit");
+
+        // SQL row matches what reading from the engine would have
+        // projected — same column shape as the diffy path test above.
+        let row: (String, String, Option<String>, i64) = sqlx::query_as(
+            "SELECT content, block_type, parent_id, position FROM blocks WHERE id = ?",
+        )
+        .bind(BLOCK_ID)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch row");
+        assert_eq!(row.0, "loro-path content");
+        assert_eq!(row.1, "content");
+        assert_eq!(row.2, Some(PAGE_ID.into()));
+        assert_eq!(row.3, 7);
+
+        // Engine actually saw the apply (proves the loro path ran).
+        let state = crate::loro::shared::get().expect("shadow state present");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine_snap = guard
+            .engine_mut()
+            .read_block(BLOCK_ID)
+            .expect("read")
+            .expect("engine state has the block");
+        drop(guard);
+        assert_eq!(engine_snap.content, "loro-path content");
+        assert_eq!(engine_snap.position, 7);
+
+        // Reset the flag for any other tests in this binary.  The
+        // OnceLock-installed flag is process-global; tests that rely on
+        // default-off must explicitly install `false` themselves.
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+    }
+
+    /// EditBlock loro path: pre-existing block, run an EditBlock op
+    /// with the flag on, verify the SQL `content` column matches the
+    /// engine's post-edit content (which is also the payload's
+    /// `to_text` for a single-author op).
+    #[tokio::test]
+    async fn apply_op_tx_edit_block_uses_loro_path_when_flag_on() {
+        let (pool, _dir) = fresh_pool_with_page().await;
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        let _state = crate::loro::shared::install_for_test();
+
+        // First create the block via the loro path (so the engine has
+        // it).  This also exercises the create branch's
+        // happy-path twice, which is intentional — the create's apply
+        // is a precondition for the edit's apply to make sense.
+        let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: Some(0),
+            content: "before-edit".into(),
+        });
+        let create_record = crate::op_log::append_local_op(&pool, DEVICE_ID, create_payload)
+            .await
+            .expect("append create");
+        let mut tx = pool.begin().await.expect("begin1");
+        super::apply_op_tx(&mut tx, &create_record)
+            .await
+            .expect("apply create");
+        tx.commit().await.expect("commit1");
+
+        // Production sets `blocks.page_id` via background rebuild
+        // (`cache::rebuild_page_ids`) or per-command updaters; the
+        // projection helper does not (today's
+        // `apply_create_block_tx` doesn't either).  Without page_id
+        // the EditBlock's `resolve_block_space` cannot reach the
+        // page's `space` property and the loro path falls back to
+        // diffy.  Mirror the rebuild's effect inline so the EditBlock
+        // path resolves cleanly.
+        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+            .bind(PAGE_ID)
+            .bind(BLOCK_ID)
+            .execute(&pool)
+            .await
+            .expect("set page_id");
+
+        // Sanity: SQL row from create exists with the create's content.
+        let pre_edit: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
+            .bind(BLOCK_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row pre-edit");
+        assert_eq!(pre_edit.0, "before-edit", "create projection wrote row");
+
+        // Now edit through the loro path.
+        let edit_payload = OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            to_text: "after-edit-content".into(),
+            prev_edit: None,
+        });
+        let edit_record = crate::op_log::append_local_op(&pool, DEVICE_ID, edit_payload)
+            .await
+            .expect("append edit");
+        let mut tx = pool.begin().await.expect("begin2");
+        super::apply_op_tx(&mut tx, &edit_record)
+            .await
+            .expect("apply edit");
+        tx.commit().await.expect("commit2");
+
+        let row: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
+            .bind(BLOCK_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(row.0, "after-edit-content");
+
+        // Engine state matches.
+        let state = crate::loro::shared::get().expect("shadow state");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine_snap = guard
+            .engine_mut()
+            .read_block(BLOCK_ID)
+            .expect("read")
+            .expect("engine has block");
+        drop(guard);
+        assert_eq!(engine_snap.content, "after-edit-content");
+
+        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 }
