@@ -52,5 +52,11 @@ pub mod engine;
 #[cfg(feature = "loro-shadow")]
 pub mod parity;
 
+#[cfg(feature = "loro-shadow")]
+pub mod registry;
+
+#[cfg(feature = "loro-shadow")]
+pub mod shared;
+
 #[cfg(all(test, feature = "loro-shadow"))]
 mod tests;
