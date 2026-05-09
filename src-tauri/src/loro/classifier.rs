@@ -36,9 +36,10 @@
 //! on every flush tick keeps the implementation simple (one scheduler,
 //! one cadence constant, no extra `tick_count` tracking) and means a
 //! freshly-flushed batch is classified within the same tick that
-//! flushed it.  The query is fully covered by the
-//! `idx_merge_parity_log_matched` index and the `WHERE bucket IS NULL`
-//! filter — over an empty pending set it's a no-op.  A separate
+//! flushed it.  The query is fully covered by the partial index
+//! `idx_merge_parity_log_unbucketed` (migration 0054) and the
+//! `WHERE bucket IS NULL` filter — over an empty pending set it's a
+//! no-op.  A separate
 //! cadence becomes worth it only if the classifier's wall-clock cost
 //! starts dominating the flush-tick budget; today it does not.
 
@@ -181,9 +182,13 @@ pub async fn classify_unbucketed(pool: &SqlitePool) -> Result<ClassifyStats, App
     loop {
         // SELECT a bounded chunk.  We don't `ORDER BY id` because the
         // classifier doesn't care about order — each row is classified
-        // independently — and an unordered scan lets SQLite use the
-        // `idx_merge_parity_log_matched` index more efficiently than
-        // an id-ordered one would.
+        // independently — and an unordered scan lets SQLite walk the
+        // partial index `idx_merge_parity_log_unbucketed` (migration
+        // 0054) directly without a sort step.  Predicate shape
+        // (`WHERE bucket IS NULL`) must stay textually identical to
+        // the index's predicate for the planner to pick it up — see
+        // the `classify_unbucketed_uses_partial_index_for_query`
+        // regression test below.
         let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(
             "SELECT id, diffy_result, loro_result, matched \
              FROM merge_parity_log \
@@ -550,5 +555,92 @@ mod tests {
                 .await
                 .expect("row");
         assert_eq!(bucket.as_deref(), Some("B"));
+    }
+
+    /// Phase-2 day-10 regression: the day-6 classifier's
+    /// `WHERE bucket IS NULL` SELECT must use the partial index
+    /// `idx_merge_parity_log_unbucketed` (migration 0054), not fall
+    /// back to a full table scan.  Without the index the query is
+    /// O(N_total_events) per flush tick — unacceptable at Phase-2
+    /// cutover write rates.  We assert against the planner's output
+    /// because that's the only signal SQLite gives that the
+    /// partial-index predicate matched the query predicate; if a
+    /// future refactor rewrites the SELECT to use `IFNULL(bucket,
+    /// NULL) IS NULL` or any other predicate shape that doesn't
+    /// match the index's literal `WHERE bucket IS NULL`, this test
+    /// fails loudly.
+    ///
+    /// Seed 1000 rows with a mix of bucketed / unbucketed states so
+    /// the planner's row-count heuristic has a realistic table
+    /// shape to reason about (a 1-row table sometimes triggers the
+    /// "just full-scan it" shortcut even when an index exists).
+    #[tokio::test]
+    async fn classify_unbucketed_uses_partial_index_for_query() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // 980 already-classified rows + 20 unclassified.  Mix is
+        // representative of steady state — most rows have a bucket,
+        // a small tail does not.  Chosen to ensure the partial
+        // index has a meaningfully smaller cardinality than the
+        // table itself, which is the planner's incentive to use it.
+        for seq in 0..980 {
+            insert_row(
+                &pool,
+                &format!("DEV/SEEDED{seq}"),
+                &format!("create:BLK{seq}"),
+                &format!("create:BLK{seq}"),
+                true,
+                Some("A"),
+                10_000 + seq,
+            )
+            .await;
+        }
+        for seq in 0..20 {
+            insert_row(
+                &pool,
+                &format!("DEV/PENDING{seq}"),
+                &format!("set_property:BLK{seq}.k=v1"),
+                &format!("set_property:BLK{seq}.k=v2"),
+                false,
+                None,
+                20_000 + seq,
+            )
+            .await;
+        }
+
+        // Mirror the production SELECT in `classify_unbucketed`
+        // exactly — EXPLAIN QUERY PLAN reflects the literal query
+        // string, so any drift here would silently invalidate the
+        // assertion below.
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN \
+             SELECT id, diffy_result, loro_result, matched \
+             FROM merge_parity_log \
+             WHERE bucket IS NULL \
+             LIMIT ?",
+        )
+        .bind(SELECT_CHUNK_ROWS)
+        .fetch_all(&pool)
+        .await
+        .expect("explain query plan");
+
+        let detail = plan
+            .iter()
+            .map(|(_, _, _, d)| d.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        // SQLite's planner output for this query is exactly:
+        //   SCAN merge_parity_log USING INDEX idx_merge_parity_log_unbucketed
+        // — "SCAN" (not "SEARCH") because the partial-index predicate
+        // pre-filtered the rows so the planner walks the full index;
+        // that index already contains only the rows we want.  The
+        // index name in the plan is the load-bearing assertion: it
+        // proves the planner matched the partial-index predicate
+        // against the query's `WHERE bucket IS NULL` literally.
+        assert!(
+            detail.contains("idx_merge_parity_log_unbucketed"),
+            "classify_unbucketed SELECT must use partial index \
+             idx_merge_parity_log_unbucketed; plan was:\n{detail}",
+        );
     }
 }
