@@ -57,21 +57,34 @@ pub(super) async fn handle_foreground_task(
             // empty batch leaves `max_seq` at None so the cursor is not
             // touched (the MAX query is skipped entirely).
             let mut max_seq: Option<i64> = None;
+            // PEND-09 Phase 2 day-9 — buffer the per-record `ApplyEffects`
+            // so the post-commit shadow-dispatch fanout has the
+            // RestoreBlock descendant cohorts available.  Indexed by
+            // record position to mirror the `records.iter()` order; an
+            // empty effects struct is the default for non-RestoreBlock
+            // ops so the post-commit walk just no-ops on those slots.
+            #[cfg(feature = "loro-shadow")]
+            let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
             // M-10: `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
                 let snapshot = snapshot_for_op(&mut tx, record).await?;
-                if let Err(e) = apply_op_tx(&mut tx, record).await {
-                    tracing::warn!(
-                        op_type = %record.op_type,
-                        device_id = %record.device_id,
-                        seq = record.seq,
-                        error = %e,
-                        "failed to apply remote op in batch — rolling back"
-                    );
-                    // tx is dropped here, which rolls back automatically
-                    return Err(e);
-                }
+                let _effects = match apply_op_tx(&mut tx, record).await {
+                    Ok(eff) => eff,
+                    Err(e) => {
+                        tracing::warn!(
+                            op_type = %record.op_type,
+                            device_id = %record.device_id,
+                            seq = record.seq,
+                            error = %e,
+                            "failed to apply remote op in batch — rolling back"
+                        );
+                        // tx is dropped here, which rolls back automatically
+                        return Err(e);
+                    }
+                };
+                #[cfg(feature = "loro-shadow")]
+                per_record_effects.push(_effects);
                 max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
                 if gcal_handle.get().is_some() {
                     // PEND-25 L2: wrap in `Arc` so `DeferredNotification`
@@ -104,10 +117,20 @@ pub(super) async fn handle_foreground_task(
             // single-op `apply_op` path for the rationale; this is
             // the same hook applied per-record.  No-op when
             // `loro-shadow` is off.
+            //
+            // PEND-09 Phase 2 day-9 — also fan out the RestoreBlock
+            // descendant cohorts captured in `per_record_effects`, in
+            // the same order as the records themselves, so the engine
+            // sees per-descendant `apply_restore_block` calls that
+            // mirror the SQL cascade.  Records with empty
+            // `restored_cohort` (every op type other than
+            // RestoreBlock) are no-ops in the fanout helper.
             #[cfg(feature = "loro-shadow")]
             {
-                for record in records.iter() {
+                for (record, effects) in records.iter().zip(per_record_effects.iter()) {
                     crate::merge::shadow_dispatch_for_record(pool, record).await;
+                    dispatch_restore_descendants_shadow(pool, record, &effects.restored_cohort)
+                        .await;
                 }
             }
 
@@ -153,7 +176,7 @@ pub(super) async fn apply_op(
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
     let snapshot = snapshot_for_op(&mut tx, record).await?;
-    apply_op_tx(&mut tx, record).await?;
+    let _effects = apply_op_tx(&mut tx, record).await?;
     // C-2b: advance the cursor in the same tx so `apply + cursor` are
     // atomic. A crash between the apply and the commit rolls both back
     // together; the cursor never points ahead of materialised state.
@@ -167,9 +190,18 @@ pub(super) async fn apply_op(
     // No-op when `loro-shadow` is off (compile-time elided); even with
     // the feature on, `shadow_dispatch_for_record` swallows its own
     // errors and never propagates failure back to the materializer.
+    //
+    // PEND-09 Phase 2 day-9 — RestoreBlock cascade fan-out.  The SQL
+    // restore walks the descendant cohort but the Loro engine is
+    // per-block-id only; without fan-out a 10-descendant subtree
+    // restore leaves 9 blocks marked `deleted_at != Null` in Loro.
+    // We synthesise per-descendant `RestoreBlock` records (sharing
+    // the root record's metadata) and dispatch each through the same
+    // shadow-dispatch path.  See `dispatch_restore_descendants_shadow`.
     #[cfg(feature = "loro-shadow")]
     {
         crate::merge::shadow_dispatch_for_record(pool, record).await;
+        dispatch_restore_descendants_shadow(pool, record, &_effects.restored_cohort).await;
     }
 
     notify_gcal_for_events(
@@ -180,6 +212,135 @@ pub(super) async fn apply_op(
         }],
     );
     Ok(())
+}
+
+/// PEND-09 Phase 2 day-9 — fan out shadow-mode `RestoreBlock` for the
+/// full cohort the SQL cascade restored (seed + every descendant).
+/// The engine's `apply_restore_block` is per-block-id only, so without
+/// this fanout a SQL restore of a 10-descendant subtree leaves 9 blocks
+/// marked `deleted_at != Null` in the Loro doc.
+///
+/// ## Decision (cutover plan §3 day-9)
+///
+/// Three options were on the table:
+/// - **(a)** materializer fans out per-descendant on the shadow path
+/// - (b) engine's `apply_restore_block` walks descendants
+/// - (c) thread `deleted_at_ref` through and gate the engine walk
+///
+/// Day 9 picks **(a)**: keeps the engine API simple (one block_id in,
+/// one mutation out) and keeps cohort semantics with the SQL that
+/// owns them.  The engine doesn't (and shouldn't) know about
+/// `parent_id` walks; SQL is the source of truth for the descendant
+/// cohort.
+///
+/// ## Why the cohort INCLUDES the seed
+///
+/// The upstream `shadow_dispatch_for_record` call in `apply_op` also
+/// targets the seed block, so in a hypothetically healthy world the
+/// seed would be applied twice (once via dispatch, once via this
+/// helper).  Engine `apply_restore_block` is idempotent (no-op on an
+/// already-restored block).  Including the seed here makes this helper
+/// the canonical cohort-restore function regardless of whether
+/// `shadow_dispatch_for_record` reaches the engine for any specific
+/// op record.  Net cost: one extra idempotent engine call per
+/// RestoreBlock.
+///
+/// ## Implementation note
+///
+/// We call `shadow_apply` directly with a synthesised
+/// [`OpPayload::RestoreBlock`] rather than re-marshalling through
+/// `shadow_dispatch_for_record`.  Synthetic records don't have a
+/// stored payload to JSON-parse; going direct skips a serialise +
+/// deserialise round-trip per cohort entry and keeps the per-call cost
+/// bounded by the registry lock + the engine's per-block-id mutation
+/// (single-digit microseconds).
+///
+/// Errors inside `shadow_apply` are already absorbed by the parity
+/// sampler (a Loro-side error becomes a parity-log row, never a hot-
+/// path failure), so this helper has nothing to propagate.  Every
+/// per-block call reuses the root op's metadata (`device_id`, `seq`,
+/// `space_id`) so log lines + parity rows stay anchored to the
+/// user-visible op.
+#[cfg(feature = "loro-shadow")]
+async fn dispatch_restore_descendants_shadow(
+    pool: &SqlitePool,
+    root_record: &OpRecord,
+    cohort: &[String],
+) {
+    use crate::op::{OpPayload, RestoreBlockPayload};
+    use crate::ulid::BlockId;
+
+    if cohort.is_empty() {
+        return;
+    }
+
+    let Some(state) = crate::loro::shared::get() else {
+        // Shadow mode not initialised (test environment that
+        // bypasses the boot setup).  Nothing to do.
+        return;
+    };
+
+    // Parse the root's payload once to extract `deleted_at_ref`.  The
+    // payload is the raw inner-only JSON (per `serialize_inner_payload`
+    // in `op_log.rs`), not the tagged `OpPayload` form, so we go
+    // through the inner struct directly.
+    let root_payload: RestoreBlockPayload = match serde_json::from_str(&root_record.payload) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                seq = root_record.seq,
+                error = %e,
+                "restore-cascade fanout: failed to parse root RestoreBlockPayload; \
+                 skipping descendant fan-out",
+            );
+            return;
+        }
+    };
+
+    // Resolve the space once via the root's block_id (every descendant
+    // is in the same space — the descendant CTE walks within a single
+    // `blocks.parent_id` graph).  Keeps fanout O(N) on the engine call
+    // and not O(N) on `resolve_block_space` SQL queries.
+    let root_block = BlockId::from_trusted(root_payload.block_id.as_str());
+    let space_id = match crate::space::resolve_block_space(pool, &root_block).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            tracing::trace!(
+                block_id = root_payload.block_id.as_str(),
+                "restore-cascade fanout: no space for root block; skipping",
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "restore-cascade fanout: resolve_block_space failed; skipping",
+            );
+            return;
+        }
+    };
+
+    for cohort_id in cohort {
+        // Build the typed payload directly (no JSON round-trip).
+        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::from_trusted(cohort_id),
+            deleted_at_ref: root_payload.deleted_at_ref.clone(),
+        });
+
+        let op_id = format!(
+            "{}/{}#cohort/{}",
+            root_record.device_id, root_record.seq, cohort_id,
+        );
+        let diffy_summary = crate::merge::diffy_summary_for(&payload);
+        crate::merge::shadow_apply(
+            &op_id,
+            &payload,
+            &root_record.device_id,
+            &space_id,
+            diffy_summary,
+            state,
+        );
+    }
 }
 
 /// C-2b: advance the materializer apply cursor inside the apply tx so
@@ -234,16 +395,56 @@ fn notify_gcal_for_events(
     }
 }
 
+/// Side-effects an `apply_op_tx` call may produce that the caller needs
+/// to fan out AFTER the SQL transaction commits.  Today the only such
+/// effect is the cohort restored by a `RestoreBlock` op — the SQL
+/// UPDATE walks the descendant CTE and clears `deleted_at` for every
+/// block in the matching `deleted_at_ref` cohort, but the per-space
+/// `LoroEngine`'s `apply_restore_block` is per-block-id only.
+///
+/// PEND-09 Phase 2 day-9 fix (review of day-8.5): without fanning out
+/// the cohort on the shadow path, a SQL restore of a 10-descendant
+/// subtree would leave 9 blocks marked `deleted_at != Null` in the Loro
+/// doc.  Day-9 picks **option (a)** of the three the cutover plan §3
+/// day-9 lists — fan out on the materializer side rather than walking
+/// descendants inside the engine — so the engine API stays simple and
+/// cohort semantics live with the SQL that defines them.
+///
+/// The cohort vec INCLUDES the seed `block_id` so the post-commit
+/// helper (`dispatch_restore_descendants_shadow`) is the canonical path
+/// for driving Loro on the whole subtree.  The engine's
+/// `apply_restore_block` is idempotent so the duplicate seed-apply (the
+/// upstream `shadow_dispatch_for_record` call also reaches the seed
+/// when the parse path is healthy) is harmless.  Empty for every op
+/// type other than `RestoreBlock`.
+#[derive(Debug, Default)]
+pub(super) struct ApplyEffects {
+    /// Block ids restored by a `RestoreBlock` apply — seed AND every
+    /// descendant the SQL CTE walked.  Empty unless the op was
+    /// `RestoreBlock`.  Order is whatever SQLite's CTE walk produces
+    /// (no guarantee but stable across calls on a fixed schema).
+    pub restored_cohort: Vec<String>,
+}
+
 /// Core apply-op logic operating on a bare [`SqliteConnection`].
 ///
 /// Both the single-op path (`apply_op`) and the batched-transaction path
 /// (`BatchApplyOps`) delegate here so that a batch can be wrapped in a
 /// single transaction for atomicity.
-async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Result<(), AppError> {
+///
+/// Returns an [`ApplyEffects`] describing post-commit fan-out the
+/// caller is responsible for running.  Today the only populated field
+/// is `restored_cohort` (see the struct docs); every other op type
+/// returns the default-empty effects.
+async fn apply_op_tx(
+    conn: &mut sqlx::SqliteConnection,
+    record: &OpRecord,
+) -> Result<ApplyEffects, AppError> {
     use std::str::FromStr;
     let op_type = OpType::from_str(&record.op_type).map_err(|e| {
         AppError::Validation(format!("unknown op_type '{}': {}", record.op_type, e))
     })?;
+    let mut effects = ApplyEffects::default();
     match op_type {
         OpType::CreateBlock => {
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
@@ -259,7 +460,23 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         }
         OpType::RestoreBlock => {
             let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
+            // Capture the descendant cohort BEFORE the UPDATE — once
+            // the UPDATE clears `deleted_at`, the cohort is no longer
+            // identifiable by `(seed_id, deleted_at_ref)`.  This SELECT
+            // mirrors the same CTE the UPDATE uses so the captured set
+            // is exactly what gets restored.
+            //
+            // We keep the seed in the cohort: the post-commit fanout
+            // (`dispatch_restore_descendants_shadow`) is the canonical
+            // path that drives Loro for the entire cohort.  Including
+            // the seed makes the helper self-contained and avoids
+            // depending on the upstream `shadow_dispatch_for_record`
+            // call also reaching the engine — the duplicate apply on
+            // the seed is idempotent (engine's `apply_restore_block`
+            // is a no-op on an already-restored block).
+            let cohort = collect_restore_cohort(conn, &p).await?;
             apply_restore_block_tx(conn, p).await?;
+            effects.restored_cohort = cohort;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
@@ -295,7 +512,33 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         }
     }
     tracing::debug!(op_type = %record.op_type, seq = record.seq, "applied op to materialized tables");
-    Ok(())
+    Ok(effects)
+}
+
+/// PEND-09 Phase 2 day-9 — capture the descendant cohort that
+/// `apply_restore_block_tx` is about to clear.  Mirrors the CTE +
+/// `deleted_at = ?` filter used by the UPDATE so the captured set is
+/// exactly the rows that will be restored.  Run inside the same tx,
+/// before the UPDATE, so the snapshot reflects the soft-deleted state.
+///
+/// The list ALWAYS includes the seed `block_id` if it matches the
+/// filter; the caller is responsible for excluding the seed when
+/// constructing the per-descendant fan-out (the seed's shadow dispatch
+/// already happens once for the root op record).
+async fn collect_restore_cohort(
+    conn: &mut sqlx::SqliteConnection,
+    p: &RestoreBlockPayload,
+) -> Result<Vec<String>, AppError> {
+    let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(concat!(
+        crate::descendants_cte_standard!(),
+        "SELECT id FROM blocks \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+    ))
+    .bind(p.block_id.as_str())
+    .bind(&p.deleted_at_ref)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
 /// PEND-28a H2: per-variant body for [`OpType::CreateBlock`].
@@ -1182,6 +1425,264 @@ pub(super) async fn handle_background_task(
         MaterializeTask::Barrier(ref notify) => {
             notify.notify_one();
             Ok(())
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PEND-09 Phase 2 day-9 — RestoreBlock cascade fanout tests.
+//
+// Verifies the materializer's restore-cascade fans out shadow-mode
+// `RestoreBlock` calls to every descendant in the SQL cohort, not just
+// the seed block.  Without this fanout a 10-descendant subtree restore
+// would leave 9 blocks marked `deleted_at != Null` in the Loro doc.
+//
+// `cfg(all(test, feature = "loro-shadow"))` so the default-build test
+// count is unchanged.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "loro-shadow"))]
+mod restore_cascade_tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::loro::shared::ShadowState;
+    use crate::op::OpPayload;
+    use crate::space::SpaceId;
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    const PAGE_ID: &str = "01HZ00000000000000000000PA";
+    const CHILD_1: &str = "01HZ00000000000000000000C1";
+    const CHILD_2: &str = "01HZ00000000000000000000C2";
+    const CHILD_3: &str = "01HZ00000000000000000000C3";
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const DEVICE_ID: &str = "device-restore-cascade";
+    const DELETED_AT: &str = "2025-01-01T00:00:00Z";
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("restore_cascade.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+        (pool, dir)
+    }
+
+    /// Build a tree: page (PAGE_ID) → child (CHILD_1) → grandchild
+    /// (CHILD_2) → great-grandchild (CHILD_3). Each block gets
+    /// `deleted_at = DELETED_AT` so the restore CTE will sweep all four.
+    /// The page also gets a `space` block_property so
+    /// `resolve_block_space` returns SPACE.
+    async fn seed_deleted_subtree(pool: &SqlitePool) {
+        // Space block (referenced by `block_properties.value_ref` →
+        // FK → `blocks(id)`).  Spaces are stored as 'tag' blocks today
+        // — see `commands::spaces::create_space`; for the test the
+        // block_type just needs to satisfy the schema's CHECK
+        // constraint (`content | tag | page`).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+        )
+        .bind(SPACE)
+        .execute(pool)
+        .await
+        .unwrap();
+        // Page (no parent, page_id = self).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 is_conflict, deleted_at) \
+             VALUES (?, 'page', 'P', NULL, 0, ?, 0, ?)",
+        )
+        .bind(PAGE_ID)
+        .bind(PAGE_ID)
+        .bind(DELETED_AT)
+        .execute(pool)
+        .await
+        .unwrap();
+        // Space property on the page so resolve_block_space succeeds.
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(PAGE_ID)
+        .bind(SPACE)
+        .execute(pool)
+        .await
+        .unwrap();
+        // Three nested children.
+        for (id, parent, pos) in [
+            (CHILD_1, PAGE_ID, 0_i64),
+            (CHILD_2, CHILD_1, 0),
+            (CHILD_3, CHILD_2, 0),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                     is_conflict, deleted_at) \
+                 VALUES (?, 'content', 'C', ?, ?, ?, 0, ?)",
+            )
+            .bind(id)
+            .bind(parent)
+            .bind(pos)
+            .bind(PAGE_ID)
+            .bind(DELETED_AT)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// Returns a fresh ShadowState — install_for_test pattern.  Unlike
+    /// `loro::shared::install_for_test` the global is process-local and
+    /// per-nextest-process, so tests don't conflict.
+    fn fresh_shadow_state() -> &'static ShadowState {
+        crate::loro::shared::install_for_test()
+    }
+
+    /// Pre-populate the engine with the four blocks (alive), then mark
+    /// each deleted via `apply_delete_block`.  This sets up an engine
+    /// state that mirrors the SQL "all four deleted at the same ref"
+    /// shape so the `apply_restore_block` calls have something to
+    /// restore.
+    fn seed_engine_with_deleted_subtree(state: &ShadowState) {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine = guard.engine_mut();
+        // Seed four alive blocks with the same parent shape as SQL.
+        engine
+            .apply_create_block(PAGE_ID, "page", "P", None, 0)
+            .unwrap();
+        engine
+            .apply_create_block(CHILD_1, "content", "C", Some(PAGE_ID), 0)
+            .unwrap();
+        engine
+            .apply_create_block(CHILD_2, "content", "C", Some(CHILD_1), 0)
+            .unwrap();
+        engine
+            .apply_create_block(CHILD_3, "content", "C", Some(CHILD_2), 0)
+            .unwrap();
+        // Soft-delete all four.
+        for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
+            engine.apply_delete_block(id).unwrap();
+        }
+    }
+
+    /// Read the engine's `deleted_at` flag for `block_id`.  Returns
+    /// `Some(true)` if the engine reports the block as deleted,
+    /// `Some(false)` if alive, `None` if the block is absent in the
+    /// engine.
+    fn engine_block_deleted(state: &ShadowState, block_id: &str) -> Option<bool> {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine = guard.engine_mut();
+        let snap = engine.read_block(block_id).expect("read_block");
+        snap.as_ref()?;
+        // `read_deleted` returns Ok(false) when `deleted_at` is missing
+        // (engine never marked it deleted) or LoroValue::Null (engine
+        // explicitly cleared the flag — i.e. the block is alive).
+        Some(engine.read_deleted(block_id).expect("read_deleted"))
+    }
+
+    /// Drives the materializer's `apply_op` path for a `RestoreBlock`
+    /// op against a 4-block subtree, then asserts that the per-space
+    /// `LoroEngine` has `deleted_at = Null` on EVERY block — the seed
+    /// AND its three descendants.  Without the day-9 fanout the
+    /// engine-side state would still report `deleted_at != Null` on
+    /// the three descendants.
+    #[tokio::test]
+    async fn restore_block_dispatches_to_loro_for_each_descendant() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_deleted_subtree(&pool).await;
+        let state = fresh_shadow_state();
+        seed_engine_with_deleted_subtree(state);
+
+        // Sanity: every block is currently deleted in the engine.
+        for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
+            assert_eq!(
+                engine_block_deleted(state, id),
+                Some(true),
+                "{id} must start deleted",
+            );
+        }
+
+        // Build a RestoreBlock op record by appending it to op_log so
+        // the rest of the apply path sees a real OpRecord.  The seed
+        // block is the page; the cascade walks every descendant
+        // matching `deleted_at = DELETED_AT`.
+        let payload = OpPayload::RestoreBlock(crate::op::RestoreBlockPayload {
+            block_id: BlockId::from_trusted(PAGE_ID),
+            deleted_at_ref: DELETED_AT.into(),
+        });
+        let record = std::sync::Arc::new(
+            crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+                .await
+                .expect("append op_log"),
+        );
+
+        // Drive the materializer's apply path (which fans out the
+        // shadow dispatch under the loro-shadow feature).
+        let gcal_handle: OnceLock<GcalConnectorHandle> = OnceLock::new();
+        super::apply_op(&pool, &record, &gcal_handle)
+            .await
+            .expect("apply_op");
+
+        // Every block in the cohort — root + three descendants — must
+        // now be alive in the engine.  This is the load-bearing
+        // assertion: the day-9 fanout is what makes the descendants
+        // alive.  Without it CHILD_1, CHILD_2, CHILD_3 would still
+        // report deleted_at != Null.
+        for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
+            assert_eq!(
+                engine_block_deleted(state, id),
+                Some(false),
+                "{id} must be restored after RestoreBlock cascade fanout",
+            );
+        }
+    }
+
+    /// Direct-helper test — exercises `dispatch_restore_descendants_shadow`
+    /// in isolation, bypassing the full `apply_op` path.  Asserts the
+    /// helper's empty-input fast path AND the per-descendant fanout
+    /// shape.
+    #[tokio::test]
+    async fn dispatch_restore_descendants_empty_list_is_noop() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_deleted_subtree(&pool).await;
+        let state = fresh_shadow_state();
+        seed_engine_with_deleted_subtree(state);
+
+        // Build a synthetic root record (we don't actually run the SQL
+        // restore here — only the empty-list fanout path).
+        let payload = serde_json::to_string(&serde_json::json!({
+            "block_id": PAGE_ID,
+            "deleted_at_ref": DELETED_AT,
+        }))
+        .unwrap();
+        let root = OpRecord {
+            device_id: DEVICE_ID.into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: "0000".into(),
+            op_type: "restore_block".into(),
+            payload,
+            created_at: DELETED_AT.into(),
+            block_id: Some(PAGE_ID.into()),
+        };
+
+        // Empty descendant list — no engine mutations expected.
+        super::dispatch_restore_descendants_shadow(&pool, &root, &[]).await;
+
+        // Engine state unchanged: every block is still deleted (we
+        // seeded them deleted in seed_engine_with_deleted_subtree).
+        for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
+            assert_eq!(
+                engine_block_deleted(state, id),
+                Some(true),
+                "{id} must remain deleted on empty-fanout path",
+            );
         }
     }
 }

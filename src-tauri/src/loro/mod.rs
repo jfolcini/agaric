@@ -48,6 +48,13 @@
 #[cfg(feature = "loro-shadow")]
 pub mod classifier;
 
+// PEND-09 Phase 2 day-9 — the `pend09.loro_authoritative` runtime flag.
+// Houses the OnceLock<AtomicBool> cache + DB-backed init/setter so the
+// materializer hot path can branch on the cutover toggle in sub-100 µs.
+// See module docstring for the default-off invariant + storage shape.
+#[cfg(feature = "loro-shadow")]
+pub mod cutover;
+
 #[cfg(feature = "loro-shadow")]
 pub mod engine;
 
