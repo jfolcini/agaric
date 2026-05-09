@@ -5,14 +5,16 @@
 //! whose values are per-block LoroMaps holding scalar fields) can
 //! round-trip a `create_block` operation through Loro's import/export.
 //!
-//! Day-1 scope is intentionally tiny: one op type (create_block), no
-//! merging, no concurrent peers, no character-level text.  Everything
-//! else (LoroText for `content`, parent_id reparent semantics, the rest
-//! of the 12 op variants, parity vs `merge/tests.rs`) lands in later
-//! days of the 2-week time-box.
+//! Day-1 scope was intentionally tiny: one op type (create_block), no
+//! merging, no concurrent peers, no character-level text.  Day 2 swaps
+//! the scalar `content` string for a `LoroText` container (the headline
+//! win of the migration — concurrent edits coalesce at the character
+//! level) and adds `apply_edit_content` to drive the CRDT.  Parent_id
+//! reparent semantics, the rest of the 12 op variants, and parity vs
+//! `merge/tests.rs` still land in later days of the 2-week time-box.
 
 use anyhow::{anyhow, Context, Result};
-use loro::{ExportMode, LoroDoc, LoroMap, LoroValue};
+use loro::{ExportMode, LoroDoc, LoroMap, LoroText, LoroValue};
 
 /// Top-level LoroMap key holding the per-block sub-maps.
 ///
@@ -83,9 +85,18 @@ impl LoroEngine {
         block_map
             .insert(FIELD_BLOCK_TYPE, LoroValue::from(block_type))
             .with_context(|| format!("create block {block_id}: set block_type"))?;
-        block_map
-            .insert(FIELD_CONTENT, LoroValue::from(content))
-            .with_context(|| format!("create block {block_id}: set content"))?;
+        // `content` is a LoroText container, not a scalar — that's the
+        // headline win of the migration.  `insert_container` returns the
+        // *attached* handle; subsequent inserts go into the doc oplog.
+        // `LoroText::insert` takes Unicode-scalar offsets (see Loro 1.12
+        // `crates/loro/src/lib.rs:2298-2301` — "Insert a string at the
+        // given unicode position").
+        let content_text: LoroText = block_map
+            .insert_container(FIELD_CONTENT, LoroText::new())
+            .with_context(|| format!("create block {block_id}: insert content container"))?;
+        content_text
+            .insert(0, content)
+            .with_context(|| format!("create block {block_id}: write initial content"))?;
         // Nullable string -> LoroValue::Null when absent.
         let parent_value = match parent_id {
             Some(p) => LoroValue::from(p),
@@ -128,7 +139,7 @@ impl LoroEngine {
 
         let block_type = read_string(&block_map, FIELD_BLOCK_TYPE)
             .with_context(|| format!("block {block_id}: block_type"))?;
-        let content = read_string(&block_map, FIELD_CONTENT)
+        let content = read_text(&block_map, FIELD_CONTENT)
             .with_context(|| format!("block {block_id}: content"))?;
         let parent_id = read_optional_string(&block_map, FIELD_PARENT_ID)
             .with_context(|| format!("block {block_id}: parent_id"))?;
@@ -144,12 +155,87 @@ impl LoroEngine {
         }))
     }
 
+    /// Splice an edit into a block's `content` LoroText.
+    ///
+    /// Mirrors what an editor's edit callback would natively produce:
+    /// "at unicode-offset `range_start`, delete `range_len` unicode
+    /// scalars, insert `replacement`".  Returns `Err` if the block is
+    /// absent, if `content` isn't a LoroText, or if the range is out
+    /// of bounds.
+    ///
+    /// **Offset semantics: Unicode scalar (USV) indices**, matching the
+    /// native [`LoroText::splice`] API in Loro 1.12 (see
+    /// `crates/loro/src/lib.rs:2393-2396` — "Delete specified character
+    /// and insert string at the same position at given unicode position").
+    /// Loro also exposes `splice_utf16` and `splice_utf8` variants if a
+    /// caller's edit callback uses a different coordinate system; for
+    /// the spike we standardise on Unicode scalars because (a) it's the
+    /// default in Loro's own README examples and (b) it matches how
+    /// `len_unicode()` reports length.
+    pub fn apply_edit_content(
+        &mut self,
+        block_id: &str,
+        range_start: usize,
+        range_len: usize,
+        replacement: &str,
+    ) -> Result<()> {
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        let block_value = blocks
+            .get(block_id)
+            .ok_or_else(|| anyhow!("edit content: block {block_id} not found"))?;
+        let block_map: LoroMap = block_value
+            .into_container()
+            .map_err(|_| anyhow!("edit content: block {block_id} value is not a container"))?
+            .into_map()
+            .map_err(|_| anyhow!("edit content: block {block_id} container is not a LoroMap"))?;
+        let content_value = block_map
+            .get(FIELD_CONTENT)
+            .ok_or_else(|| anyhow!("edit content: block {block_id} has no content field"))?;
+        let content_text: LoroText = content_value
+            .into_container()
+            .map_err(|_| anyhow!("edit content: block {block_id} content slot is not a container"))?
+            .into_text()
+            .map_err(|_| anyhow!("edit content: block {block_id} content is not a LoroText"))?;
+
+        // Up-front bound check.  `LoroText::splice` itself returns
+        // `LoroError::OutOfBound` if start+len exceeds `len_unicode`,
+        // but checking here keeps the error message in our domain
+        // ("block X edit went past content end") rather than Loro's.
+        let len = content_text.len_unicode();
+        if range_start
+            .checked_add(range_len)
+            .map(|end| end > len)
+            .unwrap_or(true)
+        {
+            return Err(anyhow!(
+                "edit content: block {block_id} range {range_start}+{range_len} \
+                 exceeds content length {len} (unicode scalars)"
+            ));
+        }
+
+        content_text
+            .splice(range_start, range_len, replacement)
+            .map_err(|e| anyhow!("edit content: block {block_id} splice failed: {e}"))?;
+        self.doc.commit();
+        Ok(())
+    }
+
     /// Export the doc as a self-contained snapshot byte string.  Useful
     /// for size measurement + later round-trip-via-bytes tests.
     pub fn export_snapshot(&self) -> Result<Vec<u8>> {
         self.doc
             .export(ExportMode::Snapshot)
             .map_err(|e| anyhow!("export snapshot: {e}"))
+    }
+
+    /// Import bytes previously produced by `export_snapshot` (or any
+    /// other Loro export mode) into this doc.  Used by the concurrent-
+    /// edit test to merge a peer's state.
+    pub fn import(&mut self, bytes: &[u8]) -> Result<()> {
+        self.doc
+            .import(bytes)
+            .map(|_status| ())
+            .map_err(|e| anyhow!("import: {e}"))
     }
 }
 
@@ -182,6 +268,21 @@ fn read_string(map: &LoroMap, key: &str) -> Result<String> {
         LoroValue::String(s) => Ok((*s).clone()),
         other => Err(anyhow!("key {key}: expected String, got {other:?}")),
     }
+}
+
+/// Read a nested LoroText container's current value as a `String`.
+///
+/// `LoroText::to_string` materialises the container's current state
+/// (Loro 1.12 `crates/loro/src/lib.rs:2638`).
+fn read_text(map: &LoroMap, key: &str) -> Result<String> {
+    let voc = map.get(key).ok_or_else(|| anyhow!("missing key {key}"))?;
+    let container = voc
+        .into_container()
+        .map_err(|_| anyhow!("key {key}: expected container, got scalar"))?;
+    let text: LoroText = container
+        .into_text()
+        .map_err(|_| anyhow!("key {key}: expected LoroText, got other container"))?;
+    Ok(text.to_string())
 }
 
 fn read_optional_string(map: &LoroMap, key: &str) -> Result<Option<String>> {

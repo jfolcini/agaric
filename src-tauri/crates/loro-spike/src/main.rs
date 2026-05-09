@@ -61,7 +61,8 @@ fn main() -> Result<()> {
 
     let bytes = engine.export_snapshot()?;
     println!(
-        "Phase 0 spike day 1: round-trip OK, doc size = {} bytes",
+        "Phase 0 spike day 2: round-trip OK (content stored as LoroText), \
+         doc size = {} bytes",
         bytes.len()
     );
 
