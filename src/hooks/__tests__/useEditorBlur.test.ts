@@ -15,7 +15,26 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EDITOR_PORTAL_SELECTORS, useEditorBlur } from '../useEditorBlur'
+import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '../useEditorBlur'
+
+/**
+ * Historical overlay class/attribute selectors. Pre-PEND-30-L-3 these were
+ * the literal contents of the now-retired `EDITOR_PORTAL_SELECTORS` array
+ * in the hook itself. Today the hook checks `[data-editor-portal]` only;
+ * this list survives in the test as documentation that every known portal
+ * surface still triggers the guard when its element ALSO carries the
+ * `data-editor-portal` attribute (which the production components do).
+ */
+const LEGACY_PORTAL_PATTERNS = [
+  '.suggestion-popup',
+  '.suggestion-list',
+  '.formatting-toolbar',
+  '[data-editor-portal]',
+  '.rdp',
+  '.date-picker-popup',
+  '.property-key-editor',
+  '.block-context-menu',
+] as const
 
 // Mock shouldSplitOnBlur from use-roving-editor
 const mockShouldSplitOnBlur = vi.fn((md: string) => md.includes('\n'))
@@ -56,7 +75,10 @@ describe('useEditorBlur', () => {
 
   afterEach(() => {
     // Clean up any portal elements left in the DOM
-    for (const sel of EDITOR_PORTAL_SELECTORS) {
+    for (const el of document.querySelectorAll(EDITOR_PORTAL_SELECTOR)) {
+      el.remove()
+    }
+    for (const sel of LEGACY_PORTAL_PATTERNS) {
       for (const el of document.querySelectorAll(sel)) {
         el.remove()
       }
@@ -67,19 +89,11 @@ describe('useEditorBlur', () => {
     }
   })
 
-  // -- EDITOR_PORTAL_SELECTORS constant -----------------------------------
+  // -- EDITOR_PORTAL_SELECTOR constant (PEND-30 L-3) --------------------
 
-  describe('EDITOR_PORTAL_SELECTORS', () => {
-    it('is exported and contains at least 5 entries', () => {
-      expect(Array.isArray(EDITOR_PORTAL_SELECTORS)).toBe(true)
-      expect(EDITOR_PORTAL_SELECTORS.length).toBeGreaterThanOrEqual(5)
-    })
-
-    it('includes expected selectors', () => {
-      expect(EDITOR_PORTAL_SELECTORS).toContain('.suggestion-popup')
-      expect(EDITOR_PORTAL_SELECTORS).toContain('.date-picker-popup')
-      expect(EDITOR_PORTAL_SELECTORS).toContain('[data-editor-portal]')
-      expect(EDITOR_PORTAL_SELECTORS).toContain('.block-context-menu')
+  describe('EDITOR_PORTAL_SELECTOR', () => {
+    it('is exported as the single canonical attribute selector', () => {
+      expect(EDITOR_PORTAL_SELECTOR).toBe('[data-editor-portal]')
     })
   })
 
@@ -177,6 +191,7 @@ describe('useEditorBlur', () => {
       // Simulate relatedTarget being inside a suggestion popup
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.setAttribute('data-editor-portal', '')
       const btn = document.createElement('button')
       popup.appendChild(btn)
       document.body.appendChild(popup)
@@ -425,6 +440,7 @@ describe('useEditorBlur', () => {
       // Add a visible popup OUTSIDE the wrapper to trigger portal guard
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
@@ -505,6 +521,7 @@ describe('useEditorBlur', () => {
       // Add a visible popup OUTSIDE the wrapper to trigger portal guard
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
@@ -649,34 +666,35 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // -- Step 4b portal scan walk (parameterized over every selector) -------
+  // -- Step 4b portal scan walk (parameterized over every legacy pattern) -
 
-  describe('Step 4b portal-scan walk over EDITOR_PORTAL_SELECTORS', () => {
+  describe('Step 4b portal-scan walk over LEGACY_PORTAL_PATTERNS', () => {
     /**
-     * Helper that exercises Step 4a (relatedTarget inside a portal) for a
-     * given selector value: builds an element matching `selector` (using a
-     * class for `.x` and an attribute for `[data-x]`), focuses an inner
-     * button, and asserts the hook treats it as "stay in editor".
+     * Helper that builds an overlay element carrying its historical class /
+     * attribute marker (e.g. `.suggestion-popup`) AND the canonical
+     * `data-editor-portal` attribute that the post-PEND-30-L-3 hook checks.
+     * The dual marking matches what production overlay components do today.
      */
     function buildPortalElement(selector: string): HTMLElement {
       const portal = document.createElement('div')
       if (selector.startsWith('.')) {
         portal.classList.add(selector.slice(1))
       } else if (selector.startsWith('[') && selector.endsWith(']')) {
-        // Strip surrounding brackets, then split on `=` for attr=value (we
-        // currently only ship presence-style selectors like
-        // `[data-editor-portal]`, so the value branch stays defensive).
         const inner = selector.slice(1, -1)
         const [attr, value] = inner.split('=')
         portal.setAttribute(attr ?? 'data-x', value ?? '')
       } else {
         throw new Error(`unsupported selector shape in test: ${selector}`)
       }
+      // Production overlays all carry data-editor-portal; the hook now
+      // checks ONLY this attribute, so each historical pattern test case
+      // must also set it.
+      portal.setAttribute('data-editor-portal', '')
       return portal
     }
 
     it.each(
-      EDITOR_PORTAL_SELECTORS,
+      LEGACY_PORTAL_PATTERNS,
     )('Step 4a: relatedTarget inside `%s` keeps editor mounted', (selector) => {
       const mockUnmount = vi.fn<() => string | null>(() => 'changed')
       const mockEdit = vi.fn()
@@ -711,7 +729,7 @@ describe('useEditorBlur', () => {
     })
 
     it.each(
-      EDITOR_PORTAL_SELECTORS,
+      LEGACY_PORTAL_PATTERNS,
     )('Step 4b: visible `%s` outside the wrapper keeps editor mounted', (selector) => {
       const mockUnmount = vi.fn<() => string | null>(() => 'changed')
       const mockEdit = vi.fn()
@@ -863,6 +881,7 @@ describe('useEditorBlur', () => {
       // contained by the wrapper (e.currentTarget).
       const portal = document.createElement('div')
       portal.classList.add('formatting-toolbar')
+      portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       wrapper.appendChild(portal)
 
@@ -903,6 +922,7 @@ describe('useEditorBlur', () => {
 
       const popup = document.createElement('div')
       popup.classList.add('block-context-menu')
+      popup.setAttribute('data-editor-portal', '')
       const inner = document.createElement('button')
       popup.appendChild(inner)
       document.body.appendChild(popup)
@@ -949,6 +969,7 @@ describe('useEditorBlur', () => {
       // Place a visible formatting toolbar INSIDE the wrapper
       const toolbar = document.createElement('div')
       toolbar.classList.add('formatting-toolbar')
+      toolbar.setAttribute('data-editor-portal', '')
       ;(toolbar as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       wrapper.appendChild(toolbar)
 
@@ -991,6 +1012,7 @@ describe('useEditorBlur', () => {
       // Place a visible date picker OUTSIDE the wrapper (in document.body)
       const picker = document.createElement('div')
       picker.classList.add('date-picker-popup')
+      picker.setAttribute('data-editor-portal', '')
       ;(picker as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(picker)
 
@@ -1033,6 +1055,7 @@ describe('useEditorBlur', () => {
       // Formatting toolbar is visible INSIDE the wrapper (the B-56 trigger)
       const toolbar = document.createElement('div')
       toolbar.classList.add('formatting-toolbar')
+      toolbar.setAttribute('data-editor-portal', '')
       ;(toolbar as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       wrapper.appendChild(toolbar)
 

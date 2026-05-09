@@ -32,7 +32,7 @@ const Calendar = ({
   ...props
 }: CalendarProps) => {
   return (
-    <div ref={ref} data-slot="calendar">
+    <div ref={ref} data-slot="calendar" data-editor-portal="">
       <DayPicker
         showOutsideDays={showOutsideDays}
         className={cn('p-3', className)}

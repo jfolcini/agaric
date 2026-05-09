@@ -24,24 +24,21 @@ import { shouldSplitOnBlur } from '../editor/use-roving-editor'
 import { logger } from '../lib/logger'
 
 /**
- * CSS selectors for transient UI elements (popups, toolbars, pickers) that
- * should NOT cause the editor to unmount when they receive focus.
- * Add new entries here when introducing new popup-style UI.
+ * Single-attribute opt-in for transient UI elements (popups, toolbars,
+ * pickers) that should NOT cause the editor to unmount when they receive
+ * focus. New overlays opt in via markup — `<div data-editor-portal>…` —
+ * instead of editing a hardcoded selector list (PEND-30 L-3).
  *
- * AGENTS.md: keep selectors here in sync when adding new editor-side overlays
- * (suggestion popups, BlockContextMenu, BlockDatePicker, etc. — see
- * "Floating UI lifecycle logging" in AGENTS.md).
+ * The legacy `EDITOR_PORTAL_SELECTORS` array (8 class selectors) is gone:
+ * `.suggestion-popup`, `.suggestion-list`, `.formatting-toolbar`, `.rdp`
+ * (the react-day-picker root — we tag our `Calendar` wrapper instead),
+ * `.date-picker-popup`, `.property-key-editor`, `.block-context-menu`
+ * all carry `data-editor-portal=""` on their outermost portal element.
+ *
+ * Tests / external code that historically imported the array can use
+ * this selector string instead.
  */
-export const EDITOR_PORTAL_SELECTORS = [
-  '.suggestion-popup',
-  '.suggestion-list',
-  '.formatting-toolbar',
-  '[data-editor-portal]',
-  '.rdp',
-  '.date-picker-popup',
-  '.property-key-editor',
-  '.block-context-menu',
-]
+export const EDITOR_PORTAL_SELECTOR = '[data-editor-portal]'
 
 export function useEditorBlur(params: {
   rovingEditor: Pick<
@@ -89,52 +86,37 @@ export function useEditorBlur(params: {
         }
       }
 
-      // Step 4a: Don't unmount if focus moved to a suggestion popup, formatting
-      // toolbar, or date picker — these are transient UI elements that need the
-      // editor to stay mounted.
+      // Step 4a: Don't unmount if focus moved to a portal-tagged overlay
+      // (suggestion popup, formatting toolbar, date picker, …). All such
+      // transient UI elements opt in via `data-editor-portal` (PEND-30 L-3).
       const related = e.relatedTarget as HTMLElement | null
-      if (related) {
-        const matchedSelector = EDITOR_PORTAL_SELECTORS.find((sel) => related.closest(sel))
-        if (matchedSelector) {
-          logger.debug('EditorBlur', 'blur prevented — focus moved to portal', {
-            blockId,
-            selector: matchedSelector,
-          })
-          return
-        }
+      if (related?.closest(EDITOR_PORTAL_SELECTOR)) {
+        logger.debug('EditorBlur', 'blur prevented — focus moved to portal', { blockId })
+        return
       }
 
-      // Step 4b: Also check if a suggestion popup, date picker, or popover is
-      // currently visible in the DOM OUTSIDE the editor wrapper. Elements inside
-      // the wrapper (e.g. formatting toolbar) are managed by the editor lifecycle
-      // and must not prevent save on external blur (B-56). Radix leaves wrapper
-      // elements mounted when closed (with visibility:hidden or opacity:0), so
-      // we use checkVisibility() which detects display:none, visibility:hidden,
-      // and opacity:0. Falls back to offsetParent for older browsers.
+      // Step 4b: Also check if a portal-tagged overlay is currently visible
+      // in the DOM OUTSIDE the editor wrapper. Elements inside the wrapper
+      // (e.g. formatting toolbar) are managed by the editor lifecycle and
+      // must not prevent save on external blur (B-56). Radix leaves wrapper
+      // elements mounted when closed (with visibility:hidden or opacity:0),
+      // so we use checkVisibility() which detects display:none,
+      // visibility:hidden, and opacity:0. Falls back to offsetParent for
+      // older browsers.
       const wrapper = e.currentTarget as HTMLElement
       {
-        let visiblePopupSelector: string | undefined
-        const hasVisiblePopup = EDITOR_PORTAL_SELECTORS.some((sel) => {
-          const els = document.querySelectorAll(sel)
-          for (const el of els) {
-            if (wrapper.contains(el)) continue
-            const htmlEl = el as HTMLElement
-            if (typeof htmlEl.checkVisibility === 'function') {
-              if (htmlEl.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
-                visiblePopupSelector = sel
-                return true
-              }
-            } else if (htmlEl.offsetParent !== null) {
-              visiblePopupSelector = sel
-              return true
-            }
+        const hasVisiblePopup = Array.from(
+          document.querySelectorAll<HTMLElement>(EDITOR_PORTAL_SELECTOR),
+        ).some((el) => {
+          if (wrapper.contains(el)) return false
+          if (typeof el.checkVisibility === 'function') {
+            return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
           }
-          return false
+          return el.offsetParent !== null
         })
         if (hasVisiblePopup) {
-          logger.debug('EditorBlur', 'blur prevented — visible popup outside wrapper', {
+          logger.debug('EditorBlur', 'blur prevented — visible portal outside wrapper', {
             blockId,
-            selector: visiblePopupSelector,
           })
           return
         }

@@ -55,6 +55,7 @@ export function BlockDatePicker({
         aria-label={t('journal.datePickerLabel')}
         className="date-picker-popup max-w-[calc(100vw-2rem)] sm:max-w-md"
         data-testid="date-picker-popup"
+        data-editor-portal=""
       >
         {/* Radix requires DialogTitle for accessibility — visually hidden since aria-label is used */}
         <DialogTitle className="sr-only">{t('journal.datePickerLabel')}</DialogTitle>
