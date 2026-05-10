@@ -635,11 +635,11 @@ pub async fn redo_page_op_inner(
 ///   undo).
 ///
 /// The query mirrors the standard page-scoped recursive CTE used by
-/// `list_page_history` / `undo_page_op_inner`: `is_conflict = 0 +
-/// depth < 100` for the page-blocks recursion, plus a second
-/// recursive CTE that walks the ordered op stream until the group
-/// boundary is reached. The walk is bounded by `count <= 1000` to match
-/// the `undo_depth` ceiling enforced in [`undo_page_op_inner`].
+/// `list_page_history` / `undo_page_op_inner`: `depth < 100` for the
+/// page-blocks recursion, plus a second recursive CTE that walks the
+/// ordered op stream until the group boundary is reached. The walk is
+/// bounded by `count <= 1000` to match the `undo_depth` ceiling
+/// enforced in [`undo_page_op_inner`].
 ///
 /// Returns `i32` (FE callers store group sizes as JS numbers; the
 /// 1000-row ceiling fits comfortably).

@@ -181,12 +181,9 @@ pub(crate) async fn recompute_subtree_inheritance(
     // descendants should inherit from above.
     //
     // I-Search-4: same ancestor-walk invariant as in `remove_inherited_tag`
-    // above — the `tag_inh_ancestors_walk!(0)` recursive member does NOT
-    // filter  on purpose (filtering would under-walk past
-    // conflict ancestors); the filter is applied at projection via the
-    // `JOIN blocks b ... WHERE b.is_conflict = 0` below. See
-    // `remove_subtree_inherited`'s docstring and
-    // `tag_inheritance_macros.rs:14-22` for the rationale.
+    // above — `tag_inh_ancestors_walk!(0)` walks the parent chain
+    // unfiltered; downstream projection joins `blocks` for whatever
+    // active-row filtering the caller needs.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_ancestors_walk!(0),

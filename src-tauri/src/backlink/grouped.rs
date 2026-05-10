@@ -275,9 +275,9 @@ pub async fn eval_backlink_query_grouped(
 
     // 9. Distribute fetched rows back into groups, maintaining sort order.
     //    MAINT-113 M2 — `all_block_ids` traces back to active candidates
-    //    (the grouped query's base set filters `is_conflict = 0 AND
-    //    deleted_at IS NULL`), so the per-group rows are also active.
-    //    The boundary cast records that claim in the type system.
+    //    (the grouped query's base set filters `deleted_at IS NULL`), so
+    //    the per-group rows are also active. The boundary cast records
+    //    that claim in the type system.
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
     for (page_id, page_title, block_ids_in_group) in &actual_groups {
         let mut blocks: Vec<(&str, usize)> = block_ids_in_group

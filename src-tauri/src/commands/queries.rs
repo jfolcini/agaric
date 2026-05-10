@@ -108,12 +108,10 @@ pub async fn get_backlinks_inner(
     pagination::list_backlinks(pool, &block_id, &page, scope.as_filter_param()).await
 }
 
-/// List conflict-copy blocks (blocks with `is_conflict = true`), with cursor pagination.
-///
-/// PEND-35 Tier 1.4 — `conflict_type` and `id_min` push two FE-side
-/// filters into SQL so cursor pagination remains consistent under
-/// filtering. `id_min` is a ULID lower bound (date lower bound, since
-/// ULIDs are time-ordered).
+/// List conflict-copy blocks. PEND-09 Phase 4 dropped the underlying
+/// `is_conflict` column; this entry point is a vacuous shell preserved
+/// for IPC-surface stability — it returns an empty page. The
+/// `conflict_type` / `id_min` parameters are accepted but ignored.
 #[instrument(skip(pool), err)]
 pub async fn get_conflicts_inner(
     pool: &SqlitePool,

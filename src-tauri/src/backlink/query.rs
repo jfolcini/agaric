@@ -271,9 +271,6 @@ pub(super) async fn resolve_root_pages(
     }
 
     let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    // Filter `p.is_conflict = 0` on the page row — conflict copies of pages
-    // must never be reported as a block's root page. Defensive consistency
-    // with the recursive-CTE oracle used in tests (invariant #9).
     let sql = format!(
         "SELECT b.id as block_id, b.page_id as root_id, p.content as root_title \
          FROM blocks b \
@@ -363,11 +360,7 @@ pub(super) async fn resolve_root_pages_cte(
 
     let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     // Bound `depth < 100` on the recursive member to prevent runaway recursion
-    // on corrupted parent_id chains (AGENTS.md invariant #9), filter
-    // `b.is_conflict = 0` on the recursive walk so conflict-copy ancestors do
-    // not redirect a block's root, and re-apply `b.is_conflict = 0` on the
-    // final projection so prod (`resolve_root_pages` filtering `p.is_conflict = 0`)
-    // and oracle agree on the same root-page universe. (M-60)
+    // on corrupted parent_id chains (AGENTS.md invariant #9). (M-60)
     let sql = format!(
         "WITH RECURSIVE walk(block_id, current_id, depth) AS ( \
             SELECT id, id, 0 FROM blocks WHERE id IN ({placeholders}) \

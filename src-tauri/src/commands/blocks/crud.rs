@@ -174,8 +174,8 @@ pub(crate) async fn create_block_in_tx(
         // same limit; the asymmetry was the loophole.
         //
         // The shared `ancestors_cte_standard!()` macro pins invariant #9
-        // (`b.is_conflict = 0` filter + `a.depth < 100` bound). Same shape
-        // as the cycle-detection CTE in `move_block_inner` (move_ops.rs).
+        // (`a.depth < 100` recursion bound). Same shape as the cycle-
+        // detection CTE in `move_block_inner` (move_ops.rs).
         // The seed (`pid`, depth 0) plus N ancestors yields MAX(depth) = N,
         // i.e. the parent's depth from the root — identical semantics to
         // the previous inline `path` CTE.
