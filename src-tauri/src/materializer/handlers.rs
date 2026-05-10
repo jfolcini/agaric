@@ -501,12 +501,35 @@ async fn apply_op_tx(
             // call also reaching the engine — the duplicate apply on
             // the seed is idempotent (engine's `apply_restore_block`
             // is a no-op on an already-restored block).
+            //
+            // PEND-09 Phase 2 day-13: the cohort capture is shared by
+            // both flag arms.  The cutover-on path applies engine
+            // restore for the SEED only (matching day-12's delete
+            // approach: SQL handles the full cohort, engine descendant
+            // state is reconciled by op-log replay).  The post-commit
+            // `dispatch_restore_descendants_shadow` continues to fan
+            // out per-descendant on the engine in BOTH arms because the
+            // engine apply is idempotent (no-op on already-restored).
             let cohort = collect_restore_cohort(conn, &p).await?;
+            #[cfg(feature = "loro-shadow")]
+            if crate::loro::cutover::is_loro_authoritative() {
+                apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
+            } else {
+                apply_restore_block_tx(conn, p).await?;
+            }
+            #[cfg(not(feature = "loro-shadow"))]
             apply_restore_block_tx(conn, p).await?;
             effects.restored_cohort = cohort;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
+            #[cfg(feature = "loro-shadow")]
+            if crate::loro::cutover::is_loro_authoritative() {
+                apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
+            } else {
+                apply_purge_block_tx(conn, p).await?;
+            }
+            #[cfg(not(feature = "loro-shadow"))]
             apply_purge_block_tx(conn, p).await?;
         }
         OpType::MoveBlock => {
@@ -522,10 +545,24 @@ async fn apply_op_tx(
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
+            #[cfg(feature = "loro-shadow")]
+            if crate::loro::cutover::is_loro_authoritative() {
+                apply_add_tag_via_loro(conn, &record.device_id, &p).await?;
+            } else {
+                apply_add_tag_tx(conn, p).await?;
+            }
+            #[cfg(not(feature = "loro-shadow"))]
             apply_add_tag_tx(conn, p).await?;
         }
         OpType::RemoveTag => {
             let p: RemoveTagPayload = serde_json::from_str(&record.payload)?;
+            #[cfg(feature = "loro-shadow")]
+            if crate::loro::cutover::is_loro_authoritative() {
+                apply_remove_tag_via_loro(conn, &record.device_id, &p).await?;
+            } else {
+                apply_remove_tag_tx(conn, p).await?;
+            }
+            #[cfg(not(feature = "loro-shadow"))]
             apply_remove_tag_tx(conn, p).await?;
         }
         OpType::SetProperty => {
@@ -541,6 +578,13 @@ async fn apply_op_tx(
         }
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
+            #[cfg(feature = "loro-shadow")]
+            if crate::loro::cutover::is_loro_authoritative() {
+                apply_delete_property_via_loro(conn, &record.device_id, &p).await?;
+            } else {
+                apply_delete_property_tx(conn, p).await?;
+            }
+            #[cfg(not(feature = "loro-shadow"))]
             apply_delete_property_tx(conn, p).await?;
         }
         OpType::AddAttachment => {
@@ -899,6 +943,258 @@ async fn apply_move_block_via_loro(
 
     projection::project_move_block_to_sql(conn, &snapshot).await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-13 — Option-A reorder for RestoreBlock.
+///
+/// Mirrors the cutover-on shape established by day-12's
+/// [`apply_delete_block_via_loro`]: engine apply for the SEED only +
+/// SQL projection that walks the cohort via the descendants CTE.  The
+/// per-descendant engine fan-out continues to live in the post-commit
+/// helper `dispatch_restore_descendants_shadow` (which fires regardless
+/// of the cutover flag because the engine apply is idempotent).
+///
+/// **Why the engine sees only the seed.**  The engine's
+/// `apply_restore_block` is per-block-id; walking descendants would
+/// duplicate work that `dispatch_restore_descendants_shadow` already
+/// does post-commit.  The split keeps the engine API simple (1 block
+/// in, 1 mutation out) and keeps cohort semantics on the SQL side that
+/// owns them.  Same trade-off as the delete-cascade fanout: the
+/// engine's descendant state will be correct after the post-commit
+/// fanout fires — and even if a crash drops the fanout, the next
+/// op-log replay rebuilds the engine from scratch.
+///
+/// **Space resolution on a soft-deleted block.**  Today's
+/// `resolve_block_space` filters `deleted_at IS NULL` (AGENTS.md
+/// invariant #9 — tombstones must not participate in space resolution).
+/// But a `RestoreBlock` op TARGETS a tombstoned block by definition,
+/// so the canonical resolver returns `None`.  We work around this by
+/// reading `parent_id` directly from `blocks` (no `deleted_at` filter)
+/// and resolving the parent's space — which is correct because the
+/// parent is in the same space as the soft-deleted child by the
+/// per-space-tree invariant.  When the block has no parent (orphan or
+/// page-level restore), the resolver returns `None` and we fall back
+/// to the diffy path.
+#[cfg(feature = "loro-shadow")]
+async fn apply_restore_block_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &RestoreBlockPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+    use crate::ulid::BlockId;
+
+    // Read parent_id directly (the canonical resolver filters out
+    // soft-deleted rows, which would always be the case here).
+    let block_id_str = p.block_id.as_str();
+    let parent_row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(block_id_str)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let resolution_anchor: BlockId = match parent_row.and_then(|(p,)| p) {
+        Some(parent) => BlockId::from_trusted(&parent),
+        None => p.block_id.clone(),
+    };
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
+    else {
+        tracing::trace!(
+            block_id = p.block_id.as_str(),
+            "apply_restore_block_via_loro: cannot resolve space; falling back to diffy path",
+        );
+        return apply_restore_block_tx(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_restore_block_tx(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_restore_block(p.block_id.as_str())?;
+        drop(guard);
+    }
+
+    projection::project_restore_block_to_sql(conn, p.block_id.as_str(), &p.deleted_at_ref).await?;
+    tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-13 — Option-A reorder for PurgeBlock.
+///
+/// Engine apply is per-block-id (deletes the seed's `blocks`,
+/// `block_properties`, `block_tags` entries from the LoroDoc).  The
+/// SQL side runs the full 15-statement cascade unchanged via
+/// [`apply_purge_block_tx`] — the cascade is much wider than the
+/// engine state (purges agenda_cache, tags_cache, fts_blocks, etc. that
+/// the engine doesn't model) so replicating it in a projection helper
+/// would be redundant.  Day-13's approach: take the engine guard,
+/// apply the engine purge for the seed, drop the guard, then run the
+/// full SQL cascade.  Same trade-off as DeleteBlock: the engine
+/// descendant state is reconciled via op-log replay; a follow-up may
+/// fan out per-descendant engine purges (same shape as the restore
+/// fanout) but it's not load-bearing today because the SQL cascade is
+/// the source of truth users observe.
+///
+/// Resolution-failure fallback: same as the day-12 helpers.
+#[cfg(feature = "loro-shadow")]
+async fn apply_purge_block_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &PurgeBlockPayload,
+) -> Result<(), AppError> {
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        tracing::trace!(
+            block_id = p.block_id.as_str(),
+            "apply_purge_block_via_loro: cannot resolve space; falling back to diffy path",
+        );
+        return apply_purge_block_tx(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_purge_block_tx(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_purge_block(p.block_id.as_str())?;
+        drop(guard);
+    }
+
+    // The SQL-side cascade purges 15 tables — much broader than the
+    // engine's three (`blocks`, `block_properties`, `block_tags`).  Reuse
+    // the diffy-side helper rather than re-implement the cascade in a
+    // projection helper.  This is consistent with day-12's choice for
+    // DeleteBlock (whose CTE-driven cascade lives in the projection
+    // helper and not in `apply_delete_block_via_loro`'s body).
+    apply_purge_block_tx(conn, p.clone()).await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-13 — Option-A reorder for AddTag.
+///
+/// Engine apply pushes the tag id onto the block's `block_tags` list
+/// (idempotent — engine de-dupes).  SQL projection writes the
+/// `block_tags` row via `INSERT OR IGNORE`.  Tag inheritance fanout
+/// runs AFTER the projection, mirroring `apply_add_tag_tx`.
+///
+/// Resolution-failure fallback: same as the day-12 helpers.
+#[cfg(feature = "loro-shadow")]
+async fn apply_add_tag_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &AddTagPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        tracing::trace!(
+            block_id = p.block_id.as_str(),
+            tag_id = p.tag_id.as_str(),
+            "apply_add_tag_via_loro: cannot resolve space; falling back to diffy path",
+        );
+        return apply_add_tag_tx(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_add_tag_tx(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())?;
+        drop(guard);
+    }
+
+    projection::project_add_tag_to_sql(conn, p.block_id.as_str(), p.tag_id.as_str()).await?;
+    tag_inheritance::propagate_tag_to_descendants(
+        &mut *conn,
+        p.block_id.as_str(),
+        p.tag_id.as_str(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-13 — Option-A reorder for RemoveTag.
+///
+/// Engine apply removes the tag id from the block's `block_tags` list
+/// (idempotent — engine no-ops on missing tag).  SQL projection
+/// deletes the `block_tags` row.  Tag inheritance cleanup runs AFTER
+/// the projection.
+///
+/// Resolution-failure fallback: same as the day-12 helpers.
+#[cfg(feature = "loro-shadow")]
+async fn apply_remove_tag_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &RemoveTagPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        tracing::trace!(
+            block_id = p.block_id.as_str(),
+            tag_id = p.tag_id.as_str(),
+            "apply_remove_tag_via_loro: cannot resolve space; falling back to diffy path",
+        );
+        return apply_remove_tag_tx(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_remove_tag_tx(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())?;
+        drop(guard);
+    }
+
+    projection::project_remove_tag_to_sql(conn, p.block_id.as_str(), p.tag_id.as_str()).await?;
+    tag_inheritance::remove_inherited_tag(&mut *conn, p.block_id.as_str(), p.tag_id.as_str())
+        .await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-13 — Option-A reorder for DeleteProperty.
+///
+/// Engine apply removes the key from the block's properties map
+/// (idempotent — engine no-ops on missing key).  SQL projection runs
+/// the per-key match (reserved key → UPDATE column to NULL;
+/// non-reserved key → DELETE block_properties row).  No tag-inheritance
+/// fanout — properties don't propagate.
+///
+/// Resolution-failure fallback: same as the day-12 helpers.
+#[cfg(feature = "loro-shadow")]
+async fn apply_delete_property_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &DeletePropertyPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        tracing::trace!(
+            block_id = p.block_id.as_str(),
+            key = p.key.as_str(),
+            "apply_delete_property_via_loro: cannot resolve space; falling back to diffy path",
+        );
+        return apply_delete_property_tx(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_delete_property_tx(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
+        drop(guard);
+    }
+
+    projection::project_delete_property_to_sql(conn, p.block_id.as_str(), &p.key).await?;
     Ok(())
 }
 
@@ -2064,8 +2360,9 @@ mod restore_cascade_tests {
 mod cutover_branch_tests {
     use crate::db::init_pool;
     use crate::op::{
-        CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-        SetPropertyPayload,
+        AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload,
+        EditBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload,
+        RestoreBlockPayload, SetPropertyPayload,
     };
     use crate::ulid::BlockId;
     use sqlx::SqlitePool;
@@ -2754,6 +3051,368 @@ mod cutover_branch_tests {
         drop(guard);
         assert_eq!(engine_snap.parent_id.as_deref(), Some(PAGE_ID));
         assert_eq!(engine_snap.position, 42);
+
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+    }
+
+    // -----------------------------------------------------------------
+    // Day-13 — RestoreBlock / PurgeBlock / AddTag / RemoveTag /
+    // DeleteProperty cutover-on tests.
+    // -----------------------------------------------------------------
+
+    /// RestoreBlock loro-path: seed via loro, soft-delete, then restore.
+    /// Verifies SQL `deleted_at` is cleared for the seed AND that the
+    /// engine's `read_deleted` returns `false`.  The descendant cohort
+    /// fan-out lives in `dispatch_restore_descendants_shadow` (post-
+    /// commit) — we inspect engine state for the seed only here.
+    #[tokio::test]
+    async fn apply_op_tx_restore_block_uses_loro_path_when_flag_on() {
+        let (pool, _dir) = fresh_pool_with_page().await;
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        let _state = crate::loro::shared::install_for_test();
+
+        seed_block_via_loro(&pool).await;
+
+        // Soft-delete via the loro path so the engine sees it.
+        let delete_payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+        });
+        let delete_record = crate::op_log::append_local_op(&pool, DEVICE_ID, delete_payload)
+            .await
+            .expect("append delete");
+        let deleted_at_ref = delete_record.created_at.clone();
+        let mut tx = pool.begin().await.expect("begin1");
+        super::apply_op_tx(&mut tx, &delete_record)
+            .await
+            .expect("apply delete");
+        tx.commit().await.expect("commit1");
+
+        // Sanity: SQL has deleted_at set, engine `read_deleted` is true.
+        let pre: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(BLOCK_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch pre");
+        assert!(pre.0.is_some(), "delete must have run");
+
+        // Now restore.
+        let restore_payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            deleted_at_ref: deleted_at_ref.clone(),
+        });
+        let restore_record = crate::op_log::append_local_op(&pool, DEVICE_ID, restore_payload)
+            .await
+            .expect("append restore");
+        let mut tx = pool.begin().await.expect("begin2");
+        super::apply_op_tx(&mut tx, &restore_record)
+            .await
+            .expect("apply restore");
+        tx.commit().await.expect("commit2");
+
+        // SQL: deleted_at cleared.
+        let post: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(BLOCK_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch post");
+        assert_eq!(post.0, None, "restore must clear deleted_at");
+
+        // Engine: seed is no longer marked deleted.
+        let state = crate::loro::shared::get().expect("shadow state");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let deleted = guard
+            .engine_mut()
+            .read_deleted(BLOCK_ID)
+            .expect("read_deleted");
+        drop(guard);
+        assert!(!deleted, "engine must see the seed restore");
+
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+    }
+
+    /// PurgeBlock loro-path: seed via loro, then purge.  Verifies SQL
+    /// row is gone (cascade ran) AND the engine's `read_block` returns
+    /// `None` for the purged block.
+    #[tokio::test]
+    async fn apply_op_tx_purge_block_uses_loro_path_when_flag_on() {
+        let (pool, _dir) = fresh_pool_with_page().await;
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        let _state = crate::loro::shared::install_for_test();
+
+        seed_block_via_loro(&pool).await;
+
+        let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append");
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record)
+            .await
+            .expect("apply_op_tx");
+        tx.commit().await.expect("commit");
+
+        // SQL: row is gone.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch count");
+        assert_eq!(count.0, 0, "purge must remove the row");
+
+        // Engine: block is gone.
+        let state = crate::loro::shared::get().expect("shadow state");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine_snap = guard.engine_mut().read_block(BLOCK_ID).expect("read_block");
+        drop(guard);
+        assert!(
+            engine_snap.is_none(),
+            "engine must drop the block on purge; got {engine_snap:?}",
+        );
+
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+    }
+
+    /// AddTag loro-path: seed two blocks (a target + a tag), apply
+    /// AddTag, verify SQL row + engine `read_tags` both reflect the
+    /// association.
+    #[tokio::test]
+    async fn apply_op_tx_add_tag_uses_loro_path_when_flag_on() {
+        const TAG_ID: &str = "01HZ00000000000000000000T7";
+
+        let (pool, _dir) = fresh_pool_with_page().await;
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        let _state = crate::loro::shared::install_for_test();
+
+        seed_block_via_loro(&pool).await;
+
+        // Create the tag block under the page, also via the loro path,
+        // so its `parent_id` resolves to a space.
+        let create_tag = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(TAG_ID),
+            block_type: "tag".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: Some(1),
+            content: "tag-Y".into(),
+        });
+        let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
+            .await
+            .expect("append create tag");
+        let mut tx = pool.begin().await.expect("begin tag");
+        super::apply_op_tx(&mut tx, &rec)
+            .await
+            .expect("apply create tag");
+        tx.commit().await.expect("commit tag");
+
+        // Now add the tag.
+        let payload = OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            tag_id: BlockId::from_trusted(TAG_ID),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append");
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record)
+            .await
+            .expect("apply_op_tx");
+        tx.commit().await.expect("commit");
+
+        // SQL: row exists.
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_ID)
+                .bind(TAG_ID)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch count");
+        assert_eq!(count.0, 1, "block_tags row must be inserted");
+
+        // Engine: tag is associated.
+        let state = crate::loro::shared::get().expect("shadow state");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let tags = guard.engine_mut().read_tags(BLOCK_ID).expect("read_tags");
+        drop(guard);
+        assert!(
+            tags.iter().any(|t| t == TAG_ID),
+            "engine must see the tag association; got {tags:?}",
+        );
+
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+    }
+
+    /// RemoveTag loro-path: seed + tag-association, then remove.  SQL
+    /// row gone, engine `read_tags` no longer returns the tag.
+    #[tokio::test]
+    async fn apply_op_tx_remove_tag_uses_loro_path_when_flag_on() {
+        const TAG_ID: &str = "01HZ00000000000000000000T8";
+
+        let (pool, _dir) = fresh_pool_with_page().await;
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        let _state = crate::loro::shared::install_for_test();
+
+        seed_block_via_loro(&pool).await;
+
+        // Create the tag + add it via loro.
+        let create_tag = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(TAG_ID),
+            block_type: "tag".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: Some(1),
+            content: "tag-Z".into(),
+        });
+        let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
+            .await
+            .expect("append create tag");
+        let mut tx = pool.begin().await.expect("begin tag");
+        super::apply_op_tx(&mut tx, &rec)
+            .await
+            .expect("apply create tag");
+        tx.commit().await.expect("commit tag");
+
+        let add = OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            tag_id: BlockId::from_trusted(TAG_ID),
+        });
+        let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, add)
+            .await
+            .expect("append add");
+        let mut tx = pool.begin().await.expect("begin add");
+        super::apply_op_tx(&mut tx, &rec).await.expect("apply add");
+        tx.commit().await.expect("commit add");
+
+        // Now remove.
+        let payload = OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            tag_id: BlockId::from_trusted(TAG_ID),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append");
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record)
+            .await
+            .expect("apply_op_tx");
+        tx.commit().await.expect("commit");
+
+        // SQL: row gone.
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_ID)
+                .bind(TAG_ID)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch count");
+        assert_eq!(count.0, 0, "block_tags row must be deleted");
+
+        // Engine: tag association is gone.
+        let state = crate::loro::shared::get().expect("shadow state");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let tags = guard.engine_mut().read_tags(BLOCK_ID).expect("read_tags");
+        drop(guard);
+        assert!(
+            !tags.iter().any(|t| t == TAG_ID),
+            "engine must drop the tag association; got {tags:?}",
+        );
+
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+    }
+
+    /// DeleteProperty loro-path: seed a non-reserved property, delete
+    /// it.  Verifies SQL row gone + engine `read_property` returns None.
+    #[tokio::test]
+    async fn apply_op_tx_delete_property_uses_loro_path_when_flag_on() {
+        let (pool, _dir) = fresh_pool_with_page().await;
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        let _state = crate::loro::shared::install_for_test();
+
+        seed_block_via_loro(&pool).await;
+
+        // Set a non-reserved property via the loro path so the engine
+        // has it.
+        let set = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            key: "effort".into(),
+            value_text: None,
+            value_num: Some(4.0),
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        });
+        let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, set)
+            .await
+            .expect("append set");
+        let mut tx = pool.begin().await.expect("begin set");
+        super::apply_op_tx(&mut tx, &rec).await.expect("apply set");
+        tx.commit().await.expect("commit set");
+
+        // Sanity precondition: SQL has the row.
+        let pre: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(BLOCK_ID)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch pre");
+        assert_eq!(pre.0, 1, "set property must have written the row");
+
+        // Now delete.
+        let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_ID),
+            key: "effort".into(),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append");
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record)
+            .await
+            .expect("apply_op_tx");
+        tx.commit().await.expect("commit");
+
+        // SQL: row gone.
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(BLOCK_ID)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch count");
+        assert_eq!(count.0, 0, "delete property must remove the row");
+
+        // Engine: property gone.
+        let state = crate::loro::shared::get().expect("shadow state");
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let prop = guard
+            .engine_mut()
+            .read_property(BLOCK_ID, "effort")
+            .expect("read_property");
+        drop(guard);
+        assert!(
+            prop.is_none(),
+            "engine must drop the property; got {prop:?}",
+        );
 
         crate::loro::cutover::install_cutover_flag_for_test(false);
     }
