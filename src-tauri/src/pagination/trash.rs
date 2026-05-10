@@ -16,7 +16,7 @@ use crate::error::AppError;
 /// record the root id (descendants cascade transparently).
 ///
 /// Ordered by `(deleted_at DESC, id ASC)` — most recently deleted first.
-/// Excludes conflict blocks (`is_conflict = 0`).
+/// Excludes conflict blocks .
 ///
 /// When `space_id` is `Some`, only trash roots whose owning page carries
 /// `space = ?space_id` are returned. Note that a soft-deleted block
@@ -48,11 +48,11 @@ pub async fn list_trash(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, is_conflict as "is_conflict: bool",
+                deleted_at,
                 conflict_type, todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks b
-         WHERE b.deleted_at IS NOT NULL AND b.is_conflict = 0
+         WHERE b.deleted_at IS NOT NULL
            AND (
                 b.parent_id IS NULL
                 OR NOT EXISTS (
@@ -92,7 +92,7 @@ pub async fn list_trash(
 /// Roots with zero descendants are omitted from the map — callers should
 /// default to `0` when a root id is not present. Non-existent ids and ids
 /// that aren't actually soft-deleted yield no entry. Conflict blocks
-/// (`is_conflict = 1`) are excluded from both the root lookup and the
+///  are excluded from both the root lookup and the
 /// recursive descendant walk, matching `list_trash` semantics. Recursion
 /// is bounded at depth 100 per AGENTS.md invariant #9.
 ///
@@ -119,7 +119,7 @@ pub async fn trash_descendant_counts(
     // enforces actual ancestry, so two unrelated roots that happen to share
     // a `deleted_at` (e.g. millisecond collisions in `cascade_soft_delete`,
     // or test fixtures with `FIXED_DELETED_AT`) do not contaminate each
-    // other's counts. `is_conflict = 0` on the recursive member and the
+    // other's counts.  on the recursive member and the
     // seed matches `list_trash`. Depth is bounded at 100 per AGENTS.md
     // invariant #9. `COUNT(*) - 1` subtracts the root row itself so the
     // result is the descendant count (excluding the root).
@@ -130,14 +130,12 @@ pub async fn trash_descendant_counts(
                FROM blocks rb
                WHERE rb.id IN (SELECT value FROM json_each(?1))
                  AND rb.deleted_at IS NOT NULL
-                 AND rb.is_conflict = 0
                UNION ALL
                SELECT d.root_id, c.id, d.batch_deleted_at, d.depth + 1
                FROM descendants d
                JOIN blocks c
                  ON c.parent_id = d.desc_id
                 AND c.deleted_at = d.batch_deleted_at
-                AND c.is_conflict = 0
                WHERE d.depth < 100
            )
            SELECT root_id AS "root_id!: String",

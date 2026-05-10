@@ -68,18 +68,6 @@ pub(crate) async fn remove_inherited_tag(
     // Use a single SQL statement: for each descendant of block_id that doesn't
     // already have an entry in block_tag_inherited for this tag, find the
     // nearest ancestor with the tag via a lateral ancestor walk.
-    //
-    // I-Search-4: the `tag_inh_ancestors_walk!(1)` macro intentionally does NOT
-    // filter `is_conflict = 0` on the recursive member — see the
-    // `remove_subtree_inherited` docstring (line 319-330 of this file) and the
-    // macro doc-comment at `tag_inheritance_macros.rs:14-22` for the full
-    // rationale. Filtering on the walk would *under*-walk past a conflict
-    // ancestor (the walk stops short of the real-block ancestor we need) and
-    // produce wrong inheritance for descendants of conflict copies. The
-    // `is_conflict = 0` filter is instead applied at projection on the
-    // `nearest_ancestor` join below (line 141: `b.is_conflict = 0`), which
-    // correctly excludes the conflict copy from being chosen as the
-    // tag-source while still letting the walk traverse past it.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_descendants_active!(),
@@ -90,7 +78,7 @@ pub(crate) async fn remove_inherited_tag(
              SELECT a.id FROM ancestors a \
              JOIN block_tags bt ON bt.block_id = a.id AND bt.tag_id = ?2 \
              JOIN blocks b ON b.id = a.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL \
              ORDER BY a.depth ASC \
              LIMIT 1 \
          ) ",
@@ -111,12 +99,6 @@ pub(crate) async fn remove_inherited_tag(
 
     // Also re-insert for block_id itself if it's a descendant of the ancestor
     // (block_id no longer has the tag directly, but might inherit from above)
-    //
-    // I-Search-4: same ancestor-walk invariant as above — the
-    // `tag_inh_ancestors_walk!(1)` recursive member does NOT filter
-    // `is_conflict = 0` on purpose; the filter is applied at projection on
-    // the `nearest_ancestor` join. See the earlier comment block in this
-    // function and `remove_subtree_inherited`'s docstring for the rationale.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_ancestors_walk!(1),
@@ -125,7 +107,7 @@ pub(crate) async fn remove_inherited_tag(
              SELECT a.id FROM ancestors a \
              JOIN block_tags bt ON bt.block_id = a.id AND bt.tag_id = ?2 \
              JOIN blocks b ON b.id = a.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL \
              ORDER BY a.depth ASC \
              LIMIT 1 \
          ) ",
@@ -200,7 +182,7 @@ pub(crate) async fn recompute_subtree_inheritance(
     //
     // I-Search-4: same ancestor-walk invariant as in `remove_inherited_tag`
     // above — the `tag_inh_ancestors_walk!(0)` recursive member does NOT
-    // filter `is_conflict = 0` on purpose (filtering would under-walk past
+    // filter  on purpose (filtering would under-walk past
     // conflict ancestors); the filter is applied at projection via the
     // `JOIN blocks b ... WHERE b.is_conflict = 0` below. See
     // `remove_subtree_inherited`'s docstring and
@@ -214,7 +196,7 @@ pub(crate) async fn recompute_subtree_inheritance(
              FROM ancestors anc \
              JOIN block_tags bt ON bt.block_id = anc.id \
              JOIN blocks b ON b.id = anc.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL \
          ), ",
         crate::tag_inh_subtree_active!(),
         " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
@@ -251,7 +233,7 @@ pub(crate) async fn inherit_parent_tags(
          SELECT ?1, bt.tag_id, bt.block_id \
          FROM block_tags bt \
          JOIN blocks b ON b.id = bt.block_id \
-         WHERE bt.block_id = ?2 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+         WHERE bt.block_id = ?2 AND b.deleted_at IS NULL",
     )
     .bind(block_id)
     .bind(parent_id)
@@ -278,19 +260,12 @@ pub(crate) async fn inherit_parent_tags(
 /// Also removes entries where other blocks inherited tags FROM blocks in this
 /// subtree (since those blocks are now deleted, their tags shouldn't propagate).
 ///
-/// **CTE policy exception (invariant #9):** the two CTEs below deliberately
-/// do NOT filter `deleted_at IS NULL` or `is_conflict = 0`:
-///
-/// - `deleted_at IS NULL` is omitted because this helper is called AFTER the
-///   subtree has been soft-deleted (`remove_subtree_inherited` runs in the
-///   same transaction as the cascade UPDATE). Filtering `deleted_at IS NULL`
-///   here would miss every descendant we just marked deleted, leaving
-///   orphaned inheritance rows.
-/// - `is_conflict = 0` is omitted because we want to sweep inheritance for
-///   conflict-copy descendants too — they share `parent_id` with the
-///   original, and their inherited rows would otherwise dangle pointing at
-///   the deleted block. This is a narrow, documented exception to the
-///   global rule that descendant walks filter conflicts.
+/// **CTE policy exception:** the two CTEs below deliberately do NOT
+/// filter `deleted_at IS NULL` — this helper is called AFTER the
+/// subtree has been soft-deleted (`remove_subtree_inherited` runs in the
+/// same transaction as the cascade UPDATE). Filtering `deleted_at IS NULL`
+/// here would miss every descendant we just marked deleted, leaving
+/// orphaned inheritance rows.
 ///
 /// The depth bound (`MAX_TAG_INHERITANCE_DEPTH`) still guards against
 /// runaway recursion on corrupted parent_id chains.

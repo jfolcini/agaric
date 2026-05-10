@@ -124,7 +124,6 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
          LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
          LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
          WHERE b.deleted_at IS NULL
-           AND b.is_conflict = 0
            AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
            AND bp.value_text IS NOT NULL
            AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)
@@ -426,7 +425,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
 
     // Read phase — snapshot-isolated SELECT on `read_pool`. Same shape
     // and filters as `rebuild_projected_agenda_cache_impl`:
-    // `is_conflict = 0`, `deleted_at IS NULL`, repeat property present,
+    // `deleted_at IS NULL`, repeat property present,
     // at least one date column, template-page exclusion.
     let mut read_tx = read_pool.begin().await?;
     let rows: Vec<CacheRepeatingRow> = sqlx::query_as::<_, CacheRepeatingRow>(
@@ -442,7 +441,6 @@ async fn rebuild_projected_agenda_cache_split_impl(
          LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
          LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
          WHERE b.deleted_at IS NULL
-           AND b.is_conflict = 0
            AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
            AND bp.value_text IS NOT NULL
            AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)

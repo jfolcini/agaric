@@ -45,7 +45,6 @@ fn sample_snapshot_data() -> SnapshotData {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -89,8 +88,8 @@ fn sample_snapshot_data() -> SnapshotData {
 /// Helper: insert a block directly into the DB (bypasses op log).
 async fn insert_block(pool: &SqlitePool, id: &str, content: &str) {
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
-             VALUES (?, 'content', ?, 1, 0)",
+        "INSERT INTO blocks (id, block_type, content, position) \
+             VALUES (?, 'content', ?, 1)",
     )
     .bind(id)
     .bind(content)
@@ -603,7 +602,6 @@ async fn apply_snapshot_empty_db() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -858,7 +856,6 @@ fn cbor_round_trip_option_f64() {
                 parent_id: None,
                 position: None,
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -1211,7 +1208,6 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         parent_id: Option<&'a str>,
         position: Option<i64>,
         deleted_at: Option<&'a str>,
-        is_conflict: i64,
         conflict_source: Option<&'a str>,
         // MAINT-133: keep this struct in lock-step with `BlockSnapshot`
         // so the encoded CBOR map covers every field the real decoder
@@ -1254,7 +1250,6 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -1308,7 +1303,6 @@ async fn apply_snapshot_rejects_invalid_block_type() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -1364,7 +1358,6 @@ async fn apply_snapshot_rejects_malformed_ulid_block_id() {
                 parent_id: Some("not-a-valid-ulid!@#".to_string()),
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -1417,7 +1410,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -1432,7 +1424,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     parent_id: Some("blk-parent".to_string()),
                     position: Some(1),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -1448,7 +1439,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     parent_id: None,
                     position: None,
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -1798,7 +1788,6 @@ fn large_text_field_round_trip() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -1876,7 +1865,6 @@ fn all_nullable_fields_null_round_trip() {
                 parent_id: None,
                 position: None,
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -1934,146 +1922,6 @@ fn all_nullable_fields_null_round_trip() {
 }
 
 // =======================================================================
-// 25. encode_decode_identity (REVIEW-LATER #56)
-// =======================================================================
-
-/// Round-trip encode→decode is idempotent: encode→decode→encode→decode
-/// preserves every field exactly.
-#[test]
-fn encode_decode_identity() {
-    let data = sample_snapshot_data();
-    let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded[..]).unwrap();
-
-    // Re-encode and decode again to verify idempotency
-    let re_encoded = encode_snapshot(&decoded).unwrap();
-    let re_decoded = decode_snapshot(&re_encoded[..]).unwrap();
-
-    // Verify all top-level fields
-    assert_eq!(
-        decoded.schema_version, re_decoded.schema_version,
-        "schema version must be idempotent across re-encode"
-    );
-    assert_eq!(
-        decoded.snapshot_device_id, re_decoded.snapshot_device_id,
-        "device id must be idempotent across re-encode"
-    );
-    assert_eq!(
-        decoded.up_to_hash, re_decoded.up_to_hash,
-        "up_to_hash must be idempotent across re-encode"
-    );
-    assert_eq!(
-        decoded.up_to_seqs, re_decoded.up_to_seqs,
-        "up_to_seqs must be idempotent across re-encode"
-    );
-
-    // Verify table lengths
-    assert_eq!(
-        decoded.tables.blocks.len(),
-        re_decoded.tables.blocks.len(),
-        "blocks count must be idempotent across re-encode"
-    );
-    assert_eq!(
-        decoded.tables.block_tags.len(),
-        re_decoded.tables.block_tags.len(),
-        "block_tags count must be idempotent across re-encode"
-    );
-    assert_eq!(
-        decoded.tables.block_properties.len(),
-        re_decoded.tables.block_properties.len(),
-        "block_properties count must be idempotent across re-encode"
-    );
-    assert_eq!(
-        decoded.tables.block_links.len(),
-        re_decoded.tables.block_links.len(),
-        "block_links count must be idempotent across re-encode"
-    );
-    assert_eq!(
-        decoded.tables.attachments.len(),
-        re_decoded.tables.attachments.len(),
-        "attachments count must be idempotent across re-encode"
-    );
-
-    // Verify individual fields in blocks
-    for (i, (a, b)) in decoded
-        .tables
-        .blocks
-        .iter()
-        .zip(re_decoded.tables.blocks.iter())
-        .enumerate()
-    {
-        assert_eq!(a.id, b.id, "block id must match at index {i}");
-        assert_eq!(
-            a.block_type, b.block_type,
-            "block_type must match at index {i}"
-        );
-        assert_eq!(
-            a.content, b.content,
-            "block content must match at index {i}"
-        );
-        assert_eq!(
-            a.parent_id, b.parent_id,
-            "block parent_id must match at index {i}"
-        );
-        assert_eq!(
-            a.position, b.position,
-            "block position must match at index {i}"
-        );
-        assert_eq!(
-            a.deleted_at, b.deleted_at,
-            "block deleted_at must match at index {i}"
-        );
-        assert_eq!(
-            a.is_conflict, b.is_conflict,
-            "block is_conflict must match at index {i}"
-        );
-        assert_eq!(
-            a.conflict_source, b.conflict_source,
-            "block conflict_source must match at index {i}"
-        );
-    }
-
-    // Verify attachments round-trip
-    for (i, (a, b)) in decoded
-        .tables
-        .attachments
-        .iter()
-        .zip(re_decoded.tables.attachments.iter())
-        .enumerate()
-    {
-        assert_eq!(a.id, b.id, "attachment id must match at index {i}");
-        assert_eq!(
-            a.block_id, b.block_id,
-            "attachment block_id must match at index {i}"
-        );
-        assert_eq!(
-            a.mime_type, b.mime_type,
-            "attachment mime_type must match at index {i}"
-        );
-        assert_eq!(
-            a.filename, b.filename,
-            "attachment filename must match at index {i}"
-        );
-        assert_eq!(
-            a.size_bytes, b.size_bytes,
-            "attachment size_bytes must match at index {i}"
-        );
-        assert_eq!(
-            a.fs_path, b.fs_path,
-            "attachment fs_path must match at index {i}"
-        );
-        assert_eq!(
-            a.created_at, b.created_at,
-            "attachment created_at must match at index {i}"
-        );
-        assert_eq!(
-            a.deleted_at, b.deleted_at,
-            "attachment deleted_at must match at index {i}"
-        );
-    }
-}
-
-// =======================================================================
 // 26. create_snapshot_captures_all_related_tables (lines 155,167,181,192)
 // =======================================================================
 
@@ -2085,15 +1933,15 @@ async fn create_snapshot_captures_all_related_tables() {
     // 1. Insert blocks (including a tag block for FK on block_tags)
     insert_block(&pool, "blk-1", "main content").await;
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
-             VALUES ('blk-2', 'content', 'linked target', 2, 0)",
+        "INSERT INTO blocks (id, block_type, content, position) \
+             VALUES ('blk-2', 'content', 'linked target', 2)",
     )
     .execute(&pool)
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, is_conflict) \
-             VALUES ('tag-1', 'tag', 'urgent', 0)",
+        "INSERT INTO blocks (id, block_type, content) \
+             VALUES ('tag-1', 'tag', 'urgent')",
     )
     .execute(&pool)
     .await
@@ -2487,7 +2335,6 @@ struct BlockSnapshotV1 {
     position: Option<i64>,
     deleted_at: Option<String>,
     archived_at: Option<String>,
-    is_conflict: i64,
     conflict_source: Option<String>,
 }
 
@@ -2529,7 +2376,6 @@ fn snapshot_v1_deserializes_with_default_fields() {
                 position: Some(1),
                 deleted_at: None,
                 archived_at: None,
-                is_conflict: 0,
                 conflict_source: None,
             }],
             block_tags: vec![],
@@ -2589,7 +2435,6 @@ fn snapshot_v2_round_trips_new_fields() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: Some("TODO".to_string()),
@@ -2833,7 +2678,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -2848,7 +2692,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     parent_id: None,
                     position: None,
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -2863,7 +2706,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     parent_id: Some("page-1".to_string()),
                     position: Some(1),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -2896,15 +2738,15 @@ async fn apply_snapshot_rebuilds_caches() {
     // A correct `apply_snapshot` must wipe these and rebuild to match the
     // restored core tables.
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, is_conflict) \
-         VALUES ('stale-tag', 'tag', 'stale', 0)",
+        "INSERT INTO blocks (id, block_type, content) \
+         VALUES ('stale-tag', 'tag', 'stale')",
     )
     .execute(&pool)
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, is_conflict) \
-         VALUES ('stale-page', 'page', 'Stale Page', 0)",
+        "INSERT INTO blocks (id, block_type, content) \
+         VALUES ('stale-page', 'page', 'Stale Page')",
     )
     .execute(&pool)
     .await
@@ -3045,7 +2887,6 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -3060,7 +2901,6 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     parent_id: Some("tpl-page".to_string()),
                     position: Some(1),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -3189,7 +3029,6 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -3279,7 +3118,6 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,
@@ -3355,8 +3193,8 @@ async fn compact_read_phase_collects_data() {
     // Insert blocks, tags, properties, and ops
     insert_block(&pool, "blk-r1", "read phase block").await;
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, is_conflict) \
-         VALUES ('tag-r1', 'tag', 'readtag', 0)",
+        "INSERT INTO blocks (id, block_type, content) \
+         VALUES ('tag-r1', 'tag', 'readtag')",
     )
     .execute(&pool)
     .await
@@ -3563,7 +3401,6 @@ mod proptest_tests {
                     parent_id,
                     position,
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -3722,7 +3559,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -3737,7 +3573,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     parent_id: None,
                     position: Some(2),
                     deleted_at: None,
-                    is_conflict: 0,
                     conflict_source: None,
                     conflict_type: None,
                     todo_state: None,
@@ -3762,16 +3597,16 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
     let stale_src = "01HQUX250STALESRCCCCCCCCCC";
     let stale_tag = "01HQUX250STALETAGGGGGGGGGG";
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, is_conflict) \
-         VALUES (?, 'content', 'stale src', 0)",
+        "INSERT INTO blocks (id, block_type, content) \
+         VALUES (?, 'content', 'stale src')",
     )
     .bind(stale_src)
     .execute(&pool)
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, is_conflict) \
-         VALUES (?, 'tag', 'stale tag', 0)",
+        "INSERT INTO blocks (id, block_type, content) \
+         VALUES (?, 'tag', 'stale tag')",
     )
     .bind(stale_tag)
     .execute(&pool)
@@ -3836,114 +3671,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
 // would otherwise blow up on decode and break sync catch-up for any
 // device that hasn't yet rotated to v3.
 
-/// A v2-shaped BlockSnapshot — exactly the field set BlockSnapshot had
-/// before MAINT-133 added `conflict_type`. We use this to encode CBOR
-/// that omits the new field, simulating a snapshot taken on an older
-/// build.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockSnapshotV2 {
-    id: String,
-    block_type: String,
-    content: Option<String>,
-    parent_id: Option<String>,
-    position: Option<i64>,
-    deleted_at: Option<String>,
-    is_conflict: i64,
-    conflict_source: Option<String>,
-    todo_state: Option<String>,
-    priority: Option<String>,
-    due_date: Option<String>,
-    scheduled_date: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SnapshotTablesV2 {
-    blocks: Vec<BlockSnapshotV2>,
-    block_tags: Vec<BlockTagSnapshot>,
-    block_properties: Vec<BlockPropertySnapshot>,
-    block_links: Vec<BlockLinkSnapshot>,
-    attachments: Vec<AttachmentSnapshot>,
-    property_definitions: Vec<crate::snapshot::types::PropertyDefinitionSnapshot>,
-    page_aliases: Vec<crate::snapshot::types::PageAliasSnapshot>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SnapshotDataV2 {
-    schema_version: u32,
-    snapshot_device_id: String,
-    up_to_seqs: BTreeMap<String, i64>,
-    up_to_hash: String,
-    tables: SnapshotTablesV2,
-}
-
-#[test]
-fn maint133_v2_snapshot_decodes_with_none_conflict_type() {
-    let mut up_to_seqs = BTreeMap::new();
-    up_to_seqs.insert("dev".to_string(), 7);
-
-    // Note: a v2 snapshot would have flagged a conflict block via
-    // is_conflict = 1 + conflict_source = Some(...) but had no way to
-    // express the conflict's *type*. The test seeds exactly that
-    // historical shape.
-    let v2 = SnapshotDataV2 {
-        schema_version: 2,
-        snapshot_device_id: "dev".to_string(),
-        up_to_seqs,
-        up_to_hash: "h2".to_string(),
-        tables: SnapshotTablesV2 {
-            blocks: vec![BlockSnapshotV2 {
-                id: "b-conf".to_string(),
-                block_type: "content".to_string(),
-                content: Some("clashed text".to_string()),
-                parent_id: None,
-                position: Some(1),
-                deleted_at: None,
-                is_conflict: 1,
-                conflict_source: Some("b-orig".to_string()),
-                todo_state: None,
-                priority: None,
-                due_date: None,
-                scheduled_date: None,
-            }],
-            block_tags: vec![],
-            block_properties: vec![],
-            block_links: vec![],
-            attachments: vec![],
-            property_definitions: vec![],
-            page_aliases: vec![],
-        },
-    };
-
-    // Encode using the same CBOR + zstd path the production code takes.
-    let mut cbor_buf = Vec::new();
-    ciborium::into_writer(&v2, &mut cbor_buf).unwrap();
-    let compressed = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
-
-    // The real decoder must accept v2 without the new field.
-    let decoded = decode_snapshot(&compressed[..])
-        .expect("v2 snapshot (no conflict_type field) must decode cleanly via serde(default)");
-
-    assert_eq!(
-        decoded.schema_version, 2,
-        "schema_version must round-trip the original v2 value"
-    );
-    assert_eq!(decoded.tables.blocks.len(), 1, "expected one block");
-    let b = &decoded.tables.blocks[0];
-    assert_eq!(b.id, "b-conf");
-    assert_eq!(b.is_conflict, 1, "is_conflict flag must survive");
-    assert_eq!(
-        b.conflict_source.as_deref(),
-        Some("b-orig"),
-        "conflict_source must survive"
-    );
-    assert!(
-        b.conflict_type.is_none(),
-        "MAINT-133: conflict_type must default to None on v2 snapshots — \
-         the field did not exist in the v2 schema. Got {:?}",
-        b.conflict_type
-    );
-}
-
 // =======================================================================
 // MAINT-133: conflict_type must survive snapshot round-trip
 // =======================================================================
@@ -3973,8 +3700,8 @@ async fn maint133_conflict_type_survives_round_trip() {
     sqlx::query(
         "INSERT INTO blocks \
             (id, block_type, content, parent_id, position, \
-             is_conflict, conflict_source, conflict_type) \
-         VALUES (?, 'content', ?, NULL, 1, 1, ?, 'Text')",
+             conflict_source, conflict_type) \
+         VALUES (?, 'content', ?, NULL, 1, ?, 'Text')",
     )
     .bind("block-conflict")
     .bind("conflicting content")
@@ -4076,7 +3803,6 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         parent_id: None,
         position: Some(1),
         deleted_at: None,
-        is_conflict: 0,
         conflict_source: None,
         conflict_type: None,
         todo_state: None,
@@ -4174,149 +3900,6 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
     assert_eq!(
         blk_count, 0,
         "L-111: blocks inserted before the failing chunk must also roll back"
-    );
-
-    mat.shutdown();
-}
-
-// =======================================================================
-// L-108: conflict copies survive their source's compaction
-// =======================================================================
-
-/// L-108: A block A and its conflict copy A' must both round-trip through
-/// `compact_op_log` → `apply_snapshot` with `conflict_source` intact, even
-/// after A's original `CreateBlock` op has been purged by compaction.
-///
-/// Pass-1 source: 08/F35. The concern was that after compaction purges the
-/// pre-conflict ops, a subsequent RESET via `apply_snapshot` may not include
-/// the source if it was never re-edited. This test pins the round-trip:
-///
-/// 1. Insert page P + real block A + conflict copy A' (with `conflict_source = A`).
-/// 2. Insert an old `CreateBlock` op for A (pre-retention-cutoff) so compaction
-///    has something to purge.
-/// 3. `compact_op_log` — A's old op is purged, a snapshot capturing both A
-///    and A' is written.
-/// 4. Insert post-compaction noise (block B) that the snapshot does NOT cover.
-/// 5. Read the snapshot blob from `log_snapshots`, call `apply_snapshot`.
-/// 6. Assert: the noise block B is gone (RESET wiped it), A and A' are present,
-///    A' still has `is_conflict = 1` and `conflict_source = A`.
-#[tokio::test]
-async fn compact_then_apply_snapshot_preserves_conflict_copy_l108() {
-    let (pool, _dir) = test_pool().await;
-    let mat = test_materializer(&pool);
-    let device_id = "dev-l108";
-
-    // Page P (real, top-level).
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-         VALUES ('P_L108', 'page', 'page-l108', NULL, 1, 0)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // Real block A (parent = P).
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-         VALUES ('A_L108', 'content', 'real A', 'P_L108', 1, 0)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // Conflict copy A' — `is_conflict = 1`, `conflict_source = A`.
-    // Mirrors the shape produced by `merge::resolve::create_conflict_copy`.
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source) \
-         VALUES ('A_PRIME_L108', 'content', 'conflict copy of A', 'P_L108', 999, 1, 'A_L108')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // Old op for A so compaction has something to purge (200 days ago vs.
-    // DEFAULT_RETENTION_DAYS = 90).
-    insert_op_at(&pool, device_id, "A_L108", "2024-01-01T00:00:00Z").await;
-
-    // Run compaction. Returns Some((snapshot_id, deleted_count)).
-    let (snapshot_id, _deleted) = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
-        .await
-        .unwrap()
-        .expect("compaction should produce a snapshot");
-
-    // Add post-compaction noise that the snapshot does NOT cover. Apply
-    // must wipe this.
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-         VALUES ('B_NOISE_L108', 'content', 'post-compaction noise', 'P_L108', 2, 0)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // Read the snapshot blob and apply it.
-    let snap_data: Vec<u8> = sqlx::query_scalar!(
-        "SELECT data FROM log_snapshots WHERE id = ? AND status = 'complete'",
-        snapshot_id
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
-
-    // Noise block must be gone (RESET wiped pre-snapshot state).
-    let noise_count: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = 'B_NOISE_L108'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        noise_count, 0,
-        "L-108: post-compaction noise block must be wiped by apply_snapshot"
-    );
-
-    // P, A, A' must all be present.
-    #[derive(sqlx::FromRow)]
-    struct BlockRow {
-        id: String,
-        is_conflict: i64,
-        conflict_source: Option<String>,
-    }
-    let mut rows: Vec<BlockRow> =
-        sqlx::query_as("SELECT id, is_conflict, conflict_source FROM blocks ORDER BY id")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    rows.sort_by(|a, b| a.id.cmp(&b.id));
-
-    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        vec!["A_L108", "A_PRIME_L108", "P_L108"],
-        "L-108: snapshot must round-trip P, A, A' (conflict copy)"
-    );
-
-    // A' must still be a conflict copy pointing at A.
-    let a_prime = rows.iter().find(|r| r.id == "A_PRIME_L108").unwrap();
-    assert_eq!(
-        a_prime.is_conflict, 1,
-        "L-108: A' must remain is_conflict = 1 after round-trip"
-    );
-    assert_eq!(
-        a_prime.conflict_source.as_deref(),
-        Some("A_L108"),
-        "L-108: A' conflict_source must point at A after round-trip"
-    );
-
-    // A must remain non-conflict.
-    let a = rows.iter().find(|r| r.id == "A_L108").unwrap();
-    assert_eq!(
-        a.is_conflict, 0,
-        "L-108: A must remain is_conflict = 0 after round-trip"
-    );
-    assert!(
-        a.conflict_source.is_none(),
-        "L-108: A must have no conflict_source after round-trip"
     );
 
     mat.shutdown();

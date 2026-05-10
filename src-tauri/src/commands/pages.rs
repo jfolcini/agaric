@@ -332,18 +332,16 @@ pub async fn export_page_markdown_inner(
 
         // Mirrors `get_page_inner`'s subtree walk: keyset on
         // `(COALESCE(position, sentinel), id)` over `page_id = ?1`, with
-        // the page row itself (`id = ?1`) excluded. Invariant #9 —
-        // `is_conflict = 0` excludes conflict copies.
+        // the page row itself (`id = ?1`) excluded.
         let rows = sqlx::query_as!(
             BlockRow,
             r#"SELECT id, block_type, content, parent_id, position,
-                    deleted_at, is_conflict as "is_conflict: bool",
+                    deleted_at,
                     conflict_type, todo_state, priority, due_date, scheduled_date,
                     page_id
              FROM blocks
              WHERE page_id = ?1
                AND id != ?1
-               AND is_conflict = 0
                AND deleted_at IS NULL
                AND (?2 IS NULL OR (
                     COALESCE(position, ?6) > ?3
@@ -421,7 +419,7 @@ pub async fn export_page_markdown_inner(
         let rows = sqlx::query!(
             r#"SELECT id, block_type, content FROM blocks
                WHERE id IN (SELECT value FROM json_each(?1))
-                 AND deleted_at IS NULL AND is_conflict = 0"#,
+                 AND deleted_at IS NULL"#,
             ids_json,
         )
         .fetch_all(pool)
@@ -533,7 +531,6 @@ pub async fn import_markdown_inner(
         r#"SELECT 1 as "ok: i32" FROM blocks b
            WHERE b.id = ?
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND EXISTS (
                  SELECT 1 FROM block_properties p
                  WHERE p.block_id = b.id
@@ -744,14 +741,11 @@ pub async fn list_page_links_inner(
          JOIN blocks tb ON tb.id = bl.target_id
              AND tb.block_type = 'page'
              AND tb.deleted_at IS NULL
-             AND tb.is_conflict = 0
          JOIN blocks sb ON sb.id = bl.source_id
              AND sb.deleted_at IS NULL
-             AND sb.is_conflict = 0
          LEFT JOIN blocks pb ON pb.id = sb.parent_id
              AND pb.deleted_at IS NULL
              AND pb.block_type = 'page'
-             AND pb.is_conflict = 0
          WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
              AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
              AND (?1 IS NULL OR (
@@ -850,7 +844,7 @@ pub struct PageSubtreeResponse {
 /// column (index `idx_blocks_page_id`) rather than a recursive CTE —
 /// the materializer maintains the column on every command path, and the
 /// index makes the query O(log n + k) at any scale. Conflict copies are
-/// excluded via `is_conflict = 0` per invariant #9.
+/// excluded via  per invariant #9.
 #[instrument(skip(pool), err)]
 pub async fn get_page_inner(
     pool: &SqlitePool,
@@ -916,18 +910,17 @@ pub async fn get_page_inner(
             None => (None, 0, ""),
         };
 
-    // Invariant #9: `is_conflict = 0` excludes conflict-copy blocks that
+    // Invariant #9:  excludes conflict-copy blocks that
     // share a `page_id` but must never appear in the user-facing subtree.
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, is_conflict as "is_conflict: bool",
+                deleted_at,
                 conflict_type, todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks
          WHERE page_id = ?1
            AND id != ?1
-           AND is_conflict = 0
            AND deleted_at IS NULL
            AND (?2 IS NULL OR (
                 COALESCE(position, ?6) > ?3

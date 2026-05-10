@@ -630,8 +630,7 @@ async fn set_date_property(
 async fn find_recurrence_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
     sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at,
-                  is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority,
                   due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         original_id
@@ -1108,8 +1107,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
     // from the two pre-existing neighbors).
     let rows: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at,
-                  is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority,
                   due_date, scheduled_date, page_id
            FROM blocks
            WHERE parent_id = ?

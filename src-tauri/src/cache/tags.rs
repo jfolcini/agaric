@@ -32,7 +32,7 @@ async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // UX-250: usage_count counts DISTINCT block_ids from the UNION of
     // `block_tags` (explicit associations) and `block_tag_refs` (inline
     // `#[ULID]` references in content). Both joins enforce
-    // `deleted_at IS NULL AND is_conflict = 0` on the referenced block
+    // `deleted_at IS NULL` on the referenced block
     // so soft-deleted / conflict-copy blocks never contribute.
     //
     // UNION (not UNION ALL) collapses a block that happens to carry both
@@ -50,17 +50,16 @@ async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
                  SELECT bt.tag_id, bt.block_id
                  FROM block_tags bt
                  JOIN blocks blk ON blk.id = bt.block_id
-                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0
+                 WHERE blk.deleted_at IS NULL
                  UNION
                  SELECT btr.tag_id, btr.source_id AS block_id
                  FROM block_tag_refs btr
                  JOIN blocks blk ON blk.id = btr.source_id
-                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0
+                 WHERE blk.deleted_at IS NULL
              )
              GROUP BY tag_id
          ) t ON t.tag_id = b.id
          WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
-           AND b.is_conflict = 0
          ORDER BY b.id",
         now,
     )
@@ -109,7 +108,7 @@ async fn rebuild_tags_cache_split_impl(
 
     // Read phase — snapshot-isolated SELECT on `read_pool`. Same shape
     // and filters as `rebuild_tags_cache_impl`: UX-250 UNION over
-    // `block_tags` ∪ `block_tag_refs`, `is_conflict = 0`,
+    // `block_tags` ∪ `block_tag_refs`, ,
     // `deleted_at IS NULL`, `content IS NOT NULL`. Tags with zero usage
     // are included via the LEFT JOIN + COALESCE.
     let mut read_tx = read_pool.begin().await?;
@@ -121,17 +120,16 @@ async fn rebuild_tags_cache_split_impl(
                  SELECT bt.tag_id, bt.block_id
                  FROM block_tags bt
                  JOIN blocks blk ON blk.id = bt.block_id
-                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0
+                 WHERE blk.deleted_at IS NULL
                  UNION
                  SELECT btr.tag_id, btr.source_id AS block_id
                  FROM block_tag_refs btr
                  JOIN blocks blk ON blk.id = btr.source_id
-                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0
+                 WHERE blk.deleted_at IS NULL
              )
              GROUP BY tag_id
          ) t ON t.tag_id = b.id
          WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
-           AND b.is_conflict = 0
          ORDER BY b.id",
     )
     .fetch_all(&mut *read_tx)

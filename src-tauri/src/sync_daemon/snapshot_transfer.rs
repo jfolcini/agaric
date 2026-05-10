@@ -1761,7 +1761,6 @@ mod tests {
                 parent_id: None,
                 position: Some(i64::from(i) + 1),
                 deleted_at: None,
-                is_conflict: 0,
                 conflict_source: None,
                 conflict_type: None,
                 todo_state: None,

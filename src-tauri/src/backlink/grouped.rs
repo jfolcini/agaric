@@ -72,7 +72,7 @@ pub async fn eval_backlink_query_grouped(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 \
            AND bl.source_id != ?1 \
-           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+           AND b.deleted_at IS NULL \
            AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))",
@@ -355,11 +355,11 @@ pub async fn eval_unlinked_references(
     space_id: Option<&str>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     // 1. Fetch the page title.
-    //    Filter `is_conflict = 0` so a conflict-copy page id never resolves to a
+    //    Filter  so a conflict-copy page id never resolves to a
     //    title that drives the unlinked-references search (mirrors the sister
     //    `resolve_root_pages` helper). (L-81)
     let title: Option<String> = sqlx::query_scalar(
-        "SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0",
+        "SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
     )
     .bind(page_id)
     .fetch_optional(pool)
@@ -444,7 +444,6 @@ pub async fn eval_unlinked_references(
          JOIN blocks b ON b.id = fb.block_id \
          WHERE fts_blocks MATCH ?1 \
            AND b.deleted_at IS NULL \
-           AND b.is_conflict = 0 \
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
            ) \
@@ -646,7 +645,7 @@ pub async fn eval_unlinked_references(
     // 11. Distribute fetched rows back into groups, maintaining sort order.
     //     MAINT-113 M2 — same active-only invariant as step 9 above; the
     //     unlinked-references query path also filters
-    //     `is_conflict = 0 AND deleted_at IS NULL` upstream.
+    //     deleted_at IS NULL` upstream.
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
     for (group_page_id, page_title, block_ids_in_group) in &actual_groups {
         let mut blocks: Vec<(&str, usize)> = block_ids_in_group

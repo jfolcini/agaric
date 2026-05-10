@@ -30,36 +30,8 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 /// simulate pre-existing content when exercising the upgrade path.
 async fn insert_page(pool: &SqlitePool, id: &str, content: &str) {
     sqlx::query!(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-         VALUES (?, 'page', ?, NULL, 1, ?, 0)",
-        id,
-        content,
-        id,
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
-/// Insert a soft-deleted page block.
-async fn insert_deleted_page(pool: &SqlitePool, id: &str, content: &str) {
-    sqlx::query!(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict, deleted_at) \
-         VALUES (?, 'page', ?, NULL, 1, ?, 0, '2025-01-01T00:00:00Z')",
-        id,
-        content,
-        id,
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
-/// Insert a conflict-copy page block.
-async fn insert_conflict_page(pool: &SqlitePool, id: &str, content: &str) {
-    sqlx::query!(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-         VALUES (?, 'page', ?, NULL, 1, ?, 1)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', ?, NULL, 1, ?)",
         id,
         content,
         id,
@@ -73,7 +45,6 @@ async fn count_space_blocks(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar!(
         r#"SELECT COUNT(*) as "n!: i64" FROM blocks b
            WHERE b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND EXISTS (
                  SELECT 1 FROM block_properties p
                  WHERE p.block_id = b.id
@@ -285,8 +256,8 @@ async fn bootstrap_skips_pages_that_already_have_space_property() {
     // mid-state where a peer synced the space block ahead of the
     // `is_space` property, then the local device's bootstrap fires.
     sqlx::query!(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-         VALUES (?, 'page', 'Work', NULL, 1, ?, 0)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'Work', NULL, 1, ?)",
         SPACE_WORK_ULID,
         SPACE_WORK_ULID,
     )
@@ -343,37 +314,6 @@ async fn bootstrap_skips_space_blocks_themselves() {
 }
 
 #[tokio::test]
-async fn bootstrap_skips_deleted_and_conflict_pages() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_page(&pool, "01JABCD0000000000000000001", "Live").await;
-    insert_deleted_page(&pool, "01JABCD0000000000000000002", "Deleted").await;
-    insert_conflict_page(&pool, "01JABCD0000000000000000003", "Conflict").await;
-
-    bootstrap_spaces(&pool, DEV).await.unwrap();
-
-    assert_eq!(
-        space_property(&pool, "01JABCD0000000000000000001")
-            .await
-            .as_deref(),
-        Some(SPACE_PERSONAL_ULID),
-        "live page must be migrated"
-    );
-    assert!(
-        space_property(&pool, "01JABCD0000000000000000002")
-            .await
-            .is_none(),
-        "soft-deleted page must not be migrated"
-    );
-    assert!(
-        space_property(&pool, "01JABCD0000000000000000003")
-            .await
-            .is_none(),
-        "conflict copy must not be migrated"
-    );
-}
-
-#[tokio::test]
 async fn bootstrap_resumes_after_partial_state() {
     let (pool, _dir) = test_pool().await;
 
@@ -382,8 +322,8 @@ async fn bootstrap_resumes_after_partial_state() {
     // Simulate a crashed prior bootstrap that created Personal but not
     // Work. The function must finish the job on the next call.
     sqlx::query!(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-         VALUES (?, 'page', 'Personal', NULL, 1, ?, 0)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'Personal', NULL, 1, ?)",
         SPACE_PERSONAL_ULID,
         SPACE_PERSONAL_ULID,
     )
@@ -737,7 +677,6 @@ async fn assert_every_page_has_space_or_is_space(pool: &SqlitePool) {
         r#"SELECT id as "id!: String" FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND NOT EXISTS (
                  SELECT 1 FROM block_properties p
                  WHERE p.block_id = b.id AND p.key = 'space'

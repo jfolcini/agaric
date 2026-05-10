@@ -137,7 +137,6 @@ export function makeBlock(
     page_id: blockType === 'page' ? id : parentId,
     position,
     deleted_at: null,
-    is_conflict: false,
     conflict_type: null,
     todo_state: null,
     priority: null,

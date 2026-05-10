@@ -275,12 +275,10 @@ where
         r#"SELECT bp.value_ref AS "space_id?"
              FROM block_properties bp
              JOIN blocks tgt ON tgt.id = bp.block_id
-                            AND tgt.is_conflict = 0
                             AND tgt.deleted_at IS NULL
             WHERE bp.block_id = COALESCE(
                     (SELECT page_id FROM blocks
                       WHERE id = ?1
-                        AND is_conflict = 0
                         AND deleted_at IS NULL),
                     ?1)
               AND bp.key = 'space'
@@ -493,25 +491,17 @@ mod tests {
         .unwrap();
     }
 
-    /// Insert a page belonging to `space_id` with the given conflict /
-    /// soft-delete flags. Mirrors the audit binary's `insert_page`
-    /// helper but exposes `is_conflict` + `deleted_at` so the
-    /// conflict-filtering tests can flip them.
-    async fn seed_page(
-        pool: &SqlitePool,
-        page_id: &str,
-        space_id: &str,
-        is_conflict: bool,
-        deleted_at: Option<&str>,
-    ) {
+    /// Insert a page belonging to `space_id` with the given soft-delete
+    /// flag. Mirrors the audit binary's `insert_page` helper but exposes
+    /// `deleted_at` so the soft-delete-filtering tests can flip it.
+    async fn seed_page(pool: &SqlitePool, page_id: &str, space_id: &str, deleted_at: Option<&str>) {
         sqlx::query(
             "INSERT INTO blocks \
-                 (id, block_type, content, parent_id, position, page_id, is_conflict, deleted_at) \
-             VALUES (?, 'page', 'Page', NULL, 1, ?, ?, ?)",
+                 (id, block_type, content, parent_id, position, page_id, deleted_at) \
+             VALUES (?, 'page', 'Page', NULL, 1, ?, ?)",
         )
         .bind(page_id)
         .bind(page_id)
-        .bind(if is_conflict { 1 } else { 0 })
         .bind(deleted_at)
         .execute(pool)
         .await
@@ -559,7 +549,7 @@ mod tests {
     async fn resolve_block_space_returns_some_for_page_in_space() {
         let (pool, _dir) = test_pool().await;
         seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
-        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, false, None).await;
+        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, None).await;
 
         let resolved = resolve_block_space(&pool, &BlockId::from_trusted(PAGE_A_ULID))
             .await
@@ -571,7 +561,7 @@ mod tests {
     async fn resolve_block_space_content_block_inherits_pages_space() {
         let (pool, _dir) = test_pool().await;
         seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
-        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, false, None).await;
+        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, None).await;
         seed_content_block(&pool, CONTENT_A_ULID, PAGE_A_ULID).await;
 
         let page_resolved = resolve_block_space(&pool, &BlockId::from_trusted(PAGE_A_ULID))
@@ -615,31 +605,15 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn resolve_block_space_skips_conflict_page_in_coalesce_chain() {
-        let (pool, _dir) = test_pool().await;
-        seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
-        // Page is marked is_conflict = 1 — must not feed page_id
-        // through the COALESCE inner subquery.
-        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, true, None).await;
-        seed_content_block(&pool, CONTENT_A_ULID, PAGE_A_ULID).await;
-
-        let resolved = resolve_block_space(&pool, &BlockId::from_trusted(CONTENT_A_ULID))
-            .await
-            .unwrap();
-        assert_eq!(resolved, None);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn resolve_block_space_skips_soft_deleted_page_in_coalesce_chain() {
         let (pool, _dir) = test_pool().await;
         seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
-        // Page is soft-deleted (deleted_at non-NULL) — same exclusion
-        // pattern as the conflict case above.
+        // Page is soft-deleted (deleted_at non-NULL) — must not feed
+        // page_id through the COALESCE inner subquery.
         seed_page(
             &pool,
             PAGE_A_ULID,
             SPACE_PERSONAL_ULID,
-            false,
             Some("2025-01-01T00:00:00Z"),
         )
         .await;
@@ -658,7 +632,7 @@ mod tests {
         // — `from_trusted` just normalises ASCII case, no re-parse.
         let (pool, _dir) = test_pool().await;
         seed_space_block(&pool, SPACE_WORK_ULID).await;
-        seed_page(&pool, PAGE_B_ULID, SPACE_WORK_ULID, false, None).await;
+        seed_page(&pool, PAGE_B_ULID, SPACE_WORK_ULID, None).await;
 
         let resolved = resolve_block_space(&pool, &BlockId::from_trusted(PAGE_B_ULID))
             .await
@@ -674,7 +648,7 @@ mod tests {
         // the helper inside their existing `BEGIN IMMEDIATE` tx.
         let (pool, _dir) = test_pool().await;
         seed_space_block(&pool, SPACE_PERSONAL_ULID).await;
-        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, false, None).await;
+        seed_page(&pool, PAGE_A_ULID, SPACE_PERSONAL_ULID, None).await;
         seed_content_block(&pool, CONTENT_B_ULID, PAGE_A_ULID).await;
 
         let mut tx = pool.begin().await.unwrap();

@@ -1,7 +1,12 @@
 /**
- * ConflictList — shows blocks where is_conflict = 1 (p2-t12, p2-t13).
+ * ConflictList — formerly displayed conflict-copy blocks (p2-t12, p2-t13).
  *
- * Standalone view similar to TrashView. Paginated list of conflict blocks.
+ * Post-PEND-09 Phase 4 the underlying `is_conflict` column was dropped;
+ * the `list_conflicts` IPC now returns an empty array. The view stays
+ * mounted as a vacuous surface so any deep-links / IPC consumers still
+ * resolve cleanly. Remove or repurpose in a future cleanup pass.
+ *
+ * Paginated list of conflict blocks.
  * Supports "Keep" (edit original + delete conflict) and "Discard" (delete conflict)
  * with two-click confirmation on both Keep and Discard.
  *

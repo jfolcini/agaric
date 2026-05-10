@@ -18,7 +18,6 @@ export function makeBlock(overrides: Partial<FlatBlock> = {}): FlatBlock {
     parent_id: null,
     position: 0,
     deleted_at: null,
-    is_conflict: false,
     conflict_type: null,
     todo_state: null,
     priority: null,
@@ -39,7 +38,6 @@ export function makePage(overrides: Partial<BlockRow> = {}): BlockRow {
     parent_id: null,
     position: null,
     deleted_at: null,
-    is_conflict: false,
     conflict_type: null,
     todo_state: null,
     priority: null,
@@ -50,7 +48,7 @@ export function makePage(overrides: Partial<BlockRow> = {}): BlockRow {
   }
 }
 
-/** Create a conflict-type BlockRow (is_conflict: true). */
+/** Create a BlockRow seeded for conflict-renderer tests. */
 export function makeConflict(overrides: Partial<BlockRow> = {}): BlockRow {
   return {
     id: 'CONFLICT001',
@@ -59,7 +57,6 @@ export function makeConflict(overrides: Partial<BlockRow> = {}): BlockRow {
     parent_id: 'ORIG001',
     position: null,
     deleted_at: null,
-    is_conflict: true,
     conflict_type: null,
     todo_state: null,
     priority: null,
@@ -79,7 +76,6 @@ export function makeDailyPage(overrides: Partial<BlockRow> = {}): BlockRow {
     parent_id: null,
     position: null,
     deleted_at: null,
-    is_conflict: false,
     conflict_type: null,
     todo_state: null,
     priority: null,

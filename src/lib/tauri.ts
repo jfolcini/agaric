@@ -290,10 +290,9 @@ export async function firstChildForBlocks(blockIds: string[]): Promise<Record<st
  * ConflictTypeRenderer — collapse a per-row `getBlock` IPC fan-out into
  * a single query.
  *
- * Soft-deleted and conflict-copy rows are INCLUDED (unlike `batchResolve`
- * which filters `is_conflict = 0`). The primary caller is `ConflictList`
- * which surfaces conflict rows themselves and their possibly-deleted
- * parents — filtering would defeat the use-case.
+ * Soft-deleted rows are INCLUDED (unlike `batchResolve` which filters
+ * them out). Pre-PEND-09 Phase 4 the call site rationale also covered
+ * conflict-copy rows; those no longer exist post-`is_conflict` drop.
  *
  * IDs that don't exist are silently omitted from the response — callers
  * must map by `id` and treat missing keys as "unknown / lost". Returned

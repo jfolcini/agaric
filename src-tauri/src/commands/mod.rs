@@ -825,7 +825,6 @@ struct RepeatingBlockRow {
     parent_id: Option<String>,
     position: Option<i64>,
     deleted_at: Option<String>,
-    is_conflict: bool,
     conflict_type: Option<String>,
     todo_state: Option<String>,
     priority: Option<String>,
@@ -842,7 +841,7 @@ impl RepeatingBlockRow {
     /// Extract the core [`crate::pagination::ActiveBlockRow`] fields
     /// (used when building [`crate::pagination::ActiveProjectedAgendaEntry`]
     /// values). The SQL that produced this row filters
-    /// `is_conflict = 0 AND deleted_at IS NULL` (see
+    /// `deleted_at IS NULL` (see
     /// `commands/agenda.rs::list_projected_agenda_on_the_fly`), so the
     /// active claim is sound.
     fn to_active_block_row(&self) -> crate::pagination::ActiveBlockRow {
@@ -853,7 +852,6 @@ impl RepeatingBlockRow {
             parent_id: self.parent_id.clone(),
             position: self.position,
             deleted_at: self.deleted_at.clone(),
-            is_conflict: self.is_conflict,
             conflict_type: self.conflict_type.clone(),
             todo_state: self.todo_state.clone(),
             priority: self.priority.clone(),

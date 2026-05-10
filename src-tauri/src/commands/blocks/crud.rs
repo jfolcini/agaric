@@ -266,7 +266,6 @@ pub(crate) async fn create_block_in_tx(
             parent_id,
             position: Some(effective_position),
             deleted_at: None,
-            is_conflict: false,
             conflict_type: None,
             todo_state: None,
             priority: None,
@@ -444,7 +443,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -523,7 +522,6 @@ pub async fn edit_block_inner(
         parent_id,
         position,
         deleted_at: None,
-        is_conflict: false,
         conflict_type: None,
         todo_state: None,
         priority: None,
@@ -604,7 +602,6 @@ pub async fn delete_block_inner(
         let child_count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
              WHERE b.deleted_at IS NULL \
-             AND b.is_conflict = 0 \
              AND EXISTS ( \
                  SELECT 1 FROM block_properties p \
                  WHERE p.block_id = b.id \
@@ -652,7 +649,7 @@ pub async fn delete_block_inner(
 
     // Cascade soft-delete within same transaction.
     //
-    // `descendants_cte_active!()` filters `is_conflict = 0` AND
+    // `descendants_cte_active!()` filters  AND
     // `deleted_at IS NULL` in the recursive member — conflict copies have
     // independent lifecycles (invariant #9) and already-deleted subtrees
     // must keep their original `deleted_at` timestamp. The shared CTE lives
@@ -716,7 +713,7 @@ pub async fn delete_block_inner(
 /// the input list (via `json_each`) that resolves to a non-deleted,
 /// non-conflict block, and whose recursive arm walks `parent_id`
 /// downward with the canonical AGENTS.md invariant #9 filters
-/// (`is_conflict = 0 AND deleted_at IS NULL` in the recursive member,
+/// (deleted_at IS NULL` in the recursive member,
 /// `depth < 100` bound). Because the seed already covers every root
 /// simultaneously, an ancestor's subtree subsumes any selected
 /// descendant — the FE's MAINT-173 ancestor-pre-walk becomes
@@ -779,14 +776,14 @@ pub async fn delete_blocks_by_ids_inner(
 
     // Resolve the live root set INSIDE the tx so a row that was
     // soft-deleted between FE selection and this call drops out
-    // cleanly. `is_conflict = 0` filter applies (invariant #9 — we
+    // cleanly.  filter applies (invariant #9 — we
     // never bulk-soft-delete a conflict copy this way; the FE / sync
     // path that produced the conflict has its own resolution flow).
     let live_roots: Vec<String> = sqlx::query_scalar!(
         r#"SELECT id AS "id!: String" FROM blocks
            WHERE id IN (SELECT value FROM json_each(?1))
              AND deleted_at IS NULL
-             AND is_conflict = 0"#,
+"#,
         ids_json,
     )
     .fetch_all(&mut **tx)
@@ -817,7 +814,6 @@ pub async fn delete_blocks_by_ids_inner(
             let child_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
                  WHERE b.deleted_at IS NULL \
-                 AND b.is_conflict = 0 \
                  AND EXISTS ( \
                      SELECT 1 FROM block_properties p \
                      WHERE p.block_id = b.id \
@@ -866,7 +862,7 @@ pub async fn delete_blocks_by_ids_inner(
     }
 
     // One recursive CTE seeded from every root in `live_roots` (via
-    // `json_each`). `b.deleted_at IS NULL AND b.is_conflict = 0`
+    // `json_each`). `b.deleted_at IS NULL`
     // applies to BOTH the seed and the recursive arm: roots already
     // tombstoned drop out (idempotency), and conflict copies are
     // skipped per invariant #9. `d.depth < 100` bounds runaway
@@ -883,11 +879,10 @@ pub async fn delete_blocks_by_ids_inner(
              SELECT id, 0 FROM blocks \
              WHERE id IN (SELECT value FROM json_each(?1)) \
                AND deleted_at IS NULL \
-               AND is_conflict = 0 \
              UNION ALL \
              SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
          ) \
          UPDATE blocks SET deleted_at = ?2 \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
@@ -1033,7 +1028,7 @@ pub async fn restore_block_inner(
 
     // Restore within same transaction.
     //
-    // `descendants_cte_standard!()` filters `is_conflict = 0` — conflict
+    // `descendants_cte_standard!()` filters  — conflict
     // copies have independent lifecycles and must not be bulk-restored with
     // the original (invariant #9). Shared CTE in `crate::block_descendants`.
     let result = sqlx::query(concat!(
@@ -1069,7 +1064,7 @@ pub async fn restore_block_inner(
     // `move_block_inner`'s recursive UPDATE skips deleted descendants,
     // so a soft-deleted block keeps its pre-move `page_id` until restore).
     //
-    // Invariant #9: the recursive CTE filters `is_conflict = 0` in both
+    // Invariant #9: the recursive CTE filters  in both
     // members AND bounds `depth < 100`. Conflict copies inherit
     // `parent_id` from the original and would otherwise be reparented
     // under the restored subtree.
@@ -1118,11 +1113,11 @@ pub async fn restore_block_inner(
     sqlx::query(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT b.id, 0 FROM blocks b \
-             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
              UNION ALL \
              SELECT b.id, d.depth + 1 FROM blocks b \
              JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
          ) \
          UPDATE blocks SET page_id = ?2 \
          WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
@@ -1239,13 +1234,12 @@ pub async fn purge_block_inner(
         .execute(&mut **tx)
         .await?;
 
-    // PURGE is the documented exception to invariant #9: the purge CTE
-    // (`descendants_cte_purge!()`, defined in `crate::block_descendants`) is
-    // the one recursive walk in the codebase that does NOT filter
-    // `is_conflict = 0` — the goal is to erase every row descended from the
-    // purged block, INCLUDING conflict copies. `depth < 100` still bounds
-    // runaway recursion on corrupted parent_id chains. The materializer's
-    // `OpType::PurgeBlock` handler mirrors this sequence for remote ops.
+    // PURGE: the goal is to erase every row descended from the purged
+    // block. `descendants_cte_purge!()` (defined in
+    // `crate::block_descendants`) walks the subtree without filters,
+    // bounded only by `depth < 100` to defend against corrupted
+    // parent_id chains. The materializer's `OpType::PurgeBlock` handler
+    // mirrors this sequence for remote ops.
 
     // block_tags: either column may reference a descendant
     sqlx::query(concat!(
@@ -1737,7 +1731,7 @@ use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
 /// Each input id is treated as a *root* of a soft-delete cascade — the
 /// frontend's batch action is sourced from `listBlocks({showDeleted:true})`
 /// which already returns roots only. The descendant walk uses the standard
-/// CTE (filters `is_conflict = 0`) so conflict copies retain their
+/// CTE (filters ) so conflict copies retain their
 /// independent lifecycle (invariant #9). Restoration filters
 /// `deleted_at IS NOT NULL` so non-deleted ids in the input are silently
 /// no-ops (matches the "all" variant's behaviour against a mixed table).
@@ -1846,7 +1840,7 @@ pub async fn restore_blocks_by_ids_inner(
              UNION ALL \
              SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.is_conflict = 0 AND d.depth < 100 \
+             WHERE d.depth < 100 \
          ) \
          UPDATE blocks SET deleted_at = NULL \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NOT NULL";
@@ -1982,7 +1976,7 @@ pub async fn purge_blocks_by_ids_inner(
 
     // Multi-root descendant CTE — variant of `descendants_cte_purge!()`
     // seeded from `json_each(?1)`. Like the single-root purge CTE this
-    // does NOT filter `is_conflict = 0` (PURGE is the documented
+    // does NOT filter  (PURGE is the documented
     // exception to invariant #9). `depth < 100` still bounds runaway
     // recursion. Kept inline as a `&str` so each `sqlx::query(...)` call
     // can `concat!` against per-table tail clauses without macro
@@ -2397,7 +2391,7 @@ pub(crate) async fn set_property_in_tx(
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -2487,7 +2481,6 @@ pub(crate) async fn set_property_in_tx(
             parent_id: existing.parent_id,
             position: existing.position,
             deleted_at: existing.deleted_at,
-            is_conflict: existing.is_conflict,
             conflict_type: existing.conflict_type,
             todo_state: if key == "todo_state" {
                 value_text.clone()
@@ -2804,7 +2797,7 @@ pub async fn purge_blocks_by_ids(
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictResolveAction {
-    /// The conflict-copy block id (the row whose `is_conflict = 1`).
+    /// The conflict-copy block id (the row whose ).
     pub block_id: String,
     /// The original / parent block id whose content is overwritten on `keep`.
     /// For `discard` actions this field is unused but still required by the

@@ -31,7 +31,6 @@ function makePage(id: string, content: string): BlockRow {
     parent_id: null,
     position: null,
     deleted_at: null,
-    is_conflict: false,
     conflict_type: null,
     todo_state: null,
     priority: null,

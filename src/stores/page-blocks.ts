@@ -306,7 +306,6 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           parent_id: result.parent_id,
           position: result.position,
           deleted_at: null,
-          is_conflict: false,
           conflict_type: null,
           todo_state: null,
           priority: null,

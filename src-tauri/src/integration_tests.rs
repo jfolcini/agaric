@@ -1904,15 +1904,13 @@ async fn compute_page_id_via_cte(pool: &SqlitePool, block_id: &str) -> Option<St
     sqlx::query_scalar!(
         r#"WITH RECURSIVE ancestors(cur_id, cur_type, depth) AS (
               SELECT b.id, b.block_type, 0 FROM blocks b
-              WHERE b.id = ? AND b.is_conflict = 0
+              WHERE b.id = ?
               UNION ALL
               SELECT parent.id, parent.block_type, a.depth + 1
               FROM ancestors a
               JOIN blocks child ON child.id = a.cur_id
               JOIN blocks parent ON parent.id = child.parent_id
               WHERE a.cur_type != 'page'
-                AND child.is_conflict = 0
-                AND parent.is_conflict = 0
                 AND a.depth < 100
            )
            SELECT cur_id AS "cur_id!: String"
@@ -1967,15 +1965,13 @@ async fn resolve_space_via_ancestor_chain(pool: &SqlitePool, block_id: &str) -> 
     sqlx::query_scalar!(
         r#"WITH RECURSIVE ancestors(cur_id, depth) AS (
               SELECT b.id, 0 FROM blocks b
-              WHERE b.id = ? AND b.is_conflict = 0
+              WHERE b.id = ?
               UNION ALL
               SELECT parent.id, a.depth + 1
               FROM ancestors a
               JOIN blocks child ON child.id = a.cur_id
               JOIN blocks parent ON parent.id = child.parent_id
-              WHERE child.is_conflict = 0
-                AND parent.is_conflict = 0
-                AND a.depth < 100
+              WHERE a.depth < 100
            )
            SELECT COALESCE(
                (SELECT bp.value_ref
@@ -2008,7 +2004,7 @@ async fn resolve_space_via_ancestor_chain(pool: &SqlitePool, block_id: &str) -> 
 async fn run_drift_audit(pool: &SqlitePool, label: &str) {
     let blocks: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT id, block_type, page_id FROM blocks \
-         WHERE is_conflict = 0 AND deleted_at IS NULL",
+         WHERE deleted_at IS NULL",
     )
     .fetch_all(pool)
     .await

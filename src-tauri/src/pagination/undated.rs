@@ -29,7 +29,7 @@ pub async fn list_undated_tasks(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at,
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
          FROM blocks b
@@ -37,7 +37,6 @@ pub async fn list_undated_tasks(
            AND b.due_date IS NULL
            AND b.scheduled_date IS NULL
            AND b.deleted_at IS NULL
-           AND b.is_conflict = 0
            AND (?1 IS NULL OR b.id > ?2)
            AND (?4 IS NULL OR COALESCE(b.page_id, b.id) IN (
                 SELECT bp.block_id FROM block_properties bp

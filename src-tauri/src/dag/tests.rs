@@ -945,8 +945,8 @@ async fn find_lca_after_compaction_produces_not_found() {
 
     // Insert block into blocks table (needed for snapshot collection)
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
-         VALUES ('B1', 'content', 'v1', 1, 0)",
+        "INSERT INTO blocks (id, block_type, content, position) \
+         VALUES ('B1', 'content', 'v1', 1)",
     )
     .execute(&pool)
     .await

@@ -23,7 +23,7 @@ pub const MIN_RETENTION_DAYS: u64 = 7;
 /// A link between two pages (for graph visualization).
 ///
 /// Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
-/// `is_conflict = 0 AND deleted_at IS NULL` on both source and target
+/// deleted_at IS NULL` on both source and target
 /// pages (MAINT-113 M1 lift of invariant #9 into the type system).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, sqlx::FromRow, specta::Type)]
 pub struct PageLink {

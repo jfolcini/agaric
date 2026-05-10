@@ -142,13 +142,11 @@ async fn resolve_or_create_journal_page(
     // space. Two spaces with the same date keep distinct daily notes.
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
-                  b.is_conflict as "is_conflict: bool", b.conflict_type,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, b.conflict_type,
                   b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND b.content = ?
              AND EXISTS (
                  SELECT 1 FROM block_properties bp
@@ -179,7 +177,6 @@ async fn resolve_or_create_journal_page(
         r#"SELECT 1 as "ok: i32" FROM blocks b
            WHERE b.id = ?
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND EXISTS (
                  SELECT 1 FROM block_properties p
                  WHERE p.block_id = b.id
@@ -339,13 +336,11 @@ pub async fn get_journal_page_by_date_inner(
 
     let row = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
-                  b.is_conflict as "is_conflict: bool", b.conflict_type,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, b.conflict_type,
                   b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND b.content = ?
              AND EXISTS (
                  SELECT 1 FROM block_properties bp
@@ -412,13 +407,11 @@ pub async fn list_journal_pages_in_range_inner(
 
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
-                  b.is_conflict as "is_conflict: bool", b.conflict_type,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, b.conflict_type,
                   b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND b.content LIKE '____-__-__'
              AND b.content >= ?
              AND b.content <= ?
@@ -510,7 +503,6 @@ mod tests {
                WHERE b.block_type = 'page'
                  AND b.content = ?
                  AND b.deleted_at IS NULL
-                 AND b.is_conflict = 0
                  AND EXISTS (
                      SELECT 1 FROM block_properties bp
                      WHERE bp.block_id = b.id

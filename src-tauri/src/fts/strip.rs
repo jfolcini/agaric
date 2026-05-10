@@ -122,14 +122,14 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
 
     if !tag_ids.is_empty() {
         let ids_json = serde_json::to_string(&tag_ids)?;
-        // Filter `is_conflict = 0` so single-block reindex matches the full
+        // Filter  so single-block reindex matches the full
         // rebuild path (`load_ref_maps`). Without this, a `RemoveConflict`
         // resolution would leave conflict-tag content in `fts_blocks` until
         // the next full rebuild. (M-61)
         let rows = sqlx::query_as::<_, (String, Option<String>)>(
             "SELECT id, content FROM blocks \
              WHERE id IN (SELECT value FROM json_each(?1)) \
-             AND block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0",
+             AND block_type = 'tag' AND deleted_at IS NULL",
         )
         .bind(&ids_json)
         .fetch_all(pool)
@@ -154,12 +154,12 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
 
     if !page_ids.is_empty() {
         let ids_json = serde_json::to_string(&page_ids)?;
-        // Filter `is_conflict = 0` to match the full rebuild path
+        // Filter  to match the full rebuild path
         // (`load_ref_maps`). See the tag-lookup comment above. (M-61)
         let rows = sqlx::query_as::<_, (String, Option<String>)>(
             "SELECT id, content FROM blocks \
              WHERE id IN (SELECT value FROM json_each(?1)) \
-             AND block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0",
+             AND block_type = 'page' AND deleted_at IS NULL",
         )
         .bind(&ids_json)
         .fetch_all(pool)
@@ -238,7 +238,7 @@ pub(crate) async fn load_ref_maps(
 ) -> Result<(HashMap<String, String>, HashMap<String, String>), AppError> {
     let tag_rows = sqlx::query!(
         "SELECT id, content FROM blocks \
-         WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0"
+         WHERE block_type = 'tag' AND deleted_at IS NULL"
     )
     .fetch_all(pool)
     .await?;
@@ -249,7 +249,7 @@ pub(crate) async fn load_ref_maps(
 
     let page_rows = sqlx::query!(
         "SELECT id, content FROM blocks \
-         WHERE block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0"
+         WHERE block_type = 'page' AND deleted_at IS NULL"
     )
     .fetch_all(pool)
     .await?;

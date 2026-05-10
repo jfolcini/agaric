@@ -26,7 +26,6 @@ pub struct BlockSnapshot {
     pub parent_id: Option<String>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
-    pub is_conflict: i64,
     pub conflict_source: Option<String>,
     /// MAINT-133: type of conflict ('Text', 'Property', 'Move', 'DeleteEdit')
     /// for conflict-copy blocks; NULL for non-conflict blocks. Added to the

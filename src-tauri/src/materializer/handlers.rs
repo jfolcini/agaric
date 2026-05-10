@@ -1146,7 +1146,7 @@ async fn apply_purge_block_via_loro(
 /// PURGE walks 15 tables — much broader than the engine's three
 /// (`blocks`, `block_properties`, `block_tags`) — so it stays SQL-side
 /// rather than being absorbed into a projection.  PURGE intentionally
-/// does NOT filter `is_conflict = 0`: invariant #9's documented
+/// does NOT filter : invariant #9's documented
 /// exception, every row that descends from the purged block must go
 /// (including conflict copies).  `depth < 100` is the runaway-recursion
 /// guard.
@@ -1449,8 +1449,8 @@ async fn apply_create_block_sql_only(
     let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
     sqlx::query(
         "INSERT OR IGNORE INTO blocks \
-             (id, block_type, content, parent_id, position, is_conflict) \
-         VALUES (?, ?, ?, ?, ?, 0)",
+             (id, block_type, content, parent_id, position) \
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(p.block_id.as_str())
     .bind(&p.block_type)
@@ -2211,8 +2211,8 @@ mod restore_cascade_tests {
         // block_type just needs to satisfy the schema's CHECK
         // constraint (`content | tag | page`).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'space', NULL, 0)",
         )
         .bind(SPACE)
         .execute(pool)
@@ -2221,8 +2221,8 @@ mod restore_cascade_tests {
         // Page (no parent, page_id = self).
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
-                                 is_conflict, deleted_at) \
-             VALUES (?, 'page', 'P', NULL, 0, ?, 0, ?)",
+                                 deleted_at) \
+             VALUES (?, 'page', 'P', NULL, 0, ?, ?)",
         )
         .bind(PAGE_ID)
         .bind(PAGE_ID)
@@ -2247,8 +2247,8 @@ mod restore_cascade_tests {
         ] {
             sqlx::query(
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
-                                     is_conflict, deleted_at) \
-                 VALUES (?, 'content', 'C', ?, ?, ?, 0, ?)",
+                                     deleted_at) \
+                 VALUES (?, 'content', 'C', ?, ?, ?, ?)",
             )
             .bind(id)
             .bind(parent)
@@ -2464,17 +2464,16 @@ mod delete_cascade_tests {
     /// so `resolve_block_space` returns SPACE.
     async fn seed_alive_subtree(pool: &SqlitePool) {
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'space', NULL, 0)",
         )
         .bind(SPACE)
         .execute(pool)
         .await
         .expect("seed space block");
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
-                                 is_conflict) \
-             VALUES (?, 'page', 'P', NULL, 0, ?, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'P', NULL, 0, ?)",
         )
         .bind(PAGE_ID)
         .bind(PAGE_ID)
@@ -2491,9 +2490,8 @@ mod delete_cascade_tests {
         .expect("seed space property");
         for (id, parent, pos) in [(CHILD_1, PAGE_ID, 0_i64), (CHILD_2, CHILD_1, 0)] {
             sqlx::query(
-                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
-                                     is_conflict) \
-                 VALUES (?, 'content', 'C', ?, ?, ?, 0)",
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'content', 'C', ?, ?, ?)",
             )
             .bind(id)
             .bind(parent)
@@ -2713,17 +2711,16 @@ mod cutover_branch_tests {
         // resolve_block_space succeeds for CreateBlock with parent
         // = PAGE_ID.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'space', NULL, 0)",
         )
         .bind(SPACE_ID)
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
-                                 is_conflict) \
-             VALUES (?, 'page', 'page-content', NULL, 0, ?, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'page-content', NULL, 0, ?)",
         )
         .bind(PAGE_ID)
         .bind(PAGE_ID)

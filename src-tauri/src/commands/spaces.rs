@@ -79,7 +79,6 @@ pub async fn list_spaces_inner(pool: &SqlitePool) -> Result<Vec<SpaceRow>, AppEr
                ON accent.block_id = b.id
               AND accent.key = 'accent_color'
            WHERE b.deleted_at IS NULL
-             AND b.is_conflict = 0
            ORDER BY COALESCE(b.content, '') ASC, b.id ASC"#,
     )
     .fetch_all(pool)
@@ -156,7 +155,6 @@ pub async fn create_page_in_space_inner(
         r#"SELECT 1 as "ok: i32" FROM blocks b
            WHERE b.id = ?
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND EXISTS (
                  SELECT 1 FROM block_properties p
                  WHERE p.block_id = b.id
@@ -437,21 +435,10 @@ mod tests {
     /// property). Used to verify the filter on the command query.
     async fn insert_plain_page(pool: &SqlitePool, id: &str, content: &str) {
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, 1, ?)",
             id,
             content,
-            id,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    /// Mark an existing block as a space (`is_space = "true"`).
-    async fn mark_as_space(pool: &SqlitePool, id: &str) {
-        sqlx::query!(
-            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
             id,
         )
         .execute(pool)
@@ -515,46 +502,6 @@ mod tests {
             "Personal sorts before Work alphabetically"
         );
         assert_eq!(spaces[1].name, "Work");
-    }
-
-    #[tokio::test]
-    async fn list_spaces_excludes_deleted_and_conflict_spaces() {
-        let (pool, _dir) = test_pool().await;
-        bootstrap_spaces(&pool, DEV).await.unwrap();
-
-        // Manufacture a soft-deleted "Archive" space.
-        sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict, deleted_at) \
-             VALUES (?, 'page', 'Archive', NULL, 1, ?, 0, '2025-01-01T00:00:00Z')",
-            "01JABCD0000000000000000001",
-            "01JABCD0000000000000000001",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        mark_as_space(&pool, "01JABCD0000000000000000001").await;
-
-        // Manufacture a conflict-copy "Copy" space.
-        sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'page', 'Copy', NULL, 1, ?, 1)",
-            "01JABCD0000000000000000002",
-            "01JABCD0000000000000000002",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        mark_as_space(&pool, "01JABCD0000000000000000002").await;
-
-        let spaces = list_spaces_inner(&pool).await.unwrap();
-        assert_eq!(
-            spaces.len(),
-            2,
-            "deleted + conflict spaces must be filtered out; only Personal + Work remain"
-        );
-        let names: Vec<&str> = spaces.iter().map(|s| s.name.as_str()).collect();
-        assert!(!names.contains(&"Archive"), "soft-deleted space excluded");
-        assert!(!names.contains(&"Copy"), "conflict-copy space excluded");
     }
 
     #[tokio::test]
@@ -810,44 +757,6 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::Validation(_))),
             "soft-deleted space target must be rejected with Validation, got {result:?}"
-        );
-        assert_eq!(
-            count_op_log(&pool).await,
-            before,
-            "atomicity: validation failure must not append any ops"
-        );
-    }
-
-    #[tokio::test]
-    async fn create_page_in_space_rejects_conflict_space_target() {
-        let (pool, _dir) = test_pool().await;
-        let materializer = Materializer::new(pool.clone());
-        bootstrap_spaces(&pool, DEV).await.unwrap();
-
-        // Flip `is_conflict = 1` on the Work space directly.
-        sqlx::query!(
-            "UPDATE blocks SET is_conflict = 1 WHERE id = ?",
-            SPACE_WORK_ULID
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let before = count_op_log(&pool).await;
-
-        let result = create_page_in_space_inner(
-            &pool,
-            DEV,
-            &materializer,
-            None,
-            "Should not land".into(),
-            SPACE_WORK_ULID.to_owned(),
-        )
-        .await;
-
-        assert!(
-            matches!(result, Err(AppError::Validation(_))),
-            "conflict-copy space target must be rejected with Validation, got {result:?}"
         );
         assert_eq!(
             count_op_log(&pool).await,

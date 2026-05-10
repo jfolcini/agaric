@@ -129,12 +129,10 @@ impl From<BlockId> for String {
 // ActiveBlockId — MAINT-113 M1
 // ---------------------------------------------------------------------------
 //
-// Lifts AGENTS.md invariant #9 (recursive CTEs over `blocks` must filter
-// `is_conflict = 0`) into the type system for IDs that have been
-// materialised as live, non-conflict blocks. A function signature that
-// takes `&ActiveBlockId` documents — and enforces — that the caller has
-// already verified the block exists, is not a conflict copy, and has
-// not been soft-deleted.
+// Lifts the "block is live" predicate into the type system. A function
+// signature that takes `&ActiveBlockId` documents — and enforces — that
+// the caller has already verified the block exists and has not been
+// soft-deleted.
 //
 // `ActiveBlockId` is a *strict* subset of `BlockId`. Every `ActiveBlockId`
 // value is also a valid `BlockId` (witnessed by the `From<ActiveBlockId>
@@ -151,7 +149,7 @@ impl From<BlockId> for String {
 /// A block ID that has been verified to refer to an active block.
 ///
 /// "Active" means the block exists in the materialised `blocks` table
-/// AND `is_conflict = 0` AND `deleted_at IS NULL`. Use [`verify_active`]
+/// AND `deleted_at IS NULL`. Use [`verify_active`]
 /// to convert a raw [`BlockId`] into this type.
 ///
 /// **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
@@ -197,7 +195,7 @@ impl ActiveBlockId {
     ///
     /// Skips the [`verify_active`] DB lookup. Use ONLY when the call site
     /// has just produced the value from an active-filtering SQL query
-    /// (e.g., a `SELECT … WHERE is_conflict = 0 AND deleted_at IS NULL`
+    /// (e.g., a `SELECT … WHERE deleted_at IS NULL`
     /// helper) and the activeness claim is fresh. For untrusted input
     /// (command parameters, op log payloads, sync messages) call
     /// [`verify_active`] instead.
@@ -280,29 +278,26 @@ impl From<ActiveBlockId> for BlockId {
 }
 
 /// Verify that a [`BlockId`] refers to an active block — i.e., a row
-/// exists in `blocks` with `is_conflict = 0 AND deleted_at IS NULL`.
+/// exists in `blocks` with deleted_at IS NULL`.
 ///
 /// This is the single checked gate from raw [`BlockId`] to
 /// [`ActiveBlockId`] (MAINT-113 M1). Every `ActiveBlockId` value in the
 /// codebase is either:
 ///
 /// 1. produced directly by a SQL query that filters on
-///    `is_conflict = 0 AND deleted_at IS NULL` (constructed via
+///    deleted_at IS NULL` (constructed via
 ///    [`ActiveBlockId::from_trusted_active`] at the helper boundary), or
 /// 2. round-tripped through this function from a raw [`BlockId`].
 ///
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — no row exists with this id.
-/// - [`AppError::Validation`] — the row exists but is a conflict copy
-///   (`is_conflict = 1`) or has been soft-deleted
-///   (`deleted_at IS NOT NULL`). The error message distinguishes the
-///   two cases for the (rare) caller that wants to recover.
+/// - [`AppError::Validation`] — the row exists but has been soft-deleted
+///   (`deleted_at IS NOT NULL`).
 pub async fn verify_active(pool: &SqlitePool, id: &BlockId) -> Result<ActiveBlockId, AppError> {
     let id_str = id.as_str();
     let row = sqlx::query!(
-        r#"SELECT is_conflict as "is_conflict: bool",
-                  deleted_at
+        r#"SELECT deleted_at
            FROM blocks
            WHERE id = ?"#,
         id_str,
@@ -313,12 +308,6 @@ pub async fn verify_active(pool: &SqlitePool, id: &BlockId) -> Result<ActiveBloc
     let row =
         row.ok_or_else(|| AppError::NotFound(format!("block '{}' does not exist", id_str)))?;
 
-    if row.is_conflict {
-        return Err(AppError::Validation(format!(
-            "block '{}' is a conflict copy",
-            id_str
-        )));
-    }
     if row.deleted_at.is_some() {
         return Err(AppError::Validation(format!(
             "block '{}' has been soft-deleted",

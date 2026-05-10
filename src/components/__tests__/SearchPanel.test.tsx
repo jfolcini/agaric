@@ -52,7 +52,6 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
   page_id: null,
   position: 1,
   deleted_at: null,
-  is_conflict: false,
   ...overrides,
 })
 
@@ -486,7 +485,6 @@ describe('SearchPanel', () => {
       parent_id: null,
       position: 0,
       deleted_at: null,
-      is_conflict: false,
     })
 
     await user.click(screen.getByText(textContent('child content')))
@@ -835,7 +833,6 @@ describe('SearchPanel', () => {
       parent_id: null,
       position: 0,
       deleted_at: null,
-      is_conflict: false,
     })
 
     // Button should re-enable after loading completes
@@ -1014,7 +1011,6 @@ describe('SearchPanel', () => {
       parent_id: null,
       position: 0,
       deleted_at: null,
-      is_conflict: false,
     }
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'search_blocks') return searchResults
@@ -1279,7 +1275,6 @@ describe('SearchPanel', () => {
         parent_id: null,
         position: 0,
         deleted_at: null,
-        is_conflict: false,
       })
 
       const listbox = screen.getByRole('listbox')
@@ -1932,7 +1927,6 @@ describe('SearchPanel', () => {
         page_id: null,
         position: 0,
         deleted_at: null,
-        is_conflict: false,
       }
       // search_blocks (empty), then get_block resolves the alias hit on
       // every effect re-run.

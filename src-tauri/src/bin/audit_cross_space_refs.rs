@@ -194,7 +194,7 @@ async fn load_space_names(pool: &SqlitePool) -> Result<FxHashMap<String, String>
            FROM blocks b
            JOIN block_properties bp
              ON bp.block_id = b.id AND bp.key = 'is_space'
-           WHERE b.is_conflict = 0 AND b.deleted_at IS NULL"#
+           WHERE b.deleted_at IS NULL"#
     )
     .fetch_all(pool)
     .await?;
@@ -228,8 +228,8 @@ async fn audit_a1(
               (SELECT bp.value_ref FROM block_properties bp
                WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space') AS "target_space?"
            FROM block_links bl
-           JOIN blocks bs ON bs.id = bl.source_id AND bs.is_conflict = 0 AND bs.deleted_at IS NULL
-           JOIN blocks bt ON bt.id = bl.target_id AND bt.is_conflict = 0 AND bt.deleted_at IS NULL
+           JOIN blocks bs ON bs.id = bl.source_id AND bs.deleted_at IS NULL
+           JOIN blocks bt ON bt.id = bl.target_id AND bt.deleted_at IS NULL
            WHERE (SELECT bp.value_ref FROM block_properties bp
                   WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space')
               IS NOT
@@ -268,8 +268,8 @@ async fn audit_a2(
               (SELECT bp.value_ref FROM block_properties bp
                WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS "target_space?"
            FROM block_tags bt
-           JOIN blocks bb ON bb.id = bt.block_id AND bb.is_conflict = 0 AND bb.deleted_at IS NULL
-           JOIN blocks tg ON tg.id = bt.tag_id    AND tg.is_conflict = 0 AND tg.deleted_at IS NULL
+           JOIN blocks bb ON bb.id = bt.block_id AND bb.deleted_at IS NULL
+           JOIN blocks tg ON tg.id = bt.tag_id AND tg.deleted_at IS NULL
            WHERE (SELECT bp.value_ref FROM block_properties bp
                   WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space')
               IS NOT
@@ -308,8 +308,8 @@ async fn audit_a3(
               (SELECT bp.value_ref FROM block_properties bp
                WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS "target_space?"
            FROM block_tag_refs btr
-           JOIN blocks bs ON bs.id = btr.source_id AND bs.is_conflict = 0 AND bs.deleted_at IS NULL
-           JOIN blocks tg ON tg.id = btr.tag_id    AND tg.is_conflict = 0 AND tg.deleted_at IS NULL
+           JOIN blocks bs ON bs.id = btr.source_id AND bs.deleted_at IS NULL
+           JOIN blocks tg ON tg.id = btr.tag_id AND tg.deleted_at IS NULL
            WHERE (SELECT bp.value_ref FROM block_properties bp
                   WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space')
               IS NOT
@@ -353,7 +353,7 @@ async fn audit_a4(
               (SELECT bp.value_ref FROM block_properties bp
                WHERE bp.block_id = COALESCE(b.page_id, b.id) AND bp.key = 'space') AS "space?"
            FROM blocks b
-           WHERE b.is_conflict = 0 AND b.deleted_at IS NULL"#
+           WHERE b.deleted_at IS NULL"#
     )
     .fetch_all(pool)
     .await?;
@@ -368,7 +368,7 @@ async fn audit_a4(
     let content_rows = sqlx::query!(
         r#"SELECT id AS "id!", content AS "content?"
            FROM blocks
-           WHERE is_conflict = 0 AND deleted_at IS NULL AND content IS NOT NULL"#
+           WHERE deleted_at IS NULL AND content IS NOT NULL"#
     )
     .fetch_all(pool)
     .await?;
@@ -864,8 +864,8 @@ mod tests {
 
         // BLOCK_WORK is a conflict copy.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'content', 'y', ?, 1, ?, 1)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', 'y', ?, 1, ?)",
         )
         .bind(BLOCK_WORK)
         .bind(PAGE_WORK)

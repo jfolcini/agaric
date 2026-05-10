@@ -647,7 +647,6 @@ export const commands = {
 	parent_id: string | null,
 	position: number | null,
 	deleted_at: string | null,
-	is_conflict: boolean,
 	conflict_type: string | null,
 	todo_state: string | null,
 	priority: string | null,
@@ -667,7 +666,7 @@ export const commands = {
  *  A block ID that has been verified to refer to an active block.
  *
  *  "Active" means the block exists in the materialised `blocks` table
- *  AND `is_conflict = 0` AND `deleted_at IS NULL`. Use [`verify_active`]
+ *  AND `deleted_at IS NULL`. Use [`verify_active`]
  *  to convert a raw [`BlockId`] into this type.
  *
  *  **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
@@ -682,13 +681,13 @@ export type ActiveBlockId = string;
 
 /**
  *  MAINT-113 M1.5 — Row returned by paginated block queries that filter
- *  on `is_conflict = 0 AND deleted_at IS NULL` in their SQL.
+ *  on `deleted_at IS NULL` in their SQL.
  *
  *  Mirror of [`BlockRow`] except `id` is typed [`crate::ulid::ActiveBlockId`]
  *  — a strict subset of the raw block-id space that has been verified
- *  (by the helper's own SQL filter) to refer to a live, non-conflict
- *  block. Helpers that intentionally surface conflict copies (`get_conflicts`)
- *  or deleted rows (`list_trash`) keep returning `BlockRow`.
+ *  (by the helper's own SQL filter) to refer to a live block. Helpers
+ *  that intentionally surface deleted rows (`list_trash`) keep returning
+ *  `BlockRow`.
  *
  *  Specta emits this as a separate TypeScript type, but `id`'s emit is
  *  `ActiveBlockId` which is itself a transparent alias for `string`. The
@@ -711,7 +710,6 @@ export type ActiveBlockRow = {
 	parent_id: string | null,
 	position: number | null,
 	deleted_at: string | null,
-	is_conflict: boolean,
 	conflict_type: string | null,
 	todo_state: string | null,
 	priority: string | null,
@@ -725,7 +723,7 @@ export type ActiveBlockRow = {
  *  `commands::agenda::list_projected_agenda_inner` and its on-the-fly
  *  fallback, both of which only emit projections of live, non-conflict
  *  blocks (the projector reads from `block_properties` joined against
- *  `blocks WHERE is_conflict = 0 AND deleted_at IS NULL`).
+ *  `blocks WHERE deleted_at IS NULL`).
  */
 export type ActiveProjectedAgendaEntry = {
 	// The source block (real, materialized, active block).
@@ -815,7 +813,7 @@ export type BacklinkGroup = {
  *  Response for a filtered backlink query, including total count.
  *
  *  MAINT-113 M2 — `items` is `ActiveBlockRow`-typed because the backlink
- *  resolver filters `is_conflict = 0 AND deleted_at IS NULL` on every
+ *  resolver filters deleted_at IS NULL` on every
  *  candidate source block (`backlink/query.rs::eval_backlink_query`,
  *  `eval_backlink_query_grouped`, `eval_unlinked_references`).
  */
@@ -840,8 +838,8 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
  *  generic structs). `BlockRow` stays raw — used by polymorphic
  *  dispatchers (`list_blocks_inner`'s show-deleted/agenda/tag/by-type/
  *  children fan-out) and by helpers that intentionally surface conflict
- *  or deleted rows (`get_block`, `get_conflicts`, `list_trash`). Helpers
- *  whose SQL filters `is_conflict = 0 AND deleted_at IS NULL` return
+ *  or deleted rows (`get_block`, `list_trash`). Helpers
+ *  whose SQL filters `deleted_at IS NULL` return
  *  [`ActiveBlockRow`] instead and lift the activeness invariant into
  *  the type system at the helper signature.
  */
@@ -852,7 +850,6 @@ export type BlockRow = {
 	parent_id: string | null,
 	position: number | null,
 	deleted_at: string | null,
-	is_conflict: boolean,
 	conflict_type: string | null,
 	todo_state: string | null,
 	priority: string | null,
@@ -911,7 +908,7 @@ export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" 
  *  the keep path, and `deleteBlock(conflict_id)` for the discard path.
  */
 export type ConflictResolveAction = {
-	// The conflict-copy block id (the row whose `is_conflict = 1`).
+	// The conflict-copy block id (the row whose ).
 	blockId: string,
 	/**
 	 *  The original / parent block id whose content is overwritten on `keep`.
@@ -1218,7 +1215,7 @@ export type OpRef = {
  *  A link between two pages (for graph visualization).
  *
  *  Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
- *  `is_conflict = 0 AND deleted_at IS NULL` on both source and target
+ *  deleted_at IS NULL` on both source and target
  *  pages (MAINT-113 M1 lift of invariant #9 into the type system).
  */
 export type PageLink = {

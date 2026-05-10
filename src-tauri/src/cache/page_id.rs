@@ -18,25 +18,18 @@ pub async fn rebuild_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    // Invariant #9: recursive CTE over `blocks` must filter `is_conflict = 0`
-    // in both members and bound `depth < 100`. Conflict copies share
-    // `parent_id` with the original and must not be walked through (or the
-    // rebuild would compute a page ancestor via the original's parent chain,
-    // then rewrite `page_id` — which is exactly the bug fixed here). Their
-    // `page_id` is assigned at conflict-creation time and must be preserved
-    // by the rebuild.
+    // Invariant #9: recursive CTE over `blocks` must bound `depth < 100`
+    // to defend against runaway recursion on corrupted `parent_id`
+    // chains.
     let result = sqlx::query(
         "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
              SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
-             WHERE b.is_conflict = 0 \
              UNION ALL \
              SELECT a.block_id, parent.id, parent.block_type, a.depth + 1 \
              FROM ancestors a \
              JOIN blocks child ON child.id = a.cur_id \
              JOIN blocks parent ON parent.id = child.parent_id \
              WHERE a.cur_type != 'page' \
-               AND child.is_conflict = 0 \
-               AND parent.is_conflict = 0 \
                AND a.depth < 100 \
          ), \
          page_ancestors AS ( \
@@ -47,7 +40,7 @@ async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
          UPDATE blocks SET page_id = ( \
              SELECT pa.page_id FROM page_ancestors pa WHERE pa.block_id = blocks.id \
          ) \
-         WHERE is_conflict = 0",
+         ",
     )
     .execute(pool)
     .await?;
@@ -73,10 +66,7 @@ async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
 /// consistent (AGENTS.md "Performance Conventions / Split read/write
 /// pool pattern").
 ///
-/// Invariant #9: the read-side CTE filters `is_conflict = 0` on every
-/// member (seed + both endpoints of the recursive join) and bounds
-/// `depth < 100`. The write-side UPDATE keeps `WHERE is_conflict = 0`
-/// so conflict copies' pre-assigned `page_id` is preserved.
+/// Invariant #9: the read-side CTE bounds `depth < 100`.
 pub async fn rebuild_page_ids_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
@@ -99,15 +89,12 @@ async fn rebuild_page_ids_split_impl(
     let pairs: Vec<(String, String)> = sqlx::query_as(
         "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
              SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
-             WHERE b.is_conflict = 0 \
              UNION ALL \
              SELECT a.block_id, parent.id, parent.block_type, a.depth + 1 \
              FROM ancestors a \
              JOIN blocks child ON child.id = a.cur_id \
              JOIN blocks parent ON parent.id = child.parent_id \
              WHERE a.cur_type != 'page' \
-               AND child.is_conflict = 0 \
-               AND parent.is_conflict = 0 \
                AND a.depth < 100 \
          ) \
          SELECT block_id, cur_id AS page_id \
@@ -122,13 +109,11 @@ async fn rebuild_page_ids_split_impl(
     // UPDATE. Mirrors the single-pool variant's atomic semantics.
     let mut tx = write_pool.begin().await?;
 
-    // Reset every non-conflict block's `page_id` to NULL. Mirrors the
-    // single-pool UPDATE semantics: blocks not present in the CTE
-    // result (orphans, conflict-only descendants) get `page_id = NULL`
-    // because the correlated subquery returns NULL for them. The reset
-    // keeps `WHERE is_conflict = 0` so conflict copies' `page_id` is
-    // preserved (invariant #9).
-    let reset = sqlx::query!("UPDATE blocks SET page_id = NULL WHERE is_conflict = 0")
+    // Reset every block's `page_id` to NULL. Mirrors the single-pool
+    // UPDATE semantics: blocks not present in the CTE result (orphans)
+    // get `page_id = NULL` because the correlated subquery returns
+    // NULL for them.
+    let reset = sqlx::query!("UPDATE blocks SET page_id = NULL ")
         .execute(&mut *tx)
         .await?;
     let mut updated: u64 = reset.rows_affected();
@@ -137,9 +122,7 @@ async fn rebuild_page_ids_split_impl(
     // 1 bind per row in the trailing IN list = 3 binds per row,
     // bounded by `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS`. The IN clause
     // restricts the UPDATE to the chunk's rows so we do not rewrite
-    // unrelated blocks via the CASE's `ELSE page_id` no-op. The
-    // `AND is_conflict = 0` guard preserves invariant #9 even if the
-    // DB state shifted between the read and write phases.
+    // unrelated blocks via the CASE's `ELSE page_id` no-op.
     for chunk in pairs.chunks(REBUILD_CHUNK) {
         let case_clauses: String = std::iter::repeat_n("WHEN ? THEN ?", chunk.len())
             .collect::<Vec<_>>()
@@ -149,7 +132,7 @@ async fn rebuild_page_ids_split_impl(
             .join(", ");
         let sql = format!(
             "UPDATE blocks SET page_id = CASE id {case_clauses} ELSE page_id END \
-             WHERE id IN ({in_placeholders}) AND is_conflict = 0",
+             WHERE id IN ({in_placeholders})",
         );
         let mut q = sqlx::query(&sql);
         // CASE binds: (block_id, page_id) per row.

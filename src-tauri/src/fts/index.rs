@@ -95,7 +95,7 @@ pub async fn update_fts_for_block_with_maps(
     let mut tx = pool.begin().await?;
 
     let row = sqlx::query!(
-        r#"SELECT id, content, deleted_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ?"#,
+        r#"SELECT id, content, deleted_at FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -111,13 +111,6 @@ pub async fn update_fts_for_block_with_maps(
         }
         Some(ref r) if r.deleted_at.is_some() => {
             // deleted_at IS NOT NULL — remove from FTS
-            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-                .bind(block_id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        Some(ref r) if r.is_conflict => {
-            // is_conflict = 1 — remove from FTS
             sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
                 .bind(block_id)
                 .execute(&mut *tx)
@@ -182,7 +175,7 @@ pub async fn update_fts_for_block_split_with_maps(
 ) -> Result<(), AppError> {
     // Phase 1: Read — no write lock needed
     let row = sqlx::query!(
-        r#"SELECT id, content, deleted_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ?"#,
+        r#"SELECT id, content, deleted_at FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(read_pool)
@@ -192,7 +185,6 @@ pub async fn update_fts_for_block_split_with_maps(
     let should_delete = match &row {
         None => true,
         Some(r) if r.deleted_at.is_some() => true,
-        Some(r) if r.is_conflict => true,
         Some(r) if r.content.is_none() => true,
         _ => false,
     };
@@ -308,7 +300,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
 
         // Batch fetch this chunk's block metadata (1 query per chunk)
         let rows = sqlx::query(
-            r#"SELECT id, content, deleted_at, is_conflict FROM blocks
+            r#"SELECT id, content, deleted_at FROM blocks
                WHERE id IN (SELECT value FROM json_each(?))"#,
         )
         .bind(&ids_json)
@@ -331,10 +323,9 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
         for row in &rows {
             let id: &str = row.get("id");
             let deleted_at: Option<&str> = row.get("deleted_at");
-            let is_conflict: bool = row.get("is_conflict");
             let content: Option<&str> = row.get("content");
 
-            if deleted_at.is_none() && !is_conflict {
+            if deleted_at.is_none() {
                 if let Some(content) = content {
                     let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
                     to_insert.push((id.to_owned(), stripped));
@@ -417,7 +408,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // `blocks` table mutates between chunks.
     let blocks = sqlx::query!(
         "SELECT id, content FROM blocks \
-         WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+         WHERE deleted_at IS NULL AND content IS NOT NULL"
     )
     .fetch_all(pool)
     .await?;
@@ -477,7 +468,7 @@ async fn rebuild_fts_index_split_impl(
     let (tag_names, page_titles) = load_ref_maps(read_pool).await?;
     let blocks = sqlx::query!(
         "SELECT id, content FROM blocks \
-         WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+         WHERE deleted_at IS NULL AND content IS NOT NULL"
     )
     .fetch_all(read_pool)
     .await?;

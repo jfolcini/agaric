@@ -120,7 +120,7 @@ mod tests {
     async fn seed_spaces(pool: &SqlitePool) {
         for (id, name) in [(SPACE_PERSONAL_ULID, "Personal"), (SPACE_WORK_ULID, "Work")] {
             sqlx::query!(
-                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict)                  VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id)                  VALUES (?, 'page', ?, NULL, 1, ?)",
                 id, name, id,
             )
             .execute(pool).await.unwrap();
@@ -129,7 +129,7 @@ mod tests {
 
     async fn seed_page(pool: &SqlitePool, page_id: &str, space_id: &str) {
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict)              VALUES (?, 'page', 'Test', NULL, 1, ?, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)              VALUES (?, 'page', 'Test', NULL, 1, ?)",
             page_id, page_id,
         )
         .execute(pool).await.unwrap();
@@ -142,7 +142,7 @@ mod tests {
 
     async fn seed_content(pool: &SqlitePool, block_id: &str, page_id: &str, content: &str) {
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict)              VALUES (?, 'content', ?, ?, 1, ?, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)              VALUES (?, 'content', ?, ?, 1, ?)",
             block_id, content, page_id, page_id,
         )
         .execute(pool).await.unwrap();
@@ -206,7 +206,7 @@ mod tests {
         let tag = BlockId::new().to_string();
         seed_page(&pool, &page, SPACE_PERSONAL_ULID).await;
         seed_content(&pool, &blk, &page, "").await;
-        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict)                       VALUES (?, 'tag', 't', NULL, 1, NULL, 0)", tag)
+        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)                       VALUES (?, 'tag', 't', NULL, 1, NULL)", tag)
             .execute(&pool).await.unwrap();
         sqlx::query!("INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref)                       VALUES (?, 'space', NULL, NULL, NULL, ?)", tag, SPACE_PERSONAL_ULID)
             .execute(&pool).await.unwrap();
@@ -232,7 +232,7 @@ mod tests {
         let tag = BlockId::new().to_string();
         seed_page(&pool, &page, SPACE_PERSONAL_ULID).await;
         seed_content(&pool, &blk, &page, "").await;
-        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict)                       VALUES (?, 'tag', 't', NULL, 1, NULL, 0)", tag)
+        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)                       VALUES (?, 'tag', 't', NULL, 1, NULL)", tag)
             .execute(&pool).await.unwrap();
         sqlx::query!("INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref)                       VALUES (?, 'space', NULL, NULL, NULL, ?)", tag, SPACE_WORK_ULID)
             .execute(&pool).await.unwrap();

@@ -886,15 +886,15 @@ async fn resolve_page_titles(
         return Ok(HashMap::new());
     }
     let ids_json = serde_json::to_string(&ids).map_err(AppError::Json)?;
-    // Recursive-CTE filter on `is_conflict = 0` is implicit here: we
-    // join on `blocks.id` directly and constrain on `is_conflict = 0`
+    // Recursive-CTE filter on  is implicit here: we
+    // join on `blocks.id` directly and constrain on
     // in the WHERE clause.  The entries list is already conflict-free
     // upstream but the JOIN being explicit is the safer shape.
     let rows = sqlx::query!(
         "SELECT b.id AS id, b.content AS content \
          FROM blocks b \
          JOIN json_each(?) j ON j.value = b.id \
-         WHERE b.is_conflict = 0",
+         ",
         ids_json,
     )
     .fetch_all(pool)
@@ -1293,8 +1293,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_type, page_id) \
-             VALUES (?, 'page', 'Test Page', NULL, 0, NULL, 0, NULL, ?)",
+             deleted_at, conflict_type, page_id) \
+             VALUES (?, 'page', 'Test Page', NULL, 0, NULL, NULL, ?)",
         )
         .bind(&page_id)
         .bind(&page_id)
@@ -1304,8 +1304,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_type, todo_state, due_date, page_id) \
-             VALUES (?, 'content', ?, ?, 1, NULL, 0, NULL, 'TODO', ?, ?)",
+             deleted_at, conflict_type, todo_state, due_date, page_id) \
+             VALUES (?, 'content', ?, ?, 1, NULL, NULL, 'TODO', ?, ?)",
         )
         .bind(&block_id)
         .bind(content)

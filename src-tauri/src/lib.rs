@@ -793,7 +793,7 @@ pub fn run() {
                 let block_count: i64 = log_or_zero(
                     tauri::async_runtime::block_on(
                         sqlx::query_scalar(
-                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND content IS NOT NULL"
                         )
                         .fetch_one(&pools.write),
                     ),
@@ -824,7 +824,7 @@ pub fn run() {
                 let block_count: i64 = log_or_zero(
                     tauri::async_runtime::block_on(
                         sqlx::query_scalar(
-                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND content IS NOT NULL"
                         )
                         .fetch_one(&pools.write),
                     ),

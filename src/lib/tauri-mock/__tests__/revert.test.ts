@@ -31,7 +31,6 @@ function makeBlockRow(id: string, extra: Record<string, unknown> = {}): Record<s
     page_id: 'PARENT_A',
     position: 3,
     deleted_at: null,
-    is_conflict: false,
     ...extra,
   }
 }

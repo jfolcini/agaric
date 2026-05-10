@@ -132,7 +132,7 @@ pub async fn list_blocks_inner(
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(pool)
@@ -166,7 +166,7 @@ pub async fn get_active_block_inner(
 ) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(pool)
@@ -225,7 +225,7 @@ pub async fn batch_resolve_inner(
     // space-scoped callers ([`SpaceScope::Active`]) get the
     // foreign-target-drops-out behaviour the spec demands.
     //
-    // AGENTS.md invariant #9 — `is_conflict = 0` filter prevents conflict
+    // AGENTS.md invariant #9 —  filter prevents conflict
     // copies from leaking into resolution results. A conflict copy carries
     // its own ULID + the same content as the original; without this guard
     // a `[[ULID]]` chip targeting the original would resolve to either the
@@ -241,7 +241,6 @@ pub async fn batch_resolve_inner(
              (CASE WHEN b.deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS "deleted: bool"
            FROM blocks b
            WHERE b.id IN (SELECT value FROM json_each(?1))
-             AND b.is_conflict = 0
              AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (
                  SELECT bp.block_id
                  FROM block_properties bp
@@ -398,7 +397,7 @@ pub async fn trash_descendant_counts(
 /// N+1 into a single query using SQLite's `ROW_NUMBER()` window
 /// function partitioned by `parent_id`.
 ///
-/// Conflict copies (`is_conflict = 1`) and soft-deleted rows
+/// Conflict copies  and soft-deleted rows
 /// (`deleted_at IS NOT NULL`) are excluded inside the CTE so the
 /// `rn = 1` row is always the first **active** sibling — matching the
 /// shape of every other UI-facing read in this module.
@@ -421,7 +420,7 @@ pub async fn first_child_for_blocks_inner(
 
     // ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY position, id)
     // surfaces exactly one row per parent_id (the first child).
-    // The CTE pre-filters `deleted_at IS NULL AND is_conflict = 0`
+    // The CTE pre-filters `deleted_at IS NULL`
     // so the rn = 1 row is the first ACTIVE sibling — the same rows
     // `list_blocks({ parent_id })` would return.
     let sql = format!(
@@ -434,7 +433,6 @@ pub async fn first_child_for_blocks_inner(
              FROM blocks \
              WHERE parent_id IN (SELECT value FROM json_each(?1)) \
                AND deleted_at IS NULL \
-               AND is_conflict = 0 \
          ) \
          SELECT {cols} FROM ranked WHERE rn = 1",
         cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
@@ -474,12 +472,12 @@ pub async fn first_child_for_blocks(
 ///   1. Returns the full 13-column [`BlockRow`] (not just the lightweight
 ///      `id / title / block_type / deleted` projection). Consumers that
 ///      need `todo_state`, `priority`, `due_date`, `scheduled_date`,
-///      `content`, `parent_id`, `position`, `is_conflict`, etc. — e.g.
+///      `content`, `parent_id`, `position`, etc. — e.g.
 ///      `ConflictTypeRenderer` — get a single round-trip instead of
 ///      per-row `get_block` IPCs.
-///   2. Does **not** filter `is_conflict = 0`. This is deliberate: the
+///   2. Does **not** filter . This is deliberate: the
 ///      primary consumer is `ConflictList` (PEND-35 Tier 2.3), which
-///      surfaces conflict rows themselves (`is_conflict = 1`) and their
+///      surfaces conflict rows themselves  and their
 ///      parents (which may be soft-deleted). Filtering would defeat the
 ///      use-case. Soft-deleted rows are likewise included so the caller
 ///      sees the full state.

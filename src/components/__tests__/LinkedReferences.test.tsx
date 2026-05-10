@@ -126,7 +126,6 @@ function makeGroup(
       page_id: pageId,
       position: 1,
       deleted_at: null,
-      is_conflict: false,
     })),
   }
 }

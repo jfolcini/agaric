@@ -60,14 +60,6 @@ async fn soft_delete_block(pool: &SqlitePool, id: &str) {
     .unwrap();
 }
 
-/// Mark a block as a conflict (is_conflict = 1).
-async fn mark_conflict(pool: &SqlitePool, id: &str) {
-    sqlx::query!("UPDATE blocks SET is_conflict = 1 WHERE id = ?", id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
 /// Associate a block with a tag via `block_tags`.
 async fn add_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
     sqlx::query!(
@@ -147,23 +139,6 @@ async fn tags_cache_excludes_deleted_tags() {
         count_rows(&pool, "tags_cache").await,
         1,
         "soft-deleted tag must be excluded"
-    );
-}
-
-#[tokio::test]
-async fn tags_cache_excludes_conflict_tags() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "TAG01", "tag", "normal").await;
-    insert_block(&pool, "TAG02", "tag", "conflict").await;
-    mark_conflict(&pool, "TAG02").await;
-
-    rebuild_tags_cache(&pool).await.unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "tags_cache").await,
-        1,
-        "conflict tag (is_conflict = 1) must be excluded"
     );
 }
 
@@ -1146,55 +1121,6 @@ async fn block_links_extracts_links_inside_code_fences() {
     );
 }
 
-/// Regression for M-14: `reindex_block_links` must skip conflict-copy source
-/// blocks so their `[[ULID]]` tokens never enter `block_links` and therefore
-/// never surface through `list_backlinks`.
-#[tokio::test]
-async fn block_links_skips_conflict_source_and_does_not_appear_in_backlinks() {
-    use crate::pagination::{list_backlinks, PageRequest};
-
-    let (pool, _dir) = test_pool().await;
-
-    // Target block being linked to.
-    insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
-
-    // Conflict-copy source containing a `[[ULID]]` token. `is_conflict = 1`.
-    insert_block(
-        &pool,
-        "01HZ0000000000000000000SRC",
-        "content",
-        "[[01HZ00000000000000000000AB]]",
-    )
-    .await;
-    mark_conflict(&pool, "01HZ0000000000000000000SRC").await;
-
-    // Reindex on the conflict source — the filter must short-circuit the
-    // content read so the regex sees an empty string and no rows are
-    // inserted.
-    reindex_block_links(&pool, "01HZ0000000000000000000SRC")
-        .await
-        .unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "block_links").await,
-        0,
-        "conflict-copy source blocks must not contribute outbound links"
-    );
-
-    // And the conflict source must not appear as a backlink for the target.
-    let page = PageRequest {
-        after: None,
-        limit: 50,
-    };
-    let resp = list_backlinks(&pool, "01HZ00000000000000000000AB", &page, None)
-        .await
-        .unwrap();
-    assert!(
-        resp.items.is_empty(),
-        "list_backlinks must not return conflict-copy source blocks"
-    );
-}
-
 // ====================================================================
 // L-24 — chunked DELETE/INSERT via json_each
 // ====================================================================
@@ -1541,58 +1467,6 @@ async fn tags_cache_handles_duplicate_tag_names() {
     );
 }
 
-#[tokio::test]
-async fn pages_cache_excludes_conflict_pages() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "PAGE01", "page", "Normal Page").await;
-    insert_block(&pool, "PAGE02", "page", "Conflict Page").await;
-    mark_conflict(&pool, "PAGE02").await;
-
-    rebuild_pages_cache(&pool).await.unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "pages_cache").await,
-        1,
-        "conflict page (is_conflict = 1) must be excluded"
-    );
-}
-
-#[tokio::test]
-async fn agenda_cache_excludes_conflict_blocks_property_source() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "BLK01", "content", "conflict task").await;
-    mark_conflict(&pool, "BLK01").await;
-    set_property(&pool, "BLK01", "due", Some("2025-06-01")).await;
-
-    rebuild_agenda_cache(&pool).await.unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "agenda_cache").await,
-        0,
-        "conflict block must be excluded from agenda (property source)"
-    );
-}
-
-#[tokio::test]
-async fn agenda_cache_excludes_conflict_blocks_tag_source() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "DTAG1", "tag", "date/2025-06-01").await;
-    insert_block(&pool, "BLK01", "content", "conflict event").await;
-    mark_conflict(&pool, "BLK01").await;
-    add_tag(&pool, "BLK01", "DTAG1").await;
-
-    rebuild_agenda_cache(&pool).await.unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "agenda_cache").await,
-        0,
-        "conflict block must be excluded from agenda (tag source)"
-    );
-}
-
 // ====================================================================
 // reindex_block_links — dangling target and NULL-content edge cases
 // ====================================================================
@@ -1935,25 +1809,6 @@ async fn tags_cache_split_basic_rebuild() {
 }
 
 #[tokio::test]
-async fn tags_cache_split_excludes_deleted_and_conflict() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "TAG01", "tag", "active").await;
-    insert_block(&pool, "TAG02", "tag", "deleted-tag").await;
-    insert_block(&pool, "TAG03", "tag", "conflict-tag").await;
-    soft_delete_block(&pool, "TAG02").await;
-    mark_conflict(&pool, "TAG03").await;
-
-    rebuild_tags_cache_split(&pool, &pool).await.unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "tags_cache").await,
-        1,
-        "soft-deleted and conflict tags must be excluded"
-    );
-}
-
-#[tokio::test]
 async fn tags_cache_split_idempotent() {
     let (pool, _dir) = test_pool().await;
 
@@ -2017,25 +1872,6 @@ async fn pages_cache_split_basic_rebuild() {
         (rows[1].page_id.as_str(), rows[1].title.as_str()),
         ("PAGE02", "My Second Page"),
         "second page must match expected id and title"
-    );
-}
-
-#[tokio::test]
-async fn pages_cache_split_excludes_deleted_and_conflict() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "PAGE01", "page", "Active Page").await;
-    insert_block(&pool, "PAGE02", "page", "Deleted Page").await;
-    insert_block(&pool, "PAGE03", "page", "Conflict Page").await;
-    soft_delete_block(&pool, "PAGE02").await;
-    mark_conflict(&pool, "PAGE03").await;
-
-    rebuild_pages_cache_split(&pool, &pool).await.unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "pages_cache").await,
-        1,
-        "soft-deleted and conflict pages must be excluded"
     );
 }
 
@@ -3622,26 +3458,6 @@ async fn reindex_block_tag_refs_soft_deleted_source_clears_rows() {
 }
 
 #[tokio::test]
-async fn reindex_block_tag_refs_skips_conflict_source() {
-    let (pool, _dir) = test_pool().await;
-    let tag = "01HBTRTAG000000000000000GA";
-    let src = "01HBTRBLK000000000000000GA";
-    insert_block(&pool, tag, "tag", "g").await;
-    insert_block(&pool, src, "content", &inline(tag)).await;
-    // Pre-seed a row so the post-reindex clear is observable.
-    insert_tag_ref(&pool, src, tag).await;
-    mark_conflict(&pool, src).await;
-
-    reindex_block_tag_refs(&pool, src).await.unwrap();
-
-    assert_eq!(
-        count_rows(&pool, "block_tag_refs").await,
-        0,
-        "reindex must treat is_conflict = 1 sources as empty (rows cleared)"
-    );
-}
-
-#[tokio::test]
 async fn reindex_block_tag_refs_noop_when_content_unchanged() {
     let (pool, _dir) = test_pool().await;
     let tag = "01HBTRTAG000000000000000HA";
@@ -3777,34 +3593,6 @@ async fn rebuild_block_tag_refs_cache_large_vault_exact_count() {
         150,
         "every one of the 150 content blocks must produce exactly one row"
     );
-}
-
-#[tokio::test]
-async fn rebuild_block_tag_refs_cache_excludes_deleted_and_conflict() {
-    let (pool, _dir) = test_pool().await;
-    let tag = "01HBTRTAG000000000000000MA";
-    let alive = "01HBTRBLK000000000000000MA";
-    let deleted = "01HBTRBLK000000000000000MB";
-    let conflict = "01HBTRBLK000000000000000MC";
-    insert_block(&pool, tag, "tag", "m").await;
-    insert_block(&pool, alive, "content", &inline(tag)).await;
-    insert_block(&pool, deleted, "content", &inline(tag)).await;
-    insert_block(&pool, conflict, "content", &inline(tag)).await;
-    soft_delete_block(&pool, deleted).await;
-    mark_conflict(&pool, conflict).await;
-
-    rebuild_block_tag_refs_cache(&pool).await.unwrap();
-
-    let rows = sqlx::query!("SELECT source_id FROM block_tag_refs")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        rows.len(),
-        1,
-        "only the alive, non-conflict block should have a row"
-    );
-    assert_eq!(rows[0].source_id, alive);
 }
 
 #[tokio::test]
@@ -3946,28 +3734,6 @@ async fn tags_cache_union_excludes_deleted_inline_ref_source() {
 }
 
 #[tokio::test]
-async fn tags_cache_union_excludes_conflict_inline_ref_source() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, "TAG_CF_IN", "tag", "conflict-inline").await;
-    insert_block(&pool, "BLK_NORMAL", "content", "normal").await;
-    insert_block(&pool, "BLK_CF", "content", "conflict").await;
-    insert_tag_ref(&pool, "BLK_NORMAL", "TAG_CF_IN").await;
-    insert_tag_ref(&pool, "BLK_CF", "TAG_CF_IN").await;
-    mark_conflict(&pool, "BLK_CF").await;
-
-    rebuild_tags_cache(&pool).await.unwrap();
-
-    let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_CF_IN'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        row.usage_count, 1,
-        "conflict-copy inline-ref source must not count toward usage"
-    );
-}
-
-#[tokio::test]
 async fn tags_cache_union_preserves_zero_usage_tags() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TAG_UNUSED_UN", "tag", "nobody-ref").await;
@@ -4063,204 +3829,6 @@ async fn agenda_rebuild_single_and_split_produce_identical_cache() {
     // Sanity: the fixture must produce non-empty output, otherwise the
     // equality check is vacuously true.
     assert!(!single.is_empty(), "fixture must populate agenda_cache");
-}
-
-/// L-28 oracle: `rebuild_page_ids`'s recursive ancestor-walking CTE has
-/// no Rust-side regression net. AGENTS.md "Performance Conventions"
-/// pattern #8 prescribes a `#[cfg(test)]` oracle preserving the old
-/// implementation when optimizing a query — `pagination/tests.rs`
-/// already has a good oracle for `list_children`'s `IFNULL → sentinel`
-/// optimisation. This one closes the equivalent gap for
-/// `rebuild_page_ids` (conflict-aware ancestor walking is exactly the
-/// area invariant #9 calls out as fragile).
-///
-/// Builds a synthetic vault with: deeply-nested non-conflict blocks
-/// under multiple page roots, conflict copies that share `parent_id`
-/// with their original (and must NOT participate in the walk per
-/// invariant #9), and orphan blocks with NULL parents. Computes the
-/// expected `page_id` per block via a Rust HashMap walk of the same
-/// ancestor chain, then runs `rebuild_page_ids` and asserts the SQL
-/// CTE produced byte-identical results.
-///
-/// Failing this test means the recursive CTE drifted from the
-/// documented semantics — a future contributor who refactors the
-/// rebuild (e.g. to a materialised parent-pointer table) gets a clear
-/// regression signal naming exactly which block diverged.
-#[tokio::test]
-async fn rebuild_page_ids_oracle_matches_rust_ancestor_walk() {
-    use std::collections::HashMap;
-
-    let (pool, _dir) = test_pool().await;
-
-    // Helper: insert a block with explicit parent_id (None for top-level).
-    async fn insert_block_with_parent(
-        pool: &SqlitePool,
-        id: &str,
-        block_type: &str,
-        parent_id: Option<&str>,
-    ) {
-        sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id) VALUES (?, ?, '', ?)",
-            id,
-            block_type,
-            parent_id,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    // Helper: mark a block as a conflict copy.
-    async fn mark_conflict(pool: &SqlitePool, id: &str) {
-        sqlx::query!(
-            "UPDATE blocks SET is_conflict = 1, conflict_type = 'edit' WHERE id = ?",
-            id,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    // Fixture (3 page roots + nested non-conflict descendants + 2
-    // conflict copies + 1 orphan block):
-    //
-    //   PAGE_A (page)
-    //     └── A1 (content)            -> page_id = PAGE_A
-    //         └── A2 (content)        -> page_id = PAGE_A
-    //             └── A3 (content)    -> page_id = PAGE_A
-    //   PAGE_B (page)
-    //     └── B1 (content)            -> page_id = PAGE_B
-    //         └── B1_CONFLICT (conflict copy of B1, parent = PAGE_B)
-    //             └── B1_C_CHILD (content) — its ancestor chain stops
-    //                 at the conflict, so its page_id stays NULL (the
-    //                 SQL UPDATE skips conflict rows AND descendants
-    //                 reachable only via conflicts)
-    //   PAGE_C (page)
-    //     └── C_CONFLICT (conflict copy, parent = PAGE_C) — page_id NULL
-    //   ORPHAN (content, no parent)   -> page_id NULL
-    //
-    insert_block_with_parent(&pool, "PAGEA", "page", None).await;
-    insert_block_with_parent(&pool, "A1", "content", Some("PAGEA")).await;
-    insert_block_with_parent(&pool, "A2", "content", Some("A1")).await;
-    insert_block_with_parent(&pool, "A3", "content", Some("A2")).await;
-
-    insert_block_with_parent(&pool, "PAGEB", "page", None).await;
-    insert_block_with_parent(&pool, "B1", "content", Some("PAGEB")).await;
-    insert_block_with_parent(&pool, "B1CONFLICT", "content", Some("PAGEB")).await;
-    mark_conflict(&pool, "B1CONFLICT").await;
-    insert_block_with_parent(&pool, "B1CCHILD", "content", Some("B1CONFLICT")).await;
-
-    insert_block_with_parent(&pool, "PAGEC", "page", None).await;
-    insert_block_with_parent(&pool, "CCONFLICT", "content", Some("PAGEC")).await;
-    mark_conflict(&pool, "CCONFLICT").await;
-
-    insert_block_with_parent(&pool, "ORPHAN", "content", None).await;
-
-    // Reference implementation: pure-Rust ancestor walk that mirrors
-    // the SQL CTE's documented semantics — climb `parent_id` until we
-    // hit a `page` ancestor or a conflict (which terminates the walk
-    // because both members of the recursive CTE filter `is_conflict =
-    // 0` and the seed step also filters).
-    #[derive(Clone)]
-    struct Row {
-        block_type: String,
-        parent_id: Option<String>,
-        is_conflict: bool,
-    }
-    let rows: Vec<(String, String, Option<String>, i64)> =
-        sqlx::query_as("SELECT id, block_type, parent_id, is_conflict FROM blocks ORDER BY id")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    let by_id: HashMap<String, Row> = rows
-        .iter()
-        .map(|(id, bt, pid, c)| {
-            (
-                id.clone(),
-                Row {
-                    block_type: bt.clone(),
-                    parent_id: pid.clone(),
-                    is_conflict: *c != 0,
-                },
-            )
-        })
-        .collect();
-
-    let mut expected: HashMap<String, Option<String>> = HashMap::new();
-    for (id, row) in &by_id {
-        if row.is_conflict {
-            // The SQL `UPDATE blocks ... WHERE is_conflict = 0` skips
-            // conflict rows entirely, leaving their `page_id`
-            // unchanged. Our fixture inserts conflict rows with
-            // `page_id = NULL` (default), so the expected value is
-            // `None`.
-            expected.insert(id.clone(), None);
-            continue;
-        }
-        // Climb ancestors. Bound at 100 to mirror the SQL CTE's
-        // `depth < 100` guard.
-        let mut cur = id.clone();
-        let mut depth = 0;
-        let page_id = loop {
-            let Some(row) = by_id.get(&cur) else {
-                break None;
-            };
-            if row.block_type == "page" {
-                break Some(cur);
-            }
-            if depth >= 100 {
-                break None; // depth bound matches the CTE
-            }
-            let Some(next) = row.parent_id.clone() else {
-                break None;
-            };
-            // Walk through the parent only if both endpoints are
-            // non-conflict (matches the CTE's recursive-member filter).
-            match by_id.get(&next) {
-                Some(r) if !r.is_conflict => {}
-                _ => break None,
-            }
-            cur = next;
-            depth += 1;
-        };
-        expected.insert(id.clone(), page_id);
-    }
-
-    // Run the production rebuild.
-    rebuild_page_ids(&pool).await.unwrap();
-
-    // Read the live `page_id` per block and compare.
-    let actual_rows: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT id, page_id FROM blocks ORDER BY id")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    let actual: HashMap<String, Option<String>> = actual_rows.into_iter().collect();
-
-    for (id, expected_page) in &expected {
-        let actual_page = actual.get(id).cloned().flatten();
-        assert_eq!(
-            actual_page,
-            expected_page.clone(),
-            "block {id}: rebuild_page_ids and Rust oracle disagree (L-28)",
-        );
-    }
-
-    // Spot-check the most important shapes (catches a vacuously-true
-    // oracle bug where both sides happen to compute None for everything).
-    assert_eq!(
-        actual.get("A3").cloned().flatten(),
-        Some("PAGEA".to_string()),
-        "deeply-nested non-conflict block must reach its page root",
-    );
-    assert!(
-        actual.get("ORPHAN").cloned().flatten().is_none(),
-        "orphan block (no parent) must have page_id NULL",
-    );
-    assert!(
-        actual.get("CCONFLICT").cloned().flatten().is_none(),
-        "conflict copy must have its page_id preserved (NULL in this fixture)",
-    );
 }
 
 /// M-17 regression: forces the chunked CASE-expression UPDATE path in

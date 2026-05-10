@@ -57,14 +57,6 @@ async fn soft_delete_block(pool: &SqlitePool, id: &str) {
         .unwrap();
 }
 
-async fn mark_conflict(pool: &SqlitePool, id: &str) {
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
 // Valid ULID-style IDs for tests (26 uppercase alphanumeric chars)
 const TAG_ULID: &str = "01HQTAG000000000000000TAG1";
 const PAGE_ULID: &str = "01HQPAGE00000000000000PG01";
@@ -373,26 +365,6 @@ async fn update_fts_nonexistent_block_is_noop() {
 }
 
 #[tokio::test]
-async fn update_fts_conflict_block_removes_from_index() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, BLOCK_A, "content", "conflict text", None, Some(0)).await;
-    update_fts_for_block(&pool, BLOCK_A).await.unwrap();
-
-    mark_conflict(&pool, BLOCK_A).await;
-    update_fts_for_block(&pool, BLOCK_A).await.unwrap();
-
-    let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "conflict", &page, None, None, None)
-        .await
-        .unwrap();
-    assert_eq!(
-        results.items.len(),
-        0,
-        "conflict block should be removed from FTS index"
-    );
-}
-
-#[tokio::test]
 async fn update_fts_null_content_removes_from_index() {
     let (pool, _dir) = test_pool().await;
     insert_block_with_null_content(&pool, BLOCK_A, "content").await;
@@ -510,26 +482,6 @@ async fn rebuild_excludes_deleted_blocks() {
         visible_results.items.len(),
         1,
         "visible block should be indexed after rebuild"
-    );
-}
-
-#[tokio::test]
-async fn rebuild_excludes_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, BLOCK_A, "content", "normal", None, Some(0)).await;
-    insert_block(&pool, BLOCK_B, "content", "conflicting", None, Some(1)).await;
-    mark_conflict(&pool, BLOCK_B).await;
-
-    rebuild_fts_index(&pool).await.unwrap();
-
-    let page = PageRequest::new(None, Some(50)).unwrap();
-    let conflict_results = search_fts(&pool, "conflicting", &page, None, None, None)
-        .await
-        .unwrap();
-    assert_eq!(
-        conflict_results.items.len(),
-        0,
-        "conflict block should be excluded from rebuild"
     );
 }
 
@@ -2573,40 +2525,6 @@ async fn update_fts_for_block_split_removes_deleted_block() {
 }
 
 #[tokio::test]
-async fn update_fts_for_block_split_removes_conflict_block() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(
-        &pool,
-        BLOCK_A,
-        "content",
-        "conflict block content",
-        None,
-        Some(0),
-    )
-    .await;
-    // First index it
-    update_fts_for_block_split(&pool, &pool, BLOCK_A)
-        .await
-        .unwrap();
-
-    // Mark as conflict and re-run split
-    mark_conflict(&pool, BLOCK_A).await;
-    update_fts_for_block_split(&pool, &pool, BLOCK_A)
-        .await
-        .unwrap();
-
-    let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "conflict", &page, None, None, None)
-        .await
-        .unwrap();
-    assert_eq!(
-        results.items.len(),
-        0,
-        "split variant should remove conflict block from FTS index"
-    );
-}
-
-#[tokio::test]
 async fn update_fts_for_block_split_handles_missing_block() {
     let (pool, _dir) = test_pool().await;
     // Should not error for a block that doesn't exist
@@ -2659,8 +2577,8 @@ const FTS_SPACE_B_ID: &str = "FTS_SPC_B";
 /// assign a page to the space.
 async fn insert_space_block_for_fts(pool: &SqlitePool, id: &str, name: &str) {
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-         VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', ?, NULL, 1, ?)",
     )
     .bind(id)
     .bind(name)
