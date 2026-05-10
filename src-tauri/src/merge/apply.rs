@@ -14,10 +14,14 @@ use sqlx::SqlitePool;
 // three-way text-merge entry point's only caller was the diffy-side
 // `sync_protocol::operations::merge_diverged_blocks`, which day 6
 // also deleted (the orchestrator emits `LoroSyncMessage` instead, and
-// Loro's CRDT import is the convergence path).  `super::detect`,
-// `super::resolve`, and `super::types` are still used by the parity
-// sink / shadow path; they shed their merge-orchestration callers
-// today and lose the rest of their surface in day 7.
+// Loro's CRDT import is the convergence path).
+//
+// PEND-09 Phase 3 day-7 — `merge::detect`, `merge::resolve`, and
+// `merge::types` deleted along with the now-orphan
+// `merge_text` / `create_conflict_copy` / `resolve_property_conflict`
+// surface.  The only thing this module still does is bridge an
+// `OpRecord` into `merge::shadow_apply` for the parity sink / shadow
+// path; that surface is feature-gated on `loro-shadow`.
 
 // ---------------------------------------------------------------------------
 // PEND-09 Phase 1 day-2 — shadow-mode dispatch helper.
