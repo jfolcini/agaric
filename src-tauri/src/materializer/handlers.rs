@@ -126,7 +126,7 @@ pub(super) async fn handle_foreground_task(
             // PEND-09 Phase 3 day-9 — the `loro-shadow` feature gate
             // is retired; this fanout runs unconditionally now.
             for (record, effects) in records.iter().zip(per_record_effects.iter()) {
-                crate::merge::shadow_dispatch_for_record(pool, record).await;
+                crate::merge::dispatch_for_record(pool, record).await;
                 dispatch_restore_descendants_shadow(pool, record, &effects.restored_cohort).await;
                 // PEND-09 Phase 2 day-15 — symmetric DeleteBlock
                 // cohort fan-out.  See the matching call in the
@@ -188,11 +188,11 @@ pub(super) async fn apply_op(
     advance_apply_cursor(&mut tx, record.seq).await?;
     tx.commit().await?;
 
-    // PEND-09 Phase 1 day-3 — shadow-mode dual-write hook on the
+    // PEND-09 Phase 1 day-3 — engine-dispatch hook on the
     // materializer hot path.  Dispatched AFTER `tx.commit` so the
     // per-space `LoroEngine` only ever observes durably-applied ops
     // (a rolled-back tx must not leak into Loro's in-process state).
-    // `shadow_dispatch_for_record` swallows its own errors and never
+    // `dispatch_for_record` swallows its own errors and never
     // propagates failure back to the materializer.
     //
     // PEND-09 Phase 2 day-9 — RestoreBlock cascade fan-out.  The SQL
@@ -205,7 +205,7 @@ pub(super) async fn apply_op(
     //
     // PEND-09 Phase 3 day-9 — the `loro-shadow` feature gate is
     // retired; this fanout runs unconditionally now.
-    crate::merge::shadow_dispatch_for_record(pool, record).await;
+    crate::merge::dispatch_for_record(pool, record).await;
     dispatch_restore_descendants_shadow(pool, record, &effects.restored_cohort).await;
     // PEND-09 Phase 2 day-15 — symmetric DeleteBlock cohort fan-out.
     // Closes the gap that day-13 left: SQL soft-deletes N
@@ -254,32 +254,30 @@ pub(super) async fn apply_op(
 ///
 /// ## Why the cohort INCLUDES the seed
 ///
-/// The upstream `shadow_dispatch_for_record` call in `apply_op` also
+/// The upstream `dispatch_for_record` call in `apply_op` also
 /// targets the seed block, so in a hypothetically healthy world the
 /// seed would be applied twice (once via dispatch, once via this
 /// helper).  Engine `apply_restore_block` is idempotent (no-op on an
 /// already-restored block).  Including the seed here makes this helper
 /// the canonical cohort-restore function regardless of whether
-/// `shadow_dispatch_for_record` reaches the engine for any specific
+/// `dispatch_for_record` reaches the engine for any specific
 /// op record.  Net cost: one extra idempotent engine call per
 /// RestoreBlock.
 ///
 /// ## Implementation note
 ///
-/// We call `shadow_apply` directly with a synthesised
+/// We call `engine_apply` directly with a synthesised
 /// [`OpPayload::RestoreBlock`] rather than re-marshalling through
-/// `shadow_dispatch_for_record`.  Synthetic records don't have a
+/// `dispatch_for_record`.  Synthetic records don't have a
 /// stored payload to JSON-parse; going direct skips a serialise +
 /// deserialise round-trip per cohort entry and keeps the per-call cost
 /// bounded by the registry lock + the engine's per-block-id mutation
 /// (single-digit microseconds).
 ///
-/// Errors inside `shadow_apply` are already absorbed by the parity
-/// sampler (a Loro-side error becomes a parity-log row, never a hot-
-/// path failure), so this helper has nothing to propagate.  Every
-/// per-block call reuses the root op's metadata (`device_id`, `seq`,
-/// `space_id`) so log lines + parity rows stay anchored to the
-/// user-visible op.
+/// Errors inside `engine_apply` are absorbed (warn + skip) so this
+/// helper has nothing to propagate.  Every per-block call reuses the
+/// root op's metadata (`device_id`, `seq`, `space_id`) so log lines
+/// stay anchored to the user-visible op.
 async fn dispatch_restore_descendants_shadow(
     pool: &SqlitePool,
     root_record: &OpRecord,
@@ -349,15 +347,7 @@ async fn dispatch_restore_descendants_shadow(
             "{}/{}#cohort/{}",
             root_record.device_id, root_record.seq, cohort_id,
         );
-        let diffy_summary = crate::merge::diffy_summary_for(&payload);
-        crate::merge::shadow_apply(
-            &op_id,
-            &payload,
-            &root_record.device_id,
-            &space_id,
-            diffy_summary,
-            state,
-        );
+        crate::merge::engine_apply(&op_id, &payload, &root_record.device_id, &space_id, state);
     }
 }
 
@@ -384,23 +374,22 @@ async fn dispatch_restore_descendants_shadow(
 /// ## Why the cohort INCLUDES the seed
 ///
 /// Same idempotent-seed rationale as `dispatch_restore_descendants_shadow`:
-/// the upstream `shadow_dispatch_for_record` already targets the seed,
+/// the upstream `dispatch_for_record` already targets the seed,
 /// so including the seed here yields one extra idempotent engine call
 /// per `DeleteBlock` (engine `apply_delete_block` is a no-op on an
 /// already-deleted block — sets `deleted_at` to the same marker).
 /// Including the seed makes this helper the canonical cohort-delete
-/// function regardless of whether `shadow_dispatch_for_record` reaches
+/// function regardless of whether `dispatch_for_record` reaches
 /// the engine for any specific op record.
 ///
 /// ## Implementation note
 ///
 /// We synthesise a per-cohort `OpPayload::DeleteBlock` and call
-/// `shadow_apply` directly, skipping the JSON round-trip the dispatch
-/// path takes through stored payloads.  Errors inside `shadow_apply`
-/// are absorbed by the parity sampler (Loro-side errors become parity
-/// rows, never hot-path failures) so this helper has nothing to
-/// propagate.  Per-call cost is bounded by the registry lock + the
-/// engine's per-block-id mutation (single-digit microseconds).
+/// `engine_apply` directly, skipping the JSON round-trip the dispatch
+/// path takes through stored payloads.  Errors inside `engine_apply`
+/// are absorbed (warn + skip) so this helper has nothing to propagate.
+/// Per-call cost is bounded by the registry lock + the engine's
+/// per-block-id mutation (single-digit microseconds).
 async fn dispatch_delete_descendants_shadow(
     root_record: &OpRecord,
     cohort: &[String],
@@ -427,7 +416,7 @@ async fn dispatch_delete_descendants_shadow(
     };
 
     let Some(state) = crate::loro::shared::get() else {
-        // Shadow mode not initialised (test environment that
+        // Engine state not initialised (test environment that
         // bypasses the boot setup).  Nothing to do.
         return;
     };
@@ -442,15 +431,7 @@ async fn dispatch_delete_descendants_shadow(
             "{}/{}#cohort/{}",
             root_record.device_id, root_record.seq, cohort_id,
         );
-        let diffy_summary = crate::merge::diffy_summary_for(&payload);
-        crate::merge::shadow_apply(
-            &op_id,
-            &payload,
-            &root_record.device_id,
-            space_id,
-            diffy_summary,
-            state,
-        );
+        crate::merge::engine_apply(&op_id, &payload, &root_record.device_id, space_id, state);
     }
 }
 
@@ -525,7 +506,7 @@ fn notify_gcal_for_events(
 /// helper (`dispatch_restore_descendants_shadow`) is the canonical path
 /// for driving Loro on the whole subtree.  The engine's
 /// `apply_restore_block` is idempotent so the duplicate seed-apply (the
-/// upstream `shadow_dispatch_for_record` call also reaches the seed
+/// upstream `dispatch_for_record` call also reaches the seed
 /// when the parse path is healthy) is harmless.  Empty for every op
 /// type other than `RestoreBlock`.
 ///
@@ -623,7 +604,7 @@ async fn apply_op_tx(
             //
             // The space resolve runs at the same pre-UPDATE moment so
             // the post-commit fanout has a known-good space id to
-            // pass to `shadow_apply` (post-UPDATE every cohort row has
+            // pass to `engine_apply` (post-UPDATE every cohort row has
             // `deleted_at IS NOT NULL`, so a fresh `resolve_block_space`
             // call would return `None` — see `ApplyEffects` doc).
             let cohort = collect_delete_cohort(conn, &p).await?;
@@ -645,7 +626,7 @@ async fn apply_op_tx(
             // (`dispatch_restore_descendants_shadow`) is the canonical
             // path that drives Loro for the entire cohort.  Including
             // the seed makes the helper self-contained and avoids
-            // depending on the upstream `shadow_dispatch_for_record`
+            // depending on the upstream `dispatch_for_record`
             // call also reaching the engine — the duplicate apply on
             // the seed is idempotent (engine's `apply_restore_block`
             // is a no-op on an already-restored block).
@@ -742,7 +723,7 @@ async fn collect_restore_cohort(
 /// `dispatch_delete_descendants_shadow` re-applies the seed alongside
 /// the descendants (idempotent — `apply_delete_block` is a no-op on an
 /// already-deleted block) so the helper is the canonical cohort-delete
-/// path regardless of whether the upstream `shadow_dispatch_for_record`
+/// path regardless of whether the upstream `dispatch_for_record`
 /// reaches the engine for any specific op record.
 ///
 /// The captured cohort feeds the post-commit
@@ -2196,7 +2177,7 @@ pub(super) async fn handle_background_task(
 mod restore_cascade_tests {
     use super::*;
     use crate::db::init_pool;
-    use crate::loro::shared::ShadowState;
+    use crate::loro::shared::LoroState;
     use crate::op::OpPayload;
     use crate::space::SpaceId;
     use crate::ulid::BlockId;
@@ -2280,10 +2261,10 @@ mod restore_cascade_tests {
         }
     }
 
-    /// Returns a fresh ShadowState — install_for_test pattern.  Unlike
+    /// Returns a fresh LoroState — install_for_test pattern.  Unlike
     /// `loro::shared::install_for_test` the global is process-local and
     /// per-nextest-process, so tests don't conflict.
-    fn fresh_shadow_state() -> &'static ShadowState {
+    fn fresh_loro_state() -> &'static LoroState {
         crate::loro::shared::install_for_test()
     }
 
@@ -2292,7 +2273,7 @@ mod restore_cascade_tests {
     /// state that mirrors the SQL "all four deleted at the same ref"
     /// shape so the `apply_restore_block` calls have something to
     /// restore.
-    fn seed_engine_with_deleted_subtree(state: &ShadowState) {
+    fn seed_engine_with_deleted_subtree(state: &LoroState) {
         let space = SpaceId::from_trusted(SPACE);
         let mut guard = state
             .registry
@@ -2322,7 +2303,7 @@ mod restore_cascade_tests {
     /// `Some(true)` if the engine reports the block as deleted,
     /// `Some(false)` if alive, `None` if the block is absent in the
     /// engine.
-    fn engine_block_deleted(state: &ShadowState, block_id: &str) -> Option<bool> {
+    fn engine_block_deleted(state: &LoroState, block_id: &str) -> Option<bool> {
         let space = SpaceId::from_trusted(SPACE);
         let mut guard = state
             .registry
@@ -2347,7 +2328,7 @@ mod restore_cascade_tests {
     async fn restore_block_dispatches_to_loro_for_each_descendant() {
         let (pool, _dir) = fresh_pool().await;
         seed_deleted_subtree(&pool).await;
-        let state = fresh_shadow_state();
+        let state = fresh_loro_state();
         seed_engine_with_deleted_subtree(state);
 
         // Sanity: every block is currently deleted in the engine.
@@ -2402,7 +2383,7 @@ mod restore_cascade_tests {
     async fn dispatch_restore_descendants_empty_list_is_noop() {
         let (pool, _dir) = fresh_pool().await;
         seed_deleted_subtree(&pool).await;
-        let state = fresh_shadow_state();
+        let state = fresh_loro_state();
         seed_engine_with_deleted_subtree(state);
 
         // Build a synthetic root record (we don't actually run the SQL
@@ -2454,7 +2435,7 @@ mod restore_cascade_tests {
 mod delete_cascade_tests {
     use super::*;
     use crate::db::init_pool;
-    use crate::loro::shared::ShadowState;
+    use crate::loro::shared::LoroState;
     use crate::op::OpPayload;
     use crate::space::SpaceId;
     use crate::ulid::BlockId;
@@ -2524,14 +2505,14 @@ mod delete_cascade_tests {
         }
     }
 
-    fn fresh_shadow_state() -> &'static ShadowState {
+    fn fresh_loro_state() -> &'static LoroState {
         crate::loro::shared::install_for_test()
     }
 
     /// Pre-populate the engine with the three blocks ALIVE.  Mirrors the
     /// SQL "active subtree" shape so the `apply_delete_block` cohort
     /// fan-out has something to mark deleted.
-    fn seed_engine_with_alive_subtree(state: &ShadowState) {
+    fn seed_engine_with_alive_subtree(state: &LoroState) {
         let space = SpaceId::from_trusted(SPACE);
         let mut guard = state
             .registry
@@ -2549,7 +2530,7 @@ mod delete_cascade_tests {
             .expect("create child 2");
     }
 
-    fn engine_block_deleted(state: &ShadowState, block_id: &str) -> Option<bool> {
+    fn engine_block_deleted(state: &LoroState, block_id: &str) -> Option<bool> {
         let space = SpaceId::from_trusted(SPACE);
         let mut guard = state
             .registry
@@ -2567,12 +2548,12 @@ mod delete_cascade_tests {
     /// seed AND its two descendants.  Without the day-15 fanout the
     /// engine-side state would still report `deleted_at = Null` on the
     /// two descendants (only the seed sees an engine apply via the
-    /// upstream `shadow_dispatch_for_record`).
+    /// upstream `dispatch_for_record`).
     #[tokio::test]
     async fn delete_block_dispatches_to_loro_for_each_descendant() {
         let (pool, _dir) = fresh_pool().await;
         seed_alive_subtree(&pool).await;
-        let state = fresh_shadow_state();
+        let state = fresh_loro_state();
         seed_engine_with_alive_subtree(state);
 
         // Sanity: every block is currently alive in the engine.

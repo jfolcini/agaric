@@ -263,8 +263,9 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
 }
 
 /// Drive one op onto the engine.  Equivalent to the per-op-type
-/// dispatch arm that lived in `merge::shadow_apply` before Phase 3
-/// day-10 deleted the parity-sink path.  Returns `Ok(())` on success;
+/// dispatch arm that lived in `merge::engine_apply` (formerly
+/// `shadow_apply`) before Phase 3 day-10 deleted the parity-sink path.
+/// Returns `Ok(())` on success;
 /// the proptest body asserts no errors fire (well-formed streams must
 /// always succeed against a fresh engine).
 fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate::error::AppError> {

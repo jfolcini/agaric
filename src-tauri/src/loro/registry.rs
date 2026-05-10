@@ -1,6 +1,6 @@
 //! Per-space [`LoroEngine`] registry — Phase-1 day-2 deliverable.
 //!
-//! Phase 1 day-2 lights up the `merge::shadow_apply` hook into a real
+//! Phase 1 day-2 lights up the `merge::engine_apply` hook into a real
 //! dual-write path.  The hook needs a `LoroEngine` per active space
 //! that outlives individual op-applies (otherwise every applied op
 //! would start from an empty doc — defeating the purpose).

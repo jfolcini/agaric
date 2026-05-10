@@ -725,7 +725,7 @@ pub fn run() {
                 let installed = crate::loro::shared::init();
                 tracing::info!(
                     installed,
-                    "loro: process-global ShadowState init complete (synchronous, pre-recovery)",
+                    "loro: process-global LoroState init complete (synchronous, pre-recovery)",
                 );
                 if let Some(state) = crate::loro::shared::get() {
                     let n = tauri::async_runtime::block_on(

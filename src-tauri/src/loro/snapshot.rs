@@ -41,7 +41,7 @@
 //! registry on first touch:
 //!
 //! - (a) Make `for_space` async + thread `&SqlitePool` through.
-//!   Invasive — every caller of `merge::shadow_apply` would need to
+//!   Invasive — every caller of `merge::engine_apply` would need to
 //!   become async.
 //! - (b) `tokio::task::block_in_place` + `Handle::block_on` inside the
 //!   sync `for_space`.  Hacky and risks deadlocks on single-threaded

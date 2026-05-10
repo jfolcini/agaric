@@ -638,25 +638,21 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
     let materializer = Materializer::new(pool.clone());
     let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
 
-    // Drive to Complete via the LoroSync sentinel-empty path
-    // (post-day-6 the streaming-phase payload is `LoroSync`, not the
-    // diffy-typed `OpBatch`).
+    // PEND-09 Phase 4 — manually set `state = Complete` to set up
+    // the terminal-state precondition. The state validation match in
+    // `handle_message` reads `self.state` (the source of truth), so
+    // setting it directly is sufficient to exercise the
+    // terminal-state reject branch. (The empty-registry path now
+    // short-circuits to `SyncComplete` rather than emitting a
+    // sentinel-empty `LoroSync`, so we can no longer drive to
+    // Complete through `handle_message` alone without scaffolding
+    // a real shadow registry — the dedicated coverage for that
+    // path lives in
+    // `loro_sync_orchestrator_handles_empty_registry_without_panic`.)
     let _start = orch.start().await.unwrap();
-    orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
-        .await
-        .unwrap();
-    orch.handle_message(SyncMessage::LoroSync {
-        msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
-            protocol_version: crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
-            space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
-            bytes: Vec::new(),
-        },
-        is_last: true,
-    })
-    .await
-    .unwrap();
+    orch.state = SyncState::Complete;
     assert_eq!(
-        orch.session().state,
+        orch.state,
         SyncState::Complete,
         "should reach Complete state before terminal test"
     );
@@ -715,17 +711,19 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
         "state should be ExchangingHeads after start"
     );
 
-    // Receive remote HeadExchange → StreamingOps
-    orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
-        .await
-        .unwrap();
-    assert_eq!(
-        orch.session().state,
-        SyncState::StreamingOps,
-        "state should be StreamingOps after head exchange"
-    );
+    // PEND-09 Phase 4 — directly set `state = StreamingOps` to set
+    // up the precondition. Driving via HeadExchange is brittle now:
+    // the empty-registry short-circuit transitions to `Complete`
+    // instead, and a sibling test in this binary may have populated
+    // the process-global `OnceLock` registry which would route us
+    // through the per-space LoroSync path. The state-validation
+    // match in `handle_message` reads `self.state` (the source of
+    // truth), so setting it directly exercises the same rejection
+    // branch deterministically.
+    orch.state = SyncState::StreamingOps;
 
-    // Send a SECOND HeadExchange in StreamingOps → should fail
+    // Send a HeadExchange in StreamingOps → should fail with the
+    // wrong-state rejection (not the terminal-state reject).
     let result = orch
         .handle_message(SyncMessage::HeadExchange { heads: vec![] })
         .await;
@@ -734,7 +732,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
         "HeadExchange should be rejected in StreamingOps state"
     );
     assert_eq!(
-        orch.session().state,
+        orch.state,
         SyncState::Failed("HeadExchange received in wrong state".into()),
         "state should transition to Failed with descriptive message"
     );
@@ -960,6 +958,25 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
     .await
     .unwrap();
 
+    // PEND-09 Phase 4 — install shadow state and register a real
+    // space so `head_exchange_outgoing_loro` takes the per-space
+    // LoroSync path (transitioning to `StreamingOps`) instead of the
+    // empty-registry short-circuit (which would transition straight
+    // to `Complete` and bypass the BUG-27 SyncComplete handler we
+    // are exercising here). The block payload itself is irrelevant
+    // — we just need at least one registered space.
+    let state = crate::loro::shared::install_for_test();
+    let space = crate::space::SpaceId::from_trusted("01HZBUG27EMPTYPEERIDXXXXXXX");
+    {
+        let mut g = state
+            .registry
+            .for_space(&space, "local-dev")
+            .expect("for_space");
+        g.engine_mut()
+            .apply_create_block("01HZBUG27EMPTYPEERIDBLK000", "content", "seed", None, 0)
+            .expect("apply_create_block");
+    }
+
     let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
     let _start = orch.start().await.unwrap();
 
@@ -978,8 +995,10 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
         .unwrap();
     // PEND-09 Phase 3 day-6 — `OpBatch` deleted; HeadExchange emits
     // a `LoroSync` (Phase-3 day-9 retired the `loro-shadow` feature
-    // gate so this is now the only path; an empty registry yields a
-    // sentinel-empty snapshot).
+    // gate so this is now the only path). Phase 4 — the
+    // empty-registry case short-circuits to `SyncComplete`, but
+    // this test installs a real space (above) to keep the per-space
+    // LoroSync path active.
     assert!(
         matches!(after_head, Some(SyncMessage::LoroSync { .. })),
         "HeadExchange with only local device_id still proceeds (it only becomes \
@@ -1427,18 +1446,17 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
         "state should be ExchangingHeads after start"
     );
 
-    // Receive remote HeadExchange (empty — both sides have no data) →
-    // transitions to StreamingOps
-    orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
-        .await
-        .unwrap();
-    assert_eq!(
-        orch.session().state,
-        SyncState::StreamingOps,
-        "should be in StreamingOps after first HeadExchange"
-    );
+    // PEND-09 Phase 4 — directly set `state = StreamingOps`. Driving
+    // via an empty-heads HeadExchange would now short-circuit to
+    // `Complete` (collapsed sentinel-empty `LoroSync` workaround),
+    // and a sibling test in this binary may have populated the
+    // process-global `OnceLock` registry which would route us
+    // through the per-space LoroSync path. State validation reads
+    // `self.state` directly, so this scaffolding exercises the same
+    // rejection branch deterministically.
+    orch.state = SyncState::StreamingOps;
 
-    // Send another HeadExchange — must be rejected
+    // Send a HeadExchange — must be rejected
     let duplicate_result = orch
         .handle_message(SyncMessage::HeadExchange { heads: vec![] })
         .await;
@@ -1449,7 +1467,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
 
     // State should transition to Failed with a descriptive message
     assert_eq!(
-        orch.session().state,
+        orch.state,
         SyncState::Failed("HeadExchange received in wrong state".into()),
         "state must be Failed after invalid HeadExchange"
     );
@@ -1547,14 +1565,18 @@ async fn handle_message_emits_within_sync_msg_span() {
 // ======================================================================
 
 /// Smoke test — the orchestrator's outgoing HeadExchange path does
-/// NOT panic when shadow state is initialised but the registry has
-/// zero registered spaces.  Reaches `StreamingOps` and emits a
-/// LoroSync sentinel with `is_last: true` so the responder can
-/// advance to Complete.
+/// NOT panic when shadow state is initialised.  When the registry has
+/// zero registered spaces (PEND-09 Phase 4 — collapsed the day-5
+/// sentinel-empty `LoroSync` workaround), HeadExchange short-circuits
+/// straight to `SyncComplete` so the responder can advance cleanly.
+/// When sibling tests in the same binary have already populated the
+/// shared `OnceLock` registry with spaces, the response is a real
+/// `LoroSync` and the orchestrator transitions to `StreamingOps` as
+/// in the production path.
 ///
-/// Locks the day-5 invariant: an orchestrator that boots into a
-/// process whose `LoroEngineRegistry` has not yet been touched still
-/// finishes a sync session cleanly (the no-op happy path).
+/// Locks the no-op happy-path invariant: an orchestrator that boots
+/// into a process whose `LoroEngineRegistry` has not yet been touched
+/// still finishes a sync session cleanly.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
@@ -1570,45 +1592,58 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
 
     // Simulate a peer that has never originated its own ops — only
     // advertises (local-dev, 0). HeadExchange path proceeds without
-    // touching local op_log (no ops to compute) and produces a
-    // LoroSync.
+    // touching local op_log (no ops to compute).
     let resp = orch
         .handle_message(SyncMessage::HeadExchange { heads: vec![] })
         .await
         .expect("HeadExchange must not error under the engine path");
 
-    // The response must be a LoroSync — never an OpBatch, regardless
-    // of whether the shared registry is empty or has stale entries
-    // from sibling tests in this binary (OnceLock is process-global).
+    // PEND-09 Phase 4 — accept either response shape:
+    //
+    // * Empty-registry short-circuit → `SyncComplete` (state ==
+    //   `Complete`).
+    // * Sibling-populated registry → real `LoroSync` (state ==
+    //   `StreamingOps`).
+    //
+    // Either way: never an `OpBatch`-shaped message and never a panic.
     match resp {
-        Some(SyncMessage::LoroSync { .. }) => {}
-        other => panic!("expected SyncMessage::LoroSync, got {other:?}"),
-    }
-    assert_eq!(
-        orch.session().state,
-        SyncState::StreamingOps,
-        "orchestrator must transition to StreamingOps after emitting LoroSync"
-    );
-
-    // Drain any remaining queued LoroSync messages — exercises the
-    // `next_message` loro path. The final drained message MUST carry
-    // `is_last: true`; subsequent calls return None.
-    let mut last_is_last: Option<bool> = None;
-    while let Some(msg) = orch.next_message() {
-        match msg {
-            SyncMessage::LoroSync { is_last, .. } => {
-                last_is_last = Some(is_last);
-            }
-            other => panic!("next_message produced non-LoroSync: {other:?}"),
+        Some(SyncMessage::SyncComplete { .. }) => {
+            assert_eq!(
+                orch.session().state,
+                SyncState::Complete,
+                "empty-registry short-circuit must leave the orchestrator in Complete"
+            );
+            // No further messages are expected after the
+            // short-circuit; `next_message` must return None.
+            assert!(
+                orch.next_message().is_none(),
+                "next_message must be empty after the short-circuit"
+            );
         }
-    }
-    // If `last_is_last` is None, the first response itself was the
-    // last; verify that path too.
-    if let Some(is_last) = last_is_last {
-        assert!(
-            is_last,
-            "final drained LoroSync message must carry is_last=true"
-        );
+        Some(SyncMessage::LoroSync { is_last, .. }) => {
+            assert_eq!(
+                orch.session().state,
+                SyncState::StreamingOps,
+                "non-empty-registry path must transition to StreamingOps"
+            );
+            // Drain any remaining queued LoroSync messages — exercises
+            // the `next_message` loro path. The final drained message
+            // (or the first if it was solo) MUST carry `is_last: true`.
+            let mut last_is_last = is_last;
+            while let Some(msg) = orch.next_message() {
+                match msg {
+                    SyncMessage::LoroSync { is_last, .. } => {
+                        last_is_last = is_last;
+                    }
+                    other => panic!("next_message produced non-LoroSync: {other:?}"),
+                }
+            }
+            assert!(
+                last_is_last,
+                "final drained LoroSync message must carry is_last=true"
+            );
+        }
+        other => panic!("expected SyncMessage::LoroSync or SyncComplete, got {other:?}"),
     }
 
     materializer.shutdown();

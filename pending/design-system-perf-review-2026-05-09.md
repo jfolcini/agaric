@@ -11,10 +11,12 @@ The system is **strong on a few intentional architectural decisions** (single ro
 
 **1. `useResolveStore` consumers double-subscribe to `version` + `cache`.**
 `src/hooks/useBlockResolve.ts:230-231` and `src/hooks/useRichContentCallbacks.ts:26-27, 87-88` each call the store twice on consecutive lines:
+
 ```ts
 const version = useResolveStore((s) => s.version)
 const cache = useResolveStore((s) => s.cache)
 ```
+
 Every cache write fires both subscriptions, and `src/stores/resolve.ts:220, 241, 270` allocates a brand-new `Map` of up to 10K entries per write. Per-keystroke `batchSet` flows from search/picker re-render every chip-rendering surface twice.
 **Fix:** drop `version` (the new Map identity is already a re-render trigger), or read `cache` outside React via `getState()` and subscribe once on a narrower derivation.
 
@@ -25,6 +27,7 @@ Every cache write fires both subscriptions, and `src/stores/resolve.ts:220, 241,
 **3. `editor` chunk (480 KB) and `LinkPreviewTooltip` chunk (304 KB) are eagerly preloaded.**
 `dist/index.html` emits 93 `modulepreload` tags including `editor-q3nmlp2u.js` (480K), `LinkPreviewTooltip-DQWPFXIe.js` (304K), `highlight-bqqDqH2C.js` (148K), `dnd-_ieDZQYq.js` (56K), `datepicker-DrlFMZhF.js` (76K), `export-graph-DgPJkOA3.js` (96K). Even though `JournalPage` is the only eager view, `BlockTree` → `use-roving-editor.ts` pulls all 28 TipTap extensions into the critical path. The `vite.config.ts:35-36` comment already acknowledges this. (`d3-CHvRSp5e.js` is *not* preloaded — it ships only when `GraphView` mounts.)
 **Fix (in priority order):**
+
 - Lazy-load the TipTap stack — JournalPage's static-render path can use `StaticBlock` until first focus/edit, then dynamic-import the editor and its 28 extensions.
 - Lazy-mount `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog` (currently mounted unconditionally at `src/App.tsx:494, 510, 515`) — drops `export-graph`/jszip out of the critical path.
 - Investigate `LinkPreviewTooltip` (304K) with `ANALYZE=1 npm run build`; sub-deps are unattributed in the present build.

@@ -1,7 +1,3 @@
-// Pre-existing clippy patterns surfaced when Phase 3 day-9 dropped the
-// `loro-shadow` cfg gates. Day-13+ mechanical cleanup territory.
-#![allow(clippy::manual_let_else)]
-
 //! `LoroEngine` — production-side port of the Phase-0 spike's CRDT
 //! engine (originally `crates/loro-spike/src/lib.rs`; the spike crate
 //! was archived in Phase-2 day-8 — see git tag `pend-09/spike-archive`).
@@ -849,23 +845,17 @@ impl LoroEngine {
             if err.is_some() {
                 return;
             }
-            let container = match voc.into_container() {
-                Ok(c) => c,
-                Err(_) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: list_children_walk block {key} value is not a container"
-                    )));
-                    return;
-                }
+            let Ok(container) = voc.into_container() else {
+                err = Some(AppError::Validation(format!(
+                    "loro: list_children_walk block {key} value is not a container"
+                )));
+                return;
             };
-            let block_map: LoroMap = match container.into_map() {
-                Ok(m) => m,
-                Err(_) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: list_children_walk block {key} container is not a LoroMap"
-                    )));
-                    return;
-                }
+            let Ok(block_map) = container.into_map() else {
+                err = Some(AppError::Validation(format!(
+                    "loro: list_children_walk block {key} container is not a LoroMap"
+                )));
+                return;
             };
             let deleted = match block_map.get(FIELD_DELETED_AT) {
                 None => false,
@@ -918,23 +908,17 @@ impl LoroEngine {
             if err.is_some() {
                 return;
             }
-            let container = match voc.into_container() {
-                Ok(c) => c,
-                Err(_) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: count_alive block {key} value is not a container"
-                    )));
-                    return;
-                }
+            let Ok(container) = voc.into_container() else {
+                err = Some(AppError::Validation(format!(
+                    "loro: count_alive block {key} value is not a container"
+                )));
+                return;
             };
-            let block_map: LoroMap = match container.into_map() {
-                Ok(m) => m,
-                Err(_) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: count_alive block {key} container is not a LoroMap"
-                    )));
-                    return;
-                }
+            let Ok(block_map) = container.into_map() else {
+                err = Some(AppError::Validation(format!(
+                    "loro: count_alive block {key} container is not a LoroMap"
+                )));
+                return;
             };
             let deleted = match block_map.get(FIELD_DELETED_AT) {
                 None => false,
