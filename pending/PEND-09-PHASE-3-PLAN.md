@@ -112,9 +112,10 @@ Phase 3 is **NOT**:
 
 * **Not the FE-side Loro `subscribe()` integration.** The FE continues
   to read SQL rows projected from Loro state. The Loro-mode equivalence
-  point in `pending/PEND-09-fe-edit-coordinate-space.md` § "Loro-mode
-  equivalence" remains; Phase 3.5+ is when FE-side `subscribe()` and
-  USV ↔ UTF-16 cursor bridging would land.
+  point in `ARCHITECTURE.md` §7 "FE edit coordinate space (FE↔BE
+  authority boundary)" — sub-section "Loro-mode equivalence" — remains;
+  Phase 3.5+ is when FE-side `subscribe()` and USV ↔ UTF-16 cursor
+  bridging would land.
 * **Not the `is_conflict` column drop.** Phase 3 makes the
   conflict-copy creation path unreachable (day 7) but the column
   itself stays readable. The drop migration deferred to Phase 4 — the
@@ -302,9 +303,8 @@ Concurrent edits to the same characters: both edits coexist, result
 depends on op ordering. Concurrent property writes (same key on same
 block): Loro's per-key LWW selects one value; the loser's value is
 gone — matches diffy's existing `resolve_property_conflict` (later
-`created_at` wins, `device_id` tiebreaker per
-`pending/PEND-09-lww-resolution-rule.md`). Concurrent moves: same
-per-key LWW.
+`created_at` wins, `device_id` tiebreaker per `ARCHITECTURE.md` §12
+"LWW resolution rule"). Concurrent moves: same per-key LWW.
 
 **Existing `is_conflict=1` rows.** Per the Phase-2 cutover plan's
 conversion rule (summarised in `SESSION-LOG.md` Session 698 Phase 2
@@ -674,7 +674,7 @@ In `src-tauri/src/sync_integration_tests.rs` or a new module:
 5. After bidirectional sync, assert engine VV equality plus SQL
    `blocks` rows match (block-by-block: content, parent_id, position,
    properties, tags). For LWW conflicts: deterministic winner per
-   `pending/PEND-09-lww-resolution-rule.md`.
+   `ARCHITECTURE.md` §12 "LWW resolution rule".
 
 ### Day 13 — Phase 3 final report
 

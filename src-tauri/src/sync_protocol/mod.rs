@@ -6,19 +6,13 @@
 //! [`SyncMessage`] values.
 
 // PEND-09 Phase 3 day-3 — sync wire types for Loro-based sync
-// (`LoroSyncMessage::{Snapshot, Update}`).  Intentionally NOT
-// `#[cfg(feature = "loro-shadow")]`-gated — the types live in the
-// default build so the orchestrator can construct/match them
-// uniformly across builds.
+// (`LoroSyncMessage::{Snapshot, Update}`).
 pub mod loro_sync_types;
 
 // PEND-09 Phase 3 day-4 — `prepare_outgoing` + `apply_remote`
-// helpers that build / consume the day-3 wire types.  The module
-// declaration is unconditional so the public API surface stays
-// stable across builds; the function bodies are
-// `#[cfg(feature = "loro-shadow")]`-gated because they touch
-// `LoroEngineRegistry` (only present under that feature).  Day-9
-// removes the gate.
+// helpers that build / consume the day-3 wire types.  Phase 3 day-9
+// retired the `loro-shadow` feature gate; the module compiles
+// unconditionally now.
 pub mod loro_sync;
 
 mod operations;

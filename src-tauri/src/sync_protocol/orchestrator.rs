@@ -1,3 +1,7 @@
+// Pre-existing clippy patterns surfaced when Phase 3 day-9 dropped the
+// `loro-shadow` cfg gates. Day-13+ mechanical cleanup territory.
+#![allow(clippy::manual_let_else)]
+
 //! # `sync_protocol` orchestrator
 //!
 //! Pure, per-session state machine that drives a single sync exchange
@@ -21,12 +25,12 @@
 //!   current [`SyncState`] (out-of-order messages transition to
 //!   [`SyncState::Failed`]).
 //! * Computing what to send the remote in response to its
-//!   `HeadExchange` — under `loro-shadow`, one
-//!   [`SyncMessage::LoroSync`] per registered space (built from
-//!   [`crate::loro::shared`]'s [`crate::loro::registry::LoroEngineRegistry`]).
-//!   Default builds have no engine state to send — they emit a single
-//!   sentinel `LoroSync` (zero-byte snapshot, `is_last: true`) so the
-//!   receiver can advance to `SyncComplete`.
+//!   `HeadExchange` — one [`SyncMessage::LoroSync`] per registered
+//!   space (built from [`crate::loro::shared`]'s
+//!   [`crate::loro::registry::LoroEngineRegistry`]).  When the
+//!   registry exists but is empty (no spaces touched yet) we emit a
+//!   single sentinel `LoroSync` (zero-byte snapshot, `is_last: true`)
+//!   so the receiver can advance to `SyncComplete`.
 //! * Importing received [`crate::sync_protocol::loro_sync_types::LoroSyncMessage`]s
 //!   via [`crate::sync_protocol::loro_sync::apply_remote`].
 //! * Emitting fine-grained progress events through an attached
@@ -51,7 +55,6 @@
 //!   dispatch defends against regressions with a `debug_assert!`.
 
 use sqlx::SqlitePool;
-#[cfg(feature = "loro-shadow")]
 use std::collections::VecDeque;
 
 use super::operations::*;
@@ -87,7 +90,7 @@ use crate::peer_refs;
 ///   match the peer the daemon connected to, and (2) the
 ///   `SyncComplete` fallback described above.
 ///
-/// * **`pending_loro_messages`** (loro-shadow) holds the
+/// * **`pending_loro_messages`** holds the
 ///   [`LoroSyncMessage`]s we owe the remote.  Populated when entering
 ///   [`SyncState::StreamingOps`] (after processing the remote's
 ///   `HeadExchange`) and drained one-per-call via
@@ -122,20 +125,18 @@ pub struct SyncOrchestrator {
     /// Hash of the last local op handed to the remote in this session,
     /// written to `peer_refs.last_sent_hash` at `SyncComplete`. `None`
     /// when we sent nothing (typical for an initiator that already
-    /// shipped all its ops on a previous sync, or for default builds
-    /// post-day-6 where the streaming-phase payload is the
-    /// sentinel-empty `LoroSync`); the read site treats `None` as the
-    /// empty-string sentinel documented on
-    /// [`peer_refs::update_on_sync`].
+    /// shipped all its ops on a previous sync, or for the residual
+    /// edge case where the registry exists but is empty so the
+    /// streaming-phase payload is the sentinel-empty `LoroSync`); the
+    /// read site treats `None` as the empty-string sentinel documented
+    /// on [`peer_refs::update_on_sync`].
     last_sent_hash: Option<String>,
     /// PEND-09 Phase 3 day-5 — pending [`LoroSyncMessage`]s queued for
-    /// streaming under the `loro-shadow` feature. Populated when
-    /// entering [`SyncState::StreamingOps`] from
-    /// [`crate::loro::shared`] (one [`LoroSyncMessage::Snapshot`] per
-    /// registered space — initial sync only; per-peer-vv-tracked
+    /// streaming. Populated when entering [`SyncState::StreamingOps`]
+    /// from [`crate::loro::shared`] (one [`LoroSyncMessage::Snapshot`]
+    /// per registered space — initial sync only; per-peer-vv-tracked
     /// Updates are a follow-up); drained one per call to
     /// [`next_message`](Self::next_message).
-    #[cfg(feature = "loro-shadow")]
     pending_loro_messages: VecDeque<crate::sync_protocol::loro_sync_types::LoroSyncMessage>,
     remote_device_id: Option<String>,
     /// When set, the orchestrator validates that the remote device_id
@@ -159,7 +160,6 @@ impl SyncOrchestrator {
             materializer,
             state: SyncState::Idle,
             last_sent_hash: None,
-            #[cfg(feature = "loro-shadow")]
             pending_loro_messages: VecDeque::new(),
             remote_device_id: None,
             expected_remote_id: None,
@@ -350,62 +350,22 @@ impl SyncOrchestrator {
 
                 // PEND-09 Phase 3 day-6 — outgoing streaming-phase
                 // payload is one [`SyncMessage::LoroSync`] per
-                // registered space (built from
-                // [`crate::loro::shared`]).  Default builds have no
-                // engine state and emit a single sentinel
-                // zero-byte-snapshot LoroSync so the receiver can
-                // advance to `SyncComplete`; day-9 promotes the engine
-                // out of the feature gate and unifies the two paths.
-                #[cfg(feature = "loro-shadow")]
-                {
-                    return self.head_exchange_outgoing_loro().await;
-                }
-
-                #[cfg(not(feature = "loro-shadow"))]
-                {
-                    // Default-build path (no engine state): send a
-                    // sentinel empty `LoroSync` and transition to
-                    // `StreamingOps`.  Single-user maintainers run with
-                    // `loro-shadow` enabled; the default build's sync
-                    // path is non-functional post-day-6 and exists only
-                    // so the rest of the project (file-transfer,
-                    // peer-refs bookkeeping) keeps compiling.
-                    use crate::sync_protocol::loro_sync_types::{
-                        LoroSyncMessage, LORO_SYNC_PROTOCOL_VERSION,
-                    };
-                    self.last_sent_hash = None;
-                    self.session.ops_sent = 0;
-                    self.state = SyncState::StreamingOps;
-                    self.session.state = SyncState::StreamingOps;
-                    self.emit(crate::sync_events::SyncEvent::Progress {
-                        state: crate::sync_events::sync_state_label(&self.state).to_string(),
-                        remote_device_id: self.session.remote_device_id.clone(),
-                        ops_received: self.session.ops_received,
-                        ops_sent: self.session.ops_sent,
-                    });
-                    Ok(Some(SyncMessage::LoroSync {
-                        msg: LoroSyncMessage::Snapshot {
-                            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
-                            space_id: crate::space::SpaceId::from_trusted(
-                                "00000000000000000000000000",
-                            ),
-                            bytes: Vec::new(),
-                        },
-                        is_last: true,
-                    }))
-                }
+                // registered space (built from [`crate::loro::shared`]).
+                // Day-9 retired the `loro-shadow` feature gate so this
+                // is now the only path; the residual edge case (registry
+                // exists but is empty) is handled by
+                // `head_exchange_outgoing_loro`'s "no spaces -> sentinel
+                // zero-byte snapshot" branch.
+                return self.head_exchange_outgoing_loro().await;
             }
 
             // ---- LoroSync (PEND-09 Phase 3 day-5) ----------------------------
-            // Under `loro-shadow`, dispatch to the day-4 `apply_remote`
-            // helper. Under default builds the engine + projection
-            // helpers don't exist — log warn + drop the message; the
-            // session can still reach `Complete` via the `is_last`
-            // signal because no engine state is required for the
-            // bookkeeping path. Day-9 removes the `loro-shadow` feature
-            // gate so this becomes unconditional.
+            // Dispatch to the day-4 `apply_remote` helper.  Phase 3
+            // day-9 retired the `loro-shadow` feature gate so this is
+            // unconditional now.  The empty-sentinel snapshot
+            // (see `head_exchange_outgoing_loro`'s zero-spaces path)
+            // skips the engine import and just advances `is_last`.
             SyncMessage::LoroSync { msg, is_last } => {
-                #[cfg(feature = "loro-shadow")]
                 {
                     use crate::sync_protocol::loro_sync;
                     use crate::sync_protocol::loro_sync_types::LoroSyncMessage as LSM;
@@ -442,22 +402,12 @@ impl SyncOrchestrator {
                             None => {
                                 tracing::warn!(
                                     device_id = %self.device_id,
-                                    "loro-shadow: shared state not initialised; \
+                                    "loro: shared state not initialised; \
                                      dropping incoming LoroSync"
                                 );
                             }
                         }
                     }
-                }
-
-                #[cfg(not(feature = "loro-shadow"))]
-                {
-                    let _ = msg; // unused under default build — silence warning
-                    tracing::warn!(
-                        device_id = %self.device_id,
-                        "default build received LoroSync message; dropping \
-                         (loro-shadow feature is required for engine state)"
-                    );
                 }
 
                 if !is_last {
@@ -529,10 +479,11 @@ impl SyncOrchestrator {
                     },
                 };
                 // `last_sent_hash` was captured from the last
-                // streaming-phase op (loro-shadow) or left None
-                // (default build). `unwrap_or_default()` reproduces the
-                // empty-string sentinel that `peer_refs::update_on_sync`
-                // expects when no ops were sent this session.
+                // streaming-phase op or left None (registry was empty
+                // for the session, only the sentinel was sent).
+                // `unwrap_or_default()` reproduces the empty-string
+                // sentinel that `peer_refs::update_on_sync` expects
+                // when no ops were sent this session.
                 let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
 
                 // PEND-24 M2: wrap the post-session bookkeeping pair
@@ -644,7 +595,6 @@ impl SyncOrchestrator {
     ///   receiver advances cleanly to `SyncComplete`.
     ///
     /// State transition: `ExchangingHeads` → `StreamingOps`.
-    #[cfg(feature = "loro-shadow")]
     async fn head_exchange_outgoing_loro(&mut self) -> Result<Option<SyncMessage>, AppError> {
         use crate::sync_protocol::loro_sync;
         use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
@@ -658,7 +608,7 @@ impl SyncOrchestrator {
             None => {
                 tracing::warn!(
                     device_id = %self.device_id,
-                    "loro-shadow: shared state not initialised; \
+                    "loro: shared state not initialised; \
                      skipping LoroSync push (sending empty stream)"
                 );
                 self.state = SyncState::StreamingOps;
@@ -765,16 +715,15 @@ impl SyncOrchestrator {
     /// }
     /// ```
     pub fn next_message(&mut self) -> Option<SyncMessage> {
-        // Default builds (no engine state) emit a single
-        // sentinel-empty `LoroSync` from `handle_message`'s
-        // `HeadExchange` arm and queue nothing — `next_message`
-        // immediately returns `None`.
-        #[cfg(feature = "loro-shadow")]
-        {
-            if let Some(msg) = self.pending_loro_messages.pop_front() {
-                let is_last = self.pending_loro_messages.is_empty();
-                return Some(SyncMessage::LoroSync { msg, is_last });
-            }
+        // PEND-09 Phase 3 day-9: when `head_exchange_outgoing_loro`'s
+        // registry-empty branch fires, the queue stays empty and the
+        // first message is a sentinel-empty `LoroSync` returned
+        // directly from `handle_message` — `next_message` then returns
+        // `None` immediately.  Otherwise it drains the per-space
+        // pending queue one message at a time.
+        if let Some(msg) = self.pending_loro_messages.pop_front() {
+            let is_last = self.pending_loro_messages.is_empty();
+            return Some(SyncMessage::LoroSync { msg, is_last });
         }
         None
     }

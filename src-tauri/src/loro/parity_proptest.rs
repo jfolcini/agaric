@@ -553,7 +553,7 @@ proptest! {
 
 /// Two-device concurrent-merge proptest streams.  See parent module
 /// docstring §"Two-device concurrent-merge extension".
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod two_device {
     use super::*;
 
@@ -826,9 +826,9 @@ mod two_device {
         /// Note: Loro's LWW tiebreak is Lamport-order (peer-id +
         /// op-counter) — NOT wall-clock timestamp.  Diffy uses
         /// (timestamp, device_id, seq); the tiebreak rule difference
-        /// is the documented bucket-C exception (see
-        /// pending/PEND-09-lww-resolution-rule.md).  Convergence on
-        /// each side is what kill-criterion #2 actually requires.
+        /// is the documented bucket-C exception (see ARCHITECTURE.md
+        /// §12 "LWW resolution rule").  Convergence on each side is
+        /// what kill-criterion #2 actually requires.
         #[test]
         fn two_device_concurrent_set_property_loro_lww_wins(
             a_value in prop_value_strategy(),
@@ -886,7 +886,8 @@ mod two_device {
         /// per-key LWW on the `parent_id` slot picks one parent; both
         /// engines must converge on the same value.  Cites the same
         /// LWW rule as test 3 — the documented Lamport-vs-wallclock
-        /// tiebreak exception (see pending/PEND-09-lww-resolution-rule.md).
+        /// tiebreak exception (see ARCHITECTURE.md §12 "LWW resolution
+        /// rule").
         ///
         /// This is the "loser's reparent intent dropped" tradeoff
         /// the plan flagged as open question 5 — the spike's

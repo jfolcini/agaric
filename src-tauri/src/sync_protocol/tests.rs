@@ -976,9 +976,10 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
         })
         .await
         .unwrap();
-    // PEND-09 Phase 3 day-6 — `OpBatch` deleted; both build flavours
-    // emit `LoroSync` from `HeadExchange` (loro-shadow walks the engine
-    // registry; default builds emit a sentinel-empty snapshot).
+    // PEND-09 Phase 3 day-6 — `OpBatch` deleted; HeadExchange emits
+    // a `LoroSync` (Phase-3 day-9 retired the `loro-shadow` feature
+    // gate so this is now the only path; an empty registry yields a
+    // sentinel-empty snapshot).
     assert!(
         matches!(after_head, Some(SyncMessage::LoroSync { .. })),
         "HeadExchange with only local device_id still proceeds (it only becomes \
@@ -1545,16 +1546,16 @@ async fn handle_message_emits_within_sync_msg_span() {
 // PEND-09 Phase 3 day-5 — LoroSync wire integration tests
 // ======================================================================
 
-/// Smoke test — under `loro-shadow`, the orchestrator's outgoing
-/// HeadExchange path does NOT panic when shadow state is initialised
-/// but the registry has zero registered spaces.  Reaches
-/// `StreamingOps` and emits a LoroSync sentinel with `is_last: true`
-/// so the responder can advance to Complete.
+/// Smoke test — the orchestrator's outgoing HeadExchange path does
+/// NOT panic when shadow state is initialised but the registry has
+/// zero registered spaces.  Reaches `StreamingOps` and emits a
+/// LoroSync sentinel with `is_last: true` so the responder can
+/// advance to Complete.
 ///
 /// Locks the day-5 invariant: an orchestrator that boots into a
 /// process whose `LoroEngineRegistry` has not yet been touched still
 /// finishes a sync session cleanly (the no-op happy path).
-#[cfg(feature = "loro-shadow")]
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
     let (pool, _dir) = test_pool().await;
@@ -1574,7 +1575,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
     let resp = orch
         .handle_message(SyncMessage::HeadExchange { heads: vec![] })
         .await
-        .expect("HeadExchange must not error under loro-shadow");
+        .expect("HeadExchange must not error under the engine path");
 
     // The response must be a LoroSync — never an OpBatch, regardless
     // of whether the shared registry is empty or has stale entries
@@ -1624,7 +1625,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
 /// other shadow-state tests is preserved.  The orchestrator path is
 /// covered by [`loro_sync_orchestrator_handles_empty_registry_without_panic`]
 /// above.
-#[cfg(feature = "loro-shadow")]
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_e2e_round_trip_block_visible_on_b() {
     use crate::loro::registry::LoroEngineRegistry;
@@ -1713,7 +1714,7 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
 /// `Idle` (before any HeadExchange).  Mirrors the OpBatch pre-
 /// HeadExchange rejection in
 /// [`orchestrator_rejects_op_batch_before_head_exchange`].
-#[cfg(feature = "loro-shadow")]
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
     use crate::space::SpaceId;

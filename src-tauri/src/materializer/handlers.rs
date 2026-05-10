@@ -63,13 +63,12 @@ pub(super) async fn handle_foreground_task(
             // record position to mirror the `records.iter()` order; an
             // empty effects struct is the default for non-RestoreBlock
             // ops so the post-commit walk just no-ops on those slots.
-            #[cfg(feature = "loro-shadow")]
             let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
             // M-10: `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
                 let snapshot = snapshot_for_op(&mut tx, record).await?;
-                let _effects = match apply_op_tx(&mut tx, record).await {
+                let effects = match apply_op_tx(&mut tx, record).await {
                     Ok(eff) => eff,
                     Err(e) => {
                         tracing::warn!(
@@ -83,8 +82,7 @@ pub(super) async fn handle_foreground_task(
                         return Err(e);
                     }
                 };
-                #[cfg(feature = "loro-shadow")]
-                per_record_effects.push(_effects);
+                per_record_effects.push(effects);
                 max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
                 if gcal_handle.get().is_some() {
                     // PEND-25 L2: wrap in `Arc` so `DeferredNotification`
@@ -115,8 +113,7 @@ pub(super) async fn handle_foreground_task(
             // back is not visible here (an Err inside the loop above
             // returns early before we reach this point).  See the
             // single-op `apply_op` path for the rationale; this is
-            // the same hook applied per-record.  No-op when
-            // `loro-shadow` is off.
+            // the same hook applied per-record.
             //
             // PEND-09 Phase 2 day-9 — also fan out the RestoreBlock
             // descendant cohorts captured in `per_record_effects`, in
@@ -125,22 +122,21 @@ pub(super) async fn handle_foreground_task(
             // mirror the SQL cascade.  Records with empty
             // `restored_cohort` (every op type other than
             // RestoreBlock) are no-ops in the fanout helper.
-            #[cfg(feature = "loro-shadow")]
-            {
-                for (record, effects) in records.iter().zip(per_record_effects.iter()) {
-                    crate::merge::shadow_dispatch_for_record(pool, record).await;
-                    dispatch_restore_descendants_shadow(pool, record, &effects.restored_cohort)
-                        .await;
-                    // PEND-09 Phase 2 day-15 — symmetric DeleteBlock
-                    // cohort fan-out.  See the matching call in the
-                    // single-op `apply_op` path for rationale.
-                    dispatch_delete_descendants_shadow(
-                        record,
-                        &effects.deleted_cohort,
-                        effects.delete_space_id.as_ref(),
-                    )
-                    .await;
-                }
+            //
+            // PEND-09 Phase 3 day-9 — the `loro-shadow` feature gate
+            // is retired; this fanout runs unconditionally now.
+            for (record, effects) in records.iter().zip(per_record_effects.iter()) {
+                crate::merge::shadow_dispatch_for_record(pool, record).await;
+                dispatch_restore_descendants_shadow(pool, record, &effects.restored_cohort).await;
+                // PEND-09 Phase 2 day-15 — symmetric DeleteBlock
+                // cohort fan-out.  See the matching call in the
+                // single-op `apply_op` path for rationale.
+                dispatch_delete_descendants_shadow(
+                    record,
+                    &effects.deleted_cohort,
+                    effects.delete_space_id.as_ref(),
+                )
+                .await;
             }
 
             notify_gcal_for_events(gcal_handle, pending_events);
@@ -185,7 +181,7 @@ pub(super) async fn apply_op(
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
     let snapshot = snapshot_for_op(&mut tx, record).await?;
-    let _effects = apply_op_tx(&mut tx, record).await?;
+    let effects = apply_op_tx(&mut tx, record).await?;
     // C-2b: advance the cursor in the same tx so `apply + cursor` are
     // atomic. A crash between the apply and the commit rolls both back
     // together; the cursor never points ahead of materialised state.
@@ -196,9 +192,8 @@ pub(super) async fn apply_op(
     // materializer hot path.  Dispatched AFTER `tx.commit` so the
     // per-space `LoroEngine` only ever observes durably-applied ops
     // (a rolled-back tx must not leak into Loro's in-process state).
-    // No-op when `loro-shadow` is off (compile-time elided); even with
-    // the feature on, `shadow_dispatch_for_record` swallows its own
-    // errors and never propagates failure back to the materializer.
+    // `shadow_dispatch_for_record` swallows its own errors and never
+    // propagates failure back to the materializer.
     //
     // PEND-09 Phase 2 day-9 — RestoreBlock cascade fan-out.  The SQL
     // restore walks the descendant cohort but the Loro engine is
@@ -207,28 +202,26 @@ pub(super) async fn apply_op(
     // We synthesise per-descendant `RestoreBlock` records (sharing
     // the root record's metadata) and dispatch each through the same
     // shadow-dispatch path.  See `dispatch_restore_descendants_shadow`.
-    #[cfg(feature = "loro-shadow")]
-    {
-        crate::merge::shadow_dispatch_for_record(pool, record).await;
-        dispatch_restore_descendants_shadow(pool, record, &_effects.restored_cohort).await;
-        // PEND-09 Phase 2 day-15 — symmetric DeleteBlock cohort fan-out.
-        // Closes the gap that day-13 left: SQL soft-deletes N
-        // descendants but the engine's `apply_delete_block` is per-block
-        // only, so without this walk the engine carries "alive" state
-        // for the descendants while SQL says "deleted".  Run
-        // unconditionally (not flag-gated) so both shadow-mode AND
-        // cutover-on benefit — same wiring as the restore fan-out.
-        //
-        // Space id was captured PRE-UPDATE in `apply_op_tx` because
-        // `resolve_block_space` filters `deleted_at IS NULL`; a
-        // post-commit lookup would return `None` for every cohort row.
-        dispatch_delete_descendants_shadow(
-            record,
-            &_effects.deleted_cohort,
-            _effects.delete_space_id.as_ref(),
-        )
-        .await;
-    }
+    //
+    // PEND-09 Phase 3 day-9 — the `loro-shadow` feature gate is
+    // retired; this fanout runs unconditionally now.
+    crate::merge::shadow_dispatch_for_record(pool, record).await;
+    dispatch_restore_descendants_shadow(pool, record, &effects.restored_cohort).await;
+    // PEND-09 Phase 2 day-15 — symmetric DeleteBlock cohort fan-out.
+    // Closes the gap that day-13 left: SQL soft-deletes N
+    // descendants but the engine's `apply_delete_block` is per-block
+    // only, so without this walk the engine carries "alive" state
+    // for the descendants while SQL says "deleted".
+    //
+    // Space id was captured PRE-UPDATE in `apply_op_tx` because
+    // `resolve_block_space` filters `deleted_at IS NULL`; a
+    // post-commit lookup would return `None` for every cohort row.
+    dispatch_delete_descendants_shadow(
+        record,
+        &effects.deleted_cohort,
+        effects.delete_space_id.as_ref(),
+    )
+    .await;
 
     notify_gcal_for_events(
         gcal_handle,
@@ -287,7 +280,6 @@ pub(super) async fn apply_op(
 /// per-block call reuses the root op's metadata (`device_id`, `seq`,
 /// `space_id`) so log lines + parity rows stay anchored to the
 /// user-visible op.
-#[cfg(feature = "loro-shadow")]
 async fn dispatch_restore_descendants_shadow(
     pool: &SqlitePool,
     root_record: &OpRecord,
@@ -409,7 +401,6 @@ async fn dispatch_restore_descendants_shadow(
 /// rows, never hot-path failures) so this helper has nothing to
 /// propagate.  Per-call cost is bounded by the registry lock + the
 /// engine's per-block-id mutation (single-digit microseconds).
-#[cfg(feature = "loro-shadow")]
 async fn dispatch_delete_descendants_shadow(
     root_record: &OpRecord,
     cohort: &[String],
@@ -599,26 +590,19 @@ async fn apply_op_tx(
     let mut effects = ApplyEffects::default();
     match op_type {
         OpType::CreateBlock => {
-            // PEND-09 Phase 3 day-8 — collapsed cutover-flag fork.
-            // Under `loro-shadow` this routes through the engine
-            // (Phase-2 day-11 Option-A reorder, the cutover-on path).
-            // Under default-build the legacy diffy merge is gone;
-            // the SQL-only fallback below is what ships behaviour
-            // until day 9 unifies the build modes.  See
-            // `pending/PEND-09-apply-op-reorder.md` and
-            // `pending/PEND-09-PHASE-3-PLAN.md` §3 day 8.
+            // PEND-09 Phase 3 day-9 — `loro-shadow` feature gate
+            // retired.  The engine path is the only path now; the
+            // SQL-only `apply_*_sql_only` helpers remain as fallbacks
+            // for the test scaffolding cases (uninitialised shadow
+            // state, unresolved space) inside the via_loro helpers
+            // themselves.  See `pending/PEND-09-PHASE-3-PLAN.md` §3
+            // day 9.
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_create_block_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_create_block_sql_only(conn, p).await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_edit_block_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_edit_block_sql_only(conn, p).await?;
         }
         OpType::DeleteBlock => {
             let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
@@ -635,11 +619,7 @@ async fn apply_op_tx(
             // `dispatch_delete_descendants_shadow`).
             //
             // The cohort capture and assignment are unconditional
-            // (mirrors the day-9 `collect_restore_cohort` shape).  The
-            // `deleted_cohort` field is only consumed under
-            // `loro-shadow`, but a single small SELECT before the
-            // UPDATE is cheap and keeps the call site free of feature
-            // gates — see `collect_delete_cohort`'s doc.
+            // (mirrors the day-9 `collect_restore_cohort` shape).
             //
             // The space resolve runs at the same pre-UPDATE moment so
             // the post-commit fanout has a known-good space id to
@@ -649,10 +629,7 @@ async fn apply_op_tx(
             let cohort = collect_delete_cohort(conn, &p).await?;
             let delete_space_id =
                 crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
-            #[cfg(feature = "loro-shadow")]
             apply_delete_block_via_loro(conn, &record.device_id, &p, &record.created_at).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_delete_block_sql_only(conn, p, &record.created_at).await?;
             effects.deleted_cohort = cohort;
             effects.delete_space_id = delete_space_id;
         }
@@ -681,53 +658,32 @@ async fn apply_op_tx(
             // descendant on the engine because the engine apply is
             // idempotent (no-op on already-restored).
             let cohort = collect_restore_cohort(conn, &p).await?;
-            #[cfg(feature = "loro-shadow")]
             apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_restore_block_sql_only(conn, p).await?;
             effects.restored_cohort = cohort;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_purge_block_sql_only(conn, p).await?;
         }
         OpType::MoveBlock => {
             let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_move_block_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_move_block_sql_only(conn, p).await?;
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_add_tag_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_add_tag_sql_only(conn, p).await?;
         }
         OpType::RemoveTag => {
             let p: RemoveTagPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_remove_tag_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_remove_tag_sql_only(conn, p).await?;
         }
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_set_property_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_set_property_sql_only(conn, p).await?;
         }
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
-            #[cfg(feature = "loro-shadow")]
             apply_delete_property_via_loro(conn, &record.device_id, &p).await?;
-            #[cfg(not(feature = "loro-shadow"))]
-            apply_delete_property_sql_only(conn, p).await?;
         }
         OpType::AddAttachment => {
             // Attachments stay on the SQL-only path — they don't go
@@ -789,11 +745,9 @@ async fn collect_restore_cohort(
 /// path regardless of whether the upstream `shadow_dispatch_for_record`
 /// reaches the engine for any specific op record.
 ///
-/// Not feature-gated so the call site in `apply_op_tx` stays simple
-/// (mirrors the unconditional `collect_restore_cohort` call); the
-/// captured cohort is only consumed under `loro-shadow`, but the SELECT
-/// itself is cheap (single CTE walk; ~µs on small subtrees) and the
-/// unified shape avoids a feature-gated field on `ApplyEffects`.
+/// The captured cohort feeds the post-commit
+/// `dispatch_delete_descendants_shadow` fanout; the SELECT itself is
+/// cheap (single CTE walk; ~µs on small subtrees).
 async fn collect_delete_cohort(
     conn: &mut sqlx::SqliteConnection,
     p: &DeleteBlockPayload,
@@ -849,13 +803,13 @@ async fn collect_delete_cohort(
 /// - Space cannot be resolved (orphan block, no `space` ancestor,
 ///   pre-FEAT-3 row, fresh page-create with no SetProperty(space)
 ///   yet).
+///
 /// In production both arms are unreachable — `init` runs at boot and
 /// space resolution succeeds on every well-formed op.  Documented as a
 /// trade-off: errors here would have been "safe in the maintainer's
 /// solo-user context", but ~55 materializer / recovery / sync_daemon
 /// tests thread synthetic bare-block ops through `apply_op` and rely
 /// on this fallback to land SQL state.
-#[cfg(feature = "loro-shadow")]
 async fn apply_create_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -922,7 +876,6 @@ async fn apply_create_block_via_loro(
 /// the guard, project.  Edit ops carry no `parent_id`, so the
 /// resolution anchor is the `block_id` itself (which already has a
 /// `parent_id` row in `blocks` — the resolution walks up from there).
-#[cfg(feature = "loro-shadow")]
 async fn apply_edit_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -969,7 +922,6 @@ async fn apply_edit_block_via_loro(
 ///
 /// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
 /// space now errors out instead of taking the diffy path.
-#[cfg(feature = "loro-shadow")]
 async fn apply_set_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1024,7 +976,6 @@ async fn apply_set_property_via_loro(
 ///
 /// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
 /// space now errors out instead of taking the diffy path.
-#[cfg(feature = "loro-shadow")]
 async fn apply_delete_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1060,7 +1011,6 @@ async fn apply_delete_block_via_loro(
 /// LWW; we read back the engine's post-apply snapshot and project both
 /// fields into SQL.  No sibling-shift on either side (see projection
 /// helper's docstring for the rationale).
-#[cfg(feature = "loro-shadow")]
 async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1129,7 +1079,6 @@ async fn apply_move_block_via_loro(
 /// PEND-09 Phase 3 day-8: when the block has no parent (orphan / page-
 /// level restore), the diffy fall-back is gone, so an unresolvable
 /// space now errors out.
-#[cfg(feature = "loro-shadow")]
 async fn apply_restore_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1187,7 +1136,6 @@ async fn apply_restore_block_via_loro(
 /// PEND-09 Phase 3 day-8: same SQL-only fallback shape as the other
 /// helpers; on a fallback the engine apply is skipped but the SQL
 /// cascade still fires.  In production both arms are unreachable.
-#[cfg(feature = "loro-shadow")]
 async fn apply_purge_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1221,7 +1169,7 @@ async fn apply_purge_block_via_loro(
 /// exception, every row that descends from the purged block must go
 /// (including conflict copies).  `depth < 100` is the runaway-recursion
 /// guard.
-#[cfg_attr(feature = "loro-shadow", allow(dead_code))]
+#[allow(dead_code)]
 async fn apply_purge_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: PurgeBlockPayload,
@@ -1379,7 +1327,6 @@ async fn purge_block_sql_cascade(
 ///
 /// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
 /// space now errors out.
-#[cfg(feature = "loro-shadow")]
 async fn apply_add_tag_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1420,7 +1367,6 @@ async fn apply_add_tag_via_loro(
 ///
 /// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
 /// space now errors out.
-#[cfg(feature = "loro-shadow")]
 async fn apply_remove_tag_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1458,7 +1404,6 @@ async fn apply_remove_tag_via_loro(
 ///
 /// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
 /// space now errors out.
-#[cfg(feature = "loro-shadow")]
 async fn apply_delete_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
@@ -1508,9 +1453,11 @@ async fn apply_delete_property_via_loro(
 // production the cutover flag is on, shadow state is initialised, and
 // space resolution succeeds — these helpers never fire.
 //
-// Day 9 will retire `loro-shadow` itself; at that point these helpers
-// can be re-evaluated alongside whatever survives the cutover module
-// retire.
+// Phase 3 day-9 retired `loro-shadow` itself but kept these helpers
+// per the same rationale: ~55 tests still rely on the SQL-only
+// fallback path for bare-block fixtures.  They never fire in
+// production (shadow state is initialised at boot, space resolution
+// succeeds for every well-formed op).
 // ---------------------------------------------------------------------------
 
 /// SQL-only CreateBlock fallback (formerly `apply_create_block_tx`).
@@ -2241,12 +2188,11 @@ pub(super) async fn handle_background_task(
 // `RestoreBlock` calls to every descendant in the SQL cohort, not just
 // the seed block.  Without this fanout a 10-descendant subtree restore
 // would leave 9 blocks marked `deleted_at != Null` in the Loro doc.
-//
-// `cfg(all(test, feature = "loro-shadow"))` so the default-build test
-// count is unchanged.
+// Phase 3 day-9 dropped the `feature = "loro-shadow"` clause from
+// the gate (now `cfg(test)` only).
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod restore_cascade_tests {
     use super::*;
     use crate::db::init_pool;
@@ -2500,12 +2446,11 @@ mod restore_cascade_tests {
 // descendant the SQL UPDATE touches, and that the cohort SELECT runs
 // BEFORE the UPDATE so the `descendants_cte_active!()` filter still
 // matches (post-UPDATE the filter would skip the just-deleted rows).
-//
-// `cfg(all(test, feature = "loro-shadow"))` so the default-build test
-// count is unchanged.
+// Phase 3 day-9 dropped the `feature = "loro-shadow"` clause from
+// the gate (now `cfg(test)` only).
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod delete_cascade_tests {
     use super::*;
     use crate::db::init_pool;
@@ -2747,27 +2692,21 @@ mod delete_cascade_tests {
 }
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 2 day-11 — `apply_op_tx` cutover-branch tests.
+// PEND-09 Phase 2 day-11 — `apply_op_tx` engine-path tests.
 //
-// Verifies the Option-A reorder branch wired into `apply_op_tx` for
-// every op type that runs through the engine path.  Each test installs
-// the cutover flag + shadow state, drives an op through `apply_op_tx`,
-// and asserts both SQL row shape (load-bearing invariant) AND engine
-// state (proves the engine path actually ran).
+// Verifies the Option-A reorder wired into `apply_op_tx` for every op
+// type that runs through the engine path.  Each test installs shadow
+// state, drives an op through `apply_op_tx`, and asserts both SQL row
+// shape (load-bearing invariant) AND engine state (proves the engine
+// path actually ran).
 //
-// PEND-09 Phase 3 day-8: the symmetric `*_uses_diffy_path_when_flag_off`
-// control tests were deleted alongside the `if is_loro_authoritative()`
-// fork in `apply_op_tx` — there is no diffy fork to control against any
-// more.  The `install_cutover_flag_for_test(true)` + shadow-state
-// install at the top of each test is now decorative for the materializer
-// itself (the engine path runs unconditionally) but kept because the
-// tests' shadow-state assertions still need state installed.
-//
-// `cfg(all(test, feature = "loro-shadow"))` keeps the default test
-// count unchanged.
+// PEND-09 Phase 3 day-8 deleted the diffy control tests; day-9 retired
+// the `loro-shadow` feature gate so the gate on this module is now
+// `cfg(test)` only (the install_for_test calls at the top of each test
+// keep shadow state assertions valid).
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod cutover_branch_tests {
     use crate::db::init_pool;
     use crate::op::{
@@ -2833,7 +2772,6 @@ mod cutover_branch_tests {
     #[tokio::test]
     async fn apply_op_tx_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         // The cutover branch reads the shadow-state global; install
         // it for the test.
         let _state = crate::loro::shared::install_for_test();
@@ -2888,7 +2826,6 @@ mod cutover_branch_tests {
         // Reset the flag for any other tests in this binary.  The
         // OnceLock-installed flag is process-global; tests that rely on
         // default-off must explicitly install `false` themselves.
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     /// EditBlock loro path: pre-existing block, run an EditBlock op
@@ -2898,7 +2835,6 @@ mod cutover_branch_tests {
     #[tokio::test]
     async fn apply_op_tx_edit_block_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         // First create the block via the loro path (so the engine has
@@ -2980,8 +2916,6 @@ mod cutover_branch_tests {
             .expect("engine has block");
         drop(guard);
         assert_eq!(engine_snap.content, "after-edit-content");
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     /// Test helper: seed a block under PAGE_ID via the loro path so the
@@ -3021,7 +2955,6 @@ mod cutover_branch_tests {
     #[tokio::test]
     async fn apply_op_tx_set_property_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3067,8 +3000,6 @@ mod cutover_branch_tests {
             .expect("read_property");
         drop(guard);
         assert!(prop_opt.is_some(), "engine must see the property");
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     // -----------------------------------------------------------------
@@ -3088,7 +3019,6 @@ mod cutover_branch_tests {
         const CHILD_2: &str = "01HZ00000000000000000000C2";
 
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3156,8 +3086,6 @@ mod cutover_branch_tests {
             .expect("read_deleted");
         drop(guard);
         assert!(deleted, "engine must see the seed delete");
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     // -----------------------------------------------------------------
@@ -3167,7 +3095,6 @@ mod cutover_branch_tests {
     #[tokio::test]
     async fn apply_op_tx_move_block_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3211,8 +3138,6 @@ mod cutover_branch_tests {
         drop(guard);
         assert_eq!(engine_snap.parent_id.as_deref(), Some(PAGE_ID));
         assert_eq!(engine_snap.position, 42);
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     // -----------------------------------------------------------------
@@ -3228,7 +3153,6 @@ mod cutover_branch_tests {
     #[tokio::test]
     async fn apply_op_tx_restore_block_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3290,8 +3214,6 @@ mod cutover_branch_tests {
             .expect("read_deleted");
         drop(guard);
         assert!(!deleted, "engine must see the seed restore");
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     /// PurgeBlock loro-path: seed via loro, then purge.  Verifies SQL
@@ -3300,7 +3222,6 @@ mod cutover_branch_tests {
     #[tokio::test]
     async fn apply_op_tx_purge_block_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3338,8 +3259,6 @@ mod cutover_branch_tests {
             engine_snap.is_none(),
             "engine must drop the block on purge; got {engine_snap:?}",
         );
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     /// AddTag loro-path: seed two blocks (a target + a tag), apply
@@ -3350,7 +3269,6 @@ mod cutover_branch_tests {
         const TAG_ID: &str = "01HZ00000000000000000000T7";
 
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3410,8 +3328,6 @@ mod cutover_branch_tests {
             tags.iter().any(|t| t == TAG_ID),
             "engine must see the tag association; got {tags:?}",
         );
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     /// RemoveTag loro-path: seed + tag-association, then remove.  SQL
@@ -3421,7 +3337,6 @@ mod cutover_branch_tests {
         const TAG_ID: &str = "01HZ00000000000000000000T8";
 
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3491,8 +3406,6 @@ mod cutover_branch_tests {
             !tags.iter().any(|t| t == TAG_ID),
             "engine must drop the tag association; got {tags:?}",
         );
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 
     /// DeleteProperty loro-path: seed a non-reserved property, delete
@@ -3500,7 +3413,6 @@ mod cutover_branch_tests {
     #[tokio::test]
     async fn apply_op_tx_delete_property_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(true);
         let _state = crate::loro::shared::install_for_test();
 
         seed_block_via_loro(&pool).await;
@@ -3573,7 +3485,5 @@ mod cutover_branch_tests {
             prop.is_none(),
             "engine must drop the property; got {prop:?}",
         );
-
-        crate::loro::cutover::install_cutover_flag_for_test(false);
     }
 }

@@ -790,6 +790,103 @@ the repeat rule copied and `due_date`/`scheduled_date` shifted forward by the in
 original block stays DONE. The `shift_date` function in `commands.rs` handles date arithmetic
 with month-end clamping.
 
+### FE edit coordinate space (FE↔BE authority boundary)
+
+This is the rule for who owns the in-progress edit while the user is typing, what happens when
+a remote sync arrives mid-edit, and where authority transfers between FE and BE. Agaric's
+offline-occasional-sync model lets us pick a much simpler boundary than full RTC editors
+(Google Docs / Notion) require.
+
+**The rule, plainly stated:**
+
+- **The FE owns local edits in-progress.** While a TipTap editor instance is mounted on a
+  block (i.e. that block is focused and the user is actively editing), the FE's `editor.state`
+  is the source of truth for that block's content. The store's optimistic copy
+  (`page-blocks.blocks[i].content`) reflects the last-flushed value, not the in-progress one.
+- **The BE owns post-flush state.** The flush boundary is a blur (or other unmount-trigger)
+  calling `editor.unmount()` (`src/editor/use-roving-editor.ts`) → `edit(blockId, content)` →
+  IPC `editBlock` (`src/stores/page-blocks.ts`) → `op_log` append → materialiser → SQL
+  `blocks.content`. Once that round-trip completes, the BE row is authoritative; on the next
+  FE re-render the static block reads from `blocks[i].content` and nothing in the FE remembers
+  the editor's transient state.
+- **The handover is the unmount call, not the keystroke.** While the editor is mounted: FE
+  wins. The instant `unmount()` returns: BE owns the next round-trip's outcome.
+
+**On remote sync arrival, the FE re-loads the page tree but explicitly preserves the focused
+block's optimistic content.** The whole-page reload sits in `useSyncEvents.ts` (the
+`sync:complete` handler that walks `pageBlockRegistry` and calls each page store's `load()`).
+The focus-preserving step lives inside `PageBlockStore.load()`: after fetching fresh rows from
+`listBlocks`, the reducer replaces the focused block's content with whatever the FE store
+currently holds, so the user's typing does not flash off-screen as a stale BE-row content. The
+TipTap editor itself is **not** unmounted by the sync handler — its in-memory ProseMirror doc
+keeps the user's keystrokes. When the user blurs, the normal flush path emits a fresh
+`edit_block` op which the convergence layer reconciles with whatever the remote inserted (see
+[Merge & Conflict Resolution](#12-merge--conflict-resolution) — clean line-merge in the diffy
+path, CRDT import via the Loro path, with conflict-copy fallback when neither can resolve).
+
+**Why FE-authoritative locally:**
+
+- **Keystroke-rate IPC roundtrips are not viable.** Round-tripping every TipTap doc transaction
+  through Tauri IPC + SQLite + materialiser before the FE can redraw destroys typing fluency
+  even at sub-ms IPC.
+- **CRDT-for-cursors / operational-transform is over-engineering at our latency target.** Agaric is offline-first,
+  sync-on-meet (mDNS + WiFi); the user is the same person on both ends. Yjs's
+  `Y.RelativePosition` and Loro's `Cursor` would each cost a non-trivial integration (cursor
+  mapping, peer-id plumbing into the editor) for cross-device cursor preservation under
+  concurrent typing — a benefit that does not match the agaric UX promise.
+- **Blur is a natural breakpoint.** Users blur a block when they finish editing it (move to
+  the next, click elsewhere, switch tabs). That is exactly when a remote merge becomes
+  well-defined: the user's local intent has been committed, and the merge layer can three-way
+  it against any concurrent remote edit.
+
+**Edge case 1 — block deleted while FE editing.** If a remote `delete_block` arrives, the
+sync-handler's `load()` re-fetches the page tree without that block. The focus-preserve guard
+checks `blocksById.get(focusedBlockId)` — the block is absent in the freshly-fetched list, so
+the conditional falls through and the block disappears from the rendered tree. React unmounts
+the `EditableBlock`; TipTap's underlying view is destroyed. **The user's in-progress edits are
+lost** in this case — they are not flushed back to the deleted block (that would require a
+flushed `edit_block` op, which never happened). The BE-side resurrection rule
+(edit-beats-delete in `merge_diverged_blocks`) only fires when both ops landed in `op_log`;
+un-flushed FE keystrokes never enter the DAG. This is the **documented loss case**: the flush
+boundary is the contract — until you blur, your edits are not durable. The draft-autosave path
+(see below) is the safety net for the *crash* variant of this case, not the *delete* variant.
+
+**Edge case 2 — typing during a sync push.** When sync is in progress (the sync trigger is
+streaming ops to a peer), the user can keep typing locally. Their keystrokes mutate TipTap
+state but do not enter `op_log` until blur. The push side ships only ops already in the log;
+the in-progress edit is excluded by construction. On the next sync round (after blur → flush)
+the now-committed `edit_block` op ships normally. Conversely, the remote's incoming ops land
+in `op_log` and trigger materialiser + `sync:complete` regardless of whether the user is
+typing — the focus-preserve step is what keeps their typing from flashing off-screen. There is
+no "pause sync while user is typing" lock; sync and editing run independently. The merge layer
+absorbs divergence at next-blur time.
+
+**Where this is implemented:**
+
+- **Editor mount + unmount lifecycle:** `src/editor/use-roving-editor.ts` (`mount`, `unmount`).
+- **Blur-driven flush:** `src/hooks/useEditorBlur.ts` — the multi-step guard chain that decides
+  whether a blur should `unmount()` and call `edit()` or `splitBlock()`.
+- **Optimistic store edit:** `src/stores/page-blocks.ts` `edit` action — optimistic content
+  update + IPC + rollback on failure.
+- **Sync arrival handler:** `src/hooks/useSyncEvents.ts` `sync:complete` listener — calls
+  `load()` on every mounted page store when `ops_received > 0`.
+- **Focus-preserving reload:** `src/stores/page-blocks.ts` `load()` action.
+- **Three-way merge / CRDT import (BE-side):** see §12 "Merge & Conflict Resolution".
+- **Draft autosave (the crash safety net):** `src/hooks/useDraftAutosave.ts` — polled every
+  500 ms while focused; persists the live editor content as a draft row so a process crash
+  mid-edit doesn't lose typing. Drafts are discarded on successful flush. **Not** the flush
+  mechanism (a draft row is not an `op_log` entry) — a separate crash-recovery path.
+
+**Loro-mode equivalence.** During Loro shadow mode, the FE never sees Loro state; Loro mirrors
+applied ops for parity comparison and is read by no FE code. Post-cutover, Loro becomes the BE
+source of truth — the FE flush path still goes through `editBlock` IPC → typed `edit_block` op,
+and the materialiser projects from Loro into the same `blocks.content` row the FE reads. The
+FE coord-space contract is unchanged. A future revisit (Phase 3+) may want richer FE-side
+merge semantics (Notion-style live merge): subscribe the FE editor to Loro doc updates, bridge
+Loro's USV-coordinate edits into TipTap's UTF-16 ProseMirror transactions, track cursor
+position via Loro `Cursor`. This is **not** today's contract; today's contract is "the FE
+coord-space rule above is independent of which engine is authoritative on the BE side".
+
 ---
 
 ## 8. Frontend Architecture
@@ -1262,11 +1359,78 @@ sync. `similar` — no first-class three-way merge API. LWW for text — correct
    Original block retains ancestor content. Conflict copy created (`is_conflict = 1`). Both
    visible. User resolves by choosing.
 
-### Property conflicts
+### LWW resolution rule (property + move conflicts)
 
-Two `set_property` ops for the same `(block_id, key)` that are causally concurrent: **last-writer-
-wins on `created_at`** with `device_id` as lexicographic tiebreaker. No block duplication.
-Auto-resolutions logged to in-memory audit list visible in Status View.
+Two classes of concurrent op converge by **Last-Writer-Wins (LWW)** rather than three-way
+merge: `set_property` writes to the same `(block_id, key)` and `move_block` ops on the same
+block. Both follow the same shape — exactly one write wins at materialisation time,
+deterministically, on every device that sees both ops. The losing write is silently dropped
+from materialised state. No conflict copy, no `is_conflict=1` row, no user-visible toast.
+
+**Timebase: wallclock UTC, not Lamport.** Every op's `created_at` field is populated at append
+time by `now_rfc3339()` (`crate::lib::now_rfc3339` in `src-tauri/src/lib.rs`), which returns a
+fixed-width `YYYY-MM-DDTHH:MM:SS.sssZ` string from `chrono::Utc::now()`. The `Z` suffix is
+load-bearing: it makes lexicographic order match instant order, which is what the dispatcher
+relies on. `op_log::append_local_op_in_tx` carries a `debug_assert!` enforcing the `Z`
+suffix at write time. Wallclock — not Lamport — is the deliberate choice: an offline device
+whose Lamport clock has not advanced should not "lose" to an online device that came back
+online a real-world day later, despite the user remembering the offline write happened
+second. Wallclock matches user intuition for "later".
+
+**Property LWW (`resolve_property_conflict`, `merge::resolve`).** Compare `created_at` via
+`chrono::DateTime::parse_from_rfc3339`. Later wins. On exact tie, larger `device_id` (lex)
+wins. On full tie (same device, same millisecond), larger `seq` wins — a tertiary tiebreaker
+that guarantees commutativity even in pathological same-device-same-ms cases. On parse failure,
+fall back to lex compare on the raw string with a `tracing::warn!`; given the `Z`-suffix
+invariant this is unreachable in practice and exists as defence-in-depth.
+
+**Move LWW (inline in `sync_protocol::operations`).** Same shape, with two intentional
+simplifications relative to the property path: (a) the timestamp compare is lex on the raw
+`String`, not RFC-3339-parsed — sound today because every op routes through
+`now_rfc3339()` but would silently mis-order a future ingest path that mixed `Z` with
+`+00:00`; (b) no `seq` tertiary tiebreak — on full tie the local-side op (`op_a`) wins by
+default. Cross-device `device_id` ties are impossible by construction (each device's id is
+a ULID), and same-device-same-ms is non-occurring inside a single device's monotonically
+advancing `seq`.
+
+**Concurrency detection without DAG walk.** The dispatcher does not walk the op DAG to decide
+whether two ops are concurrent. It uses a simpler proxy: post-sync, find `(block_id, key)`
+pairs with `HAVING COUNT(DISTINCT device_id) > 1` and feed the latest op per device to the
+resolver. This catches every real divergence; it also catches some already-resolved cases
+(one device's later op already cites the other in `parent_seqs`). Those are filtered by the
+**post-resolution idempotency guard** (M-43 for properties, M-44 for moves): if the
+materialised value already matches the LWW winner, the dispatcher emits no new op. Without
+this guard the dispatcher would re-emit the same winning `set_property` on every sync round,
+flooding the op log.
+
+**Convergence applies the winner via a fresh op.** When the dispatcher picks a winner, it
+emits a new `set_property` (or `move_block`) op carrying the winner's value. That op enters
+`op_log` like any other write, propagates on the next sync, and brings both devices'
+materialised state to the same row. The losing intent is **not** preserved — recoverable
+only by walking `op_log` directly (audit / debugger). A future "remote-overrode-your-move"
+in-app awareness log is a planned polish, not part of the rule.
+
+**What this rule does NOT cover:**
+
+- **Text-content edits.** `edit_block` ops route through the text-merge path (three-way diffy
+  merge, with conflict-copy fallback when overlapping; single-line blocks always conflict on
+  overlap — see "Text conflicts" above). Property/move LWW never produces a conflict copy.
+- **Tag / link adds + removes.** Set-semantics at the materialiser layer (dedup on read);
+  concurrent add+remove does not invoke LWW.
+- **`delete_block` vs concurrent `edit_block` ("resurrect" path).** Edit-beats-delete: a
+  synthetic `restore_block` op precedes the edit. Intentionally biased toward not losing
+  user content, not LWW.
+- **`move_block` vs `delete_block`.** Commutative — both ops apply in sequence and the
+  block ends up deleted regardless of order.
+
+**Wallclock skew is bounded by the user's own devices.** The rule trusts each device's clock
+at op-append time. A device whose clock is 30s fast will reliably "win" against a device with
+a correct clock even if the user-perceived order disagrees. There is no NTP dependency. The
+mitigation is the threat model: agaric is single-user offline-first; the user owns both
+devices, OS clock-sync is typically sub-second, and same-person concurrent edits are rare.
+Backward clock jumps (NTP correction, manual date change) work correctly long-term — later
+real-world writes still win once the clock catches up — and the per-device monotonic `seq`
+is the safety net for the same-device-same-ms-after-drift edge case.
 
 ### Ancestor text reconstruction
 
@@ -1607,6 +1771,39 @@ AI agents and CI can interact with the Android app entirely via ADB — no displ
 - `adb logcat -s RustStdoutStderr:V` for Rust logs
 - Chrome DevTools Protocol via `adb forward` for WebView inspection
 
+### Android sync constraints
+
+Sync runs the same Rust transport stack as desktop, but Android imposes platform-specific
+restrictions that affect discovery, connection lifecycle, and background behaviour. Each item
+below is a permanent constraint of the platform, not a transient bug.
+
+**mDNS multicast on Android.** Android restricts multicast by default. The pure-Rust `mdns-sd`
+crate handles its own multicast (no Avahi dependency) and works on Android once the WiFi
+multicast lock is acquired at runtime. The `CHANGE_NETWORK_STATE` and `ACCESS_NETWORK_STATE`
+permissions are auto-added by Tauri 2; the multicast-lock acquisition is a runtime step. Some
+carriers further restrict multicast on WiFi — verification requires a real device, not just an
+emulator. The `MDNS_BROWSE_TIMEOUT = 5s` constant in `sync_net` is sized for this environment
+(short enough that "no peers" surfaces quickly to the manual-IP fallback UI; long enough to
+absorb Android's slower multicast wakeup vs. desktop). Manual `host:port` entry stored in
+`peer_refs.last_address` is the always-available fallback when mDNS is blocked.
+
+**WebSocket lifecycle under app backgrounding.** WebSocket transport runs in the Rust backend
+via `tokio-tungstenite` (not in WebView JS), so the WebView lifecycle does not directly kill
+sync connections. The Android process itself can be killed when backgrounded; on foreground
+resume, the daemon's reconnection path (1s → 60s exponential backoff in `SyncScheduler`,
+re-verifying the pinned cert hash on each connect) restores sync without user action.
+
+**Doze mode (background restrictions).** After the screen turns off Android Doze mode blocks
+network access, defers alarms, and ignores CPU wake locks. Agaric is **foreground-only sync**:
+the daemon makes no attempt to run while the app is backgrounded. Background sync (Android
+WorkManager with a 15-minute minimum interval, wrapped as a Tauri native plugin) is captured
+as future work; today the on-foreground reconnect path is the only mechanism.
+
+**Camera permission for QR pairing.** The pairing QR scanner uses `html5-qrcode` (camera +
+ZXing in WebView). It requires `CAMERA` permission in `AndroidManifest.xml` plus a runtime
+permission request. File-upload of a saved QR image and 4-word manual entry both work without
+the camera permission and are always available as fallbacks.
+
 ---
 
 ## 20. Sync & Networking
@@ -1630,6 +1827,14 @@ mDNS service type `_agaric._tcp.local.`. On announce: register service with TXT 
 `device_id=<UUID>`. On browse: receive `ServiceResolved` events, extract peer addresses and port.
 mDNS owns discovery and address resolution end-to-end — there is no scan-bootstrap path that
 threads `host:port` through the pairing QR.
+
+`mdns-sd` is a pure-Rust implementation that handles multicast announcement and browsing
+directly — Avahi (Linux) is **not** required for Agaric sync. Avahi is only relevant if users
+want `.local` hostname resolution from other apps; Agaric works without it. Manual `host:port`
+entry stored in `peer_refs.last_address` is the cross-platform fallback when mDNS is blocked
+(some carriers, restricted networks) or unavailable (no daemon, multicast lock denied on
+Android — see §19). The browse timeout is fixed at `MDNS_BROWSE_TIMEOUT = 5s` (`sync_net.rs`)
+to keep "no peers found" snappy on platforms where multicast may silently drop traffic.
 
 ### Pairing
 
@@ -1811,7 +2016,29 @@ idempotent.
 
 WebSocket `RECV_TIMEOUT` is 30 seconds (`sync_net.rs`). The `handle_message` loop in
 `sync_daemon.rs` wraps each message exchange in a 120-second `tokio::time::timeout` to prevent
-indefinite hangs during large op transfers.
+indefinite hangs during large op transfers. The mDNS browse timeout is 5 seconds
+(`MDNS_BROWSE_TIMEOUT`); see Discovery above for rationale.
+
+### Firewall and host networking
+
+The sync server binds to a random port. On Linux desktops, host firewalls (UFW, firewalld,
+iptables) may block the port:
+
+```bash
+# Ubuntu/Debian (UFW):
+sudo ufw allow PORT/tcp comment "Agaric sync"
+
+# Fedora (firewalld):
+sudo firewall-cmd --add-port=PORT/tcp --permanent
+sudo firewall-cmd --reload
+
+# Arch (iptables):
+sudo iptables -A INPUT -p tcp --dport PORT -j ACCEPT
+```
+
+The listening port is shown in StatusPanel so the user can copy it into a firewall rule. Connect
+failures from a paired peer surface a user-friendly error pointing at firewall configuration
+rather than a stack trace.
 
 ---
 

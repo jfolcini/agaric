@@ -268,7 +268,7 @@ pub async fn classify_unbucketed(pool: &SqlitePool) -> Result<ClassifyStats, App
     Ok(stats)
 }
 
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use sqlx::SqlitePool;

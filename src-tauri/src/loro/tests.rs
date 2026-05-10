@@ -1,9 +1,7 @@
 //! Phase-1 day-1 smoke tests for the Loro production scaffold.
 //!
-//! Gated on `feature = "loro-shadow"`; with the default feature set
-//! these tests do not exist in the test binary, so the agaric test
-//! count is unchanged.  With `--features loro-shadow` they appear
-//! alongside the rest of the suite.
+//! Phase 3 day-9 retired the `loro-shadow` feature gate; these tests
+//! now run as part of the default `cargo nextest run -p agaric` suite.
 //!
 //! Today's coverage is intentionally minimal: prove that the engine
 //! survives a create-then-read round-trip.  The full corpus port

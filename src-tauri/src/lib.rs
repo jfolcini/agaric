@@ -16,13 +16,12 @@ pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;
 // PEND-09 Phase 1 day-1 — production-side scaffold for the Loro CRDT
-// migration.  The module body is gated on `feature = "loro-shadow"`;
-// with the feature off (default) the inner declarations do not
-// compile, so the module is empty for production builds.  See
-// `src/loro/mod.rs` for the gate and `SESSION-LOG.md` Session 698
-// for the Phase-1 readiness checklist this module addresses (the
-// spike crate that authored the original report was archived in
-// Phase-2 day-8; see git tag `pend-09/spike-archive`).
+// migration.  As of Phase 3 day-9 the `loro-shadow` feature gate is
+// retired and this module compiles unconditionally — the Loro engine
+// is the only materializer path.  See `SESSION-LOG.md` Session 698
+// for the Phase-1 readiness checklist (the spike crate that authored
+// the original report was archived in Phase-2 day-8; see git tag
+// `pend-09/spike-archive`).
 pub mod loro;
 pub mod materializer;
 pub mod mcp;
@@ -716,12 +715,17 @@ pub fn run() {
             // periodic flush task itself is still spawned later (it's
             // a long-running background task; blocking on it would
             // pin boot indefinitely).
-            #[cfg(feature = "loro-shadow")]
+            // PEND-09 Phase 3 day-9 — the `loro-shadow` feature gate is
+            // retired; this block runs unconditionally now (the engine
+            // is the only materializer path).  The cutover-flag init
+            // also disappeared with the gate — `is_loro_authoritative`
+            // is "always true" post-day-9, so there is no flag to read
+            // from `app_settings`.
             {
                 let installed = crate::loro::shared::init();
                 tracing::info!(
                     installed,
-                    "loro-shadow: process-global ShadowState init complete (synchronous, pre-recovery)",
+                    "loro: process-global ShadowState init complete (synchronous, pre-recovery)",
                 );
                 if let Some(state) = crate::loro::shared::get() {
                     let n = tauri::async_runtime::block_on(
@@ -734,27 +738,10 @@ pub fn run() {
                     if n > 0 {
                         tracing::info!(
                             rehydrated_spaces = n,
-                            "loro-shadow: rehydrated per-space LoroDoc snapshots from \
+                            "loro: rehydrated per-space LoroDoc snapshots from \
                              loro_doc_state (pre-recovery)",
                         );
                     }
-                }
-
-                // PEND-09 Phase 2 day-9 — populate the cutover toggle
-                // cache from the `app_settings` row seeded by migration
-                // `0053`.  Sub-100 µs reads on the hot path are
-                // contractual (cutover plan §5.2); a synchronous boot
-                // read avoids the lazy-first-read race with the
-                // materializer's first op.  Errors on this read fall
-                // through to default-off (logged inside
-                // `init_cutover_flag` itself); we do not abort boot.
-                if let Err(e) = tauri::async_runtime::block_on(
-                    crate::loro::cutover::init_cutover_flag(&pools.write),
-                ) {
-                    tracing::warn!(
-                        error = %e,
-                        "loro-shadow: init_cutover_flag failed; cutover toggle defaults to off",
-                    );
                 }
             }
 
@@ -999,7 +986,6 @@ pub fn run() {
             // moves into Tauri managed state so the periodic parity-
             // flush task (spawned below) has its own handle.  Cheap:
             // `SqlitePool` is an `Arc`-based clone.
-            #[cfg(feature = "loro-shadow")]
             let pool_for_loro_flush = pools.write.clone();
 
             // PEND-09 Phase 2 day-9 — boot rehydration moved earlier in
@@ -1029,33 +1015,30 @@ pub fn run() {
             // registry is populated before any op flows through.  See
             // the pre-recovery block above for the reasoning.  Only the
             // long-running flush task remains here.
-            #[cfg(feature = "loro-shadow")]
-            {
-                if let Some(state) = crate::loro::shared::get() {
-                    let pool_for_flush = pool_for_loro_flush;
-                    tauri::async_runtime::spawn(async move {
-                        crate::loro::flush_task::run_periodic_flush(
-                            pool_for_flush,
-                            state,
-                            std::time::Duration::from_secs(
-                                crate::loro::flush_task::FLUSH_INTERVAL_SECS,
-                            ),
-                            std::time::Duration::from_secs(
-                                crate::loro::flush_task::PURGE_INTERVAL_SECS,
-                            ),
-                            std::time::Duration::from_secs(
-                                crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
-                            ),
-                        )
-                        .await;
-                    });
-                    tracing::info!(
-                        flush_secs = crate::loro::flush_task::FLUSH_INTERVAL_SECS,
-                        purge_secs = crate::loro::flush_task::PURGE_INTERVAL_SECS,
-                        snapshot_secs = crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
-                        "loro-shadow: parity flush + purge + snapshot task spawned",
-                    );
-                }
+            if let Some(state) = crate::loro::shared::get() {
+                let pool_for_flush = pool_for_loro_flush;
+                tauri::async_runtime::spawn(async move {
+                    crate::loro::flush_task::run_periodic_flush(
+                        pool_for_flush,
+                        state,
+                        std::time::Duration::from_secs(
+                            crate::loro::flush_task::FLUSH_INTERVAL_SECS,
+                        ),
+                        std::time::Duration::from_secs(
+                            crate::loro::flush_task::PURGE_INTERVAL_SECS,
+                        ),
+                        std::time::Duration::from_secs(
+                            crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
+                        ),
+                    )
+                    .await;
+                });
+                tracing::info!(
+                    flush_secs = crate::loro::flush_task::FLUSH_INTERVAL_SECS,
+                    purge_secs = crate::loro::flush_task::PURGE_INTERVAL_SECS,
+                    snapshot_secs = crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
+                    "loro: parity flush + purge + snapshot task spawned",
+                );
             }
 
             // Sync state (#275, #278)

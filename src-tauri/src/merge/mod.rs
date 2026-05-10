@@ -1,3 +1,12 @@
+// Pre-existing clippy patterns surfaced when Phase 3 day-9 dropped the
+// `loro-shadow` cfg gates around this module's body. Day-13+ mechanical
+// cleanup territory.
+#![allow(
+    clippy::redundant_closure,
+    clippy::redundant_closure_for_method_calls,
+    clippy::cast_possible_truncation
+)]
+
 //! Shadow-mode dispatch surface into the per-space `LoroEngine`.
 //!
 //! PEND-09 Phase 3 day-6 deleted `merge_block_text_only` (the diffy
@@ -7,43 +16,33 @@
 //! (`merge_text` + `walk_to_create_block_root` helpers) and
 //! `merge::resolve` (`create_conflict_copy`,
 //! `create_conflict_copy_with_reindex`, `resolve_property_conflict`)
-//! along with the now-empty `merge::types` module — none of those
-//! orchestration entry points has a live caller now that Loro CRDT
-//! import is the convergence path.
+//! along with the now-empty `merge::types` module.  Phase 3 day-9
+//! retired the `loro-shadow` feature gate; the helpers in this module
+//! compile unconditionally.
 //!
 //! What remains in this module:
-//! - `shadow_apply` — feature-gated dual-write hook that drives the
-//!   per-space `LoroEngine` and records a parity event.
-//! - `shadow_dispatch_for_record` — feature-gated `OpRecord` →
-//!   `OpPayload` dispatch helper used by the materializer.
-//! - `diffy_summary_for` — feature-gated helper that builds the
-//!   `diffy_result` side of the parity event from a typed op.
+//! - `shadow_apply` — dual-write hook that drives the per-space
+//!   `LoroEngine` and records a parity event.
+//! - `shadow_dispatch_for_record` — `OpRecord` → `OpPayload` dispatch
+//!   helper used by the materializer.
+//! - `diffy_summary_for` — helper that builds the `diffy_result` side
+//!   of the parity event from a typed op.
 
 mod apply;
 
 // PEND-09 Phase 1 day-3 — re-export the shadow-mode dispatcher so the
 // materializer (`materializer::handlers::apply_op`) and any other
 // per-op call sites can reach it without depending on the
-// `merge::apply` private module path.  Feature-gated: with
-// `loro-shadow` off the symbol does not compile, mirroring
-// `shadow_apply` below.
-#[cfg(feature = "loro-shadow")]
+// `merge::apply` private module path.
 pub(crate) use apply::shadow_dispatch_for_record;
 
 // ---------------------------------------------------------------------------
 // PEND-09 Phase 1 day-2 — shadow-mode dual-write hook.
 //
 // `shadow_apply` is the call site that runs every applied op through
-// both the diffy merge layer AND the per-space Loro `LoroEngine`,
-// logs a per-op parity event into the in-memory ring buffer, and
-// returns the diffy result as authoritative (Phase 1 is "shadow mode" —
-// diffy stays the source of truth for the entire phase).
-//
-// **No-op when `loro-shadow` is off.**  The function exists as
-// `pub(crate)` regardless of feature so the call sites that invoke it
-// (currently `merge::apply::merge_block_text_only`, future per-op
-// apply paths) don't need their own `#[cfg]` gates.  The body is the
-// only thing that varies by feature.
+// the per-space Loro `LoroEngine` and logs a per-op parity event into
+// the in-memory ring buffer.  Phase 3 day-9 retired the `loro-shadow`
+// feature gate; the helper compiles unconditionally.
 // ---------------------------------------------------------------------------
 
 /// Shadow-mode dual-write entry point.
@@ -70,14 +69,8 @@ pub(crate) use apply::shadow_dispatch_for_record;
 ///
 /// Returns nothing because the diffy result remains authoritative for
 /// Phase 1; this hook records observations only.
-// PEND-09 Phase 1 day-3 — the off-side `(op_id, op, device_id)` stub
-// was deleted; the day-2 reviewer flagged the divergent two-signature
-// shape as fragile under day-3 envelope work.  The single feature-on
-// definition below is the only surface that ever exists.  Every caller
-// in the codebase is itself `#[cfg(feature = "loro-shadow")]`-gated
-// (see `merge/apply.rs` and `materializer/handlers.rs`), so removing
-// the off-side stub has no effect on the feature-off build.
-#[cfg(feature = "loro-shadow")]
+// PEND-09 Phase 3 day-9 — `loro-shadow` feature gate retired; this
+// helper compiles unconditionally (the engine is the only path).
 pub(crate) fn shadow_apply(
     op_id: &str,
     op: &crate::op::OpPayload,
@@ -220,13 +213,12 @@ pub(crate) fn shadow_apply(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    // Day-14: snapshot the cutover flag at record time.  The bucket
-    // semantics (the two summaries differ) do not change with the
-    // flag, but a maintainer reading `parity_report` weeks later
-    // needs to know whether diffy or Loro was authoritative when
-    // each row was written.  Sub-100 µs hot-path read by contract
-    // (see `crate::loro::cutover` module docs).
-    let loro_authoritative = crate::loro::cutover::is_loro_authoritative();
+    // PEND-09 Phase 3 day-9 — the cutover flag retired alongside the
+    // `loro-shadow` feature gate; the engine is now the only path so
+    // every parity row is recorded with `loro_authoritative = true`.
+    // The column survives in the schema for back-compat with rows
+    // written under day-14's runtime flip (auth = 0 vs 1).
+    let loro_authoritative = true;
 
     sampler.record(ParityEvent {
         op_id: op_id.to_string(),
@@ -254,9 +246,8 @@ pub(crate) fn shadow_apply(
 /// emits — a perfect-string-match parity event means both layers
 /// agreed at the structural level.
 ///
-/// Used only with `loro-shadow` on; with the feature off this helper
-/// is dead code and the gate hides it.
-#[cfg(feature = "loro-shadow")]
+/// PEND-09 Phase 3 day-9 — `loro-shadow` feature gate retired;
+/// compiles unconditionally now.
 pub(crate) fn diffy_summary_for(op: &crate::op::OpPayload) -> String {
     match op {
         crate::op::OpPayload::CreateBlock(p) => format!("create:{}", p.block_id.as_str()),

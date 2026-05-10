@@ -235,12 +235,13 @@ pub(crate) struct OpTypeRow {
 /// One recent divergent op (bucket C or D). `bucket` is always
 /// `Some(...)` here because the SELECT filters on `bucket IN ('C','D')`.
 ///
-/// Day-14: `loro_authoritative_at_classify` carries the value of
-/// `crate::loro::cutover::is_loro_authoritative()` at the moment the
-/// row was recorded.  The pretty-printer renders it as `loro` /
-/// `diffy` so a maintainer browsing the divergence tail can see
-/// which side was the source of truth for each row — bucket-D
-/// semantics differ between the two cases (see migration 0055).
+/// Day-14: `loro_authoritative_at_classify` carries which side was
+/// authoritative when the row was recorded.  Phase-3 day-9 retired
+/// the cutover flag (the engine is the only path now); new rows are
+/// always `1` ("loro"), but the pretty-printer keeps rendering it as
+/// `loro` / `diffy` so old rows from the shadow-mode era (auth = 0)
+/// are still legible — bucket-D semantics differ between the two
+/// cases (see migration 0055).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DivergentOp {
     pub id: i64,
