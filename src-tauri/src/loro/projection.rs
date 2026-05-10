@@ -25,14 +25,18 @@
 //! same op_log the materializer reads.  See
 //! `pending/PEND-09-apply-op-reorder.md` §5 for the full rationale.
 //!
-//! ## Day-11 scope
+//! ## Coverage
 //!
-//! Conservative scope per `pending/PEND-09-apply-op-reorder.md` §9:
-//! Create / Edit / SetProperty / Purge ship with unit tests; Move /
-//! Delete / Restore / DeleteProperty / Tag ship as TODO stubs that
-//! `unimplemented!()` so a future caller wiring the branch in fails
-//! fast (rather than silently no-oping).  Each stub carries a TODO
-//! pointing to the design doc.
+//! Day-11 shipped Create / Edit / SetProperty / Purge (with unit tests).
+//! Day-12 added Delete + Move (with cascade UPDATE for delete).
+//! **Day-13** adds the final five op types: Restore, DeleteProperty,
+//! AddTag, RemoveTag (with the `apply_*_via_loro` wrappers in
+//! `materializer/handlers.rs` running the post-projection
+//! `tag_inheritance::*` calls AFTER the projection, exactly as the
+//! diffy-side path does), and PurgeBlock's cutover branch wired
+//! through.  All 12 op types now have projection helpers + cutover
+//! branches; only the two attachment ops bypass the projection (per
+//! the cutover plan §8.2 — file blobs live outside CRDT state).
 //!
 //! ## What this module does NOT do
 //!
@@ -319,51 +323,135 @@ pub async fn project_move_block_to_sql(
     Ok(())
 }
 
-/// **Day-11 stub** — `RestoreBlock` projection.  TODO(day-12).
-#[allow(dead_code)]
+/// Project a `RestoreBlock` engine state into SQL.  Mirrors the cohort
+/// UPDATE in `apply_restore_block_tx` — clears `deleted_at` for every
+/// block in the descendant CTE that was soft-deleted at the same
+/// `deleted_at_ref` timestamp.
+///
+/// **Engine fan-out trade-off (day-13).**  The engine's
+/// `apply_restore_block` is per-block-id only, so the cutover-on path
+/// only applies the SEED block to the engine.  The descendant cohort's
+/// engine state is NOT reconciled by the projection — it relies on
+/// `dispatch_restore_descendants_shadow` running post-commit (which
+/// already exists from day-9).  This matches day-12's delete-cascade
+/// approach: SQL handles the full cohort; engine state for descendants
+/// will be reconciled by op-log replay if/when the engine is rebuilt.
+/// The cohort-fanout-on-engine integration is a day-14+ TODO — same
+/// shape as the delete-cascade fanout.
+///
+/// **Idempotence.**  The `WHERE deleted_at = ?` filter on the CTE makes
+/// a re-apply a no-op for rows that have already been restored
+/// (their `deleted_at` is now NULL and won't match `= ?`).
 pub async fn project_restore_block_to_sql(
-    _conn: &mut SqliteConnection,
-    _block_id: &str,
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    deleted_at_ref: &str,
 ) -> Result<(), AppError> {
-    Err(AppError::Validation(
-        "project_restore_block_to_sql: not yet implemented (day-11 stub)".into(),
+    sqlx::query(concat!(
+        crate::descendants_cte_standard!(),
+        "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
+    .bind(block_id)
+    .bind(deleted_at_ref)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
-/// **Day-11 stub** — `DeleteProperty` projection.  TODO(day-12).
-#[allow(dead_code)]
+/// Project a `DeleteProperty` engine state into SQL.  Mirrors the
+/// per-key match in `apply_delete_property_tx`:
+///
+/// - **Reserved keys** (`todo_state`, `priority`, `due_date`,
+///   `scheduled_date`) clear the dedicated `blocks` column.
+/// - **Non-reserved keys** delete the `block_properties` row keyed on
+///   `(block_id, key)`.
+///
+/// Idempotent on either branch — the UPDATE on a column already NULL
+/// is a no-op, and the DELETE matching zero rows is a no-op.
 pub async fn project_delete_property_to_sql(
-    _conn: &mut SqliteConnection,
-    _block_id: &str,
-    _key: &str,
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    key: &str,
 ) -> Result<(), AppError> {
-    Err(AppError::Validation(
-        "project_delete_property_to_sql: not yet implemented (day-11 stub)".into(),
-    ))
+    if is_reserved_property_key(key) {
+        match key {
+            "todo_state" => {
+                sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            "priority" => {
+                sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            "due_date" => {
+                sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            "scheduled_date" => {
+                sqlx::query!(
+                    "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
+                    block_id
+                )
+                .execute(&mut *conn)
+                .await?;
+            }
+            other => {
+                return Err(AppError::Validation(format!(
+                    "project_delete_property_to_sql: unrecognised reserved key '{other}'",
+                )));
+            }
+        }
+    } else {
+        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+            .bind(block_id)
+            .bind(key)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
 }
 
-/// **Day-11 stub** — `AddTag` projection.  TODO(day-12).
-#[allow(dead_code)]
+/// Project an `AddTag` engine state into SQL.  Mirrors the
+/// `INSERT OR IGNORE INTO block_tags` shape of `apply_add_tag_tx`.
+///
+/// **Note on `tag_inheritance::propagate_tag_to_descendants`.**  The
+/// caller (the cutover branch in `apply_op_tx`) is responsible for
+/// invoking it AFTER the projection, mirroring the diffy-side ordering.
+/// Keeps the helper pure.
 pub async fn project_add_tag_to_sql(
-    _conn: &mut SqliteConnection,
-    _block_id: &str,
-    _tag_id: &str,
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    tag_id: &str,
 ) -> Result<(), AppError> {
-    Err(AppError::Validation(
-        "project_add_tag_to_sql: not yet implemented (day-11 stub)".into(),
-    ))
+    sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
-/// **Day-11 stub** — `RemoveTag` projection.  TODO(day-12).
-#[allow(dead_code)]
+/// Project a `RemoveTag` engine state into SQL.  Mirrors the
+/// `DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?` shape of
+/// `apply_remove_tag_tx`.
+///
+/// **Note on `tag_inheritance::remove_inherited_tag`.**  The caller
+/// invokes it AFTER the projection — same shape as `AddTag` above.
 pub async fn project_remove_tag_to_sql(
-    _conn: &mut SqliteConnection,
-    _block_id: &str,
-    _tag_id: &str,
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    tag_id: &str,
 ) -> Result<(), AppError> {
-    Err(AppError::Validation(
-        "project_remove_tag_to_sql: not yet implemented (day-11 stub)".into(),
-    ))
+    sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -794,5 +882,322 @@ mod tests {
                 .expect("fetch row 2");
         assert_eq!(row.0.as_deref(), Some(BLOCK_B));
         assert_eq!(row.1, 7);
+    }
+
+    // ---------------------------------------------------------------------
+    // Day-13 — Restore / DeleteProperty / AddTag / RemoveTag projections.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn project_restore_block_clears_deleted_at_for_cohort() {
+        // Seed a parent + 2 children all soft-deleted at the same
+        // timestamp (the "cohort" the restore is meant to undo).
+        // Verify the projection clears `deleted_at` for all three.
+        let (pool, _dir) = fresh_pool().await;
+        const CHILD_1: &str = "01HZ00000000000000000000C1";
+        const CHILD_2: &str = "01HZ00000000000000000000C2";
+        let cohort_ts = "2026-05-10T12:00:00Z";
+
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
+             VALUES (?, 'content', 'parent', NULL, 0, 0, ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(cohort_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for child in [CHILD_1, CHILD_2] {
+            sqlx::query(
+                "INSERT INTO blocks \
+                     (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
+                 VALUES (?, 'content', 'child', ?, 0, 0, ?)",
+            )
+            .bind(child)
+            .bind(BLOCK_A)
+            .bind(cohort_ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_restore_block_to_sql(&mut conn, BLOCK_A, cohort_ts)
+            .await
+            .expect("project restore");
+        drop(conn);
+
+        for id in [BLOCK_A, CHILD_1, CHILD_2] {
+            let row: (Option<String>,) =
+                sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("fetch row");
+            assert_eq!(row.0, None, "{id} must be restored");
+        }
+    }
+
+    #[tokio::test]
+    async fn project_restore_block_does_not_restore_other_cohorts() {
+        // A child soft-deleted at a DIFFERENT timestamp must NOT be
+        // restored — mirrors the cohort-identity invariant.
+        let (pool, _dir) = fresh_pool().await;
+        const CHILD_OTHER: &str = "01HZ00000000000000000000CX";
+        let cohort_ts = "2026-05-10T12:00:00Z";
+        let other_ts = "2025-01-01T00:00:00Z";
+
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
+             VALUES (?, 'content', 'parent', NULL, 0, 0, ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(cohort_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
+             VALUES (?, 'content', 'old-deletion-child', ?, 0, 0, ?)",
+        )
+        .bind(CHILD_OTHER)
+        .bind(BLOCK_A)
+        .bind(other_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_restore_block_to_sql(&mut conn, BLOCK_A, cohort_ts)
+            .await
+            .expect("project restore");
+        drop(conn);
+
+        let parent_row: (Option<String>,) =
+            sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch parent");
+        assert_eq!(parent_row.0, None);
+
+        // CHILD_OTHER stays soft-deleted.
+        let child_row: (Option<String>,) =
+            sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(CHILD_OTHER)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch other child");
+        assert_eq!(
+            child_row.0.as_deref(),
+            Some(other_ts),
+            "child from other cohort must NOT be restored"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_delete_property_removes_block_property_row() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', '', NULL, 0, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'effort', '3')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_property_to_sql(&mut conn, BLOCK_A, "effort")
+            .await
+            .expect("project delete property");
+        drop(conn);
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch count");
+        assert_eq!(count.0, 0, "effort row must be deleted");
+    }
+
+    #[tokio::test]
+    async fn project_delete_property_clears_hot_path_column() {
+        // Reserved-key path: clears the `blocks.todo_state` column,
+        // does NOT touch `block_properties`.
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, is_conflict, todo_state) \
+             VALUES (?, 'content', '', NULL, 0, 0, 'DOING')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_property_to_sql(&mut conn, BLOCK_A, "todo_state")
+            .await
+            .expect("project delete reserved");
+        drop(conn);
+
+        let row: (Option<String>,) = sqlx::query_as("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(row.0, None, "todo_state column must be cleared");
+    }
+
+    #[tokio::test]
+    async fn project_delete_property_idempotent_on_missing_row() {
+        // Second-call (or first-call on an already-clean state) is a
+        // silent no-op.
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', '', NULL, 0, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.expect("acquire");
+        // Key has never been written — must succeed without error.
+        project_delete_property_to_sql(&mut conn, BLOCK_A, "absent_key")
+            .await
+            .expect("must no-op cleanly");
+    }
+
+    #[tokio::test]
+    async fn project_add_tag_inserts_block_tags_row() {
+        let (pool, _dir) = fresh_pool().await;
+        // Both blocks must exist for the FK.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', '', NULL, 0, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0, 0)",
+        )
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_add_tag_to_sql(&mut conn, BLOCK_A, BLOCK_B)
+            .await
+            .expect("project add tag");
+        drop(conn);
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch count");
+        assert_eq!(count.0, 1);
+    }
+
+    #[tokio::test]
+    async fn project_add_tag_idempotent_via_insert_or_ignore() {
+        // Second call with same (block_id, tag_id) is a silent no-op.
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', '', NULL, 0, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0, 0)",
+        )
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_add_tag_to_sql(&mut conn, BLOCK_A, BLOCK_B)
+            .await
+            .expect("first add");
+        project_add_tag_to_sql(&mut conn, BLOCK_A, BLOCK_B)
+            .await
+            .expect("second add must no-op");
+        drop(conn);
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch count");
+        assert_eq!(count.0, 1, "INSERT OR IGNORE keeps a single row");
+    }
+
+    #[tokio::test]
+    async fn project_remove_tag_deletes_block_tags_row() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', '', NULL, 0, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0, 0)",
+        )
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(BLOCK_A)
+            .bind(BLOCK_B)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_remove_tag_to_sql(&mut conn, BLOCK_A, BLOCK_B)
+            .await
+            .expect("project remove tag");
+        drop(conn);
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch count");
+        assert_eq!(count.0, 0);
     }
 }
