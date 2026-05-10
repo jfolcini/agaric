@@ -516,8 +516,9 @@ fn main() {
     // Phase 0 (archived in Phase-2 day-8; see git tag
     // `pend-09/spike-archive`); we honour the "do not add loro to agaric
     // deps" rule.  These numbers come from the day-7 reference run
-    // logged in `pending/PEND-09-SPIKE-NOTES.md`.
-    println!("---- day-7 Loro reference (quoted from pending/PEND-09-SPIKE-NOTES.md) ----");
+    // logged at git tag `pend-09/spike-archive` (spike-notes.md within
+    // the archived crate; see also `SESSION-LOG.md` Session 698).
+    println!("---- day-7 Loro reference (quoted from git tag pend-09/spike-archive) ----");
     println!("| (A) Loro read_block                     | 10000 |  0.023s   |    2.29 µs   |");
     println!("| (B) Loro list_children-walk             |  1000 | 24.832s   |   24.83 ms   |");
     println!("| (C) Loro read_property                  |  1000 |  0.001s   |    0.88 µs   |");

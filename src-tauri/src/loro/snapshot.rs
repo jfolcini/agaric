@@ -14,8 +14,8 @@
 //! materializer projects from `LoroDoc` state into SQL.  A cold-start
 //! engine would project an empty doc on top of existing SQL state,
 //! corrupting the user's workspace.  The plan (Q4 from
-//! `pending/PEND-09-crdt-migration.md`, day-6 spec from
-//! `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §3 / Gate 6) says: persist
+//! `pending/PEND-09-crdt-migration.md`, day-6 spec captured in
+//! `SESSION-LOG.md` Session 698 Phase 2 day-6 entry) says: persist
 //! per-space `LoroDoc` snapshots in a `loro_doc_state` SQLite table,
 //! rehydrate on app boot, periodically re-snapshot in the background.
 //!
@@ -92,9 +92,9 @@ fn now_ms() -> i64 {
 ///
 /// Replaces any existing row for `space_id` (`INSERT OR REPLACE`).
 /// `op_count` resets to 0 on every save — the column is reserved for a
-/// future "snapshot every N ops" cadence (`PEND-09-PHASE-2-CUTOVER-PLAN.md`
-/// §8.1 option (a)) and is currently unused by the time-driven
-/// scheduler.
+/// future "snapshot every N ops" cadence (Phase-2 cutover plan option
+/// archived in `SESSION-LOG.md` Session 698 Phase 2 day-6 entry) and is
+/// currently unused by the time-driven scheduler.
 pub async fn save_snapshot(
     pool: &SqlitePool,
     space_id: &SpaceId,

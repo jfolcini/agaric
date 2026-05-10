@@ -55,8 +55,9 @@ pub const PURGE_INTERVAL_SECS: u64 = 3_600;
 /// PEND-09 Phase 2 day-6 — cadence at which the per-space LoroDoc
 /// snapshot scheduler walks the registry and writes every engine's
 /// current state into `loro_doc_state` (see migration `0052`).  5
-/// minutes is the soft default from `PEND-09-PHASE-2-CUTOVER-PLAN.md`
-/// §8.1: short enough that "snapshot on shutdown only" never has more
+/// minutes is the soft default from the Phase-2 cutover plan (see
+/// `SESSION-LOG.md` Session 698 Phase 2 day-6 entry): short enough
+/// that "snapshot on shutdown only" never has more
 /// than ~5 minutes of unbacked op-log replay to do on the next boot;
 /// long enough that the snapshot's I/O / CPU cost is amortised over
 /// hundreds of materializer ticks at typical typing rates.

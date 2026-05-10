@@ -2,11 +2,9 @@
 # under `crates/loro-spike` as an isolated, throwaway evaluation of the Loro
 # CRDT library (see `pending/PEND-09-crdt-migration.md`); Phase 1 ported the
 # necessary engine code into `src-tauri/src/loro/`.  The spike was archived
-# in Phase 2 day-8 (Gate 8 of `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md`):
-# the directory is gone, the verdict lives at
-# `pending/PEND-09-SPIKE-REPORT.md` + `pending/PEND-09-SPIKE-NOTES.md`,
-# and the final-state source is preserved at the annotated git tag
-# `pend-09/spike-archive` (commit `3e8a1267`).
+# in Phase 2 day-8 (see `SESSION-LOG.md` Session 698): the directory is
+# gone, the spike's notes + final report + source are preserved at the
+# annotated git tag `pend-09/spike-archive` (commit `3e8a1267`).
 [workspace]
 members = ["."]
 
@@ -393,7 +391,7 @@ harness = false
 # (now-archived) spike's `read_path_bench` (day-7); see git tag
 # `pend-09/spike-archive` for the original source.  Throwaway in
 # spirit; lives only until the spike's open question 8 is closed
-# in `pending/PEND-09-SPIKE-NOTES.md`.
+# (see `SESSION-LOG.md` Session 698 + `git tag pend-09/spike-archive`).
 [[bench]]
 name = "loro_vs_sql_reads"
 harness = false
@@ -415,22 +413,22 @@ path = "src/bin/audit_cross_space_refs.rs"
 # PEND-09 Phase 2 day-4 — read-only diagnostic that prints a histogram of
 # the user's `op_log` table (count + percentage per op_type) and compares
 # the result against the spike's synthetic 30/50/10/5/5 op-mix proxy.
-# Closes Phase-2 Gate 4 ("op-log volume sampling") per
-# `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §2 + §3 day 4. The binary
-# opens the DB with `SqliteConnectOptions::read_only(true)` so it can
-# never accidentally write to the user's data — safe to run on a live DB.
+# Closes Phase-2 Gate 4 ("op-log volume sampling"); see `SESSION-LOG.md`
+# Session 698 for the multi-day chain. The binary opens the DB with
+# `SqliteConnectOptions::read_only(true)` so it can never accidentally
+# write to the user's data — safe to run on a live DB.
 [[bin]]
 name = "op_log_histogram"
 path = "src/bin/op_log_histogram.rs"
 
 # PEND-09 Phase 2 day-7 — read-only diagnostic that prints a bucket-A/B/C/D
 # histogram + recent-divergent-ops tail from the `merge_parity_log` table,
-# closing Phase-2 Gate 7 (`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §2 +
-# §3 day 7).  Lets the maintainer observe shadow-mode parity state during
-# the 7-day soak without typing raw SQL.  Same `read_only(true)` opening
-# as `op_log_histogram` so the binary can never write to the user's data;
-# refuses to auto-create the table if missing (reports "was this DB built
-# with shadow mode?" and exits non-zero).
+# closing Phase-2 Gate 7 (see `SESSION-LOG.md` Session 698 for the
+# multi-day chain).  Lets the maintainer observe shadow-mode parity state
+# during the 7-day soak without typing raw SQL.  Same `read_only(true)`
+# opening as `op_log_histogram` so the binary can never write to the
+# user's data; refuses to auto-create the table if missing (reports "was
+# this DB built with shadow mode?" and exits non-zero).
 [[bin]]
 name = "parity_report"
 path = "src/bin/parity_report.rs"

@@ -19,10 +19,10 @@ pub mod link_metadata;
 // migration.  The module body is gated on `feature = "loro-shadow"`;
 // with the feature off (default) the inner declarations do not
 // compile, so the module is empty for production builds.  See
-// `src/loro/mod.rs` for the gate and `pending/PEND-09-SPIKE-REPORT.md`
-// §6 for the Phase-1 readiness checklist this module addresses (the
-// spike crate that authored the report was archived in Phase-2 day-8;
-// see git tag `pend-09/spike-archive`).
+// `src/loro/mod.rs` for the gate and `SESSION-LOG.md` Session 698
+// for the Phase-1 readiness checklist this module addresses (the
+// spike crate that authored the original report was archived in
+// Phase-2 day-8; see git tag `pend-09/spike-archive`).
 pub mod loro;
 pub mod materializer;
 pub mod mcp;
