@@ -8,6 +8,17 @@
 //! the bucket histogram + recent-divergent-ops tail without typing raw
 //! SQL.
 //!
+//! ## Day-17 addition: `--purge-before <unix_ms>`
+//!
+//! Phase 2 day-9.5 (`eb01c5f8`) shipped a fix for
+//! `shadow_dispatch_for_record`'s broken JSON-parse path; rows written
+//! before that fix have `loro_result` strings that reflect always-empty
+//! engine state and would skew a bucket histogram on the cutover-soak
+//! audit.  The Phase 2 final report named "purge pre-day-9.5 garbage
+//! parity rows" as a prerequisite — this flag makes that a one-shot CLI
+//! command instead of a SQL paste.  See the §"Behaviour" subsection
+//! below and the test `purge_before_deletes_only_older_rows`.
+//!
 //! ## Behaviour
 //!
 //! - Opens the database **read-only**
@@ -72,14 +83,57 @@ use agaric_lib::error::AppError;
 
 #[derive(Debug)]
 enum ParsedArgs {
-    Run { db_path: Option<PathBuf> },
+    Run {
+        db_path: Option<PathBuf>,
+        /// Day-17: when `Some(cutoff_ms)`, the binary opens the DB
+        /// **read-write** and deletes every `merge_parity_log` row whose
+        /// `created_at < cutoff_ms` — then exits without printing the
+        /// regular report.  When `None`, behaviour is identical to days
+        /// 7-16: read-only, print report.
+        purge_before_ms: Option<i64>,
+    },
     Help,
     Version,
     BadArg(String),
 }
 
+/// Parse a `--purge-before` value into a positive ms-since-epoch.
+///
+/// Defensive defaults (per the day-17 spec):
+///
+/// - Must parse as `i64`.
+/// - Must be **strictly positive** (`> 0`).  Negative or zero rejects
+///   so a typo (`--purge-before -1`, `--purge-before 0`) cannot become
+///   "delete everything".
+/// - Must not be `i64::MAX` — that's the overflow sentinel that would
+///   delete every row in any practical DB; we treat it as a typo
+///   guard rather than a real cutoff.
+///
+/// The bin has NO default value — the caller MUST pass a cutoff
+/// explicitly.  See `parse_args`'s `--purge-before` branch.
+fn parse_purge_before(raw: &str) -> Result<i64, String> {
+    let parsed: i64 = raw
+        .parse::<i64>()
+        .map_err(|e| format!("--purge-before requires an integer ms-since-epoch: {e}"))?;
+    if parsed <= 0 {
+        return Err(format!(
+            "--purge-before must be a positive integer (got {parsed}); \
+             refusing to interpret zero or negative as a cutoff"
+        ));
+    }
+    if parsed == i64::MAX {
+        return Err(format!(
+            "--purge-before must not equal i64::MAX ({}); that's the overflow sentinel, \
+             not a real cutoff",
+            i64::MAX
+        ));
+    }
+    Ok(parsed)
+}
+
 fn parse_args(args: &[String]) -> ParsedArgs {
     let mut db_path: Option<PathBuf> = None;
+    let mut purge_before_ms: Option<i64> = None;
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -96,6 +150,29 @@ fn parse_args(args: &[String]) -> ParsedArgs {
                 }
                 db_path = Some(PathBuf::from(value));
             }
+            "--purge-before" => match iter.next() {
+                Some(v) => match parse_purge_before(v) {
+                    Ok(ms) => purge_before_ms = Some(ms),
+                    Err(msg) => return ParsedArgs::BadArg(msg),
+                },
+                None => {
+                    return ParsedArgs::BadArg(
+                        "--purge-before requires a positive integer ms-since-epoch".into(),
+                    )
+                }
+            },
+            other if other.starts_with("--purge-before=") => {
+                let value = other.trim_start_matches("--purge-before=");
+                if value.is_empty() {
+                    return ParsedArgs::BadArg(
+                        "--purge-before requires a positive integer ms-since-epoch".into(),
+                    );
+                }
+                match parse_purge_before(value) {
+                    Ok(ms) => purge_before_ms = Some(ms),
+                    Err(msg) => return ParsedArgs::BadArg(msg),
+                }
+            }
             // Accept a single positional path arg for ergonomic
             // `parity_report /path/to/notes.db` invocation.
             other if !other.starts_with('-') && db_path.is_none() => {
@@ -104,7 +181,10 @@ fn parse_args(args: &[String]) -> ParsedArgs {
             other => return ParsedArgs::BadArg(format!("unknown argument: {other}")),
         }
     }
-    ParsedArgs::Run { db_path }
+    ParsedArgs::Run {
+        db_path,
+        purge_before_ms,
+    }
 }
 
 fn print_help() {
@@ -113,17 +193,23 @@ fn print_help() {
          \n\
          USAGE:\n    \
              parity_report <NOTES_DB>\n    \
-             parity_report --db-path <NOTES_DB>\n\
+             parity_report --db-path <NOTES_DB>\n    \
+             parity_report --purge-before <UNIX_MS> <NOTES_DB>\n\
          \n\
          OPTIONS:\n    \
-             --db-path <PATH>  Path to notes.db (read-only). Required (no default).\n    \
-             -V, --version     Print version and exit.\n    \
-             -h, --help        Print this help and exit.\n\
+             --db-path <PATH>          Path to notes.db. Required (no default).\n    \
+             --purge-before <UNIX_MS>  Delete merge_parity_log rows with\n        \
+                                       created_at < UNIX_MS, then exit (no report).\n        \
+                                       Opens the DB read-write. Must be a positive\n        \
+                                       integer. No default — callers must pass it.\n    \
+             -V, --version             Print version and exit.\n    \
+             -h, --help                Print this help and exit.\n\
          \n\
          EXIT CODES:\n    \
-             0   Report printed (verdict line conveys D-bucket alert).\n    \
+             0   Report printed (verdict line conveys D-bucket alert), or\n        \
+                 --purge-before completed (rows-deleted printed to stdout).\n    \
              2   Real error (DB missing, merge_parity_log table absent,\n        \
-                 schema mismatch, IO failure)."
+                 schema mismatch, IO failure, bad CLI argument)."
     );
 }
 
@@ -332,6 +418,44 @@ pub(crate) async fn load_report(pool: &SqlitePool) -> Result<ParityReport, AppEr
         op_types,
         date_range,
         recent_divergent,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Day-17 — purge pre-cutoff parity rows
+// ---------------------------------------------------------------------------
+
+/// Delete every `merge_parity_log` row whose `created_at < cutoff_ms`.
+/// Returns the number of rows deleted.
+///
+/// Day-17: the headline use case is purging rows written before
+/// commit `eb01c5f8` (Phase 2 day-9.5), where
+/// `shadow_dispatch_for_record` was reading the wrong JSON envelope
+/// and `loro_result` columns reflected always-empty engine state.
+///
+/// **Caller's responsibility:** open the pool **read-write**.  The
+/// read-only pool the day-7 report uses will surface a SQLite
+/// "attempt to write a readonly database" error here, which is the
+/// correct safety behaviour but unhelpful in tests.  See
+/// [`run_purge`] for the bin's wiring.
+pub(crate) async fn purge_parity_log_before(
+    pool: &SqlitePool,
+    cutoff_ms: i64,
+) -> Result<usize, AppError> {
+    let result = sqlx::query("DELETE FROM merge_parity_log WHERE created_at < ?")
+        .bind(cutoff_ms)
+        .execute(pool)
+        .await?;
+    let deleted = result.rows_affected();
+    // `rows_affected()` is `u64`; the bin's caller treats the count as
+    // `usize` (printed inline, compared against test fixtures).  On
+    // 32-bit pointer targets the cast could truncate — use try_from so
+    // a (theoretical) > 2^32 row delete surfaces as an explicit error
+    // rather than a silent wraparound.
+    usize::try_from(deleted).map_err(|_| {
+        AppError::InvalidOperation(format!(
+            "purge_parity_log_before deleted {deleted} rows; count exceeds usize on this platform",
+        ))
     })
 }
 
@@ -769,13 +893,21 @@ async fn main() -> ExitCode {
             eprintln!("Try `parity_report --help` for usage.");
             ExitCode::from(2)
         }
-        ParsedArgs::Run { db_path: None } => {
+        ParsedArgs::Run {
+            db_path: None,
+            purge_before_ms: _,
+        } => {
             eprintln!("parity_report: a path to notes.db is required.");
             eprintln!("Try `parity_report --help` for usage.");
             ExitCode::from(2)
         }
         ParsedArgs::Run {
             db_path: Some(path),
+            purge_before_ms: Some(cutoff_ms),
+        } => run_purge(&path, cutoff_ms).await,
+        ParsedArgs::Run {
+            db_path: Some(path),
+            purge_before_ms: None,
         } => run_main(&path).await,
     }
 }
@@ -834,6 +966,68 @@ async fn run_main(db_path: &std::path::Path) -> ExitCode {
 
     print!("{}", format_report(&report, db_path));
     ExitCode::SUCCESS
+}
+
+/// Day-17: open the DB read-write, run the DELETE, print a one-line
+/// confirmation, and exit.  Skips the regular report.
+///
+/// Read-write contract: this is the **only** code path in the bin
+/// that opens the DB writable.  The day-7 read-only contract
+/// (preserved by `run_main`) still holds for the no-flag case — see
+/// `parse_args` and the `main` dispatch.
+async fn run_purge(db_path: &std::path::Path, cutoff_ms: i64) -> ExitCode {
+    if !db_path.exists() {
+        eprintln!(
+            "parity_report: database file not found: {}",
+            db_path.display()
+        );
+        return ExitCode::from(2);
+    }
+
+    // Read-write: the DELETE writes.  Note the contrast with `run_main`'s
+    // `read_only(true)` — keeping this branch isolated to the
+    // `--purge-before` path means accidentally invoking the bin without
+    // the flag still hits the read-only opener.
+    let opts = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(false);
+
+    let pool = match SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+    {
+        Ok(pool) => pool,
+        Err(e) => {
+            eprintln!("parity_report: failed to open DB read-write: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    match merge_parity_log_exists(&pool).await {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!(
+                "parity_report: merge_parity_log table not found; was this DB built with shadow mode?"
+            );
+            return ExitCode::from(2);
+        }
+        Err(e) => {
+            eprintln!("parity_report: sqlite_master probe failed: {e}");
+            return ExitCode::from(2);
+        }
+    }
+
+    match purge_parity_log_before(&pool, cutoff_ms).await {
+        Ok(deleted) => {
+            println!("purge_before={cutoff_ms}; rows_deleted={deleted}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("parity_report: purge failed: {e}");
+            ExitCode::from(2)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -935,8 +1129,15 @@ mod tests {
     #[test]
     fn parse_args_positional_path() {
         match parse_args(&["parity_report".into(), "/tmp/notes.db".into()]) {
-            ParsedArgs::Run { db_path } => {
+            ParsedArgs::Run {
+                db_path,
+                purge_before_ms,
+            } => {
                 assert_eq!(db_path.expect("path"), PathBuf::from("/tmp/notes.db"));
+                assert!(
+                    purge_before_ms.is_none(),
+                    "no --purge-before flag → purge_before_ms must be None"
+                );
             }
             other => panic!("expected Run, got {other:?}"),
         }
@@ -958,6 +1159,101 @@ mod tests {
     fn parse_args_unknown_flag_is_bad_arg() {
         assert!(matches!(
             parse_args(&["parity_report".into(), "--unknown".into()]),
+            ParsedArgs::BadArg(_)
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // 1b. Day-17 — `--purge-before` CLI parsing
+    // -----------------------------------------------------------------------
+
+    /// `parse_args_handles_purge_flag`: the canonical day-17 invocation —
+    /// `--purge-before <ms> <db_path>` — round-trips both fields into
+    /// `ParsedArgs::Run`.
+    #[test]
+    fn parse_args_handles_purge_flag() {
+        match parse_args(&[
+            "parity_report".into(),
+            "--purge-before".into(),
+            "1234567890123".into(),
+            "/path/to.db".into(),
+        ]) {
+            ParsedArgs::Run {
+                db_path,
+                purge_before_ms,
+            } => {
+                assert_eq!(db_path.expect("path"), PathBuf::from("/path/to.db"));
+                assert_eq!(purge_before_ms, Some(1_234_567_890_123));
+            }
+            other => panic!("expected Run with purge_before_ms, got {other:?}"),
+        }
+
+        // Same arg in =-form must produce the same parse so callers can
+        // pick whichever form their shell prefers.
+        match parse_args(&[
+            "parity_report".into(),
+            "--purge-before=1234567890123".into(),
+            "/path/to.db".into(),
+        ]) {
+            ParsedArgs::Run {
+                db_path,
+                purge_before_ms,
+            } => {
+                assert_eq!(db_path.expect("path"), PathBuf::from("/path/to.db"));
+                assert_eq!(purge_before_ms, Some(1_234_567_890_123));
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    /// `parse_args_rejects_negative_purge_value`: typo guard — the bin
+    /// must NEVER interpret `-1` (or `0`) as a cutoff because that
+    /// would silently delete every row.
+    #[test]
+    fn parse_args_rejects_negative_purge_value() {
+        // Negative value.
+        assert!(matches!(
+            parse_args(&[
+                "parity_report".into(),
+                "--purge-before".into(),
+                "-1".into(),
+                "/tmp/notes.db".into(),
+            ]),
+            ParsedArgs::BadArg(_)
+        ));
+        // Zero is also rejected — same "delete everything" risk.
+        assert!(matches!(
+            parse_args(&[
+                "parity_report".into(),
+                "--purge-before".into(),
+                "0".into(),
+                "/tmp/notes.db".into(),
+            ]),
+            ParsedArgs::BadArg(_)
+        ));
+        // Non-numeric.
+        assert!(matches!(
+            parse_args(&[
+                "parity_report".into(),
+                "--purge-before".into(),
+                "yesterday".into(),
+                "/tmp/notes.db".into(),
+            ]),
+            ParsedArgs::BadArg(_)
+        ));
+        // Missing value.
+        assert!(matches!(
+            parse_args(&["parity_report".into(), "--purge-before".into()]),
+            ParsedArgs::BadArg(_)
+        ));
+        // i64::MAX overflow sentinel.
+        assert!(matches!(
+            parse_args(&[
+                "parity_report".into(),
+                "--purge-before".into(),
+                i64::MAX.to_string(),
+                "/tmp/notes.db".into(),
+            ]),
             ParsedArgs::BadArg(_)
         ));
     }
@@ -1551,5 +1847,100 @@ mod tests {
         // AUTOINCREMENT primary key → ids are 1, 2, 3 in insert order;
         // ORDER BY id DESC → 3, 2, 1.
         assert_eq!(ids, vec![3, 2, 1]);
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Day-17 — `purge_parity_log_before` SQL behaviour
+    // -----------------------------------------------------------------------
+
+    /// `purge_before_deletes_only_older_rows`: insert 3 rows with
+    /// `created_at` 1000, 2000, 3000; purge with cutoff 2500; assert
+    /// rows at 1000 and 2000 are deleted, row at 3000 stays.  This is
+    /// the headline "delete pre-day-9.5 garbage" behaviour from the
+    /// Phase 2 final report.
+    #[tokio::test]
+    async fn purge_before_deletes_only_older_rows() {
+        let (pool, _dir) = make_pool().await;
+
+        for ts in [1_000_i64, 2_000, 3_000] {
+            insert_event(
+                &pool,
+                &format!("dev/T{ts}"),
+                "edit_block",
+                "edit:BLK1:hi",
+                "edit:BLK1:hi",
+                true,
+                Some("A"),
+                ts,
+            )
+            .await;
+        }
+
+        let deleted = purge_parity_log_before(&pool, 2_500)
+            .await
+            .expect("purge_parity_log_before");
+        assert_eq!(deleted, 2, "rows at ts=1000, 2000 must be deleted");
+
+        // The 3000 row must still be present, and the others gone.
+        let remaining: Vec<i64> = sqlx::query_as::<_, (i64,)>(
+            "SELECT created_at FROM merge_parity_log ORDER BY created_at ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("select remaining")
+        .into_iter()
+        .map(|(ts,)| ts)
+        .collect();
+        assert_eq!(remaining, vec![3_000]);
+    }
+
+    /// `purge_before_returns_count`: the returned `usize` matches
+    /// SQLite's `rows_affected()`.  Using a deterministic 5-row
+    /// fixture so the count check is unambiguous.
+    #[tokio::test]
+    async fn purge_before_returns_count() {
+        let (pool, _dir) = make_pool().await;
+
+        for i in 0..5 {
+            insert_event(
+                &pool,
+                &format!("dev/R{i}"),
+                "edit_block",
+                "edit:BLK1:hi",
+                "edit:BLK1:hi",
+                true,
+                Some("A"),
+                1_000 + i, // 1000, 1001, 1002, 1003, 1004
+            )
+            .await;
+        }
+
+        // Cutoff 1_003 → rows at 1000, 1001, 1002 are deleted (3 rows);
+        // 1003 is NOT deleted (strict `<` semantics).
+        let deleted = purge_parity_log_before(&pool, 1_003)
+            .await
+            .expect("purge_parity_log_before");
+        assert_eq!(deleted, 3, "strict-less-than cutoff: 3 rows deleted");
+
+        // Idempotence: re-running with the same cutoff returns 0 — the
+        // already-deleted rows can't be deleted twice.
+        let deleted_again = purge_parity_log_before(&pool, 1_003)
+            .await
+            .expect("purge_parity_log_before second call");
+        assert_eq!(deleted_again, 0);
+    }
+
+    /// `purge_before_empty_log_returns_zero`: empty `merge_parity_log`
+    /// → returns 0, doesn't error.  The day-17 spec calls this out
+    /// explicitly because the bin must not blow up on a freshly-created
+    /// DB the maintainer is testing the flag against.
+    #[tokio::test]
+    async fn purge_before_empty_log_returns_zero() {
+        let (pool, _dir) = make_pool().await;
+        // No inserts: the migrated table is empty.
+        let deleted = purge_parity_log_before(&pool, 1_000_000)
+            .await
+            .expect("purge on empty log must not error");
+        assert_eq!(deleted, 0);
     }
 }
