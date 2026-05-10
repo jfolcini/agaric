@@ -1753,3 +1753,483 @@ async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
 
     materializer.shutdown();
 }
+
+// ======================================================================
+// PEND-09 Phase 3 day-12 — end-to-end Loro-sync integration tests
+// ======================================================================
+//
+// These tests exercise the full `prepare_outgoing` → wire round-trip →
+// `apply_remote` cycle through more cases than the day-5 happy-path
+// E2E (`loro_sync_e2e_round_trip_block_visible_on_b`).  Each test
+// drives the public sync helpers directly (no real sockets) and
+// asserts engine-state convergence + the SQL projection on the
+// receiving side.
+//
+// Coverage picked (per Phase-3-plan §3 day 12 menu):
+//
+// * Scenario 1 — multi-block, multi-space initial snapshot.
+// * Scenario 2 — incremental Update against an already-seeded peer.
+// * Scenario 3 — concurrent disjoint creates → CRDT mutual import
+//   convergence (commutativity of `import`).
+//
+// Skipped intentionally:
+// * Scenario 4 (same-block concurrent edit RGA convergence) — the
+//   character-merge path is already covered by the engine-level
+//   parity corpus + spike tests; the day-12 seam test focuses on the
+//   sync wire instead of duplicating the RGA contract.
+// * Scenario 5 (SQL projection happy-path) — the day-5 E2E
+//   `loro_sync_e2e_round_trip_block_visible_on_b` already pins this.
+
+/// Scenario 1 — multi-block, multi-space initial snapshot.
+///
+/// Engine A creates 5 blocks across 2 spaces (3 in `space-X`, 2 in
+/// `space-Y`).  For each space, build a `LoroSyncMessage::Snapshot`
+/// via `prepare_outgoing(None)`, wrap it in `SyncMessage::LoroSync`,
+/// JSON-round-trip the envelope, then apply on B's empty registry +
+/// fresh DB.  Assert engine B reads back every block with the right
+/// content + parent + position, AND that the SQL `blocks` table on
+/// B mirrors the same shape per space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
+    use crate::loro::registry::LoroEngineRegistry;
+    use crate::space::SpaceId;
+    use crate::sync_protocol::loro_sync;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    let space_x = SpaceId::from_trusted("01HZPHASE3D12MULTISPACEXXXX");
+    let space_y = SpaceId::from_trusted("01HZPHASE3D12MULTISPACEYYYY");
+
+    // Distinct ULID-shaped block_ids so SQL inserts don't collide.
+    let blk_x1 = "01HZPHASE3D12BLKXSPACEXAAA1";
+    let blk_x2 = "01HZPHASE3D12BLKXSPACEXBBB2";
+    let blk_x3 = "01HZPHASE3D12BLKXSPACEXCCC3";
+    let blk_y1 = "01HZPHASE3D12BLKYSPACEYDDD4";
+    let blk_y2 = "01HZPHASE3D12BLKYSPACEYEEE5";
+
+    // Engine A — seed 3 blocks in space_x, 2 in space_y.
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a
+            .for_space(&space_x, "device-A")
+            .expect("for_space space_x");
+        let e = g.engine_mut();
+        e.apply_create_block(blk_x1, "content", "x-one", None, 0)
+            .expect("create x1");
+        e.apply_create_block(blk_x2, "content", "x-two", Some(blk_x1), 1)
+            .expect("create x2");
+        e.apply_create_block(blk_x3, "page", "x-three", None, 2)
+            .expect("create x3");
+    }
+    {
+        let mut g = registry_a
+            .for_space(&space_y, "device-A")
+            .expect("for_space space_y");
+        let e = g.engine_mut();
+        e.apply_create_block(blk_y1, "content", "y-one", None, 0)
+            .expect("create y1");
+        e.apply_create_block(blk_y2, "content", "y-two", None, 1)
+            .expect("create y2");
+    }
+
+    // Build + wire-roundtrip + apply one snapshot per space.
+    let registry_b = LoroEngineRegistry::new();
+
+    for space in [&space_x, &space_y] {
+        let inner = loro_sync::prepare_outgoing(&registry_a, space, "device-A", None)
+            .await
+            .expect("prepare_outgoing");
+
+        // Wrap in the day-5 wire envelope and JSON-roundtrip — this
+        // mirrors what `conn.send_json` / `conn.recv_json` do on the
+        // real transport.
+        let outgoing = SyncMessage::LoroSync {
+            msg: inner,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&outgoing).expect("serialise SyncMessage::LoroSync");
+        let received: SyncMessage =
+            serde_json::from_str(&json).expect("deserialise SyncMessage::LoroSync");
+        let received_inner: LoroSyncMessage = match received {
+            SyncMessage::LoroSync { msg, is_last } => {
+                assert!(is_last, "wire must preserve is_last");
+                msg
+            }
+            other => panic!("expected SyncMessage::LoroSync, got {other:?}"),
+        };
+
+        let returned_space =
+            loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+                .await
+                .expect("apply_remote");
+        assert_eq!(&returned_space, space, "apply_remote must echo space");
+    }
+
+    // ── Engine convergence — every seeded block readable on B with
+    // the original (block_type, content, parent_id, position).
+    let expected_x: &[(&str, &str, &str, Option<&str>, i64)] = &[
+        (blk_x1, "content", "x-one", None, 0),
+        (blk_x2, "content", "x-two", Some(blk_x1), 1),
+        (blk_x3, "page", "x-three", None, 2),
+    ];
+    {
+        let mut g = registry_b
+            .for_space(&space_x, "device-B")
+            .expect("for_space space_x B");
+        let e = g.engine_mut();
+        assert_eq!(
+            e.count_alive_blocks().expect("count"),
+            3,
+            "space_x: 3 alive"
+        );
+        for (id, ty, content, parent, pos) in expected_x {
+            let snap = e
+                .read_block(id)
+                .expect("read")
+                .unwrap_or_else(|| panic!("block {id} must be visible on B"));
+            assert_eq!(snap.block_type, *ty, "block_type for {id}");
+            assert_eq!(snap.content, *content, "content for {id}");
+            assert_eq!(snap.parent_id.as_deref(), *parent, "parent_id for {id}");
+            assert_eq!(snap.position, *pos, "position for {id}");
+        }
+    }
+
+    let expected_y: &[(&str, &str, &str, Option<&str>, i64)] = &[
+        (blk_y1, "content", "y-one", None, 0),
+        (blk_y2, "content", "y-two", None, 1),
+    ];
+    {
+        let mut g = registry_b
+            .for_space(&space_y, "device-B")
+            .expect("for_space space_y B");
+        let e = g.engine_mut();
+        assert_eq!(
+            e.count_alive_blocks().expect("count"),
+            2,
+            "space_y: 2 alive"
+        );
+        for (id, ty, content, parent, pos) in expected_y {
+            let snap = e
+                .read_block(id)
+                .expect("read")
+                .unwrap_or_else(|| panic!("block {id} must be visible on B"));
+            assert_eq!(snap.block_type, *ty, "block_type for {id}");
+            assert_eq!(snap.content, *content, "content for {id}");
+            assert_eq!(snap.parent_id.as_deref(), *parent, "parent_id for {id}");
+            assert_eq!(snap.position, *pos, "position for {id}");
+        }
+    }
+
+    // ── SQL projection — every block also lands in the `blocks`
+    // table with matching shape.  Single query joining all 5 ids.
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?, ?, ?, ?)")
+            .bind(blk_x1)
+            .bind(blk_x2)
+            .bind(blk_x3)
+            .bind(blk_y1)
+            .bind(blk_y2)
+            .fetch_one(&pool_b)
+            .await
+            .expect("count rows");
+    assert_eq!(row_count, 5, "all 5 blocks must be projected to SQL");
+
+    // Spot-check the parented block — parent_id is the most failure-
+    // prone projection field.
+    let x2_row: (String, String, String, Option<String>, i64) = sqlx::query_as(
+        "SELECT id, block_type, content, parent_id, position FROM blocks WHERE id = ?",
+    )
+    .bind(blk_x2)
+    .fetch_one(&pool_b)
+    .await
+    .expect("fetch x2");
+    assert_eq!(x2_row.0, blk_x2);
+    assert_eq!(x2_row.1, "content");
+    assert_eq!(x2_row.2, "x-two");
+    assert_eq!(x2_row.3.as_deref(), Some(blk_x1));
+    assert_eq!(x2_row.4, 1);
+
+    materializer_b.shutdown();
+}
+
+/// Scenario 2 — incremental Update against an already-seeded peer.
+///
+/// 1. A creates BLOCK_X, exports a Snapshot, B applies it (B's vv now
+///    matches A's pre-X vv).
+/// 2. A creates BLOCK_Y.  A captures B's current `version_vector()` as
+///    `peer_vv`, then `prepare_outgoing(Some(peer_vv))` builds a
+///    `LoroSyncMessage::Update` carrying ONLY the post-vv ops.
+/// 3. B applies the Update.  Engine + SQL both show {X, Y}.
+///
+/// This pins the day-4/day-5 incremental-sync wire path that the
+/// day-5 E2E doesn't cover (it only does Snapshot).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_update_against_seeded_peer() {
+    use crate::loro::registry::LoroEngineRegistry;
+    use crate::space::SpaceId;
+    use crate::sync_protocol::loro_sync;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    let space = SpaceId::from_trusted("01HZPHASE3D12UPDATESCENARIO");
+    let block_x = "01HZPHASE3D12BLOCKXEEEEEEE1";
+    let block_y = "01HZPHASE3D12BLOCKYFFFFFFF2";
+
+    // ── Step 1 — A creates X, snapshot to B.
+    let registry_a = LoroEngineRegistry::new();
+    let registry_b = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A");
+        g.engine_mut()
+            .apply_create_block(block_x, "content", "x-content", None, 0)
+            .expect("create X");
+    }
+    {
+        let inner = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare_outgoing snapshot");
+        // Round-trip via the SyncMessage envelope to mirror the wire.
+        let outgoing = SyncMessage::LoroSync {
+            msg: inner,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&outgoing).expect("serialise");
+        let received: SyncMessage = serde_json::from_str(&json).expect("deserialise");
+        let received_inner = match received {
+            SyncMessage::LoroSync { msg, .. } => msg,
+            other => panic!("expected LoroSync, got {other:?}"),
+        };
+        loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+            .await
+            .expect("apply snapshot");
+    }
+
+    // Sanity — B has X but not Y.
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-1");
+        let e = g.engine_mut();
+        assert!(
+            e.read_block(block_x).expect("read X").is_some(),
+            "X visible"
+        );
+        assert!(e.read_block(block_y).expect("read Y").is_none(), "Y absent");
+    }
+
+    // ── Step 2 — Capture B's vv, A creates Y, A builds an Update
+    // against B's vv.
+    let b_vv: Vec<u8> = {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-vv");
+        g.engine_mut().version_vector()
+    };
+    assert!(
+        !b_vv.is_empty(),
+        "B's vv after one import must be non-empty"
+    );
+
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A-2");
+        g.engine_mut()
+            .apply_create_block(block_y, "content", "y-content", None, 1)
+            .expect("create Y");
+    }
+
+    let update_msg = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
+        .await
+        .expect("prepare_outgoing update");
+    let (echoed_from_vv, update_bytes_len) = match &update_msg {
+        LoroSyncMessage::Update { from_vv, bytes, .. } => (from_vv.clone(), bytes.len()),
+        other => panic!("expected Update variant, got {other:?}"),
+    };
+    assert_eq!(
+        echoed_from_vv, b_vv,
+        "Update.from_vv must echo the peer-vv passed in"
+    );
+    assert!(update_bytes_len > 0, "Update bytes must be non-empty");
+
+    // ── Step 3 — Wire-roundtrip + apply on B.
+    let outgoing = SyncMessage::LoroSync {
+        msg: update_msg,
+        is_last: true,
+    };
+    let json = serde_json::to_string(&outgoing).expect("serialise update envelope");
+    let received: SyncMessage = serde_json::from_str(&json).expect("deserialise update envelope");
+    let received_inner = match received {
+        SyncMessage::LoroSync { msg, .. } => msg,
+        other => panic!("expected LoroSync, got {other:?}"),
+    };
+    loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+        .await
+        .expect("apply update");
+
+    // ── Engine on B sees both X and Y.
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-final");
+        let e = g.engine_mut();
+        let snap_x = e
+            .read_block(block_x)
+            .expect("read X")
+            .expect("X visible after update");
+        let snap_y = e
+            .read_block(block_y)
+            .expect("read Y")
+            .expect("Y visible after update");
+        assert_eq!(snap_x.content, "x-content");
+        assert_eq!(snap_y.content, "y-content");
+        assert_eq!(snap_y.position, 1);
+    }
+
+    // ── SQL on B has both rows.
+    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")
+        .bind(block_x)
+        .bind(block_y)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count rows");
+    assert_eq!(row_count, 2, "both X and Y must land in SQL after update");
+
+    materializer_b.shutdown();
+}
+
+/// Scenario 3 — concurrent disjoint creates converge via mutual
+/// import.  Verifies `apply_remote` is commutative for non-conflicting
+/// ops: A creates X, B creates Y, the two exchange snapshots, and
+/// after both imports both engines + both SQL projections show
+/// {X, Y}.  This locks the CRDT-merge invariant at the sync seam.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
+    use crate::loro::registry::LoroEngineRegistry;
+    use crate::space::SpaceId;
+    use crate::sync_protocol::loro_sync;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let materializer_a = Materializer::new(pool_a.clone());
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    let space = SpaceId::from_trusted("01HZPHASE3D12CONVERGENCESPC");
+    let block_x = "01HZPHASE3D12CONVBLOCKXAAA1";
+    let block_y = "01HZPHASE3D12CONVBLOCKYBBB2";
+
+    // Both peers start fresh.  A creates X locally; B creates Y
+    // locally — disjoint ops, no causal relationship.  Distinct
+    // device-ids ensure distinct Loro PeerIDs, so the ops are truly
+    // concurrent at the CRDT layer.
+    let registry_a = LoroEngineRegistry::new();
+    let registry_b = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A");
+        g.engine_mut()
+            .apply_create_block(block_x, "content", "from-A", None, 0)
+            .expect("create X on A");
+    }
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B");
+        g.engine_mut()
+            .apply_create_block(block_y, "content", "from-B", None, 1)
+            .expect("create Y on B");
+    }
+
+    // Each side exports a snapshot.  Because the sender is the only
+    // writer of its own ops, a Snapshot is what `prepare_outgoing(None)`
+    // would produce — and is the safe choice when neither peer has
+    // observed the other yet.
+    let msg_from_a = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", None)
+        .await
+        .expect("A prepare_outgoing");
+    let msg_from_b = loro_sync::prepare_outgoing(&registry_b, &space, "device-B", None)
+        .await
+        .expect("B prepare_outgoing");
+
+    // Wire-roundtrip both snapshots.
+    let wire_a: SyncMessage = {
+        let env = SyncMessage::LoroSync {
+            msg: msg_from_a,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&env).expect("serialise A→B");
+        serde_json::from_str(&json).expect("deserialise A→B")
+    };
+    let wire_b: SyncMessage = {
+        let env = SyncMessage::LoroSync {
+            msg: msg_from_b,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&env).expect("serialise B→A");
+        serde_json::from_str(&json).expect("deserialise B→A")
+    };
+    let inner_a_to_b = match wire_a {
+        SyncMessage::LoroSync { msg, .. } => msg,
+        other => panic!("expected LoroSync A→B, got {other:?}"),
+    };
+    let inner_b_to_a = match wire_b {
+        SyncMessage::LoroSync { msg, .. } => msg,
+        other => panic!("expected LoroSync B→A, got {other:?}"),
+    };
+
+    // Mutual import: A applies B's snapshot, B applies A's snapshot.
+    loro_sync::apply_remote(&pool_b, &registry_b, "device-B", inner_a_to_b)
+        .await
+        .expect("apply A→B");
+    loro_sync::apply_remote(&pool_a, &registry_a, "device-A", inner_b_to_a)
+        .await
+        .expect("apply B→A");
+
+    // ── Engine convergence — both engines see both blocks with the
+    // original content + position.
+    for (label, registry, pool, dev) in [
+        ("A", &registry_a, &pool_a, "device-A"),
+        ("B", &registry_b, &pool_b, "device-B"),
+    ] {
+        let mut g = registry
+            .for_space(&space, dev)
+            .unwrap_or_else(|e| panic!("for_space {label}: {e}"));
+        let e = g.engine_mut();
+        assert_eq!(
+            e.count_alive_blocks().expect("count"),
+            2,
+            "{label}: must see both blocks after mutual import"
+        );
+        let snap_x = e
+            .read_block(block_x)
+            .expect("read X")
+            .unwrap_or_else(|| panic!("{label}: X visible"));
+        let snap_y = e
+            .read_block(block_y)
+            .expect("read Y")
+            .unwrap_or_else(|| panic!("{label}: Y visible"));
+        assert_eq!(snap_x.content, "from-A", "{label}: X content");
+        assert_eq!(snap_y.content, "from-B", "{label}: Y content");
+        assert_eq!(snap_x.position, 0, "{label}: X position");
+        assert_eq!(snap_y.position, 1, "{label}: Y position");
+
+        // SQL projection on each side mirrors the engine state.
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")
+            .bind(block_x)
+            .bind(block_y)
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|err| panic!("{label}: count rows: {err}"));
+        assert_eq!(row_count, 2, "{label}: SQL must show both rows");
+    }
+
+    materializer_a.shutdown();
+    materializer_b.shutdown();
+}
