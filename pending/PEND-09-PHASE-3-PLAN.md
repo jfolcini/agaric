@@ -384,9 +384,9 @@ This document. Default-build behaviour byte-identical to commit
 (unchanged); `--features loro-shadow` reports the Phase-2 day-17 close
 count.
 
-### Day 2 — Cutover flag default ON via migration
+### Day 2 — Cutover flag default ON via migration — **COMMITTED 2026-05-10**
 
-Migration `0056_pend_09_cutover_default_on.sql`:
+Migration `0056_pend_09_cutover_default_on.sql` landed; `loro/cutover.rs` gains the `migration_0056_flips_cutover_default_on` regression test (loro-shadow count 3901→3902). First behaviour-change commit since Phase 1 day 1; reversible via SQL UPDATE per below.
 
 ```sql
 UPDATE app_settings

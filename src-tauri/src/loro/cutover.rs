@@ -242,17 +242,68 @@ mod tests {
     #[tokio::test]
     async fn init_cutover_flag_loads_seeded_value() {
         let (pool, _dir) = fresh_pool().await;
-        // Migration seeds `'0'` — init must read `false`.
+        // Migration 0053 seeded `'0'`; Phase-3 day-2 migration 0056
+        // flips that to `'1'`.  After running the full migration set
+        // (`init_pool` runs every migration in order) the row is `'1'`
+        // and `init_cutover_flag` must read `true`.
         init_cutover_flag(&pool).await.expect("init");
         assert!(
-            !is_loro_authoritative(),
-            "fresh DB seeded '0' must read false",
+            is_loro_authoritative(),
+            "fresh DB after migration 0056 must read true",
         );
+        // Reset the cache so subsequent tests in this binary aren't
+        // surprised by an installed `true`.
+        install_cutover_flag_for_test(false);
+    }
+
+    /// PEND-09 Phase 3 day-2 regression net.
+    ///
+    /// Migration `0056_pend_09_cutover_default_on.sql` flips the
+    /// `app_settings.pend09.loro_authoritative` row from `'0'` (the
+    /// 0053 seed) to `'1'`.  This test verifies the migration actually
+    /// runs and the cache initialiser observes the flipped value.
+    ///
+    /// Without this test, a future maintainer who tweaks the migration
+    /// (typo in the key, accidentally drops the WHERE clause, etc.)
+    /// would see no failure until production-day behaviour shifted.
+    #[tokio::test]
+    async fn migration_0056_flips_cutover_default_on() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // Sanity: the row exists with value '1' after migrations.
+        let row: (String,) = sqlx::query_as("SELECT value FROM app_settings WHERE key = ?")
+            .bind(KEY_LORO_AUTHORITATIVE)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row after migrations");
+        assert_eq!(
+            row.0, "1",
+            "migration 0056 must overwrite the 0053 seed `'0'` to `'1'`",
+        );
+
+        // Cache initialiser reads `true`.
+        init_cutover_flag(&pool).await.expect("init");
+        assert!(
+            is_loro_authoritative(),
+            "init_cutover_flag against a freshly-migrated DB must read true \
+             (Phase-3 day-2 default-on migration)",
+        );
+
+        // Cleanup: reset to false so subsequent tests in this binary
+        // see the documented default-off invariant.
+        install_cutover_flag_for_test(false);
     }
 
     #[tokio::test]
     async fn set_loro_authoritative_updates_row_and_cache() {
         let (pool, _dir) = fresh_pool().await;
+        // Phase-3 day-2 migration 0056 flips the seed to `'1'`; this
+        // test's intent is to verify the off→on→off flip semantics, so
+        // explicitly start from `false` (matches the original Phase-2
+        // day-9 invariant the test was written under).
+        set_loro_authoritative(&pool, false)
+            .await
+            .expect("set initial false");
         init_cutover_flag(&pool).await.expect("init");
         assert!(!is_loro_authoritative(), "starts false");
 
