@@ -468,7 +468,7 @@ pub async fn project_remove_tag_to_sql(
 ///   [`crate::loro::engine::BlockSnapshot`] carries.  Day-5 / day-12
 ///   may extend.
 /// * `None` → engine has no record of `block_id`.  The plan
-///   (`pending/PEND-09-PHASE-3-PLAN.md` §3 day 4) defers the
+///   (`SESSION-LOG.md` Session 699 Phase 3 §3 day 4) defers the
 ///   purge-from-SQL semantics: an absent engine record could mean
 ///   (a) the block was hard-purged on the remote (legitimate
 ///   delete-from-SQL), or (b) a transient engine miss the caller

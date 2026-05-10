@@ -576,7 +576,7 @@ async fn apply_op_tx(
             // SQL-only `apply_*_sql_only` helpers remain as fallbacks
             // for the test scaffolding cases (uninitialised shadow
             // state, unresolved space) inside the via_loro helpers
-            // themselves.  See `pending/PEND-09-PHASE-3-PLAN.md` §3
+            // themselves.  See `SESSION-LOG.md` Session 699 Phase 3
             // day 9.
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
             apply_create_block_via_loro(conn, &record.device_id, &p).await?;
