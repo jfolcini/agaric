@@ -469,6 +469,38 @@ Until day 5, the receiver still expects `OpBatch`. Day 4 lands
 sender-only; receiver swing is day 5. §10.2 covers single-PR vs
 two-PR sequencing.
 
+#### Day 4 partial — Loro-sync push + apply helpers — **COMMITTED 2026-05-10**
+
+Day-4's pure-helper layer landed additive: new module
+`src-tauri/src/sync_protocol/loro_sync.rs` (~430 LOC including tests)
+exposes `prepare_outgoing(registry, space_id, device_id, peer_vv) ->
+LoroSyncMessage` and `apply_remote(pool, registry, device_id, message)
+-> SpaceId`. New engine method
+`LoroEngine::import_with_changed_blocks(bytes) -> Vec<BlockId>` and
+projection helper `loro::projection::project_block_full_to_sql(tx,
+space_id, block_id, Option<&BlockSnapshot>)` are the supporting
+infrastructure. Five new tests under
+`#[cfg(all(test, feature = "loro-shadow"))]` lock the snapshot/update
+prepare paths, the engine import + SQL projection round-trip, and the
+unsupported-protocol-version reject (Snapshot + Update). No transport
+wiring yet — that's the rest of day-4 (sender) plus day-5 (receiver +
+DELETE `OpBatch`).
+
+`import_with_changed_blocks` uses the brute-force walk-all-blocks
+fallback (engine.rs docstring): `loro::ImportStatus.success` is a
+`VersionRange` of (peer, counter-range) accepted ops, not a
+container-id set, so translating it to changed-block-ids would require
+either op-log decode or root-subscribe instrumentation. The walk costs
+O(N_blocks) per sync-pull but sync-pull is a cold path; day-5 / a
+later benchmark can swap to a targeted enumeration if it ever lands
+on a hot path. `project_block_full_to_sql` `None` → log warn + skip
+per the plan's purge-deferral rule.
+
+Default-build behaviour byte-identical to commit `b7496159` — module
+declaration unconditional, function bodies feature-gated. Default
+test count unchanged (**3778**); `--features loro-shadow` count goes
+**3907 → 3912** (5 new tests, exactly matching the day-4 estimate).
+
 ### Day 5 — Wire Loro sync pull (DESTRUCTIVE)
 
 The load-bearing day. Edit `sync_protocol/operations.rs` and
