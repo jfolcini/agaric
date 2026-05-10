@@ -110,14 +110,17 @@ impl From<OpTransfer> for OpRecord {
 ///    protocol violation and transitions to
 ///    [`SyncState::Failed`](super::SyncState::Failed).
 ///
-/// 2. **`OpBatch`** — zero or more, in either direction, after the
-///    peer-relevant `HeadExchange` has been processed. Every batch
-///    carries `is_last`; the final batch sets `is_last: true` to
-///    flush the receiver's accumulator and trigger the per-session
-///    apply + merge.
+/// 2. **`LoroSync`** — zero or more, in either direction, after the
+///    peer-relevant `HeadExchange` has been processed. Each message
+///    carries one [`LoroSyncMessage`] (Snapshot or Update) for one
+///    [`crate::space::SpaceId`]; `is_last: true` on the final
+///    per-space message tells the receiver to transition to
+///    `SyncComplete`.  PEND-09 Phase 3 day-6 — replaced the
+///    diffy-typed `OpBatch` variant; Loro's CRDT import converges
+///    concurrent edits with no three-way text-merge pass.
 ///
 /// 3. **`SyncComplete`** — exactly once per side, after that side has
-///    streamed its final `OpBatch`. Carries `last_hash` (the receiver's
+///    streamed its final `LoroSync`. Carries `last_hash` (the receiver's
 ///    new frontier-of-record), which is written to `peer_refs` to
 ///    bookmark the next session's starting point.
 ///
@@ -158,21 +161,15 @@ pub enum SyncMessage {
     /// First exchanged in a session; advertises `(device_id, seq, hash)`
     /// tuples. Both peers must send exactly one.
     HeadExchange { heads: Vec<DeviceHead> },
-    /// Streamed after `HeadExchange`. The batch carrying `is_last: true`
-    /// flushes the receiver's accumulator and triggers apply + merge.
-    OpBatch { ops: Vec<OpTransfer>, is_last: bool },
     /// PEND-09 Phase 3 day-5 — Loro-CRDT-based sync wire envelope.
     ///
     /// Carries one [`LoroSyncMessage`] (Snapshot or Update) per
     /// [`crate::space::SpaceId`].  Sent zero-or-more times in either
-    /// direction in place of [`SyncMessage::OpBatch`] under the
-    /// `loro-shadow` feature; default builds still emit / consume
-    /// `OpBatch`.  The `is_last` flag tells the receiver this is the
-    /// final per-space message of the batch — same contract as
-    /// `OpBatch.is_last` — so the receiver can transition to
-    /// `SyncComplete` once it processes the last one.  Day-6 deletes
-    /// `OpBatch`; this variant becomes the sole streaming-phase
-    /// payload.
+    /// direction.  The `is_last` flag tells the receiver this is the
+    /// final per-space message of the batch so it can transition to
+    /// `SyncComplete` once it processes the last one.  PEND-09 Phase 3
+    /// day-6 — became the sole streaming-phase payload after the
+    /// diffy-typed `OpBatch` variant was deleted.
     LoroSync { msg: LoroSyncMessage, is_last: bool },
     /// Responder side-exit: our op log was compacted past the
     /// initiator's heads, so a delta replay is impossible. Triggers
@@ -233,27 +230,8 @@ pub struct SyncSession {
     pub ops_sent: usize,
 }
 
-/// Counts returned by [`apply_remote_ops`](super::apply_remote_ops).
-#[derive(Debug)]
-pub struct ApplyResult {
-    pub inserted: usize,
-    pub duplicates: usize,
-    pub hash_mismatches: usize,
-    /// Number of ops where `(device_id, seq)` already existed locally with a
-    /// **different** hash — i.e., a fork: a peer produced a divergent op for
-    /// the same `(device_id, seq)` slot. The local copy is kept; the
-    /// incoming op is dropped (the existing `INSERT OR IGNORE` is a no-op
-    /// for these rows). This is distinct from `duplicates` (same hash), and
-    /// is surfaced for observability so callers can log/alert.
-    pub forks: usize,
-}
-
-/// Counts returned by [`merge_diverged_blocks`](super::merge_diverged_blocks).
-pub struct MergeResults {
-    pub clean_merges: usize,
-    pub conflicts: usize,
-    pub already_up_to_date: usize,
-    pub property_lww: usize,
-    pub move_lww: usize,
-    pub delete_edit_resurrect: usize,
-}
+// PEND-09 Phase 3 day-6 — `ApplyResult` and `MergeResults` deleted
+// alongside their producers (`apply_remote_ops` and
+// `merge_diverged_blocks`).  The Loro-side push/apply path
+// (`sync_protocol::loro_sync`) does not return per-op counts today —
+// the engine import is opaque from the orchestrator's view.

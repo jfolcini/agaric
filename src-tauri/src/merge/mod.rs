@@ -1,23 +1,24 @@
 //! Three-way merge using diffy.
 //!
 //! Provides:
-//! - `merge_text()` — three-way text merge for a block's content
-//! - `create_conflict_copy()` — creates a conflict copy block when merge fails
-//! - `resolve_property_conflict()` — LWW for concurrent property changes
-//! - `merge_block_text_only()` — text-only merge orchestrator for a single
-//!   block's `edit_block` history. Deliberately scoped: callers must
-//!   compose property/move/delete-resurrect passes separately (see
-//!   `sync_protocol::operations::merge_diverged_blocks`).
+//! - `merge_text()` — three-way text merge for a block's content (kept
+//!   for the parity sink / shadow path; day 7 deletes it).
+//! - `create_conflict_copy()` — conflict-copy creation helper (kept for
+//!   the same reason; day 7 deletes it).
+//! - `resolve_property_conflict()` — LWW for concurrent property
+//!   changes (kept; day 7 deletes it).
+//!
+//! PEND-09 Phase 3 day-6 — `merge_block_text_only` deleted.  Its only
+//! caller (`sync_protocol::operations::merge_diverged_blocks`) was
+//! deleted day 6 alongside the diffy-typed sync wire.  The Loro engine
+//! converges concurrent edits via CRDT import; no three-way text-merge
+//! orchestrator is needed any more.
 
 mod apply;
 mod detect;
 mod resolve;
 mod types;
 
-#[cfg(test)]
-mod tests;
-
-pub use apply::merge_block_text_only;
 pub use detect::merge_text;
 pub use resolve::{create_conflict_copy, resolve_property_conflict};
 pub use types::{MergeOutcome, MergeResult, PropertyConflictResolution};
@@ -30,13 +31,6 @@ pub use types::{MergeOutcome, MergeResult, PropertyConflictResolution};
 // `shadow_apply` below.
 #[cfg(feature = "loro-shadow")]
 pub(crate) use apply::shadow_dispatch_for_record;
-
-// Test-only alias: the existing test suite was written against the old
-// name `merge_block`. Production callers MUST use `merge_block_text_only`
-// so the text-only scope is explicit at the call site (M-73). This alias
-// is gated on `cfg(test)` so it cannot leak into production code.
-#[cfg(test)]
-pub(crate) use apply::merge_block_text_only as merge_block;
 
 // ---------------------------------------------------------------------------
 // PEND-09 Phase 1 day-2 — shadow-mode dual-write hook.

@@ -176,6 +176,7 @@ pub async fn create_conflict_copy(
 /// The enqueued task is idempotent and dedup'd by the materializer
 /// (see `materializer::dedup`) — re-issuing it for the same block_id
 /// is safe.
+#[allow(dead_code)] // PEND-09 Phase 3 day-7 deletes the whole merge::resolve module
 pub async fn create_conflict_copy_with_reindex(
     pool: &SqlitePool,
     device_id: &str,
