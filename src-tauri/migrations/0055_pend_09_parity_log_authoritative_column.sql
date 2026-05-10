@@ -1,0 +1,69 @@
+-- PEND-09 Phase 2 day-14 — record the cutover-flag value at parity-event time.
+--
+-- Days 11-13 wired all 12 op types through the cutover branch
+-- (commits `8af389aa`, `204ca451`, `478c7dd4`).  When the cutover
+-- flag is OFF (today's default + shadow mode) diffy is the primary
+-- and a bucket-D event means "Loro disagreed with diffy".  When the
+-- flag is ON Loro is the primary and a bucket-D event means "diffy
+-- would have disagreed with what Loro produced".  The bucket
+-- definition (the two summaries differ in a non-CRDT-explainable
+-- way) does not change, but the action a maintainer takes after
+-- inspecting a divergent row very much does.
+--
+-- This migration adds the `loro_authoritative_at_classify` column so
+-- post-cutover analysis can correctly attribute divergences without
+-- having to consult `app_settings` or rely on the `created_at`
+-- timestamp aligning with a known cutover-flip moment.  The column
+-- is populated at parity-event-record time
+-- (`parity_sink::flush_to_sqlite`) by reading
+-- `crate::loro::cutover::is_loro_authoritative()`.
+--
+-- ## Why a column not a separate table / view
+--
+-- A separate table would force every parity-analysis query into a
+-- JOIN.  A view computed from the existing column set has no source
+-- of truth for "what was the flag when this row was recorded" —
+-- the flag can flip during a single retention window.  An on-row
+-- column captures the flag at exactly the right moment, costs one
+-- extra byte per row (INTEGER 0/1), and lets `parity_report` and the
+-- classifier filter without joining.
+--
+-- ## Default 0 is correct for in-flight rows
+--
+-- Existing rows in `merge_parity_log` were all written under shadow
+-- mode (the cutover flag did not exist before Phase-2 day-9, and was
+-- seeded `'0'` by migration 0053).  Defaulting the column to 0 for
+-- pre-existing rows therefore reflects historical truth: every row
+-- already in the table was recorded with diffy authoritative.
+--
+-- ## ALTER TABLE on a STRICT table
+--
+-- The day-4 migration 0051 created `merge_parity_log` STRICT.
+-- SQLite supports `ALTER TABLE ... ADD COLUMN` on STRICT tables
+-- since 3.37 (sqlx 0.8.6 bundles well above this).  The added
+-- column carries `INTEGER NOT NULL DEFAULT 0` — fully STRICT-
+-- compatible (explicit type, explicit not-null, default literal of
+-- the declared type).
+--
+-- ## Default-build safety
+--
+-- The migration is generic — it runs on every database, including
+-- default (non-`loro-shadow`) builds.  In default builds the
+-- `merge_parity_log` table is created (by migration 0051) but never
+-- written to (the parity sink + classifier are both feature-gated),
+-- so the new column is added on an empty table and stays empty.  No
+-- runtime cost beyond the one-time ALTER + CREATE INDEX at migration
+-- time.
+
+ALTER TABLE merge_parity_log
+  ADD COLUMN loro_authoritative_at_classify INTEGER NOT NULL DEFAULT 0;
+
+-- Index for the future "filter by cutover-era" analysis queries.
+-- Two-value column normally doesn't index well, but during a long
+-- shadow-mode soak the cutover-on subset will be the small one
+-- (most rows recorded under diffy authoritative); after cutover the
+-- shadow-mode rows are the small subset.  Either way one of the two
+-- partitions is a small selectivity target and the index pays for
+-- itself on whichever side is being inspected.
+CREATE INDEX idx_merge_parity_log_authoritative
+  ON merge_parity_log (loro_authoritative_at_classify);

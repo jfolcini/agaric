@@ -228,6 +228,7 @@ mod tests {
             loro_result: format!("loro:{op_id}"),
             r#match: matched,
             timestamp: ts_ms,
+            loro_authoritative: false,
         }
     }
 

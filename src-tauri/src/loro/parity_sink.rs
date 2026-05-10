@@ -48,11 +48,13 @@ pub const DEFAULT_RETENTION_DAYS: i64 = 30;
 
 /// Rows-per-statement for the multi-row `INSERT INTO merge_parity_log`.
 ///
-/// Each row binds 8 placeholders (op_id, space_id, op_type,
-/// diffy_result, loro_result, matched, bucket, created_at) so a 100
-/// row chunk binds 800 placeholders — well below SQLite's compiled-in
-/// 999-variable limit (`SQLITE_LIMIT_VARIABLE_NUMBER`, see
-/// [`crate::db::MAX_SQL_PARAMS`]).  Mirrors the [`fts::index`] pattern.
+/// Each row binds 9 placeholders (op_id, space_id, op_type,
+/// diffy_result, loro_result, matched, bucket, created_at,
+/// loro_authoritative_at_classify) so a 100-row chunk binds 900
+/// placeholders — still below SQLite's compiled-in 999-variable limit
+/// (`SQLITE_LIMIT_VARIABLE_NUMBER`, see [`crate::db::MAX_SQL_PARAMS`]).
+/// Day-14 added the ninth placeholder; the chunk size stays at 100.
+/// Mirrors the [`fts::index`] pattern.
 const FLUSH_CHUNK_ROWS: usize = 100;
 
 /// Compute the timestamp (ms-since-Unix-epoch) below which parity
@@ -123,7 +125,8 @@ pub async fn flush_to_sqlite(
         // doesn't have it in the schema cache anyway.
         let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
             "INSERT INTO merge_parity_log \
-             (op_id, space_id, op_type, diffy_result, loro_result, matched, bucket, created_at) ",
+             (op_id, space_id, op_type, diffy_result, loro_result, matched, bucket, \
+              created_at, loro_authoritative_at_classify) ",
         );
         qb.push_values(chunk, |mut b, ev| {
             b.push_bind(&ev.op_id)
@@ -134,7 +137,10 @@ pub async fn flush_to_sqlite(
                 .push_bind(if ev.r#match { 1i64 } else { 0i64 })
                 // bucket is NULL until the day-6 classifier runs.
                 .push_bind::<Option<String>>(None)
-                .push_bind(ev.timestamp);
+                .push_bind(ev.timestamp)
+                // Day-14: the cutover-flag value at record time.  See
+                // `ParityEvent::loro_authoritative` and migration 0055.
+                .push_bind(if ev.loro_authoritative { 1i64 } else { 0i64 });
         });
         qb.build().execute(&mut *tx).await?;
         total += chunk.len();
@@ -194,6 +200,30 @@ mod tests {
             loro_result: format!("loro:{op_id}"),
             r#match: matched,
             timestamp: ts_ms,
+            loro_authoritative: false,
+        }
+    }
+
+    /// Variant of `ev` that lets a test specify the cutover-flag
+    /// value the event was recorded under.  Day-14: every parity-sink
+    /// row carries this column; the helper makes test rows
+    /// declarative without a full struct literal.
+    fn ev_with_authoritative(
+        op_id: &str,
+        op_type: &str,
+        matched: bool,
+        ts_ms: i64,
+        loro_authoritative: bool,
+    ) -> ParityEvent {
+        ParityEvent {
+            op_id: op_id.into(),
+            space_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            op_type: op_type.into(),
+            diffy_result: format!("diffy:{op_id}"),
+            loro_result: format!("loro:{op_id}"),
+            r#match: matched,
+            timestamp: ts_ms,
+            loro_authoritative,
         }
     }
 
@@ -386,5 +416,67 @@ mod tests {
             .await
             .expect("count");
         assert_eq!(usize::try_from(count).expect("test count fits in usize"), n);
+    }
+
+    /// Day-14: when an event is recorded with `loro_authoritative = true`
+    /// the corresponding `loro_authoritative_at_classify` column is `1`
+    /// after flush.  The column lets post-cutover analysis distinguish
+    /// shadow-mode-era rows from cutover-era rows without having to
+    /// consult `app_settings`.
+    #[tokio::test]
+    async fn parity_event_records_loro_authoritative_flag_when_true() {
+        let (pool, _dir) = fresh_pool().await;
+        let sampler = ShadowParitySampler::with_capacity(4);
+
+        sampler.record(ev_with_authoritative(
+            "DEV/CUT",
+            "edit_block",
+            true,
+            4_000,
+            true,
+        ));
+
+        let inserted = flush_to_sqlite(&pool, &sampler).await.expect("flush");
+        assert_eq!(inserted, 1);
+
+        let value: i64 = sqlx::query_scalar(
+            "SELECT loro_authoritative_at_classify FROM merge_parity_log WHERE op_id = ?",
+        )
+        .bind("DEV/CUT")
+        .fetch_one(&pool)
+        .await
+        .expect("fetch authoritative column");
+        assert_eq!(
+            value, 1,
+            "loro_authoritative=true must persist as 1 in the column",
+        );
+    }
+
+    /// Day-14: when an event is recorded with `loro_authoritative = false`
+    /// (the shadow-mode default) the column persists as `0`.
+    #[tokio::test]
+    async fn parity_event_records_loro_authoritative_flag_when_false() {
+        let (pool, _dir) = fresh_pool().await;
+        let sampler = ShadowParitySampler::with_capacity(4);
+
+        // The default `ev(...)` helper sets `loro_authoritative = false`,
+        // mirroring shadow-mode `merge::shadow_apply` callers before the
+        // flag flips.
+        sampler.record(ev("DEV/SHADOW", "edit_block", true, 4_000));
+
+        let inserted = flush_to_sqlite(&pool, &sampler).await.expect("flush");
+        assert_eq!(inserted, 1);
+
+        let value: i64 = sqlx::query_scalar(
+            "SELECT loro_authoritative_at_classify FROM merge_parity_log WHERE op_id = ?",
+        )
+        .bind("DEV/SHADOW")
+        .fetch_one(&pool)
+        .await
+        .expect("fetch authoritative column");
+        assert_eq!(
+            value, 0,
+            "loro_authoritative=false must persist as 0 in the column",
+        );
     }
 }
