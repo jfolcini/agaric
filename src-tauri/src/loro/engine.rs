@@ -996,6 +996,62 @@ impl LoroEngine {
             .map_err(|e| AppError::Validation(format!("loro: import: {e}")))
     }
 
+    /// Import `bytes` into the doc and return every block_id present
+    /// in the post-import top-level `blocks` LoroMap.
+    ///
+    /// PEND-09 Phase 3 day-4 — sync-pull projection driver.  The
+    /// receiver's caller passes each returned block_id to
+    /// [`crate::loro::projection::project_block_full_to_sql`] so the
+    /// SQL `blocks` row mirrors the engine's post-import state.
+    ///
+    /// ## Why brute-force enumeration (not VersionRange-driven diff)
+    ///
+    /// Loro 1.12's [`loro::ImportStatus`] reports a
+    /// [`loro::VersionRange`] (`success`) — the (peer, counter-range)
+    /// span of accepted ops — but does NOT directly map to the set of
+    /// block_ids whose state changed.  Translating a counter-range
+    /// into changed-container-ids would require either
+    /// (a) walking the op-log changes in that range and decoding their
+    /// targets, or (b) subscribing to root-level diff events for the
+    /// duration of the import.  Both add complexity for the day-4
+    /// additive landing; the day-5 wiring or later can swap to a
+    /// targeted enumeration once a benchmark shows the brute-force
+    /// projection is on a hot path.
+    ///
+    /// The brute-force walk costs O(N_blocks) per sync-pull — same
+    /// asymptotic shape as `count_alive_blocks` / `list_children_walk`
+    /// (Phase-0 day-7 measured at 250-2500x slower than indexed SQL,
+    /// SPIKE-REPORT.md §4.4) — but sync-pull is a cold path bounded
+    /// by the op-streaming cadence, so the cost is amortised against
+    /// network latency.
+    ///
+    /// ## Edge cases
+    ///
+    /// * Soft-deleted blocks (those whose `deleted_at` slot is set)
+    ///   ARE included in the returned vector — the projection helper
+    ///   needs them to project the soft-delete to SQL.
+    /// * If the import added zero new ops (peer was up-to-date), the
+    ///   walk still returns every block_id — the projection helper
+    ///   becomes a sequence of idempotent `INSERT OR REPLACE`s, which
+    ///   is correct but wasteful.  Day-5 may short-circuit on
+    ///   `ImportStatus.success.is_empty()` to skip the walk.
+    pub fn import_with_changed_blocks(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<Vec<crate::ulid::BlockId>, AppError> {
+        self.doc
+            .import(bytes)
+            .map(|_status| ())
+            .map_err(|e| AppError::Validation(format!("loro: import_with_changed_blocks: {e}")))?;
+
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        let mut out: Vec<crate::ulid::BlockId> = Vec::with_capacity(blocks.len());
+        blocks.for_each(|key, _voc| {
+            out.push(crate::ulid::BlockId::from_trusted(key));
+        });
+        Ok(out)
+    }
+
     /// Encode the doc's current op-log version vector for transport
     /// over the wire.
     ///

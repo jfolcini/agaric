@@ -454,6 +454,60 @@ pub async fn project_remove_tag_to_sql(
     Ok(())
 }
 
+/// PEND-09 Phase 3 day-4 — project an engine-side block snapshot to
+/// SQL after a sync-pull import.  Drives the `apply_remote` side of
+/// [`crate::sync_protocol::loro_sync`].
+///
+/// Behaviour:
+///
+/// * `Some(snapshot)` → `INSERT OR REPLACE` the `blocks` row with
+///   `(id, block_type, content, parent_id, position, is_conflict=0)`.
+///   Other columns (`deleted_at`, reserved-property hot-path columns)
+///   are left to per-op projection helpers running alongside this
+///   one — day-4's scope is the core block shape that
+///   [`crate::loro::engine::BlockSnapshot`] carries.  Day-5 / day-12
+///   may extend.
+/// * `None` → engine has no record of `block_id`.  The plan
+///   (`pending/PEND-09-PHASE-3-PLAN.md` §3 day 4) defers the
+///   purge-from-SQL semantics: an absent engine record could mean
+///   (a) the block was hard-purged on the remote (legitimate
+///   delete-from-SQL), or (b) a transient engine miss the caller
+///   shouldn't act on.  Day-4 logs a warn + skips.  The next
+///   sync-pull that carries an explicit purge op re-triggers this
+///   path with proper semantics via the per-op projection helpers.
+pub async fn project_block_full_to_sql(
+    conn: &mut SqliteConnection,
+    space_id: &crate::space::SpaceId,
+    block_id: &crate::ulid::BlockId,
+    snapshot: Option<&crate::loro::engine::BlockSnapshot>,
+) -> Result<(), AppError> {
+    match snapshot {
+        Some(snap) => {
+            sqlx::query(
+                "INSERT OR REPLACE INTO blocks \
+                     (id, block_type, content, parent_id, position, is_conflict) \
+                 VALUES (?, ?, ?, ?, ?, 0)",
+            )
+            .bind(&snap.block_id)
+            .bind(&snap.block_type)
+            .bind(&snap.content)
+            .bind(snap.parent_id.as_deref())
+            .bind(snap.position)
+            .execute(&mut *conn)
+            .await?;
+            Ok(())
+        }
+        None => {
+            tracing::warn!(
+                space_id = %space_id.as_str(),
+                block_id = %block_id.as_str(),
+                "project_block_full_to_sql: engine has no record; skipping (defer to explicit purge op)"
+            );
+            Ok(())
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
