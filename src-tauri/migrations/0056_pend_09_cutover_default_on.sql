@@ -1,0 +1,58 @@
+-- PEND-09 Phase 3 day-2: flip the cutover flag default ON.
+--
+-- Phase 2 day-9 (commit d0395805, migration 0053) seeded
+-- `app_settings.pend09.loro_authoritative` at '0' (off) so the diffy
+-- 3-way-merge / LWW path remained authoritative until the maintainer
+-- explicitly opted in.  Phase 3 days 11-15 + 16 + 17 wired all 12 op
+-- types through Loro when the flag is on; the cutover code path is
+-- now the production path (Phase-2 day-15 close `2cf07f57`:
+-- GO-FOR-CUTOVER).
+--
+-- This migration flips the row from '0' to '1' so the engine becomes
+-- authoritative starting on the next app launch:
+--
+--   * Fresh DBs: 0053 seeds '0', 0056 immediately overwrites to '1';
+--     net first-boot value is '1'.
+--   * The maintainer's existing DB: this UPDATE flips the row in place
+--     on the next migration run.
+--
+-- This is the FIRST behaviour-change migration since Phase 1 day 1
+-- (`pending/PEND-09-PHASE-3-PLAN.md` §3 day 2 + §5 row "day 2").
+-- Default-build behaviour is no longer byte-identical to commit
+-- `c4b15982` — the SQL itself runs unconditionally on next migration
+-- and shifts the materializer hot path to the Loro-authoritative
+-- branch in `materializer/handlers.rs:609,620,664,702,714,725,736,
+-- 747,758,769`.
+--
+-- ## Reversibility
+--
+-- The maintainer can flip back via SQL:
+--
+--   sqlite3 notes.db "UPDATE app_settings SET value = '0', \
+--       updated_at = (strftime('%s','now') * 1000) \
+--       WHERE key = 'pend09.loro_authoritative'"
+--
+-- The `OnceLock<AtomicBool>` cache in `src-tauri/src/loro/cutover.rs`
+-- re-reads the row on next `init_cutover_flag` (i.e. on next app boot)
+-- so the override takes effect on relaunch.  No data risk — Phase-2
+-- has run shadow-mode parity for days; the diffy fallback path is
+-- still wired up through Phase 3 day 8.
+--
+-- ## Why UPDATE not INSERT OR REPLACE
+--
+-- Migration 0053 is the seed; this migration assumes the row exists.
+-- If for some reason the row is missing (corrupt DB? hand-edited?)
+-- the UPDATE matches zero rows — that's fine: `init_cutover_flag`
+-- already handles a missing row by defaulting to `false` (verified
+-- in `src-tauri/src/loro/cutover.rs:113-122`, which logs a
+-- `tracing::warn!` and falls back to off).  No need for an UPSERT
+-- here; defensive code already exists in the cache initialiser.
+--
+-- The 0053 seed migration is preserved as historical record (the
+-- value column is a single string; this migration overwrites the
+-- row, doesn't change the schema).
+
+UPDATE app_settings
+   SET value = '1',
+       updated_at = (CAST(strftime('%s','now') AS INTEGER) * 1000)
+ WHERE key = 'pend09.loro_authoritative';
