@@ -479,4 +479,185 @@ mod tests {
             "loro_authoritative=false must persist as 0 in the column",
         );
     }
+
+    // -----------------------------------------------------------------
+    // Day-16: end-to-end coverage of `shadow_apply`'s cutover-flag read.
+    //
+    // The two tests above (`parity_event_records_loro_authoritative_flag_when_*`)
+    // construct `ParityEvent` directly and verify the SQL flush
+    // persists the column. They do NOT exercise the threading path
+    // through `merge::shadow_apply`'s
+    // `let loro_authoritative = is_loro_authoritative();` line.
+    //
+    // The day-14 reviewer flagged this gap (Phase-2 report §10.6):
+    // a regression that breaks `shadow_apply` to always pass
+    // `loro_authoritative: false` (or read the flag at the wrong
+    // time) would not be caught by the unit tests above. Day 16
+    // closes that gap with the two tests below — they drive a real
+    // op through `shadow_apply`, then drain + flush + assert.
+    //
+    // ## Cutover-flag global serialisation
+    //
+    // `is_loro_authoritative()` reads a process-global
+    // `OnceLock<AtomicBool>`. `cargo nextest` runs each test in its
+    // own process so the global is fresh per test, BUT
+    // `cargo test` (and any future grouped-thread test runner) runs
+    // multiple tests in one process and shares the global. The
+    // existing test pattern in `loro::cutover::tests` and
+    // `materializer::handlers::cutover_branch_tests` is to call
+    // `install_cutover_flag_for_test(value)` at the start of every
+    // test that depends on the flag, and explicitly install the
+    // opposite value rather than relying on a default. Both tests
+    // below do that, AND reset to `false` on exit so a sibling test
+    // that depends on the default-off invariant is not poisoned. No
+    // mutex is needed because every flag-dependent test installs an
+    // explicit value at entry — sibling-test ordering is irrelevant.
+    // -----------------------------------------------------------------
+
+    /// Drive a real op through `merge::shadow_apply` with the cutover
+    /// flag flipped ON. The recorded `ParityEvent` MUST carry
+    /// `loro_authoritative = true`, and the flushed SQL row's
+    /// `loro_authoritative_at_classify` column MUST be `1`.
+    ///
+    /// This is the integration test the day-14 reviewer flagged as
+    /// missing: the day-14 unit tests build `ParityEvent` by hand and
+    /// would pass even if `shadow_apply` were broken to always pass
+    /// `loro_authoritative: false`. This test exercises the threading
+    /// from `is_loro_authoritative()` through `shadow_apply` into the
+    /// sampler and on into the SQLite row.
+    #[tokio::test]
+    async fn shadow_apply_records_cutover_flag_when_on() {
+        use crate::op::{CreateBlockPayload, OpPayload};
+        use crate::space::SpaceId;
+        use crate::ulid::BlockId;
+
+        let (pool, _dir) = fresh_pool().await;
+
+        // A locally-owned `ShadowState` rather than the process-global
+        // one (`shared::install_for_test`) so the sampler is empty at
+        // the start of this test regardless of what other tests in the
+        // same binary may have pushed into the global. Mirrors the
+        // `merge::apply::shadow_apply_unit_tests::fresh_state` pattern.
+        let state = crate::loro::shared::ShadowState::new();
+
+        // Cutover flag ON. After the test, reset to false (see
+        // module-level "Cutover-flag global serialisation" comment).
+        crate::loro::cutover::install_cutover_flag_for_test(true);
+        assert!(
+            crate::loro::cutover::is_loro_authoritative(),
+            "test precondition: install_cutover_flag_for_test(true) must \
+             make is_loro_authoritative() report true",
+        );
+
+        let space_id = SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        let block_id = BlockId::from_trusted("01HZ00000000000000000000AB");
+        let op = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block_id.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "cutover-on content".into(),
+        });
+        let summary = crate::merge::diffy_summary_for(&op);
+        crate::merge::shadow_apply(
+            "DEV/CUT-ON",
+            &op,
+            "device-day16-test",
+            &space_id,
+            summary,
+            &state,
+        );
+
+        // The sampler ring should hold exactly one event from our call;
+        // assert before flush so a regression that records zero events
+        // surfaces with a sharper failure mode.
+        assert_eq!(
+            state.sampler.snapshot().len(),
+            1,
+            "exactly one parity event per shadow_apply call",
+        );
+
+        let inserted = flush_to_sqlite(&pool, &state.sampler).await.expect("flush");
+        assert_eq!(inserted, 1, "the one queued event must flush");
+
+        let value: i64 = sqlx::query_scalar(
+            "SELECT loro_authoritative_at_classify FROM merge_parity_log WHERE op_id = ?",
+        )
+        .bind("DEV/CUT-ON")
+        .fetch_one(&pool)
+        .await
+        .expect("fetch authoritative column");
+        assert_eq!(
+            value, 1,
+            "shadow_apply must thread the cutover flag through to \
+             ParityEvent — flag was ON at record time so the column \
+             must persist as 1",
+        );
+
+        // Reset for sibling tests.
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+    }
+
+    /// Companion to `shadow_apply_records_cutover_flag_when_on`: with
+    /// the cutover flag explicitly OFF (the shadow-mode default), the
+    /// recorded event's `loro_authoritative` field MUST be `false` and
+    /// the flushed SQL column MUST be `0`. Together the two tests pin
+    /// the threading behaviour against both the trivial "always
+    /// false" mutation AND the inverted "always true" mutation.
+    #[tokio::test]
+    async fn shadow_apply_records_cutover_flag_when_off() {
+        use crate::op::{CreateBlockPayload, OpPayload};
+        use crate::space::SpaceId;
+        use crate::ulid::BlockId;
+
+        let (pool, _dir) = fresh_pool().await;
+        let state = crate::loro::shared::ShadowState::new();
+
+        // Explicit install of `false` rather than relying on the
+        // OnceLock-uninit default — robust against sibling tests in
+        // the same process that may have flipped the cache to true
+        // earlier (matches `materializer::handlers::cutover_branch_tests`).
+        crate::loro::cutover::install_cutover_flag_for_test(false);
+        assert!(
+            !crate::loro::cutover::is_loro_authoritative(),
+            "test precondition: install_cutover_flag_for_test(false) must \
+             make is_loro_authoritative() report false",
+        );
+
+        let space_id = SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        let block_id = BlockId::from_trusted("01HZ00000000000000000000CD");
+        let op = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block_id.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "cutover-off content".into(),
+        });
+        let summary = crate::merge::diffy_summary_for(&op);
+        crate::merge::shadow_apply(
+            "DEV/CUT-OFF",
+            &op,
+            "device-day16-test",
+            &space_id,
+            summary,
+            &state,
+        );
+
+        let inserted = flush_to_sqlite(&pool, &state.sampler).await.expect("flush");
+        assert_eq!(inserted, 1);
+
+        let value: i64 = sqlx::query_scalar(
+            "SELECT loro_authoritative_at_classify FROM merge_parity_log WHERE op_id = ?",
+        )
+        .bind("DEV/CUT-OFF")
+        .fetch_one(&pool)
+        .await
+        .expect("fetch authoritative column");
+        assert_eq!(
+            value, 0,
+            "shadow_apply must thread the cutover flag through to \
+             ParityEvent — flag was OFF at record time so the column \
+             must persist as 0",
+        );
+    }
 }
