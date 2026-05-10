@@ -349,8 +349,12 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 mod command_integration_tests;
 #[cfg(test)]
 mod integration_tests;
-#[cfg(test)]
-mod sync_integration_tests;
+// PEND-09 Phase 3 day-6 — `sync_integration_tests` removed.  The
+// module exercised the diffy-typed sync stack
+// (`compute_ops_to_send` / `apply_remote_ops` / `merge_diverged_blocks`
+// / `OpBatch`); all four targets were deleted today.  The
+// LoroSync-equivalent integration tests live in
+// `sync_protocol::tests` (`loro_sync_e2e_*`).
 
 /// L-2: Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
 /// breadcrumb instead of being silently coerced to `0`. The fall-through

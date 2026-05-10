@@ -1,6 +1,6 @@
 use super::tls::{AllowAnyCert, PinningCertVerifier};
 use super::*;
-use crate::sync_protocol::{DeviceHead, OpTransfer, SyncMessage};
+use crate::sync_protocol::{DeviceHead, SyncMessage};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -124,34 +124,10 @@ fn sync_message_roundtrip_head_exchange() {
     }
 }
 
-#[test]
-fn sync_message_roundtrip_op_batch() {
-    let msg = SyncMessage::OpBatch {
-        ops: vec![OpTransfer {
-            device_id: "dev-1".into(),
-            seq: 1,
-            parent_seqs: Some("0".into()),
-            hash: "h1".into(),
-            op_type: "create_block".into(),
-            payload: "{}".into(),
-            created_at: "2025-01-01T00:00:00Z".into(),
-        }],
-        is_last: true,
-    };
-    let json = serde_json::to_string(&msg).unwrap();
-    let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
-    match parsed {
-        SyncMessage::OpBatch { ops, is_last } => {
-            assert_eq!(ops.len(), 1, "should contain exactly one op transfer");
-            assert_eq!(
-                ops[0].op_type, "create_block",
-                "op_type should survive roundtrip"
-            );
-            assert!(is_last, "is_last flag should survive roundtrip");
-        }
-        other => panic!("expected OpBatch, got {other:?}"),
-    }
-}
+// PEND-09 Phase 3 day-6 — `SyncMessage::OpBatch` deleted; the
+// LoroSync-shaped roundtrip is exercised by
+// `sync_protocol::tests::sync_message_serde_roundtrip` and
+// `json_shape_all_variants_have_type_tag`.
 
 #[test]
 fn sync_message_roundtrip_reset_required() {
