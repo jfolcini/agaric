@@ -599,31 +599,26 @@ async fn apply_op_tx(
     let mut effects = ApplyEffects::default();
     match op_type {
         OpType::CreateBlock => {
+            // PEND-09 Phase 3 day-8 — collapsed cutover-flag fork.
+            // Under `loro-shadow` this routes through the engine
+            // (Phase-2 day-11 Option-A reorder, the cutover-on path).
+            // Under default-build the legacy diffy merge is gone;
+            // the SQL-only fallback below is what ships behaviour
+            // until day 9 unifies the build modes.  See
+            // `pending/PEND-09-apply-op-reorder.md` and
+            // `pending/PEND-09-PHASE-3-PLAN.md` §3 day 8.
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
-            // PEND-09 Phase 2 day-11 — Option-A reorder branch.  When
-            // the cutover flag is on, route through the engine FIRST,
-            // then project from the engine's post-apply state into
-            // SQL.  When off (default), the diffy-side path runs
-            // unchanged.  See `pending/PEND-09-apply-op-reorder.md`.
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_create_block_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_create_block_tx(conn, p).await?;
-            }
+            apply_create_block_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_create_block_tx(conn, p).await?;
+            apply_create_block_sql_only(conn, p).await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_edit_block_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_edit_block_tx(conn, p).await?;
-            }
+            apply_edit_block_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_edit_block_tx(conn, p).await?;
+            apply_edit_block_sql_only(conn, p).await?;
         }
         OpType::DeleteBlock => {
             let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
@@ -638,12 +633,6 @@ async fn apply_op_tx(
             // Cohort INCLUDES the seed (mirrors `restored_cohort`'s
             // shape — see the `ApplyEffects` doc and
             // `dispatch_delete_descendants_shadow`).
-            //
-            // Cutover-on path: SQL projection still drives the cohort
-            // walk (day-12); the engine seed is applied inside
-            // `apply_delete_block_via_loro`.  The post-commit fan-out
-            // below is what propagates the engine-side delete to the
-            // descendants in BOTH arms.
             //
             // The cohort capture and assignment are unconditional
             // (mirrors the day-9 `collect_restore_cohort` shape).  The
@@ -661,14 +650,9 @@ async fn apply_op_tx(
             let delete_space_id =
                 crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_delete_block_via_loro(conn, &record.device_id, &p, &record.created_at)
-                    .await?;
-            } else {
-                apply_delete_block_tx(conn, p, &record.created_at).await?;
-            }
+            apply_delete_block_via_loro(conn, &record.device_id, &p, &record.created_at).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_delete_block_tx(conn, p, &record.created_at).await?;
+            apply_delete_block_sql_only(conn, p, &record.created_at).await?;
             effects.deleted_cohort = cohort;
             effects.delete_space_id = delete_space_id;
         }
@@ -689,92 +673,65 @@ async fn apply_op_tx(
             // the seed is idempotent (engine's `apply_restore_block`
             // is a no-op on an already-restored block).
             //
-            // PEND-09 Phase 2 day-13: the cohort capture is shared by
-            // both flag arms.  The cutover-on path applies engine
-            // restore for the SEED only (matching day-12's delete
-            // approach: SQL handles the full cohort, engine descendant
-            // state is reconciled by op-log replay).  The post-commit
-            // `dispatch_restore_descendants_shadow` continues to fan
-            // out per-descendant on the engine in BOTH arms because the
-            // engine apply is idempotent (no-op on already-restored).
+            // The engine path applies restore for the SEED only
+            // (matching the delete-cascade approach: SQL handles the
+            // full cohort, engine descendant state is reconciled by
+            // op-log replay).  The post-commit
+            // `dispatch_restore_descendants_shadow` fans out per-
+            // descendant on the engine because the engine apply is
+            // idempotent (no-op on already-restored).
             let cohort = collect_restore_cohort(conn, &p).await?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_restore_block_tx(conn, p).await?;
-            }
+            apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_restore_block_tx(conn, p).await?;
+            apply_restore_block_sql_only(conn, p).await?;
             effects.restored_cohort = cohort;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_purge_block_tx(conn, p).await?;
-            }
+            apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_purge_block_tx(conn, p).await?;
+            apply_purge_block_sql_only(conn, p).await?;
         }
         OpType::MoveBlock => {
             let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_move_block_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_move_block_tx(conn, p).await?;
-            }
+            apply_move_block_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_move_block_tx(conn, p).await?;
+            apply_move_block_sql_only(conn, p).await?;
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_add_tag_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_add_tag_tx(conn, p).await?;
-            }
+            apply_add_tag_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_add_tag_tx(conn, p).await?;
+            apply_add_tag_sql_only(conn, p).await?;
         }
         OpType::RemoveTag => {
             let p: RemoveTagPayload = serde_json::from_str(&record.payload)?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_remove_tag_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_remove_tag_tx(conn, p).await?;
-            }
+            apply_remove_tag_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_remove_tag_tx(conn, p).await?;
+            apply_remove_tag_sql_only(conn, p).await?;
         }
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_set_property_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_set_property_tx(conn, p).await?;
-            }
+            apply_set_property_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_set_property_tx(conn, p).await?;
+            apply_set_property_sql_only(conn, p).await?;
         }
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
             #[cfg(feature = "loro-shadow")]
-            if crate::loro::cutover::is_loro_authoritative() {
-                apply_delete_property_via_loro(conn, &record.device_id, &p).await?;
-            } else {
-                apply_delete_property_tx(conn, p).await?;
-            }
+            apply_delete_property_via_loro(conn, &record.device_id, &p).await?;
             #[cfg(not(feature = "loro-shadow"))]
-            apply_delete_property_tx(conn, p).await?;
+            apply_delete_property_sql_only(conn, p).await?;
         }
         OpType::AddAttachment => {
+            // Attachments stay on the SQL-only path — they don't go
+            // through Loro per the cutover plan §8.2.
             let p: AddAttachmentPayload = serde_json::from_str(&record.payload)?;
             apply_add_attachment_tx(conn, p, &record.created_at).await?;
         }
@@ -854,7 +811,6 @@ async fn collect_delete_cohort(
 
 /// PEND-09 Phase 2 day-11 — Option-A reorder for CreateBlock.
 ///
-/// When `is_loro_authoritative()` is on, this function:
 /// 1. Resolves the block's space (parent_id-based for content blocks;
 ///    self-id for pages).
 /// 2. Acquires the per-space [`crate::loro::engine::LoroEngine`] via
@@ -866,8 +822,8 @@ async fn collect_delete_cohort(
 ///    cannot cross an `.await`).
 /// 6. Projects the snapshot into SQL via
 ///    [`crate::loro::projection::project_create_block_to_sql`].
-/// 7. Calls `tag_inheritance::inherit_parent_tags` exactly as the
-///    diffy-side path does, so derived tag rows stay correct.
+/// 7. Calls `tag_inheritance::inherit_parent_tags`, so derived tag
+///    rows stay correct.
 ///
 /// ## Atomic semantics
 ///
@@ -881,24 +837,24 @@ async fn collect_delete_cohort(
 ///
 /// For a `CreateBlock`, the `parent_id` is the resolution anchor when
 /// present (content blocks descend from a page); otherwise the
-/// block's own id is used (page-create with no parent).  In the
-/// no-parent / fresh-page case the SetProperty(space) op hasn't been
-/// applied yet, so `resolve_block_space` returns `None` and the call
-/// falls back to the diffy-side path.  In practice, page-create ops
-/// carry a SetProperty(space) op next to them; the parent-based
-/// resolution works for content-block creates which is the common
-/// path.  See `pending/PEND-09-apply-op-reorder.md` §12 observation
-/// 2 for the day-12 follow-up on tightening this fallback.
+/// block's own id is used (page-create with no parent).
 ///
-/// ## Failure modes
+/// ## Fallback modes
 ///
-/// - Space cannot be resolved (orphan block, no `space` property
-///   ancestor): the call falls back to the diffy-side path.  This is
-///   conservative — the engine path needs a space, the diffy path
-///   does not, and a rare orphan op should not block materialisation.
-/// - Engine `apply_create_block` errors (e.g. block already exists in
-///   the engine): the error propagates as `AppError::Validation`.
-/// - Projection errors propagate.
+/// PEND-09 Phase 3 day-8: the legacy "if-flag-off, run diffy" branch
+/// is gone, but the engine path still falls back to a SQL-only path
+/// (`apply_*_sql_only` below) when:
+/// - Shadow state isn't initialised (test scaffolding without
+///   `install_for_test`).
+/// - Space cannot be resolved (orphan block, no `space` ancestor,
+///   pre-FEAT-3 row, fresh page-create with no SetProperty(space)
+///   yet).
+/// In production both arms are unreachable — `init` runs at boot and
+/// space resolution succeeds on every well-formed op.  Documented as a
+/// trade-off: errors here would have been "safe in the maintainer's
+/// solo-user context", but ~55 materializer / recovery / sync_daemon
+/// tests thread synthetic bare-block ops through `apply_op` and rely
+/// on this fallback to land SQL state.
 #[cfg(feature = "loro-shadow")]
 async fn apply_create_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
@@ -910,25 +866,14 @@ async fn apply_create_block_via_loro(
     use crate::ulid::BlockId;
 
     // Resolve space via parent_id (or self for a page-create that
-    // has no parent).  Falls back to the diffy-side path on any
-    // resolution failure.
+    // has no parent).  Fall back to SQL-only on any resolve miss.
     let resolution_anchor: BlockId = match &p.parent_id {
         Some(parent) => parent.clone(),
         None => p.block_id.clone(),
     };
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
     else {
-        // Cannot resolve a space — fall back to the diffy path.
-        // For a fresh page-create op, the space property hasn't
-        // been written yet, so this branch will fire.  That's
-        // acceptable: the diffy-side path produces correct SQL
-        // and the cutover-soak's parity classifier surfaces any
-        // disagreement.
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            "apply_create_block_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_create_block_tx(conn, p.clone()).await;
+        return apply_create_block_sql_only(conn, p.clone()).await;
     };
 
     // Acquire engine guard, apply, read-back, drop guard.  The guard
@@ -936,9 +881,7 @@ async fn apply_create_block_via_loro(
     // engine work inside this sync block.
     let snapshot: BlockSnapshot = {
         let Some(state) = crate::loro::shared::get() else {
-            // Shadow state not initialised (test or unusual boot).
-            // Fall back to diffy.
-            return apply_create_block_tx(conn, p.clone()).await;
+            return apply_create_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -989,16 +932,12 @@ async fn apply_edit_block_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            "apply_edit_block_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_edit_block_tx(conn, p.clone()).await;
+        return apply_edit_block_sql_only(conn, p.clone()).await;
     };
 
     let snapshot: BlockSnapshot = {
         let Some(state) = crate::loro::shared::get() else {
-            return apply_edit_block_tx(conn, p.clone()).await;
+            return apply_edit_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -1028,10 +967,8 @@ async fn apply_edit_block_via_loro(
 /// construction, so this is correct — see the projection helper's
 /// docstring).
 ///
-/// Resolution-failure fallback: if the block's space cannot be resolved
-/// (e.g. brand-new block whose `space` property hasn't been set), or
-/// if the shadow state is uninitialised, fall back to the diffy-side
-/// path so materialisation never wedges.
+/// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
+/// space now errors out instead of taking the diffy path.
 #[cfg(feature = "loro-shadow")]
 async fn apply_set_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
@@ -1041,17 +978,12 @@ async fn apply_set_property_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            key = p.key.as_str(),
-            "apply_set_property_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_set_property_tx(conn, p.clone()).await;
+        return apply_set_property_sql_only(conn, p.clone()).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
-            return apply_set_property_tx(conn, p.clone()).await;
+            return apply_set_property_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -1086,11 +1018,12 @@ async fn apply_set_property_via_loro(
 /// real `record.created_at` so cohort identity for restore lookups
 /// remains accurate.  The cascade (descendant fanout) is preserved on
 /// the SQL side via the projection's CTE-driven UPDATE — the engine
-/// only sees the seed block's apply, mirroring today's diffy-shadow
-/// behaviour.  A complete cutover-on cascade fanout for the engine is
-/// a follow-up (same shape as `dispatch_restore_descendants_shadow`).
+/// only sees the seed block's apply.  A complete engine-side cascade
+/// fanout is a follow-up (same shape as
+/// `dispatch_restore_descendants_shadow`).
 ///
-/// Resolution-failure fallback: same as the other helpers.
+/// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
+/// space now errors out instead of taking the diffy path.
 #[cfg(feature = "loro-shadow")]
 async fn apply_delete_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
@@ -1101,16 +1034,12 @@ async fn apply_delete_block_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            "apply_delete_block_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_delete_block_tx(conn, p.clone(), now).await;
+        return apply_delete_block_sql_only(conn, p.clone(), now).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
-            return apply_delete_block_tx(conn, p.clone(), now).await;
+            return apply_delete_block_sql_only(conn, p.clone(), now).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -1119,8 +1048,8 @@ async fn apply_delete_block_via_loro(
     }
 
     projection::project_delete_block_to_sql(conn, p.block_id.as_str(), now).await?;
-    // tag_inheritance::remove_subtree_inherited mirrors the diffy path's
-    // post-UPDATE step.
+    // tag_inheritance::remove_subtree_inherited matches the previous
+    // diffy path's post-UPDATE step.
     tag_inheritance::remove_subtree_inherited(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
 }
@@ -1141,16 +1070,12 @@ async fn apply_move_block_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            "apply_move_block_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_move_block_tx(conn, p.clone()).await;
+        return apply_move_block_sql_only(conn, p.clone()).await;
     };
 
     let snapshot: BlockSnapshot = {
         let Some(state) = crate::loro::shared::get() else {
-            return apply_move_block_tx(conn, p.clone()).await;
+            return apply_move_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -1199,9 +1124,11 @@ async fn apply_move_block_via_loro(
 /// reading `parent_id` directly from `blocks` (no `deleted_at` filter)
 /// and resolving the parent's space — which is correct because the
 /// parent is in the same space as the soft-deleted child by the
-/// per-space-tree invariant.  When the block has no parent (orphan or
-/// page-level restore), the resolver returns `None` and we fall back
-/// to the diffy path.
+/// per-space-tree invariant.
+///
+/// PEND-09 Phase 3 day-8: when the block has no parent (orphan / page-
+/// level restore), the diffy fall-back is gone, so an unresolvable
+/// space now errors out.
 #[cfg(feature = "loro-shadow")]
 async fn apply_restore_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
@@ -1225,16 +1152,12 @@ async fn apply_restore_block_via_loro(
     };
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
     else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            "apply_restore_block_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_restore_block_tx(conn, p.clone()).await;
+        return apply_restore_block_sql_only(conn, p.clone()).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
-            return apply_restore_block_tx(conn, p.clone()).await;
+            return apply_restore_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -1251,19 +1174,19 @@ async fn apply_restore_block_via_loro(
 ///
 /// Engine apply is per-block-id (deletes the seed's `blocks`,
 /// `block_properties`, `block_tags` entries from the LoroDoc).  The
-/// SQL side runs the full 15-statement cascade unchanged via
-/// [`apply_purge_block_tx`] — the cascade is much wider than the
-/// engine state (purges agenda_cache, tags_cache, fts_blocks, etc. that
-/// the engine doesn't model) so replicating it in a projection helper
-/// would be redundant.  Day-13's approach: take the engine guard,
-/// apply the engine purge for the seed, drop the guard, then run the
-/// full SQL cascade.  Same trade-off as DeleteBlock: the engine
+/// SQL side then runs the full 15-statement cascade inline below —
+/// the cascade is much wider than the engine state (purges
+/// agenda_cache, tags_cache, fts_blocks, etc. that the engine doesn't
+/// model) so it stays in this helper rather than getting absorbed
+/// into a projection.  Same trade-off as DeleteBlock: the engine
 /// descendant state is reconciled via op-log replay; a follow-up may
 /// fan out per-descendant engine purges (same shape as the restore
 /// fanout) but it's not load-bearing today because the SQL cascade is
 /// the source of truth users observe.
 ///
-/// Resolution-failure fallback: same as the day-12 helpers.
+/// PEND-09 Phase 3 day-8: same SQL-only fallback shape as the other
+/// helpers; on a fallback the engine apply is skipped but the SQL
+/// cascade still fires.  In production both arms are unreachable.
 #[cfg(feature = "loro-shadow")]
 async fn apply_purge_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
@@ -1271,16 +1194,12 @@ async fn apply_purge_block_via_loro(
     p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            "apply_purge_block_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_purge_block_tx(conn, p.clone()).await;
+        return purge_block_sql_cascade(conn, p).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
-            return apply_purge_block_tx(conn, p.clone()).await;
+            return purge_block_sql_cascade(conn, p).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -1288,263 +1207,50 @@ async fn apply_purge_block_via_loro(
         drop(guard);
     }
 
-    // The SQL-side cascade purges 15 tables — much broader than the
-    // engine's three (`blocks`, `block_properties`, `block_tags`).  Reuse
-    // the diffy-side helper rather than re-implement the cascade in a
-    // projection helper.  This is consistent with day-12's choice for
-    // DeleteBlock (whose CTE-driven cascade lives in the projection
-    // helper and not in `apply_delete_block_via_loro`'s body).
-    apply_purge_block_tx(conn, p.clone()).await?;
+    purge_block_sql_cascade(conn, p).await?;
     Ok(())
 }
 
-/// PEND-09 Phase 2 day-13 — Option-A reorder for AddTag.
+/// PEND-09 Phase 3 day-8: SQL-side purge cascade, formerly the body of
+/// the legacy `apply_purge_block_tx` helper.
 ///
-/// Engine apply pushes the tag id onto the block's `block_tags` list
-/// (idempotent — engine de-dupes).  SQL projection writes the
-/// `block_tags` row via `INSERT OR IGNORE`.  Tag inheritance fanout
-/// runs AFTER the projection, mirroring `apply_add_tag_tx`.
-///
-/// Resolution-failure fallback: same as the day-12 helpers.
-#[cfg(feature = "loro-shadow")]
-async fn apply_add_tag_via_loro(
-    conn: &mut sqlx::SqliteConnection,
-    device_id: &str,
-    p: &AddTagPayload,
-) -> Result<(), AppError> {
-    use crate::loro::projection;
-
-    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            tag_id = p.tag_id.as_str(),
-            "apply_add_tag_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_add_tag_tx(conn, p.clone()).await;
-    };
-
-    {
-        let Some(state) = crate::loro::shared::get() else {
-            return apply_add_tag_tx(conn, p.clone()).await;
-        };
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
-        let engine = guard.engine_mut();
-        engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())?;
-        drop(guard);
-    }
-
-    projection::project_add_tag_to_sql(conn, p.block_id.as_str(), p.tag_id.as_str()).await?;
-    tag_inheritance::propagate_tag_to_descendants(
-        &mut *conn,
-        p.block_id.as_str(),
-        p.tag_id.as_str(),
-    )
-    .await?;
-    Ok(())
-}
-
-/// PEND-09 Phase 2 day-13 — Option-A reorder for RemoveTag.
-///
-/// Engine apply removes the tag id from the block's `block_tags` list
-/// (idempotent — engine no-ops on missing tag).  SQL projection
-/// deletes the `block_tags` row.  Tag inheritance cleanup runs AFTER
-/// the projection.
-///
-/// Resolution-failure fallback: same as the day-12 helpers.
-#[cfg(feature = "loro-shadow")]
-async fn apply_remove_tag_via_loro(
-    conn: &mut sqlx::SqliteConnection,
-    device_id: &str,
-    p: &RemoveTagPayload,
-) -> Result<(), AppError> {
-    use crate::loro::projection;
-
-    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            tag_id = p.tag_id.as_str(),
-            "apply_remove_tag_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_remove_tag_tx(conn, p.clone()).await;
-    };
-
-    {
-        let Some(state) = crate::loro::shared::get() else {
-            return apply_remove_tag_tx(conn, p.clone()).await;
-        };
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
-        let engine = guard.engine_mut();
-        engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())?;
-        drop(guard);
-    }
-
-    projection::project_remove_tag_to_sql(conn, p.block_id.as_str(), p.tag_id.as_str()).await?;
-    tag_inheritance::remove_inherited_tag(&mut *conn, p.block_id.as_str(), p.tag_id.as_str())
-        .await?;
-    Ok(())
-}
-
-/// PEND-09 Phase 2 day-13 — Option-A reorder for DeleteProperty.
-///
-/// Engine apply removes the key from the block's properties map
-/// (idempotent — engine no-ops on missing key).  SQL projection runs
-/// the per-key match (reserved key → UPDATE column to NULL;
-/// non-reserved key → DELETE block_properties row).  No tag-inheritance
-/// fanout — properties don't propagate.
-///
-/// Resolution-failure fallback: same as the day-12 helpers.
-#[cfg(feature = "loro-shadow")]
-async fn apply_delete_property_via_loro(
-    conn: &mut sqlx::SqliteConnection,
-    device_id: &str,
-    p: &DeletePropertyPayload,
-) -> Result<(), AppError> {
-    use crate::loro::projection;
-
-    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
-        tracing::trace!(
-            block_id = p.block_id.as_str(),
-            key = p.key.as_str(),
-            "apply_delete_property_via_loro: cannot resolve space; falling back to diffy path",
-        );
-        return apply_delete_property_tx(conn, p.clone()).await;
-    };
-
-    {
-        let Some(state) = crate::loro::shared::get() else {
-            return apply_delete_property_tx(conn, p.clone()).await;
-        };
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
-        let engine = guard.engine_mut();
-        engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
-        drop(guard);
-    }
-
-    projection::project_delete_property_to_sql(conn, p.block_id.as_str(), &p.key).await?;
-    Ok(())
-}
-
-/// PEND-28a H2: per-variant body for [`OpType::CreateBlock`].
-async fn apply_create_block_tx(
-    conn: &mut sqlx::SqliteConnection,
-    p: CreateBlockPayload,
-) -> Result<(), AppError> {
-    let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
-    sqlx::query(
-        "INSERT OR IGNORE INTO blocks \
-             (id, block_type, content, parent_id, position, is_conflict) \
-         VALUES (?, ?, ?, ?, ?, 0)",
-    )
-    .bind(p.block_id.as_str())
-    .bind(&p.block_type)
-    .bind(&p.content)
-    .bind(parent_id_str.as_deref())
-    .bind(p.position)
-    .execute(&mut *conn)
-    .await?;
-    let parent_str = parent_id_str.as_deref();
-    tag_inheritance::inherit_parent_tags(&mut *conn, p.block_id.as_str(), parent_str).await?;
-    Ok(())
-}
-
-/// PEND-28a H2: per-variant body for [`OpType::EditBlock`].
-async fn apply_edit_block_tx(
-    conn: &mut sqlx::SqliteConnection,
-    p: EditBlockPayload,
-) -> Result<(), AppError> {
-    sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
-        .bind(&p.to_text)
-        .bind(p.block_id.as_str())
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
-}
-
-/// PEND-28a H2: per-variant body for [`OpType::DeleteBlock`].
-async fn apply_delete_block_tx(
-    conn: &mut sqlx::SqliteConnection,
-    p: DeleteBlockPayload,
-    now: &str,
-) -> Result<(), AppError> {
-    // Cascade soft-delete: mark the target and every not-yet-deleted
-    // descendant. Mirror of the cascade in `commands/blocks/crud.rs`
-    // delete_block_inner, applied by the materializer on remote ops.
-    //
-    // `descendants_cte_active!()` filters `is_conflict = 0` (conflict
-    // copies have independent lifecycles — invariant #9) AND
-    // `deleted_at IS NULL` (don't re-sweep already-deleted subtrees).
-    // Shared CTE lives in `crate::block_descendants`.
-    sqlx::query(concat!(
-        crate::descendants_cte_active!(),
-        "UPDATE blocks SET deleted_at = ? \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-    ))
-    .bind(p.block_id.as_str())
-    .bind(now)
-    .execute(&mut *conn)
-    .await?;
-    tag_inheritance::remove_subtree_inherited(&mut *conn, p.block_id.as_str()).await?;
-    Ok(())
-}
-
-/// PEND-28a H2: per-variant body for [`OpType::RestoreBlock`].
-async fn apply_restore_block_tx(
-    conn: &mut sqlx::SqliteConnection,
-    p: RestoreBlockPayload,
-) -> Result<(), AppError> {
-    // Restore every descendant that was soft-deleted at the same
-    // `deleted_at_ref` timestamp — i.e., the exact cohort that
-    // `delete_block` soft-deleted together.
-    //
-    // `descendants_cte_standard!()` filters `is_conflict = 0` —
-    // conflict copies have independent deleted_at timestamps and
-    // must not be bulk-restored with the original (invariant #9).
-    // Shared CTE lives in `crate::block_descendants`.
-    sqlx::query(concat!(
-        crate::descendants_cte_standard!(),
-        "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-    ))
-    .bind(p.block_id.as_str())
-    .bind(&p.deleted_at_ref)
-    .execute(&mut *conn)
-    .await?;
-    tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
-    Ok(())
-}
-
-/// PEND-28a H2: per-variant body for [`OpType::PurgeBlock`].
-async fn apply_purge_block_tx(
+/// PURGE walks 15 tables — much broader than the engine's three
+/// (`blocks`, `block_properties`, `block_tags`) — so it stays SQL-side
+/// rather than being absorbed into a projection.  PURGE intentionally
+/// does NOT filter `is_conflict = 0`: invariant #9's documented
+/// exception, every row that descends from the purged block must go
+/// (including conflict copies).  `depth < 100` is the runaway-recursion
+/// guard.
+#[cfg_attr(feature = "loro-shadow", allow(dead_code))]
+async fn apply_purge_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: PurgeBlockPayload,
+) -> Result<(), AppError> {
+    purge_block_sql_cascade(conn, &p).await
+}
+
+async fn purge_block_sql_cascade(
+    conn: &mut sqlx::SqliteConnection,
+    p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {
     let block_id = p.block_id.as_str();
     sqlx::query("PRAGMA defer_foreign_keys = ON")
         .execute(&mut *conn)
         .await?;
-    // PEND-20 C: materialise the descendants set ONCE into a
-    // TEMP table, then have the 15 DELETE / UPDATE statements
-    // below read from the table via `WHERE ... IN (SELECT id
-    // FROM _purge_descendants)`. Pre-refactor each statement
-    // re-evaluated the recursive `descendants_cte_purge!()` CTE
-    // end-to-end against the same subtree (15× walks per
-    // cascade), needlessly extending the writer-lock window.
+    // PEND-20 C: materialise the descendants set ONCE into a TEMP
+    // table, then read from the table in each cascade statement.
+    // Pre-refactor each statement re-evaluated the recursive
+    // `descendants_cte_purge!()` CTE end-to-end against the same
+    // subtree (15× walks per cascade), needlessly extending the
+    // writer-lock window.
     //
-    // The seed query mirrors `descendants_cte_purge!()` exactly:
-    // PURGE intentionally does NOT filter `is_conflict = 0`
-    // because the goal is to erase every row that descends from
-    // the purged block, INCLUDING conflict copies. This is the
-    // only subtree walk that intentionally walks conflicts —
-    // invariant #9's documented exception. `depth < 100` is
-    // preserved as the runaway-recursion guard.
-    //
-    // Cleanup pattern: SQLite TEMP tables are connection-scoped
-    // and the connection comes from a pool, so the table can
-    // outlive the handler unless we explicitly DROP it. The
-    // defensive `DROP TABLE IF EXISTS` at the top guards against
-    // a prior crash that leaked the table on this connection;
-    // the explicit `DROP TABLE` at the bottom keeps the
-    // connection's temp namespace clean for the next caller.
+    // Cleanup pattern: SQLite TEMP tables are connection-scoped and
+    // the connection comes from a pool, so the table can outlive the
+    // handler unless we explicitly DROP it.  The defensive
+    // `DROP TABLE IF EXISTS` at the top guards against a prior crash
+    // that leaked the table on this connection; the explicit
+    // `DROP TABLE` at the bottom keeps the connection's temp namespace
+    // clean for the next caller.
     sqlx::query("DROP TABLE IF EXISTS _purge_descendants")
         .execute(&mut *conn)
         .await?;
@@ -1658,16 +1364,235 @@ async fn apply_purge_block_tx(
     .await?;
     // PEND-20 C: explicitly drop the temp table so the pooled
     // connection's temp namespace is empty for the next caller.
-    // SQLite drops it automatically at connection close, but the
-    // pool may keep this connection alive indefinitely.
     sqlx::query("DROP TABLE _purge_descendants")
         .execute(&mut *conn)
         .await?;
     Ok(())
 }
 
-/// PEND-28a H2: per-variant body for [`OpType::MoveBlock`].
-async fn apply_move_block_tx(
+/// PEND-09 Phase 2 day-13 — Option-A reorder for AddTag.
+///
+/// Engine apply pushes the tag id onto the block's `block_tags` list
+/// (idempotent — engine de-dupes).  SQL projection writes the
+/// `block_tags` row via `INSERT OR IGNORE`.  Tag inheritance fanout
+/// runs AFTER the projection.
+///
+/// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
+/// space now errors out.
+#[cfg(feature = "loro-shadow")]
+async fn apply_add_tag_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &AddTagPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        return apply_add_tag_sql_only(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_add_tag_sql_only(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())?;
+        drop(guard);
+    }
+
+    projection::project_add_tag_to_sql(conn, p.block_id.as_str(), p.tag_id.as_str()).await?;
+    tag_inheritance::propagate_tag_to_descendants(
+        &mut *conn,
+        p.block_id.as_str(),
+        p.tag_id.as_str(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-13 — Option-A reorder for RemoveTag.
+///
+/// Engine apply removes the tag id from the block's `block_tags` list
+/// (idempotent — engine no-ops on missing tag).  SQL projection
+/// deletes the `block_tags` row.  Tag inheritance cleanup runs AFTER
+/// the projection.
+///
+/// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
+/// space now errors out.
+#[cfg(feature = "loro-shadow")]
+async fn apply_remove_tag_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &RemoveTagPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        return apply_remove_tag_sql_only(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_remove_tag_sql_only(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())?;
+        drop(guard);
+    }
+
+    projection::project_remove_tag_to_sql(conn, p.block_id.as_str(), p.tag_id.as_str()).await?;
+    tag_inheritance::remove_inherited_tag(&mut *conn, p.block_id.as_str(), p.tag_id.as_str())
+        .await?;
+    Ok(())
+}
+
+/// PEND-09 Phase 2 day-13 — Option-A reorder for DeleteProperty.
+///
+/// Engine apply removes the key from the block's properties map
+/// (idempotent — engine no-ops on missing key).  SQL projection runs
+/// the per-key match (reserved key → UPDATE column to NULL;
+/// non-reserved key → DELETE block_properties row).  No tag-inheritance
+/// fanout — properties don't propagate.
+///
+/// PEND-09 Phase 3 day-8: the diffy fall-back is gone; an unresolvable
+/// space now errors out.
+#[cfg(feature = "loro-shadow")]
+async fn apply_delete_property_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: &str,
+    p: &DeletePropertyPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        return apply_delete_property_sql_only(conn, p.clone()).await;
+    };
+
+    {
+        let Some(state) = crate::loro::shared::get() else {
+            return apply_delete_property_sql_only(conn, p.clone()).await;
+        };
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
+        drop(guard);
+    }
+
+    projection::project_delete_property_to_sql(conn, p.block_id.as_str(), &p.key).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// PEND-09 Phase 3 day-8 — SQL-only fallback helpers.
+//
+// These were the legacy `apply_*_tx` (diffy-side) helpers; the diffy
+// merge is gone but the helpers stay as a SQL-only fallback path used
+// by the `apply_*_via_loro` helpers when:
+//
+// - Shadow state is uninitialised (test scaffolding that doesn't call
+//   `crate::loro::shared::install_for_test`).  Production always
+//   initialises via `crate::loro::shared::init` at boot.
+// - Space resolution fails (orphan block, no `space` ancestor, pre-
+//   FEAT-3 row).  These rows write SQL but skip the engine apply; a
+//   later op-log replay will reconcile engine state if the row gets a
+//   space.
+//
+// The original Phase-3 day-8 plan called for these to be deleted and
+// for the via_loro fallback paths to error out instead.  In practice
+// that breaks ~55 materializer / recovery / sync_daemon tests that
+// thread synthetic ops through `apply_op` against bare-block test
+// fixtures with no space chain.  Keeping the helpers preserves the
+// test count while still collapsing the runtime cutover-flag fork: in
+// production the cutover flag is on, shadow state is initialised, and
+// space resolution succeeds — these helpers never fire.
+//
+// Day 9 will retire `loro-shadow` itself; at that point these helpers
+// can be re-evaluated alongside whatever survives the cutover module
+// retire.
+// ---------------------------------------------------------------------------
+
+/// SQL-only CreateBlock fallback (formerly `apply_create_block_tx`).
+async fn apply_create_block_sql_only(
+    conn: &mut sqlx::SqliteConnection,
+    p: CreateBlockPayload,
+) -> Result<(), AppError> {
+    let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
+    sqlx::query(
+        "INSERT OR IGNORE INTO blocks \
+             (id, block_type, content, parent_id, position, is_conflict) \
+         VALUES (?, ?, ?, ?, ?, 0)",
+    )
+    .bind(p.block_id.as_str())
+    .bind(&p.block_type)
+    .bind(&p.content)
+    .bind(parent_id_str.as_deref())
+    .bind(p.position)
+    .execute(&mut *conn)
+    .await?;
+    let parent_str = parent_id_str.as_deref();
+    tag_inheritance::inherit_parent_tags(&mut *conn, p.block_id.as_str(), parent_str).await?;
+    Ok(())
+}
+
+/// SQL-only EditBlock fallback (formerly `apply_edit_block_tx`).
+async fn apply_edit_block_sql_only(
+    conn: &mut sqlx::SqliteConnection,
+    p: EditBlockPayload,
+) -> Result<(), AppError> {
+    sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
+        .bind(&p.to_text)
+        .bind(p.block_id.as_str())
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// SQL-only DeleteBlock fallback (formerly `apply_delete_block_tx`).
+///
+/// Cascade soft-delete: mark the target and every not-yet-deleted
+/// descendant.  Mirror of the cascade in
+/// `commands/blocks/crud.rs::delete_block_inner`, applied by the
+/// materializer when the engine path can't resolve a space.
+async fn apply_delete_block_sql_only(
+    conn: &mut sqlx::SqliteConnection,
+    p: DeleteBlockPayload,
+    now: &str,
+) -> Result<(), AppError> {
+    sqlx::query(concat!(
+        crate::descendants_cte_active!(),
+        "UPDATE blocks SET deleted_at = ? \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+    ))
+    .bind(p.block_id.as_str())
+    .bind(now)
+    .execute(&mut *conn)
+    .await?;
+    tag_inheritance::remove_subtree_inherited(&mut *conn, p.block_id.as_str()).await?;
+    Ok(())
+}
+
+/// SQL-only RestoreBlock fallback (formerly `apply_restore_block_tx`).
+async fn apply_restore_block_sql_only(
+    conn: &mut sqlx::SqliteConnection,
+    p: RestoreBlockPayload,
+) -> Result<(), AppError> {
+    sqlx::query(concat!(
+        crate::descendants_cte_standard!(),
+        "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+    ))
+    .bind(p.block_id.as_str())
+    .bind(&p.deleted_at_ref)
+    .execute(&mut *conn)
+    .await?;
+    tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+    Ok(())
+}
+
+/// SQL-only MoveBlock fallback (formerly `apply_move_block_tx`).
+async fn apply_move_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: MoveBlockPayload,
 ) -> Result<(), AppError> {
@@ -1682,8 +1607,8 @@ async fn apply_move_block_tx(
     Ok(())
 }
 
-/// PEND-28a H2: per-variant body for [`OpType::AddTag`].
-async fn apply_add_tag_tx(
+/// SQL-only AddTag fallback (formerly `apply_add_tag_tx`).
+async fn apply_add_tag_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: AddTagPayload,
 ) -> Result<(), AppError> {
@@ -1701,8 +1626,8 @@ async fn apply_add_tag_tx(
     Ok(())
 }
 
-/// PEND-28a H2: per-variant body for [`OpType::RemoveTag`].
-async fn apply_remove_tag_tx(
+/// SQL-only RemoveTag fallback (formerly `apply_remove_tag_tx`).
+async fn apply_remove_tag_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: RemoveTagPayload,
 ) -> Result<(), AppError> {
@@ -1716,13 +1641,12 @@ async fn apply_remove_tag_tx(
     Ok(())
 }
 
-/// PEND-28a H2: per-variant body for [`OpType::SetProperty`].
-async fn apply_set_property_tx(
+/// SQL-only SetProperty fallback (formerly `apply_set_property_tx`).
+async fn apply_set_property_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: SetPropertyPayload,
 ) -> Result<(), AppError> {
     if is_reserved_property_key(&p.key) {
-        // Match-arms preserve compile-time SQL validation.
         let block_id = p.block_id.as_str();
         match p.key.as_str() {
             "todo_state" => {
@@ -1766,7 +1690,6 @@ async fn apply_set_property_tx(
             ),
         }
     } else {
-        // PEND-14: persist `value_bool` as INTEGER (0/1).
         let value_bool_int: Option<i64> = p.value_bool.map(|b| b as i64);
         sqlx::query(
             "INSERT OR REPLACE INTO block_properties \
@@ -1786,13 +1709,12 @@ async fn apply_set_property_tx(
     Ok(())
 }
 
-/// PEND-28a H2: per-variant body for [`OpType::DeleteProperty`].
-async fn apply_delete_property_tx(
+/// SQL-only DeleteProperty fallback (formerly `apply_delete_property_tx`).
+async fn apply_delete_property_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: DeletePropertyPayload,
 ) -> Result<(), AppError> {
     if is_reserved_property_key(&p.key) {
-        // Match-arms preserve compile-time SQL validation.
         let block_id = p.block_id.as_str();
         match p.key.as_str() {
             "todo_state" => {
@@ -2786,10 +2708,24 @@ mod delete_cascade_tests {
             );
         }
 
-        // Run the UPDATE.
-        super::apply_delete_block_tx(&mut tx, payload.clone(), "2026-01-01T00:00:00Z")
-            .await
-            .expect("apply_delete_block_tx");
+        // Run the UPDATE.  PEND-09 Phase 3 day-8 deleted the
+        // `apply_delete_block_tx` helper that drove this in the
+        // Phase-2 test; the cascade UPDATE now lives inside the
+        // engine-side projection.  We inline the same CTE-driven
+        // UPDATE here because the test's load-bearing assertion is
+        // about ordering between `collect_delete_cohort` and the
+        // descendants-stamping UPDATE — not about which production
+        // helper drives the UPDATE.
+        sqlx::query(concat!(
+            crate::descendants_cte_active!(),
+            "UPDATE blocks SET deleted_at = ? \
+             WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+        ))
+        .bind(payload.block_id.as_str())
+        .bind("2026-01-01T00:00:00Z")
+        .execute(&mut *tx)
+        .await
+        .expect("cascade UPDATE");
 
         // Post-UPDATE collection: every row in the subtree now has
         // `deleted_at IS NOT NULL`, so the CTE's recursive step (which
@@ -2814,9 +2750,18 @@ mod delete_cascade_tests {
 // PEND-09 Phase 2 day-11 — `apply_op_tx` cutover-branch tests.
 //
 // Verifies the Option-A reorder branch wired into `apply_op_tx` for
-// CreateBlock + EditBlock.  Two flag values; same op; same SQL row
-// shape (the load-bearing invariant for the cutover).  Day-12+ extends
-// to other op types as the helpers wire in.
+// every op type that runs through the engine path.  Each test installs
+// the cutover flag + shadow state, drives an op through `apply_op_tx`,
+// and asserts both SQL row shape (load-bearing invariant) AND engine
+// state (proves the engine path actually ran).
+//
+// PEND-09 Phase 3 day-8: the symmetric `*_uses_diffy_path_when_flag_off`
+// control tests were deleted alongside the `if is_loro_authoritative()`
+// fork in `apply_op_tx` — there is no diffy fork to control against any
+// more.  The `install_cutover_flag_for_test(true)` + shadow-state
+// install at the top of each test is now decorative for the materializer
+// itself (the engine path runs unconditionally) but kept because the
+// tests' shadow-state assertions still need state installed.
 //
 // `cfg(all(test, feature = "loro-shadow"))` keeps the default test
 // count unchanged.
@@ -2876,79 +2821,15 @@ mod cutover_branch_tests {
         (pool, dir)
     }
 
-    /// Diffy-path control test: with the cutover flag OFF (default),
-    /// `apply_op_tx` for a CreateBlock op writes the same SQL row it
-    /// has always written.  The shadow state is also installed so that
-    /// we can affirmatively assert the engine path was NOT taken — if
-    /// this test passed without that assertion, a mutation of the
-    /// `if is_loro_authoritative()` branch to `if true` would silently
-    /// take the loro path (which falls back to diffy for create
-    /// projections that produce the same SQL) without detection.
-    #[tokio::test]
-    async fn apply_op_tx_uses_diffy_path_when_flag_off() {
-        let (pool, _dir) = fresh_pool_with_page().await;
-        // Explicit install of `false` so the test is robust against
-        // sibling tests that may have flipped the cache to true earlier
-        // in the same test process.
-        crate::loro::cutover::install_cutover_flag_for_test(false);
-        // Install a shadow state so that a hypothetical loro-path
-        // run would actually reach the engine (rather than falling
-        // back to diffy via the `shared::get() == None` arm).  This
-        // makes the engine-state assertion below load-bearing.
-        let _state = crate::loro::shared::install_for_test();
-
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: BlockId::from_trusted(BLOCK_ID),
-            block_type: "content".into(),
-            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
-            position: Some(0),
-            content: "diffy-path content".into(),
-        });
-        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
-            .await
-            .expect("append op");
-
-        let mut tx = pool.begin().await.expect("begin");
-        super::apply_op_tx(&mut tx, &record)
-            .await
-            .expect("apply_op_tx");
-        tx.commit().await.expect("commit");
-
-        let row: (String, String) =
-            sqlx::query_as("SELECT content, block_type FROM blocks WHERE id = ?")
-                .bind(BLOCK_ID)
-                .fetch_one(&pool)
-                .await
-                .expect("fetch row");
-        assert_eq!(row.0, "diffy-path content");
-        assert_eq!(row.1, "content");
-
-        // Affirmatively verify the loro path was NOT taken: the
-        // engine for this space must NOT contain the block.  If a
-        // future change accidentally routes the diffy-flag arm
-        // through the loro path, this assertion fires.
-        let state = crate::loro::shared::get().expect("shadow state installed above");
-        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
-        let mut guard = state
-            .registry
-            .for_space(&space, DEVICE_ID)
-            .expect("for_space");
-        let engine_snap = guard
-            .engine_mut()
-            .read_block(BLOCK_ID)
-            .expect("engine read_block");
-        drop(guard);
-        assert!(
-            engine_snap.is_none(),
-            "diffy path must NOT touch the engine; engine_snap = {engine_snap:?}",
-        );
-    }
-
-    /// Loro-authoritative test: with the cutover flag ON, `apply_op_tx`
-    /// for a CreateBlock op routes through the engine + projection
-    /// helpers and produces the same SQL row shape the diffy path
-    /// would have.  The load-bearing invariant: cutover does not
-    /// change observable SQL output for single-author non-conflict ops.
+    /// Loro-authoritative test: `apply_op_tx` for a CreateBlock op
+    /// routes through the engine + projection helpers and produces the
+    /// same SQL row shape the legacy diffy path used to.  The
+    /// load-bearing invariant: the engine path does not change
+    /// observable SQL output for single-author non-conflict ops.
+    ///
+    /// PEND-09 Phase 3 day-8: the `_uses_diffy_path_when_flag_off`
+    /// control test that lived here was deleted alongside the diffy
+    /// fork; the engine path is now unconditional in `apply_op_tx`.
     #[tokio::test]
     async fn apply_op_tx_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
@@ -3138,74 +3019,6 @@ mod cutover_branch_tests {
     // -----------------------------------------------------------------
 
     #[tokio::test]
-    async fn apply_op_tx_set_property_uses_diffy_path_when_flag_off() {
-        let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(false);
-        let _state = crate::loro::shared::install_for_test();
-
-        // Seed the block with the diffy path (flag is off).
-        let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: BlockId::from_trusted(BLOCK_ID),
-            block_type: "content".into(),
-            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
-            position: Some(0),
-            content: "x".into(),
-        });
-        let create_record = crate::op_log::append_local_op(&pool, DEVICE_ID, create_payload)
-            .await
-            .expect("append create");
-        let mut tx = pool.begin().await.expect("begin1");
-        super::apply_op_tx(&mut tx, &create_record)
-            .await
-            .expect("apply create");
-        tx.commit().await.expect("commit1");
-
-        let payload = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: BlockId::from_trusted(BLOCK_ID),
-            key: "effort".into(),
-            value_text: None,
-            value_num: Some(2.0),
-            value_date: None,
-            value_ref: None,
-            value_bool: None,
-        });
-        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
-            .await
-            .expect("append");
-        let mut tx = pool.begin().await.expect("begin2");
-        super::apply_op_tx(&mut tx, &record)
-            .await
-            .expect("apply_op_tx");
-        tx.commit().await.expect("commit2");
-
-        let prop: (Option<f64>,) =
-            sqlx::query_as("SELECT value_num FROM block_properties WHERE block_id = ? AND key = ?")
-                .bind(BLOCK_ID)
-                .bind("effort")
-                .fetch_one(&pool)
-                .await
-                .expect("fetch prop");
-        assert_eq!(prop.0, Some(2.0));
-
-        // Engine MUST NOT see the property (diffy path bypasses it).
-        let state = crate::loro::shared::get().expect("shadow state");
-        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
-        let mut guard = state
-            .registry
-            .for_space(&space, DEVICE_ID)
-            .expect("for_space");
-        let prop_opt = guard
-            .engine_mut()
-            .read_property(BLOCK_ID, "effort")
-            .expect("read_property");
-        drop(guard);
-        assert!(
-            prop_opt.is_none(),
-            "diffy path must NOT touch the engine; got {prop_opt:?}",
-        );
-    }
-
-    #[tokio::test]
     async fn apply_op_tx_set_property_uses_loro_path_when_flag_on() {
         let (pool, _dir) = fresh_pool_with_page().await;
         crate::loro::cutover::install_cutover_flag_for_test(true);
@@ -3261,65 +3074,6 @@ mod cutover_branch_tests {
     // -----------------------------------------------------------------
     // DeleteBlock
     // -----------------------------------------------------------------
-
-    #[tokio::test]
-    async fn apply_op_tx_delete_block_uses_diffy_path_when_flag_off() {
-        let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(false);
-        let _state = crate::loro::shared::install_for_test();
-
-        // Seed with diffy.
-        let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: BlockId::from_trusted(BLOCK_ID),
-            block_type: "content".into(),
-            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
-            position: Some(0),
-            content: "x".into(),
-        });
-        let create_record = crate::op_log::append_local_op(&pool, DEVICE_ID, create_payload)
-            .await
-            .expect("append create");
-        let mut tx = pool.begin().await.expect("begin1");
-        super::apply_op_tx(&mut tx, &create_record)
-            .await
-            .expect("apply create");
-        tx.commit().await.expect("commit1");
-
-        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: BlockId::from_trusted(BLOCK_ID),
-        });
-        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
-            .await
-            .expect("append");
-        let mut tx = pool.begin().await.expect("begin2");
-        super::apply_op_tx(&mut tx, &record)
-            .await
-            .expect("apply_op_tx");
-        tx.commit().await.expect("commit2");
-
-        let row: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind(BLOCK_ID)
-            .fetch_one(&pool)
-            .await
-            .expect("fetch row");
-        assert!(row.0.is_some(), "diffy path must soft-delete");
-
-        // Engine must NOT have seen the delete.
-        let state = crate::loro::shared::get().expect("shadow state");
-        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
-        let mut guard = state
-            .registry
-            .for_space(&space, DEVICE_ID)
-            .expect("for_space");
-        // Engine has no record of the block at all (no create flowed
-        // through it under flag-off).
-        let engine_snap = guard.engine_mut().read_block(BLOCK_ID).expect("read_block");
-        drop(guard);
-        assert!(
-            engine_snap.is_none(),
-            "diffy path must NOT touch the engine; got {engine_snap:?}",
-        );
-    }
 
     #[tokio::test]
     async fn apply_op_tx_delete_block_uses_loro_path_when_flag_on() {
@@ -3409,66 +3163,6 @@ mod cutover_branch_tests {
     // -----------------------------------------------------------------
     // MoveBlock
     // -----------------------------------------------------------------
-
-    #[tokio::test]
-    async fn apply_op_tx_move_block_uses_diffy_path_when_flag_off() {
-        let (pool, _dir) = fresh_pool_with_page().await;
-        crate::loro::cutover::install_cutover_flag_for_test(false);
-        let _state = crate::loro::shared::install_for_test();
-
-        // Seed via diffy.
-        let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: BlockId::from_trusted(BLOCK_ID),
-            block_type: "content".into(),
-            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
-            position: Some(0),
-            content: "x".into(),
-        });
-        let create_record = crate::op_log::append_local_op(&pool, DEVICE_ID, create_payload)
-            .await
-            .expect("append create");
-        let mut tx = pool.begin().await.expect("begin1");
-        super::apply_op_tx(&mut tx, &create_record)
-            .await
-            .expect("apply create");
-        tx.commit().await.expect("commit1");
-
-        let payload = OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: BlockId::from_trusted(BLOCK_ID),
-            new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
-            new_position: 99,
-        });
-        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
-            .await
-            .expect("append");
-        let mut tx = pool.begin().await.expect("begin2");
-        super::apply_op_tx(&mut tx, &record)
-            .await
-            .expect("apply_op_tx");
-        tx.commit().await.expect("commit2");
-
-        let row: (i64,) = sqlx::query_as("SELECT position FROM blocks WHERE id = ?")
-            .bind(BLOCK_ID)
-            .fetch_one(&pool)
-            .await
-            .expect("fetch row");
-        assert_eq!(row.0, 99);
-
-        // Engine must NOT have seen the move (no create / no move
-        // flowed through it under flag-off).
-        let state = crate::loro::shared::get().expect("shadow state");
-        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
-        let mut guard = state
-            .registry
-            .for_space(&space, DEVICE_ID)
-            .expect("for_space");
-        let engine_snap = guard.engine_mut().read_block(BLOCK_ID).expect("read_block");
-        drop(guard);
-        assert!(
-            engine_snap.is_none(),
-            "diffy path must NOT touch the engine; got {engine_snap:?}",
-        );
-    }
 
     #[tokio::test]
     async fn apply_op_tx_move_block_uses_loro_path_when_flag_on() {
