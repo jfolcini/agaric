@@ -1,0 +1,83 @@
+-- PEND-09 Phase 3 day-10 — drop the `merge_parity_log` table.
+--
+-- Migration `0051` (Phase 1 day-4) created `merge_parity_log` as the
+-- persistent sink for diffy-vs-Loro shadow-mode parity observations.
+-- The table's semantic was "did the diffy 3-way-merge result equal
+-- the per-space `LoroEngine`'s mirrored result for the same op?".
+-- That question is meaningless after Phase 3:
+--
+--   * Day 5 (`apply_remote_loro_batch`) replaced the diffy sync apply
+--     path with `LoroEngine::import`; diffy 3-way merge no longer
+--     runs on incoming sync ops.
+--   * Day 6 deleted `merge::apply::merge_block_text_only`.
+--   * Day 7 deleted `merge::resolve` + `merge::detect`.
+--   * Day 8 collapsed the materializer's `if is_loro_authoritative()`
+--     fork into the engine-only path.
+--   * Day 9 retired the `loro-shadow` Cargo feature gate; the engine
+--     became the only materializer path.
+--
+-- After day 9 the `merge_parity_log` table is unused: no callers
+-- write to it (the parity sink + classifier + flush task all compile
+-- but their writes are disconnected from the materializer hot path),
+-- no consumers read it, and the data already in it captured a
+-- comparison surface that no longer exists.  Day 10 drops the table
+-- and its three indexes; day 11 (separately) deletes the parity sink
+-- + classifier + flush task + parity_report bin in code.
+--
+-- ## What gets dropped
+--
+-- * The table itself (`merge_parity_log`, created by `0051`).  Drops
+--   the implicit AUTOINCREMENT sequence + the primary-key index +
+--   every column (including the `loro_authoritative_at_classify`
+--   added by `0055`).
+-- * `idx_merge_parity_log_created_at` (created by `0051`) — used by
+--   the retention purge.
+-- * `idx_merge_parity_log_op_id` (created by `0051`) — used by the
+--   "show me parity events for this op_id" debug query.
+-- * `idx_merge_parity_log_matched` (created by `0051`) — used by the
+--   divergence-rate query.
+-- * `idx_merge_parity_log_unbucketed` (created by `0054`) — partial
+--   index keyed on `(id) WHERE bucket IS NULL`, used by the day-6
+--   classifier.
+-- * `idx_merge_parity_log_authoritative` (created by `0055`) — index
+--   on the `loro_authoritative_at_classify` column for cutover-era
+--   filtering.
+--
+-- SQLite's `DROP TABLE` is atomic against the table's own indexes:
+-- they vanish with the table.  We list them in `DROP INDEX IF EXISTS`
+-- form first for documentation / forensic clarity, but the explicit
+-- index drops are no-ops once the table goes away.
+--
+-- ## Reversibility
+--
+-- Sticky.  Once the table is dropped, the historical parity rows are
+-- gone — restoring them requires a backup of `notes.db` taken before
+-- this migration ran.  Per the Phase-2 final report (see
+-- `SESSION-LOG.md` Session 698 Phase 2 day-13.5 entry), the parity
+-- log data is non-load-bearing: the cutover decision was made, the
+-- diffy↔Loro comparison surface no longer exists, and the maintainer's
+-- single-user invariant means no one is reading it.  Acceptable loss.
+--
+-- ## Why no `DELETE FROM app_settings WHERE key = 'pend09.loro_authoritative'`
+--
+-- The Phase-3 plan §3 day-10 originally listed deletion of the
+-- cutover-flag row alongside the table drop.  Day-9 retired the
+-- cutover module (`loro/cutover.rs`) and its readers, so the flag
+-- has no consumer; leaving the row in `app_settings` is harmless and
+-- keeps the day-10 migration scoped to the parity-log surface alone.
+-- A future Phase 4 sweep can drop the row + the seed migration 0053
+-- as a single mechanical cleanup.
+--
+-- ## Default-build safety
+--
+-- Generic — runs on every database.  Pre-Phase-3 builds wrote rows
+-- here only with `--features loro-shadow`; default builds had an
+-- empty table.  Either way, the drop succeeds.
+
+DROP INDEX IF EXISTS idx_merge_parity_log_authoritative;
+DROP INDEX IF EXISTS idx_merge_parity_log_unbucketed;
+DROP INDEX IF EXISTS idx_merge_parity_log_matched;
+DROP INDEX IF EXISTS idx_merge_parity_log_op_id;
+DROP INDEX IF EXISTS idx_merge_parity_log_created_at;
+
+DROP TABLE IF EXISTS merge_parity_log;

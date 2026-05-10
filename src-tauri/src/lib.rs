@@ -1001,45 +1001,21 @@ pub fn run() {
             app.manage(PersistedCert::new(sync_cert));
             app.manage(materializer);
 
-            // PEND-09 Phase 1 day-5 — spawn the periodic flush + purge +
-            // snapshot task that drains the in-memory parity sampler
-            // into `merge_parity_log` and ages out rows past the 30-day
-            // retention window.  Fire-and-forget; cancels cleanly when
-            // the runtime shuts down (the inner `tokio::time::interval`
-            // drops with the future).  Errors `tracing::warn!` and
-            // continue.
+            // PEND-09 Phase 3 day-10 — the periodic parity-flush + purge
+            // + snapshot task is gone.  The flush + purge halves drained
+            // the in-memory parity sampler into `merge_parity_log`; both
+            // the sampler and the table are deleted.  The snapshot half
+            // (`save_all_engines`) used to ride the same tick; it now
+            // has no host scheduler.  The day-12 sync rebuild adds a
+            // fresh scheduler back if it ends up load-bearing.  Until
+            // then `loro::snapshot::save_all_engines` is callable
+            // directly from a shutdown hook or from a sync-pull path
+            // when one lands.
             //
-            // PEND-09 Phase 2 day-9 — the shadow-state init + LoroDoc
-            // rehydrate that previously lived inside this spawn moved
-            // earlier in setup (synchronous, before recovery) so the
-            // registry is populated before any op flows through.  See
-            // the pre-recovery block above for the reasoning.  Only the
-            // long-running flush task remains here.
-            if let Some(state) = crate::loro::shared::get() {
-                let pool_for_flush = pool_for_loro_flush;
-                tauri::async_runtime::spawn(async move {
-                    crate::loro::flush_task::run_periodic_flush(
-                        pool_for_flush,
-                        state,
-                        std::time::Duration::from_secs(
-                            crate::loro::flush_task::FLUSH_INTERVAL_SECS,
-                        ),
-                        std::time::Duration::from_secs(
-                            crate::loro::flush_task::PURGE_INTERVAL_SECS,
-                        ),
-                        std::time::Duration::from_secs(
-                            crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
-                        ),
-                    )
-                    .await;
-                });
-                tracing::info!(
-                    flush_secs = crate::loro::flush_task::FLUSH_INTERVAL_SECS,
-                    purge_secs = crate::loro::flush_task::PURGE_INTERVAL_SECS,
-                    snapshot_secs = crate::loro::flush_task::SNAPSHOT_INTERVAL_SECS,
-                    "loro: parity flush + purge + snapshot task spawned",
-                );
-            }
+            // The `pool_for_loro_flush` clone above is kept so the
+            // surrounding setup-closure compile shape is unchanged for
+            // when the day-12 scheduler re-introduces it.
+            let _ = pool_for_loro_flush;
 
             // Sync state (#275, #278)
             app.manage(commands::PairingState(std::sync::Mutex::new(None)));

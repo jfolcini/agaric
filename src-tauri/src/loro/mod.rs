@@ -8,6 +8,16 @@
 //! the feature-gate retire (day-9) collapse those two build modes
 //! into one.
 //!
+//! Phase 3 day-10 deleted the parity sink + bucket classifier + flush
+//! task + the in-memory `ShadowParitySampler` ring.  Their host table
+//! `merge_parity_log` (migration `0051`) compared diffy-vs-Loro
+//! results; with diffy gone the comparison has no meaning.  The
+//! per-space LoroDoc snapshot scheduler that previously rode the
+//! flush task's tick now has no host: the day-12 sync rebuild adds
+//! a fresh scheduler back if it ends up load-bearing.  Until then
+//! `loro::snapshot::save_all_engines` is callable directly from
+//! shutdown / sync-pull paths.
+//!
 //! The module exposes the surface the materializer + sync layers need
 //! to drive the per-space `LoroEngine`:
 //!
@@ -17,7 +27,7 @@
 //!   [`crate::error::AppError`] instead of `anyhow::Result` (the
 //!   spike's throwaway error type).
 //! * [`engine::BlockSnapshot`] — the read-back projection of a block
-//!   from the Loro doc, sufficient for parity-equality checks.
+//!   from the Loro doc.
 //! * [`engine::peer_id_from_device_id`] — derives a stable Loro
 //!   `PeerID` from the device's UUID-v4 `device_id` via `xxh3_64`
 //!   (Phase-1 day-7 swap from the spike's `std::hash::DefaultHasher`,
@@ -25,20 +35,10 @@
 //!   deterministic across runs, devices, and Rust toolchain versions;
 //!   see the function's stability-contract docstring before changing
 //!   it.
-//! * [`parity::ShadowParitySampler`] — in-memory ring buffer for the
-//!   first parity-logging sink.
-
-pub mod classifier;
 
 pub mod engine;
 
 pub mod envelope;
-
-pub mod flush_task;
-
-pub mod parity;
-
-pub mod parity_sink;
 
 // PEND-09 Phase 2 day-11 — projection helpers that write SQL rows
 // from post-apply Loro engine state.  Each per-op-type helper takes a
@@ -58,8 +58,10 @@ pub mod snapshot;
 #[cfg(test)]
 mod tests;
 
-// PEND-09 Phase 1 day-8 — proptest-augmented parity streams.  Asserts
-// kill-criterion #2 (bucket D must stay at zero) over thousands of
-// randomised single-author op streams.
+// PEND-09 Phase 1 day-8 — randomised LoroEngine regression streams.
+// Phase 3 day-10 repurposed this module: with the parity sink gone
+// the bucket-A/B/C/D classifier is no longer reachable, so the tests
+// now assert direct convergence invariants (single-author replay,
+// two-device snapshot exchange) on bare `LoroEngine` instances.
 #[cfg(test)]
-mod parity_proptest;
+mod engine_proptest;

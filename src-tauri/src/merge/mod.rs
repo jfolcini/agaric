@@ -4,53 +4,68 @@
 #![allow(
     clippy::redundant_closure,
     clippy::redundant_closure_for_method_calls,
-    clippy::cast_possible_truncation
+    clippy::cast_possible_truncation,
+    clippy::needless_pass_by_value
 )]
 
-//! Shadow-mode dispatch surface into the per-space `LoroEngine`.
+//! Engine dispatch surface into the per-space `LoroEngine`.
 //!
-//! PEND-09 Phase 3 day-6 deleted `merge_block_text_only` (the diffy
-//! three-way text-merge entry point); its only caller
-//! (`sync_protocol::operations::merge_diverged_blocks`) was deleted
-//! the same day.  Phase 3 day-7 deleted `merge::detect`
-//! (`merge_text` + `walk_to_create_block_root` helpers) and
-//! `merge::resolve` (`create_conflict_copy`,
-//! `create_conflict_copy_with_reindex`, `resolve_property_conflict`)
-//! along with the now-empty `merge::types` module.  Phase 3 day-9
-//! retired the `loro-shadow` feature gate; the helpers in this module
-//! compile unconditionally.
+//! ## History (delete-trail)
+//!
+//! - Phase 3 day-6 deleted `merge_block_text_only` (the diffy
+//!   three-way text-merge entry point); its only caller
+//!   (`sync_protocol::operations::merge_diverged_blocks`) was deleted
+//!   the same day.
+//! - Phase 3 day-7 deleted `merge::detect`
+//!   (`merge_text` + `walk_to_create_block_root`) and `merge::resolve`
+//!   (`create_conflict_copy`, `create_conflict_copy_with_reindex`,
+//!   `resolve_property_conflict`) along with the now-empty
+//!   `merge::types` module.
+//! - Phase 3 day-9 retired the `loro-shadow` feature gate; the helpers
+//!   in this module compile unconditionally.
+//! - Phase 3 day-10 deleted the parity sink (ring buffer + SQLite
+//!   table + classifier + flush task).  `shadow_apply` no longer
+//!   records a `ParityEvent`; it just dispatches the op onto the
+//!   per-space `LoroEngine`.  The `diffy_result_summary` parameter is
+//!   preserved at the call site (the materializer cohort-fanout
+//!   helpers still build a summary string for log output) but the
+//!   parity-record sink is gone.  `diffy_summary_for` similarly
+//!   collapsed to a logging-only helper and is kept for the
+//!   handful of debug log lines that still reference it.
 //!
 //! What remains in this module:
-//! - `shadow_apply` — dual-write hook that drives the per-space
-//!   `LoroEngine` and records a parity event.
+//! - `shadow_apply` — engine dispatcher; per-op-type match arms call
+//!   `LoroEngine::apply_*`, errors trace-log and skip.
 //! - `shadow_dispatch_for_record` — `OpRecord` → `OpPayload` dispatch
 //!   helper used by the materializer.
-//! - `diffy_summary_for` — helper that builds the `diffy_result` side
-//!   of the parity event from a typed op.
+//! - `diffy_summary_for` — vestigial human-readable summary builder
+//!   (logging only post-day-10).
 
 mod apply;
 
-// PEND-09 Phase 1 day-3 — re-export the shadow-mode dispatcher so the
+// PEND-09 Phase 1 day-3 — re-export the engine dispatcher so the
 // materializer (`materializer::handlers::apply_op`) and any other
 // per-op call sites can reach it without depending on the
 // `merge::apply` private module path.
 pub(crate) use apply::shadow_dispatch_for_record;
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 1 day-2 — shadow-mode dual-write hook.
+// PEND-09 Phase 1 day-2 — engine dispatch hook.
 //
 // `shadow_apply` is the call site that runs every applied op through
-// the per-space Loro `LoroEngine` and logs a per-op parity event into
-// the in-memory ring buffer.  Phase 3 day-9 retired the `loro-shadow`
-// feature gate; the helper compiles unconditionally.
+// the per-space Loro `LoroEngine`.  Phase 3 day-10 collapsed it to a
+// pure dispatcher: pre-day-10 it also recorded a `ParityEvent` into
+// the in-memory sampler; the sampler + sink are gone, so the helper
+// is now just "look up the engine, dispatch on op_type, log on
+// failure".
 // ---------------------------------------------------------------------------
 
-/// Shadow-mode dual-write entry point.
+/// Engine dispatch entry point.
 ///
-/// `op_id` is a caller-supplied identity (production will pass the
-/// op_log row's `(device_id, seq)` composite formatted as `"DEV/SEQ"`).
-/// `op` is the typed payload that diffy just produced; we mirror it
-/// onto the per-space `LoroEngine` and record a [`ParityEvent`].
+/// `op_id` is a caller-supplied identity (production passes the
+/// op_log row's `(device_id, seq)` composite formatted as
+/// `"DEV/SEQ"`).  `op` is the typed payload; the dispatcher mirrors
+/// it onto the per-space `LoroEngine`.
 ///
 /// `space_id` is the engine partition key — every op carries an
 /// implicit space (its block's owning page resolves to one space)
@@ -60,17 +75,15 @@ pub(crate) use apply::shadow_dispatch_for_record;
 /// through to [`LoroEngine::with_peer_id`] so the engine's Loro
 /// peer id is stable across the process lifetime.
 ///
-/// `diffy_result_summary` is a small human-readable string (e.g. for
-/// CreateBlock the resulting block_id; for EditBlock the post-content's
-/// first 50 chars) used for the parity event's `diffy_result` column.
-/// Today's "match" is coarse: string-equality on the diffy and Loro
-/// summaries.  Day-4 (persistent SQLite parity sink) will refine the
-/// summary shape and the match semantics.
+/// `diffy_result_summary` is preserved for log-line continuity at
+/// the call sites that still build one — Phase 3 day-10 deleted the
+/// parity sink that consumed it, but the cohort-fanout helpers in
+/// `materializer::handlers` still pass it through for `tracing::warn`
+/// output on apply failure.  The argument may be deleted once those
+/// helpers stop building summary strings.
 ///
-/// Returns nothing because the diffy result remains authoritative for
-/// Phase 1; this hook records observations only.
-// PEND-09 Phase 3 day-9 — `loro-shadow` feature gate retired; this
-// helper compiles unconditionally (the engine is the only path).
+/// Returns nothing.  Errors `tracing::warn!` and never propagate —
+/// the engine dispatch must not break the materializer hot path.
 pub(crate) fn shadow_apply(
     op_id: &str,
     op: &crate::op::OpPayload,
@@ -79,9 +92,9 @@ pub(crate) fn shadow_apply(
     diffy_result_summary: String,
     state: &crate::loro::shared::ShadowState,
 ) {
-    use crate::loro::parity::ParityEvent;
+    let _ = diffy_result_summary; // Phase 3 day-10: log-line use only.
 
-    let crate::loro::shared::ShadowState { registry, sampler } = state;
+    let crate::loro::shared::ShadowState { registry } = state;
 
     let mut guard = match registry.for_space(space_id, device_id) {
         Ok(g) => g,
@@ -97,16 +110,13 @@ pub(crate) fn shadow_apply(
     };
     let engine = guard.engine_mut();
 
-    // Dispatch on op_type and capture a small, human-readable
-    // summary string.  Phase-2 day-8.5 expanded coverage to TEN op
-    // types (the original five — CreateBlock / EditBlock / DeleteBlock /
-    // MoveBlock / SetProperty — plus AddTag / RemoveTag / RestoreBlock /
-    // PurgeBlock / DeleteProperty).  AddAttachment / DeleteAttachment
-    // remain log+skip — those are file-blob ops and the file lives
-    // outside the CRDT state, so the engine has nothing useful to
-    // mirror (see SPIKE-REPORT.md and PEND-09 Phase-2 cutover plan §3
-    // day-8.5).
-    let dispatch_result: Result<String, crate::error::AppError> = match op {
+    // Dispatch on op_type.  Phase-2 day-8.5 expanded coverage to TEN
+    // op types (the original five — CreateBlock / EditBlock /
+    // DeleteBlock / MoveBlock / SetProperty — plus AddTag / RemoveTag
+    // / RestoreBlock / PurgeBlock / DeleteProperty).  AddAttachment /
+    // DeleteAttachment remain log+skip — those are file-blob ops and
+    // the file lives outside the CRDT state.
+    let dispatch_result: Result<(), crate::error::AppError> = match op {
         crate::op::OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(|id| id.as_str());
             let position = p.position.unwrap_or(0);
@@ -118,36 +128,24 @@ pub(crate) fn shadow_apply(
                     parent,
                     position,
                 )
-                .map(|_| format!("create:{}", p.block_id.as_str()))
+                .map(|_| ())
         }
         crate::op::OpPayload::EditBlock(p) => engine
             .apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)
-            .map(|_| {
-                let head: String = p.to_text.chars().take(50).collect();
-                format!("edit:{}:{}", p.block_id.as_str(), head)
-            }),
-        crate::op::OpPayload::DeleteBlock(p) => engine
-            .apply_delete_block(p.block_id.as_str())
-            .map(|_| format!("delete:{}", p.block_id.as_str())),
+            .map(|_| ()),
+        crate::op::OpPayload::DeleteBlock(p) => {
+            engine.apply_delete_block(p.block_id.as_str()).map(|_| ())
+        }
         crate::op::OpPayload::MoveBlock(p) => {
             let parent = p.new_parent_id.as_ref().map(|id| id.as_str());
             engine
                 .apply_move_block(p.block_id.as_str(), parent, p.new_position)
-                .map(|_| {
-                    format!(
-                        "move:{}:{}:{}",
-                        p.block_id.as_str(),
-                        parent.unwrap_or("<root>"),
-                        p.new_position
-                    )
-                })
+                .map(|_| ())
         }
         crate::op::OpPayload::SetProperty(p) => {
             // Spike's engine accepts string values; production
             // SetProperty has multiple typed columns.  Stringify the
-            // single set field to fit the spike's surface.  Day-4 will
-            // refine the encoding (likely a typed enum on the engine
-            // side) — for now we collapse to a single string.
+            // single set field to fit the spike's surface.
             let value: Option<String> = p
                 .value_text
                 .clone()
@@ -157,36 +155,27 @@ pub(crate) fn shadow_apply(
                 .or_else(|| p.value_bool.map(|b| b.to_string()));
             engine
                 .apply_set_property(p.block_id.as_str(), &p.key, value.as_deref())
-                .map(|_| {
-                    format!(
-                        "set_property:{}:{}={}",
-                        p.block_id.as_str(),
-                        p.key,
-                        value.as_deref().unwrap_or("<null>")
-                    )
-                })
+                .map(|_| ())
         }
         crate::op::OpPayload::AddTag(p) => engine
             .apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())
-            .map(|_| format!("add_tag:{}:{}", p.block_id.as_str(), p.tag_id.as_str())),
+            .map(|_| ()),
         crate::op::OpPayload::RemoveTag(p) => engine
             .apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())
-            .map(|_| format!("remove_tag:{}:{}", p.block_id.as_str(), p.tag_id.as_str())),
-        crate::op::OpPayload::RestoreBlock(p) => engine
-            .apply_restore_block(p.block_id.as_str())
-            .map(|_| format!("restore:{}", p.block_id.as_str())),
-        crate::op::OpPayload::PurgeBlock(p) => engine
-            .apply_purge_block(p.block_id.as_str())
-            .map(|_| format!("purge:{}", p.block_id.as_str())),
+            .map(|_| ()),
+        crate::op::OpPayload::RestoreBlock(p) => {
+            engine.apply_restore_block(p.block_id.as_str()).map(|_| ())
+        }
+        crate::op::OpPayload::PurgeBlock(p) => {
+            engine.apply_purge_block(p.block_id.as_str()).map(|_| ())
+        }
         crate::op::OpPayload::DeleteProperty(p) => engine
             .apply_delete_property(p.block_id.as_str(), &p.key)
-            .map(|_| format!("delete_property:{}:{}", p.block_id.as_str(), p.key)),
-        // AddAttachment / DeleteAttachment are out of scope per Phase-2
-        // day-8.5: attachments are file-blobs that live outside CRDT
-        // state — the file body sits on disk under `app_data_dir`,
-        // not inside the per-space LoroDoc.  Phase 3 may revisit if
-        // attachment metadata (filename / mime) needs CRDT-style
-        // merge; today the materializer's row-level write is enough.
+            .map(|_| ()),
+        // AddAttachment / DeleteAttachment are out of scope per
+        // Phase-2 day-8.5: attachments are file-blobs that live
+        // outside CRDT state — the file body sits on disk under
+        // `app_data_dir`, not inside the per-space LoroDoc.
         other => {
             tracing::debug!(
                 op_id,
@@ -197,57 +186,23 @@ pub(crate) fn shadow_apply(
         }
     };
 
-    let loro_result_summary = match &dispatch_result {
-        Ok(summary) => summary.clone(),
-        Err(e) => format!("error:{e}"),
-    };
-
-    // Coarse match: the diffy + loro summaries are stringified the
-    // same way (e.g. both start with "create:<block_id>"), so a
-    // string-equality is a usable first signal.  Day-4 refines this
-    // to a content-aware comparison.
-    let r#match = diffy_result_summary == loro_result_summary;
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-
-    // PEND-09 Phase 3 day-9 — the cutover flag retired alongside the
-    // `loro-shadow` feature gate; the engine is now the only path so
-    // every parity row is recorded with `loro_authoritative = true`.
-    // The column survives in the schema for back-compat with rows
-    // written under day-14's runtime flip (auth = 0 vs 1).
-    let loro_authoritative = true;
-
-    sampler.record(ParityEvent {
-        op_id: op_id.to_string(),
-        space_id: space_id.to_string(),
-        op_type: op.op_type_str().to_string(),
-        diffy_result: diffy_result_summary,
-        loro_result: loro_result_summary,
-        r#match,
-        timestamp,
-        loro_authoritative,
-    });
-
-    if !r#match {
-        tracing::debug!(
+    if let Err(e) = dispatch_result {
+        tracing::warn!(
             op_id,
-            "shadow_apply: parity diverged (expected during early shadow mode)",
+            op_type = %op.op_type_str(),
+            error = %e,
+            "shadow_apply: engine apply failed; skipping",
         );
     }
 }
 
-/// Build the same compact "summary" string `shadow_apply` produces
-/// from the typed op, for the `diffy_result` side of the parity event.
-/// Exposed as a sibling helper so callers in `merge/apply.rs` can
-/// build the diffy summary using the same shape that the Loro side
-/// emits — a perfect-string-match parity event means both layers
-/// agreed at the structural level.
+/// Vestigial summary builder, retained for log-line continuity.
 ///
-/// PEND-09 Phase 3 day-9 — `loro-shadow` feature gate retired;
-/// compiles unconditionally now.
+/// Pre-Phase-3-day-10 this fed the `diffy_result` column of the
+/// `merge_parity_log` table.  Day-10 dropped the table; the helper
+/// stays because materializer cohort-fanout still calls it to build
+/// a string for `tracing::warn` output on apply failure.  Future
+/// cleanup may inline the few remaining call sites and delete this.
 pub(crate) fn diffy_summary_for(op: &crate::op::OpPayload) -> String {
     match op {
         crate::op::OpPayload::CreateBlock(p) => format!("create:{}", p.block_id.as_str()),
@@ -280,12 +235,6 @@ pub(crate) fn diffy_summary_for(op: &crate::op::OpPayload) -> String {
                 value.as_deref().unwrap_or("<null>")
             )
         }
-        // Phase-2 day-8.5 — typed summaries for the five newly-mirrored
-        // op types (AddTag / RemoveTag / RestoreBlock / PurgeBlock /
-        // DeleteProperty).  `unsupported:` is now reachable only for
-        // the attachment ops (AddAttachment / DeleteAttachment), which
-        // are intentionally out of CRDT scope — see `shadow_apply`'s
-        // dispatch comment.
         crate::op::OpPayload::AddTag(p) => {
             format!("add_tag:{}:{}", p.block_id.as_str(), p.tag_id.as_str())
         }

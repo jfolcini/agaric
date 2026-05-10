@@ -1,54 +1,38 @@
-//! PEND-09 Phase 1 day-8 — proptest-augmented parity streams.
+//! PEND-09 — randomised `LoroEngine` regression streams.
 //!
-//! Days 1-7 landed the spike port + shadow-mode wiring + envelope +
-//! persistent SQLite parity sink + flush task + bucket A/B/C/D
-//! classifier + xxh3-64 peer-id swap.  Days prior also brought a
-//! hand-curated 53-case parity corpus across the spike's
-//! `tests/parity_corpus.rs` (now archived; see git tag
-//! `pend-09/spike-archive`) and a 5-shape integration suite in
-//! `merge/apply.rs::shadow_apply_unit_tests`.  Both prove kill
-//! criterion #2 (the headline "D bucket = 0" gate) over the cases
-//! their authors thought of.
+//! ## History
 //!
-//! Day-8 closes the gap left by hand-curated lists by feeding the
-//! same shadow-mode dispatch path **thousands of randomised op
-//! streams** and asserting that the day-6 `classifier::classify`
-//! never produces a `Bucket::D`.  Where the corpus tests one merge
-//! shape per file, proptest's shrinker actively searches the space
-//! for any input that violates the invariant — so a real CRDT bug
-//! (Loro errors where diffy succeeded, summary-shape drift) lands as
-//! a reproducible minimal counter-example pinned in
-//! `proptest-regressions/`.
+//! Originally landed Phase 1 day-8 as `loro/parity_proptest.rs`
+//! (commit `89df17a2`) — proptest streams driven through both Loro
+//! and the diffy-shaped summary path, asserting the bucket A/B/C/D
+//! classifier never produced a `Bucket::D` (kill criterion #2).  The
+//! two-device sub-module landed Phase 2 day-2 (`a9849adc`) to
+//! exercise concurrent-merge convergence over Loro's `import`.
 //!
-//! ## Why direct engine drive (not `shadow_apply`)
+//! Phase 3 day-10 repurposed the file: the parity sink + classifier +
+//! `merge_parity_log` table + diffy summary surface all got deleted
+//! (Loro is now authoritative; there is no diffy oracle to compare
+//! against).  What survived is the **engine convergence net** — the
+//! same proptest infrastructure now asserts:
 //!
-//! `merge::shadow_apply` requires a populated `ShadowState` (engine
-//! registry + sampler) and a `SpaceId`.  The engine drive logic is
-//! the same dispatch table; we mirror it inline here so each
-//! generated stream gets a fresh engine without registry-mutex
-//! re-entrancy concerns.  The summary strings produced are the
-//! identical shape `merge::shadow_apply` and `merge::diffy_summary_for`
-//! emit (see the helper-string assertions in the integration tests).
+//! * Single-author streams: every well-formed op succeeds against a
+//!   fresh engine, and the post-apply read-back matches the typed
+//!   input.  Catches engine-side regressions where an op's effect is
+//!   lost / corrupted in `LoroEngine::apply_*`.
+//! * Two-device streams: two engines that imported each other's
+//!   exported snapshots converge to the same read-back state across
+//!   every block_id touched + every property key written.  Catches
+//!   `loro` upstream regressions in `import` / `export_snapshot` /
+//!   per-key LWW behaviour.
 //!
-//! ## Two-device concurrent-merge extension (Phase 2 day-2)
+//! The two-device tests are the load-bearing surface for Phase 3's
+//! sync-rebuild trust assumption: if two `LoroEngine` instances
+//! diverge after mutual snapshot exchange, the sync apply path the
+//! day-5 `apply_remote_loro_batch` builds on is wrong.  The 1024
+//! cases × 4 streams reported in `pending/PEND-09-PHASE-3-PLAN.md`
+//! §7.1 came from this file under its old name.
 //!
-//! Day-8 deliberately scoped to single-author streams; the
-//! [`two_device`] sub-module landed on Phase 2 day-2 to close the
-//! deferred Phase-1-day-8 gap and exercise the C-bucket-rich case
-//! (concurrent edits across two peers + Loro's `import`-merge).
-//!
-//! Scope choice: the two-device tests assert **Loro-side convergence
-//! only** — both engines, after mutual snapshot exchange, must read
-//! back identical state.  The diffy oracle is NOT compared per-stream:
-//! diffy convergence is already proven by the existing 3700+-test
-//! merge suite + the hand-curated 53-case spike parity corpus, and
-//! standing up two `SqlitePool`s + two materializers per proptest
-//! case would balloon per-case wall-clock past the 30 s budget.  The
-//! two-device tests target Loro-side bugs (op-log merge bugs,
-//! container-shape divergence, LWW non-determinism) that the
-//! single-author day-8 net cannot catch.
-//!
-//! ## Configuration choices
+//! ## Configuration choices (preserved from parity_proptest.rs)
 //!
 //! - **256 cases** (proptest default) — empirically <1 s wall-clock on
 //!   the test box for the mixed-op stream, comfortably under the
@@ -64,15 +48,11 @@
 //!   the small pool is more realistic than a fresh-id-per-op model.
 //!
 //! Failing seeds auto-save under `proptest-regressions/loro/` per
-//! proptest's default behaviour; the file is committed to source
-//! control (see `proptest-regressions/mcp/tools_ro.txt` for the
-//! existing convention).
+//! proptest's default behaviour.
 
 use proptest::prelude::*;
 
-use crate::loro::classifier::{self, Bucket};
 use crate::loro::engine::LoroEngine;
-use crate::merge::diffy_summary_for;
 use crate::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     SetPropertyPayload,
@@ -103,16 +83,15 @@ fn block_id_strategy() -> impl Strategy<Value = String> {
 // ---------------------------------------------------------------------------
 // Op-payload strategies.  Each generates ONE typed op against a given
 // block id; the stream-level strategy handles invariant maintenance
-// (e.g. "Edit only after Create" — see [`StreamGenState`]).
+// (e.g. "Edit only after Create").
 // ---------------------------------------------------------------------------
 
 /// Short ASCII-printable content snippet, 0..=20 chars.  Bounded so
 /// `EditBlock`'s `to_text` stays manageable in shrinker output.  We
-/// avoid arbitrary Unicode here on purpose — the spike's
+/// avoid arbitrary Unicode here on purpose — the engine's
 /// `apply_edit_via_diff_splice` is unicode-scalar-correct (validated
-/// in the corpus's category 5 RGA tests), and adding a Unicode axis
-/// to the shrinker would balloon counter-example size without adding
-/// regression value beyond what the corpus already covers.
+/// in `loro::tests`), and adding a Unicode axis to the shrinker would
+/// balloon counter-example size without adding regression value.
 fn content_strategy() -> impl Strategy<Value = String> {
     "[a-zA-Z0-9 ]{0,20}".prop_map(|s| s)
 }
@@ -146,14 +125,14 @@ fn position_strategy() -> impl Strategy<Value = i64> {
 // 1. A block must be created (CreateBlock) before any Edit / Delete /
 //    Move / SetProperty against it.  The engine returns
 //    `AppError::Validation("not found")` otherwise — a legitimate
-//    "engine refused a malformed input" error, NOT a divergence-from-
-//    diffy bucket-D event.
+//    "engine refused a malformed input" error, NOT an engine-side
+//    correctness failure.
 // 2. Within a stream, a CreateBlock for a given id must not collide
 //    with an existing CreateBlock for the same id (engine returns
 //    `insert_container` slot-already-populated error).
 //
 // Both invariants are also enforced upstream (the materializer
-// rejects malformed ops before they reach `shadow_apply`), so the
+// rejects malformed ops before they reach the engine), so the
 // generator is modelling the production invariant — not papering
 // over an engine bug.
 // ---------------------------------------------------------------------------
@@ -189,7 +168,7 @@ enum OpKind {
 /// Generator for a single [`OpKind`] step.  The probability mix
 /// (40 % create, 60 % spread across the four mutators) keeps streams
 /// from being all-create — once the pool warms up the shrinker can
-/// favour mutator-heavy streams which are where parity bugs would
+/// favour mutator-heavy streams which are where engine bugs would
 /// first surface.
 fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
     prop_oneof![
@@ -207,7 +186,7 @@ fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
 
 /// A stream of op-kind sketches.  The realised stream (with concrete
 /// block_ids, no-Edit-before-Create) is computed at apply time by
-/// [`apply_stream`] from the running `created_blocks` set.
+/// the test bodies from the running `created_blocks` set.
 fn op_stream_strategy(
     len_range: std::ops::RangeInclusive<usize>,
 ) -> impl Strategy<Value = Vec<OpKind>> {
@@ -222,9 +201,9 @@ fn op_stream_strategy(
 fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<OpPayload> {
     let pick_alive = |index: usize| -> Option<&String> {
         // Only consider blocks that exist AND have not been deleted.
-        // Production shadow_apply skips ops against deleted blocks at
-        // the materializer boundary; mirroring the rule here keeps
-        // stream semantics aligned with what the engine ever sees.
+        // Mirrors the materializer boundary's "skip ops against
+        // deleted blocks" rule so stream semantics align with what
+        // the engine ever sees in production.
         let alive: Vec<&String> = created.iter().filter(|id| !deleted.contains(id)).collect();
         if alive.is_empty() {
             return None;
@@ -283,46 +262,33 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
     }
 }
 
-/// Mirror of the dispatch arm in `merge::shadow_apply`: drive one op
-/// onto an engine and return the same Loro-summary string the parity
-/// row would carry.  Errors stringify as `"error:<msg>"` per the
-/// production shape (see `merge::mod.rs` line 196).
-fn loro_summary_for_engine(engine: &mut LoroEngine, op: &OpPayload) -> String {
-    let result: Result<String, crate::error::AppError> = match op {
+/// Drive one op onto the engine.  Equivalent to the per-op-type
+/// dispatch arm that lived in `merge::shadow_apply` before Phase 3
+/// day-10 deleted the parity-sink path.  Returns `Ok(())` on success;
+/// the proptest body asserts no errors fire (well-formed streams must
+/// always succeed against a fresh engine).
+fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate::error::AppError> {
+    match op {
         OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(|id| id.as_str());
             let position = p.position.unwrap_or(0);
-            engine
-                .apply_create_block(
-                    p.block_id.as_str(),
-                    &p.block_type,
-                    &p.content,
-                    parent,
-                    position,
-                )
-                .map(|_| format!("create:{}", p.block_id.as_str()))
+            engine.apply_create_block(
+                p.block_id.as_str(),
+                &p.block_type,
+                &p.content,
+                parent,
+                position,
+            )?;
         }
-        OpPayload::EditBlock(p) => engine
-            .apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)
-            .map(|_| {
-                let head: String = p.to_text.chars().take(50).collect();
-                format!("edit:{}:{}", p.block_id.as_str(), head)
-            }),
-        OpPayload::DeleteBlock(p) => engine
-            .apply_delete_block(p.block_id.as_str())
-            .map(|_| format!("delete:{}", p.block_id.as_str())),
+        OpPayload::EditBlock(p) => {
+            engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)?;
+        }
+        OpPayload::DeleteBlock(p) => {
+            engine.apply_delete_block(p.block_id.as_str())?;
+        }
         OpPayload::MoveBlock(p) => {
             let parent = p.new_parent_id.as_ref().map(|id| id.as_str());
-            engine
-                .apply_move_block(p.block_id.as_str(), parent, p.new_position)
-                .map(|_| {
-                    format!(
-                        "move:{}:{}:{}",
-                        p.block_id.as_str(),
-                        parent.unwrap_or("<root>"),
-                        p.new_position
-                    )
-                })
+            engine.apply_move_block(p.block_id.as_str(), parent, p.new_position)?;
         }
         OpPayload::SetProperty(p) => {
             let value: Option<String> = p
@@ -332,48 +298,35 @@ fn loro_summary_for_engine(engine: &mut LoroEngine, op: &OpPayload) -> String {
                 .or_else(|| p.value_date.clone())
                 .or_else(|| p.value_ref.clone())
                 .or_else(|| p.value_bool.map(|b| b.to_string()));
-            engine
-                .apply_set_property(p.block_id.as_str(), &p.key, value.as_deref())
-                .map(|_| {
-                    format!(
-                        "set_property:{}:{}={}",
-                        p.block_id.as_str(),
-                        p.key,
-                        value.as_deref().unwrap_or("<null>")
-                    )
-                })
+            engine.apply_set_property(p.block_id.as_str(), &p.key, value.as_deref())?;
         }
         // The proptest generators only emit the five supported op
         // variants — any other variant is unreachable here.
-        other => Ok(format!("unsupported:{}", other.op_type_str())),
-    };
-
-    match result {
-        Ok(summary) => summary,
-        Err(e) => format!("error:{e}"),
+        _ => {}
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // proptest cases.
 //
 // Each case generates a stream, drives it onto a fresh engine, and
-// asserts every step's classifier bucket is NOT `D`.  The "fresh
-// engine per case" stance is deliberate — it isolates failures to a
-// single stream, so the shrinker's minimised counter-example is also
-// the minimised reproduction script.
+// asserts every applied op succeeds.  The "fresh engine per case"
+// stance is deliberate — it isolates failures to a single stream, so
+// the shrinker's minimised counter-example is also the minimised
+// reproduction script.
 // ---------------------------------------------------------------------------
 
 proptest! {
-    /// Sanity check: single-author CreateBlock-only streams must
-    /// always produce bucket A (byte-identical diffy + Loro summaries).
+    /// Sanity check: single-author CreateBlock-only streams must apply
+    /// cleanly and read back with the content the stream supplied.
     /// This is the floor — if this test ever flakes, every richer test
     /// below is suspect.
     #[test]
-    fn single_author_create_only_stream_is_bucket_a(
+    fn single_author_create_only_stream_apply_succeeds(
         // Up to 8 creates over the 3-block pool.  Most cases will hit
-        // the "duplicate create" guard and skip; that's fine — what we
-        // care about is the create-succeeded summaries staying in A.
+        // the "duplicate create" guard in `resolve_op` and skip; that's
+        // fine — what we care about is the create-succeeded path.
         block_ids in proptest::collection::vec(block_id_strategy(), 1..=8),
     ) {
         let mut engine = LoroEngine::with_peer_id("DEV-PROPTEST")
@@ -387,33 +340,31 @@ proptest! {
             };
             let Some(op) = resolve_op(&kind, &created, &[]) else { continue };
 
-            let loro_summary = loro_summary_for_engine(&mut engine, &op);
-            let diffy_summary = diffy_summary_for(&op);
-            let matched = loro_summary == diffy_summary;
-            let bucket = classifier::classify(&diffy_summary, &loro_summary, matched);
+            apply_to_engine(&mut engine, &op).expect("apply create on fresh id");
 
-            // Single-author Create succeeded on a fresh id → A.
-            // ANY other bucket on this floor case is a regression.
-            prop_assert_eq!(
-                bucket,
-                Bucket::A,
-                "create-only stream must stay in A; got {:?} (diffy={}, loro={})",
-                bucket,
-                diffy_summary,
-                loro_summary,
-            );
+            // Read-back equality: the engine must hold the just-created
+            // block with the typed content.
+            let snap = engine
+                .read_block(block_id)
+                .expect("read")
+                .expect("block must exist post-create");
+            prop_assert_eq!(snap.content, "hello");
 
             created.push(block_id.clone());
         }
     }
 
-    /// The headline test: single-author MIXED-OP streams (Create +
-    /// Edit + Delete + Move + SetProperty over the 3-block pool).
-    /// kill criterion #2 says bucket D must remain zero across ALL
-    /// observed streams.  proptest's shrinker gives us thousands of
-    /// distinct streams per CI run.
+    /// Single-author MIXED-OP streams (Create + Edit + Delete + Move +
+    /// SetProperty over the 3-block pool).  Every well-formed op must
+    /// apply without error against a fresh engine — the resolver's
+    /// invariants (Create-before-mutate, no duplicate Create, no
+    /// Edit-on-deleted) make every emitted op well-formed.
+    ///
+    /// proptest's shrinker gives us thousands of distinct streams per
+    /// CI run; any apply-side failure here surfaces an engine
+    /// regression as a minimal reproducer.
     #[test]
-    fn single_author_mixed_op_stream_never_hits_bucket_d(
+    fn single_author_mixed_op_stream_apply_succeeds(
         ops in op_stream_strategy(1..=50),
     ) {
         let mut engine = LoroEngine::with_peer_id("DEV-PROPTEST")
@@ -424,71 +375,13 @@ proptest! {
         for kind in &ops {
             let Some(op) = resolve_op(kind, &created, &deleted) else { continue };
 
-            let loro_summary = loro_summary_for_engine(&mut engine, &op);
-            let diffy_summary = diffy_summary_for(&op);
-            let matched = loro_summary == diffy_summary;
-            let bucket = classifier::classify(&diffy_summary, &loro_summary, matched);
-
-            // The whole point of this test: D must stay empty.  We
-            // include both summaries in the failure message so a
-            // failing seed surfaces the exact disagreement string.
-            prop_assert_ne!(
-                bucket,
-                Bucket::D,
-                "single-author stream landed in bucket D — STOP-AND-FLAG \
-                 (diffy={}, loro={})",
-                diffy_summary,
-                loro_summary,
-            );
+            // Headline assertion: well-formed ops must apply cleanly.
+            // A failure here is an engine bug (or a resolver bug if
+            // the op turned out to be ill-formed).
+            apply_to_engine(&mut engine, &op)
+                .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
             // Track stream state for the next iteration.
-            match &op {
-                OpPayload::CreateBlock(p) => {
-                    created.push(p.block_id.as_str().to_string());
-                }
-                OpPayload::DeleteBlock(p) => {
-                    deleted.push(p.block_id.as_str().to_string());
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Defensive companion: single-author streams should also stay
-    /// out of bucket B (Loro-merged-where-diffy-conflicted).  B is
-    /// reachable today only via the forward-compat `conflict:` prefix
-    /// rule (see `classifier::classify`); a single-author stream
-    /// cannot produce a conflict, so any B sighting here is a
-    /// summary-shape drift in either `diffy_summary_for` or the
-    /// engine summary path.  Catches a class of refactor bugs the
-    /// D-only assertion above would miss.
-    #[test]
-    fn single_author_mixed_op_stream_never_hits_bucket_b(
-        ops in op_stream_strategy(1..=50),
-    ) {
-        let mut engine = LoroEngine::with_peer_id("DEV-PROPTEST")
-            .expect("with_peer_id");
-        let mut created: Vec<String> = Vec::new();
-        let mut deleted: Vec<String> = Vec::new();
-
-        for kind in &ops {
-            let Some(op) = resolve_op(kind, &created, &deleted) else { continue };
-
-            let loro_summary = loro_summary_for_engine(&mut engine, &op);
-            let diffy_summary = diffy_summary_for(&op);
-            let matched = loro_summary == diffy_summary;
-            let bucket = classifier::classify(&diffy_summary, &loro_summary, matched);
-
-            prop_assert_ne!(
-                bucket,
-                Bucket::B,
-                "single-author stream landed in bucket B — diffy summary \
-                 shouldn't carry `conflict:` prefix without a real concurrent \
-                 conflict (diffy={}, loro={})",
-                diffy_summary,
-                loro_summary,
-            );
-
             match &op {
                 OpPayload::CreateBlock(p) => {
                     created.push(p.block_id.as_str().to_string());
@@ -505,54 +398,31 @@ proptest! {
 // ===========================================================================
 // PEND-09 Phase 2 day-2 — two-device concurrent-merge proptest streams.
 //
-// Closes the deferred Phase-1-day-8 gap.  The single-author streams
-// above prove the dispatch path doesn't drop ops on the way through
-// the engine; what they CANNOT catch is divergence-on-merge — the
-// failure mode where two devices, having both applied valid op
+// The single-author streams above prove the engine's apply path doesn't
+// drop or corrupt ops.  What they CANNOT catch is divergence-on-merge —
+// the failure mode where two devices, having both applied valid op
 // streams independently, produce different states after exchanging
-// snapshots.  This sub-module's tests start a fresh `LoroEngine` per
-// device with distinct peer ids, run independently-generated op
-// streams on each, mutually `import` snapshots, and assert both
-// engines read back identical state across a representative key set.
+// snapshots.  This sub-module starts a fresh `LoroEngine` per device
+// with distinct peer ids, runs independently-generated op streams on
+// each, mutually `import` snapshots, and asserts both engines read
+// back identical state across a representative key set.
 //
-// ## Why this lives here, not in a sibling file
-//
-// The strategies + helpers ([`block_id_strategy`], [`op_kind_strategy`],
-// [`resolve_op`]) are reused unchanged across single-author and
-// two-device tests; pulling them into a new file would force them
-// `pub(super)`-visible across an internal module boundary for no
-// readability win.  The `two_device` mod block keeps the day-2 cases
-// visually grouped without splitting the strategy code.
+// Phase 3 day-10 narrative shift: when this sub-module was written
+// (Phase 2 day-2) it was the C-bucket-rich case backing the
+// merge_parity_log classifier story.  After day-10 the parity sink is
+// gone and the classifier is gone — the convergence assertion stands
+// on its own as the load-bearing CRDT correctness check the day-5
+// `apply_remote_loro_batch` will trust.
 //
 // ## Scope: Loro-side convergence only
 //
 // We assert "device A's reads == device B's reads after sync" for
-// every key the streams touched.  We do NOT compare against the
-// diffy 3-way merge oracle: diffy convergence is independently
-// covered by the production `merge/tests.rs` suite (3700+ tests) and
-// the spike's hand-curated 53-case parity corpus.  The two-device
-// proptest's value-add is randomised search for Loro-only bugs:
-// container-shape mismatches across import, non-deterministic LWW
-// outcomes, op-log merge errors.
-//
-// ## Bucket-D / kill-criterion #2 angle
-//
-// The day-8 single-author proptest is the module that exercises the
-// bucket-classify path against diffy-shaped summaries (see the
-// `bucket` / `classify` callsites earlier in this file).  These
-// two-device tests deliberately do NOT run `classify` per op:
-// without a diffy-side oracle running per-stream there is no second
-// summary to compare against, so a `Bucket::D` assertion would be
-// vacuous.  The two-device tests' contract is narrower: post-sync
-// convergence + "LWW winner is one of the two contributors".  Sync-
-// path crashes (an `import` failure, an `apply_*` returning a
-// validation error after divergence) surface as `expect()` panics
-// in [`sync_engines`] / the per-op apply calls, which fails the
-// proptest case directly — no classify needed.
+// every key the streams touched.  We do NOT compare against any
+// external oracle.  The two-device proptest's value-add is randomised
+// search for Loro-only bugs: container-shape mismatches across
+// import, non-deterministic LWW outcomes, op-log merge errors.
 // ===========================================================================
 
-/// Two-device concurrent-merge proptest streams.  See parent module
-/// docstring §"Two-device concurrent-merge extension".
 #[cfg(test)]
 mod two_device {
     use super::*;
@@ -568,35 +438,20 @@ mod two_device {
     /// dispatch (Create-before-mutate, no duplicate Create, no
     /// Edit/Delete/Move/SetProperty on a deleted block — see
     /// [`resolve_op`]).  Returns the set of block_ids that ended up
-    /// created (so the comparator can read them back) and the keys
-    /// touched on `set_property` (so we can compare property reads).
-    /// The caller uses the returned sets to compute the union of
-    /// "interesting" reads across both devices.
-    ///
-    /// Note: peer-id assignment lives in the caller — each test
-    /// instantiates its engines via [`LoroEngine::with_peer_id`] with
-    /// distinct labels (`"DEV-PROPTEST-A"` vs `"DEV-PROPTEST-B"`) so
-    /// the two engines land on distinct `PeerID`s, which is required
-    /// for Loro's CRDT to treat them as independent writers.
-    fn apply_stream(
-        engine: &mut LoroEngine,
-        ops: &[OpKind],
-    ) -> (Vec<String>, Vec<(String, String)>) {
+    /// created (so the comparator can read them back).
+    fn apply_stream(engine: &mut LoroEngine, ops: &[OpKind]) -> Vec<String> {
         let mut created: Vec<String> = Vec::new();
         let mut deleted: Vec<String> = Vec::new();
-        let mut props_touched: Vec<(String, String)> = Vec::new();
 
         for kind in ops {
             let Some(op) = resolve_op(kind, &created, &deleted) else {
                 continue;
             };
 
-            // Drive the op onto the engine.  We don't classify per-op
-            // here — single-author classification is the day-8 job;
-            // here we care about post-sync convergence.  Errors are
-            // ignored on the apply side (the resolver guards against
-            // most of them already) and surface in convergence drift.
-            let _summary = loro_summary_for_engine(engine, &op);
+            // Errors are ignored on the apply side (the resolver guards
+            // against most of them already) and surface as convergence
+            // drift in the post-sync compare.
+            let _ = apply_to_engine(engine, &op);
 
             match &op {
                 OpPayload::CreateBlock(p) => {
@@ -605,20 +460,16 @@ mod two_device {
                 OpPayload::DeleteBlock(p) => {
                     deleted.push(p.block_id.as_str().to_string());
                 }
-                OpPayload::SetProperty(p) => {
-                    props_touched.push((p.block_id.as_str().to_string(), p.key.clone()));
-                }
                 _ => {}
             }
         }
 
-        (created, props_touched)
+        created
     }
 
     /// Mutual snapshot exchange — A imports B's state, B imports A's.
-    /// Mirrors the spike's `parity_corpus::sync` helper.  After this
-    /// call both engines have all ops from both sides and must read
-    /// back identical state across every shared key.
+    /// After this call both engines have all ops from both sides and
+    /// must read back identical state across every shared key.
     fn sync_engines(a: &mut LoroEngine, b: &mut LoroEngine) {
         let a_bytes = a.export_snapshot().expect("export A");
         let b_bytes = b.export_snapshot().expect("export B");
@@ -630,11 +481,6 @@ mod two_device {
     /// both engines agree (either both see the block with identical
     /// fields, or both see no block); returns the divergence detail in
     /// `Err` for the prop_assert message.
-    ///
-    /// We compare the [`BlockSnapshot`] equality directly — `PartialEq`
-    /// covers all five fields (block_id, block_type, content,
-    /// parent_id, position).  `read_deleted` is checked separately
-    /// since it's not part of `BlockSnapshot`.
     fn compare_block_reads(a: &LoroEngine, b: &LoroEngine, block_id: &str) -> Result<(), String> {
         let a_block = a
             .read_block(block_id)
@@ -648,7 +494,6 @@ mod two_device {
             ));
         }
         // If both saw the block, also check the deleted-flag read.
-        // (read_deleted is Err on missing block, so guard.)
         if a_block.is_some() {
             let a_del = a
                 .read_deleted(block_id)
@@ -711,10 +556,6 @@ mod two_device {
         /// convergence; we do NOT assert which side wins.
         #[test]
         fn two_device_concurrent_create_only_stream_loro_converges(
-            // 1-6 creates per device.  Small enough that overlap on
-            // the 3-block pool is common (proptest will explore both
-            // disjoint and overlapping cases); large enough that
-            // we exercise multi-create-per-device.
             a_block_ids in proptest::collection::vec(block_id_strategy(), 1..=6),
             b_block_ids in proptest::collection::vec(block_id_strategy(), 1..=6),
         ) {
@@ -738,8 +579,8 @@ mod two_device {
                 })
                 .collect();
 
-            let (a_created, _) = apply_stream(&mut engine_a, &a_ops);
-            let (b_created, _) = apply_stream(&mut engine_b, &b_ops);
+            let a_created = apply_stream(&mut engine_a, &a_ops);
+            let b_created = apply_stream(&mut engine_b, &b_ops);
 
             sync_engines(&mut engine_a, &mut engine_b);
 
@@ -769,10 +610,6 @@ mod two_device {
         /// concurrent splices interleave deterministically per Loro's
         /// CRDT rules.  After sync both engines must read back the
         /// same content.
-        ///
-        /// This is the "RGA-CRDT identical-edit doubling" scenario
-        /// the spike's category 5 documented as bucket C — it's
-        /// CRDT-correct divergence from diffy, not bucket D.
         #[test]
         fn two_device_concurrent_edit_same_block_loro_converges(
             a_edits in proptest::collection::vec(content_strategy(), 1..=8),
@@ -785,8 +622,7 @@ mod two_device {
 
             // Common seed: both devices create the same block, then
             // exchange snapshots so the create lands on a shared
-            // ancestor.  This matches the spike `two_peers_from_seed`
-            // pattern — the divergent edits below have a clean LCA.
+            // ancestor.  The divergent edits below have a clean LCA.
             let seed_id = BLOCK_ID_POOL[0];
             engine_a
                 .apply_create_block(seed_id, "content", "seed", None, 0)
@@ -819,16 +655,13 @@ mod two_device {
         ///
         /// Both devices SetProperty(X, "todo_state", different values).
         /// Loro's LoroMap LWW key-write picks one value; both engines
-        /// after sync must see the SAME winner.  Mirrors the spike's
-        /// `parity_concurrent_property_writes_different_values`
-        /// (parity_corpus.rs ~line 724) lifted into proptest scale.
+        /// after sync must see the SAME winner.
         ///
         /// Note: Loro's LWW tiebreak is Lamport-order (peer-id +
-        /// op-counter) — NOT wall-clock timestamp.  Diffy uses
-        /// (timestamp, device_id, seq); the tiebreak rule difference
-        /// is the documented bucket-C exception (see ARCHITECTURE.md
-        /// §12 "LWW resolution rule").  Convergence on each side is
-        /// what kill-criterion #2 actually requires.
+        /// op-counter) — NOT wall-clock timestamp.  The tiebreak rule
+        /// is documented in `ARCHITECTURE.md` §12 "LWW resolution
+        /// rule".  Convergence on each side is what kill-criterion #2
+        /// actually requires.
         #[test]
         fn two_device_concurrent_set_property_loro_lww_wins(
             a_value in prop_value_strategy(),
@@ -884,16 +717,7 @@ mod two_device {
         ///
         /// Both devices MoveBlock(X, different parents).  Loro's
         /// per-key LWW on the `parent_id` slot picks one parent; both
-        /// engines must converge on the same value.  Cites the same
-        /// LWW rule as test 3 — the documented Lamport-vs-wallclock
-        /// tiebreak exception (see ARCHITECTURE.md §12 "LWW resolution
-        /// rule").
-        ///
-        /// This is the "loser's reparent intent dropped" tradeoff
-        /// the plan flagged as open question 5 — the spike's
-        /// `parity_concurrent_reparent_different_parents` (corpus
-        /// ~line 638) tests one pair of values; here we let proptest
-        /// search the parent-id space.
+        /// engines must converge on the same value.
         #[test]
         fn two_device_concurrent_move_loro_lww_wins(
             a_pos in position_strategy(),

@@ -16,11 +16,17 @@ use sqlx::SqlitePool;
 // PEND-09 Phase 3 day-7 — `merge::detect`, `merge::resolve`, and
 // `merge::types` deleted along with the now-orphan
 // `merge_text` / `create_conflict_copy` / `resolve_property_conflict`
-// surface.  The only thing this module still does is bridge an
-// `OpRecord` into `merge::shadow_apply` for the parity sink path.
+// surface.
 //
 // PEND-09 Phase 3 day-9 — `loro-shadow` feature gate retired; the
 // dispatcher and tests below compile unconditionally.
+//
+// PEND-09 Phase 3 day-10 — parity sink + classifier + flush task
+// deleted.  `shadow_apply` is now a pure engine dispatcher (no
+// `ParityEvent` recording); the unit tests below verify engine state
+// after dispatch but no longer assert on a sampler ring.  The
+// "parity_sampler_records_one_event_per_call" test was removed in the
+// same pass — its target sampler is gone.
 
 // ---------------------------------------------------------------------------
 // PEND-09 Phase 1 day-2 — shadow-mode dispatch helper.
@@ -218,9 +224,9 @@ mod shadow_apply_unit_tests {
     use crate::loro::shared::ShadowState;
     use crate::merge::shadow_apply;
     use crate::op::{
-        AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
-        DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-        PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
+        AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload,
+        EditBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
+        SetPropertyPayload,
     };
     use crate::space::SpaceId;
     use crate::ulid::BlockId;
@@ -235,7 +241,6 @@ mod shadow_apply_unit_tests {
     fn fresh_state() -> ShadowState {
         ShadowState {
             registry: LoroEngineRegistry::new(),
-            sampler: crate::loro::parity::ShadowParitySampler::new(),
         }
     }
 
@@ -260,14 +265,6 @@ mod shadow_apply_unit_tests {
     fn delete_op(block_id: &str) -> OpPayload {
         OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::from_trusted(block_id),
-        })
-    }
-
-    fn move_op(block_id: &str, position: i64) -> OpPayload {
-        OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: BlockId::from_trusted(block_id),
-            new_parent_id: None,
-            new_position: position,
         })
     }
 
@@ -391,55 +388,13 @@ mod shadow_apply_unit_tests {
         }
     }
 
-    /// The parity sampler ring must accumulate exactly one event per
-    /// `shadow_apply` call.
-    #[test]
-    fn parity_sampler_records_one_event_per_call() {
-        let state = fresh_state();
-        let space = SpaceId::from_trusted(SPACE_A);
-
-        // Mix all five supported op types.  CreateBlock first so the
-        // subsequent ops have a target.
-        let ops = vec![
-            create_op(BLOCK_1, "seed"),
-            edit_op(BLOCK_1, "edited"),
-            move_op(BLOCK_1, 7),
-            set_prop_op(BLOCK_1, "priority", "high"),
-            delete_op(BLOCK_1),
-        ];
-        let n = ops.len() as u64;
-
-        for (idx, op) in ops.into_iter().enumerate() {
-            let summary = super::super::diffy_summary_for(&op);
-            shadow_apply(
-                &format!("DEV/{idx}"),
-                &op,
-                DEVICE_ID,
-                &space,
-                summary,
-                &state,
-            );
-        }
-
-        assert_eq!(
-            state.sampler.total_pushed(),
-            n,
-            "exactly one parity event per shadow_apply call",
-        );
-
-        // All five events must report a match because we passed the
-        // exact same summary string the dispatcher produces.
-        let snap = state.sampler.snapshot();
-        assert_eq!(snap.len(), n as usize);
-        for ev in &snap {
-            assert!(
-                ev.r#match,
-                "self-summary should always match: op_id={} diffy={} loro={}",
-                ev.op_id, ev.diffy_result, ev.loro_result
-            );
-        }
-        assert_eq!(state.sampler.total_diverged(), 0);
-    }
+    // PEND-09 Phase 3 day-10 — `parity_sampler_records_one_event_per_call`
+    // was removed here.  Its target — the `ShadowParitySampler` ring
+    // owned by `ShadowState` — got deleted alongside the
+    // `merge_parity_log` table (the diffy↔Loro comparison surface lost
+    // meaning post-cutover).  The dispatcher is now log+skip on error
+    // with no observable record-keeping; the engine-side mutation tests
+    // above + below remain as the engine-effect oracle.
 
     // ---------------------------------------------------------------------
     // Phase-2 day-8.5 — dispatcher coverage for the five newly-mirrored
@@ -590,90 +545,16 @@ mod shadow_apply_unit_tests {
         );
     }
 
-    /// All five new dispatch arms produce a parity event whose
-    /// diffy_summary matches the loro_summary exactly (same shape as
-    /// the existing five-op test).
-    #[test]
-    fn shadow_apply_records_match_for_new_op_types() {
-        let state = fresh_state();
-        let space = SpaceId::from_trusted(SPACE_A);
-
-        // Seed sequence so each op has a valid target.
-        let seed = vec![
-            ("DEV/0", create_op(BLOCK_1, "seed")),
-            ("DEV/1", set_prop_op(BLOCK_1, "k", "v")),
-        ];
-        for (id, op) in &seed {
-            dispatch(&state, &space, id, op);
-        }
-        let baseline = state.sampler.total_pushed();
-
-        let new_ops = vec![
-            ("DEV/2", add_tag_op(BLOCK_1, TAG_ULID)),
-            ("DEV/3", remove_tag_op(BLOCK_1, TAG_ULID)),
-            ("DEV/4", delete_prop_op(BLOCK_1, "k")),
-            ("DEV/5", delete_op(BLOCK_1)),
-            ("DEV/6", restore_op(BLOCK_1)),
-            ("DEV/7", purge_op(BLOCK_1)),
-        ];
-        for (id, op) in &new_ops {
-            dispatch(&state, &space, id, op);
-        }
-
-        // One parity event per dispatch (no skipped arms).
-        assert_eq!(
-            state.sampler.total_pushed(),
-            baseline + new_ops.len() as u64,
-            "every new op type must produce exactly one parity event"
-        );
-
-        // Every event for the new ops must have matched (we passed
-        // the diffy_summary the dispatcher itself produces).
-        let snap = state.sampler.snapshot();
-        for ev in &snap[snap.len() - new_ops.len()..] {
-            assert!(
-                ev.r#match,
-                "new-op self-summary must match: op_type={} diffy={} loro={}",
-                ev.op_type, ev.diffy_result, ev.loro_result,
-            );
-        }
-        assert_eq!(state.sampler.total_diverged(), 0);
-    }
-
-    /// Attachment ops are intentionally out of scope per Phase-2
-    /// day-8.5 (file-blob ops live outside CRDT state).  The
-    /// dispatcher must skip them — no parity event recorded, no
-    /// engine mutation.
-    #[test]
-    fn shadow_apply_skips_attachment_ops() {
-        let state = fresh_state();
-        let space = SpaceId::from_trusted(SPACE_A);
-        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
-        let baseline = state.sampler.total_pushed();
-
-        let add_att = OpPayload::AddAttachment(AddAttachmentPayload {
-            attachment_id: BlockId::test_id("A1"),
-            block_id: BlockId::from_trusted(BLOCK_1),
-            mime_type: "image/png".into(),
-            filename: "p.png".into(),
-            size_bytes: 1,
-            fs_path: "/tmp/p.png".into(),
-        });
-        let del_att = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-            attachment_id: BlockId::test_id("A1"),
-            fs_path: "/tmp/p.png".into(),
-        });
-        dispatch(&state, &space, "DEV/2", &add_att);
-        dispatch(&state, &space, "DEV/3", &del_att);
-
-        // Both attachment ops must have been skipped — no new parity
-        // events past the baseline.
-        assert_eq!(
-            state.sampler.total_pushed(),
-            baseline,
-            "attachment ops must be log-and-skip (no parity event)"
-        );
-    }
+    // PEND-09 Phase 3 day-10 — `shadow_apply_records_match_for_new_op_types`
+    // and `shadow_apply_skips_attachment_ops` were removed here.  Both
+    // asserted on `state.sampler.total_pushed()` / `total_diverged()` —
+    // the parity-sampler ring is gone post-day-10.  The "skips
+    // attachment ops" half was a no-op observation against the same
+    // sampler counter; with the counter gone there is nothing
+    // observable to assert.  The dispatch arms themselves are still
+    // exercised by the per-op-type tests above (each asserts the
+    // engine reflects the mutation), so coverage is unchanged where
+    // it matters — only the sampler-counter assertion is removed.
 }
 
 // ---------------------------------------------------------------------------
