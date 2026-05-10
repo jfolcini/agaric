@@ -664,3 +664,208 @@ day-11+ hard floor; the flag-off rollback is a single-row SQL
 UPDATE (`set_loro_authoritative(false)`), no code revert needed.
 
 — PEND-09 Phase 2 day-10, 2026-05-09.
+
+## 10. Days 11-15 addendum — prerequisite closed, recommendation upgraded
+
+**Dated 2026-05-10.** Append-only follow-up to §1-§9; the
+sections above are preserved as the historical record taken at
+day-10 close. This addendum updates the recommendation in light
+of the five days of work that landed after the original report.
+
+### 10.1 Why this addendum exists
+
+§1's recommendation was **GO-WITH-PREREQUISITES** because the
+single biggest gap was the `apply_op` reorder (§4.1). At day-10
+the toggle plumbing existed but **no code path branched on
+`is_loro_authoritative()`** outside test modules; flipping the
+flag changed nothing observable. Days 11-15 closed that gap end
+to end, plus the symmetric engine-fanout asymmetry §8.1 had only
+half-fixed for restore. The remaining items are calendar-time
+and user-decision; they were always going to remain.
+
+### 10.2 Day-by-day recap
+
+- **Day 11 — `apply_op` reorder design + projection helpers
+  (commit `8af389aa`).** Picks **Option A** from cutover plan
+  §8.4 (per-arm `if is_loro_authoritative()` branch in
+  `apply_op_tx`, preserves diffy path on the `false` arm for
+  test parity and incremental rollout). New design doc
+  `pending/PEND-09-apply-op-reorder.md` (~280 lines covering
+  projection rules, hot-path columns, atomic semantics, and the
+  Loro-1.x no-transaction-primitive trade-off). New module
+  `src-tauri/src/loro/projection.rs` (~485 LOC + tests):
+  `project_create_block_to_sql`, `project_edit_block_to_sql`,
+  `project_set_property_to_sql`, `project_purge_block_to_sql`,
+  plus 6 fail-fast stubs for the not-yet-wired ops.
+  `apply_create_block_via_loro` + `apply_edit_block_via_loro`
+  helpers in `materializer/handlers.rs` follow the `EngineGuard`
+  scoping pattern (acquire → apply → drop guard → project; the
+  guard is `!Send` so the compiler enforces no `.await` crosses
+  the lock). Default 3769 (unchanged), feature-on 3858 → 3867
+  (+9). Reviewer added `§12` to the design doc capturing three
+  follow-up items including the engine-strict-vs-SQL-permissive
+  asymmetry called out in 10.4 below.
+- **Day 12 — wire SetProperty + DeleteBlock + MoveBlock (commit
+  `204ca451`).** Replaces day-11 stubs for
+  `project_delete_block_to_sql` (CTE-driven cascade matching
+  `apply_delete_block_tx` exactly) and `project_move_block_to_sql`
+  (single UPDATE; no sibling-shift on either side, matches diffy).
+  Three new `apply_*_via_loro` helpers + three new cutover-branch
+  arms in `apply_op_tx`. Default 3769 (unchanged), feature-on
+  3867 → 3876 (+9). Decisions noted in commit message: move
+  sibling-shift = neither side; delete-cascade = projection
+  mirrors diffy CTE; SetProperty value flattening = engine takes
+  `Option<&str>`, SQL reads typed columns from payload. Reviewer
+  killed all 4 mutations.
+- **Day 13 — wire Restore + Purge + AddTag + RemoveTag +
+  DeleteProperty (commit `478c7dd4`).** Closes the cutover-branch
+  coverage. **All 10 non-attachment op types** now route through
+  Loro on the cutover-on arm (Create, Edit, Delete, Restore,
+  Purge, Move, AddTag, RemoveTag, SetProperty, DeleteProperty).
+  Attachments correctly bypass per cutover-plan §8.2 (file blobs
+  outside CRDT state). Caught a real bug in the process:
+  `resolve_block_space` filters `deleted_at IS NULL`, but
+  RestoreBlock targets a tombstoned block — fix reads `parent_id`
+  directly (no `deleted_at` filter), resolves parent's space,
+  falls back to diffy when no parent (orphan / page restore).
+  Default 3769 (unchanged), feature-on 3876 → 3889 (+13).
+  Reviewer killed all 3 mutations.
+- **Day 14 — reversed parity logging (commit `fe5229bd`).**
+  Migration `0055_pend_09_parity_log_authoritative_column.sql`
+  adds a `loro_authoritative_at_classify` column to
+  `merge_parity_log`. `ParityEvent` gains the corresponding
+  `bool`; `parity_sink` writes a 9-column INSERT (chunk size 100
+  still under SQLite's 999-placeholder limit). `shadow_apply`
+  reads `is_loro_authoritative()` at record time and threads it
+  into the event so downstream tooling can interpret bucket-D
+  semantics correctly under either authority. `parity_report`
+  bin's divergent-ops table gains an `auth` column (`loro` /
+  `diffy`). Reviewer caught two real issues (clippy
+  `type_complexity` on the 8-tuple `DivergentRow`, and a
+  header-aliased test assertion that would pass even if every
+  row rendered identically); both fixed. Reviewer flagged
+  remaining gap: `shadow_apply`'s flag read has no end-to-end
+  integration test (the day-14 test bypasses `shadow_apply`,
+  constructing `ParityEvent` directly). Default 3769 → 3770
+  (+1), feature-on 3889 → 3892 (+3).
+- **Day 15 — engine descendant fanout for Delete (commit
+  `d6bbf2db`).** Symmetric to day-9's
+  `dispatch_restore_descendants_shadow`. Pre-day-15, when a
+  `delete_block` cascaded to N descendants via SQL CTE, the
+  engine's apply ran for the seed only — descendants stayed
+  alive in engine state while SQL said deleted, breaking the
+  snapshot scheduler (day-6), peer-exported snapshots, and the
+  cutover-on engine readback for descendants. Fix:
+  `ApplyEffects` gains `deleted_cohort: Vec<BlockId>` and
+  `delete_space_id: Option<SpaceId>`; new `collect_delete_cohort`
+  SELECT mirrors `collect_restore_cohort`; new
+  `dispatch_delete_descendants_shadow` walks the cohort and
+  calls `shadow_apply` per block (cohort includes seed; engine
+  apply is idempotent on already-deleted). Asymmetry with
+  restore documented inline: `resolve_block_space` filters
+  `deleted_at IS NULL` on both the block lookup AND the
+  property-holder, so the space MUST be captured **pre-UPDATE**
+  for delete (post-UPDATE every cohort row is tombstoned and
+  resolves to `None`); restore is the inverse and resolves
+  post-UPDATE. Default 3770 (unchanged), feature-on 3892 → 3894
+  (+2). Reviewer killed all 3 mutations.
+
+### 10.3 Recommendation update — GO-FOR-CUTOVER
+
+**Recommendation: GO-FOR-CUTOVER for the cutover flag-flip.**
+Dated **2026-05-10**. Upgrade rationale:
+
+- §4.1 (the `apply_op` reorder) is **closed**. Days 11-13 wired
+  all 10 non-attachment op types through `is_loro_authoritative()`
+  via the projection-helper pattern. Attachments still bypass
+  intentionally per cutover-plan §8.2.
+- §4.3 (the pre-day-9.5 `merge_parity_log` purge) remains a
+  one-line SQL the maintainer runs before the soak; not a code
+  gap.
+- The day-9 restore-cascade fanout is now matched on the delete
+  side (day-15), closing the engine-state-correctness asymmetry
+  §8.1 had flagged for completeness.
+- The reversed-parity column (day-14) means downstream tooling
+  no longer has to infer authority from external context — the
+  bucket-D semantics are now per-row interpretable under either
+  authority value, so the soak's analysis surface is correct
+  regardless of when the maintainer flips.
+
+### 10.4 Numbers update (supersedes §6 row 1-2)
+
+| Metric | Day-10 close (`19b9d8bd`) | Day-15 close (`d6bbf2db`) | Δ days 11-15 |
+| ------ | ------------------------- | ------------------------- | ------------ |
+| Default test count | 3769 | **3770** | **+1** (day 14) |
+| Feature-on test count | 3858 | **3894** | **+36** (+9 d11, +9 d12, +13 d13, +3 d14, +2 d15) |
+| Migrations | 54 | **55** (`0055_pend_09_parity_log_authoritative_column.sql`) | **+1** |
+| New modules | — | `projection.rs` | **+1** |
+| New design docs | — | `pending/PEND-09-apply-op-reorder.md` | **+1** |
+
+**Phase-2 net (Phase-1 close → day-15 close):** default
+3734 → 3770 = **+36**; feature-on 3774 → 3894 = **+120**.
+
+**Default-build verdict re-verified at day-15 close:** `cargo
+nextest run -p agaric` reports 3770 / 3770 passed. Default-build
+behaviour remains byte-identical to day-10 in production code
+paths — the cutover branches are gated on the runtime flag,
+which still defaults `'0'`; flipping it is the next decision
+gate, not anything this addendum changes.
+
+### 10.5 What's left now
+
+The §4 list shrinks. The remaining items are all calendar-time
+or user-decision:
+
+- **Calendar-time:** the 7-day post-cutover shadow-mode soak
+  (§4.2). Cannot start until the maintainer flips the flag on
+  the primary workstation; the flag is now genuinely flippable.
+- **User-decision:** §7.1 (conflict-copy conversion rule),
+  §7.2 (diffy fallback release window), §7.3 (cutover-soak
+  duration), §7.4 (cutover release version), §7.5
+  (`merge_parity_log` purge timing), §7.6 (D-bucket sighting
+  policy), §7.7 (reorder ownership — **resolved in practice**:
+  the same agent shipped it across days 11-15).
+- **Polish:** §8.2 (boot-rehydrate latency telemetry), §8.5
+  (flush-tick refresh of the cutover-flag cache).
+
+### 10.6 Engineering items deferred to Phase 3
+
+These surfaced during days 11-15 and are scoped out of the
+flag-flip itself; recording them here so Phase 3 picks them up
+deliberately:
+
+- **Engine-strict vs SQL-permissive asymmetry.** Captured in
+  the day-11 design doc `pending/PEND-09-apply-op-reorder.md`
+  §12 (added by the day-11 reviewer). The engine's apply
+  methods are validation-strict (e.g. unknown-block restore
+  silently noops to match SQL `UPDATE`-zero-rows; engine
+  property writes don't validate type coercion the way SQL
+  doesn't either) but the cutover-on projection path now
+  introduces one-sided strictness in places (most notably the
+  Restore parent-resolution fallback to diffy when no parent
+  resolves). Phase 3 should reconcile in one direction or the
+  other rather than carrying the asymmetry into long-term code.
+- **`shadow_apply` cutover-flag-read end-to-end coverage.**
+  Day-14 reviewer flag. The day-14 sink test bypasses
+  `shadow_apply` and constructs `ParityEvent` directly; an
+  integration test driving through the full
+  op-log → materializer → `shadow_dispatch_for_record` path
+  with the flag flipped on partway would exercise the
+  threading. Day-9.5's two regression tests
+  (§5.6) are the right shape; this is more in that template.
+- **Reconcile follow-up (day-15+).** If the maintainer
+  prioritises before flag-flip: a sweep of the remaining
+  cohort-walk and tag-inheritance arms to confirm symmetry
+  between the diffy and Loro projection paths in
+  feature-on builds (the day-12 + day-13 commit messages
+  enumerate the per-op decisions; a single audit pass would
+  formalise them as invariants).
+
+### 10.7 Sign-off addendum
+
+Days 11-15 closed the load-bearing prerequisite §1 named.
+**Recommendation upgraded to GO-FOR-CUTOVER**, dated 2026-05-10.
+Sections §1-§9 above remain the day-10 historical record;
+§10 is the post-prerequisite update.
+
+— PEND-09 Phase 2 day-15 addendum, 2026-05-10.
