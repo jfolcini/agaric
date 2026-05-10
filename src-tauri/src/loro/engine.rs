@@ -1049,7 +1049,7 @@ impl LoroEngine {
     /// `loro-internal-1.12.0/src/version.rs:843-845`).  The output
     /// is opaque bytes; the receiver round-trips via
     /// `VersionVector::decode` (Loro 1.12 wire-stable per
-    /// `pending/PEND-09-PHASE-3-PLAN.md` §7.7).
+    /// `SESSION-LOG.md` Session 699 Phase 3 §7.7).
     ///
     /// PEND-09 Phase 3 day-3 — companion to `export_update_since`,
     /// used by sync push to (a) advertise the local frontier and

@@ -95,7 +95,7 @@ pub async fn prepare_outgoing(
 /// etc.) at the materializer boundary.
 ///
 /// Atomicity contract (per
-/// `pending/PEND-09-PHASE-3-PLAN.md` §2.4 / §7.3): the engine import
+/// `SESSION-LOG.md` Session 699 Phase 3 §2.4 / §7.3): the engine import
 /// happens **before** the SQL transaction.  A crash between the two
 /// leaves the engine ahead of SQL; boot crash recovery (day-12+)
 /// reconciles by re-running projection over each engine block.

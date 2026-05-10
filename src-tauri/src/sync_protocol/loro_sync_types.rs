@@ -6,7 +6,7 @@
 //! `ExportMode::Snapshot` for a full state-plus-history blob and
 //! `ExportMode::updates(&peer_vv)` for an incremental delta against
 //! a known peer version vector.  See
-//! `pending/PEND-09-PHASE-3-PLAN.md` §2.1, §3 day 3, §8.3.
+//! `SESSION-LOG.md` Session 699 Phase 3 §2.1, §3 day 3, §8.3.
 //!
 //! Phase 3 day-9 retired the `loro-shadow` feature gate; the matching
 //! engine API (`engine::version_vector`, `engine::export_update_since`)
@@ -46,7 +46,7 @@ pub type LoroVersionVector = Vec<u8>;
 /// One sync message between peers, scoped to a single [`SpaceId`].
 ///
 /// Per-space partitioning matches the existing per-space [`LoroDoc`]
-/// model (`pending/PEND-09-crdt-migration.md` line 13 +
+/// model (see `SESSION-LOG.md` Session 698 +
 /// `loro::registry::LoroEngineRegistry`); a sync session that
 /// covers N spaces sends N of these messages, one per space.
 ///

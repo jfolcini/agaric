@@ -13,9 +13,8 @@
 //! For Phase-2 cutover the engine becomes **authoritative** — the
 //! materializer projects from `LoroDoc` state into SQL.  A cold-start
 //! engine would project an empty doc on top of existing SQL state,
-//! corrupting the user's workspace.  The plan (Q4 from
-//! `pending/PEND-09-crdt-migration.md`, day-6 spec captured in
-//! `SESSION-LOG.md` Session 698 Phase 2 day-6 entry) says: persist
+//! corrupting the user's workspace.  The plan (Q4 from `SESSION-LOG.md`
+//! Session 698 + day-6 spec in Session 698 Phase 2 day-6 entry) says: persist
 //! per-space `LoroDoc` snapshots in a `loro_doc_state` SQLite table,
 //! rehydrate on app boot, periodically re-snapshot in the background.
 //!

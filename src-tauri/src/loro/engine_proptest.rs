@@ -29,8 +29,8 @@
 //! sync-rebuild trust assumption: if two `LoroEngine` instances
 //! diverge after mutual snapshot exchange, the sync apply path the
 //! day-5 `apply_remote_loro_batch` builds on is wrong.  The 1024
-//! cases × 4 streams reported in `pending/PEND-09-PHASE-3-PLAN.md`
-//! §7.1 came from this file under its old name.
+//! cases × 4 streams reported in `SESSION-LOG.md` Session 699
+//! Phase 3 §7.1 came from this file under its old name.
 //!
 //! ## Configuration choices (preserved from parity_proptest.rs)
 //!
