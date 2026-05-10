@@ -90,6 +90,23 @@ impl LoroEngineRegistry {
         })
     }
 
+    /// All [`SpaceId`]s currently registered, in arbitrary order.
+    ///
+    /// PEND-09 Phase 3 day-5 — used by the sync orchestrator to
+    /// enumerate which spaces to push when entering `StreamingOps`.
+    /// The returned `Vec` is a snapshot (cloned under the lock); the
+    /// caller may iterate without holding the registry mutex.
+    /// Concurrent `for_space` calls that lazy-create new engines after
+    /// this snapshot are simply not visible to the current sync round
+    /// — they will be picked up by the next `HeadExchange`.
+    pub fn space_ids(&self) -> Vec<SpaceId> {
+        let guard = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard.keys().cloned().collect()
+    }
+
     /// Number of engines currently held.  Used by tests to assert
     /// per-space isolation.
     pub fn len(&self) -> usize {

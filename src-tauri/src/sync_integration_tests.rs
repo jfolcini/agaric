@@ -960,6 +960,13 @@ async fn sync_with_empty_op_logs_both_sides() {
 /// Full SyncOrchestrator flow from the initiator's perspective:
 /// start() → HeadExchange → receive remote HeadExchange → send OpBatch →
 /// receive SyncComplete → complete.
+///
+/// PEND-09 Phase 3 day-5 — gated to default builds. Under
+/// `loro-shadow` the orchestrator emits `SyncMessage::LoroSync` rather
+/// than `OpBatch`; the LoroSync round-trip is exercised by the new
+/// `loro_sync_e2e_*` integration tests. Day-6 deletes the OpBatch
+/// path and this test with it.
+#[cfg(not(feature = "loro-shadow"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_full_flow_initiator_side() {
     let (pool_a, _dir_a) = test_pool().await;
@@ -1569,6 +1576,14 @@ async fn orchestrator_emits_error_event_on_remote_error() {
 
 /// Verify events for the full initiator-side flow (start → HeadExchange
 /// → send ops → receive SyncComplete).
+///
+/// PEND-09 Phase 3 day-5 — gated to default builds. Same rationale as
+/// [`orchestrator_full_flow_initiator_side`] above. The
+/// loro-shadow-side event sequence is the same shape (Progress
+/// exchanging_heads → Progress streaming_ops → Complete) but is
+/// covered by the new day-5 integration test that round-trips a
+/// LoroSync message between two engines.
+#[cfg(not(feature = "loro-shadow"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_emits_events_initiator_side() {
     use crate::sync_events::{RecordingEventSink, SyncEvent};

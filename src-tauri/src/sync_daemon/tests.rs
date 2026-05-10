@@ -178,6 +178,14 @@ fn cancel_is_idempotent() {
 /// Verify the drain pattern works: a SyncOrchestrator with >1000 ops
 /// returns one batch from handle_message() and the rest via
 /// next_message(), with correct is_last flags.
+///
+/// PEND-09 Phase 3 day-5 — gated to default builds. Under
+/// `loro-shadow` the chunking unit is per-space LoroSync messages
+/// (not per-1000-op batches); the drain pattern itself remains
+/// (handle_message returns first; next_message drains the rest) and
+/// is exercised by the new day-5 LoroSync round-trip integration
+/// test.
+#[cfg(not(feature = "loro-shadow"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn drain_pending_batches_after_handle_message() {
     use crate::db::init_pool;
@@ -1895,6 +1903,16 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
 /// message processing), so even if the orchestrator enters ResetRequired
 /// because the fresh server DB has no ops for the remote's claimed head,
 /// the cert hash should already be persisted.
+///
+/// PEND-09 Phase 3 day-5 — gated to default builds. The server's
+/// response is `OpBatch` in default builds and `LoroSync` under
+/// `loro-shadow`; the test's hardcoded `OpBatch` matcher would fail
+/// under loro-shadow. The TOFU code path itself is unchanged across
+/// builds (cert verification runs before protocol dispatch); a future
+/// translation can swap the matcher for a build-conditional variant
+/// once the day-6 OpBatch deletion forces it. Today the simpler
+/// scope-disciplined choice is to gate.
+#[cfg(not(feature = "loro-shadow"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inmem_handle_incoming_sync_tofu_stores_cert_hash() {
     use crate::op::{CreateBlockPayload, OpPayload};
@@ -2106,6 +2124,12 @@ async fn inmem_handle_incoming_sync_tofu_stores_cert_hash() {
 /// We pre-insert one op for REMOTE_PAIRED so that the server's
 /// `check_reset_required` passes (it verifies claimed head seqs exist).
 /// The server has no LOCAL_DEV ops, so OpBatch is empty.
+///
+/// PEND-09 Phase 3 day-5 — gated to default builds. Under
+/// `loro-shadow` the server's response is a `LoroSync` envelope; the
+/// hardcoded `OpBatch` matcher is unsuited to the cross-build shape.
+/// Day-6 deletes the OpBatch path and this test.
+#[cfg(not(feature = "loro-shadow"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inmem_handle_incoming_sync_happy_path_empty_sync() {
     use crate::op::{CreateBlockPayload, OpPayload};

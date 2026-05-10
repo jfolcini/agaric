@@ -135,6 +135,15 @@ pub struct SyncOrchestrator {
     /// Populated when entering [`SyncState::StreamingOps`]; drained in
     /// batches of [`OP_BATCH_SIZE`] via [`next_message`](Self::next_message).
     pending_op_transfers: VecDeque<OpTransfer>,
+    /// PEND-09 Phase 3 day-5 — pending [`LoroSyncMessage`]s queued for
+    /// streaming under the `loro-shadow` feature. Populated when
+    /// entering [`SyncState::StreamingOps`] from
+    /// [`crate::loro::shared`] (one [`LoroSyncMessage::Snapshot`] per
+    /// registered space — initial sync only; per-peer-vv-tracked
+    /// Updates are a follow-up); drained one per call to
+    /// [`next_message`](Self::next_message).
+    #[cfg(feature = "loro-shadow")]
+    pending_loro_messages: VecDeque<crate::sync_protocol::loro_sync_types::LoroSyncMessage>,
     received_ops: Vec<OpTransfer>,
     remote_device_id: Option<String>,
     /// When set, the orchestrator validates that the remote device_id
@@ -159,6 +168,8 @@ impl SyncOrchestrator {
             state: SyncState::Idle,
             last_sent_hash: None,
             pending_op_transfers: VecDeque::new(),
+            #[cfg(feature = "loro-shadow")]
+            pending_loro_messages: VecDeque::new(),
             received_ops: Vec::new(),
             remote_device_id: None,
             expected_remote_id: None,
@@ -259,6 +270,24 @@ impl SyncOrchestrator {
                 });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
+            // PEND-09 Phase 3 day-5 — LoroSync follows the same
+            // state-window rules as OpBatch: valid after HeadExchange
+            // (i.e. in `StreamingOps`) or as the responder's first
+            // post-HeadExchange message (in `ExchangingHeads`).
+            (
+                SyncState::StreamingOps | SyncState::ExchangingHeads,
+                SyncMessage::LoroSync { .. },
+            ) => {}
+            (_, SyncMessage::LoroSync { .. }) => {
+                let msg_str = "LoroSync received before HeadExchange";
+                self.state = SyncState::Failed(msg_str.into());
+                self.session.state = self.state.clone();
+                self.emit(crate::sync_events::SyncEvent::Error {
+                    message: msg_str.into(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                });
+                return Err(AppError::InvalidOperation(msg_str.into()));
+            }
             // SyncComplete valid in StreamingOps (Complete is terminal, already caught above)
             (SyncState::StreamingOps, SyncMessage::SyncComplete { .. }) => {}
             (_, SyncMessage::SyncComplete { .. }) => {
@@ -343,39 +372,54 @@ impl SyncOrchestrator {
                     }));
                 }
 
-                // Compute and send ops the remote is missing
-                let ops = compute_ops_to_send(&self.pool, &heads).await?;
-                // L-70: capture only the last op's hash for the
-                // `SyncComplete` bookkeeping; the full
-                // `Vec<OpTransfer>` lives in `pending_op_transfers`
-                // for retry/ack and is drained by `next_message`.
-                self.last_sent_hash = ops.last().map(|r| r.hash.clone());
-                let all_transfers: VecDeque<OpTransfer> =
-                    ops.into_iter().map(OpTransfer::from).collect();
-                self.session.ops_sent = all_transfers.len();
+                // PEND-09 Phase 3 day-5 — under `loro-shadow`, the
+                // outgoing streaming-phase payload is one
+                // [`SyncMessage::LoroSync`] per registered space (built
+                // from [`crate::loro::shared`]) instead of the diffy
+                // [`SyncMessage::OpBatch`] of typed [`OpTransfer`] rows.
+                // Default builds keep the OpBatch path until day 6
+                // deletes it.
+                #[cfg(feature = "loro-shadow")]
+                {
+                    return self.head_exchange_outgoing_loro().await;
+                }
 
-                // Chunk into batches of OP_BATCH_SIZE.  The first batch is
-                // returned directly; remaining ops are stored in
-                // pending_op_transfers for retrieval via next_message().
-                let mut remaining = all_transfers;
-                let chunk_end = remaining.len().min(OP_BATCH_SIZE);
-                let first_batch: Vec<OpTransfer> = remaining.drain(..chunk_end).collect();
-                let is_last = remaining.is_empty();
-                self.pending_op_transfers = remaining;
+                #[cfg(not(feature = "loro-shadow"))]
+                {
+                    // Compute and send ops the remote is missing
+                    let ops = compute_ops_to_send(&self.pool, &heads).await?;
+                    // L-70: capture only the last op's hash for the
+                    // `SyncComplete` bookkeeping; the full
+                    // `Vec<OpTransfer>` lives in `pending_op_transfers`
+                    // for retry/ack and is drained by `next_message`.
+                    self.last_sent_hash = ops.last().map(|r| r.hash.clone());
+                    let all_transfers: VecDeque<OpTransfer> =
+                        ops.into_iter().map(OpTransfer::from).collect();
+                    self.session.ops_sent = all_transfers.len();
 
-                self.state = SyncState::StreamingOps;
-                self.session.state = SyncState::StreamingOps;
-                self.emit(crate::sync_events::SyncEvent::Progress {
-                    state: crate::sync_events::sync_state_label(&self.state).to_string(),
-                    remote_device_id: self.session.remote_device_id.clone(),
-                    ops_received: self.session.ops_received,
-                    ops_sent: self.session.ops_sent,
-                });
+                    // Chunk into batches of OP_BATCH_SIZE.  The first batch is
+                    // returned directly; remaining ops are stored in
+                    // pending_op_transfers for retrieval via next_message().
+                    let mut remaining = all_transfers;
+                    let chunk_end = remaining.len().min(OP_BATCH_SIZE);
+                    let first_batch: Vec<OpTransfer> = remaining.drain(..chunk_end).collect();
+                    let is_last = remaining.is_empty();
+                    self.pending_op_transfers = remaining;
 
-                Ok(Some(SyncMessage::OpBatch {
-                    ops: first_batch,
-                    is_last,
-                }))
+                    self.state = SyncState::StreamingOps;
+                    self.session.state = SyncState::StreamingOps;
+                    self.emit(crate::sync_events::SyncEvent::Progress {
+                        state: crate::sync_events::sync_state_label(&self.state).to_string(),
+                        remote_device_id: self.session.remote_device_id.clone(),
+                        ops_received: self.session.ops_received,
+                        ops_sent: self.session.ops_sent,
+                    });
+
+                    Ok(Some(SyncMessage::OpBatch {
+                        ops: first_batch,
+                        is_last,
+                    }))
+                }
             }
 
             // ---- OpBatch ----------------------------------------------------
@@ -455,6 +499,96 @@ impl SyncOrchestrator {
                 }
 
                 // Determine our latest head hash for the SyncComplete message
+                let last_hash = get_local_heads(&self.pool)
+                    .await?
+                    .into_iter()
+                    .find(|h| h.device_id == self.device_id)
+                    .map(|h| h.hash)
+                    .unwrap_or_default();
+
+                self.state = SyncState::Complete;
+                self.session.state = SyncState::Complete;
+                self.emit(crate::sync_events::SyncEvent::Complete {
+                    remote_device_id: self.session.remote_device_id.clone(),
+                    ops_received: self.session.ops_received,
+                    ops_sent: self.session.ops_sent,
+                });
+                Ok(Some(SyncMessage::SyncComplete { last_hash }))
+            }
+
+            // ---- LoroSync (PEND-09 Phase 3 day-5) ----------------------------
+            // Under `loro-shadow`, dispatch to the day-4 `apply_remote`
+            // helper. Under default builds the engine + projection
+            // helpers don't exist — log warn + drop the message; the
+            // session can still reach `Complete` via the `is_last`
+            // signal because no engine state is required for the
+            // bookkeeping path. Day-6 deletes the OpBatch path; day-9
+            // removes the `loro-shadow` feature gate so this becomes
+            // unconditional.
+            SyncMessage::LoroSync { msg, is_last } => {
+                #[cfg(feature = "loro-shadow")]
+                {
+                    use crate::sync_protocol::loro_sync;
+                    use crate::sync_protocol::loro_sync_types::LoroSyncMessage as LSM;
+
+                    // Skip the empty-sentinel snapshot (see
+                    // `head_exchange_outgoing_loro`'s zero-spaces path).
+                    let is_empty_sentinel = matches!(
+                        &msg,
+                        LSM::Snapshot { bytes, .. } if bytes.is_empty()
+                    );
+
+                    if !is_empty_sentinel {
+                        match crate::loro::shared::get() {
+                            Some(shadow) => {
+                                self.state = SyncState::ApplyingOps;
+                                self.session.state = SyncState::ApplyingOps;
+                                self.emit(crate::sync_events::SyncEvent::Progress {
+                                    state: crate::sync_events::sync_state_label(&self.state)
+                                        .to_string(),
+                                    remote_device_id: self.session.remote_device_id.clone(),
+                                    ops_received: self.session.ops_received,
+                                    ops_sent: self.session.ops_sent,
+                                });
+                                loro_sync::apply_remote(
+                                    &self.pool,
+                                    &shadow.registry,
+                                    &self.device_id,
+                                    msg,
+                                )
+                                .await?;
+                                self.session.ops_received =
+                                    self.session.ops_received.saturating_add(1);
+                            }
+                            None => {
+                                tracing::warn!(
+                                    device_id = %self.device_id,
+                                    "loro-shadow: shared state not initialised; \
+                                     dropping incoming LoroSync"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                #[cfg(not(feature = "loro-shadow"))]
+                {
+                    let _ = msg; // unused under default build — silence warning
+                    tracing::warn!(
+                        device_id = %self.device_id,
+                        "default build received LoroSync message; dropping \
+                         (loro-shadow feature is required for engine state)"
+                    );
+                }
+
+                if !is_last {
+                    return Ok(None); // wait for more LoroSync messages
+                }
+
+                // Final LoroSync of the batch — transition to Complete
+                // and send our SyncComplete with the latest local head
+                // hash. No diffy-style merge step; Loro's import has
+                // already converged the engine state.
                 let last_hash = get_local_heads(&self.pool)
                     .await?
                     .into_iter()
@@ -613,6 +747,108 @@ impl SyncOrchestrator {
         }
     }
 
+    /// PEND-09 Phase 3 day-5 — build and queue outgoing
+    /// [`SyncMessage::LoroSync`] messages, one per [`SpaceId`] currently
+    /// held in [`crate::loro::shared::get`]'s registry.
+    ///
+    /// Strategy:
+    /// * Snapshot every registered space via
+    ///   [`crate::sync_protocol::loro_sync::prepare_outgoing`] with
+    ///   `peer_vv = None` (initial-sync only — per-peer-vv-tracked
+    ///   incremental Updates are a follow-up; see plan §10.5).
+    /// * Mark the **last** message with `is_last: true`; everything
+    ///   else with `is_last: false`. The receiver transitions to
+    ///   `Merging`/`Complete` when it processes the `is_last: true`
+    ///   message.
+    /// * If the registry is empty (no shadow init, no spaces touched
+    ///   yet, etc.), fall through to "nothing to send" — transition
+    ///   directly to `Complete` and emit `SyncComplete`. Same shape as
+    ///   the pre-day-5 OpBatch path's "is_last: true with empty ops".
+    ///
+    /// State transition: `ExchangingHeads` → `StreamingOps` (or
+    /// directly to `Complete` when there is nothing to stream).
+    #[cfg(feature = "loro-shadow")]
+    async fn head_exchange_outgoing_loro(&mut self) -> Result<Option<SyncMessage>, AppError> {
+        use crate::sync_protocol::loro_sync;
+        use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+
+        // Look up the process-global registry. If shadow state was
+        // never initialised (e.g., a test that skipped the bootstrap
+        // path), log + fall through to "no streaming payload" — the
+        // session still completes, just with zero ops sent.
+        let shadow = match crate::loro::shared::get() {
+            Some(s) => s,
+            None => {
+                tracing::warn!(
+                    device_id = %self.device_id,
+                    "loro-shadow: shared state not initialised; \
+                     skipping LoroSync push (sending empty stream)"
+                );
+                self.state = SyncState::StreamingOps;
+                self.session.state = SyncState::StreamingOps;
+                return Ok(Some(SyncMessage::LoroSync {
+                    msg: LoroSyncMessage::Snapshot {
+                        protocol_version:
+                            crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
+                        space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+                        bytes: Vec::new(),
+                    },
+                    is_last: true,
+                }));
+            }
+        };
+
+        // Enumerate spaces and build one LoroSync per space.  The
+        // `peer_vv = None` choice ships a full snapshot; per-peer-vv
+        // tracking (and hence Update messages) is plan §10.5 / day-12+.
+        let space_ids = shadow.registry.space_ids();
+        let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
+        for sid in &space_ids {
+            let m =
+                loro_sync::prepare_outgoing(&shadow.registry, sid, &self.device_id, None).await?;
+            messages.push_back(m);
+        }
+        self.session.ops_sent = messages.len();
+
+        self.state = SyncState::StreamingOps;
+        self.session.state = SyncState::StreamingOps;
+        self.emit(crate::sync_events::SyncEvent::Progress {
+            state: crate::sync_events::sync_state_label(&self.state).to_string(),
+            remote_device_id: self.session.remote_device_id.clone(),
+            ops_received: self.session.ops_received,
+            ops_sent: self.session.ops_sent,
+        });
+
+        // Pop the first; the rest go into the pending queue and are
+        // drained by `next_message`.
+        match messages.pop_front() {
+            None => {
+                // Empty registry — send a single sentinel `is_last:
+                // true` message with an empty snapshot so the receiver
+                // can advance to Complete.  The receiver's
+                // `apply_remote` skips zero-byte payloads (no engine
+                // import) and marks the streaming phase done.
+                Ok(Some(SyncMessage::LoroSync {
+                    msg: LoroSyncMessage::Snapshot {
+                        protocol_version:
+                            crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
+                        space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+                        bytes: Vec::new(),
+                    },
+                    is_last: true,
+                }))
+            }
+            Some(first) => {
+                let is_last = messages.is_empty();
+                self.pending_loro_messages = messages;
+                Ok(Some(SyncMessage::LoroSync {
+                    msg: first,
+                    is_last,
+                }))
+            }
+        }
+    }
+
     /// Returns true iff the session ended in `SyncState::Complete` — i.e. the
     /// op-batch exchange finished cleanly, no peer-reported failure, no
     /// snapshot-reset required.
@@ -652,6 +888,19 @@ impl SyncOrchestrator {
     /// }
     /// ```
     pub fn next_message(&mut self) -> Option<SyncMessage> {
+        // PEND-09 Phase 3 day-5 — drain the LoroSync queue first under
+        // `loro-shadow`. The `pending_op_transfers` queue is empty in
+        // that build (the OpBatch construction path is feature-gated
+        // off), so checking it first costs nothing. Default builds
+        // skip this branch and fall through to the OpBatch drain.
+        #[cfg(feature = "loro-shadow")]
+        {
+            if let Some(msg) = self.pending_loro_messages.pop_front() {
+                let is_last = self.pending_loro_messages.is_empty();
+                return Some(SyncMessage::LoroSync { msg, is_last });
+            }
+        }
+
         if self.pending_op_transfers.is_empty() {
             return None;
         }
