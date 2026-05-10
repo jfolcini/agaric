@@ -1,27 +1,25 @@
-//! Three-way merge using diffy.
+//! Shadow-mode dispatch surface into the per-space `LoroEngine`.
 //!
-//! Provides:
-//! - `merge_text()` — three-way text merge for a block's content (kept
-//!   for the parity sink / shadow path; day 7 deletes it).
-//! - `create_conflict_copy()` — conflict-copy creation helper (kept for
-//!   the same reason; day 7 deletes it).
-//! - `resolve_property_conflict()` — LWW for concurrent property
-//!   changes (kept; day 7 deletes it).
+//! PEND-09 Phase 3 day-6 deleted `merge_block_text_only` (the diffy
+//! three-way text-merge entry point); its only caller
+//! (`sync_protocol::operations::merge_diverged_blocks`) was deleted
+//! the same day.  Phase 3 day-7 deleted `merge::detect`
+//! (`merge_text` + `walk_to_create_block_root` helpers) and
+//! `merge::resolve` (`create_conflict_copy`,
+//! `create_conflict_copy_with_reindex`, `resolve_property_conflict`)
+//! along with the now-empty `merge::types` module — none of those
+//! orchestration entry points has a live caller now that Loro CRDT
+//! import is the convergence path.
 //!
-//! PEND-09 Phase 3 day-6 — `merge_block_text_only` deleted.  Its only
-//! caller (`sync_protocol::operations::merge_diverged_blocks`) was
-//! deleted day 6 alongside the diffy-typed sync wire.  The Loro engine
-//! converges concurrent edits via CRDT import; no three-way text-merge
-//! orchestrator is needed any more.
+//! What remains in this module:
+//! - `shadow_apply` — feature-gated dual-write hook that drives the
+//!   per-space `LoroEngine` and records a parity event.
+//! - `shadow_dispatch_for_record` — feature-gated `OpRecord` →
+//!   `OpPayload` dispatch helper used by the materializer.
+//! - `diffy_summary_for` — feature-gated helper that builds the
+//!   `diffy_result` side of the parity event from a typed op.
 
 mod apply;
-mod detect;
-mod resolve;
-mod types;
-
-pub use detect::merge_text;
-pub use resolve::{create_conflict_copy, resolve_property_conflict};
-pub use types::{MergeOutcome, MergeResult, PropertyConflictResolution};
 
 // PEND-09 Phase 1 day-3 — re-export the shadow-mode dispatcher so the
 // materializer (`materializer::handlers::apply_op`) and any other
