@@ -1,10 +1,9 @@
 //! `op_log_histogram` — PEND-09 Phase 2 day-4 read-only diagnostic.
 //!
-//! Closes Phase-2 Gate 4 ([Phase-2 cutover plan
-//! `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §2 Gate 4 + §3 day 4]). Runs
-//! against the maintainer's real `notes.db` to confirm the spike's
-//! synthetic 30/50/10/5/5 op-mix proxy
-//! (`SPIKE-REPORT.md` §3 row "Plan 9") is in the right ballpark — i.e. that
+//! Closes Phase-2 Gate 4 (see `SESSION-LOG.md` Session 698 Phase 2 day-4
+//! entry). Runs against the maintainer's real `notes.db` to confirm the
+//! spike's synthetic 30/50/10/5/5 op-mix proxy (preserved at git tag
+//! `pend-09/spike-archive`) is in the right ballpark — i.e. that
 //! kill-criterion-#3's 358× wall-clock margin is robust to the actual
 //! distribution. The wide margin means a 10× error in the proxy does not
 //! flip the verdict; this gate is about *knowing*, not gating.

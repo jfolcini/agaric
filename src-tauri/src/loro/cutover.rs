@@ -2,8 +2,8 @@
 //!
 //! ## Why this module exists
 //!
-//! The Phase-2 cutover plan
-//! (`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §3 day 9 + §5) calls for a
+//! The Phase-2 cutover (see `SESSION-LOG.md` Session 698, Phase 2 day-9
+//! + day-9.5 entries) calls for a
 //! single runtime flag that, when ON, makes the materializer treat the
 //! per-space [`crate::loro::engine::LoroEngine`] as authoritative and
 //! projects from it into SQL.  When OFF the existing diffy-merge path
@@ -19,9 +19,10 @@
 //!   [`init_cutover_flag`] at app boot.  The materializer hot-path read
 //!   ([`is_loro_authoritative`]) is a single
 //!   `AtomicBool::load(Ordering::Relaxed)` on a hit — well under the
-//!   100 µs target the cutover plan §5.2 sets.
+//!   100 µs target the original cutover plan set (see `SESSION-LOG.md`
+//!   Session 698 Phase 2 day-9 entry).
 //! - **Refresh:** [`set_loro_authoritative`] updates both the row AND
-//!   the cache.  The plan §5.2 also calls for a 30-second refresh on
+//!   the cache.  The plan also calls for a 30-second refresh on
 //!   the flush task tick so a SQL `UPDATE app_settings ...` flips
 //!   without a process restart; that wiring is **not** part of day 9 —
 //!   the day-9 commit lands the flag infrastructure only.  The
@@ -332,7 +333,8 @@ mod tests {
     }
 
     /// Verify the cache read is sub-100 µs averaged across many
-    /// iterations.  Target per the cutover plan §5.2 is ≤1 µs cached;
+    /// iterations.  Target per the original cutover plan (see
+    /// `SESSION-LOG.md` Session 698 Phase 2 day-9) is ≤1 µs cached;
     /// this test asserts the much-weaker 100 µs ceiling so it stays
     /// non-flaky on slow CI hardware.  An `AtomicBool::load(Relaxed)`
     /// on x86_64 is on the order of 1 ns — three orders of magnitude
@@ -360,7 +362,7 @@ mod tests {
         assert!(
             per_call_ns < 100_000,
             "is_loro_authoritative() read averaged {per_call_ns} ns per call, \
-             must be < 100_000 ns (100 µs) per the cutover plan §5.2",
+             must be < 100_000 ns (100 µs) per the cutover plan",
         );
         // Sanity: the side-effect accumulator was used.
         assert!(acc > 0);

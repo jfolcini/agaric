@@ -83,7 +83,7 @@ The spike is **2 weeks, hard time-box**. Reviewer flagged that the original crit
 1. **Loro library status check.** Confirm Loro is at a usable pre-1.0 version (>= 0.x with stable LoroMap+LoroText), license is acceptable, and the maintainers have a documented serialization-format-stability stance for the version range we'd consume. **If serialization format can change between minor versions without an upgrade path for old payloads, kill** — that's a data-durability red line.
 2. **`LoroTree` evaluation.** The plan's per-space-doc design uses `LoroMap` + scalar parent_id, but if `LoroTree` is stable and faster, reconsider. If `LoroTree` is "experimental" only, document the decision and stay with the LoroMap approach.
 
-If any kill criterion fires: archive the prototype crate as `pending/PEND-09-spike-archive.tar.gz`, document the failing criterion in this file, return PEND-09 to "deferred" state in REVIEW-LATER.md, communicate the verdict.
+If any kill criterion fires: archive the prototype crate (today: as the annotated git tag `pend-09/spike-archive`; the original plan called for `pending/PEND-09-spike-archive.tar.gz`), document the failing criterion in this file, return PEND-09 to "deferred" state in REVIEW-LATER.md, communicate the verdict. (Outcome: kill criteria did NOT fire — the spike returned a GO recommendation; see `SESSION-LOG.md` Session 698 Phase 0 days 2-7 entries.)
 
 ## What the user sees after the migration
 
@@ -125,7 +125,7 @@ If any kill criterion fires: archive the prototype crate as `pending/PEND-09-spi
 
 **Phase 0 — Spike (new code, no production impact):**
 
-- New crate: `src-tauri/crates/loro-spike/` (Rust workspace member). Self-contained: depends on `loro 0.x`, exposes a CLI that takes a path to `notes.db` and runs the parity tests. (Archived in Phase-2 day-8 — see git tag `pend-09/spike-archive`; the spike's notes/report live at `pending/PEND-09-SPIKE-{NOTES,REPORT}.md`.)
+- New crate: `src-tauri/crates/loro-spike/` (Rust workspace member). Self-contained: depends on `loro 0.x`, exposes a CLI that takes a path to `notes.db` and runs the parity tests. (Archived in Phase-2 day-8 — see git tag `pend-09/spike-archive`; the spike's notes + final report live within the archived crate at that tag, summarised in `SESSION-LOG.md` Session 698 Phase 0 days 2-7 entries.)
 
 **Phase 1 — Shadow:**
 

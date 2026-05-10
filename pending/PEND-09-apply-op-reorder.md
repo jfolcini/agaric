@@ -1,11 +1,11 @@
 # PEND-09 — `apply_op` reorder design
 
 PEND-09 Phase 2 day-11 deliverable, written **2026-05-10**.  Closes the
-single biggest gap before the cutover flag-flip surfaced in
-`pending/PEND-09-PHASE-2-REPORT.md` §4.1: today the
-`pend09.loro_authoritative` runtime flag (commit `d0395805`) exists but
-no code path branches on it.  Flipping it to `'1'` changes nothing
-observable.
+single biggest gap before the cutover flag-flip surfaced in the Phase 2
+final report (see `SESSION-LOG.md` Session 698 Phase 2 day-13.5 entry):
+today the `pend09.loro_authoritative` runtime flag (commit `d0395805`)
+exists but no code path branches on it.  Flipping it to `'1'` changes
+nothing observable.
 
 This doc designs the substantive reorder; day-11 lands the projection
 helpers + the branch wired in for **CreateBlock + EditBlock** as

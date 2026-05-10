@@ -2,12 +2,14 @@
 
 Day-1 deliverable for Phase 3, written **2026-05-10**, the day after
 the Phase-2 day-15 addendum
-(`pending/PEND-09-PHASE-2-REPORT.md` §10, commit `2cf07f57`) closed
-with a **GO-FOR-CUTOVER** recommendation, and the day-17 follow-up
+(see `SESSION-LOG.md` Session 698 Phase 2 day-15.5 entry, commit `2cf07f57`)
+closed with a **GO-FOR-CUTOVER** recommendation, and the day-17 follow-up
 (`ff272b0b`, `parity_report --purge-before`) closed clean against the
 test suite.
 
-This doc is the analog of `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md`
+This doc is the analog of the now-retired Phase-2 cutover plan (the
+day-by-day spec is summarised in `SESSION-LOG.md` Session 698 Phase 2
+days 1-17 entries)
 scoped to Phase 3 — but Phase 3 is **not** a pure deletion pass. Per
 the maintainer's 2026-05-10 clarification ("I want sync support. So
 far I am the only user and I have NOT started using the old
@@ -32,7 +34,8 @@ The original plan
 (`pending/PEND-09-crdt-migration.md` lines 67-68 + 144-150) framed
 Phase 3 as a deletion pass: drop `merge/{apply,detect,resolve}.rs`,
 drop the `is_conflict` column, sweep ~870 reference sites
-(`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §6.4 verified count), drop
+(verified in the Phase-2 cutover plan, summarised in
+`SESSION-LOG.md` Session 698 Phase 2 day-1 entry), drop
 `merge_parity_log`. Sync was assumed unchanged because it was already
 running on the diffy primitives.
 
@@ -144,7 +147,8 @@ Post-Phase-3, the wire format is **Loro's own binary export**:
 * `LoroSyncSnapshot` carries a full state-plus-history export from
   `LoroDoc::export(ExportMode::Snapshot)`
   (`loro-1.12.0/src/lib.rs:1273`). Size ≈ 6.4 MiB at 25K alive blocks
-  (`pending/PEND-09-SPIKE-REPORT.md` §3 row "Plan 3"); ≈ 26 MiB at
+  (archived spike report §3 row "Plan 3" at `git tag pend-09/spike-archive`;
+  see `SESSION-LOG.md` Session 698 Phase 0 day-7 entry); ≈ 26 MiB at
   100K. Used for **initial sync** (peer has no state) and the
   post-`ResetRequired` snapshot sub-flow already routed through
   `sync_daemon::snapshot_transfer`.
@@ -186,8 +190,8 @@ wire and inside `op_log.payload`. The `payload_version` and
 
 **Today.** Local writes hit `apply_op` → `apply_op_tx`; with the
 cutover flag on, an `apply_*_via_loro` helper updates the engine
-first, then `apply_op_tx` projects to SQL (Phase-2 day-15,
-`pending/PEND-09-PHASE-2-REPORT.md` §10.2 day 15). Sync push
+first, then `apply_op_tx` projects to SQL (Phase-2 day-15; see
+`SESSION-LOG.md` Session 698 Phase 2 day-15 entry). Sync push
 re-fetches the typed `OpRecord` rows from `op_log` and serialises to
 `OpBatch` (`sync_protocol::compute_ops_to_send`,
 `sync_protocol/operations.rs:67-93`).
@@ -240,7 +244,7 @@ sync pull (receiver side):
 
 `LoroDoc::import` (`loro-1.12.0/src/lib.rs:710`) handles concurrent
 ops via op-log merging — no "needs divergence resolution" outcome.
-Per Phase-0 spike validation (`pending/PEND-09-SPIKE-REPORT.md` §2),
+Per Phase-0 spike validation (archived report at `git tag pend-09/spike-archive`; see `SESSION-LOG.md` Session 698 Phase 0 day-3 entry),
 parity_corpus, Phase-1 day-8 single-author proptest commit `89df17a2`,
 and Phase-2 day-2 two-device proptest commit `a9849adc` (1 024
 randomised concurrent runs, zero D-bucket sightings), Loro converges
@@ -272,8 +276,8 @@ helpers.
 Rejected: Option (ii) re-export old-VV → new-VV deltas, decode via
 `export_json_updates` / `import_json_updates`, run per-op typed
 projection helpers. Re-introduces the JSON-round-trip shape that
-Phase-2 day-9.5 (`eb01c5f8`) just fixed
-(`pending/PEND-09-PHASE-2-REPORT.md` §5).
+Phase-2 day-9.5 (`eb01c5f8`) just fixed (the headline lesson; see
+`SESSION-LOG.md` Session 698 Phase 2 day-9.5 entry).
 
 **Atomicity.** Sync pull writes many SQL rows. Decision: **single tx
 for the whole batch.** The engine import already happened before the
@@ -302,8 +306,9 @@ gone — matches diffy's existing `resolve_property_conflict` (later
 `pending/PEND-09-lww-resolution-rule.md`). Concurrent moves: same
 per-key LWW.
 
-**Existing `is_conflict=1` rows.** Per
-`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §7.1, a conversion rule is
+**Existing `is_conflict=1` rows.** Per the Phase-2 cutover plan's
+conversion rule (summarised in `SESSION-LOG.md` Session 698 Phase 2
+day-1 entry), a conversion rule is
 needed for legacy rows **if any exist**. Verified 2026-05-10:
 maintainer's primary `notes.db` is single-user, never-synced;
 assumption is zero such rows. §10.3 carries the
@@ -366,10 +371,11 @@ The `loro_doc_state` table (Phase-2 day-6, migration `0052`,
 
 Phase 3 keeps this as-is. 5-min cadence plus
 single-source-of-truth-engine invariant means a hard crash loses at
-most 5 minutes of synced state. Acceptable per
-`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §8.1 option (c). The
-boot-latency telemetry concern from Phase 2
-(`pending/PEND-09-PHASE-2-REPORT.md` §8.2) gets revisited as §10.6.
+most 5 minutes of synced state. Acceptable per the Phase-2 cutover
+plan's snapshot-cadence option (c) (see `SESSION-LOG.md` Session 698
+Phase 2 day-6 entry). The boot-latency telemetry concern from the
+Phase-2 final report (`SESSION-LOG.md` Session 698 Phase 2 day-13.5
+entry) gets revisited as §10.6.
 
 ## 3. Day-by-day breakdown
 
@@ -401,7 +407,7 @@ sub-100 µs timing test). Day 2 is **just the default flip**.
 **Mini-soak.** Maintainer runs the day-2 build against the primary
 workstation's `notes.db` for ≥1 calendar day, watches the
 `parity_report` bin output for surprise D-bucket rows. The Phase-2
-day-15 close (`pending/PEND-09-PHASE-2-REPORT.md` §10.3) verdict was
+day-15 close (see `SESSION-LOG.md` Session 698 Phase 2 day-15.5 entry) verdict was
 **GO-FOR-CUTOVER** with day-9.5's JSON-parse fix (`eb01c5f8`) plus
 days 11-15 projection helpers covering all 10 non-attachment op
 types (commits `8af389aa`, `204ca451`, `478c7dd4`, `fe5229bd`,
@@ -590,8 +596,8 @@ The `loro-shadow` feature gates every `loro/*.rs` module
 
 * `Cargo.toml`: delete the `loro-shadow` feature; promote
   `loro = "1.12"` and `xxhash-rust = "0.8"` to hard deps (drop
-  `optional = true`). Per
-  `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §8.5: hard dep, not
+  `optional = true`). Per the Phase-2 cutover plan (see
+  `SESSION-LOG.md` Session 698 Phase 2 day-1 entry): hard dep, not
   optional.
 * Remove every `#[cfg(feature = "loro-shadow")]` gate (~80-100 sites
   via `grep -rn 'cfg(feature = "loro-shadow")' src-tauri/src/`).
@@ -714,7 +720,7 @@ constraints.
 | 7 | Delete `merge::resolve` plus `merge::detect` plus `merge/tests.rs` | `git revert` | Code | None (assumes day-7 zero-`is_conflict` assertion held) |
 | 8 | Collapse `apply_*_via_loro` plus `apply_*_tx` | `git revert` | Code | None |
 | 9 | Remove `loro-shadow` feature | `git revert` | Build config | None |
-| 10 | Drop `merge_parity_log` plus `app_settings.pend09.*` row | Migration `0057` is sticky; cannot un-DROP without restoring from backup. The `merge_parity_log` data is non-load-bearing per `pending/PEND-09-PHASE-2-REPORT.md` §5.5 | Code | The merge_parity_log historical data |
+| 10 | Drop `merge_parity_log` plus `app_settings.pend09.*` row | Migration `0057` is sticky; cannot un-DROP without restoring from backup. The `merge_parity_log` data is non-load-bearing per the Phase-2 final report (see `SESSION-LOG.md` Session 698 Phase 2 day-13.5 entry) | Code | The merge_parity_log historical data |
 | 11 | Parity-sink fate | `git revert` if maintainer changes mind | Code | None |
 | 12 | Sync integration test | `git revert` | Test code | None |
 | 13 | Final report | `git revert` | Doc | None |
@@ -815,8 +821,9 @@ wrong.
 
 **Evidence.**
 
-* Phase-0 `parity_corpus` validation
-  (`pending/PEND-09-SPIKE-REPORT.md` §2 row 2: 53/53 cases pass).
+* Phase-0 `parity_corpus` validation (archived spike report §2 row 2:
+  53/53 cases pass; preserved at `git tag pend-09/spike-archive`,
+  summarised in `SESSION-LOG.md` Session 698 Phase 0 day-3 entry).
 * Phase-1 day-8 single-author proptest commit `89df17a2`: 256
   cases × 4 streams, zero D-bucket sightings.
 * Phase-2 day-2 two-device proptest commit `a9849adc`: 1 024
@@ -834,9 +841,10 @@ as a regression net.
 `loro_version: u8` envelope field bumps to 3; readers older than
 the bump-aware version cannot decode.
 
-**Evidence.** Per
-`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §8.7 plus Phase-0 kill
-criterion 4: format stability within 1.x is YELLOW (within-1.x
+**Evidence.** Per the Phase-2 cutover plan's wire-format-versioning
+section (summarised in `SESSION-LOG.md` Session 698 Phase 2 day-1
+entry) plus Phase-0 kill criterion 4: format stability within 1.x is
+YELLOW (within-1.x
 stable; 2.0 cross-major upgrade not under contract). No upstream
 2.0 signal as of 2026-05-10.
 
@@ -868,9 +876,9 @@ referenced" diagnostic might fire from a test not enumerated in §6.
 `cargo nextest run -p agaric` clean before commit. Days 6-9 should
 run `cargo mutants` (or equivalent) on the deleted code to verify
 nothing tested the deletion target indirectly. The Phase-2
-day-9.5 latent-JSON-parse bug
-(`pending/PEND-09-PHASE-2-REPORT.md` §5) was caught only via
-deliberate mutation testing — same discipline applies here.
+day-9.5 latent-JSON-parse bug (the headline lesson; see
+`SESSION-LOG.md` Session 698 Phase 2 day-9.5 entry) was caught only
+via deliberate mutation testing — same discipline applies here.
 
 ### 7.5 Op-log size + replay-from-zero post-Phase-3
 
@@ -883,7 +891,8 @@ ops — only local writes recover.
 backups cover it. A future `loro_doc_state` rebuild from a peer's
 snapshot is the same as initial sync. 5-min snapshot cadence plus
 boot rehydrate means worst-case loss is 5 min of synced state.
-Acceptable per `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §8.1.
+Acceptable per the Phase-2 cutover plan's snapshot-cadence section
+(see `SESSION-LOG.md` Session 698 Phase 2 day-6 entry).
 
 ### 7.6 Boot rehydrate vs sync push race
 
@@ -919,8 +928,9 @@ the wire format.
 
 **Evidence.** `loro-1.12.0/src/lib.rs:887` documents `oplog_vv()`;
 `lib.rs:1297-1299` documents `ExportMode::updates(&vv)`. Both 1.x
-stable per Phase-0 kill criterion 4 (`pending/PEND-09-SPIKE-REPORT.md`
-§2 row 4).
+stable per Phase-0 kill criterion 4 (archived spike report §2 row 4 at
+`git tag pend-09/spike-archive`; verdict in `SESSION-LOG.md` Session
+698 Phase 0 days 2-7 entries).
 
 **Mitigation.** Pin Loro to caret-1; verify on each version bump.
 Day-3 unit test round-trips
@@ -1019,8 +1029,9 @@ bytes. Phase 3 changes WHAT bytes get streamed; the HOW is unchanged.
   `loro_vv_bytes BLOB NULL` column for per-space VV tracking.
 * `src-tauri/src/sync_files/` plus `src-tauri/src/sync_files.rs`
   (~144 KiB) — file-blob transfer for attachments. **KEEP entirely**
-  — orthogonal. Attachments still log-and-skip in the engine per
-  `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §8.2.
+  — orthogonal. Attachments still log-and-skip in the engine per the
+  Phase-2 cutover plan's attachments section (see `SESSION-LOG.md`
+  Session 698 Phase 2 day-1 entry).
 * `src-tauri/src/device.rs` — device identity. **KEEP entirely**.
   Loro's `peer_id_from_device_id` (`loro/engine.rs:102`) reads
   from this — unchanged.
@@ -1071,8 +1082,8 @@ Smaller commits help review; single-user atomicity moot.
 
 ### 10.3 Existing `is_conflict=1` rows — assert vs migrate?
 
-**Question.** Per
-`pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §7.1, the conversion rule
+**Question.** Per the Phase-2 cutover plan's conversion rule (see
+`SESSION-LOG.md` Session 698 Phase 2 day-1 entry), the conversion rule
 is "concat-into-merge-result with `---` separator, ours-first". Per
 §2.5, the maintainer's primary `notes.db` is assumed to have zero
 such rows.
@@ -1113,7 +1124,8 @@ column.
 
 ### 10.6 Boot rehydrate latency telemetry
 
-Carry-forward from `pending/PEND-09-PHASE-2-REPORT.md` §8.2. Add
+Carry-forward from the Phase-2 final report (see `SESSION-LOG.md`
+Session 698 Phase 2 day-13.5 entry). Add
 `tracing::info!` on rehydrate elapsed time per space at boot? If
 yes: a 5-min one-line edit to `src-tauri/src/lib.rs`'s boot block.
 

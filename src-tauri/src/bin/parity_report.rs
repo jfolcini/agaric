@@ -1,12 +1,11 @@
 //! `parity_report` — PEND-09 Phase 2 day-7 read-only diagnostic.
 //!
-//! Closes Phase-2 Gate 7 ([Phase-2 cutover plan
-//! `pending/PEND-09-PHASE-2-CUTOVER-PLAN.md` §2 Gate 7 + §3 day 7]) and
-//! the §7 item 2 follow-up that flagged the 7-day shadow-mode soak as
-//! "tedious to observe without a diagnostic command". The maintainer
-//! runs this against `notes.db` between Gate-1 daily samples and reads
-//! the bucket histogram + recent-divergent-ops tail without typing raw
-//! SQL.
+//! Closes Phase-2 Gate 7 (see `SESSION-LOG.md` Session 698 Phase 2 day-7
+//! and day-17 entries) and the follow-up that flagged the 7-day
+//! shadow-mode soak as "tedious to observe without a diagnostic command".
+//! The maintainer runs this against `notes.db` between Gate-1 daily
+//! samples and reads the bucket histogram + recent-divergent-ops tail
+//! without typing raw SQL.
 //!
 //! ## Day-17 addition: `--purge-before <unix_ms>`
 //!
