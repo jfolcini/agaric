@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::op_log::OpRecord;
+use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,6 +161,19 @@ pub enum SyncMessage {
     /// Streamed after `HeadExchange`. The batch carrying `is_last: true`
     /// flushes the receiver's accumulator and triggers apply + merge.
     OpBatch { ops: Vec<OpTransfer>, is_last: bool },
+    /// PEND-09 Phase 3 day-5 — Loro-CRDT-based sync wire envelope.
+    ///
+    /// Carries one [`LoroSyncMessage`] (Snapshot or Update) per
+    /// [`crate::space::SpaceId`].  Sent zero-or-more times in either
+    /// direction in place of [`SyncMessage::OpBatch`] under the
+    /// `loro-shadow` feature; default builds still emit / consume
+    /// `OpBatch`.  The `is_last` flag tells the receiver this is the
+    /// final per-space message of the batch — same contract as
+    /// `OpBatch.is_last` — so the receiver can transition to
+    /// `SyncComplete` once it processes the last one.  Day-6 deletes
+    /// `OpBatch`; this variant becomes the sole streaming-phase
+    /// payload.
+    LoroSync { msg: LoroSyncMessage, is_last: bool },
     /// Responder side-exit: our op log was compacted past the
     /// initiator's heads, so a delta replay is impossible. Triggers
     /// the snapshot sub-flow in [`crate::sync_daemon::snapshot_transfer`].
