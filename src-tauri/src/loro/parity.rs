@@ -68,15 +68,11 @@ pub struct ParityEvent {
     /// (what `merge::shadow_apply` already populates) and the
     /// `merge_parity_log.created_at` column convention.
     pub timestamp: i64,
-    /// Value of `crate::loro::cutover::is_loro_authoritative()` at the
-    /// moment this event was recorded.  Day-14 added: lets the
-    /// downstream parity-analysis tools distinguish shadow-mode-era
-    /// rows (where diffy was authoritative and a bucket-D event
-    /// means "Loro disagreed with diffy") from cutover-era rows
-    /// (where Loro is authoritative and a bucket-D event means
-    /// "diffy would have disagreed with what Loro produced").  The
-    /// bucket definition does not change, but the maintainer's
-    /// follow-up action does.
+    /// Phase-3 day-9 hard-coded this to `true` (the cutover module
+    /// retired alongside the `loro-shadow` feature gate; the engine
+    /// is the only path now).  The column survives in the schema for
+    /// back-compat with rows written under day-14's runtime flip
+    /// (auth = 0 vs 1) so `parity_report` keeps rendering both eras.
     pub loro_authoritative: bool,
 }
 

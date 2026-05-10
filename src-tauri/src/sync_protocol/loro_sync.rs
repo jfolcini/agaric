@@ -17,15 +17,6 @@
 //!   into the per-space engine and project every changed block into
 //!   the SQL `blocks` table inside a single transaction.
 //!
-//! ## Why feature-gated body
-//!
-//! The wire types ([`super::loro_sync_types`]) are intentionally NOT
-//! feature-gated — day-5 deletes `OpBatch` and the default build
-//! needs SOMETHING to keep `SyncMessage` populated through the swing.
-//! The push/apply helpers are gated because they touch
-//! [`crate::loro::registry::LoroEngineRegistry`] which only compiles
-//! under `loro-shadow`.  Day-9 removes the feature gate entirely.
-//!
 //! ## What's NOT here yet
 //!
 //! * Transport wiring.  The orchestrator
@@ -41,16 +32,11 @@
 //!   import error, which [`apply_remote`] forwards as
 //!   [`crate::error::AppError::Validation`].
 
-#[cfg(feature = "loro-shadow")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "loro-shadow")]
 use crate::error::AppError;
-#[cfg(feature = "loro-shadow")]
 use crate::loro::registry::LoroEngineRegistry;
-#[cfg(feature = "loro-shadow")]
 use crate::space::SpaceId;
-#[cfg(feature = "loro-shadow")]
 use crate::sync_protocol::loro_sync_types::{LoroSyncMessage, LORO_SYNC_PROTOCOL_VERSION};
 
 /// Build the next outgoing [`LoroSyncMessage`] for `space_id`.
@@ -70,7 +56,6 @@ use crate::sync_protocol::loro_sync_types::{LoroSyncMessage, LORO_SYNC_PROTOCOL_
 ///
 /// PEND-09 Phase 3 day-4 — sender-side helper.  Day-5 wires this
 /// into `super::orchestrator`'s session loop.
-#[cfg(feature = "loro-shadow")]
 pub async fn prepare_outgoing(
     registry: &LoroEngineRegistry,
     space_id: &SpaceId,
@@ -117,7 +102,6 @@ pub async fn prepare_outgoing(
 ///
 /// PEND-09 Phase 3 day-4 — receiver-side helper.  Day-5 wires this
 /// into `super::orchestrator`'s session loop.
-#[cfg(feature = "loro-shadow")]
 pub async fn apply_remote(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -191,7 +175,7 @@ pub async fn apply_remote(
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::init_pool;

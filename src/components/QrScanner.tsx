@@ -5,7 +5,9 @@ import { logger } from '@/lib/logger'
 
 // QR scanner component — production-ready implementation.
 // Uses html5-qrcode for camera access and QR code detection.
-// See docs/SYNC-PLATFORM-NOTES.md #220 for original implementation plan.
+// See ARCHITECTURE.md §19 "Camera permission for QR pairing" for the
+// platform constraint (Android CAMERA permission + file-upload + 4-word
+// manual-entry fallbacks).
 
 interface QrScannerProps {
   onScan: (data: string) => void

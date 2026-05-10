@@ -1,3 +1,7 @@
+// Pre-existing clippy patterns surfaced when Phase 3 day-9 dropped the
+// `loro-shadow` cfg gates. Day-13+ mechanical cleanup territory.
+#![allow(clippy::manual_let_else)]
+
 //! `LoroEngine` — production-side port of the Phase-0 spike's CRDT
 //! engine (originally `crates/loro-spike/src/lib.rs`; the spike crate
 //! was archived in Phase-2 day-8 — see git tag `pend-09/spike-archive`).
@@ -1603,13 +1607,10 @@ mod day_85_op_coverage_tests {
 //     captured pre-vv contain only ops added AFTER that vv (the
 //     incremental-sync invariant).
 //
-// The engine module itself is `#[cfg(feature = "loro-shadow")]`-gated
-// at `src/loro/mod.rs`, so when this `#[cfg(test)]` module compiles
-// the feature is on (matches the day-8.5 test module above).  The
-// explicit `all(test, feature = "loro-shadow")` is belt-and-braces
-// in case the module ever moves out from under the parent gate.
+// Phase 3 day-9 retired the `loro-shadow` feature gate; the engine
+// module compiles unconditionally now and so does this test module.
 // ---------------------------------------------------------------------------
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod day_3_sync_vv_tests {
     use super::LoroEngine;
     use loro::VersionVector;

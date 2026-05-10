@@ -21,8 +21,8 @@
 //!
 //! Created in `crate::run` immediately after the device_id is known
 //! (the registry's `for_space` call requires a `device_id`).  Lives
-//! for the rest of the process.  When `loro-shadow` is off, this
-//! module does not compile and `shadow_apply` is a no-op.
+//! for the rest of the process.  Phase 3 day-9 retired the
+//! `loro-shadow` feature gate; this module compiles unconditionally.
 
 use std::sync::OnceLock;
 
@@ -57,9 +57,9 @@ impl Default for ShadowState {
 }
 
 /// Initialise the process-global shadow state.  Idempotent — a second
-/// call is a no-op (the first install wins).  Called from
-/// `crate::run`'s `app.setup` closure once the `loro-shadow` feature
-/// is enabled.
+/// call is a no-op (the first install wins).  Called unconditionally
+/// from `crate::run`'s `app.setup` closure (Phase 3 day-9 retired the
+/// `loro-shadow` feature gate that previously gated the call site).
 ///
 /// Returns `true` if this call performed the initialisation, `false`
 /// if a previous call already did.

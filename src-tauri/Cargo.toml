@@ -69,18 +69,11 @@ ci-smoke = []
 # integration points still work through `rmcp`'s framing. See
 # `src/mcp/rmcp_spike.md` for the verdict.
 mcp_rmcp_spike = ["dep:rmcp"]
-# PEND-09 Phase 1 — gate for the Loro CRDT shadow-mode dual-write code
-# paths.  **Off by default**: with this feature disabled the binary is
-# byte-identical to today's behaviour, the `loro` crate is not linked,
-# and `src/loro/` compiles to an empty module.  The feature is the
-# entire control surface for Phase 1 — flipping it on enables the
-# `LoroEngine` port (originally from `crates/loro-spike/`; archived
-# in Phase 2 day-8 — see git tag `pend-09/spike-archive`), the in-memory parity
-# sampler, and the `merge::shadow_apply` hook.  Production rollout
-# happens by enabling this feature in CI builds once Phase 1 reaches
-# its parity-sampling milestone; until then it stays opt-in for
-# developers running `cargo build --features loro-shadow`.
-loro-shadow = ["dep:loro", "dep:xxhash-rust"]
+# PEND-09 Phase 3 day-9 — `loro-shadow` feature flag retired.  The
+# Loro CRDT engine is now the only path: `loro` and `xxhash-rust` are
+# hard deps below (no `optional = true`), and `src/loro/` compiles
+# unconditionally.  Removing the gate is the day-9 deliverable; see
+# `pending/PEND-09-PHASE-3-PLAN.md` §3 day 9.
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -236,20 +229,14 @@ dirs = { version = "6.0.0", default-features = false }
 # `src/mcp/rmcp_spike.md` for the spike verdict.
 rmcp = { version = "1.6", optional = true, features = ["client"] }
 
-# PEND-09 Phase 1 — Loro CRDT runtime.  Optional dep, gated behind the
-# `loro-shadow` feature.  When the feature is off (default), `loro` is
-# NOT linked into the binary — the dep section declaration is the
-# canonical entry point for the eventual cutover, but Phase-1-day-1
-# scaffolding takes the strict zero-default-impact stance: nothing
-# changes in the produced binary unless `--features loro-shadow` is
-# passed.  Caret-1 mirrors what the (now-archived) spike crate pinned
-# (see git tag `pend-09/spike-archive` for `crates/loro-spike/Cargo.toml`);
-# the spike's format-stability finding (kill criterion #4) is the basis
-# for the 1.x pin.  When Phase 2 cutover lands and the materializer routes
-# every op through Loro, this becomes a non-optional dep and the
-# feature flag retires.  Not part of any coupled dep stack per
-# AGENTS.md §"Coupled Dependency Updates".
-loro = { version = "1.12", optional = true }
+# PEND-09 Phase 1 — Loro CRDT runtime.  Hard dep as of Phase 3 day-9
+# (the `loro-shadow` feature gate retired); the engine is the only
+# materializer path.  Caret-1 mirrors what the (now-archived) spike
+# crate pinned (see git tag `pend-09/spike-archive` for
+# `crates/loro-spike/Cargo.toml`); the spike's format-stability finding
+# (kill criterion #4) is the basis for the 1.x pin.  Not part of any
+# coupled dep stack per AGENTS.md §"Coupled Dependency Updates".
+loro = "1.12"
 
 # PEND-09 Phase 1 day-7 — deterministic, cross-Rust-version-stable u64
 # hash for `peer_id_from_device_id`.  `std::hash::DefaultHasher`
@@ -260,9 +247,8 @@ loro = { version = "1.12", optional = true }
 # (seed defaults to 0), versioned, and follows the official xxHash
 # specification — pinning the algorithm here means a future Rustc
 # upgrade will not silently re-credit op history to a different peer.
-# Optional + gated behind `loro-shadow` so the default build does not
-# link `xxhash-rust`.
-xxhash-rust = { version = "0.8", features = ["xxh3"], optional = true }
+# Hard dep as of Phase 3 day-9 (no longer optional/feature-gated).
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }

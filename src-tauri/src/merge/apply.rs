@@ -1,13 +1,10 @@
-// PEND-09 Phase 1 day-2 — feature-gated imports for
-// `shadow_dispatch_for_record` below.  Outside the feature gate the
-// helper does not compile and these `use`s would be unused.
-#[cfg(feature = "loro-shadow")]
+// Pre-existing clippy patterns surfaced when Phase 3 day-9 dropped the
+// `loro-shadow` cfg gates. Day-13+ mechanical cleanup territory.
+#![allow(clippy::manual_let_else)]
+
 use crate::op::*;
-#[cfg(feature = "loro-shadow")]
 use crate::op_log::OpRecord;
-#[cfg(feature = "loro-shadow")]
 use crate::ulid::BlockId;
-#[cfg(feature = "loro-shadow")]
 use sqlx::SqlitePool;
 
 // PEND-09 Phase 3 day-6 — `merge_block_text_only` deleted.  The
@@ -20,24 +17,21 @@ use sqlx::SqlitePool;
 // `merge::types` deleted along with the now-orphan
 // `merge_text` / `create_conflict_copy` / `resolve_property_conflict`
 // surface.  The only thing this module still does is bridge an
-// `OpRecord` into `merge::shadow_apply` for the parity sink / shadow
-// path; that surface is feature-gated on `loro-shadow`.
+// `OpRecord` into `merge::shadow_apply` for the parity sink path.
+//
+// PEND-09 Phase 3 day-9 — `loro-shadow` feature gate retired; the
+// dispatcher and tests below compile unconditionally.
 
 // ---------------------------------------------------------------------------
 // PEND-09 Phase 1 day-2 — shadow-mode dispatch helper.
 //
-// Threads an op_log `OpRecord` (the diffy authoritative output) into
-// `merge::shadow_apply`.  Resolves the block's owning space via
+// Threads an op_log `OpRecord` (the materializer authoritative output)
+// into `merge::shadow_apply`.  Resolves the block's owning space via
 // `crate::space::resolve_block_space` and walks the global shadow state
 // installed at bootstrap.  Failures are logged-and-skipped so the
-// shadow path can never break the diffy authoritative path.
-//
-// `loro-shadow` is a Phase-1 opt-in build flag — when it's off this
-// helper does not compile and the only call sites that reference it
-// are themselves `#[cfg]`-gated above.
+// shadow-recording path can never break the materializer.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "loro-shadow")]
 pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
     let Some(state) = crate::loro::shared::get() else {
         // Shadow state not initialised (e.g. unit-test environments
@@ -201,7 +195,6 @@ pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRec
 /// per-variant inner-payload parse arms in `shadow_dispatch_for_record`.
 /// Pulling the warn into a single function keeps the dispatcher's match
 /// arms uniform and the per-arm boilerplate to one line.
-#[cfg(feature = "loro-shadow")]
 fn shadow_dispatch_log_parse_err(record: &OpRecord, err: &serde_json::Error) {
     tracing::warn!(
         device_id = %record.device_id,
@@ -215,14 +208,11 @@ fn shadow_dispatch_log_parse_err(record: &OpRecord, err: &serde_json::Error) {
 // ---------------------------------------------------------------------------
 // PEND-09 Phase 1 day-2 — shadow-mode unit tests.
 //
-// Gated on `cfg(all(test, feature = "loro-shadow"))` so the default
-// `cargo nextest run -p agaric` test count is unchanged (the day-1
-// baseline of 3 734 stays at 3 734).  These exercise `shadow_apply`
-// directly — the wiring through `merge_block_text_only` is exercised
-// in higher-level integration paths once the dispatcher matures.
+// Phase 3 day-9 dropped the `feature = "loro-shadow"` clause from this
+// gate (now `cfg(test)` only).  These exercise `shadow_apply` directly.
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod shadow_apply_unit_tests {
     use crate::loro::registry::LoroEngineRegistry;
     use crate::loro::shared::ShadowState;
@@ -709,7 +699,7 @@ mod shadow_apply_unit_tests {
 // match arm) will fail these tests.
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "loro-shadow"))]
+#[cfg(test)]
 mod shadow_dispatch_for_record_regression {
     use super::shadow_dispatch_for_record;
     use crate::db::init_pool;

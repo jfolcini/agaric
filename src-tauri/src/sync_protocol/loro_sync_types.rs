@@ -8,17 +8,9 @@
 //! a known peer version vector.  See
 //! `pending/PEND-09-PHASE-3-PLAN.md` §2.1, §3 day 3, §8.3.
 //!
-//! ## Why these are NOT `#[cfg(feature = "loro-shadow")]`-gated
-//!
-//! Day 5 deletes `OpBatch` (the existing diffy-typed wire format).
-//! If [`LoroSyncMessage`] were feature-gated, the default build
-//! would have no sync wire type at all between days 5 and 9 (when
-//! the `loro-shadow` feature is itself removed).  Landing the new
-//! types in the default build from day 3 means days 4-5 can swing
-//! the transport without first un-gating.  The matching engine
-//! API (`engine::version_vector`, `engine::export_update_since`) is
-//! still feature-gated because the engine module itself is — but
-//! the wire envelope that carries its bytes lives in default.
+//! Phase 3 day-9 retired the `loro-shadow` feature gate; the matching
+//! engine API (`engine::version_vector`, `engine::export_update_since`)
+//! and these wire types now compile uniformly in every build.
 //!
 //! ## What's NOT here yet
 //!
