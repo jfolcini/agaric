@@ -228,6 +228,14 @@ pub(crate) fn shadow_apply(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
+    // Day-14: snapshot the cutover flag at record time.  The bucket
+    // semantics (the two summaries differ) do not change with the
+    // flag, but a maintainer reading `parity_report` weeks later
+    // needs to know whether diffy or Loro was authoritative when
+    // each row was written.  Sub-100 µs hot-path read by contract
+    // (see `crate::loro::cutover` module docs).
+    let loro_authoritative = crate::loro::cutover::is_loro_authoritative();
+
     sampler.record(ParityEvent {
         op_id: op_id.to_string(),
         space_id: space_id.to_string(),
@@ -236,6 +244,7 @@ pub(crate) fn shadow_apply(
         loro_result: loro_result_summary,
         r#match,
         timestamp,
+        loro_authoritative,
     });
 
     if !r#match {

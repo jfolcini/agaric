@@ -149,6 +149,13 @@ pub(crate) struct OpTypeRow {
 
 /// One recent divergent op (bucket C or D). `bucket` is always
 /// `Some(...)` here because the SELECT filters on `bucket IN ('C','D')`.
+///
+/// Day-14: `loro_authoritative_at_classify` carries the value of
+/// `crate::loro::cutover::is_loro_authoritative()` at the moment the
+/// row was recorded.  The pretty-printer renders it as `loro` /
+/// `diffy` so a maintainer browsing the divergence tail can see
+/// which side was the source of truth for each row — bucket-D
+/// semantics differ between the two cases (see migration 0055).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DivergentOp {
     pub id: i64,
@@ -158,6 +165,7 @@ pub(crate) struct DivergentOp {
     pub loro_result: String,
     pub bucket: String,
     pub created_at: i64,
+    pub loro_authoritative_at_classify: bool,
 }
 
 /// Aggregated data for the report. Built by [`load_report`] from the
@@ -281,9 +289,17 @@ pub(crate) async fn load_report(pool: &SqlitePool) -> Result<ParityReport, AppEr
 
     // --- 5. Recent divergent ops.  Tiebreak on `id DESC` so two events
     // sharing the same millisecond timestamp still produce stable
-    // output — recent insert id wins.
-    let recent: Vec<(i64, String, String, String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, op_id, op_type, diffy_result, loro_result, bucket, created_at \
+    // output — recent insert id wins.  Day-14 added the
+    // `loro_authoritative_at_classify` column (see migration 0055)
+    // so the table renders which side was authoritative per row.
+    //
+    // Type alias for the 8-column row tuple — the day-14 addition
+    // pushed the inline type past clippy::type_complexity, so the
+    // alias keeps the call site readable and the lint silent.
+    type DivergentRow = (i64, String, String, String, String, String, i64, i64);
+    let recent: Vec<DivergentRow> = sqlx::query_as(
+        "SELECT id, op_id, op_type, diffy_result, loro_result, bucket, created_at, \
+                loro_authoritative_at_classify \
          FROM merge_parity_log \
          WHERE bucket IN ('C', 'D') \
          ORDER BY created_at DESC, id DESC \
@@ -295,14 +311,17 @@ pub(crate) async fn load_report(pool: &SqlitePool) -> Result<ParityReport, AppEr
     let recent_divergent: Vec<DivergentOp> = recent
         .into_iter()
         .map(
-            |(id, op_id, op_type, diffy_result, loro_result, bucket, created_at)| DivergentOp {
-                id,
-                op_id,
-                op_type,
-                diffy_result,
-                loro_result,
-                bucket,
-                created_at,
+            |(id, op_id, op_type, diffy_result, loro_result, bucket, created_at, auth)| {
+                DivergentOp {
+                    id,
+                    op_id,
+                    op_type,
+                    diffy_result,
+                    loro_result,
+                    bucket,
+                    created_at,
+                    loro_authoritative_at_classify: auth != 0,
+                }
             },
         )
         .collect();
@@ -561,16 +580,34 @@ fn format_op_type_table(report: &ParityReport) -> String {
     out
 }
 
+/// Render the cutover-flag value at record time as the short label
+/// the divergent-ops table column uses.  Day-14: `loro` means Loro
+/// was authoritative when the row was written; `diffy` means diffy
+/// was authoritative.  See `DivergentOp::loro_authoritative_at_classify`
+/// and migration 0055 for the why.
+fn fmt_authoritative(loro_authoritative: bool) -> &'static str {
+    if loro_authoritative {
+        "loro"
+    } else {
+        "diffy"
+    }
+}
+
 fn format_divergent_table(rows: &[DivergentOp]) -> String {
-    // Five columns: id, timestamp, op_type, diffy summary, loro summary,
-    // bucket. Truncate the two summary columns at SUMMARY_TRUNCATE so
-    // the row stays under 132 cols at sane bucket / op_type lengths.
+    // Seven columns: id, timestamp, op_type, diffy summary, loro
+    // summary, bucket, auth.  Day-14 added the `auth` column —
+    // `loro` / `diffy` per row, surfacing the value of
+    // `loro_authoritative_at_classify` so the maintainer can read
+    // bucket-D semantics correctly per row.  Truncate the two
+    // summary columns at SUMMARY_TRUNCATE so the row stays under
+    // 140 cols at sane bucket / op_type lengths.
     let header_id = "id";
     let header_ts = "timestamp";
     let header_op = "op_type";
     let header_diffy = "diffy";
     let header_loro = "loro";
     let header_bucket = "bk";
+    let header_auth = "auth";
 
     let id_width = rows
         .iter()
@@ -606,6 +643,15 @@ fn format_divergent_table(rows: &[DivergentOp]) -> String {
         .unwrap_or(0)
         .max(header_loro.len());
     let bucket_width = header_bucket.len(); // single character so 2 (header) is the floor
+                                            // The auth column renders `loro` / `diffy` (5 chars max).
+                                            // Floor at the header width so the column aligns even when no
+                                            // row triggers the wider value.
+    let auth_width = rows
+        .iter()
+        .map(|r| fmt_authoritative(r.loro_authoritative_at_classify).len())
+        .max()
+        .unwrap_or(0)
+        .max(header_auth.len());
 
     let row_width = id_width
         + 2
@@ -617,24 +663,28 @@ fn format_divergent_table(rows: &[DivergentOp]) -> String {
         + 2
         + loro_width
         + 2
-        + bucket_width;
+        + bucket_width
+        + 2
+        + auth_width;
     let rule: String = "-".repeat(row_width);
 
     let mut out = String::new();
     out.push_str(&format!(
-        "  {:>id_width$}  {:<ts_width$}  {:<op_width$}  {:<diffy_width$}  {:<loro_width$}  {:<bucket_width$}\n",
+        "  {:>id_width$}  {:<ts_width$}  {:<op_width$}  {:<diffy_width$}  {:<loro_width$}  {:<bucket_width$}  {:<auth_width$}\n",
         header_id,
         header_ts,
         header_op,
         header_diffy,
         header_loro,
         header_bucket,
+        header_auth,
         id_width = id_width,
         ts_width = ts_width,
         op_width = op_width,
         diffy_width = diffy_width,
         loro_width = loro_width,
         bucket_width = bucket_width,
+        auth_width = auth_width,
     ));
     out.push_str("  ");
     out.push_str(&rule);
@@ -649,17 +699,19 @@ fn format_divergent_table(rows: &[DivergentOp]) -> String {
         let diffy_padded = pad_right_chars(&diffy, diffy_width);
         let loro_padded = pad_right_chars(&loro, loro_width);
         out.push_str(&format!(
-            "  {:>id_width$}  {:<ts_width$}  {:<op_width$}  {}  {}  {:<bucket_width$}\n",
+            "  {:>id_width$}  {:<ts_width$}  {:<op_width$}  {}  {}  {:<bucket_width$}  {:<auth_width$}\n",
             r.id,
             fmt_timestamp_ms(r.created_at),
             r.op_type,
             diffy_padded,
             loro_padded,
             r.bucket,
+            fmt_authoritative(r.loro_authoritative_at_classify),
             id_width = id_width,
             ts_width = ts_width,
             op_width = op_width,
             bucket_width = bucket_width,
+            auth_width = auth_width,
         ));
     }
     out
@@ -809,6 +861,10 @@ mod tests {
     /// production write paths live in `parity_sink.rs` (chunked
     /// multi-row INSERT) but the diagnostic only reads, so the test
     /// fixture writes one row at a time.
+    ///
+    /// Defaults `loro_authoritative_at_classify` to 0 (shadow-mode
+    /// era).  Use [`insert_event_with_auth`] when a test needs to
+    /// pin the value explicitly.
     async fn insert_event(
         pool: &SqlitePool,
         op_id: &str,
@@ -819,10 +875,44 @@ mod tests {
         bucket: Option<&str>,
         created_at_ms: i64,
     ) {
+        insert_event_with_auth(
+            pool,
+            op_id,
+            op_type,
+            diffy_result,
+            loro_result,
+            matched,
+            bucket,
+            created_at_ms,
+            false,
+        )
+        .await;
+    }
+
+    /// Variant of [`insert_event`] that lets a test pin the
+    /// `loro_authoritative_at_classify` column.  Day-14 added; lets
+    /// the new "shows authoritative column" tests construct mixed
+    /// rows without bypassing the column-default machinery.
+    ///
+    /// The 9-arg signature mirrors the columns the row carries —
+    /// keeps the test helpers declarative without a struct literal.
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_event_with_auth(
+        pool: &SqlitePool,
+        op_id: &str,
+        op_type: &str,
+        diffy_result: &str,
+        loro_result: &str,
+        matched: bool,
+        bucket: Option<&str>,
+        created_at_ms: i64,
+        loro_authoritative: bool,
+    ) {
         sqlx::query(
             "INSERT INTO merge_parity_log \
-             (op_id, space_id, op_type, diffy_result, loro_result, matched, bucket, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (op_id, space_id, op_type, diffy_result, loro_result, matched, bucket, \
+              created_at, loro_authoritative_at_classify) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(op_id)
         .bind("01ARZ3NDEKTSV4RRFFQ69G5FAV")
@@ -832,6 +922,7 @@ mod tests {
         .bind(if matched { 1i64 } else { 0i64 })
         .bind(bucket)
         .bind(created_at_ms)
+        .bind(if loro_authoritative { 1i64 } else { 0i64 })
         .execute(pool)
         .await
         .expect("insert merge_parity_log row");
@@ -1269,6 +1360,7 @@ mod tests {
                 loro_result: "error:Validation(boom)".into(),
                 bucket: "D".into(),
                 created_at: 1_778_284_805_000,
+                loro_authoritative_at_classify: false,
             }],
         };
 
@@ -1350,6 +1442,87 @@ mod tests {
         let report = load_report(&pool).await.expect("load_report");
         let names: Vec<&str> = report.op_types.iter().map(|r| r.op_type.as_str()).collect();
         assert_eq!(names, vec!["create_block", "edit_block"]);
+    }
+
+    /// Day-14: the divergent-ops table renders the
+    /// `loro_authoritative_at_classify` column as `loro` / `diffy`
+    /// per row.  Insert two divergent rows — one shadow-mode-era
+    /// (`auth = 0`), one cutover-era (`auth = 1`) — and verify
+    /// `format_divergent_table` includes both labels and the column
+    /// header.
+    #[tokio::test]
+    async fn parity_report_shows_authoritative_column() {
+        let (pool, dir) = make_pool().await;
+
+        // Shadow-mode-era D event: diffy was authoritative.
+        insert_event_with_auth(
+            &pool,
+            "dev/SHADOW",
+            "edit_block",
+            "edit:BLK1:hi",
+            "error:Validation(boom)",
+            false,
+            Some("D"),
+            1_000,
+            false,
+        )
+        .await;
+        // Cutover-era D event: Loro was authoritative.
+        insert_event_with_auth(
+            &pool,
+            "dev/CUT",
+            "edit_block",
+            "edit:BLK2:hi",
+            "error:Validation(boom)",
+            false,
+            Some("D"),
+            2_000,
+            true,
+        )
+        .await;
+
+        let report = load_report(&pool).await.expect("load_report");
+        assert_eq!(report.recent_divergent.len(), 2);
+
+        // Verify the per-row flag round-tripped from the DB.
+        let auth_by_op: Vec<(&str, bool)> = report
+            .recent_divergent
+            .iter()
+            .map(|r| (r.op_id.as_str(), r.loro_authoritative_at_classify))
+            .collect();
+        // Ordered created_at DESC so cutover row first.
+        assert_eq!(auth_by_op, vec![("dev/CUT", true), ("dev/SHADOW", false)],);
+
+        // Verify the formatted divergent table contains the new
+        // column header AND both per-row labels.  Substring searches
+        // for bare "loro" / "diffy" would alias against the column
+        // headers (`header_diffy = "diffy"`, `header_loro = "loro"`),
+        // so we anchor each assertion on the per-row diffy summary
+        // (unique to each row by construction) and inspect the trailing
+        // auth column on that line.  The auth column is left-padded
+        // (`{:<auth_width$}`) to a width that fits "diffy" (5 chars),
+        // so the "loro" (4 chars) row ends with one trailing space.
+        let out = format_report(&report, &dir.path().join("parity_report.db"));
+        assert!(
+            out.contains("auth"),
+            "divergent-ops table must include the 'auth' header column; got: {out}",
+        );
+        let cut_line = out
+            .lines()
+            .find(|l| l.contains("edit:BLK2:hi"))
+            .unwrap_or_else(|| panic!("dev/CUT row missing from output: {out}"));
+        assert!(
+            cut_line.trim_end().ends_with("loro"),
+            "cutover-era row must render the auth column as 'loro'; got line: {cut_line:?}",
+        );
+        let shadow_line = out
+            .lines()
+            .find(|l| l.contains("edit:BLK1:hi"))
+            .unwrap_or_else(|| panic!("dev/SHADOW row missing from output: {out}"));
+        assert!(
+            shadow_line.trim_end().ends_with("diffy"),
+            "shadow-mode-era row must render the auth column as 'diffy'; got line: {shadow_line:?}",
+        );
     }
 
     /// Divergent-table tiebreak on `id DESC`: when two C/D events share
