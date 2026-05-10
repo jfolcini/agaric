@@ -461,7 +461,7 @@ pub async fn project_remove_tag_to_sql(
 /// Behaviour:
 ///
 /// * `Some(snapshot)` → `INSERT OR REPLACE` the `blocks` row with
-///   `(id, block_type, content, parent_id, position, is_conflict=0)`.
+///   `(id, block_type, content, parent_id, position)`.
 ///   Other columns (`deleted_at`, reserved-property hot-path columns)
 ///   are left to per-op projection helpers running alongside this
 ///   one — day-4's scope is the core block shape that

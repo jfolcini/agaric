@@ -8,13 +8,11 @@
 //! ## Recursive CTE policy (invariant #9)
 //!
 //! Every CTE that walks descendants via `parent_id` in this module filters
-//!  in the recursive member. Exception: `remove_subtree_inherited`
-//! deliberately does NOT filter `deleted_at` or `is_conflict` — it is called
-//! AFTER the blocks have been soft-deleted, so filtering `deleted_at IS NULL`
-//! would miss the very rows we need to clean up. The `is_conflict` omission
-//! is intentional for the same reason: conflict-copy descendants' inherited
-//! entries must also be swept when the owning subtree is deleted. See the
-//! per-function doc comments for the specific rationale.
+//! `deleted_at IS NULL` in the recursive member. Exception:
+//! `remove_subtree_inherited` deliberately does NOT filter `deleted_at` —
+//! it is called AFTER the blocks have been soft-deleted, so filtering
+//! would miss the very rows we need to clean up. See the per-function
+//! doc comments for the specific rationale.
 //!
 //! Every recursive CTE in this module is built from the macro family in
 //! [`crate::tag_inheritance_macros`] (MAINT-141). The macros bake in

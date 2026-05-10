@@ -1997,10 +1997,9 @@ async fn resolve_space_via_ancestor_chain(pool: &SqlitePool, block_id: &str) -> 
 
 /// Run the three-assertion audit (A: page_id correctness, B: space
 /// property existence on pages, C: transitive consistency on
-/// non-pages) against every live block. `is_conflict = 0 AND
-/// deleted_at IS NULL` filter mirrors the production space-filter
-/// scope: conflict copies have independent lifecycles (invariant #9)
-/// and soft-deleted blocks are not surfaced by list queries.
+/// non-pages) against every live block. The `deleted_at IS NULL`
+/// filter mirrors the production space-filter scope: soft-deleted
+/// blocks are not surfaced by list queries.
 async fn run_drift_audit(pool: &SqlitePool, label: &str) {
     let blocks: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT id, block_type, page_id FROM blocks \

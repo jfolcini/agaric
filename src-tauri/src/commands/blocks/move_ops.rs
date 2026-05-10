@@ -97,10 +97,8 @@ pub async fn move_block_inner(
         // among the ancestors, reparenting would create a cycle (e.g.
         // moving A under its own grandchild C in a chain A→B→C).
         //
-        // The macro pins AGENTS.md invariant #9 (`b.is_conflict = 0` filter
-        // in the recursive member + `a.depth < 100` bound). Without those,
-        // a conflict copy along the parent chain would falsely report a
-        // cycle, and a corrupted parent_id chain could run unbounded
+        // The macro pins AGENTS.md invariant #9 (`a.depth < 100` recursion
+        // bound). Without it, a corrupted parent_id chain could run unbounded
         // recursion.
         //
         // The macro seeds the CTE at `pid` itself (depth 0) rather than at
