@@ -398,14 +398,10 @@ path = "src/bin/audit_cross_space_refs.rs"
 name = "op_log_histogram"
 path = "src/bin/op_log_histogram.rs"
 
-# PEND-09 Phase 2 day-7 — read-only diagnostic that prints a bucket-A/B/C/D
-# histogram + recent-divergent-ops tail from the `merge_parity_log` table,
-# closing Phase-2 Gate 7 (see `SESSION-LOG.md` Session 698 for the
-# multi-day chain).  Lets the maintainer observe shadow-mode parity state
-# during the 7-day soak without typing raw SQL.  Same `read_only(true)`
-# opening as `op_log_histogram` so the binary can never write to the
-# user's data; refuses to auto-create the table if missing (reports "was
-# this DB built with shadow mode?" and exits non-zero).
-[[bin]]
-name = "parity_report"
-path = "src/bin/parity_report.rs"
+# PEND-09 Phase 3 day-10 — `parity_report` bin deleted alongside the
+# `merge_parity_log` table (migration `0057`).  The bin's reason for
+# existing was the diffy-vs-Loro parity histogram during the Phase-2
+# soak; with diffy gone the comparison surface no longer exists, the
+# table got dropped, and the bin's queries would all be against a
+# missing table.  Re-introduce from git history if a future sync
+# audit ever needs an analogous tool.
