@@ -131,6 +131,15 @@ pub(super) async fn handle_foreground_task(
                     crate::merge::shadow_dispatch_for_record(pool, record).await;
                     dispatch_restore_descendants_shadow(pool, record, &effects.restored_cohort)
                         .await;
+                    // PEND-09 Phase 2 day-15 — symmetric DeleteBlock
+                    // cohort fan-out.  See the matching call in the
+                    // single-op `apply_op` path for rationale.
+                    dispatch_delete_descendants_shadow(
+                        record,
+                        &effects.deleted_cohort,
+                        effects.delete_space_id.as_ref(),
+                    )
+                    .await;
                 }
             }
 
@@ -202,6 +211,23 @@ pub(super) async fn apply_op(
     {
         crate::merge::shadow_dispatch_for_record(pool, record).await;
         dispatch_restore_descendants_shadow(pool, record, &_effects.restored_cohort).await;
+        // PEND-09 Phase 2 day-15 — symmetric DeleteBlock cohort fan-out.
+        // Closes the gap that day-13 left: SQL soft-deletes N
+        // descendants but the engine's `apply_delete_block` is per-block
+        // only, so without this walk the engine carries "alive" state
+        // for the descendants while SQL says "deleted".  Run
+        // unconditionally (not flag-gated) so both shadow-mode AND
+        // cutover-on benefit — same wiring as the restore fan-out.
+        //
+        // Space id was captured PRE-UPDATE in `apply_op_tx` because
+        // `resolve_block_space` filters `deleted_at IS NULL`; a
+        // post-commit lookup would return `None` for every cohort row.
+        dispatch_delete_descendants_shadow(
+            record,
+            &_effects.deleted_cohort,
+            _effects.delete_space_id.as_ref(),
+        )
+        .await;
     }
 
     notify_gcal_for_events(
@@ -343,6 +369,100 @@ async fn dispatch_restore_descendants_shadow(
     }
 }
 
+/// PEND-09 Phase 2 day-15 — symmetric companion to
+/// [`dispatch_restore_descendants_shadow`] for the `DeleteBlock`
+/// cascade.
+///
+/// The SQL `apply_delete_block_tx` walks `descendants_cte_active!()`
+/// and stamps `deleted_at` on every active descendant.  The Loro
+/// engine's `apply_delete_block` is per-block-id only, so without this
+/// fanout a 10-descendant subtree delete leaves 9 blocks alive in the
+/// engine while SQL reports them deleted — exactly the symmetric gap
+/// day-9 closed for restore (see that helper's doc for the day-9
+/// rationale; the fix here mirrors it 1:1 for delete).
+///
+/// ## Decision (cutover plan §3 day-15)
+///
+/// Same three-option matrix as day-9: (a) materializer fans out, (b)
+/// engine walks descendants, (c) thread the cohort through.  Day-15
+/// picks (a) for the same reasons — keeps the engine API simple
+/// (one block_id in, one mutation out) and keeps cohort semantics with
+/// the SQL that owns them.
+///
+/// ## Why the cohort INCLUDES the seed
+///
+/// Same idempotent-seed rationale as `dispatch_restore_descendants_shadow`:
+/// the upstream `shadow_dispatch_for_record` already targets the seed,
+/// so including the seed here yields one extra idempotent engine call
+/// per `DeleteBlock` (engine `apply_delete_block` is a no-op on an
+/// already-deleted block — sets `deleted_at` to the same marker).
+/// Including the seed makes this helper the canonical cohort-delete
+/// function regardless of whether `shadow_dispatch_for_record` reaches
+/// the engine for any specific op record.
+///
+/// ## Implementation note
+///
+/// We synthesise a per-cohort `OpPayload::DeleteBlock` and call
+/// `shadow_apply` directly, skipping the JSON round-trip the dispatch
+/// path takes through stored payloads.  Errors inside `shadow_apply`
+/// are absorbed by the parity sampler (Loro-side errors become parity
+/// rows, never hot-path failures) so this helper has nothing to
+/// propagate.  Per-call cost is bounded by the registry lock + the
+/// engine's per-block-id mutation (single-digit microseconds).
+#[cfg(feature = "loro-shadow")]
+async fn dispatch_delete_descendants_shadow(
+    root_record: &OpRecord,
+    cohort: &[String],
+    space_id: Option<&crate::space::SpaceId>,
+) {
+    use crate::op::OpPayload;
+    use crate::ulid::BlockId;
+
+    if cohort.is_empty() {
+        return;
+    }
+
+    let Some(space_id) = space_id else {
+        // Pre-UPDATE space resolve returned None — the seed has no
+        // resolvable space (pre-FEAT-3 data, or a block whose owning
+        // page never received a `space` SetProperty).  Nothing to do —
+        // there's no canonical engine to mirror onto.  Trace-only:
+        // the diffy-side delete is already authoritative.
+        tracing::trace!(
+            seq = root_record.seq,
+            "delete-cascade fanout: no space captured for root block; skipping",
+        );
+        return;
+    };
+
+    let Some(state) = crate::loro::shared::get() else {
+        // Shadow mode not initialised (test environment that
+        // bypasses the boot setup).  Nothing to do.
+        return;
+    };
+
+    for cohort_id in cohort {
+        // Build the typed payload directly (no JSON round-trip).
+        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::from_trusted(cohort_id),
+        });
+
+        let op_id = format!(
+            "{}/{}#cohort/{}",
+            root_record.device_id, root_record.seq, cohort_id,
+        );
+        let diffy_summary = crate::merge::diffy_summary_for(&payload);
+        crate::merge::shadow_apply(
+            &op_id,
+            &payload,
+            &root_record.device_id,
+            space_id,
+            diffy_summary,
+            state,
+        );
+    }
+}
+
 /// C-2b: advance the materializer apply cursor inside the apply tx so
 /// `apply + cursor` are atomic. The cursor is monotonic (`MAX`), so
 /// out-of-order replay attempts (or mixed-direction batches) are no-ops.
@@ -417,6 +537,24 @@ fn notify_gcal_for_events(
 /// upstream `shadow_dispatch_for_record` call also reaches the seed
 /// when the parse path is healthy) is harmless.  Empty for every op
 /// type other than `RestoreBlock`.
+///
+/// PEND-09 Phase 2 day-15 — `deleted_cohort` is the symmetric companion
+/// for the `DeleteBlock` cascade.  Same shape, same rationale: the SQL
+/// soft-delete walks N descendants, the engine's `apply_delete_block`
+/// is per-block-id only, so without per-descendant fan-out the engine
+/// state for the descendants is "alive" while SQL says "deleted".
+/// Empty unless the op was `DeleteBlock`.  Includes the seed for the
+/// same idempotent-seed-apply reason as `restored_cohort`.
+///
+/// `delete_space_id` is captured alongside `deleted_cohort` because
+/// `resolve_block_space` filters `deleted_at IS NULL` — once the SQL
+/// UPDATE has stamped the cohort as deleted, a post-commit
+/// `resolve_block_space` lookup would return `None` for every row.
+/// This is the asymmetry with `restored_cohort`: post-restore-UPDATE
+/// the cohort is alive again so `dispatch_restore_descendants_shadow`
+/// can resolve the space inline; post-delete-UPDATE the cohort is
+/// dead, so we capture the space at the same pre-UPDATE moment as the
+/// cohort itself.
 #[derive(Debug, Default)]
 pub(super) struct ApplyEffects {
     /// Block ids restored by a `RestoreBlock` apply — seed AND every
@@ -424,6 +562,20 @@ pub(super) struct ApplyEffects {
     /// `RestoreBlock`.  Order is whatever SQLite's CTE walk produces
     /// (no guarantee but stable across calls on a fixed schema).
     pub restored_cohort: Vec<String>,
+    /// PEND-09 Phase 2 day-15 — block ids soft-deleted by a `DeleteBlock`
+    /// apply — seed AND every active descendant the SQL CTE walked.
+    /// Empty unless the op was `DeleteBlock`.  Captured BEFORE the
+    /// UPDATE so the `descendants_cte_active!()` filter still matches
+    /// (post-UPDATE every cohort row has `deleted_at IS NOT NULL` and
+    /// the CTE would skip them all).
+    pub deleted_cohort: Vec<String>,
+    /// PEND-09 Phase 2 day-15 — space id resolved for the `DeleteBlock`
+    /// seed at PRE-UPDATE time.  `None` for every other op type and
+    /// for delete ops on blocks that have no resolvable space (a
+    /// permitted but rare state — pre-FEAT-3 data).  Required because
+    /// `resolve_block_space` filters `deleted_at IS NULL`; a post-commit
+    /// resolve attempt would fail on every cohort row.
+    pub delete_space_id: Option<crate::space::SpaceId>,
 }
 
 /// Core apply-op logic operating on a bare [`SqliteConnection`].
@@ -475,6 +627,39 @@ async fn apply_op_tx(
         }
         OpType::DeleteBlock => {
             let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
+            // PEND-09 Phase 2 day-15 — capture the descendant cohort
+            // BEFORE the UPDATE.  The SQL cascade uses
+            // `descendants_cte_active!()` which filters
+            // `deleted_at IS NULL`, so once the UPDATE stamps the cohort
+            // as deleted the CTE no longer matches them.  We mirror the
+            // exact same CTE here so the captured set is precisely the
+            // rows the UPDATE will touch.
+            //
+            // Cohort INCLUDES the seed (mirrors `restored_cohort`'s
+            // shape — see the `ApplyEffects` doc and
+            // `dispatch_delete_descendants_shadow`).
+            //
+            // Cutover-on path: SQL projection still drives the cohort
+            // walk (day-12); the engine seed is applied inside
+            // `apply_delete_block_via_loro`.  The post-commit fan-out
+            // below is what propagates the engine-side delete to the
+            // descendants in BOTH arms.
+            //
+            // The cohort capture and assignment are unconditional
+            // (mirrors the day-9 `collect_restore_cohort` shape).  The
+            // `deleted_cohort` field is only consumed under
+            // `loro-shadow`, but a single small SELECT before the
+            // UPDATE is cheap and keeps the call site free of feature
+            // gates — see `collect_delete_cohort`'s doc.
+            //
+            // The space resolve runs at the same pre-UPDATE moment so
+            // the post-commit fanout has a known-good space id to
+            // pass to `shadow_apply` (post-UPDATE every cohort row has
+            // `deleted_at IS NOT NULL`, so a fresh `resolve_block_space`
+            // call would return `None` — see `ApplyEffects` doc).
+            let cohort = collect_delete_cohort(conn, &p).await?;
+            let delete_space_id =
+                crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
             #[cfg(feature = "loro-shadow")]
             if crate::loro::cutover::is_loro_authoritative() {
                 apply_delete_block_via_loro(conn, &record.device_id, &p, &record.created_at)
@@ -484,6 +669,8 @@ async fn apply_op_tx(
             }
             #[cfg(not(feature = "loro-shadow"))]
             apply_delete_block_tx(conn, p, &record.created_at).await?;
+            effects.deleted_cohort = cohort;
+            effects.delete_space_id = delete_space_id;
         }
         OpType::RestoreBlock => {
             let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
@@ -621,6 +808,45 @@ async fn collect_restore_cohort(
     ))
     .bind(p.block_id.as_str())
     .bind(&p.deleted_at_ref)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// PEND-09 Phase 2 day-15 — capture the descendant cohort that
+/// `apply_delete_block_tx` is about to soft-delete.  Mirrors the CTE +
+/// `deleted_at IS NULL` filter used by the UPDATE so the captured set is
+/// exactly the rows that will be touched.
+///
+/// MUST run BEFORE the UPDATE: `descendants_cte_active!()` filters
+/// `deleted_at IS NULL` in the recursive step, so once the UPDATE has
+/// stamped the cohort as deleted the CTE no longer matches them and a
+/// post-UPDATE call would return an empty list (or worse, the seed only
+/// — depending on the recursion order).
+///
+/// The list ALWAYS includes the seed `block_id` if it's currently
+/// active; the seed is the CTE's anchor row and is yielded at depth 0.
+/// `dispatch_delete_descendants_shadow` re-applies the seed alongside
+/// the descendants (idempotent — `apply_delete_block` is a no-op on an
+/// already-deleted block) so the helper is the canonical cohort-delete
+/// path regardless of whether the upstream `shadow_dispatch_for_record`
+/// reaches the engine for any specific op record.
+///
+/// Not feature-gated so the call site in `apply_op_tx` stays simple
+/// (mirrors the unconditional `collect_restore_cohort` call); the
+/// captured cohort is only consumed under `loro-shadow`, but the SELECT
+/// itself is cheap (single CTE walk; ~µs on small subtrees) and the
+/// unified shape avoids a feature-gated field on `ApplyEffects`.
+async fn collect_delete_cohort(
+    conn: &mut sqlx::SqliteConnection,
+    p: &DeleteBlockPayload,
+) -> Result<Vec<String>, AppError> {
+    let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(concat!(
+        crate::descendants_cte_active!(),
+        "SELECT id FROM blocks \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+    ))
+    .bind(p.block_id.as_str())
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
@@ -2341,6 +2567,246 @@ mod restore_cascade_tests {
                 "{id} must remain deleted on empty-fanout path",
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PEND-09 Phase 2 day-15 — DeleteBlock cascade fanout tests.
+//
+// Symmetric companion to `restore_cascade_tests` above.  Asserts that
+// the materializer fans out the engine-side soft-delete to every
+// descendant the SQL UPDATE touches, and that the cohort SELECT runs
+// BEFORE the UPDATE so the `descendants_cte_active!()` filter still
+// matches (post-UPDATE the filter would skip the just-deleted rows).
+//
+// `cfg(all(test, feature = "loro-shadow"))` so the default-build test
+// count is unchanged.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "loro-shadow"))]
+mod delete_cascade_tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::loro::shared::ShadowState;
+    use crate::op::OpPayload;
+    use crate::space::SpaceId;
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    // Distinct ULIDs from `restore_cascade_tests` so cross-test bleed
+    // through the process-local shadow state is impossible.
+    const PAGE_ID: &str = "01HZ00000000000000000000PD";
+    const CHILD_1: &str = "01HZ00000000000000000000D1";
+    const CHILD_2: &str = "01HZ00000000000000000000D2";
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const DEVICE_ID: &str = "device-delete-cascade";
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("delete_cascade.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+        (pool, dir)
+    }
+
+    /// Build a tree: page (PAGE_ID) -> child (CHILD_1) -> grandchild
+    /// (CHILD_2).  All ALIVE (deleted_at NULL) so the
+    /// `descendants_cte_active!()` filter in `apply_delete_block_tx`
+    /// matches all three.  The page also gets a `space` block_property
+    /// so `resolve_block_space` returns SPACE.
+    async fn seed_alive_subtree(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+        )
+        .bind(SPACE)
+        .execute(pool)
+        .await
+        .expect("seed space block");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 is_conflict) \
+             VALUES (?, 'page', 'P', NULL, 0, ?, 0)",
+        )
+        .bind(PAGE_ID)
+        .bind(PAGE_ID)
+        .execute(pool)
+        .await
+        .expect("seed page");
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(PAGE_ID)
+        .bind(SPACE)
+        .execute(pool)
+        .await
+        .expect("seed space property");
+        for (id, parent, pos) in [(CHILD_1, PAGE_ID, 0_i64), (CHILD_2, CHILD_1, 0)] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                     is_conflict) \
+                 VALUES (?, 'content', 'C', ?, ?, ?, 0)",
+            )
+            .bind(id)
+            .bind(parent)
+            .bind(pos)
+            .bind(PAGE_ID)
+            .execute(pool)
+            .await
+            .expect("seed child");
+        }
+    }
+
+    fn fresh_shadow_state() -> &'static ShadowState {
+        crate::loro::shared::install_for_test()
+    }
+
+    /// Pre-populate the engine with the three blocks ALIVE.  Mirrors the
+    /// SQL "active subtree" shape so the `apply_delete_block` cohort
+    /// fan-out has something to mark deleted.
+    fn seed_engine_with_alive_subtree(state: &ShadowState) {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine = guard.engine_mut();
+        engine
+            .apply_create_block(PAGE_ID, "page", "P", None, 0)
+            .expect("create page");
+        engine
+            .apply_create_block(CHILD_1, "content", "C", Some(PAGE_ID), 0)
+            .expect("create child 1");
+        engine
+            .apply_create_block(CHILD_2, "content", "C", Some(CHILD_1), 0)
+            .expect("create child 2");
+    }
+
+    fn engine_block_deleted(state: &ShadowState, block_id: &str) -> Option<bool> {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let engine = guard.engine_mut();
+        let snap = engine.read_block(block_id).expect("read_block");
+        snap.as_ref()?;
+        Some(engine.read_deleted(block_id).expect("read_deleted"))
+    }
+
+    /// Drives the materializer's `apply_op` path for a `DeleteBlock` op
+    /// against a 3-block subtree, then asserts that the per-space
+    /// `LoroEngine` reports `deleted_at != Null` on EVERY block — the
+    /// seed AND its two descendants.  Without the day-15 fanout the
+    /// engine-side state would still report `deleted_at = Null` on the
+    /// two descendants (only the seed sees an engine apply via the
+    /// upstream `shadow_dispatch_for_record`).
+    #[tokio::test]
+    async fn delete_block_dispatches_to_loro_for_each_descendant() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_alive_subtree(&pool).await;
+        let state = fresh_shadow_state();
+        seed_engine_with_alive_subtree(state);
+
+        // Sanity: every block is currently alive in the engine.
+        for id in [PAGE_ID, CHILD_1, CHILD_2] {
+            assert_eq!(
+                engine_block_deleted(state, id),
+                Some(false),
+                "{id} must start alive",
+            );
+        }
+
+        let payload = OpPayload::DeleteBlock(crate::op::DeleteBlockPayload {
+            block_id: BlockId::from_trusted(PAGE_ID),
+        });
+        let record = std::sync::Arc::new(
+            crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+                .await
+                .expect("append op_log"),
+        );
+
+        let gcal_handle: OnceLock<GcalConnectorHandle> = OnceLock::new();
+        super::apply_op(&pool, &record, &gcal_handle)
+            .await
+            .expect("apply_op");
+
+        // Every block in the cohort — root + two descendants — must
+        // now be deleted in the engine.  This is the load-bearing
+        // assertion: the day-15 fanout is what makes the descendants
+        // deleted.  Without it CHILD_1 / CHILD_2 would still report
+        // `deleted_at = Null`.
+        for id in [PAGE_ID, CHILD_1, CHILD_2] {
+            assert_eq!(
+                engine_block_deleted(state, id),
+                Some(true),
+                "{id} must be deleted after DeleteBlock cascade fanout",
+            );
+        }
+    }
+
+    /// Verifies the cohort SELECT runs BEFORE the UPDATE — the
+    /// load-bearing ordering invariant.  `collect_delete_cohort` uses
+    /// `descendants_cte_active!()` which filters `deleted_at IS NULL`,
+    /// so calling it AFTER the UPDATE would yield an empty list (every
+    /// row in the cohort has `deleted_at IS NOT NULL` post-UPDATE).
+    ///
+    /// The test calls `collect_delete_cohort` on a fresh tx, then runs
+    /// the UPDATE, then calls `collect_delete_cohort` AGAIN — and
+    /// asserts the first call returned the full cohort while the second
+    /// call returned empty.  This pins the ordering: any future refactor
+    /// that swaps the order would flip the second assertion to non-empty
+    /// and the first to empty, failing the test.
+    #[tokio::test]
+    async fn delete_block_cohort_collected_before_update() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_alive_subtree(&pool).await;
+
+        let payload = crate::op::DeleteBlockPayload {
+            block_id: BlockId::from_trusted(PAGE_ID),
+        };
+
+        let mut tx = pool.begin().await.expect("begin tx");
+
+        // Pre-UPDATE collection: every active row in the subtree
+        // matches `deleted_at IS NULL`, so the seed + two descendants
+        // are returned.
+        let pre_cohort = super::collect_delete_cohort(&mut tx, &payload)
+            .await
+            .expect("collect pre-UPDATE");
+        assert_eq!(
+            pre_cohort.len(),
+            3,
+            "pre-UPDATE cohort must include seed + 2 descendants; got {pre_cohort:?}",
+        );
+        for id in [PAGE_ID, CHILD_1, CHILD_2] {
+            assert!(
+                pre_cohort.iter().any(|c| c == id),
+                "pre-UPDATE cohort missing {id}; got {pre_cohort:?}",
+            );
+        }
+
+        // Run the UPDATE.
+        super::apply_delete_block_tx(&mut tx, payload.clone(), "2026-01-01T00:00:00Z")
+            .await
+            .expect("apply_delete_block_tx");
+
+        // Post-UPDATE collection: every row in the subtree now has
+        // `deleted_at IS NOT NULL`, so the CTE's recursive step (which
+        // requires `deleted_at IS NULL`) finds no descendants.  The
+        // outer SELECT additionally filters `deleted_at IS NULL`, so
+        // even the seed (which the anchor row admits unconditionally)
+        // is excluded.  Empty list confirms the ordering invariant.
+        let post_cohort = super::collect_delete_cohort(&mut tx, &payload)
+            .await
+            .expect("collect post-UPDATE");
+        assert!(
+            post_cohort.is_empty(),
+            "post-UPDATE cohort must be empty (all rows now `deleted_at IS NOT NULL`); \
+             got {post_cohort:?}",
+        );
+
+        tx.commit().await.expect("commit");
     }
 }
 
