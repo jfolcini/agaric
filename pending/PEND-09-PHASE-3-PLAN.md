@@ -413,25 +413,42 @@ next 30-second flush tick. Net data risk: zero.
 
 **§10.1 user decision: skip mini-soak or run for ≥1 day?**
 
-### Day 3 — Loro sync wire types
+### Day 3 — Loro sync wire types — **COMMITTED 2026-05-10**
 
-Edit `src-tauri/src/sync_protocol/types.rs` to add
-`PeerVersionVectors`, `LoroSyncSnapshot`, `LoroSyncUpdate` variants
-to `SyncMessage`. The existing `OpBatch` variant stays callable
-until day 5.
+New module `src-tauri/src/sync_protocol/loro_sync_types.rs` (~190 LOC):
+defines `LoroSyncMessage::{Snapshot, Update}` plus
+`LoroVersionVector` type alias plus `LORO_SYNC_PROTOCOL_VERSION = 1`
+constant.  Wired into `sync_protocol/mod.rs` as `pub mod
+loro_sync_types`.  Intentionally NOT `#[cfg(feature =
+"loro-shadow")]`-gated — day 5 deletes `OpBatch` and the default
+build needs a sync wire type continuously through that swing.  The
+matching engine surface `LoroEngine::version_vector` /
+`LoroEngine::export_update_since` lands in `loro/engine.rs` and
+remains feature-gated (the engine module itself is); day-4 wires
+the senders.
 
-New module `src-tauri/src/sync_protocol/loro_sync.rs` (~200-300
-LOC), see §8.1.
+The day-3 `LoroSyncMessage` shape collapses the plan's earlier
+three-variant sketch (`PeerVersionVectors` + `LoroSyncSnapshot` +
+`LoroSyncUpdate`) into two variants — the per-message
+`from_vv: LoroVersionVector` field on `Update` carries the same
+information without a separate pre-stream exchange.  §8.3's
+`PeerVersionVectors` variant + `ExchangingPeerVVs` orchestrator
+state are deferred to days 4-5 if the sender path actually needs
+the round-trip; it currently does not (sender reads the receiver's
+last vv from `peer_refs` per §8.1).
+
+Existing `SyncMessage::OpBatch` left untouched — day-5 deletes it.
 
 Verify Loro 1.12 `VersionVector::encode()` round-trips byte-stable
-across runs — unit test for `encode → decode → equality`.
+across runs via the `version_vector_returns_encoded_bytes` engine
+test (decode-equals-direct-vv invariant) plus
+`export_update_since_carries_only_post_vv_ops` (the
+incremental-sync invariant).
 
-Default 3775 unchanged on day 3 (new variants are additive; `OpBatch`
-still wins all decode dispatches; the new module is reachable but
-unexercised). The new sync types are **not** gated under `loro-shadow`
-— they ship in the default build so day 5 can swing the receiver
-without first un-gating. Feature-on test count grows by ~5-8 from the
-new round-trip unit test.
+Default count: **3775 → 3778** (3 new wire-shape round-trip / version
+constant tests in `loro_sync_types`).  Feature-on count: **3902 →
+3907** (3 default + 2 engine VV tests).  Both match the day-1 plan
+estimate.
 
 ### Day 4 — Wire Loro sync push
 
