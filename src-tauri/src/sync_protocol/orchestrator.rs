@@ -1,7 +1,3 @@
-// Pre-existing clippy patterns surfaced when Phase 3 day-9 dropped the
-// `loro-shadow` cfg gates. Day-13+ mechanical cleanup territory.
-#![allow(clippy::manual_let_else)]
-
 //! # `sync_protocol` orchestrator
 //!
 //! Pure, per-session state machine that drives a single sync exchange
@@ -28,9 +24,12 @@
 //!   `HeadExchange` — one [`SyncMessage::LoroSync`] per registered
 //!   space (built from [`crate::loro::shared`]'s
 //!   [`crate::loro::registry::LoroEngineRegistry`]).  When the
-//!   registry exists but is empty (no spaces touched yet) we emit a
-//!   single sentinel `LoroSync` (zero-byte snapshot, `is_last: true`)
-//!   so the receiver can advance to `SyncComplete`.
+//!   registry exists but is empty (no spaces touched yet) we
+//!   short-circuit straight to `SyncComplete` — no streaming-phase
+//!   payload — and the remote's state validation accepts
+//!   `SyncComplete` in `ExchangingHeads` to absorb the empty-stream
+//!   case (PEND-09 Phase 4 — collapsed the day-5 sentinel
+//!   zero-byte `LoroSync` workaround).
 //! * Importing received [`crate::sync_protocol::loro_sync_types::LoroSyncMessage`]s
 //!   via [`crate::sync_protocol::loro_sync::apply_remote`].
 //! * Emitting fine-grained progress events through an attached
@@ -127,9 +126,10 @@ pub struct SyncOrchestrator {
     /// when we sent nothing (typical for an initiator that already
     /// shipped all its ops on a previous sync, or for the residual
     /// edge case where the registry exists but is empty so the
-    /// streaming-phase payload is the sentinel-empty `LoroSync`); the
-    /// read site treats `None` as the empty-string sentinel documented
-    /// on [`peer_refs::update_on_sync`].
+    /// orchestrator short-circuited to `SyncComplete` without
+    /// emitting any streaming-phase payload); the read site treats
+    /// `None` as the empty-string sentinel documented on
+    /// [`peer_refs::update_on_sync`].
     last_sent_hash: Option<String>,
     /// PEND-09 Phase 3 day-5 — pending [`LoroSyncMessage`]s queued for
     /// streaming. Populated when entering [`SyncState::StreamingOps`]
@@ -264,8 +264,16 @@ impl SyncOrchestrator {
                 });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
-            // SyncComplete valid in StreamingOps (Complete is terminal, already caught above)
-            (SyncState::StreamingOps, SyncMessage::SyncComplete { .. }) => {}
+            // SyncComplete valid in StreamingOps (Complete is terminal,
+            // already caught above) and in ExchangingHeads (the
+            // empty-stream short-circuit: when the remote has zero
+            // registered spaces, `head_exchange_outgoing_loro` skips the
+            // streaming phase entirely and replies with `SyncComplete`
+            // directly — see PEND-09 Phase 4 sentinel collapse).
+            (
+                SyncState::StreamingOps | SyncState::ExchangingHeads,
+                SyncMessage::SyncComplete { .. },
+            ) => {}
             (_, SyncMessage::SyncComplete { .. }) => {
                 let msg_str = "SyncComplete received in wrong state";
                 self.state = SyncState::Failed(msg_str.into());
@@ -352,60 +360,50 @@ impl SyncOrchestrator {
                 // payload is one [`SyncMessage::LoroSync`] per
                 // registered space (built from [`crate::loro::shared`]).
                 // Day-9 retired the `loro-shadow` feature gate so this
-                // is now the only path; the residual edge case (registry
-                // exists but is empty) is handled by
-                // `head_exchange_outgoing_loro`'s "no spaces -> sentinel
-                // zero-byte snapshot" branch.
+                // is now the only path. PEND-09 Phase 4 — the residual
+                // edge case (registry exists but is empty) now
+                // short-circuits to `SyncMessage::SyncComplete` rather
+                // than emitting a zero-byte sentinel `LoroSync`.
                 return self.head_exchange_outgoing_loro().await;
             }
 
             // ---- LoroSync (PEND-09 Phase 3 day-5) ----------------------------
             // Dispatch to the day-4 `apply_remote` helper.  Phase 3
             // day-9 retired the `loro-shadow` feature gate so this is
-            // unconditional now.  The empty-sentinel snapshot
-            // (see `head_exchange_outgoing_loro`'s zero-spaces path)
-            // skips the engine import and just advances `is_last`.
+            // unconditional now.  PEND-09 Phase 4 — the day-5
+            // empty-sentinel short-circuit was collapsed: senders no
+            // longer emit a zero-byte `Snapshot` for the no-spaces
+            // case, so the receiver always has real bytes to import.
             SyncMessage::LoroSync { msg, is_last } => {
                 {
                     use crate::sync_protocol::loro_sync;
-                    use crate::sync_protocol::loro_sync_types::LoroSyncMessage as LSM;
 
-                    // Skip the empty-sentinel snapshot (see
-                    // `head_exchange_outgoing_loro`'s zero-spaces path).
-                    let is_empty_sentinel = matches!(
-                        &msg,
-                        LSM::Snapshot { bytes, .. } if bytes.is_empty()
-                    );
-
-                    if !is_empty_sentinel {
-                        match crate::loro::shared::get() {
-                            Some(shadow) => {
-                                self.state = SyncState::ApplyingOps;
-                                self.session.state = SyncState::ApplyingOps;
-                                self.emit(crate::sync_events::SyncEvent::Progress {
-                                    state: crate::sync_events::sync_state_label(&self.state)
-                                        .to_string(),
-                                    remote_device_id: self.session.remote_device_id.clone(),
-                                    ops_received: self.session.ops_received,
-                                    ops_sent: self.session.ops_sent,
-                                });
-                                loro_sync::apply_remote(
-                                    &self.pool,
-                                    &shadow.registry,
-                                    &self.device_id,
-                                    msg,
-                                )
-                                .await?;
-                                self.session.ops_received =
-                                    self.session.ops_received.saturating_add(1);
-                            }
-                            None => {
-                                tracing::warn!(
-                                    device_id = %self.device_id,
-                                    "loro: shared state not initialised; \
-                                     dropping incoming LoroSync"
-                                );
-                            }
+                    match crate::loro::shared::get() {
+                        Some(shadow) => {
+                            self.state = SyncState::ApplyingOps;
+                            self.session.state = SyncState::ApplyingOps;
+                            self.emit(crate::sync_events::SyncEvent::Progress {
+                                state: crate::sync_events::sync_state_label(&self.state)
+                                    .to_string(),
+                                remote_device_id: self.session.remote_device_id.clone(),
+                                ops_received: self.session.ops_received,
+                                ops_sent: self.session.ops_sent,
+                            });
+                            loro_sync::apply_remote(
+                                &self.pool,
+                                &shadow.registry,
+                                &self.device_id,
+                                msg,
+                            )
+                            .await?;
+                            self.session.ops_received = self.session.ops_received.saturating_add(1);
+                        }
+                        None => {
+                            tracing::warn!(
+                                device_id = %self.device_id,
+                                "loro: shared state not initialised; \
+                                 dropping incoming LoroSync"
+                            );
                         }
                     }
                 }
@@ -480,10 +478,12 @@ impl SyncOrchestrator {
                 };
                 // `last_sent_hash` was captured from the last
                 // streaming-phase op or left None (registry was empty
-                // for the session, only the sentinel was sent).
-                // `unwrap_or_default()` reproduces the empty-string
-                // sentinel that `peer_refs::update_on_sync` expects
-                // when no ops were sent this session.
+                // for the session and the orchestrator short-circuited
+                // straight to `SyncComplete` without emitting any
+                // streaming-phase payload). `unwrap_or_default()`
+                // reproduces the empty-string sentinel that
+                // `peer_refs::update_on_sync` expects when no ops were
+                // sent this session.
                 let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
 
                 // PEND-24 M2: wrap the post-session bookkeeping pair
@@ -589,46 +589,69 @@ impl SyncOrchestrator {
     ///   else with `is_last: false`. The receiver transitions to
     ///   `Merging`/`Complete` when it processes the `is_last: true`
     ///   message.
-    /// * If the registry is empty (no shadow init, no spaces touched
-    ///   yet, etc.), fall through to "nothing to send" — emit a single
-    ///   sentinel zero-byte snapshot with `is_last: true` so the
-    ///   receiver advances cleanly to `SyncComplete`.
+    /// * If the registry has no spaces (no shadow init, no spaces
+    ///   touched yet, etc.), short-circuit straight to
+    ///   [`SyncMessage::SyncComplete`] — no streaming-phase payload at
+    ///   all. PEND-09 Phase 4 — collapsed the day-5 sentinel
+    ///   zero-byte `LoroSync` workaround. The receiver's state
+    ///   validation accepts `SyncComplete` in `ExchangingHeads` so the
+    ///   peer advances cleanly without ever entering `StreamingOps`.
     ///
-    /// State transition: `ExchangingHeads` → `StreamingOps`.
+    /// State transition: `ExchangingHeads` → `StreamingOps` (when at
+    /// least one space is registered) or `ExchangingHeads` →
+    /// `Complete` (empty-stream short-circuit).
     async fn head_exchange_outgoing_loro(&mut self) -> Result<Option<SyncMessage>, AppError> {
         use crate::sync_protocol::loro_sync;
         use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
 
-        // Look up the process-global registry. If shadow state was
-        // never initialised (e.g., a test that skipped the bootstrap
-        // path), log + fall through to "no streaming payload" — the
-        // session still completes, just with zero ops sent.
-        let shadow = match crate::loro::shared::get() {
-            Some(s) => s,
+        // Look up the process-global registry and snapshot its
+        // currently-registered space ids.  If shadow state was never
+        // initialised (e.g., a test that skipped the bootstrap path),
+        // treat it as an empty registry — we still need to advance
+        // the remote's state machine, just with zero ops sent.
+        let shadow_opt = crate::loro::shared::get();
+        let space_ids: Vec<crate::space::SpaceId> = match shadow_opt {
+            Some(s) => s.registry.space_ids(),
             None => {
                 tracing::warn!(
                     device_id = %self.device_id,
                     "loro: shared state not initialised; \
-                     skipping LoroSync push (sending empty stream)"
+                     skipping LoroSync push (short-circuiting to SyncComplete)"
                 );
-                self.state = SyncState::StreamingOps;
-                self.session.state = SyncState::StreamingOps;
-                return Ok(Some(SyncMessage::LoroSync {
-                    msg: LoroSyncMessage::Snapshot {
-                        protocol_version:
-                            crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
-                        space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
-                        bytes: Vec::new(),
-                    },
-                    is_last: true,
-                }));
+                Vec::new()
             }
         };
+
+        // PEND-09 Phase 4 — empty-stream short-circuit.  No registered
+        // spaces means there is nothing to ship; reply with
+        // `SyncComplete` directly so we do not waste a round-trip on
+        // an empty `LoroSync`.  The remote's state validation accepts
+        // `SyncComplete` in `ExchangingHeads` for exactly this case.
+        if space_ids.is_empty() {
+            let last_hash = get_local_heads(&self.pool)
+                .await?
+                .into_iter()
+                .find(|h| h.device_id == self.device_id)
+                .map(|h| h.hash)
+                .unwrap_or_default();
+            self.state = SyncState::Complete;
+            self.session.state = SyncState::Complete;
+            self.emit(crate::sync_events::SyncEvent::Complete {
+                remote_device_id: self.session.remote_device_id.clone(),
+                ops_received: self.session.ops_received,
+                ops_sent: self.session.ops_sent,
+            });
+            return Ok(Some(SyncMessage::SyncComplete { last_hash }));
+        }
+
+        // `space_ids` is non-empty here, so `shadow_opt` was `Some`
+        // when we read it (the `None` branch produced an empty Vec).
+        let shadow =
+            shadow_opt.expect("space_ids non-empty implies shadow_opt was Some on the read above");
 
         // Enumerate spaces and build one LoroSync per space.  The
         // `peer_vv = None` choice ships a full snapshot; per-peer-vv
         // tracking (and hence Update messages) is plan §10.5 / day-12+.
-        let space_ids = shadow.registry.space_ids();
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
         for sid in &space_ids {
             let m =
@@ -647,33 +670,18 @@ impl SyncOrchestrator {
         });
 
         // Pop the first; the rest go into the pending queue and are
-        // drained by `next_message`.
-        match messages.pop_front() {
-            None => {
-                // Empty registry — send a single sentinel `is_last:
-                // true` message with an empty snapshot so the receiver
-                // can advance to Complete.  The receiver's
-                // `apply_remote` skips zero-byte payloads (no engine
-                // import) and marks the streaming phase done.
-                Ok(Some(SyncMessage::LoroSync {
-                    msg: LoroSyncMessage::Snapshot {
-                        protocol_version:
-                            crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
-                        space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
-                        bytes: Vec::new(),
-                    },
-                    is_last: true,
-                }))
-            }
-            Some(first) => {
-                let is_last = messages.is_empty();
-                self.pending_loro_messages = messages;
-                Ok(Some(SyncMessage::LoroSync {
-                    msg: first,
-                    is_last,
-                }))
-            }
-        }
+        // drained by `next_message`.  `messages` is non-empty here:
+        // the `space_ids.is_empty()` short-circuit above returned
+        // before we built it.
+        let first = messages
+            .pop_front()
+            .expect("messages was just built from a non-empty space_ids list");
+        let is_last = messages.is_empty();
+        self.pending_loro_messages = messages;
+        Ok(Some(SyncMessage::LoroSync {
+            msg: first,
+            is_last,
+        }))
     }
 
     /// Returns true iff the session ended in `SyncState::Complete` — i.e. the
@@ -715,12 +723,12 @@ impl SyncOrchestrator {
     /// }
     /// ```
     pub fn next_message(&mut self) -> Option<SyncMessage> {
-        // PEND-09 Phase 3 day-9: when `head_exchange_outgoing_loro`'s
+        // PEND-09 Phase 4: when `head_exchange_outgoing_loro`'s
         // registry-empty branch fires, the queue stays empty and the
-        // first message is a sentinel-empty `LoroSync` returned
-        // directly from `handle_message` — `next_message` then returns
-        // `None` immediately.  Otherwise it drains the per-space
-        // pending queue one message at a time.
+        // session reply is `SyncComplete` (returned directly from
+        // `handle_message`) — `next_message` then returns `None`
+        // immediately.  Otherwise it drains the per-space pending
+        // queue one message at a time.
         if let Some(msg) = self.pending_loro_messages.pop_front() {
             let is_last = self.pending_loro_messages.is_empty();
             return Some(SyncMessage::LoroSync { msg, is_last });

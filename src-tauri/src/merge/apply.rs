@@ -1,7 +1,3 @@
-// Pre-existing clippy patterns surfaced when Phase 3 day-9 dropped the
-// `loro-shadow` cfg gates. Day-13+ mechanical cleanup territory.
-#![allow(clippy::manual_let_else)]
-
 use crate::op::*;
 use crate::op_log::OpRecord;
 use crate::ulid::BlockId;
@@ -22,28 +18,26 @@ use sqlx::SqlitePool;
 // dispatcher and tests below compile unconditionally.
 //
 // PEND-09 Phase 3 day-10 — parity sink + classifier + flush task
-// deleted.  `shadow_apply` is now a pure engine dispatcher (no
+// deleted.  `engine_apply` is now a pure engine dispatcher (no
 // `ParityEvent` recording); the unit tests below verify engine state
 // after dispatch but no longer assert on a sampler ring.  The
 // "parity_sampler_records_one_event_per_call" test was removed in the
 // same pass — its target sampler is gone.
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 1 day-2 — shadow-mode dispatch helper.
+// PEND-09 Phase 1 day-2 — engine dispatch helper.
 //
 // Threads an op_log `OpRecord` (the materializer authoritative output)
-// into `merge::shadow_apply`.  Resolves the block's owning space via
-// `crate::space::resolve_block_space` and walks the global shadow state
+// into `merge::engine_apply`.  Resolves the block's owning space via
+// `crate::space::resolve_block_space` and walks the global engine state
 // installed at bootstrap.  Failures are logged-and-skipped so the
-// shadow-recording path can never break the materializer.
+// engine-dispatch path can never break the materializer.
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
+pub(crate) async fn dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
     let Some(state) = crate::loro::shared::get() else {
-        // Shadow state not initialised (e.g. unit-test environments
-        // that exercise `merge_block_text_only` without going through
-        // `crate::run`).  Skip silently — the diffy path is already
-        // authoritative.
+        // Engine state not initialised (e.g. unit-test environments
+        // that bypass `crate::run`).  Skip silently.
         return;
     };
 
@@ -66,98 +60,95 @@ pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRec
     // `record.op_type` (the dedicated `op_log` column), parse the
     // corresponding inner-only struct, then re-wrap as `OpPayload` so
     // the rest of the function (block-id extraction, space resolve,
-    // `shadow_apply` call) is untouched.
+    // `engine_apply` call) is untouched.
     let payload: OpPayload = match record.op_type.as_str() {
         "create_block" => {
             match serde_json::from_str::<crate::op::CreateBlockPayload>(&record.payload) {
                 Ok(p) => OpPayload::CreateBlock(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "edit_block" => {
             match serde_json::from_str::<crate::op::EditBlockPayload>(&record.payload) {
                 Ok(p) => OpPayload::EditBlock(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "delete_block" => {
             match serde_json::from_str::<crate::op::DeleteBlockPayload>(&record.payload) {
                 Ok(p) => OpPayload::DeleteBlock(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "restore_block" => {
             match serde_json::from_str::<crate::op::RestoreBlockPayload>(&record.payload) {
                 Ok(p) => OpPayload::RestoreBlock(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "purge_block" => {
             match serde_json::from_str::<crate::op::PurgeBlockPayload>(&record.payload) {
                 Ok(p) => OpPayload::PurgeBlock(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "move_block" => {
             match serde_json::from_str::<crate::op::MoveBlockPayload>(&record.payload) {
                 Ok(p) => OpPayload::MoveBlock(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "add_tag" => match serde_json::from_str::<crate::op::AddTagPayload>(&record.payload) {
             Ok(p) => OpPayload::AddTag(p),
-            Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+            Err(e) => return dispatch_log_parse_err(record, &e),
         },
         "remove_tag" => {
             match serde_json::from_str::<crate::op::RemoveTagPayload>(&record.payload) {
                 Ok(p) => OpPayload::RemoveTag(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "set_property" => {
             match serde_json::from_str::<crate::op::SetPropertyPayload>(&record.payload) {
                 Ok(p) => OpPayload::SetProperty(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "delete_property" => {
             match serde_json::from_str::<crate::op::DeletePropertyPayload>(&record.payload) {
                 Ok(p) => OpPayload::DeleteProperty(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "add_attachment" => {
             match serde_json::from_str::<crate::op::AddAttachmentPayload>(&record.payload) {
                 Ok(p) => OpPayload::AddAttachment(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         "delete_attachment" => {
             match serde_json::from_str::<crate::op::DeleteAttachmentPayload>(&record.payload) {
                 Ok(p) => OpPayload::DeleteAttachment(p),
-                Err(e) => return shadow_dispatch_log_parse_err(record, &e),
+                Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
         other => {
             // Unknown op_type — matches the pre-fix "unsupported" path
-            // (log + return, never break the diffy authoritative path).
+            // (log + return, never break the engine-dispatch path).
             tracing::warn!(
                 device_id = %record.device_id,
                 seq = record.seq,
                 op_type = %other,
-                "shadow_dispatch: unknown op_type; skipping",
+                "engine_dispatch: unknown op_type; skipping",
             );
             return;
         }
     };
 
-    let block_id_str = match payload.block_id() {
-        Some(id) => id,
-        None => {
-            // Op types without a `block_id` (today only DeleteAttachment)
-            // can't be assigned to a space; skip.
-            return;
-        }
+    let Some(block_id_str) = payload.block_id() else {
+        // Op types without a `block_id` (today only DeleteAttachment)
+        // can't be assigned to a space; skip.
+        return;
     };
     let block_id = BlockId::from_trusted(block_id_str);
 
@@ -170,7 +161,7 @@ pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRec
             // may revisit by routing such ops to a "default" space.
             tracing::trace!(
                 block_id = block_id_str,
-                "shadow_dispatch: no space found for block; skipping",
+                "engine_dispatch: no space found for block; skipping",
             );
             return;
         }
@@ -178,51 +169,43 @@ pub(crate) async fn shadow_dispatch_for_record(pool: &SqlitePool, record: &OpRec
             tracing::warn!(
                 block_id = block_id_str,
                 error = %e,
-                "shadow_dispatch: resolve_block_space failed; skipping",
+                "engine_dispatch: resolve_block_space failed; skipping",
             );
             return;
         }
     };
 
     let op_id = format!("{}/{}", record.device_id, record.seq);
-    let diffy_summary = super::diffy_summary_for(&payload);
 
-    super::shadow_apply(
-        &op_id,
-        &payload,
-        &record.device_id,
-        &space_id,
-        diffy_summary,
-        state,
-    );
+    super::engine_apply(&op_id, &payload, &record.device_id, &space_id, state);
 }
 
 /// PEND-09 Phase 2 day-9.5 — shared warn-and-return helper for the
-/// per-variant inner-payload parse arms in `shadow_dispatch_for_record`.
+/// per-variant inner-payload parse arms in `dispatch_for_record`.
 /// Pulling the warn into a single function keeps the dispatcher's match
 /// arms uniform and the per-arm boilerplate to one line.
-fn shadow_dispatch_log_parse_err(record: &OpRecord, err: &serde_json::Error) {
+fn dispatch_log_parse_err(record: &OpRecord, err: &serde_json::Error) {
     tracing::warn!(
         device_id = %record.device_id,
         seq = record.seq,
         op_type = %record.op_type,
         error = %err,
-        "shadow_dispatch: failed to parse inner payload; skipping",
+        "engine_dispatch: failed to parse inner payload; skipping",
     );
 }
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 1 day-2 — shadow-mode unit tests.
+// PEND-09 Phase 1 day-2 — engine-dispatch unit tests.
 //
 // Phase 3 day-9 dropped the `feature = "loro-shadow"` clause from this
-// gate (now `cfg(test)` only).  These exercise `shadow_apply` directly.
+// gate (now `cfg(test)` only).  These exercise `engine_apply` directly.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod shadow_apply_unit_tests {
+mod engine_apply_unit_tests {
     use crate::loro::registry::LoroEngineRegistry;
-    use crate::loro::shared::ShadowState;
-    use crate::merge::shadow_apply;
+    use crate::loro::shared::LoroState;
+    use crate::merge::engine_apply;
     use crate::op::{
         AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload,
         EditBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
@@ -236,10 +219,10 @@ mod shadow_apply_unit_tests {
     const SPACE_B: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
     const BLOCK_1: &str = "01HZ00000000000000000000AB";
     const BLOCK_2: &str = "01HZ00000000000000000000CD";
-    const DEVICE_ID: &str = "device-shadow-test";
+    const DEVICE_ID: &str = "device-engine-apply-test";
 
-    fn fresh_state() -> ShadowState {
-        ShadowState {
+    fn fresh_state() -> LoroState {
+        LoroState {
             registry: LoroEngineRegistry::new(),
         }
     }
@@ -280,7 +263,7 @@ mod shadow_apply_unit_tests {
         })
     }
 
-    /// Dispatching a `CreateBlock` op via shadow_apply must populate
+    /// Dispatching a `CreateBlock` op via engine_apply must populate
     /// the per-space engine.
     #[test]
     fn dispatch_create_block_populates_engine() {
@@ -288,14 +271,7 @@ mod shadow_apply_unit_tests {
         let space = SpaceId::from_trusted(SPACE_A);
         let op = create_op(BLOCK_1, "hello");
 
-        shadow_apply(
-            "DEV/1",
-            &op,
-            DEVICE_ID,
-            &space,
-            super::super::diffy_summary_for(&op),
-            &state,
-        );
+        engine_apply("DEV/1", &op, DEVICE_ID, &space, &state);
 
         // The engine for SPACE_A must hold BLOCK_1 with content "hello".
         // Scope the guard so the registry mutex is released before
@@ -329,8 +305,7 @@ mod shadow_apply_unit_tests {
             edit_op(BLOCK_1, "alpha-beta"),
             delete_op(BLOCK_1),
         ] {
-            let summary = super::super::diffy_summary_for(&op);
-            shadow_apply("DEV/x", &op, DEVICE_ID, &space, summary, &state);
+            engine_apply("DEV/x", &op, DEVICE_ID, &space, &state);
         }
 
         let mut guard = state
@@ -355,23 +330,9 @@ mod shadow_apply_unit_tests {
         let space_b = SpaceId::from_trusted(SPACE_B);
 
         let op_a = create_op(BLOCK_1, "in A");
-        shadow_apply(
-            "DEV/1",
-            &op_a,
-            DEVICE_ID,
-            &space_a,
-            super::super::diffy_summary_for(&op_a),
-            &state,
-        );
+        engine_apply("DEV/1", &op_a, DEVICE_ID, &space_a, &state);
         let op_b = create_op(BLOCK_2, "in B");
-        shadow_apply(
-            "DEV/2",
-            &op_b,
-            DEVICE_ID,
-            &space_b,
-            super::super::diffy_summary_for(&op_b),
-            &state,
-        );
+        engine_apply("DEV/2", &op_b, DEVICE_ID, &space_b, &state);
 
         assert_eq!(state.registry.len(), 2, "must hold two distinct engines");
 
@@ -390,7 +351,7 @@ mod shadow_apply_unit_tests {
 
     // PEND-09 Phase 3 day-10 — `parity_sampler_records_one_event_per_call`
     // was removed here.  Its target — the `ShadowParitySampler` ring
-    // owned by `ShadowState` — got deleted alongside the
+    // owned by `LoroState` — got deleted alongside the
     // `merge_parity_log` table (the diffy↔Loro comparison surface lost
     // meaning post-cutover).  The dispatcher is now log+skip on error
     // with no observable record-keeping; the engine-side mutation tests
@@ -400,7 +361,7 @@ mod shadow_apply_unit_tests {
     // Phase-2 day-8.5 — dispatcher coverage for the five newly-mirrored
     // op types (AddTag / RemoveTag / RestoreBlock / PurgeBlock /
     // DeleteProperty).  Each test seeds the engine with a CreateBlock,
-    // dispatches the new op via `shadow_apply`, and asserts the engine
+    // dispatches the new op via `engine_apply`, and asserts the engine
     // reflects the mutation (mutation-test of the dispatcher arm).
     // ---------------------------------------------------------------------
 
@@ -445,16 +406,14 @@ mod shadow_apply_unit_tests {
         })
     }
 
-    /// Helper: drive an op through `shadow_apply` using the dispatcher's
-    /// own diffy_summary as the diffy side (so the parity event is a
-    /// match).  Mirrors the pattern from the existing tests.
-    fn dispatch(state: &ShadowState, space: &SpaceId, op_id: &str, op: &OpPayload) {
-        let summary = super::super::diffy_summary_for(op);
-        shadow_apply(op_id, op, DEVICE_ID, space, summary, state);
+    /// Helper: drive an op through `engine_apply`.  Mirrors the pattern
+    /// from the existing tests.
+    fn dispatch(state: &LoroState, space: &SpaceId, op_id: &str, op: &OpPayload) {
+        engine_apply(op_id, op, DEVICE_ID, space, state);
     }
 
     #[test]
-    fn shadow_apply_dispatches_add_tag() {
+    fn engine_apply_dispatches_add_tag() {
         let state = fresh_state();
         let space = SpaceId::from_trusted(SPACE_A);
         // Seed: block must exist before tags are applied.
@@ -473,7 +432,7 @@ mod shadow_apply_unit_tests {
     }
 
     #[test]
-    fn shadow_apply_dispatches_remove_tag() {
+    fn engine_apply_dispatches_remove_tag() {
         let state = fresh_state();
         let space = SpaceId::from_trusted(SPACE_A);
         dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
@@ -489,7 +448,7 @@ mod shadow_apply_unit_tests {
     }
 
     #[test]
-    fn shadow_apply_dispatches_restore_block() {
+    fn engine_apply_dispatches_restore_block() {
         let state = fresh_state();
         let space = SpaceId::from_trusted(SPACE_A);
         dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
@@ -510,7 +469,7 @@ mod shadow_apply_unit_tests {
     }
 
     #[test]
-    fn shadow_apply_dispatches_purge_block() {
+    fn engine_apply_dispatches_purge_block() {
         let state = fresh_state();
         let space = SpaceId::from_trusted(SPACE_A);
         dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
@@ -527,7 +486,7 @@ mod shadow_apply_unit_tests {
     }
 
     #[test]
-    fn shadow_apply_dispatches_delete_property() {
+    fn engine_apply_dispatches_delete_property() {
         let state = fresh_state();
         let space = SpaceId::from_trusted(SPACE_A);
         dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
@@ -559,7 +518,7 @@ mod shadow_apply_unit_tests {
 
 // ---------------------------------------------------------------------------
 // PEND-09 Phase 2 day-9.5 — regression coverage for the latent JSON-parse
-// bug in `shadow_dispatch_for_record`.
+// bug in `dispatch_for_record`.
 //
 // Background: from Phase 1 day-2 (commit `dcfc3637`) until day-9.5, the
 // dispatcher attempted `serde_json::from_str::<OpPayload>(&record.payload)`,
@@ -575,16 +534,16 @@ mod shadow_apply_unit_tests {
 // These tests build real `OpRecord`s via `op_log::append_local_op`
 // (which exercises the same `serialize_inner_payload` path that
 // production uses) and assert the engine state is mutated by
-// `shadow_dispatch_for_record`.  A future change that regresses the
+// `dispatch_for_record`.  A future change that regresses the
 // dispatcher (e.g. switches back to the tagged parse, or drops a
 // match arm) will fail these tests.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod shadow_dispatch_for_record_regression {
-    use super::shadow_dispatch_for_record;
+mod dispatch_for_record_regression {
+    use super::dispatch_for_record;
     use crate::db::init_pool;
-    use crate::loro::shared::{install_for_test, ShadowState};
+    use crate::loro::shared::{install_for_test, LoroState};
     use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload, SetPropertyPayload};
     use crate::op_log::append_local_op;
     use crate::space::SpaceId;
@@ -594,7 +553,7 @@ mod shadow_dispatch_for_record_regression {
 
     const SPACE_ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const BLOCK_ULID: &str = "01HZ00000000000000000000AB";
-    const DEVICE_ID: &str = "device-shadow-regression";
+    const DEVICE_ID: &str = "device-engine-dispatch-regression";
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().expect("tempdir");
@@ -641,7 +600,7 @@ mod shadow_dispatch_for_record_regression {
     }
 
     /// Read the engine snapshot for `BLOCK_ULID` in `SPACE_ULID`.
-    fn engine_block_content(state: &ShadowState) -> Option<String> {
+    fn engine_block_content(state: &LoroState) -> Option<String> {
         let space = SpaceId::from_trusted(SPACE_ULID);
         let mut guard = state
             .registry
@@ -658,7 +617,7 @@ mod shadow_dispatch_for_record_regression {
     ///   * `Ok(None)`        → key never set            → returns `None`
     ///   * `Ok(Some(None))`  → key explicitly cleared   → returns `None`
     ///   * `Ok(Some(Some(s)))` → key holds string `s`   → returns `Some(s)`
-    fn engine_property(state: &ShadowState, key: &str) -> Option<String> {
+    fn engine_property(state: &LoroState, key: &str) -> Option<String> {
         let space = SpaceId::from_trusted(SPACE_ULID);
         let mut guard = state
             .registry
@@ -672,13 +631,13 @@ mod shadow_dispatch_for_record_regression {
     }
 
     /// PEND-09 Phase 2 day-9.5 — `CreateBlock` must reach the engine
-    /// when threaded through `shadow_dispatch_for_record`.
+    /// when threaded through `dispatch_for_record`.
     ///
     /// Pre-fix this test failed: the JSON parse logged a warn and
     /// returned without touching the engine, so `engine_block_content`
     /// was `None`.
     #[tokio::test]
-    async fn shadow_dispatch_for_record_applies_create_block() {
+    async fn dispatch_for_record_applies_create_block() {
         let (pool, _dir) = fresh_pool().await;
         seed_space_membership(&pool).await;
         let state = install_for_test();
@@ -708,14 +667,14 @@ mod shadow_dispatch_for_record_regression {
         );
 
         // Drive the dispatcher.
-        shadow_dispatch_for_record(&pool, &record).await;
+        dispatch_for_record(&pool, &record).await;
 
         // Engine must now hold the block with the content from the
         // payload.  This is the load-bearing assertion.
         assert_eq!(
             engine_block_content(state).as_deref(),
             Some("hello-from-record"),
-            "shadow_dispatch_for_record must apply CreateBlock to the engine \
+            "dispatch_for_record must apply CreateBlock to the engine \
              (regression: latent JSON-parse bug returned without applying)"
         );
     }
@@ -724,7 +683,7 @@ mod shadow_dispatch_for_record_regression {
     /// also reach the engine.  Two variants in one test to give the
     /// regression net more breadth without spinning up two pools.
     #[tokio::test]
-    async fn shadow_dispatch_for_record_applies_edit_and_set_property() {
+    async fn dispatch_for_record_applies_edit_and_set_property() {
         let (pool, _dir) = fresh_pool().await;
         seed_space_membership(&pool).await;
         let state = install_for_test();
@@ -741,7 +700,7 @@ mod shadow_dispatch_for_record_regression {
         let r1 = append_local_op(&pool, DEVICE_ID, create_payload)
             .await
             .expect("append create");
-        shadow_dispatch_for_record(&pool, &r1).await;
+        dispatch_for_record(&pool, &r1).await;
         assert_eq!(
             engine_block_content(state).as_deref(),
             Some("v1"),
@@ -757,11 +716,11 @@ mod shadow_dispatch_for_record_regression {
         let r2 = append_local_op(&pool, DEVICE_ID, edit_payload)
             .await
             .expect("append edit");
-        shadow_dispatch_for_record(&pool, &r2).await;
+        dispatch_for_record(&pool, &r2).await;
         assert_eq!(
             engine_block_content(state).as_deref(),
             Some("v2"),
-            "shadow_dispatch_for_record must apply EditBlock to the engine"
+            "dispatch_for_record must apply EditBlock to the engine"
         );
 
         // SetProperty — property must appear.
@@ -777,11 +736,11 @@ mod shadow_dispatch_for_record_regression {
         let r3 = append_local_op(&pool, DEVICE_ID, set_payload)
             .await
             .expect("append set");
-        shadow_dispatch_for_record(&pool, &r3).await;
+        dispatch_for_record(&pool, &r3).await;
         assert_eq!(
             engine_property(state, "priority").as_deref(),
             Some("high"),
-            "shadow_dispatch_for_record must apply SetProperty to the engine"
+            "dispatch_for_record must apply SetProperty to the engine"
         );
     }
 }

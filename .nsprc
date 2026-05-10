@@ -30,5 +30,13 @@
   "1116663": {
     "active": true,
     "notes": "dompurify ADD_TAGS+FORBID_TAGS bypass via transitive dep mermaid; mermaid does not expose ADD_TAGS/FORBID_TAGS to users and per AGENTS.md threat model the app is single-user local-first with no adversarial input"
+  },
+  "1117870": {
+    "active": true,
+    "notes": "fast-uri path traversal via better-npm-audit > table > ajv > fast-uri (audit-tool-only transitive dep, not used in production or dev runtime)"
+  },
+  "1117884": {
+    "active": true,
+    "notes": "fast-uri host confusion via better-npm-audit > table > ajv > fast-uri (audit-tool-only transitive dep, not used in production or dev runtime)"
   }
 }
