@@ -5,6 +5,14 @@
 //! layer (WebSocket, BLE, …) is handled elsewhere — this module operates
 //! purely on typed [`SyncMessage`] values.
 
+// PEND-09 Phase 3 day-3 — new sync wire types for Loro-based sync
+// (`LoroSyncMessage::{Snapshot, Update}`).  Day-4 wires these into
+// the sender; day-5 swings the receiver and deletes `OpBatch`.
+// Intentionally NOT `#[cfg(feature = "loro-shadow")]`-gated — the
+// types live in the default build so day-5 can swing the wire
+// without first un-gating.  See module docstring for the why.
+pub mod loro_sync_types;
+
 mod operations;
 mod orchestrator;
 pub mod types;

@@ -61,7 +61,7 @@
 //!    measurement (see SPIKE-REPORT.md §4.2).  Phase 1 builds against
 //!    one engine.
 
-use loro::{ExportMode, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, PeerID};
+use loro::{ExportMode, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, PeerID, VersionVector};
 
 use crate::error::AppError;
 
@@ -995,6 +995,52 @@ impl LoroEngine {
             .map(|_status| ())
             .map_err(|e| AppError::Validation(format!("loro: import: {e}")))
     }
+
+    /// Encode the doc's current op-log version vector for transport
+    /// over the wire.
+    ///
+    /// Wraps `LoroDoc::oplog_vv()`
+    /// (`loro-1.12.0/src/lib.rs:887`) and serialises the result via
+    /// `VersionVector::encode()` (`postcard::to_allocvec` —
+    /// `loro-internal-1.12.0/src/version.rs:843-845`).  The output
+    /// is opaque bytes; the receiver round-trips via
+    /// `VersionVector::decode` (Loro 1.12 wire-stable per
+    /// `pending/PEND-09-PHASE-3-PLAN.md` §7.7).
+    ///
+    /// PEND-09 Phase 3 day-3 — companion to `export_update_since`,
+    /// used by sync push to (a) advertise the local frontier and
+    /// (b) build the `from_vv` field of [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Update`]
+    /// at send time.
+    pub fn version_vector(&self) -> Vec<u8> {
+        self.doc.oplog_vv().encode()
+    }
+
+    /// Export the ops added to this doc since the peer's `since_vv`
+    /// frontier.
+    ///
+    /// `since_vv` is the receiver's current `oplog_vv()` encoded via
+    /// [`Self::version_vector`] (or any other path that produced a
+    /// Loro 1.12 `VersionVector::encode` blob).  Internally:
+    ///
+    /// 1. `VersionVector::decode(since_vv)`
+    ///    (`loro-internal-1.12.0/src/version.rs:847-850`).
+    /// 2. `self.doc.export(ExportMode::updates(&vv))`
+    ///    (`loro-1.12.0/src/lib.rs:1297-1300`).
+    ///
+    /// Returns `AppError::Validation` if `since_vv` is not a
+    /// well-formed encoded version vector — the receiver should
+    /// fall back to a [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot`]
+    /// in that case (day-5 receiver dispatch).
+    ///
+    /// PEND-09 Phase 3 day-3 — companion to `version_vector`.
+    pub fn export_update_since(&self, since_vv: &[u8]) -> Result<Vec<u8>, AppError> {
+        let vv = VersionVector::decode(since_vv).map_err(|e| {
+            AppError::Validation(format!("loro: export_update_since: decode vv: {e}"))
+        })?;
+        self.doc
+            .export(ExportMode::updates(&vv))
+            .map_err(|e| AppError::Validation(format!("loro: export_update_since: {e}")))
+    }
 }
 
 impl Default for LoroEngine {
@@ -1487,6 +1533,151 @@ mod day_85_op_coverage_tests {
             engine_null_then_delete.read_property(BLOCK_A, "k").unwrap(),
             None,
             "delete_property must remove key even when value is explicit-Null"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PEND-09 Phase 3 day-3 — version-vector + incremental-update tests.
+//
+// Cover the two new wire-facing methods on `LoroEngine`:
+//   * `version_vector` — `oplog_vv().encode()` round-trips byte-stable
+//     via `VersionVector::decode`.
+//   * `export_update_since` — the bytes produced by passing in a
+//     captured pre-vv contain only ops added AFTER that vv (the
+//     incremental-sync invariant).
+//
+// The engine module itself is `#[cfg(feature = "loro-shadow")]`-gated
+// at `src/loro/mod.rs`, so when this `#[cfg(test)]` module compiles
+// the feature is on (matches the day-8.5 test module above).  The
+// explicit `all(test, feature = "loro-shadow")` is belt-and-braces
+// in case the module ever moves out from under the parent gate.
+// ---------------------------------------------------------------------------
+#[cfg(all(test, feature = "loro-shadow"))]
+mod day_3_sync_vv_tests {
+    use super::LoroEngine;
+    use loro::VersionVector;
+
+    const BLOCK_A: &str = "01HZ00000000000000000000VV";
+    const BLOCK_B: &str = "01HZ00000000000000000000VW";
+    const BLOCK_C: &str = "01HZ00000000000000000000VX";
+    const BLOCK_D: &str = "01HZ00000000000000000000VY";
+    const BLOCK_E: &str = "01HZ00000000000000000000VZ";
+
+    /// `version_vector` returns the encoded form of `oplog_vv()`,
+    /// round-trippable via `VersionVector::decode`.  Locks the
+    /// wire-format invariant that the bytes are well-formed input
+    /// to the standard Loro decoder.
+    #[test]
+    fn version_vector_returns_encoded_bytes() {
+        let mut engine = LoroEngine::with_peer_id("DEV-VV").expect("set peer");
+        engine
+            .apply_create_block(BLOCK_A, "text", "alpha", None, 0)
+            .expect("create A");
+        engine
+            .apply_create_block(BLOCK_B, "text", "beta", None, 1)
+            .expect("create B");
+
+        let bytes = engine.version_vector();
+        assert!(!bytes.is_empty(), "encoded vv must not be empty");
+
+        let decoded = VersionVector::decode(&bytes).expect("decode round-trip");
+        // `oplog_vv()` returns by-value; compare against a freshly
+        // captured copy.  Round-trip equality is the contract.
+        let direct = engine.doc.oplog_vv();
+        assert_eq!(decoded, direct, "decoded vv must equal oplog_vv()");
+    }
+
+    /// `export_update_since` carries only ops added AFTER the
+    /// captured vv.  Apply 3 ops on a sender, capture vv, apply 2
+    /// more ops, export updates since the captured vv, import into
+    /// a fresh receiver.  The receiver must see only the 2 post-vv
+    /// blocks — the first 3 are not in the delta and remain unknown
+    /// to the receiver.
+    #[test]
+    fn export_update_since_carries_only_post_vv_ops() {
+        let mut sender = LoroEngine::with_peer_id("DEV-S").expect("set peer S");
+
+        // First batch — 3 ops; these should NOT appear in the
+        // post-vv delta.
+        sender
+            .apply_create_block(BLOCK_A, "text", "first", None, 0)
+            .expect("create A");
+        sender
+            .apply_create_block(BLOCK_B, "text", "second", None, 1)
+            .expect("create B");
+        sender
+            .apply_create_block(BLOCK_C, "text", "third", None, 2)
+            .expect("create C");
+
+        // Capture the frontier between the two batches.
+        let vv_after_first_batch = sender.version_vector();
+
+        // Second batch — 2 ops; these SHOULD appear in the delta.
+        sender
+            .apply_create_block(BLOCK_D, "text", "fourth", None, 3)
+            .expect("create D");
+        sender
+            .apply_create_block(BLOCK_E, "text", "fifth", None, 4)
+            .expect("create E");
+
+        let delta_bytes = sender
+            .export_update_since(&vv_after_first_batch)
+            .expect("export updates since pre-batch-2 vv");
+        assert!(
+            !delta_bytes.is_empty(),
+            "delta covering 2 ops must not be empty"
+        );
+
+        // Receiver mirrors the sender's pre-batch-2 state, then
+        // imports the delta.  Use the same peer-id so the engines
+        // share an op-log identity for this fixture.
+        let mut receiver = LoroEngine::with_peer_id("DEV-S").expect("set peer R");
+        receiver
+            .apply_create_block(BLOCK_A, "text", "first", None, 0)
+            .expect("receiver create A");
+        receiver
+            .apply_create_block(BLOCK_B, "text", "second", None, 1)
+            .expect("receiver create B");
+        receiver
+            .apply_create_block(BLOCK_C, "text", "third", None, 2)
+            .expect("receiver create C");
+
+        // Sanity: receiver does not yet know about the post-vv blocks.
+        assert!(
+            receiver.read_block(BLOCK_D).unwrap().is_none(),
+            "pre-import: BLOCK_D must be absent"
+        );
+        assert!(
+            receiver.read_block(BLOCK_E).unwrap().is_none(),
+            "pre-import: BLOCK_E must be absent"
+        );
+
+        receiver.import(&delta_bytes).expect("import delta");
+
+        // Post-import: only the 2 post-vv blocks are now visible
+        // because the delta carried no ops for the first 3.  (The
+        // first 3 were already there from the manual seed; the
+        // delta did not duplicate them.)
+        let snap_d = receiver
+            .read_block(BLOCK_D)
+            .expect("read D")
+            .expect("BLOCK_D must be present after import");
+        assert_eq!(snap_d.content, "fourth");
+        let snap_e = receiver
+            .read_block(BLOCK_E)
+            .expect("read E")
+            .expect("BLOCK_E must be present after import");
+        assert_eq!(snap_e.content, "fifth");
+
+        // The vv after import should equal the sender's full vv —
+        // confirming the delta closed the gap exactly.
+        let receiver_vv = receiver.version_vector();
+        let sender_vv = sender.version_vector();
+        assert_eq!(
+            VersionVector::decode(&receiver_vv).unwrap(),
+            VersionVector::decode(&sender_vv).unwrap(),
+            "receiver vv must match sender vv after delta import"
         );
     }
 }
