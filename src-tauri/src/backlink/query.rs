@@ -83,7 +83,7 @@ pub async fn eval_backlink_query(
         "SELECT bl.source_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
-           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+           AND b.deleted_at IS NULL \
            AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))",
@@ -212,7 +212,7 @@ pub async fn eval_backlink_query(
 
     // 6. Fetch full BlockRows.
     //    MAINT-113 M2 — `actual_ids` is pre-filtered to active blocks via
-    //    the `b.deleted_at IS NULL AND b.is_conflict = 0` predicate at
+    //    the `b.deleted_at IS NULL` predicate at
     //    the base-set query above (line ~86). The boundary cast records
     //    that claim in the type system.
     let fetched: Vec<BlockRow> = fetch_block_rows_by_ids(pool, &actual_ids).await?;
@@ -278,7 +278,7 @@ pub(super) async fn resolve_root_pages(
         "SELECT b.id as block_id, b.page_id as root_id, p.content as root_title \
          FROM blocks b \
          JOIN blocks p ON p.id = b.page_id \
-         WHERE b.id IN ({placeholders}) AND p.is_conflict = 0"
+         WHERE b.id IN ({placeholders})"
     );
 
     #[derive(sqlx::FromRow)]
@@ -375,12 +375,12 @@ pub(super) async fn resolve_root_pages_cte(
             SELECT w.block_id, b.parent_id, w.depth + 1 \
             FROM walk w \
             JOIN blocks b ON b.id = w.current_id \
-            WHERE b.parent_id IS NOT NULL AND b.is_conflict = 0 AND w.depth < 100 \
+            WHERE b.parent_id IS NOT NULL AND w.depth < 100 \
         ) \
         SELECT w.block_id, w.current_id as root_id, b.content as root_title \
         FROM walk w \
         JOIN blocks b ON b.id = w.current_id \
-        WHERE b.parent_id IS NULL AND b.block_type = 'page' AND b.is_conflict = 0"
+        WHERE b.parent_id IS NULL AND b.block_type = 'page'"
     );
 
     #[derive(sqlx::FromRow)]

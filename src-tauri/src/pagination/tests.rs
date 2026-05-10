@@ -550,49 +550,6 @@ async fn list_children_excludes_soft_deleted() {
 }
 
 #[tokio::test]
-async fn list_children_excludes_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
-    insert_block(
-        &pool,
-        "CHILD001",
-        "content",
-        "normal child",
-        Some("PARENT01"),
-        Some(1),
-    )
-    .await;
-    insert_block(
-        &pool,
-        "CHILD002",
-        "content",
-        "conflict child",
-        Some("PARENT01"),
-        Some(2),
-    )
-    .await;
-
-    // Mark CHILD002 as a conflict copy
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind("CHILD002")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_children(&pool, Some("PARENT01"), &page, None)
-        .await
-        .unwrap();
-
-    assert_eq!(resp.items.len(), 1, "conflict child must be excluded");
-    assert_eq!(
-        resp.items[0].id, "CHILD001",
-        "only non-conflict child should be returned"
-    );
-}
-
-#[tokio::test]
 async fn list_children_sentinel_positions_sort_after_positioned() {
     let (pool, _dir) = test_pool().await;
 
@@ -790,30 +747,6 @@ async fn list_by_type_excludes_soft_deleted() {
 }
 
 #[tokio::test]
-async fn list_by_type_excludes_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "PAGE0001", "page", "Normal Page", None, None).await;
-    insert_block(&pool, "PAGE0002", "page", "Conflict Page", None, None).await;
-
-    // Mark PAGE0002 as a conflict copy
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind("PAGE0002")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_type(&pool, "page", &page, None).await.unwrap();
-
-    assert_eq!(resp.items.len(), 1, "conflict page must be excluded");
-    assert_eq!(
-        resp.items[0].id, "PAGE0001",
-        "only non-conflict page should be returned"
-    );
-}
-
-#[tokio::test]
 async fn list_by_type_returns_empty_for_unknown_type() {
     let (pool, _dir) = test_pool().await;
 
@@ -895,36 +828,6 @@ async fn list_trash_paginates_with_cursor() {
         async |pool, page| list_trash(pool, &page, None).await,
     )
     .await;
-}
-
-#[tokio::test]
-async fn list_trash_excludes_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "NORMAL01", "content", "normal", None, None).await;
-    insert_block(&pool, "CONFLCT1", "content", "conflict", None, None).await;
-
-    soft_delete_block(&pool, "NORMAL01", FIXED_DELETED_AT).await;
-    soft_delete_block(&pool, "CONFLCT1", FIXED_DELETED_AT).await;
-
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind("CONFLCT1")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page, None).await.unwrap();
-
-    assert_eq!(
-        resp.items.len(),
-        1,
-        "conflict blocks must be excluded from trash"
-    );
-    assert_eq!(
-        resp.items[0].id, "NORMAL01",
-        "only non-conflict block in trash"
-    );
 }
 
 // ── UX-243: roots-only trash listing ────────────────────────────────
@@ -1120,32 +1023,6 @@ async fn list_trash_pagination_cursor_with_mixed_root_sizes() {
     assert_eq!(r3.items[0].id, "ROOT0001");
 }
 
-#[tokio::test]
-async fn list_trash_conflict_filter_still_applies_to_roots() {
-    // is_conflict = 0 predicate must still filter conflict copies from the
-    // roots-only list (it's an additional constraint, not replaced by the
-    // roots predicate).
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "NORM0001", "page", "normal", None, None).await;
-    insert_block(&pool, "CONF0001", "page", "conflict", None, None).await;
-
-    soft_delete_block(&pool, "NORM0001", "2025-08-01T00:00:00+00:00").await;
-    soft_delete_block(&pool, "CONF0001", "2025-08-01T00:00:00+00:00").await;
-
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind("CONF0001")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page, None).await.unwrap();
-
-    assert_eq!(resp.items.len(), 1, "conflict root must still be filtered");
-    assert_eq!(resp.items[0].id, "NORM0001");
-}
-
 // ── UX-243: trash_descendant_counts helper ──────────────────────────
 
 #[tokio::test]
@@ -1225,54 +1102,6 @@ async fn trash_descendant_counts_empty_input_returns_empty_map() {
     let (pool, _dir) = test_pool().await;
     let counts = trash_descendant_counts(&pool, &[]).await.unwrap();
     assert!(counts.is_empty(), "empty input must return empty map");
-}
-
-#[tokio::test]
-async fn trash_descendant_counts_excludes_conflict_descendants() {
-    // Conflict copies must not inflate the descendant count — their filter
-    // matches list_trash's root filter.
-    let (pool, _dir) = test_pool().await;
-
-    let ts = "2025-10-05T00:00:00+00:00";
-    insert_block(&pool, "PAGE_X01", "page", "x", None, None).await;
-    insert_block(
-        &pool,
-        "X_CHD001",
-        "content",
-        "ok child",
-        Some("PAGE_X01"),
-        Some(1),
-    )
-    .await;
-    insert_block(
-        &pool,
-        "X_CNFL01",
-        "content",
-        "conflict child",
-        Some("PAGE_X01"),
-        Some(2),
-    )
-    .await;
-
-    soft_delete_block(&pool, "PAGE_X01", ts).await;
-    soft_delete_block(&pool, "X_CHD001", ts).await;
-    soft_delete_block(&pool, "X_CNFL01", ts).await;
-
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind("X_CNFL01")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let counts = trash_descendant_counts(&pool, &["PAGE_X01".to_string()])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        counts.get("PAGE_X01").copied(),
-        Some(1),
-        "conflict descendant must not count, expected 1 got {counts:?}"
-    );
 }
 
 #[tokio::test]
@@ -2415,15 +2244,6 @@ async fn insert_op_log_entry(
     .unwrap();
 }
 
-/// Mark a block as a conflict.
-async fn set_conflict(pool: &SqlitePool, id: &str) {
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
 #[tokio::test]
 async fn test_list_backlinks_basic() {
     let (pool, _dir) = test_pool().await;
@@ -2540,92 +2360,6 @@ async fn test_list_backlinks_excludes_deleted() {
     );
     assert_eq!(resp.items[0].id, "SOURCE01", "first alive backlink source");
     assert_eq!(resp.items[1].id, "SOURCE03", "second alive backlink source");
-}
-
-/// Regression for L-20: `list_agenda`, `list_agenda_range`, and
-/// `list_backlinks` must filter `b.is_conflict = 0` defensively. The cache
-/// rebuilds already exclude conflict rows, but during the TOCTOU window
-/// between `set_conflict` and the background rebuild the cache row can
-/// still join to a `is_conflict = 1` block. We simulate that window here
-/// by flipping the flag directly via SQL without rebuilding.
-#[tokio::test]
-async fn list_agenda_and_backlinks_exclude_in_flight_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    // Three agenda blocks for the same date; flip BLOCK002 to conflict
-    // *after* writing the cache rows, simulating the rebuild window.
-    insert_block(&pool, "BLOCK001", "content", "alive", None, None).await;
-    insert_block(
-        &pool,
-        "BLOCK002",
-        "content",
-        "in-flight conflict",
-        None,
-        None,
-    )
-    .await;
-    insert_block(&pool, "BLOCK003", "content", "alive too", None, None).await;
-    insert_agenda_entry(&pool, "2025-03-15", "BLOCK001", "property:scheduled").await;
-    insert_agenda_entry(&pool, "2025-03-15", "BLOCK002", "property:scheduled").await;
-    insert_agenda_entry(&pool, "2025-03-15", "BLOCK003", "property:scheduled").await;
-
-    // Set due_date so the range query has something to filter on too.
-    sqlx::query(
-        "UPDATE blocks SET due_date = '2025-03-15' WHERE id IN ('BLOCK001','BLOCK002','BLOCK003')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'BLOCK002'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let page = PageRequest::new(None, Some(50)).unwrap();
-
-    // list_agenda excludes the in-flight conflict.
-    let agenda = list_agenda(&pool, "2025-03-15", None, &page, None)
-        .await
-        .unwrap();
-    let ids: Vec<&str> = agenda.items.iter().map(|b| b.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        vec!["BLOCK001", "BLOCK003"],
-        "list_agenda must skip blocks where is_conflict = 1"
-    );
-
-    // list_agenda_range likewise.
-    let range = list_agenda_range(&pool, "2025-03-01", "2025-03-31", None, &page, None)
-        .await
-        .unwrap();
-    let range_ids: Vec<&str> = range.items.iter().map(|b| b.id.as_str()).collect();
-    assert_eq!(
-        range_ids,
-        vec!["BLOCK001", "BLOCK003"],
-        "list_agenda_range must skip blocks where is_conflict = 1"
-    );
-
-    // list_backlinks: separate setup — flip the source to conflict directly.
-    insert_block(&pool, "TARGETXX", "page", "target", None, None).await;
-    insert_block(&pool, "SRCALIVE", "content", "alive source", None, None).await;
-    insert_block(&pool, "SRCCONFL", "content", "conflict source", None, None).await;
-    insert_block_link(&pool, "SRCALIVE", "TARGETXX").await;
-    insert_block_link(&pool, "SRCCONFL", "TARGETXX").await;
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'SRCCONFL'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let bl = list_backlinks(&pool, "TARGETXX", &page, None)
-        .await
-        .unwrap();
-    let bl_ids: Vec<&str> = bl.items.iter().map(|b| b.id.as_str()).collect();
-    assert_eq!(
-        bl_ids,
-        vec!["SRCALIVE"],
-        "list_backlinks must skip source blocks where is_conflict = 1"
-    );
 }
 
 #[tokio::test]
@@ -3119,56 +2853,6 @@ async fn test_list_block_history_uses_native_block_id_column() {
     );
 }
 
-// ====================================================================
-// list_conflicts
-// ====================================================================
-
-#[tokio::test]
-async fn test_list_conflicts_basic() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "NORMAL01", "content", "normal", None, None).await;
-    insert_block(&pool, "CONFLCT1", "content", "conflict 1", None, None).await;
-    insert_block(&pool, "CONFLCT2", "content", "conflict 2", None, None).await;
-
-    set_conflict(&pool, "CONFLCT1").await;
-    set_conflict(&pool, "CONFLCT2").await;
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
-
-    assert_eq!(resp.items.len(), 2, "only conflict blocks");
-    assert_eq!(resp.items[0].id, "CONFLCT1", "first conflict block");
-    assert_eq!(resp.items[1].id, "CONFLCT2", "second conflict block");
-    assert!(
-        resp.items.iter().all(|b| b.is_conflict),
-        "all returned blocks must be conflicts"
-    );
-    assert!(!resp.has_more, "all conflicts fit in one page");
-}
-
-#[tokio::test]
-async fn test_list_conflicts_excludes_deleted() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "CONFLCT1", "content", "alive conflict", None, None).await;
-    insert_block(&pool, "CONFLCT2", "content", "deleted conflict", None, None).await;
-
-    set_conflict(&pool, "CONFLCT1").await;
-    set_conflict(&pool, "CONFLCT2").await;
-    soft_delete_block(&pool, "CONFLCT2", FIXED_DELETED_AT).await;
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
-
-    assert_eq!(
-        resp.items.len(),
-        1,
-        "soft-deleted conflict must be excluded"
-    );
-    assert_eq!(resp.items[0].id, "CONFLCT1", "only alive conflict block");
-}
-
 #[tokio::test]
 async fn test_list_conflicts_empty() {
     let (pool, _dir) = test_pool().await;
@@ -3187,196 +2871,6 @@ async fn test_list_conflicts_empty() {
     assert!(
         resp.next_cursor.is_none(),
         "empty conflicts should have no cursor"
-    );
-}
-
-#[tokio::test]
-async fn test_list_conflicts_pagination() {
-    let (pool, _dir) = test_pool().await;
-
-    for i in 1..=5_i64 {
-        let id = format!("CONFLCT{i}");
-        insert_block(&pool, &id, "content", &format!("conflict {i}"), None, None).await;
-        set_conflict(&pool, &id).await;
-    }
-
-    // Page 1
-    let r1 = list_conflicts(&pool, &PageRequest::new(None, Some(2)).unwrap(), None, None)
-        .await
-        .unwrap();
-    assert_eq!(r1.items.len(), 2, "conflicts page 1 should return 2 items");
-    assert!(r1.has_more, "conflicts page 1 should indicate more");
-    assert_eq!(r1.items[0].id, "CONFLCT1", "conflicts page 1 first item");
-    assert_eq!(r1.items[1].id, "CONFLCT2", "conflicts page 1 second item");
-
-    // Page 2
-    let r2 = list_conflicts(
-        &pool,
-        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(r2.items.len(), 2, "conflicts page 2 should return 2 items");
-    assert!(r2.has_more, "conflicts page 2 should indicate more");
-    assert_eq!(r2.items[0].id, "CONFLCT3", "conflicts page 2 first item");
-    assert_eq!(r2.items[1].id, "CONFLCT4", "conflicts page 2 second item");
-
-    // Page 3 (last)
-    let r3 = list_conflicts(
-        &pool,
-        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        r3.items.len(),
-        1,
-        "conflicts last page should return 1 item"
-    );
-    assert!(!r3.has_more, "conflicts last page should not indicate more");
-    assert!(
-        r3.next_cursor.is_none(),
-        "conflicts last page should have no cursor"
-    );
-    assert_eq!(r3.items[0].id, "CONFLCT5", "conflicts last page item");
-}
-
-/// Helper for the PEND-35 Tier 1.4 filter tests — tag a conflict block
-/// with a specific `conflict_type` ("Property" / "Move" / etc).
-async fn set_conflict_type(pool: &SqlitePool, id: &str, conflict_type: &str) {
-    sqlx::query("UPDATE blocks SET conflict_type = ? WHERE id = ?")
-        .bind(conflict_type)
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
-// PEND-35 Tier 1.4 — `list_conflicts` SQL-side filters
-
-#[tokio::test]
-async fn list_conflicts_no_filter_returns_all() {
-    // Control: when both filter args are None, every conflict comes back.
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "CONFLCT1", "content", "first", None, None).await;
-    insert_block(&pool, "CONFLCT2", "content", "second", None, None).await;
-    set_conflict(&pool, "CONFLCT1").await;
-    set_conflict(&pool, "CONFLCT2").await;
-    set_conflict_type(&pool, "CONFLCT1", "Property").await;
-    set_conflict_type(&pool, "CONFLCT2", "Move").await;
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
-
-    assert_eq!(resp.items.len(), 2, "no filters => every conflict returns");
-}
-
-#[tokio::test]
-async fn list_conflicts_filters_by_conflict_type() {
-    // Seed two conflicts of different `conflict_type`; assert that
-    // `Some("Property")` returns only the matching one.
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "CONFLCT1", "content", "prop conflict", None, None).await;
-    insert_block(&pool, "CONFLCT2", "content", "move conflict", None, None).await;
-    set_conflict(&pool, "CONFLCT1").await;
-    set_conflict(&pool, "CONFLCT2").await;
-    set_conflict_type(&pool, "CONFLCT1", "Property").await;
-    set_conflict_type(&pool, "CONFLCT2", "Move").await;
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page, Some("Property"), None)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        resp.items.len(),
-        1,
-        "conflict_type=Property must drop the Move row"
-    );
-    assert_eq!(resp.items[0].id, "CONFLCT1", "Property row returned");
-    assert_eq!(
-        resp.items[0].conflict_type.as_deref(),
-        Some("Property"),
-        "row keeps its conflict_type"
-    );
-}
-
-#[tokio::test]
-async fn list_conflicts_filters_by_id_min() {
-    // Seed three conflicts at strictly-increasing IDs (ULIDs are
-    // time-ordered, so `id >= id_min` doubles as a date-min filter);
-    // assert `id_min = "CONFLCT3"` keeps only CONFLCT3 and CONFLCT5.
-    let (pool, _dir) = test_pool().await;
-
-    for id in ["CONFLCT1", "CONFLCT3", "CONFLCT5"] {
-        insert_block(&pool, id, "content", id, None, None).await;
-        set_conflict(&pool, id).await;
-    }
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page, None, Some("CONFLCT3"))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        resp.items.len(),
-        2,
-        "id_min must keep rows >= the cutoff (inclusive)"
-    );
-    assert_eq!(resp.items[0].id, "CONFLCT3", "first row at the cutoff");
-    assert_eq!(resp.items[1].id, "CONFLCT5", "second row past the cutoff");
-}
-
-// PEND-35 Tier 3.2 — verify the partial index `idx_blocks_conflict`
-// (migration 0049) is actually picked by SQLite's planner for the
-// `list_conflicts` query shape (`is_conflict = 1 AND deleted_at IS
-// NULL ORDER BY id ASC` plus the two optional filters). Without the
-// index the planner would do a full table scan; the assertion here
-// fails loudly if a future schema change accidentally drops or
-// shadows it.
-#[tokio::test]
-async fn list_conflicts_uses_partial_index() {
-    let (pool, _dir) = test_pool().await;
-
-    // Mirror the SQL in `pagination::hierarchy::list_conflicts` exactly —
-    // EXPLAIN QUERY PLAN reflects the actual query string, so any drift
-    // here would silently invalidate the assertion.
-    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
-        "EXPLAIN QUERY PLAN \
-         SELECT id, block_type, content, parent_id, position, \
-                deleted_at, is_conflict, conflict_type, todo_state, \
-                priority, due_date, scheduled_date, page_id \
-         FROM blocks \
-         WHERE is_conflict = 1 AND deleted_at IS NULL \
-           AND (?1 IS NULL OR id > ?2) \
-           AND (?4 IS NULL OR conflict_type = ?4) \
-           AND (?5 IS NULL OR id >= ?5) \
-         ORDER BY id ASC \
-         LIMIT ?3",
-    )
-    .bind(Option::<i64>::None) // ?1 cursor_flag
-    .bind("") // ?2 cursor_id
-    .bind(11_i64) // ?3 fetch_limit
-    .bind(Option::<&str>::None) // ?4 conflict_type
-    .bind(Option::<&str>::None) // ?5 id_min
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-
-    let detail = plan
-        .iter()
-        .map(|(_, _, _, d)| d.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        detail.contains("idx_blocks_conflict"),
-        "list_conflicts must use idx_blocks_conflict; plan was:\n{detail}"
     );
 }
 
@@ -3543,37 +3037,6 @@ async fn list_trash_rejects_cursor_without_deleted_at() {
     assert!(
         err_msg.contains("cursor missing deleted_at"),
         "error message must mention missing deleted_at, got: {err_msg}"
-    );
-}
-
-// ====================================================================
-// F07-fix: list_by_tag excludes conflict blocks
-// ====================================================================
-
-#[tokio::test]
-async fn list_by_tag_excludes_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "TAG00001", "tag", "important", None, None).await;
-    insert_block(&pool, "BLOCK001", "content", "normal", None, None).await;
-    insert_block(&pool, "BLOCK002", "content", "conflict", None, None).await;
-
-    insert_tag_association(&pool, "BLOCK001", "TAG00001").await;
-    insert_tag_association(&pool, "BLOCK002", "TAG00001").await;
-
-    set_conflict(&pool, "BLOCK002").await;
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_tag(&pool, "TAG00001", &page, None).await.unwrap();
-
-    assert_eq!(
-        resp.items.len(),
-        1,
-        "conflict blocks must be excluded from list_by_tag"
-    );
-    assert_eq!(
-        resp.items[0].id, "BLOCK001",
-        "only non-conflict tagged block"
     );
 }
 
@@ -3756,7 +3219,7 @@ async fn list_children_ifnull_oracle(
 
     let rows = sqlx::query_as::<_, BlockRow>(
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, is_conflict,
+                deleted_at,
                 conflict_type, todo_state, priority, due_date, scheduled_date, page_id
          FROM blocks
          WHERE parent_id IS ?1 AND deleted_at IS NULL
@@ -4371,8 +3834,8 @@ const SPACE_B_ID: &str = "SPACE_BB";
 /// succeed when a later page is assigned to this space.
 async fn insert_space_block(pool: &SqlitePool, id: &str, name: &str) {
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-         VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', ?, NULL, 1, ?)",
     )
     .bind(id)
     .bind(name)
@@ -5111,57 +4574,6 @@ mod tests_p7 {
             }
         }
     }
-
-    /// AGENTS.md invariant #9 — `batch_resolve_inner` must filter
-    /// `is_conflict = 0`. A conflict copy carries its own ULID + the
-    /// same content as the original; without the guard, a `[[ULID]]`
-    /// chip targeting the original would resolve to either row
-    /// depending on row ordering, surfacing duplicate / corrupted
-    /// titles in breadcrumbs and link chips. This regression test
-    /// proves the filter is in place.
-    #[tokio::test]
-    async fn batch_resolve_excludes_conflict_copies() {
-        let (pool, _dir) = test_pool().await;
-        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
-
-        // Original page, in the active space.
-        insert_block(&pool, "PG_ORIG", "page", "Original", None, Some(1)).await;
-        assign_to_space(&pool, "PG_ORIG", SPACE_A_ID).await;
-
-        // Conflict copy: distinct ULID, same content, marked `is_conflict = 1`,
-        // also assigned to the active space (same as a sync-induced conflict).
-        insert_block(&pool, "PG_CONF", "page", "Original", None, Some(2)).await;
-        sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-            .bind("PG_CONF")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assign_to_space(&pool, "PG_CONF", SPACE_A_ID).await;
-
-        // Resolving both ULIDs from the active space must yield the
-        // original ONLY — the conflict copy is silently dropped.
-        let resolved = batch_resolve_inner(
-            &pool,
-            vec!["PG_ORIG".into(), "PG_CONF".into()],
-            &SpaceScope::Active(SpaceId::from_trusted(SPACE_A_ID)),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(
-            resolved.len(),
-            1,
-            "exactly the non-conflict page must surface; conflict copy must be silently dropped"
-        );
-        assert_eq!(
-            resolved[0].id, "PG_ORIG",
-            "the surviving entry must be the original (non-conflict) page"
-        );
-        assert!(
-            !resolved.iter().any(|r| r.id == "PG_CONF"),
-            "PG_CONF (is_conflict = 1) MUST NOT appear in the result"
-        );
-    }
 }
 
 // ====================================================================
@@ -5238,7 +4650,6 @@ mod active_row_conversions {
             parent_id: Some("PAR_ABC".to_string()),
             position: Some(42),
             deleted_at: Some("2024-01-01T00:00:00Z".to_string()),
-            is_conflict: false,
             conflict_type: Some("lww".to_string()),
             todo_state: Some("TODO".to_string()),
             priority: Some("A".to_string()),
@@ -5246,32 +4657,6 @@ mod active_row_conversions {
             scheduled_date: Some("2024-12-25".to_string()),
             page_id: Some("PAGE_XYZ".to_string()),
         }
-    }
-
-    /// Pin the always-safe `From<ActiveBlockRow> for BlockRow` conversion.
-    /// The conversion is the only documented downcast path used at the
-    /// `gcal_push::connector` boundary; a silent field-order mistake here
-    /// would corrupt that pipeline's input.
-    #[test]
-    fn from_active_block_row_preserves_every_field() {
-        let active = fixture_active_row();
-        let raw: BlockRow = active.clone().into();
-
-        // The id field changes type (ActiveBlockId -> String) but the
-        // underlying bytes must be identical.
-        assert_eq!(raw.id, active.id.as_str());
-        assert_eq!(raw.block_type, active.block_type);
-        assert_eq!(raw.content, active.content);
-        assert_eq!(raw.parent_id, active.parent_id);
-        assert_eq!(raw.position, active.position);
-        assert_eq!(raw.deleted_at, active.deleted_at);
-        assert_eq!(raw.is_conflict, active.is_conflict);
-        assert_eq!(raw.conflict_type, active.conflict_type);
-        assert_eq!(raw.todo_state, active.todo_state);
-        assert_eq!(raw.priority, active.priority);
-        assert_eq!(raw.due_date, active.due_date);
-        assert_eq!(raw.scheduled_date, active.scheduled_date);
-        assert_eq!(raw.page_id, active.page_id);
     }
 
     /// Pin the always-safe `From<ActiveProjectedAgendaEntry> for
@@ -5309,7 +4694,6 @@ mod active_row_conversions {
             parent_id: None,
             position: None,
             deleted_at: None,
-            is_conflict: false,
             conflict_type: None,
             todo_state: None,
             priority: None,
@@ -5324,40 +4708,6 @@ mod active_row_conversions {
             "from_block_row_unchecked must normalise the id to uppercase \
              via from_trusted_active",
         );
-    }
-
-    /// `from_block_row_unchecked` is field-preserving (other than the
-    /// id-uppercase) — every other field must be moved through unchanged.
-    #[test]
-    fn from_block_row_unchecked_preserves_other_fields() {
-        let row = BlockRow {
-            id: "ROW_ABC".to_string(),
-            block_type: "page".to_string(),
-            content: Some("body".to_string()),
-            parent_id: Some("PAR".to_string()),
-            position: Some(7),
-            deleted_at: None,
-            is_conflict: false,
-            conflict_type: None,
-            todo_state: Some("DOING".to_string()),
-            priority: Some("B".to_string()),
-            due_date: Some("2025-01-01".to_string()),
-            scheduled_date: Some("2024-12-31".to_string()),
-            page_id: Some("PAGE".to_string()),
-        };
-        let active = ActiveBlockRow::from_block_row_unchecked(row.clone());
-        assert_eq!(active.block_type, row.block_type);
-        assert_eq!(active.content, row.content);
-        assert_eq!(active.parent_id, row.parent_id);
-        assert_eq!(active.position, row.position);
-        assert_eq!(active.deleted_at, row.deleted_at);
-        assert_eq!(active.is_conflict, row.is_conflict);
-        assert_eq!(active.conflict_type, row.conflict_type);
-        assert_eq!(active.todo_state, row.todo_state);
-        assert_eq!(active.priority, row.priority);
-        assert_eq!(active.due_date, row.due_date);
-        assert_eq!(active.scheduled_date, row.scheduled_date);
-        assert_eq!(active.page_id, row.page_id);
     }
 }
 

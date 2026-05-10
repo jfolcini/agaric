@@ -109,14 +109,13 @@ async fn apply_agenda_diff(
 /// Top-level tags have `page_id IS NULL` and pass the `NOT EXISTS`
 /// check vacuously.
 ///
-/// Conflict-aware (`is_conflict = 0` on every block reference,
+/// Conflict-aware ( on every block reference,
 /// invariant #9). Soft-deleted rows excluded.
 const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source, 0 AS prio
             FROM block_properties bp
             JOIN blocks b ON b.id = bp.block_id
             WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
-              AND b.is_conflict = 0
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
@@ -136,7 +135,6 @@ const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
               AND SUBSTR(t.content, 14, 2) GLOB '[0-9][0-9]'
               AND b.deleted_at IS NULL
               AND t.deleted_at IS NULL
-              AND b.is_conflict = 0
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
@@ -146,7 +144,6 @@ const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
             FROM blocks b
             WHERE b.due_date IS NOT NULL
               AND b.deleted_at IS NULL
-              AND b.is_conflict = 0
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
@@ -156,7 +153,6 @@ const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
             FROM blocks b
             WHERE b.scheduled_date IS NOT NULL
               AND b.deleted_at IS NULL
-              AND b.is_conflict = 0
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'

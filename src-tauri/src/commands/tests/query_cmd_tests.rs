@@ -45,38 +45,6 @@ async fn get_backlinks_returns_linked_blocks() {
 }
 
 // ======================================================================
-// get_conflicts
-// ======================================================================
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_conflicts_returns_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "CF_NORM", "content", "normal", None, None).await;
-    insert_block(&pool, "CF_CONF", "content", "conflict", None, None).await;
-
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind("CF_CONF")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let resp = get_conflicts_inner(&pool, None, None, None, None)
-        .await
-        .unwrap();
-
-    assert_eq!(resp.items.len(), 1, "only one conflict block should exist");
-    assert_eq!(
-        resp.items[0].id, "CF_CONF",
-        "conflict block ID should match"
-    );
-    assert!(
-        resp.items[0].is_conflict,
-        "conflict block should have is_conflict=true"
-    );
-}
-
-// ======================================================================
 // count_conflicts (PEND-35 Tier 2.11)
 // ======================================================================
 //
@@ -99,110 +67,6 @@ async fn count_conflicts_returns_zero_when_no_conflicts() {
         .unwrap();
 
     assert_eq!(n, 0, "table without conflicts should count to zero");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_conflicts_counts_active_conflicts_only() {
-    let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-
-    // Three conflict blocks:
-    //   CC_LIVE_A — live conflict in space A
-    //   CC_LIVE_B — live conflict in space B
-    //   CC_DEAD   — soft-deleted conflict (must NOT count under either scope)
-    insert_block(&pool, "CC_LIVE_A", "content", "conflict A", None, None).await;
-    insert_block(&pool, "CC_LIVE_B", "content", "conflict B", None, None).await;
-    insert_block(&pool, "CC_DEAD", "content", "deleted conflict", None, None).await;
-
-    sqlx::query(
-        "UPDATE blocks SET is_conflict = 1 WHERE id IN ('CC_LIVE_A','CC_LIVE_B','CC_DEAD')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'CC_DEAD'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    // Owning-page assignments: CC_LIVE_A → space A, CC_LIVE_B → space B.
-    // CC_DEAD assigned to A so the space subquery would match it if the
-    // `deleted_at` predicate ever regressed — keeps the test honest.
-    assign_to_space(&pool, "CC_LIVE_A", TEST_SPACE_ID).await;
-    assign_to_space(&pool, "CC_LIVE_B", TEST_SPACE_B_ID).await;
-    assign_to_space(&pool, "CC_DEAD", TEST_SPACE_ID).await;
-
-    // Global — both live conflicts counted, deleted excluded.
-    let global = count_conflicts_inner(&pool, &SpaceScope::Global)
-        .await
-        .unwrap();
-    assert_eq!(
-        global, 2,
-        "Global counts every live conflict regardless of space"
-    );
-
-    // Active(A) — only CC_LIVE_A is visible.
-    let active_a = count_conflicts_inner(
-        &pool,
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        active_a, 1,
-        "Active(A) drops the conflict whose owning page is in space B"
-    );
-
-    // Active(B) — only CC_LIVE_B is visible.
-    let active_b = count_conflicts_inner(
-        &pool,
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        active_b, 1,
-        "Active(B) drops the conflict whose owning page is in space A"
-    );
-}
-
-// PEND-35 Tier 2.11 — verify the partial index `idx_blocks_conflict`
-// (migration 0049) is picked by SQLite's planner for the
-// `count_conflicts` query shape (`COUNT(*) … WHERE is_conflict = 1 AND
-// deleted_at IS NULL`). Mirrors `pagination::tests::list_conflicts_uses_partial_index`.
-// The unscoped path — the dominant call site (every 30 s for the
-// badge) — must be index-served end-to-end.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_conflicts_uses_partial_index() {
-    let (pool, _dir) = test_pool().await;
-
-    // Mirror the SQL in `count_conflicts_inner` exactly — EXPLAIN QUERY
-    // PLAN reflects the actual query string, so any drift here would
-    // silently invalidate the assertion.
-    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
-        "EXPLAIN QUERY PLAN \
-         SELECT COUNT(*) \
-         FROM blocks b \
-         WHERE b.is_conflict = 1 AND b.deleted_at IS NULL \
-           AND (?1 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?1))",
-    )
-    .bind(Option::<&str>::None) // ?1 — Global path (the dominant case)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-
-    let detail = plan
-        .iter()
-        .map(|(_, _, _, d)| d.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        detail.contains("idx_blocks_conflict"),
-        "count_conflicts must use idx_blocks_conflict; plan was:\n{detail}"
-    );
 }
 
 // ======================================================================
@@ -1717,46 +1581,6 @@ async fn count_backlinks_batch_excludes_deleted_source_blocks() {
         result.get("BLD_TGT"),
         Some(&1),
         "only the live source block should be counted"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_backlinks_batch_excludes_conflict_source_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "CTGT", "page", "target", None, None).await;
-    insert_block(&pool, "CLIVE", "content", "live src", None, None).await;
-    insert_block(&pool, "CCONF", "content", "conflict src", None, None).await;
-
-    // Mark CCONF as conflict
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind("CCONF")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    // Both link to the same target
-    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
-        .bind("CLIVE")
-        .bind("CTGT")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
-        .bind("CCONF")
-        .bind("CTGT")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let result = count_backlinks_batch_inner(&pool, vec!["CTGT".into()], &SpaceScope::Global)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        result.get("CTGT"),
-        Some(&1),
-        "only the non-conflict source block should be counted"
     );
 }
 
@@ -3852,46 +3676,6 @@ async fn get_blocks_returns_full_rows_for_n_ids() {
     assert_eq!(c2.scheduled_date.as_deref(), Some("2026-05-09"));
 }
 
-/// PEND-35 Tier 2.3 — `get_blocks_inner` MUST return soft-deleted rows
-/// AND `is_conflict = 1` rows (unlike `batch_resolve_inner` which
-/// filters them). The conflict-resolution UI surfaces conflict rows
-/// themselves and possibly-deleted parents; filtering would defeat
-/// the use-case.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_blocks_includes_deleted_and_conflicts() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, "GB_DEL", "content", "deleted", None, Some(1)).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-04-01T00:00:00Z' WHERE id = 'GB_DEL'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    insert_block(&pool, "GB_CFL", "content", "conflict copy", None, Some(2)).await;
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'GB_CFL'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let rows = get_blocks_inner(&pool, vec!["GB_DEL".into(), "GB_CFL".into()])
-        .await
-        .unwrap();
-    assert_eq!(
-        rows.len(),
-        2,
-        "soft-deleted + conflict rows BOTH return (unlike batch_resolve)"
-    );
-
-    let by_id: std::collections::HashMap<String, _> =
-        rows.into_iter().map(|r| (r.id.clone(), r)).collect();
-    assert!(
-        by_id["GB_DEL"].deleted_at.is_some(),
-        "deleted row carries its tombstone"
-    );
-    assert!(
-        by_id["GB_CFL"].is_conflict,
-        "conflict row carries is_conflict = true"
-    );
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_blocks_rejects_empty_oversize() {
     let (pool, _dir) = test_pool().await;
@@ -4499,52 +4283,5 @@ async fn filtered_blocks_query_reserved_key_routes_to_column() {
         ids,
         ["FBR_TODO"].into_iter().collect(),
         "reserved-key filter must route to b.todo_state; got {ids:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn filtered_blocks_query_excludes_deleted_and_conflict() {
-    let (pool, _dir) = test_pool().await;
-
-    insert_block(&pool, "FBE_LIVE", "content", "live", None, Some(1)).await;
-    insert_block(&pool, "FBE_DEL", "content", "deleted", None, Some(2)).await;
-    insert_block(&pool, "FBE_CONF", "content", "conflict", None, Some(3)).await;
-    insert_property(&pool, "FBE_LIVE", "k", "v").await;
-    insert_property(&pool, "FBE_DEL", "k", "v").await;
-    insert_property(&pool, "FBE_CONF", "k", "v").await;
-
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'FBE_DEL'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'FBE_CONF'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let result = filtered_blocks_query_inner(
-        &pool,
-        vec![PropertyFilter {
-            key: "k".into(),
-            value_text: Some("v".into()),
-            value_text_in: Vec::new(),
-            value_date: None,
-            value_date_range: None,
-            operator: "eq".into(),
-        }],
-        None,
-        None,
-        &SpaceScope::Global,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-
-    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        ["FBE_LIVE"].into_iter().collect(),
-        "soft-deleted and conflict-copy blocks must be excluded; got {ids:?}"
     );
 }

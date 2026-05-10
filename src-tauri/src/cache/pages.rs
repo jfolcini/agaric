@@ -38,7 +38,7 @@ async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
          SELECT id, content, ?
          FROM blocks
          WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL
-           AND is_conflict = 0",
+",
         now,
     )
     .execute(&mut *tx)
@@ -86,13 +86,13 @@ async fn rebuild_pages_cache_split_impl(
 
     // Read phase — snapshot-isolated SELECT on `read_pool`. Same filters
     // as `rebuild_pages_cache_impl`: `block_type = 'page'`,
-    // `is_conflict = 0`, `deleted_at IS NULL`, `content IS NOT NULL`.
+    // `deleted_at IS NULL`, `content IS NOT NULL`.
     let mut read_tx = read_pool.begin().await?;
     let desired_rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, content
          FROM blocks
          WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL
-           AND is_conflict = 0",
+",
     )
     .fetch_all(&mut *read_tx)
     .await?;

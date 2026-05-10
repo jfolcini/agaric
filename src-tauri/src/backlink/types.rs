@@ -115,7 +115,7 @@ pub enum BacklinkSort {
 /// Response for a filtered backlink query, including total count.
 ///
 /// MAINT-113 M2 — `items` is `ActiveBlockRow`-typed because the backlink
-/// resolver filters `is_conflict = 0 AND deleted_at IS NULL` on every
+/// resolver filters deleted_at IS NULL` on every
 /// candidate source block (`backlink/query.rs::eval_backlink_query`,
 /// `eval_backlink_query_grouped`, `eval_unlinked_references`).
 #[derive(Debug, Clone, Serialize, specta::Type)]

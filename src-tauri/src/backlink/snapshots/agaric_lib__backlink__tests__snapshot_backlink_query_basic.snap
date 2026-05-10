@@ -9,7 +9,6 @@ items:
     parent_id: ~
     position: ~
     deleted_at: ~
-    is_conflict: false
     conflict_type: ~
     todo_state: ~
     priority: ~
@@ -22,7 +21,6 @@ items:
     parent_id: ~
     position: ~
     deleted_at: ~
-    is_conflict: false
     conflict_type: ~
     todo_state: ~
     priority: ~
@@ -35,7 +33,6 @@ items:
     parent_id: ~
     position: ~
     deleted_at: ~
-    is_conflict: false
     conflict_type: ~
     todo_state: ~
     priority: ~

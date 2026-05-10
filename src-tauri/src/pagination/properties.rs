@@ -206,13 +206,12 @@ pub async fn query_by_property(
         //       binds the range to the date column directly)
         let sql = format!(
             "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                    b.deleted_at, b.is_conflict, b.conflict_type, \
+                    b.deleted_at, b.conflict_type, \
                     b.todo_state, b.priority, b.due_date, b.scheduled_date, \
                     b.page_id \
              FROM blocks b \
              WHERE b.{col} IS NOT NULL \
                AND b.deleted_at IS NULL \
-               AND b.is_conflict = 0 \
                AND (?1 IS NULL OR b.{col} {sql_op} ?1) \
                AND (?2 IS NULL OR b.id > ?3) \
                AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
@@ -254,14 +253,13 @@ pub async fn query_by_property(
         //   ?12/?13  value_date_range half-open `[from, to)` against `bp.value_date`
         let sql = format!(
             "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                    b.deleted_at, b.is_conflict, b.conflict_type, \
+                    b.deleted_at, b.conflict_type, \
                     b.todo_state, b.priority, b.due_date, b.scheduled_date, \
                     b.page_id \
              FROM block_properties bp \
              JOIN blocks b ON b.id = bp.block_id \
              WHERE bp.key = ?1 \
                AND b.deleted_at IS NULL \
-               AND b.is_conflict = 0 \
                AND (?2 IS NULL OR bp.value_text {sql_op} ?2) \
                AND (?3 IS NULL OR bp.value_date {sql_op} ?3) \
                AND (?4 IS NULL OR b.id > ?5) \

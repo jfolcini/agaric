@@ -572,17 +572,16 @@ mod dispatch_for_record_regression {
     ///     the target block (so the property lookup itself succeeds).
     async fn seed_space_membership(pool: &SqlitePool) {
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'space', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'space', NULL, 0)",
         )
         .bind(SPACE_ULID)
         .execute(pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
-                                 is_conflict) \
-             VALUES (?, 'content', '', NULL, 0, ?, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', '', NULL, 0, ?)",
         )
         .bind(BLOCK_ULID)
         .bind(BLOCK_ULID)

@@ -64,7 +64,7 @@ prek run --all-files         # Pre-commit hooks
 6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.
 7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
 8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism
-9. **Recursive CTEs over `blocks` must filter `is_conflict = 0`** in the recursive member, and bound `depth < 100` to prevent runaway recursion on corrupted data. Conflict copies leak into results otherwise.
+9. **Recursive CTEs over `blocks` must bound `depth < 100`** in the recursive member to prevent runaway recursion on corrupted `parent_id` chains. (Historical note: this invariant also required filtering `is_conflict = 0`; PEND-09 Phase 4 dropped that column when the conflict-copy creation path became unreachable, so only the depth bound remains.)
 
 ## Architectural Stability
 
@@ -314,7 +314,7 @@ Baseline performance at 100K blocks (established by benchmarks):
 
 ## Backend Patterns (commonly caught in review)
 
-1. **Recursive CTE correctness:** every descendant walk (`list_children`, `list_page_links`, cascade ops) must follow invariant #9 (see "Key Architectural Invariants"). Missing filter leaks conflict copies as phantom rows; missing bound allows runaway recursion on corrupted data.
+1. **Recursive CTE correctness:** every descendant walk (`list_children`, `list_page_links`, cascade ops) must follow invariant #9 (see "Key Architectural Invariants") — bound `depth < 100`. Missing bound allows runaway recursion on corrupted data.
 2. **Transaction wrapping for atomic multi-op sequences:** when a feature requires multiple ops atomically (e.g., create block + set property for recurrence), use `_in_tx` variants or wrap in `BEGIN IMMEDIATE`. All-or-nothing semantics must be verified in tests.
 3. **Batch via `json_each()`, not N+1:** when resolving/counting many IDs, pass a JSON array and use `json_each()` with a single query. See `backlink/query.rs` and `fts.rs` for examples.
 4. **`total_count` uses post-filter count:** when a query filters after fetch (self-reference filtering in backlinks, etc.), set `total_count` from filtered length, not pre-filter length.

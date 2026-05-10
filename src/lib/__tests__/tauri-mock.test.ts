@@ -141,7 +141,6 @@ describe('get_block', () => {
       page_id: SEED_IDS.PAGE_GETTING_STARTED,
       position: 0,
       deleted_at: null,
-      is_conflict: false,
       conflict_type: null,
       todo_state: null,
       priority: null,

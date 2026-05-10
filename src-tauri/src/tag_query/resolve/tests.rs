@@ -38,13 +38,6 @@ async fn soft_delete(pool: &SqlitePool, id: &str) {
         .await
         .unwrap();
 }
-async fn mark_conflict(pool: &SqlitePool, id: &str) {
-    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
 async fn insert_child_block(
     pool: &SqlitePool,
     id: &str,
@@ -96,21 +89,7 @@ async fn resolve_tag_excludes_deleted_blocks() {
     assert_eq!(result.len(), 1);
     assert!(result.contains("BLK_1"));
 }
-#[tokio::test]
-async fn resolve_tag_excludes_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, "TAG_A", "tag", "alpha").await;
-    insert_block(&pool, "BLK_1", "content", "one").await;
-    insert_block(&pool, "BLK_2", "content", "two").await;
-    insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
-    insert_tag_assoc(&pool, "BLK_2", "TAG_A").await;
-    mark_conflict(&pool, "BLK_2").await;
-    let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
-        .await
-        .unwrap();
-    assert_eq!(result.len(), 1);
-    assert!(result.contains("BLK_1"));
-}
+
 #[tokio::test]
 async fn resolve_tag_unknown_tag_returns_empty() {
     let (pool, _dir) = test_pool().await;
@@ -1150,24 +1129,6 @@ async fn resolve_tag_inline_ref_excludes_deleted_source() {
 }
 
 #[tokio::test]
-async fn resolve_tag_inline_ref_excludes_conflict_source() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, "TAG_CF", "tag", "conflict-src").await;
-    insert_block(&pool, "BLK_CF_OK", "content", "ok").await;
-    insert_block(&pool, "BLK_CF_CF", "content", "conflict").await;
-    insert_inline_ref(&pool, "BLK_CF_OK", "TAG_CF").await;
-    insert_inline_ref(&pool, "BLK_CF_CF", "TAG_CF").await;
-    mark_conflict(&pool, "BLK_CF_CF").await;
-
-    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_CF".into()), false)
-        .await
-        .unwrap();
-    assert_eq!(result.len(), 1, "conflict-copy source must be filtered out");
-    assert!(result.contains("BLK_CF_OK"));
-    assert!(!result.contains("BLK_CF_CF"));
-}
-
-#[tokio::test]
 async fn resolve_prefix_unions_inline_refs() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TAG_PR_1", "tag", "proj/alpha").await;
@@ -1561,81 +1522,4 @@ async fn materialized_matches_cte_oracle_at_depth_boundary_i_search_5() {
     // Sanity: the tagged seed itself must be in the result regardless of
     // which side of the bound we land on.
     assert!(mat.contains("B000"), "tagged seed B000 must appear");
-}
-
-/// I-Search-5: parity when a tagged ancestor in the middle of a chain
-/// is a conflict copy (`is_conflict = 1`).
-///
-/// Tree: `ROOT_C -> MIDDLE_C (is_conflict=1) -> LEAF_C`.
-/// `ROOT_C` carries `TAG_OK`; `MIDDLE_C` carries `TAG_BAD`. Per
-/// invariant #9 every descendant walk must filter `is_conflict = 0`
-/// in both seed and recursive members, so:
-///   * `TAG_BAD` must NOT propagate from the conflict copy to `LEAF_C`,
-///     and the conflict block itself must be filtered out of the
-///     direct-tag arm too.
-///   * Materialised and CTE oracle must agree on every result set.
-#[tokio::test]
-async fn materialized_skips_conflict_ancestor_i_search_5() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, "TAG_OK", "tag", "ok-tag").await;
-    insert_block(&pool, "TAG_BAD", "tag", "bad-tag").await;
-    insert_tag_cache(&pool, "TAG_OK", "ok-tag", 1).await;
-    insert_tag_cache(&pool, "TAG_BAD", "bad-tag", 1).await;
-
-    insert_block(&pool, "ROOT_C", "content", "real root").await;
-    insert_child_block(&pool, "MIDDLE_C", "content", "conflict middle", "ROOT_C").await;
-    insert_child_block(
-        &pool,
-        "LEAF_C",
-        "content",
-        "leaf below conflict",
-        "MIDDLE_C",
-    )
-    .await;
-    insert_tag_assoc(&pool, "ROOT_C", "TAG_OK").await;
-    insert_tag_assoc(&pool, "MIDDLE_C", "TAG_BAD").await;
-    mark_conflict(&pool, "MIDDLE_C").await;
-
-    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
-
-    // Conflict-tagged ancestor: tag must not surface anywhere — neither
-    // the conflict block itself (filtered by direct-arm `is_conflict = 0`)
-    // nor its real descendant (the tagged seed of every inheritance walk
-    // is filtered when `tagged.is_conflict = 1`).
-    let expr_bad = TagExpr::Tag("TAG_BAD".into());
-    let mat_bad = resolve_expr(&pool, &expr_bad, true).await.unwrap();
-    let cte_bad = resolve_expr_cte(&pool, &expr_bad, true).await.unwrap();
-    assert_eq!(
-        mat_bad, cte_bad,
-        "TAG_BAD parity broken across the conflict ancestor: \
-         mat={mat_bad:?}, cte={cte_bad:?}"
-    );
-    assert!(
-        !mat_bad.contains("MIDDLE_C"),
-        "MIDDLE_C is is_conflict=1; direct-tag arm must filter it"
-    );
-    assert!(
-        !mat_bad.contains("LEAF_C"),
-        "LEAF_C must not inherit a tag attached to a conflict copy"
-    );
-
-    // Real-ancestor tag: the materialised and CTE paths must agree on
-    // whatever they return for `LEAF_C`. Both walks stop at the conflict
-    // copy in the recursive member, so neither should include `LEAF_C`
-    // in this fixture; the assertion below pins that invariant. If a
-    // future change ever makes one helper "step over" the conflict
-    // ancestor while the other does not, this parity assert fires.
-    let expr_ok = TagExpr::Tag("TAG_OK".into());
-    let mat_ok = resolve_expr(&pool, &expr_ok, true).await.unwrap();
-    let cte_ok = resolve_expr_cte(&pool, &expr_ok, true).await.unwrap();
-    assert_eq!(
-        mat_ok, cte_ok,
-        "TAG_OK parity broken across the conflict ancestor: \
-         mat={mat_ok:?}, cte={cte_ok:?}"
-    );
-    assert!(mat_ok.contains("ROOT_C"), "ROOT_C carries TAG_OK directly");
-    assert!(
-        !mat_ok.contains("MIDDLE_C"),
-        "MIDDLE_C is is_conflict=1; descendant walk must skip it"
-    );
 }

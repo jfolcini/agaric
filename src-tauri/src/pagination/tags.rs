@@ -32,12 +32,12 @@ pub async fn list_by_tag(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at,
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
          FROM block_tags bt
          JOIN blocks b ON b.id = bt.block_id
-         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
+         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL
            AND (?2 IS NULL OR b.id > ?3)
            AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
                 SELECT bp.block_id FROM block_properties bp

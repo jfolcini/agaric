@@ -3401,7 +3401,7 @@ async fn reserved_key_todo_state() {
     use crate::op::is_reserved_property_key;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    sqlx::query("INSERT INTO blocks (id, block_type, content, position, is_conflict) VALUES ('BLK-RES', 'content', 'test', 1, 0)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES ('BLK-RES', 'content', 'test', 1)").execute(&pool).await.unwrap();
     assert!(
         is_reserved_property_key("todo_state"),
         "todo_state should be a reserved property key"
@@ -3446,7 +3446,7 @@ async fn reserved_key_todo_state() {
 async fn delete_reserved_key() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    sqlx::query("INSERT INTO blocks (id, block_type, content, position, is_conflict, todo_state) VALUES ('BLK-DEL', 'content', 'test', 1, 0, 'TODO')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO blocks (id, block_type, content, position, todo_state) VALUES ('BLK-DEL', 'content', 'test', 1, 'TODO')").execute(&pool).await.unwrap();
     let r = make_op_record(
         &pool,
         OpPayload::DeleteProperty(DeletePropertyPayload {
@@ -3776,7 +3776,7 @@ async fn purge_handler_cleans_projected_agenda_cache() {
 // ======================================================================
 
 /// Build a tree of 100+ blocks rooted at `root_id`, with one
-/// `is_conflict = 1` copy mixed in to confirm the purge variant
+// copy mixed in to confirm the purge variant
 /// intentionally walks conflicts.
 async fn seed_purge_tree(pool: &SqlitePool, root_id: &str) -> usize {
     insert_block_direct(pool, root_id, "page", "purge-root").await;
@@ -3814,8 +3814,8 @@ async fn seed_purge_tree(pool: &SqlitePool, root_id: &str) -> usize {
     // proves it walks conflicts (invariant #9 exception).
     let conflict_id = format!("{root_id}_CONFLICT");
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-         VALUES (?, 'content', 'conflict-copy', ?, 99, 1)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'conflict-copy', ?, 99)",
     )
     .bind(&conflict_id)
     .bind(root_id)

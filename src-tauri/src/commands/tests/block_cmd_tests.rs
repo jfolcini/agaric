@@ -4280,13 +4280,13 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
 }
 
 // ======================================================================
-// Regression: move_block recursive CTEs must filter `is_conflict = 0`
+// Regression: move_block recursive CTEs must filter
 // (AGENTS.md invariant #9). Conflict copies inherit `parent_id` from the
 // original block and would otherwise be re-parented into a moved subtree
 // or inflate the depth-check subtree count.
 // ======================================================================
 
-/// Insert a conflict-copy block directly with `is_conflict = 1` and an
+/// Insert a conflict-copy block directly with  and an
 /// optional `page_id` pin. Mirrors the shape produced by
 /// `merge::resolve::create_conflict_copy`.
 async fn insert_conflict_copy_with_page(
@@ -4296,8 +4296,8 @@ async fn insert_conflict_copy_with_page(
     page_id: Option<&str>,
 ) {
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, page_id) \
-         VALUES (?, 'content', 'conflict', ?, 999, 1, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'content', 'conflict', ?, 999, ?)",
     )
     .bind(id)
     .bind(parent_id)
@@ -4305,200 +4305,6 @@ async fn insert_conflict_copy_with_page(
     .execute(pool)
     .await
     .unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn move_block_does_not_reparent_conflict_copy_descendants() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // OLD_PAGE contains BLK → REAL_CHILD (real). BLK also has a conflict copy
-    // CF_DESC sitting as a descendant (parent_id = BLK, is_conflict = 1).
-    insert_block(&pool, "CF_MV_OLD", "page", "old", None, Some(1)).await;
-    insert_block(&pool, "CF_MV_NEW", "page", "new", None, Some(2)).await;
-    insert_block(
-        &pool,
-        "CF_MV_BLK",
-        "content",
-        "blk",
-        Some("CF_MV_OLD"),
-        Some(1),
-    )
-    .await;
-    insert_block(
-        &pool,
-        "CF_MV_RC",
-        "content",
-        "real-child",
-        Some("CF_MV_BLK"),
-        Some(1),
-    )
-    .await;
-
-    // Pin page_id on the real rows (mirrors what the materializer would do).
-    sqlx::query("UPDATE blocks SET page_id = 'CF_MV_OLD' WHERE id = 'CF_MV_OLD'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE blocks SET page_id = 'CF_MV_NEW' WHERE id = 'CF_MV_NEW'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE blocks SET page_id = 'CF_MV_OLD' WHERE id IN ('CF_MV_BLK', 'CF_MV_RC')")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    // Conflict copy rooted under the moved subtree — page_id pinned to OLD.
-    insert_conflict_copy_with_page(&pool, "CF_MV_CC", "CF_MV_BLK", Some("CF_MV_OLD")).await;
-
-    // Move BLK from OLD_PAGE to NEW_PAGE.
-    move_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "CF_MV_BLK".into(),
-        Some("CF_MV_NEW".into()),
-        1,
-    )
-    .await
-    .unwrap();
-
-    // `move_block` dispatches `RebuildPageIds` as a background task (see
-    // dispatch.rs `move_block` arm). The assertions below must reflect the
-    // FINAL state after the rebuild has run — otherwise the test races the
-    // background task and is non-deterministic. Flush the background queue
-    // to wait for quiescence before reading.
-    mat.flush_background().await.unwrap();
-
-    // Real descendant follows BLK into NEW_PAGE.
-    let rc_page: Option<String> =
-        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'CF_MV_RC'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        rc_page,
-        Some("CF_MV_NEW".into()),
-        "real descendant's page_id must follow moved parent"
-    );
-
-    // Conflict copy's page_id must NOT be rewritten — the descendants CTE
-    // in `move_block_inner` skips `is_conflict = 1` rows, AND the background
-    // `rebuild_page_ids` CTE must also skip conflict copies (invariant #9).
-    // Without the `is_conflict = 0` filter in `rebuild_page_ids_impl`, the
-    // rebuild would walk CF_MV_CC → CF_MV_BLK → CF_MV_NEW and incorrectly
-    // set CF_MV_CC.page_id = CF_MV_NEW.
-    let cc_page: Option<String> =
-        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'CF_MV_CC'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        cc_page,
-        Some("CF_MV_OLD".into()),
-        "conflict-copy descendant's page_id must NOT be rewritten by move_block \
-         or the subsequent rebuild_page_ids background task"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn move_block_depth_check_ignores_conflict_copy_descendants() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // Build a parent chain of depth MAX_BLOCK_DEPTH - 1 = 19 levels:
-    // page→d01→d02→...→d19. Target: place a subtree under d19.
-    insert_block(&pool, "CFD_PAGE", "page", "root", None, Some(1)).await;
-    let mut parent = "CFD_PAGE".to_string();
-    for i in 1..MAX_BLOCK_DEPTH {
-        let id = format!("CFD_{i:02}");
-        insert_block(
-            &pool,
-            &id,
-            "content",
-            &format!("level {i}"),
-            Some(&parent),
-            Some(1),
-        )
-        .await;
-        parent = id;
-    }
-    let deepest = parent; // CFD_19
-
-    // The block we will move is a loose leaf; crucially, it has a CONFLICT
-    // copy as a direct child. With the buggy CTE, the descendants walk would
-    // count the conflict copy, making subtree_depth = 1 and the move
-    // parent_depth(19) + 1 + subtree_depth(1) = 21 > MAX_BLOCK_DEPTH (20) →
-    // false Validation error. With the fixed CTE (is_conflict = 0 filter),
-    // subtree_depth = 0 and the move succeeds (19 + 1 + 0 = 20 <= 20).
-    insert_block(&pool, "CFD_LEAF", "content", "leaf", None, Some(99)).await;
-    insert_conflict_copy_with_page(&pool, "CFD_LEAF_CC", "CFD_LEAF", None).await;
-
-    let result = move_block_inner(&pool, DEV, &mat, "CFD_LEAF".into(), Some(deepest), 1).await;
-    assert!(
-        result.is_ok(),
-        "conflict-copy descendants must not count toward subtree depth; got: {result:?}"
-    );
-}
-
-// I-CommandsCRUD-13: the cycle-detection recursive CTE in
-// `move_block_inner` (move_ops.rs ~L95-103) MUST filter `is_conflict = 0`
-// in its recursive member, per AGENTS.md invariant #9. Without that
-// filter, the ancestor walk could traverse THROUGH a conflict-copy node
-// and falsely report a cycle when the moved block sits beyond the
-// conflict copy in the (logically detached) parent chain.
-//
-// The test pins both halves of the contract:
-//   (a) A real cycle through real ancestry is still detected even when
-//       a conflict copy is present in the DB.
-//   (b) A move whose ancestor walk only reaches the moved block by
-//       crossing a conflict-copy node must NOT be flagged as a cycle —
-//       the filter prunes the walk at the conflict copy.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn move_block_cycle_detection_ignores_conflict_copies_i_commandscrud_13() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // Real chain: A (page) → B → C.
-    insert_block(&pool, "I13_A", "page", "A", None, Some(1)).await;
-    insert_block(&pool, "I13_B", "content", "B", Some("I13_A"), Some(1)).await;
-    insert_block(&pool, "I13_C", "content", "C", Some("I13_B"), Some(1)).await;
-
-    // Conflict copy B' (is_conflict = 1) with parent_id = C. Sits in the
-    // DB alongside the real chain. Its presence must not perturb the
-    // cycle CTE in either direction.
-    insert_conflict_copy_with_page(&pool, "I13_B_CC", "I13_C", None).await;
-
-    // (a) Real cycle through the genuine ancestry must still be caught:
-    // moving A under C would create the would-be parent chain A→C→B→A.
-    let real_cycle =
-        move_block_inner(&pool, DEV, &mat, "I13_A".into(), Some("I13_C".into()), 1).await;
-    assert!(
-        matches!(real_cycle, Err(AppError::Validation(ref msg)) if msg.contains("cycle detected")),
-        "real cycle A→B→C must be detected even with conflict copy B' in the DB, got: {real_cycle:?}"
-    );
-
-    // (b) Build a real block X whose parent_id IS the conflict copy.
-    // Walking up from X via parent_id reaches B'. With the
-    // `is_conflict = 0` filter, recursion stops there; without it, the
-    // walk would continue B' → C → B → A and falsely flag a move of A
-    // (or B, or C) under X as a cycle.
-    insert_block(&pool, "I13_X", "content", "X", Some("I13_B_CC"), Some(1)).await;
-
-    // Moving A under X must succeed: the only path back to A from X
-    // crosses the conflict copy, which the filter prunes. If the filter
-    // were missing, this assertion would fail with `Err(Validation(
-    // "cycle detected"))` because the unfiltered walk would surface A
-    // in the ancestor set.
-    let move_under_cc_chain =
-        move_block_inner(&pool, DEV, &mat, "I13_A".into(), Some("I13_X".into()), 1).await;
-    assert!(
-        move_under_cc_chain.is_ok(),
-        "moving A under X (whose ancestor chain crosses conflict copy B') \
-         must NOT be flagged as a cycle; the is_conflict = 0 filter on the \
-         recursive CTE must prune the walk at the conflict copy. Got: {move_under_cc_chain:?}"
-    );
 }
 
 // ======================================================================

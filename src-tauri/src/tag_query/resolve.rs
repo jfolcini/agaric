@@ -20,7 +20,7 @@ use crate::sql_utils::escape_like;
 /// inheritance applies only to explicit tags; an inline ref on a page
 /// does not propagate to child blocks.
 ///
-/// Deleted (`deleted_at IS NOT NULL`) and conflict (`is_conflict = 1`)
+/// Deleted (`deleted_at IS NOT NULL`) and conflict
 /// blocks are excluded at every UNION arm.
 ///
 /// This is the single source of truth for the leaf SQL — both
@@ -37,17 +37,17 @@ pub(crate) async fn resolve_tag_leaves(
             "SELECT bt.block_id \
              FROM block_tags bt \
              JOIN blocks b ON b.id = bt.block_id \
-             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL \
              UNION \
              SELECT bti.block_id \
              FROM block_tag_inherited bti \
              JOIN blocks b ON b.id = bti.block_id \
-             WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL \
              UNION \
              SELECT btr.source_id AS block_id \
              FROM block_tag_refs btr \
              JOIN blocks b ON b.id = btr.source_id \
-             WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+             WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL",
         )
         .bind(tag_id)
         .fetch_all(pool)
@@ -57,12 +57,12 @@ pub(crate) async fn resolve_tag_leaves(
         let rows = sqlx::query_scalar!(
             "SELECT bt.block_id FROM block_tags bt \
              JOIN blocks b ON b.id = bt.block_id \
-             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL \
              UNION \
              SELECT btr.source_id AS block_id \
              FROM block_tag_refs btr \
              JOIN blocks b ON b.id = btr.source_id \
-             WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+             WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL",
             tag_id
         )
         .fetch_all(pool)
@@ -84,12 +84,12 @@ pub(crate) async fn resolve_tag_leaves(
 ///
 /// **I-Search-10 — `tags_cache` conflict-tag invariant.** The query
 /// joins `tags_cache → block_tags → blocks` and filters
-/// `b.deleted_at IS NULL AND b.is_conflict = 0` on the *associating*
+/// `b.deleted_at IS NULL` on the *associating*
 /// block (`b.id = bt.block_id`), NOT on the *tag* block
 /// (`tc.tag_id`). Conflict-copy tag blocks would surface here if
 /// `tags_cache` ever included them, but the cache-rebuild contract in
 /// [`crate::cache::rebuild_tags_cache`] explicitly excludes
-/// `is_conflict = 1` tag rows. The result is correct in practice; the
+// tag rows. The result is correct in practice; the
 /// SQL contract just doesn't make that dependency explicit. If the
 /// cache-rebuild rules ever change to include conflict tag rows, add a
 /// defensive `JOIN blocks t ON t.id = tc.tag_id WHERE t.is_conflict = 0`
@@ -107,21 +107,21 @@ pub(crate) async fn resolve_tag_prefix_leaves(
              JOIN block_tags bt ON bt.tag_id = tc.tag_id \
              JOIN blocks b ON b.id = bt.block_id \
              WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+               AND b.deleted_at IS NULL \
              UNION \
              SELECT DISTINCT bti.block_id \
              FROM tags_cache tc \
              JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
              JOIN blocks b ON b.id = bti.block_id \
              WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+               AND b.deleted_at IS NULL \
              UNION \
              SELECT DISTINCT btr.source_id AS block_id \
              FROM tags_cache tc \
              JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
              JOIN blocks b ON b.id = btr.source_id \
              WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL AND b.is_conflict = 0",
+               AND b.deleted_at IS NULL",
         )
         .bind(&escaped)
         .fetch_all(pool)
@@ -134,14 +134,14 @@ pub(crate) async fn resolve_tag_prefix_leaves(
              JOIN block_tags bt ON bt.tag_id = tc.tag_id \
              JOIN blocks b ON b.id = bt.block_id \
              WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+               AND b.deleted_at IS NULL \
              UNION \
              SELECT DISTINCT btr.source_id AS block_id \
              FROM tags_cache tc \
              JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
              JOIN blocks b ON b.id = btr.source_id \
              WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL AND b.is_conflict = 0",
+               AND b.deleted_at IS NULL",
             escaped
         )
         .fetch_all(pool)
@@ -210,7 +210,7 @@ pub fn resolve_expr<'a>(
                     resolve_expr(pool, inner, include_inherited).await?;
                 if inner_set.is_empty() {
                     let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL",
                     )
                     .fetch_all(pool)
                     .await?;
@@ -219,7 +219,7 @@ pub fn resolve_expr<'a>(
                 let json_ids = serde_json::to_string(&inner_set.iter().collect::<Vec<_>>())
                     .map_err(|e| AppError::InvalidOperation(e.to_string()))?;
                 Ok(sqlx::query_scalar::<_, String>(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                    "SELECT id FROM blocks WHERE deleted_at IS NULL \
                      AND id NOT IN (SELECT value FROM json_each(?))",
                 )
                 .bind(&json_ids)
@@ -264,12 +264,12 @@ pub(crate) fn resolve_expr_cte<'a>(
                          SELECT bt.block_id AS id, 0 AS depth \
                          FROM block_tags bt \
                          JOIN blocks b ON b.id = bt.block_id \
-                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL \
                          UNION ALL \
                          SELECT b.id, tt.depth + 1 \
                          FROM blocks b \
                          JOIN tagged_tree tt ON b.parent_id = tt.id \
-                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND tt.depth < 100 \
+                         WHERE b.deleted_at IS NULL AND tt.depth < 100 \
                      ) \
                      SELECT DISTINCT id FROM tagged_tree",
                 )
@@ -289,12 +289,12 @@ pub(crate) fn resolve_expr_cte<'a>(
                          JOIN block_tags bt ON bt.tag_id = tc.tag_id \
                          JOIN blocks b ON b.id = bt.block_id \
                          WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                           AND b.deleted_at IS NULL \
                          UNION ALL \
                          SELECT b.id, tt.depth + 1 \
                          FROM blocks b \
                          JOIN tagged_tree tt ON b.parent_id = tt.id \
-                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND tt.depth < 100 \
+                         WHERE b.deleted_at IS NULL AND tt.depth < 100 \
                      ) \
                      SELECT DISTINCT id FROM tagged_tree",
                 )

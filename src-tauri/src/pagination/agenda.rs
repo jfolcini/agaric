@@ -36,12 +36,12 @@ pub async fn list_agenda(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at,
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
-         WHERE ac.date = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
+         WHERE ac.date = ?1 AND b.deleted_at IS NULL
            AND (?2 IS NULL OR ac.source = ?2)
            AND (?3 IS NULL OR b.id > ?4)
            AND (?6 IS NULL OR COALESCE(b.page_id, b.id) IN (
@@ -105,13 +105,13 @@ pub async fn list_agenda_range(
     // `sqlx::query!` requires a string literal directly.
     let raw_rows = sqlx::query!(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at,
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id, ac.date as "ac_date: String"
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date >= ?1 AND ac.date <= ?2
-           AND b.deleted_at IS NULL AND b.is_conflict = 0
+           AND b.deleted_at IS NULL
            AND (?3 IS NULL OR ac.source = ?3)
            AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))
            AND (?8 IS NULL OR COALESCE(b.page_id, b.id) IN (
@@ -145,7 +145,6 @@ pub async fn list_agenda_range(
             parent_id: r.parent_id,
             position: r.position,
             deleted_at: r.deleted_at,
-            is_conflict: r.is_conflict,
             conflict_type: r.conflict_type,
             todo_state: r.todo_state,
             priority: r.priority,

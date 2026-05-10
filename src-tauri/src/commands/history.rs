@@ -56,7 +56,7 @@ pub async fn apply_reverse_in_tx(
         OpPayload::DeleteBlock(p) => {
             // Cascade soft-delete (same as delete_block_inner).
             //
-            // `descendants_cte_active!()` pins invariant #9: `is_conflict = 0`
+            // `descendants_cte_active!()` pins invariant #9:
             // (conflict copies aren't swept into the reverse cascade —
             // they have independent lifecycles) AND `deleted_at IS NULL`
             // (don't re-sweep already-deleted descendants), with `depth < 100`
@@ -75,7 +75,7 @@ pub async fn apply_reverse_in_tx(
         OpPayload::RestoreBlock(p) => {
             // Cascade restore (same as restore_block_inner).
             //
-            // `descendants_cte_standard!()` pins invariant #9: `is_conflict = 0`
+            // `descendants_cte_standard!()` pins invariant #9:
             // (conflict copies have independent lifecycles and must not be
             // bulk-restored with the original) and `depth < 100`. Shared CTE
             // lives in `crate::block_descendants`.
@@ -374,16 +374,16 @@ pub async fn restore_page_to_op_inner(
         .fetch_all(pool)
         .await?
     } else {
-        // Recursive CTE must filter `is_conflict = 0` in the recursive member —
+        // Recursive CTE must filter  in the recursive member —
         // conflict copies inherit `parent_id` from the original block and would
         // otherwise leak into page-scoped results. `depth < 100` bounds the walk
         // against runaway recursion on corrupted data (invariant #9).
         sqlx::query_as::<_, (String, i64, String)>(
             "WITH RECURSIVE page_blocks(id, depth) AS ( \
-               SELECT id, 0 FROM blocks WHERE id = ?1 AND is_conflict = 0 \
+               SELECT id, 0 FROM blocks WHERE id = ?1 \
                UNION ALL \
                SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
-               WHERE b.is_conflict = 0 AND pb.depth < 100 \
+               WHERE pb.depth < 100 \
              ) \
              SELECT o.device_id, o.seq, o.op_type FROM op_log o \
              WHERE ( \
@@ -464,7 +464,7 @@ pub async fn undo_page_op_inner(
     // Uses the write pool for consistency — these reads feed into the write
     // transaction below.
     //
-    // Recursive CTE must filter `is_conflict = 0` in the recursive member —
+    // Recursive CTE must filter  in the recursive member —
     // conflict copies inherit `parent_id` from the original block and would
     // otherwise leak into page-scoped results. `depth < 100` bounds the walk
     // against runaway recursion on corrupted data (invariant #9).
@@ -482,10 +482,10 @@ pub async fn undo_page_op_inner(
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ?1 AND is_conflict = 0 \
+             SELECT id, 0 FROM blocks WHERE id = ?1 \
              UNION ALL \
              SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
-             WHERE b.is_conflict = 0 AND pb.depth < 100 \
+             WHERE pb.depth < 100 \
          ) \
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
          FROM op_log ol \
@@ -679,10 +679,10 @@ pub async fn find_undo_group_inner(
     let seed_rn: i64 = depth + 1; // depth=0 → rn=1 (newest)
     let count: Option<i64> = sqlx::query_scalar(
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ?1 AND is_conflict = 0 \
+             SELECT id, 0 FROM blocks WHERE id = ?1 \
              UNION ALL \
              SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
-             WHERE b.is_conflict = 0 AND pb.depth < 100 \
+             WHERE pb.depth < 100 \
          ), \
          ordered_ops AS ( \
              SELECT \

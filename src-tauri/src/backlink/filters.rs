@@ -163,7 +163,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                      JOIN blocks b ON b.id = bp.block_id \
                      WHERE bp.key = ?1 AND bp.value_text IS NOT NULL \
                        AND bp.value_text {sql_op} ?2{escape_clause} \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0"
+                       AND b.deleted_at IS NULL"
                 );
                 let rows = sqlx::query_scalar::<_, String>(&sql)
                     .bind(key)
@@ -179,7 +179,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                      FROM block_properties bp \
                      JOIN blocks b ON b.id = bp.block_id \
                      WHERE bp.key = ?1 AND bp.value_num IS NOT NULL \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                       AND b.deleted_at IS NULL",
                 )
                 .bind(key)
                 .fetch_all(pool)
@@ -209,7 +209,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                      FROM block_properties bp \
                      JOIN blocks b ON b.id = bp.block_id \
                      WHERE bp.key = ?1 AND bp.value_date IS NOT NULL \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                       AND b.deleted_at IS NULL",
                 )
                 .bind(key)
                 .fetch_all(pool)
@@ -240,7 +240,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                      FROM block_properties bp \
                      JOIN blocks b ON b.id = bp.block_id \
                      WHERE bp.key = ?1 \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                       AND b.deleted_at IS NULL",
                 )
                 .bind(key)
                 .fetch_all(pool)
@@ -274,7 +274,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 // Fallback: no candidate set — scan all non-deleted blocks.
                 let rows = sqlx::query_scalar::<_, String>(
                     "SELECT b.id FROM blocks b \
-                     WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                     WHERE b.deleted_at IS NULL \
                        AND NOT EXISTS ( \
                          SELECT 1 FROM block_properties bp \
                          WHERE bp.block_id = b.id AND bp.key = ?1 \
@@ -288,7 +288,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 
             BacklinkFilter::TodoState { state } => {
                 let rows: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM blocks WHERE todo_state = ? AND deleted_at IS NULL AND is_conflict = 0",
+                    "SELECT id FROM blocks WHERE todo_state = ? AND deleted_at IS NULL",
                 )
                 .bind(state)
                 .fetch_all(pool)
@@ -298,7 +298,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 
             BacklinkFilter::Priority { level } => {
                 let rows: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM blocks WHERE priority = ? AND deleted_at IS NULL AND is_conflict = 0",
+                    "SELECT id FROM blocks WHERE priority = ? AND deleted_at IS NULL",
                 )
                 .bind(level)
                 .fetch_all(pool)
@@ -308,12 +308,12 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 
             BacklinkFilter::DueDate { op, value } => {
                 let sql = match op {
-                    CompareOp::Eq => "SELECT id FROM blocks WHERE due_date = ? AND deleted_at IS NULL AND is_conflict = 0",
-                    CompareOp::Neq => "SELECT id FROM blocks WHERE due_date != ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
-                    CompareOp::Lt => "SELECT id FROM blocks WHERE due_date < ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
-                    CompareOp::Lte => "SELECT id FROM blocks WHERE due_date <= ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
-                    CompareOp::Gt => "SELECT id FROM blocks WHERE due_date > ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
-                    CompareOp::Gte => "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
+                    CompareOp::Eq => "SELECT id FROM blocks WHERE due_date = ? AND deleted_at IS NULL",
+                    CompareOp::Neq => "SELECT id FROM blocks WHERE due_date != ? AND due_date IS NOT NULL AND deleted_at IS NULL",
+                    CompareOp::Lt => "SELECT id FROM blocks WHERE due_date < ? AND due_date IS NOT NULL AND deleted_at IS NULL",
+                    CompareOp::Lte => "SELECT id FROM blocks WHERE due_date <= ? AND due_date IS NOT NULL AND deleted_at IS NULL",
+                    CompareOp::Gt => "SELECT id FROM blocks WHERE due_date > ? AND due_date IS NOT NULL AND deleted_at IS NULL",
+                    CompareOp::Gte => "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL",
                     CompareOp::Contains | CompareOp::StartsWith => {
                         return Err(AppError::Validation(format!(
                             "DueDate filter does not support {op:?} operator"
@@ -355,7 +355,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                      FROM fts_blocks fb \
                      JOIN blocks b ON b.id = fb.block_id \
                      WHERE fts_blocks MATCH ?1 \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                       AND b.deleted_at IS NULL",
                 )
                 .bind(&sanitized)
                 .fetch_all(pool)
@@ -376,9 +376,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 // Build SQL with optional ULID range bounds.  ULID prefix comparison
                 // works because Crockford base32 preserves sort order and SQLite
                 // string comparison treats shorter strings as less-than.
-                let mut sql = String::from(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
-                );
+                let mut sql = String::from("SELECT id FROM blocks WHERE deleted_at IS NULL");
                 let mut bind_idx = 1u32;
                 if after_prefix.is_some() {
                     sql.push_str(&format!(" AND id >= ?{bind_idx}"));
@@ -414,7 +412,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                     let rows = sqlx::query_scalar::<_, String>(
                         "SELECT id FROM blocks \
                          WHERE block_type = ?1 \
-                           AND deleted_at IS NULL AND is_conflict = 0 \
+                           AND deleted_at IS NULL \
                            AND id IN (SELECT value FROM json_each(?2))",
                     )
                     .bind(block_type)
@@ -431,7 +429,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 // helper.
                 let rows = sqlx::query_scalar::<_, String>(
                     "SELECT id FROM blocks \
-                     WHERE block_type = ?1 AND deleted_at IS NULL AND is_conflict = 0",
+                     WHERE block_type = ?1 AND deleted_at IS NULL",
                 )
                 .bind(block_type)
                 .fetch_all(pool)
@@ -465,12 +463,12 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                             .collect::<Vec<_>>()
                             .join(",");
                         let sql = format!(
-                            "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                            "SELECT id FROM blocks WHERE deleted_at IS NULL \
                              AND id NOT IN ( \
                                WITH RECURSIVE desc(id, depth) AS ( \
-                                 SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                                 SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL \
                                  UNION ALL \
-                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
                                ) SELECT id FROM desc \
                              )"
                         );
@@ -482,12 +480,12 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                     } else {
                         let json_ids = serde_json::to_string(&excluded)?;
                         let rows = sqlx::query_scalar::<_, String>(
-                            "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                            "SELECT id FROM blocks WHERE deleted_at IS NULL \
                              AND id NOT IN ( \
                                WITH RECURSIVE desc(id, depth) AS ( \
                                  SELECT value AS id, 0 AS depth FROM json_each(?1) \
                                  UNION ALL \
-                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
                                ) SELECT id FROM desc \
                              )",
                         )
@@ -499,7 +497,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 } else {
                     // No inclusion AND no exclusion — all blocks
                     result = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL",
                     )
                     .fetch_all(pool)
                     .await?
@@ -546,7 +544,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 if inner_set.is_empty() {
                     // Not of empty set = all non-deleted blocks
                     let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL",
                     )
                     .fetch_all(pool)
                     .await?;
@@ -561,7 +559,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                         .collect::<Vec<_>>()
                         .join(",");
                     let sql = format!(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL \
                          AND id NOT IN ({placeholders})"
                     );
                     let mut query = sqlx::query_scalar::<_, String>(&sql);
@@ -576,7 +574,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 // into SQL — avoids loading all block IDs into memory.
                 let json_ids = serde_json::to_string(&inner_set.iter().collect::<Vec<_>>())?;
                 let rows = sqlx::query_scalar::<_, String>(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                    "SELECT id FROM blocks WHERE deleted_at IS NULL \
                      AND id NOT IN (SELECT value FROM json_each(?))",
                 )
                 .bind(&json_ids)
@@ -609,9 +607,9 @@ async fn fetch_descendants_of(
             .join(",");
         let sql = format!(
             "WITH RECURSIVE desc(id, depth) AS ( \
-                SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL \
                 UNION ALL \
-                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
             ) SELECT id FROM desc"
         );
         let mut q = sqlx::query_scalar::<_, String>(&sql);
@@ -625,9 +623,9 @@ async fn fetch_descendants_of(
             "WITH RECURSIVE desc(id, depth) AS ( \
                 SELECT b.id, 0 FROM blocks b \
                 JOIN json_each(?1) j ON j.value = b.id \
-                WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                WHERE b.deleted_at IS NULL \
                 UNION ALL \
-                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
             ) SELECT id FROM desc",
         )
         .bind(&json_ids)

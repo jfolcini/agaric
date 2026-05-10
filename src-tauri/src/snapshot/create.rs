@@ -75,7 +75,7 @@ pub(crate) async fn collect_tables(
 ) -> Result<SnapshotTables, AppError> {
     let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
         BlockSnapshot,
-        "SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict, conflict_source, conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks"
+        "SELECT id, block_type, content, parent_id, position, deleted_at, conflict_source, conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks"
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -522,8 +522,8 @@ mod tests_m69 {
     /// over what's in the DB before calling `create_snapshot`.
     async fn insert_block(pool: &SqlitePool, id: &str, content: &str) {
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
-             VALUES (?, 'content', ?, 1, 0)",
+            "INSERT INTO blocks (id, block_type, content, position) \
+             VALUES (?, 'content', ?, 1)",
         )
         .bind(id)
         .bind(content)

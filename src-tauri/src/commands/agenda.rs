@@ -230,7 +230,6 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
         Option<i64>,
         Option<String>,
-        bool,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -245,7 +244,7 @@ pub async fn list_projected_agenda_inner(
         // intersects against `block_properties(key = 'space').value_ref`.
         "SELECT pac.block_id, pac.projected_date, pac.source,
                 b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.is_conflict, b.conflict_type,
+                b.deleted_at, b.conflict_type,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
          FROM projected_agenda_cache pac
@@ -253,7 +252,6 @@ pub async fn list_projected_agenda_inner(
          WHERE pac.projected_date >= ?1
            AND pac.projected_date <= ?2
            AND b.deleted_at IS NULL
-           AND b.is_conflict = 0
            AND NOT EXISTS (
                SELECT 1 FROM block_properties tp
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
@@ -307,13 +305,12 @@ pub async fn list_projected_agenda_inner(
                 parent_id: row.6,
                 position: row.7,
                 deleted_at: row.8,
-                is_conflict: row.9,
-                conflict_type: row.10,
-                todo_state: row.11,
-                priority: row.12,
-                due_date: row.13,
-                scheduled_date: row.14,
-                page_id: row.15,
+                conflict_type: row.9,
+                todo_state: row.10,
+                priority: row.11,
+                due_date: row.12,
+                scheduled_date: row.13,
+                page_id: row.14,
             },
             projected_date: row.1,
             source: row.2,
@@ -401,7 +398,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     let rows = sqlx::query_as!(
         RepeatingBlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at,
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
                 bp.value_text AS repeat_rule,
@@ -414,7 +411,6 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
          LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
          LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
          WHERE b.deleted_at IS NULL
-           AND b.is_conflict = 0
            AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
            AND bp.value_text IS NOT NULL
            AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)

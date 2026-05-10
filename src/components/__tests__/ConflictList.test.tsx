@@ -96,7 +96,6 @@ const originalBlock = {
   parent_id: null,
   position: null,
   deleted_at: null,
-  is_conflict: false,
   conflict_type: null,
 }
 
@@ -687,7 +686,6 @@ describe('ConflictList', () => {
       parent_id: 'ORIG001',
       position: null,
       deleted_at: null,
-      is_conflict: true,
     }
     const page = {
       items: [conflict],
@@ -739,7 +737,6 @@ describe('ConflictList', () => {
         parent_id: null,
         position: null,
         deleted_at: null,
-        is_conflict: false,
         conflict_type: null,
       },
     })
@@ -928,7 +925,6 @@ describe('ConflictList', () => {
               parent_id: 'PARENT1',
               position: 1,
               deleted_at: null,
-              is_conflict: true,
               conflict_type: 'Property',
             },
           ],
@@ -944,7 +940,6 @@ describe('ConflictList', () => {
           parent_id: null,
           position: 1,
           deleted_at: null,
-          is_conflict: false,
           conflict_type: null,
         }
       return null
@@ -971,7 +966,6 @@ describe('ConflictList', () => {
               parent_id: 'PARENT2',
               position: 1,
               deleted_at: null,
-              is_conflict: true,
               conflict_type: 'Move',
             },
           ],
@@ -987,7 +981,6 @@ describe('ConflictList', () => {
           parent_id: null,
           position: 1,
           deleted_at: null,
-          is_conflict: false,
           conflict_type: null,
         }
       return null
@@ -1786,7 +1779,6 @@ describe('ConflictList', () => {
       parent_id: null,
       position: 1,
       deleted_at: null,
-      is_conflict: false,
       conflict_type: null,
       todo_state: 'TODO',
       priority: 'B',
@@ -1805,7 +1797,6 @@ describe('ConflictList', () => {
               parent_id: 'ORIG_PROP',
               position: 1,
               deleted_at: null,
-              is_conflict: true,
               conflict_type: 'Property',
               todo_state: 'DONE',
               priority: 'A',
@@ -1842,7 +1833,6 @@ describe('ConflictList', () => {
       parent_id: 'OLD_PARENT',
       position: 1,
       deleted_at: null,
-      is_conflict: false,
       conflict_type: null,
       todo_state: null,
       priority: null,
@@ -1861,7 +1851,6 @@ describe('ConflictList', () => {
               parent_id: 'NEW_PARENT',
               position: 3,
               deleted_at: null,
-              is_conflict: true,
               conflict_type: 'Move',
               todo_state: null,
               priority: null,
@@ -1897,7 +1886,6 @@ describe('ConflictList', () => {
       parent_id: null,
       position: 1,
       deleted_at: null,
-      is_conflict: false,
       conflict_type: null,
       todo_state: 'TODO',
       priority: 'A',
@@ -1916,7 +1904,6 @@ describe('ConflictList', () => {
               parent_id: 'ORIG_SAME',
               position: 1,
               deleted_at: null,
-              is_conflict: true,
               conflict_type: 'Property',
               todo_state: 'TODO',
               priority: 'A',
@@ -3036,7 +3023,6 @@ describe('ConflictList', () => {
         parent_id: 'P1',
         position: 1,
         deleted_at: null,
-        is_conflict: true,
         conflict_type: null,
         todo_state: null,
         priority: null,
@@ -3050,7 +3036,6 @@ describe('ConflictList', () => {
         parent_id: 'P2',
         position: 2,
         deleted_at: null,
-        is_conflict: true,
         conflict_type: 'Move',
         todo_state: null,
         priority: null,
@@ -3079,7 +3064,6 @@ describe('ConflictList', () => {
             parent_id: null,
             position: 1,
             deleted_at: null,
-            is_conflict: false,
             conflict_type: null,
             todo_state: null,
             priority: null,

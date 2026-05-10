@@ -10,7 +10,6 @@ items:
     deleted_at: ~
     due_date: ~
     id: "[ULID]"
-    is_conflict: false
     page_id: "[ULID]"
     parent_id: ~
     position: 1

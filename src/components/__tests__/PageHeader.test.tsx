@@ -142,7 +142,6 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
             parent_id: null,
             position: null,
             deleted_at: null,
-            is_conflict: false,
             conflict_type: null,
           },
           {
@@ -152,7 +151,6 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
             parent_id: null,
             position: null,
             deleted_at: null,
-            is_conflict: false,
             conflict_type: null,
           },
         ],
@@ -171,7 +169,6 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
         parent_id: null,
         position: null,
         deleted_at: null,
-        is_conflict: false,
         conflict_type: null,
       }
     if (cmd === 'edit_block')
@@ -406,7 +403,6 @@ describe('PageHeader tag management', () => {
               parent_id: null,
               position: null,
               deleted_at: null,
-              is_conflict: false,
               conflict_type: null,
             },
             {
@@ -416,7 +412,6 @@ describe('PageHeader tag management', () => {
               parent_id: null,
               position: null,
               deleted_at: null,
-              is_conflict: false,
               conflict_type: null,
             },
           ],
@@ -919,7 +914,6 @@ describe('PageHeader page-level undo/redo buttons', () => {
           parent_id: null,
           position: null,
           deleted_at: null,
-          is_conflict: false,
           conflict_type: null,
         }
       return null

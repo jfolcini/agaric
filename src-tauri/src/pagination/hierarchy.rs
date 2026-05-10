@@ -52,11 +52,11 @@ pub async fn list_children(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, is_conflict as "is_conflict: bool",
+                deleted_at,
                 conflict_type, todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks b
-         WHERE parent_id IS ?1 AND deleted_at IS NULL AND is_conflict = 0
+         WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (
                 position > ?3
                 OR (position = ?3 AND id > ?4)))
@@ -112,11 +112,11 @@ pub async fn list_by_type(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, is_conflict as "is_conflict: bool",
+                deleted_at,
                 conflict_type, todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks b
-         WHERE block_type = ?1 AND deleted_at IS NULL AND is_conflict = 0
+         WHERE block_type = ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR id > ?3)
            AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
                 SELECT bp.block_id FROM block_properties bp
@@ -137,53 +137,19 @@ pub async fn list_by_type(
 
 /// List conflict blocks, paginated.
 ///
-/// Ordered by `id ASC` (ULID ≈ chronological).
-/// Returns only non-deleted blocks with `is_conflict = 1`.
-///
-/// PEND-35 Tier 1.4 — `conflict_type` and `id_min` push two formerly
-/// FE-side filters into SQL so cursor pagination stays consistent under
-/// filtering. `id_min` is a ULID lower bound (`id >= id_min`); since
-/// ULIDs are time-ordered, this doubles as a date lower-bound filter
-/// (e.g. "last 7 days"). Both arguments are `None` for the unfiltered
-/// path used by older callers.
-///
-/// Note: there is no recursive CTE here, so the `is_conflict = 0` rule
-/// for descendant walks (invariant #9) does NOT apply — this query
-/// specifically wants `is_conflict = 1`.
+/// PEND-09 Phase 4 dropped the `blocks.is_conflict` column. The
+/// conflict-copy creation path was made unreachable in Phase 3, so this
+/// query can never return rows — it is preserved as a vacuous Tauri
+/// surface so the IPC contract stays stable.
 pub async fn list_conflicts(
-    pool: &SqlitePool,
-    page: &PageRequest,
-    conflict_type: Option<&str>,
-    id_min: Option<&str>,
+    _pool: &SqlitePool,
+    _page: &PageRequest,
+    _conflict_type: Option<&str>,
+    _id_min: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let fetch_limit = page.limit + 1;
-
-    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
-        Some(c) => (Some(1), &c.id),
-        None => (None, ""),
-    };
-
-    let rows = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date, scheduled_date,
-                page_id
-         FROM blocks
-         WHERE is_conflict = 1 AND deleted_at IS NULL
-           AND (?1 IS NULL OR id > ?2)
-           AND (?4 IS NULL OR conflict_type = ?4)
-           AND (?5 IS NULL OR id >= ?5)
-         ORDER BY id ASC
-         LIMIT ?3"#,
-        cursor_flag,   // ?1
-        cursor_id,     // ?2
-        fetch_limit,   // ?3
-        conflict_type, // ?4
-        id_min,        // ?5
-    )
-    .fetch_all(pool)
-    .await?;
-
-    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
+    Ok(PageResponse {
+        items: Vec::new(),
+        next_cursor: None,
+        has_more: false,
+    })
 }

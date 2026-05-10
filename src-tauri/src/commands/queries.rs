@@ -399,38 +399,21 @@ pub async fn list_unlinked_references_inner(
 /// `crate::backlink::query::eval_backlink_query`). [`SpaceScope::Global`]
 /// preserves the cross-space count for legacy callers.
 ///
-/// Uses the partial index `idx_blocks_conflict ON blocks(id) WHERE
-/// is_conflict = 1 AND deleted_at IS NULL` (migration 0049, PEND-35
-/// Tier 3.2). The unscoped path is index-served end-to-end; the
-/// space-scoped path still benefits because the partial index narrows
-/// the candidate set before the property-table subquery runs.
+/// PEND-09 Phase 4 dropped the `blocks.is_conflict` column. The
+/// conflict-copy creation path was made unreachable in Phase 3, so this
+/// counter can never be non-zero — it is preserved as a vacuous Tauri
+/// surface so the IPC contract stays stable.
 ///
 /// # Errors
 ///
-/// - Database errors propagated from sqlx.
-#[instrument(skip(pool), err)]
-pub async fn count_conflicts_inner(pool: &SqlitePool, scope: &SpaceScope) -> Result<i64, AppError> {
-    // FEAT-3p4 — `?1` carries the active space id (or NULL for
-    // [`SpaceScope::Global`]). The clause shape mirrors
-    // `crate::backlink::query::eval_backlink_query` and
-    // `count_backlinks_batch_inner`:
-    //   `(?N IS NULL OR COALESCE(b.page_id, b.id) IN (
-    //        SELECT bp.block_id FROM block_properties bp
-    //        WHERE bp.key = 'space' AND bp.value_ref = ?N))`
-    // — applied to the conflict block (`b`) so a conflict whose owning
-    // page lives outside the active space is excluded from the badge.
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) \
-         FROM blocks b \
-         WHERE b.is_conflict = 1 AND b.deleted_at IS NULL \
-           AND (?1 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?1))",
-    )
-    .bind(scope.as_filter_param())
-    .fetch_one(pool)
-    .await?;
-    Ok(row.0)
+/// - Database errors propagated from sqlx (none are issued, but the
+///   signature is preserved).
+#[instrument(skip(_pool), err)]
+pub async fn count_conflicts_inner(
+    _pool: &SqlitePool,
+    _scope: &SpaceScope,
+) -> Result<i64, AppError> {
+    Ok(0)
 }
 
 /// Count backlinks per target page for a batch of page IDs in a single query.
@@ -473,7 +456,6 @@ pub async fn count_backlinks_batch_inner(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
-           AND b.is_conflict = 0 \
            AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
@@ -873,11 +855,11 @@ pub async fn filtered_blocks_query_inner(
     // EXISTS-subquery slots are appended starting at ?6.
     let mut sql = String::from(
         "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.deleted_at, b.is_conflict, b.conflict_type, \
+                b.deleted_at, b.conflict_type, \
                 b.todo_state, b.priority, b.due_date, b.scheduled_date, \
                 b.page_id \
          FROM blocks b \
-         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+         WHERE b.deleted_at IS NULL \
            AND (?1 IS NULL OR b.id > ?2) \
            AND (?4 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                 SELECT bp.block_id FROM block_properties bp \

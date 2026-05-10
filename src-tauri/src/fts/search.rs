@@ -176,7 +176,7 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
 }
 
 /// Row from the FTS5 search query (private; mapped to `ActiveBlockRow` for
-/// response — the SQL filters `is_conflict = 0 AND deleted_at IS NULL`).
+/// response — the SQL filters deleted_at IS NULL`).
 #[derive(Debug, sqlx::FromRow)]
 struct FtsSearchRow {
     // Block fields
@@ -186,7 +186,6 @@ struct FtsSearchRow {
     parent_id: Option<String>,
     position: Option<i64>,
     deleted_at: Option<String>,
-    is_conflict: bool,
     conflict_type: Option<String>,
     todo_state: Option<String>,
     priority: Option<String>,
@@ -279,14 +278,14 @@ pub async fn search_fts(
     // and (FEAT-3 Phase 2) space_id.
     let mut sql = String::from(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.is_conflict, b.conflict_type,
+                b.deleted_at, b.conflict_type,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
                 fts.rank as search_rank
          FROM fts_blocks fts
          JOIN blocks b ON b.id = fts.block_id
          WHERE fts_blocks MATCH ?1
-           AND b.deleted_at IS NULL AND b.is_conflict = 0
+           AND b.deleted_at IS NULL
            AND (?2 IS NULL OR fts.rank > ?3
                 OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
     );
@@ -412,7 +411,7 @@ pub async fn search_fts(
         None
     };
     // MAINT-113 M1.5 — boundary cast: the SQL above filters
-    // `is_conflict = 0 AND deleted_at IS NULL` (line ~288), so every
+    // deleted_at IS NULL` (line ~288), so every
     // surviving row is active. `from_trusted_active` records the claim
     // in the type system without re-running the predicate.
     let mut block_rows: Vec<ActiveBlockRow> = rows
@@ -424,7 +423,6 @@ pub async fn search_fts(
             parent_id: r.parent_id,
             position: r.position,
             deleted_at: r.deleted_at,
-            is_conflict: r.is_conflict,
             conflict_type: r.conflict_type,
             todo_state: r.todo_state,
             priority: r.priority,

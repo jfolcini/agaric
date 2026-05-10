@@ -43,7 +43,7 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
     let mut tx = pool.begin().await?;
 
     let row = sqlx::query!(
-        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL AND is_conflict = 0",
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
     )
     .fetch_optional(&mut *tx)
@@ -152,7 +152,7 @@ pub async fn reindex_block_tag_refs_split(
 ) -> Result<(), AppError> {
     // Read phase from read_pool.
     let row = sqlx::query!(
-        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL AND is_conflict = 0",
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
     )
     .fetch_optional(read_pool)
@@ -249,7 +249,7 @@ async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, App
     let mut tx = pool.begin().await?;
 
     let tag_ids: HashSet<String> = sqlx::query_scalar!(
-        "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0"
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL"
     )
     .fetch_all(&mut *tx)
     .await?
@@ -270,7 +270,7 @@ async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, App
     {
         let mut stream = sqlx::query!(
             "SELECT id, content FROM blocks \
-             WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+             WHERE deleted_at IS NULL AND content IS NOT NULL"
         )
         .fetch(&mut *tx);
         while let Some(row) = stream.try_next().await? {
@@ -328,7 +328,7 @@ async fn rebuild_block_tag_refs_cache_split_impl(
 ) -> Result<u64, AppError> {
     // Read phase — from read_pool.
     let tag_ids: HashSet<String> = sqlx::query_scalar!(
-        "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0"
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL"
     )
     .fetch_all(read_pool)
     .await?
@@ -343,7 +343,7 @@ async fn rebuild_block_tag_refs_cache_split_impl(
     {
         let mut stream = sqlx::query!(
             "SELECT id, content FROM blocks \
-             WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+             WHERE deleted_at IS NULL AND content IS NOT NULL"
         )
         .fetch(read_pool);
         while let Some(row) = stream.try_next().await? {
@@ -538,18 +538,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rebuild_skips_deleted_and_conflict_blocks_m19a() {
+    async fn rebuild_skips_deleted_blocks_m19a() {
         let (pool, _dir) = test_pool().await;
 
         let tag = ulid_like("TAGEE", 0);
         let healthy = ulid_like("HEALT", 0);
         let deleted = ulid_like("DELET", 0);
-        let conflict = ulid_like("CONFL", 0);
 
         insert_block(&pool, &tag, "tag", "t").await;
         insert_block(&pool, &healthy, "content", &format!("#[{tag}]")).await;
         insert_block(&pool, &deleted, "content", &format!("#[{tag}]")).await;
-        insert_block(&pool, &conflict, "content", &format!("#[{tag}]")).await;
 
         // Soft-delete one source.
         let now = "2025-01-15T12:00:00+00:00";
@@ -561,17 +559,12 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // Mark the other as a conflict copy.
-        sqlx::query!("UPDATE blocks SET is_conflict = 1 WHERE id = ?", conflict)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
 
         assert_eq!(
             inserted, 1,
-            "only the healthy source must produce a row (deleted + conflict excluded)"
+            "only the healthy source must produce a row (deleted excluded)"
         );
         let pairs = fetch_all_pairs(&pool).await;
         let mut expected = HashSet::new();

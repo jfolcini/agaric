@@ -630,7 +630,6 @@ describe('TagFilterPanel', () => {
       parent_id: null,
       position: 0,
       deleted_at: null,
-      is_conflict: false,
     })
 
     await user.click(screen.getByText('tagged content'))

@@ -678,7 +678,6 @@ mod tests {
             "content": "SECRET_BLOCK_CONTENT",
             "parent_id": ULID_B,
             "position": 1,
-            "is_conflict": false,
         });
         let s = summarise_append_block(&args, &result);
         assert_eq!(
@@ -701,7 +700,6 @@ mod tests {
             "id": ULID_A,
             "block_type": "content",
             "content": "SECRET_BLOCK_CONTENT",
-            "is_conflict": false,
         });
         let s = summarise_update_block_content(&args, &result);
         assert_eq!(
@@ -808,7 +806,6 @@ mod tests {
             "id": ULID_A,
             "block_type": "page",
             "content": "SECRET_TITLE",
-            "is_conflict": false,
         });
         let s = summarise_create_page(&args, &result);
         assert_eq!(

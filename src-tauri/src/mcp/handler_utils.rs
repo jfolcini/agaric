@@ -100,7 +100,7 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
 /// (an inherited reference to the page block at the top of the parent
 /// chain). The page's space comes from
 /// `block_properties(key = 'space', value_ref)`. Conflict copies are
-/// excluded via `is_conflict = 0` per AGENTS.md invariant #9 — a
+/// excluded via  per AGENTS.md invariant #9 — a
 /// conflict copy must not satisfy a space-scope check.
 ///
 /// # Returns
@@ -130,7 +130,7 @@ pub(crate) async fn validate_block_in_space(
          LEFT JOIN block_properties bp \
            ON bp.block_id = COALESCE(b.page_id, b.id) \
           AND bp.key = 'space' \
-         WHERE b.id = ? AND b.is_conflict = 0",
+         WHERE b.id = ?",
     )
     .bind(block_id)
     .fetch_optional(pool)

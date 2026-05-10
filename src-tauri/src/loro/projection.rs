@@ -83,8 +83,8 @@ pub async fn project_create_block_to_sql(
 ) -> Result<(), AppError> {
     sqlx::query(
         "INSERT OR IGNORE INTO blocks \
-             (id, block_type, content, parent_id, position, is_conflict) \
-         VALUES (?, ?, ?, ?, ?, 0)",
+             (id, block_type, content, parent_id, position) \
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&snapshot.block_id)
     .bind(&snapshot.block_type)
@@ -485,8 +485,8 @@ pub async fn project_block_full_to_sql(
         Some(snap) => {
             sqlx::query(
                 "INSERT OR REPLACE INTO blocks \
-                     (id, block_type, content, parent_id, position, is_conflict) \
-                 VALUES (?, ?, ?, ?, ?, 0)",
+                     (id, block_type, content, parent_id, position) \
+                 VALUES (?, ?, ?, ?, ?)",
             )
             .bind(&snap.block_id)
             .bind(&snap.block_type)
@@ -605,8 +605,8 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         // Seed.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', 'original', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'original', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -633,8 +633,8 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
             "INSERT INTO blocks \
-                (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
-             VALUES (?, 'content', 'original', NULL, 0, 0, '2026-01-01T00:00:00Z')",
+                (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'original', NULL, 0, '2026-01-01T00:00:00Z')",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -663,8 +663,8 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         // Seed the block so the UPDATE (hot-path) has something to hit.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', '', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -748,8 +748,8 @@ mod tests {
         // Seed the block, a property, a tag.  The purge must clean
         // all three.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', 'doomed', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'doomed', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -757,8 +757,8 @@ mod tests {
         .unwrap();
         // Tag-block (referenced by block_tags FK).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'tag-X', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0)",
         )
         .bind(BLOCK_B)
         .execute(&pool)
@@ -818,8 +818,8 @@ mod tests {
     async fn project_delete_block_writes_deleted_at() {
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', 'soon-deleted', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'soon-deleted', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -850,8 +850,8 @@ mod tests {
         // re-applies of the delete op.
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', 'doomed', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'doomed', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -886,16 +886,16 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         // Seed a parent and a child.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'page', 'old-parent', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'page', 'old-parent', NULL, 0)",
         )
         .bind(BLOCK_B)
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', 'child', ?, 3, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'child', ?, 3)",
         )
         .bind(BLOCK_A)
         .bind(BLOCK_B)
@@ -954,8 +954,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks \
-                 (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
-             VALUES (?, 'content', 'parent', NULL, 0, 0, ?)",
+                 (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'parent', NULL, 0, ?)",
         )
         .bind(BLOCK_A)
         .bind(cohort_ts)
@@ -965,8 +965,8 @@ mod tests {
         for child in [CHILD_1, CHILD_2] {
             sqlx::query(
                 "INSERT INTO blocks \
-                     (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
-                 VALUES (?, 'content', 'child', ?, 0, 0, ?)",
+                     (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', 'child', ?, 0, ?)",
             )
             .bind(child)
             .bind(BLOCK_A)
@@ -1004,8 +1004,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks \
-                 (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
-             VALUES (?, 'content', 'parent', NULL, 0, 0, ?)",
+                 (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'parent', NULL, 0, ?)",
         )
         .bind(BLOCK_A)
         .bind(cohort_ts)
@@ -1014,8 +1014,8 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO blocks \
-                 (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
-             VALUES (?, 'content', 'old-deletion-child', ?, 0, 0, ?)",
+                 (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'old-deletion-child', ?, 0, ?)",
         )
         .bind(CHILD_OTHER)
         .bind(BLOCK_A)
@@ -1056,8 +1056,8 @@ mod tests {
     async fn project_delete_property_removes_block_property_row() {
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', '', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -1094,8 +1094,8 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
             "INSERT INTO blocks \
-                 (id, block_type, content, parent_id, position, is_conflict, todo_state) \
-             VALUES (?, 'content', '', NULL, 0, 0, 'DOING')",
+                 (id, block_type, content, parent_id, position, todo_state) \
+             VALUES (?, 'content', '', NULL, 0, 'DOING')",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -1122,8 +1122,8 @@ mod tests {
         // silent no-op.
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', '', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -1141,16 +1141,16 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         // Both blocks must exist for the FK.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', '', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'tag-X', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0)",
         )
         .bind(BLOCK_B)
         .execute(&pool)
@@ -1178,16 +1178,16 @@ mod tests {
         // Second call with same (block_id, tag_id) is a silent no-op.
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', '', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'tag-X', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0)",
         )
         .bind(BLOCK_B)
         .execute(&pool)
@@ -1217,16 +1217,16 @@ mod tests {
     async fn project_remove_tag_deletes_block_tags_row() {
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'content', '', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
-             VALUES (?, 'tag', 'tag-X', NULL, 0, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0)",
         )
         .bind(BLOCK_B)
         .execute(&pool)

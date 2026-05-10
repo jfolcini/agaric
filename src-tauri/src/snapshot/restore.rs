@@ -232,7 +232,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         table: "blocks",
         columns: [
             "id", "block_type", "content", "parent_id", "position",
-            "deleted_at", "is_conflict", "conflict_source", "conflict_type",
+            "deleted_at", "conflict_source", "conflict_type",
             "todo_state", "priority", "due_date", "scheduled_date",
         ],
         rows: data.tables.blocks,
@@ -243,7 +243,6 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(&b.parent_id)
                 .bind(b.position)
                 .bind(&b.deleted_at)
-                .bind(b.is_conflict)
                 .bind(&b.conflict_source)
                 .bind(&b.conflict_type)
                 .bind(&b.todo_state)

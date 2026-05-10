@@ -35,7 +35,6 @@ function makeTemplate(id: string, content: string) {
     parent_id: null,
     position: null,
     deleted_at: null,
-    is_conflict: false,
     conflict_type: null,
     todo_state: null,
     priority: null,
@@ -52,7 +51,6 @@ function makeChild(id: string, content: string, parentId: string) {
     parent_id: parentId,
     position: null,
     deleted_at: null,
-    is_conflict: false,
     conflict_type: null,
     todo_state: null,
     priority: null,
@@ -688,7 +686,6 @@ describe('TemplatesView', () => {
             parent_id: null,
             position: null,
             deleted_at: null,
-            is_conflict: false,
           }
         }
         return emptyPage
@@ -745,7 +742,6 @@ describe('TemplatesView', () => {
             parent_id: null,
             position: null,
             deleted_at: null,
-            is_conflict: false,
           }
         }
         return emptyPage
@@ -779,7 +775,6 @@ describe('TemplatesView', () => {
             parent_id: null,
             position: null,
             deleted_at: null,
-            is_conflict: false,
           }
         }
         return emptyPage

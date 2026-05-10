@@ -1818,34 +1818,6 @@ async fn get_conflicts_empty_when_none_exist() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_conflicts_returns_conflict_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    // Insert a conflict block directly
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, is_conflict, position) \
-         VALUES (?, ?, ?, 1, ?)",
-    )
-    .bind("CONFLICT01")
-    .bind("content")
-    .bind("conflict copy")
-    .bind(1_i64)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let resp = get_conflicts_inner(&pool, None, None, None, None)
-        .await
-        .unwrap();
-
-    assert_eq!(resp.items.len(), 1, "one conflict block expected");
-    assert_eq!(
-        resp.items[0].id, "CONFLICT01",
-        "conflict block ID must match"
-    );
-}
-
 // ======================================================================
 // list_backlinks_grouped — happy paths, edge cases, filters
 // ======================================================================

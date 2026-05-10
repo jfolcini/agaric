@@ -194,7 +194,6 @@ async fn is_bootstrap_complete(pool: &SqlitePool) -> Result<bool, AppError> {
         r#"SELECT COUNT(*) as "n!: i64" FROM blocks b
            WHERE b.id IN (?, ?)
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND EXISTS (
                  SELECT 1 FROM block_properties p
                  WHERE p.block_id = b.id
@@ -253,8 +252,8 @@ async fn ensure_space_block(
     // match the command path's behaviour for page blocks.
     sqlx::query!(
         "INSERT OR IGNORE INTO blocks \
-             (id, block_type, content, parent_id, position, page_id, is_conflict) \
-         VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+             (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', ?, NULL, 1, ?)",
         block_id,
         name,
         block_id,
@@ -364,7 +363,7 @@ async fn ensure_accent_color_property(
 ///   per-row hash chain (`prev_hash` advance, `parent_seqs`) is part of
 ///   the op_log contract. Batching the op_log writes is a separate,
 ///   larger refactor and is out of scope for M-92.
-/// - **`is_conflict = 0` predicate.** [`pages_without_space`] already
+/// - ** predicate.** [`pages_without_space`] already
 ///   filters to live, non-conflict pages with `block_type = 'page'`, so
 ///   the per-page block-existence probe in `set_property_in_tx` is
 ///   redundant and is intentionally skipped here.
@@ -469,7 +468,6 @@ async fn pages_without_space(
         r#"SELECT id as "id!: String" FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND NOT EXISTS (
                  SELECT 1 FROM block_properties
                  WHERE block_id = b.id AND key = 'space'
@@ -663,7 +661,6 @@ async fn pages_to_migrate(
               AND p.value_ref = ?
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND b.id < ?
              AND NOT EXISTS (
                  SELECT 1 FROM block_properties s
@@ -708,7 +705,6 @@ pub async fn migrate_orphan_tags_to_space(
         r#"SELECT b.id as "id!: String" FROM blocks b
            WHERE b.block_type = 'tag'
              AND b.deleted_at IS NULL
-             AND b.is_conflict = 0
              AND NOT EXISTS (
                  SELECT 1 FROM block_properties
                  WHERE block_id = b.id AND key = 'space'
@@ -739,7 +735,6 @@ pub async fn migrate_orphan_tags_to_space(
                INNER JOIN blocks b
                    ON b.id = r.source_id
                   AND b.deleted_at IS NULL
-                  AND b.is_conflict = 0
                INNER JOIN block_properties p
                    ON p.block_id = COALESCE(b.page_id, b.id)
                   AND p.key = 'space'
@@ -809,8 +804,8 @@ mod tests {
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         for (id, name) in [(SPACE_PERSONAL_ULID, "Personal"), (SPACE_WORK_ULID, "Work")] {
             sqlx::query!(
-                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-                 VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', ?, NULL, 1, ?)",
                 id,
                 name,
                 id,
@@ -831,8 +826,8 @@ mod tests {
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         // Seed inside the tx so FK checks see the row.
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'tag', 'lonely', NULL, 1, NULL, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'tag', 'lonely', NULL, 1, NULL)",
             tag_id,
         )
         .execute(&mut *tx)
@@ -860,16 +855,16 @@ mod tests {
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'tag', 'work-tag', NULL, 1, NULL, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'tag', 'work-tag', NULL, 1, NULL)",
             tag_id,
         )
         .execute(&mut *tx)
         .await
         .unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'page', 'Test', NULL, 1, ?, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'Test', NULL, 1, ?)",
             source_id,
             source_id,
         )
@@ -914,8 +909,8 @@ mod tests {
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'tag', 'idem', NULL, 1, NULL, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'tag', 'idem', NULL, 1, NULL)",
             tag_id,
         )
         .execute(&mut *tx)
@@ -932,24 +927,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orphan_tag_ignores_deleted_and_conflict_blocks() {
+    async fn orphan_tag_ignores_deleted_blocks() {
         let (pool, _tmp) = fresh_pool().await;
         let deleted_id = BlockId::new().to_string();
-        let conflict_id = BlockId::new().to_string();
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'tag', 'del', NULL, 1, NULL, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'tag', 'del', NULL, 1, NULL)",
             deleted_id,
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'tag', 'conf', NULL, 1, NULL, 0)",
-            conflict_id,
         )
         .execute(&mut *tx)
         .await
@@ -957,13 +943,6 @@ mod tests {
         sqlx::query!(
             "UPDATE blocks SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?",
             deleted_id,
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        sqlx::query!(
-            "UPDATE blocks SET is_conflict = 1 WHERE id = ?",
-            conflict_id
         )
         .execute(&mut *tx)
         .await
@@ -986,17 +965,22 @@ mod tests {
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'tag', 'via-content', NULL, 1, NULL, 0)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'tag', 'via-content', NULL, 1, NULL)",
             tag_id,
         )
-        .execute(&mut *tx).await.unwrap();
+        .execute(&mut *tx)
+        .await
+        .unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'page', 'Page', NULL, 1, ?, 0)",
-            page_id, page_id,
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'Page', NULL, 1, ?)",
+            page_id,
+            page_id,
         )
-        .execute(&mut *tx).await.unwrap();
+        .execute(&mut *tx)
+        .await
+        .unwrap();
         sqlx::query!(
             "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
              VALUES (?, 'space', NULL, NULL, NULL, ?)",
@@ -1004,11 +988,15 @@ mod tests {
         )
         .execute(&mut *tx).await.unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
-             VALUES (?, 'content', 'content', ?, 2, ?, 0)",
-            content_id, page_id, page_id,
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', 'content', ?, 2, ?)",
+            content_id,
+            page_id,
+            page_id,
         )
-        .execute(&mut *tx).await.unwrap();
+        .execute(&mut *tx)
+        .await
+        .unwrap();
         sqlx::query!(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
             content_id,

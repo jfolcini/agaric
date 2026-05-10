@@ -26,14 +26,11 @@
 //! Two production-visible consts coexist because the macro and
 //! runtime sqlx APIs diverge on type-cast syntax:
 //!
-//! - [`BLOCK_ROW_CANONICAL_SELECT`] — for the 20 `sqlx::query_as!(BlockRow, …)`
-//!   compile-time macro sites. Includes the `is_conflict as "is_conflict: bool"`
-//!   cast required by the proc-macro to type-resolve the column.
+//! - [`BLOCK_ROW_CANONICAL_SELECT`] — for the `sqlx::query_as!(BlockRow, …)`
+//!   compile-time macro sites.
 //! - [`BLOCK_ROW_RUNTIME_SELECT`] — for the 3 runtime
 //!   `sqlx::query_as::<_, BlockRow>(…)` sites which use sqlx's
-//!   `FromRow` for type mapping (no compile-time `as "x: T"` cast
-//!   needed because the type is resolved at runtime, not at
-//!   proc-macro expansion time). MAINT-223 (PEND-28a H1 follow-up).
+//!   `FromRow` for type mapping. MAINT-223 (PEND-28a H1 follow-up).
 //!
 //! Both are `pub(crate) const` (not `#[cfg(test)]`-gated) so the
 //! production sites can reference them directly. The parity tests in
@@ -48,18 +45,12 @@
 //!    parity tests will print every drifted site so you can update
 //!    each one.
 
-/// Canonical SELECT column list (with sqlx type override on
-/// `is_conflict`).  Use this exact column list — possibly with a
-/// table alias prefix such as `b.` when the query joins another
+/// Canonical SELECT column list. Use this exact column list — possibly
+/// with a table alias prefix such as `b.` when the query joins another
 /// table — in every `sqlx::query_as!(BlockRow, "SELECT <THIS> FROM
 /// blocks ...")` invocation.  Keep in sync with
 /// [`BLOCK_ROW_CANONICAL_FIELDS`], [`BLOCK_ROW_RUNTIME_SELECT`], and
 /// the `BlockRow` struct definition.
-///
-/// The `is_conflict as "is_conflict: bool"` cast is required by the
-/// `sqlx::query_as!` proc-macro for compile-time type resolution.
-/// The runtime `sqlx::query_as::<_, BlockRow>(…)` form does not
-/// accept this cast syntax — see [`BLOCK_ROW_RUNTIME_SELECT`].
 ///
 /// `#[allow(dead_code)]`: the const is documentation /
 /// drift-detection scaffolding consumed only by the parity tests in
@@ -69,21 +60,16 @@
 #[allow(dead_code)]
 pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str =
     "id, block_type, content, parent_id, position, deleted_at, \
-     is_conflict as \"is_conflict: bool\", conflict_type, todo_state, \
+     conflict_type, todo_state, \
      priority, due_date, scheduled_date, page_id";
 
 /// Canonical SELECT column list for the **runtime** sqlx form
 /// (`sqlx::query_as::<_, BlockRow>(&sql)` and the analogous
-/// `ActiveBlockRow` form). Same 13 columns as
-/// [`BLOCK_ROW_CANONICAL_SELECT`] but **without** the
-/// `is_conflict as "is_conflict: bool"` cast suffix.
+/// `ActiveBlockRow` form). Same 12 columns as
+/// [`BLOCK_ROW_CANONICAL_SELECT`].
 ///
 /// Used by the 3 runtime `sqlx::query_as::<_, BlockRow>(…)` sites
-/// which use sqlx's `FromRow` for type mapping (no compile-time
-/// `as "x: T"` cast needed because the type is resolved at runtime,
-/// not at proc-macro expansion time). The runtime form rejects the
-/// cast syntax that the macro form requires, so the two consts
-/// must be kept lockstep but cannot be the same string.
+/// which use sqlx's `FromRow` for type mapping.
 ///
 /// Precedent: [`BLOCK_ROW_CANONICAL_SELECT`] for the macro form.
 /// MAINT-223 (PEND-28a H1 follow-up) extracted this const from the
@@ -91,7 +77,7 @@ pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str =
 /// coverage that Test B gives the macro sites.
 pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str =
     "id, block_type, content, parent_id, position, deleted_at, \
-     is_conflict, conflict_type, todo_state, \
+     conflict_type, todo_state, \
      priority, due_date, scheduled_date, page_id";
 
 /// Canonical field list for `BlockRow` in struct-declaration order.
@@ -110,7 +96,6 @@ pub(crate) const BLOCK_ROW_CANONICAL_FIELDS: &[&str] = &[
     "parent_id",
     "position",
     "deleted_at",
-    "is_conflict",
     "conflict_type",
     "todo_state",
     "priority",
@@ -188,7 +173,7 @@ mod tests {
             .split(',')
             .map(|raw| {
                 let trimmed = raw.trim();
-                // `is_conflict as "is_conflict: bool"` -> `is_conflict`
+                // Strip any `as "<name>: <type>"` cast suffix.
                 if let Some(idx) = trimmed.find(" as ") {
                     trimmed[..idx].trim().to_string()
                 } else {
@@ -306,7 +291,7 @@ mod tests {
         // removed), this assertion fails — bump the constant
         // deliberately and confirm the new site uses the canonical
         // SELECT.
-        const EXPECTED_HITS: usize = 20;
+        const EXPECTED_HITS: usize = 19;
         assert_eq!(
             total_hits, EXPECTED_HITS,
             "expected {EXPECTED_HITS} `query_as!(BlockRow, …)` \
