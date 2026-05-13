@@ -43,7 +43,6 @@
     "@tiptap/core": "^3.22.4",
     "@tiptap/extension-blockquote": "^3.22.4",
     "@tiptap/extension-bold": "^3.22.4",
-    "@tiptap/extension-bubble-menu": "^3.22.4",
     "@tiptap/extension-code": "^3.22.4",
     "@tiptap/extension-code-block-lowlight": "^3.22.4",
     "@tiptap/extension-document": "^3.22.4",
