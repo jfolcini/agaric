@@ -43,7 +43,7 @@ Frontend "I want all" call sites that ignore those ceilings:
 | MEDIUM | `src/hooks/useDuePanelData.ts:210, 261` | 500 | routes via agenda (cap 500) — at-edge | OK today, fragile to refactor |
 | MEDIUM | `src/components/SearchPanel.tsx:138` | 20 | list + JS `.filter()` | page picker can't find pages past index 19 |
 | ~~MEDIUM~~ DONE | ~~`src/hooks/useBlockDatePicker.ts:143`~~ | ~~500~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp); the existing `.find()` over `dateStr`/`legacyStr` keeps working on the flat `PageHeading[]` shape | — |
-| MEDIUM | `src/hooks/useBlockResolve.ts:99` | 500 | one-shot | resolve cache misses pages past 100 |
+| ~~MEDIUM~~ DONE | ~~`src/hooks/useBlockResolve.ts:99`~~ | ~~500~~ | `searchPagesViaCache` now hydrates from `list_all_pages_in_space` (no pagination, no clamp); the empty-`spaceId` pre-bootstrap fallback is preserved (backend treats `''` as a no-match `value_ref` filter) | — |
 | MEDIUM | `src/lib/template-utils.ts:175` | 500 | one-shot | template lookup truncated |
 | MEDIUM | `src/components/TagList.tsx:63` | 500 | `listTagsByPrefix` (cap 200) | tag list truncated past 200 |
 | LOW | `src/components/ViewDispatcher.tsx:111` | 100 | trash count badge | wrong badge count at >100 trash items |
