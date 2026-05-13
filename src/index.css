@@ -1200,6 +1200,153 @@
     --priority-normal: oklch(0.5 0.28 265);
     --priority-foreground: oklch(1 0 0);
   }
+
+  /* A11Y-HC1 — second-pass token-coverage gap. The audit flagged that
+   * `--ring`, `--alert-*`, `--op-*`, `--date-*`, `--conflict-*`,
+   * `--task-*`, `--block-ref(-foreground)`, `--highlight`, and
+   * `--sync-*` were still on their default values inside
+   * `prefers-contrast: more`, so a11y users saw the same washed-out
+   * surfaces as everyone else. Same recipe as the StatusBadge block
+   * above: boost chroma toward the design-system maximum, push
+   * lightness toward the extreme that's furthest from the page bg
+   * (darker bg / darker fg in light mode, brighter bg / brighter fg
+   * in dark mode), hue preserved so semantic mapping is unchanged. */
+
+  /* Light theme — darker, more saturated surfaces; deeper foregrounds. */
+  :root {
+    /* Focus ring: lift chroma + drop lightness so the /50 alpha blend
+     * over the white page still clears WCAG 2.4.7 3:1. */
+    --ring: oklch(0.5 0.3 28.71);
+
+    /* Alerts (callouts): bg slightly darker than page, fg/border deeper. */
+    --alert-info: oklch(0.94 0.06 255);
+    --alert-info-foreground: oklch(0.3 0.28 266);
+    --alert-info-border: oklch(0.6 0.2 254);
+    --alert-warning: oklch(0.94 0.16 102);
+    --alert-warning-foreground: oklch(0.4 0.22 66);
+    --alert-warning-border: oklch(0.65 0.2 102);
+    --alert-tip: oklch(0.93 0.13 142);
+    --alert-tip-foreground: oklch(0.3 0.24 152);
+    --alert-tip-border: oklch(0.55 0.18 142);
+    --alert-error: oklch(0.93 0.11 25);
+    --alert-error-foreground: oklch(0.35 0.28 25);
+    --alert-error-border: oklch(0.55 0.22 25);
+    --alert-note: oklch(0.9 0 0);
+    --alert-note-foreground: oklch(0.2 0 0);
+    --alert-note-border: oklch(0.4 0 0);
+
+    /* Diff operation chips. */
+    --op-create: oklch(0.93 0.13 163);
+    --op-create-foreground: oklch(0.35 0.2 163);
+    --op-edit: oklch(0.92 0.1 260);
+    --op-edit-foreground: oklch(0.3 0.25 264);
+    --op-move: oklch(0.92 0.12 304);
+    --op-move-foreground: oklch(0.32 0.25 303);
+    --op-tag: oklch(0.94 0.12 85);
+    --op-tag-foreground: oklch(0.45 0.2 55);
+
+    /* Date source chips. */
+    --date-due: oklch(0.92 0.1 75);
+    --date-due-foreground: oklch(0.32 0.22 46);
+    --date-scheduled: oklch(0.93 0.1 157);
+    --date-scheduled-foreground: oklch(0.25 0.18 153);
+    --date-property: oklch(0.92 0.1 307);
+    --date-property-foreground: oklch(0.3 0.25 304);
+
+    /* Conflict markers (rebase / merge surfaces). */
+    --conflict-text: oklch(0.9 0.12 75);
+    --conflict-text-foreground: oklch(0.3 0.18 70);
+    --conflict-move: oklch(0.89 0.1 310);
+    --conflict-move-foreground: oklch(0.22 0.18 310);
+
+    /* Task checkbox states (foreground-on-bg chips — push chroma + drop
+     * lightness so the glyph is unambiguous against the page). */
+    --task-done: oklch(0.45 0.28 149);
+    --task-doing: oklch(0.5 0.3 260);
+    --task-cancelled: oklch(0.4 0.06 260);
+    --task-custom: oklch(0.55 0.25 53);
+
+    /* Search highlight — push to the most saturated yellow we use so
+     * the band reads as a marker rather than a tint. */
+    --highlight: oklch(0.92 0.22 102);
+
+    /* Block-reference chip. */
+    --block-ref: oklch(0.87 0.13 293);
+    --block-ref-foreground: oklch(0.3 0.28 293);
+
+    /* Sync status pips (idle = green, active = amber — these are tiny
+     * dots, so boost chroma while staying within the accent-palette
+     * lightness convention). */
+    --sync-idle: oklch(0.55 0.22 162);
+    --sync-active: oklch(0.6 0.22 70);
+  }
+
+  /* Dark theme — brighter, more saturated surfaces; lifted foregrounds. */
+  .dark {
+    /* Focus ring: keep red-orange hue, lift L + chroma so the /50 alpha
+     * blend over the navy bg stays clearly above the surface. */
+    --ring: oklch(0.75 0.25 28.71);
+
+    /* Alerts (callouts). */
+    --alert-info: oklch(0.36 0.14 268);
+    --alert-info-foreground: oklch(0.95 0.13 254);
+    --alert-info-border: oklch(0.65 0.25 266);
+    --alert-warning: oklch(0.38 0.12 58);
+    --alert-warning-foreground: oklch(0.98 0.18 102);
+    --alert-warning-border: oklch(0.7 0.2 66);
+    --alert-tip: oklch(0.36 0.13 152);
+    --alert-tip-foreground: oklch(0.95 0.18 142);
+    --alert-tip-border: oklch(0.6 0.22 152);
+    --alert-error: oklch(0.36 0.14 25);
+    --alert-error-foreground: oklch(0.95 0.18 25);
+    --alert-error-border: oklch(0.6 0.26 25);
+    --alert-note: oklch(0.35 0 0);
+    --alert-note-foreground: oklch(0.98 0 0);
+    --alert-note-border: oklch(0.6 0 0);
+
+    /* Diff operation chips. */
+    --op-create: oklch(0.26 0.08 163);
+    --op-create-foreground: oklch(0.9 0.25 163);
+    --op-edit: oklch(0.26 0.07 260);
+    --op-edit-foreground: oklch(0.85 0.22 255);
+    --op-move: oklch(0.26 0.08 304);
+    --op-move-foreground: oklch(0.85 0.22 302);
+    --op-tag: oklch(0.26 0.08 85);
+    --op-tag-foreground: oklch(0.95 0.22 84);
+
+    /* Date source chips. */
+    --date-due: oklch(0.3 0.1 55);
+    --date-due-foreground: oklch(0.95 0.18 66);
+    --date-scheduled: oklch(0.3 0.09 157);
+    --date-scheduled-foreground: oklch(0.95 0.2 156);
+    --date-property: oklch(0.3 0.1 305);
+    --date-property-foreground: oklch(0.92 0.18 304);
+
+    /* Conflict markers. */
+    --conflict-text: oklch(0.35 0.1 70);
+    --conflict-text-foreground: oklch(0.95 0.14 80);
+    --conflict-move: oklch(0.33 0.1 310);
+    --conflict-move-foreground: oklch(0.94 0.12 310);
+
+    /* Task checkbox states — lift lightness + chroma so the glyph
+     * stays vivid against the deep navy surface. */
+    --task-done: oklch(0.85 0.25 149);
+    --task-doing: oklch(0.82 0.24 260);
+    --task-cancelled: oklch(0.75 0.04 260);
+    --task-custom: oklch(0.82 0.22 53);
+
+    /* Search highlight — saturate the marker so it reads as a band
+     * rather than a tint against the navy surface. */
+    --highlight: oklch(0.7 0.22 66);
+
+    /* Block-reference chip. */
+    --block-ref: oklch(0.36 0.12 293);
+    --block-ref-foreground: oklch(0.92 0.22 293);
+
+    /* Sync status pips. */
+    --sync-idle: oklch(0.82 0.22 162);
+    --sync-active: oklch(0.88 0.24 70);
+  }
 }
 
 /* ── Fallback: browsers without container query support ────────────── */
