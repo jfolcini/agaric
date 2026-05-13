@@ -56,10 +56,12 @@ current crate cannot be referred to by absolute paths`.
    path-appended macro form.
 
 Once one of these lands, retry the lockstep bump:
-```
+
+```bash
 cargo update --precise <new_version> tauri-specta --manifest-path src-tauri/Cargo.toml
 cargo update --precise 2.11.1 tauri --manifest-path src-tauri/Cargo.toml
 ```
+
 …and re-run the full nextest suite.
 
 **Alternative:** vendor `tauri-specta` locally and patch
