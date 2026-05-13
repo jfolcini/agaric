@@ -208,8 +208,7 @@ describe('Checkbox', () => {
     render(<Checkbox aria-label="Accept terms" />)
 
     const cb = screen.getByRole('checkbox', { name: 'Accept terms' })
-    expect(cb.className).toContain('focus-visible:ring-[3px]')
-    expect(cb.className).toContain('focus-visible:ring-ring/50')
+    expect(cb.className).toContain('focus-ring-visible')
   })
 
   // -- Class merging ----------------------------------------------------------

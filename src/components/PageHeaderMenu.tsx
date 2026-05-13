@@ -269,7 +269,7 @@ export function PageHeaderMenu({
           <div className="rounded bg-destructive/5 p-0.5">
             <button
               type="button"
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-visible:ring-[3px] focus-visible:ring-destructive/50 focus-visible:outline-hidden"
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
               onClick={onDeleteRequest}
             >
               <Trash2 className="h-3.5 w-3.5" />

@@ -5,6 +5,14 @@
  * Uses requestAnimationFrame for smooth 60fps scrolling with speed that
  * increases proportionally as the pointer gets closer to the edge.
  *
+ * Honours `prefers-reduced-motion: reduce` — the global CSS rule covers
+ * CSS animations, but this JS-driven RAF loop has to opt out manually
+ * (per UX.md §"JS-driven animations ignore global reduced-motion CSS").
+ * When the user prefers reduced motion we skip the loop entirely: a
+ * continuous edge-scroll is exactly the kind of unexpected sustained
+ * motion that preference is meant to suppress, and forcing a single jump
+ * per pointermove would surprise the user mid-drag instead.
+ *
  * @param containerRef - ref to the scrollable container element
  * @param active - whether a drag is currently in progress
  */
@@ -41,6 +49,13 @@ export function useAutoScrollOnDrag(
   // Run the auto-scroll RAF loop while dragging
   useEffect(() => {
     if (!active) return
+
+    // Suppress the auto-scroll loop entirely under reduced motion. The
+    // pointer-tracking effect above still runs so the drag itself works;
+    // only the continuous near-edge scrolling is disabled.
+    const prefersReducedMotion =
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    if (prefersReducedMotion) return
 
     const tick = () => {
       const container = containerRef.current

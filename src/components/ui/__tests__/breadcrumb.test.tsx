@@ -8,7 +8,7 @@
  *  - Intermediate items invoke their onSelect handler
  *  - Per-crumb truncation: intermediate `max-w-[160px]`, active `max-w-[280px]`
  *  - FEAT-13 text-link styling: non-active crumbs do NOT carry `rounded-sm`
- *    or the form-control `focus-visible:ring-[3px]`; hover/focus indicate
+ *    or the form-control `focus-ring-visible`; hover/focus indicate
  *    via underline + outline-hidden instead.
  *  - Toolbar density `min-h-6` (FEAT-13).
  *  - UX-215 keyboard navigation — ArrowLeft / ArrowRight / Home / End on the

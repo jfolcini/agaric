@@ -16,7 +16,13 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearTagColor, getTagColor, getTagColors, setTagColor } from '../tag-colors'
+import {
+  clearTagColor,
+  getTagColor,
+  getTagColors,
+  pickReadableForeground,
+  setTagColor,
+} from '../tag-colors'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -130,6 +136,82 @@ describe('tag-colors', () => {
       getTagColors()
       getTagColor('TAG1')
       expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('pickReadableForeground', () => {
+    // WCAG-aware foreground selector — guards against the previous
+    // hard-coded `color: '#fff'` inline style in TagList, which failed
+    // 4.5:1 contrast on light pastel tag fills (e.g. amber-200).
+
+    it('returns white on pure black', () => {
+      expect(pickReadableForeground('#000000')).toBe('#fff')
+    })
+
+    it('returns black on pure white', () => {
+      expect(pickReadableForeground('#ffffff')).toBe('#000')
+    })
+
+    it('returns black on light pastels (the bug the audit flagged)', () => {
+      // Light amber / yellow / mint — these are exactly the fills where
+      // the old `color: '#fff'` rendered illegible.
+      expect(pickReadableForeground('#fde68a')).toBe('#000') // amber-200
+      expect(pickReadableForeground('#fef3c7')).toBe('#000') // amber-100
+      expect(pickReadableForeground('#bbf7d0')).toBe('#000') // green-200
+    })
+
+    it('returns white on genuinely dark fills', () => {
+      // Strict WCAG 4.5:1 puts the crossover roughly at L≈0.179, which is
+      // darker than most "saturated" mid-tone palette colors. These are
+      // luminance-dark enough that white is the higher-contrast choice.
+      expect(pickReadableForeground('#1e3a8a')).toBe('#fff') // blue-900
+      expect(pickReadableForeground('#7f1d1d')).toBe('#fff') // red-900
+      expect(pickReadableForeground('#581c87')).toBe('#fff') // purple-900
+      expect(pickReadableForeground('#111111')).toBe('#fff')
+    })
+
+    it('returns black on mid-tone palette fills (higher WCAG contrast vs. black)', () => {
+      // Documents the WCAG-correct behaviour for the TAG_COLOR_PRESETS:
+      // mid-tone "500" Tailwind palette colors all have higher contrast
+      // ratio against black than against white, so the helper picks black.
+      // (red-500 = 5.58:1 vs black, 3.76:1 vs white, etc.)
+      expect(pickReadableForeground('#ef4444')).toBe('#000') // red-500
+      expect(pickReadableForeground('#3b82f6')).toBe('#000') // blue-500
+      expect(pickReadableForeground('#a855f7')).toBe('#000') // purple-500
+    })
+
+    it('accepts 3-digit shorthand hex', () => {
+      expect(pickReadableForeground('#000')).toBe('#fff')
+      expect(pickReadableForeground('#fff')).toBe('#000')
+      // #003 expands to #000033 — dark blue, definitively white-text territory.
+      expect(pickReadableForeground('#003')).toBe('#fff')
+    })
+
+    it('accepts 8-digit hex (alpha ignored)', () => {
+      expect(pickReadableForeground('#000000ff')).toBe('#fff')
+      expect(pickReadableForeground('#ffffff00')).toBe('#000')
+    })
+
+    it('is case-insensitive', () => {
+      expect(pickReadableForeground('#1E3A8A')).toBe('#fff')
+      expect(pickReadableForeground('#FDE68A')).toBe('#000')
+    })
+
+    it('trims surrounding whitespace', () => {
+      expect(pickReadableForeground('  #000000  ')).toBe('#fff')
+      expect(pickReadableForeground('  #ffffff  ')).toBe('#000')
+    })
+
+    it('falls back to black for malformed input (never invisible white-on-white)', () => {
+      expect(pickReadableForeground('')).toBe('#000')
+      expect(pickReadableForeground('not-a-color')).toBe('#000')
+      expect(pickReadableForeground('#12')).toBe('#000')
+      expect(pickReadableForeground('#12345')).toBe('#000')
+      expect(pickReadableForeground('rgb(0,0,0)')).toBe('#000')
+      // No leading '#'
+      expect(pickReadableForeground('ef4444')).toBe('#000')
+      // Non-hex characters inside an otherwise well-shaped string
+      expect(pickReadableForeground('#zzzzzz')).toBe('#000')
     })
   })
 })

@@ -722,8 +722,10 @@ describe('TagList', () => {
       })
     })
 
-    it('badge renders with custom background color', async () => {
-      // Pre-set color in localStorage
+    it('badge renders with custom background color and a contrast-aware foreground', async () => {
+      // Pre-set color in localStorage. blue-500 (#3b82f6, L≈0.236) yields
+      // higher WCAG contrast against black than white (5.71:1 vs 3.68:1),
+      // so the contrast-aware helper picks black — not a hard-coded white.
       localStorage.setItem('tag-colors', JSON.stringify({ T1: '#3b82f6' }))
       mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'blue-tag')])
 
@@ -732,6 +734,19 @@ describe('TagList', () => {
       const badge = await screen.findByText('blue-tag')
       const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
       expect(badgeEl).toHaveStyle({ backgroundColor: '#3b82f6' })
+      expect(badgeEl).toHaveStyle({ color: '#000' })
+    })
+
+    it('badge picks white foreground when the bg is dark enough (WCAG)', async () => {
+      // Very dark navy — strictly higher contrast against white than black.
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: '#1e3a8a' }))
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'navy-tag')])
+
+      render(<TagList />)
+
+      const badge = await screen.findByText('navy-tag')
+      const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
+      expect(badgeEl).toHaveStyle({ backgroundColor: '#1e3a8a' })
       expect(badgeEl).toHaveStyle({ color: '#fff' })
     })
 

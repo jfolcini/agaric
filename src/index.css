@@ -103,6 +103,11 @@
   /* Sync status */
   --color-sync-idle: var(--sync-idle);
   --color-sync-active: var(--sync-active);
+  /* Legibility outline for icons sized down onto an arbitrary accent
+   * fill (e.g. the Check glyph on the space-accent swatch grid). This
+   * is intentionally a 1-px dark halo, not a brand shadow — keeping it
+   * a token so the two SpaceManageDialog call sites don't drift. */
+  --shadow-accent-stroke: 0 0 1.5px rgb(0 0 0 / 0.9);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

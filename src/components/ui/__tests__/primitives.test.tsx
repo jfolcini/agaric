@@ -18,7 +18,9 @@ import { CloseButtonIcon, closeButtonClassName } from '../close-button'
 import { Input } from '../input'
 import { Label } from '../label'
 import { ListItem } from '../list-item'
+import { RecentPageChip } from '../recent-page-chip'
 import { Spinner } from '../spinner'
+import { ToggleGroup, ToggleGroupItem } from '../toggle-group'
 
 // ---------------------------------------------------------------------------
 // Spinner
@@ -441,6 +443,148 @@ describe('Input', () => {
         <label htmlFor="a11y-input">Field</label>
         <Input id="a11y-input" />
       </div>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// RecentPageChip
+// ---------------------------------------------------------------------------
+
+describe('RecentPageChip', () => {
+  it('renders as a button with type="button" and data-slot', () => {
+    render(<RecentPageChip>Home</RecentPageChip>)
+    const btn = screen.getByRole('button', { name: 'Home' })
+    expect(btn).toBeInTheDocument()
+    expect(btn).toHaveAttribute('type', 'button')
+    expect(btn).toHaveAttribute('data-slot', 'recent-page-chip')
+  })
+
+  it('default classes include chip chrome (border, bg-secondary/40, shrink-0)', () => {
+    render(<RecentPageChip>Styled</RecentPageChip>)
+    const btn = screen.getByRole('button', { name: 'Styled' })
+    expect(btn.className).toContain('border')
+    expect(btn.className).toContain('bg-secondary/40')
+    expect(btn.className).toContain('shrink-0')
+    expect(btn.className).toContain('focus-ring-visible')
+  })
+
+  it('includes coarse pointer touch-target class', () => {
+    render(<RecentPageChip>Touch</RecentPageChip>)
+    const btn = screen.getByRole('button', { name: 'Touch' })
+    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
+  })
+
+  it('merges custom className', () => {
+    render(<RecentPageChip className="my-chip">Custom</RecentPageChip>)
+    const btn = screen.getByRole('button', { name: 'Custom' })
+    expect(btn.className).toContain('my-chip')
+    expect(btn.className).toContain('bg-secondary/40')
+  })
+
+  it('fires onClick when clicked', async () => {
+    const handleClick = vi.fn()
+    const user = userEvent.setup()
+    render(<RecentPageChip onClick={handleClick}>Open</RecentPageChip>)
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLButtonElement>()
+    render(<RecentPageChip ref={ref}>Ref test</RecentPageChip>)
+    expect(ref.current).toBeInstanceOf(HTMLButtonElement)
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(<RecentPageChip>Accessible chip</RecentPageChip>)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ToggleGroup
+// ---------------------------------------------------------------------------
+
+describe('ToggleGroup', () => {
+  it('renders the group with data-slot and items with role="radio"', () => {
+    render(
+      <ToggleGroup type="single" aria-label="Diff mode">
+        <ToggleGroupItem value="just-change">Just this change</ToggleGroupItem>
+        <ToggleGroupItem value="compared-current">Compared to current</ToggleGroupItem>
+      </ToggleGroup>,
+    )
+    const group = screen.getByRole('group', { name: 'Diff mode' })
+    expect(group).toBeInTheDocument()
+    expect(group).toHaveAttribute('data-slot', 'toggle-group')
+    const items = screen.getAllByRole('radio')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toHaveAttribute('data-slot', 'toggle-group-item')
+  })
+
+  it('group default classes include border and rounded-md', () => {
+    render(
+      <ToggleGroup type="single" aria-label="Modes">
+        <ToggleGroupItem value="a">A</ToggleGroupItem>
+      </ToggleGroup>,
+    )
+    const group = screen.getByRole('group', { name: 'Modes' })
+    expect(group.className).toContain('rounded-md')
+    expect(group.className).toContain('border-input')
+  })
+
+  it('item includes coarse pointer touch-target class', () => {
+    render(
+      <ToggleGroup type="single" aria-label="Modes">
+        <ToggleGroupItem value="a">A</ToggleGroupItem>
+      </ToggleGroup>,
+    )
+    const item = screen.getByRole('radio', { name: 'A' })
+    expect(item.className).toContain('[@media(pointer:coarse)]:min-h-11')
+  })
+
+  it('merges custom className on group and item', () => {
+    render(
+      <ToggleGroup type="single" aria-label="Modes" className="my-group">
+        <ToggleGroupItem value="a" className="my-item">
+          A
+        </ToggleGroupItem>
+      </ToggleGroup>,
+    )
+    const group = screen.getByRole('group', { name: 'Modes' })
+    const item = screen.getByRole('radio', { name: 'A' })
+    expect(group.className).toContain('my-group')
+    expect(group.className).toContain('rounded-md')
+    expect(item.className).toContain('my-item')
+  })
+
+  it('toggles data-state="on" when an item is clicked (single select)', async () => {
+    const handleChange = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <ToggleGroup type="single" aria-label="Diff mode" onValueChange={handleChange}>
+        <ToggleGroupItem value="just-change">Just this change</ToggleGroupItem>
+        <ToggleGroupItem value="compared-current">Compared to current</ToggleGroupItem>
+      </ToggleGroup>,
+    )
+    const first = screen.getByRole('radio', { name: 'Just this change' })
+    const second = screen.getByRole('radio', { name: 'Compared to current' })
+    expect(first).toHaveAttribute('data-state', 'off')
+    await user.click(first)
+    expect(handleChange).toHaveBeenCalledWith('just-change')
+    expect(first).toHaveAttribute('data-state', 'on')
+    expect(second).toHaveAttribute('data-state', 'off')
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <ToggleGroup type="single" aria-label="Diff mode" defaultValue="a">
+        <ToggleGroupItem value="a">A</ToggleGroupItem>
+        <ToggleGroupItem value="b">B</ToggleGroupItem>
+      </ToggleGroup>,
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()

@@ -155,12 +155,14 @@ describe('Select', () => {
     renderSelect()
     const trigger = screen.getByRole('combobox')
     expect(trigger.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(trigger.className).toContain('[@media(pointer:coarse)]:text-base')
   })
 
   it('sm size includes coarse pointer height override', () => {
     renderSelect({ size: 'sm' })
     const trigger = screen.getByRole('combobox')
     expect(trigger.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(trigger.className).toContain('[@media(pointer:coarse)]:text-base')
   })
 
   // -- Focus-visible ring classes ---------------------------------------------

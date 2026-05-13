@@ -1132,7 +1132,7 @@ PageBrowser, TrashView, ConflictList, BacklinksPanel, HistoryView, StatusPanel, 
 `useHasConflicts`. The caller stabilises `queryFn` with `useCallback`; when its identity
 changes the hook re-fetches page 1 (paginated) or restarts polling.
 
-### Component inventory (120+ domain + 29 shadcn/ui + 1 editor = 150+ total)
+### Component inventory (120+ domain + 37 shadcn/ui + 1 editor = 158+ total)
 
 **Page-level**: PageEditor, PageHeader (with PageTitleEditor, PageAliasSection, PageTagSection, PageHeaderMenu), PageBrowser (with PageTreeItem), JournalPage, SearchPanel (with SearchablePopover), TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel, PropertiesView (with PropertyDefinitionsList, TaskStatesSection, DeadlineWarningSection), TemplatesView, GraphView
 
@@ -1156,7 +1156,7 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 
 **Editor**: SuggestionList
 
-**shadcn/ui (29)**: alert-dialog, alert-list-item, badge, button, calendar, card, card-button, chevron-toggle, close-button, dialog, filter-pill, input, label, list-item, popover, popover-menu-item, priority-badge, scroll-area, section-title, select, separator, sheet, sidebar, skeleton, sonner, spinner, status-badge, status-icon, tooltip
+**shadcn/ui (37)**: alert-dialog, alert-list-item, badge, breadcrumb, button, calendar, card, card-button, checkbox, chevron-toggle, close-button, dialog, filter-pill, input, label, list-item, menu-popover-content, popover, popover-menu-item, priority-badge, recent-page-chip, scroll-area, search-input, section-title, select, separator, sheet, sidebar, skeleton, sonner, spinner, status-badge, status-icon, switch, textarea, toggle-group, tooltip
 
 ### Utility modules (src/lib/ — 37 modules)
 

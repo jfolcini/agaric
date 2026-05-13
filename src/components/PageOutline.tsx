@@ -102,7 +102,7 @@ export function PageOutline() {
                       className={cn(
                         'w-full text-left text-sm truncate rounded px-2 py-1',
                         'hover:bg-accent hover:text-accent-foreground',
-                        'focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 outline-hidden',
+                        'focus-ring-visible focus-visible:ring-inset',
                         'transition-colors',
                       )}
                       onClick={() => handleClick(h.blockId)}

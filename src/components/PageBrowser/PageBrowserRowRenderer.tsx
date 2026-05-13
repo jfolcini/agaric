@@ -215,7 +215,7 @@ function PageRow({
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
         // Row-highlight (background) only — the inner button paints its own
-        // `focus-visible:ring-[3px]` ring for the actual focus affordance.
+        // `focus-ring-visible` ring for the actual focus affordance.
         // Painting a ring here as well stacked two rings on the focused row.
         focusedIndex === pageIndex && 'bg-accent/30',
       )}
@@ -239,7 +239,7 @@ function PageRow({
         </Button>
         <button
           type="button"
-          className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 focus-visible:outline-hidden"
+          className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
           onClick={() => onPageSelect?.(page.id, title)}
         >
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
