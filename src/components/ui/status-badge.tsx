@@ -24,7 +24,11 @@ interface StatusBadgeProps extends VariantProps<typeof statusBadgeVariants> {
 
 const StatusBadge = ({ ref, state, children, className }: StatusBadgeProps) => {
   return (
-    <span ref={ref} className={cn(statusBadgeVariants({ state }), className)}>
+    <span
+      ref={ref}
+      data-slot="status-badge"
+      className={cn(statusBadgeVariants({ state }), className)}
+    >
       {children}
     </span>
   )

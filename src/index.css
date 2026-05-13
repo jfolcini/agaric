@@ -264,11 +264,6 @@
   /* Line-height scale (paired with text sizes) */
   --leading-tight: 1.25;
   --leading-normal: 1.5;
-  --leading-relaxed: 1.625;
-  /* Letter-spacing */
-  --tracking-tight: -0.025em;
-  --tracking-normal: 0em;
-  --tracking-wide: 0.025em;
 }
 
 /* ── Agaric dark theme ─────────────────────────────────────────────── */

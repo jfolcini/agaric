@@ -23,7 +23,14 @@ interface AlertListItemProps
 }
 
 const AlertListItem = ({ ref, variant, className, ...props }: AlertListItemProps) => {
-  return <li ref={ref} className={cn(alertListItemVariants({ variant }), className)} {...props} />
+  return (
+    <li
+      ref={ref}
+      data-slot="alert-list-item"
+      className={cn(alertListItemVariants({ variant }), className)}
+      {...props}
+    />
+  )
 }
 AlertListItem.displayName = 'AlertListItem'
 

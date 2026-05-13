@@ -268,7 +268,7 @@ function HistoryListItemInner({
           onClick={(e) => e.stopPropagation()}
           className={cn(
             'h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:size-11',
-            'focus-ring-visible focus-visible:ring-offset-1',
+            'focus-ring-visible',
           )}
           aria-label={t('history.selectOperationLabel', {
             opType: entry.op_type,

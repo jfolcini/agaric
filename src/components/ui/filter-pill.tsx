@@ -36,6 +36,7 @@ export function FilterPill({
 }: FilterPillProps): React.ReactElement {
   return (
     <Badge
+      data-slot="filter-pill"
       variant="secondary"
       className={cn('filter-pill shrink-0 gap-1 text-xs', className)}
       role="group"

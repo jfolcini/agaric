@@ -53,6 +53,7 @@ export function StatusIcon({
   if (state === 'DOING')
     return (
       <Clock
+        data-slot="status-icon"
         className={cn(sizeClass, 'text-task-doing')}
         aria-hidden="true"
         data-testid="icon-doing"
@@ -61,6 +62,7 @@ export function StatusIcon({
   if (state === 'DONE')
     return (
       <CheckCircle2
+        data-slot="status-icon"
         className={cn(sizeClass, 'text-task-done')}
         aria-hidden="true"
         data-testid="icon-done"
@@ -69,6 +71,7 @@ export function StatusIcon({
   if (state === 'CANCELLED')
     return (
       <XCircle
+        data-slot="status-icon"
         className={cn(sizeClass, 'text-task-cancelled')}
         aria-hidden="true"
         data-testid="icon-cancelled"
@@ -77,6 +80,7 @@ export function StatusIcon({
   // Default: TODO or unknown
   return (
     <Circle
+      data-slot="status-icon"
       className={cn(sizeClass, 'text-muted-foreground')}
       aria-hidden="true"
       data-testid="icon-todo"
