@@ -123,9 +123,7 @@ test.describe('Editor lifecycle', () => {
     await page.getByRole('button', { name: 'Status', exact: true }).click()
     await expect(page.locator('header').getByText('Status')).toBeVisible()
 
-    // Navigate to Conflicts
-    await page.getByRole('button', { name: /^Conflicts/ }).click()
-    await expect(page.locator('header').getByText('Conflicts')).toBeVisible()
+    // (Conflicts nav-item removed in Session 700 / PEND-09 Phase 5.)
 
     // Navigate back to Journal (no header label — has mode tabs instead)
     await page.getByRole('button', { name: 'Journal', exact: true }).click()
