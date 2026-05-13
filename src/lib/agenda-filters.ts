@@ -3,42 +3,33 @@
  *
  * Evaluates AgendaFilter[] against the backend, returning matching blocks.
  * Extracted from AgendaView.tsx (R-13) — no React dependencies.
+ *
+ * Audit H3 — when the user has at least one filter active, dispatch ONE
+ * `filtered_blocks_query` IPC that AND-intersects every dimension in SQL.
+ * The previous implementation fanned out one IPC per dimension (each
+ * capped at 200 rows by `PageRequest::new`) and intersected the result
+ * sets in JS — any AND-set member outside the top-200 of any sub-query
+ * was silently dropped before the intersection ran. The composed-EXISTS
+ * shape on the backend evaluates the full predicate set in a single SQL
+ * round-trip with cursor-paginated, correctness-preserving output.
  */
 
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import type { AgendaFilter } from '../components/AgendaFilterBuilder'
 import type { PageResponse } from './bindings'
 import { formatDate, getDateRangeForFilter } from './date-utils'
-import { listBlocksLimit, paginationLimit, type SafeLimit } from './safe-limit'
-import type { BlockRow } from './tauri'
-import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
+import { paginationLimit, type SafeLimit } from './safe-limit'
+import type { BlockRow, FilteredBlocksPropertyFilter, FilteredBlocksTagFilter } from './tauri'
+import { filteredBlocksQuery, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
 
 /**
- * Per-page limit for agenda-driven `queryByProperty` / `listUndatedTasks`
- * IPCs.  Pinned to `PageRequest::new`'s `MAX_PAGE_SIZE = 200` — the
- * backend cap that limit-clamp-followup's Phase 1 turns into a loud
- * `AppError::Validation`.  Single-shot call sites here that consume the
- * full page must accept a residual truncation risk for workspaces with
- * more than 200 matching items in a single dimension (filtered by date
- * key); the `paginateAll`-wrapped sites walk to exhaustion and so are
- * unaffected.
- *
- * Note: the `listTagsByPrefix` call inside `executeAgendaFilters` uses
- * `limit: PAGINATION_LIMIT` deliberately (it's a typeahead-style tag
- * lookup, not an agenda paginator) and is not affected by this constant.
- *
- * Added for FE-H-2; reduced from 500 → 200 in limit-clamp-followup
- * Phase 1; typed as `SafeLimit<PaginationMax>` in Phase 3 so the
- * brand flows through to wrapper signatures.
+ * Per-page limit for agenda queries — pinned to `PageRequest::new`'s
+ * `MAX_PAGE_SIZE = 200` (limit-clamp-followup Phase 1 turns this into a
+ * loud `AppError::Validation`). Used for both the no-filter default
+ * branch (queryByProperty / listUndatedTasks) and the active-filter
+ * `filtered_blocks_query` call.
  */
 export const AGENDA_QUERY_LIMIT: SafeLimit = paginationLimit(200)
-
-/**
- * Per-page limit for agenda-driven `listBlocks` IPCs (the agenda-date,
- * agenda-date-range, and tag-id dispatch branches).  Pinned to
- * `list_blocks_inner`'s clamp of 100 (the BUG-48 root cap).
- */
-export const AGENDA_LIST_BLOCKS_LIMIT: SafeLimit = listBlocksLimit(100)
 
 // ---------------------------------------------------------------------------
 // Types
@@ -118,246 +109,163 @@ export function toPastDatePreset(value: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Per-dimension query handlers
+// Filter translation — AgendaFilter[] → filtered_blocks_query inputs
 // ---------------------------------------------------------------------------
 
 /**
- * Query blocks matching the given todo_state values.
- *
- * PEND-35 Tier 2.10a — collapses N per-value fan-out into ONE
- * `query_by_property` call using `valueTextIn` (Tier 3.4). The previous
- * loop fired one IPC per status value; the SQL `value_text IN (?, ?, …)`
- * binding does the union server-side in a single round-trip.
+ * Convert an inclusive `{start, end}` range into the half-open
+ * `[start, endExclusive)` form expected by `valueDateRange` /
+ * `value_date_range` on the backend (mirror of the previous inline
+ * conversion in `queryPropertyDateDimension`).
  */
-async function queryStatus(values: string[], spaceId: string): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
-  if (values.length === 0) return result
-  const resp = await queryByProperty({
-    key: 'todo_state',
-    valueTextIn: values,
-    limit: AGENDA_QUERY_LIMIT,
-    spaceId,
-  })
-  for (const b of resp.items) {
-    result.set(b.id, b)
-  }
-  return result
+function toHalfOpenRange(range: { start: string; end: string }): [string, string] {
+  const endExclusiveDate = new Date(`${range.end}T00:00:00`)
+  endExclusiveDate.setDate(endExclusiveDate.getDate() + 1)
+  return [range.start, formatDate(endExclusiveDate)]
 }
 
 /**
- * Query blocks matching the given priority values.
- *
- * PEND-35 Tier 2.10a — same per-value fan-out collapse as `queryStatus`.
+ * Translate one future-dated filter value (dueDate / scheduledDate) into
+ * a list of property filters on the reserved date column. Returns
+ * multiple filters only for `Overdue`, where the predicate is
+ * `column < today AND todo_state != 'DONE'`.
  */
-async function queryPriority(values: string[], spaceId: string): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
-  if (values.length === 0) return result
-  const resp = await queryByProperty({
-    key: 'priority',
-    valueTextIn: values,
-    limit: AGENDA_QUERY_LIMIT,
-    spaceId,
-  })
-  for (const b of resp.items) {
-    result.set(b.id, b)
-  }
-  return result
-}
-
-// --- queryDateDimension helpers (module-private) ---------------------------
-
-/** True when the block's date column is before today and the block isn't DONE. */
-function isOverdue(
-  block: BlockRow,
-  columnKey: 'due_date' | 'scheduled_date',
-  todayStr: string,
-): boolean {
-  const dateVal = columnKey === 'due_date' ? block.due_date : block.scheduled_date
-  return dateVal != null && dateVal < todayStr && block.todo_state !== 'DONE'
-}
-
-/** Fetch and filter overdue blocks for a date column. */
-async function queryOverdueForColumn(
-  columnKey: 'due_date' | 'scheduled_date',
-  todayStr: string,
-  spaceId: string,
-): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
-  const resp = await queryByProperty({ key: columnKey, limit: AGENDA_QUERY_LIMIT, spaceId })
-  for (const b of resp.items) {
-    if (isOverdue(b, columnKey, todayStr)) {
-      result.set(b.id, b)
-    }
-  }
-  return result
-}
-
-/**
- * Resolve a preset label to a date range and fetch blocks via listBlocks.
- * Dispatches to the single-day branch when start === end, otherwise the range branch.
- * Returns an empty map when the value is not a known preset or the range resolves to null.
- */
-async function queryPresetRangeForColumn(
+function futureDateValueToFilters(
   value: string,
   columnKey: 'due_date' | 'scheduled_date',
   today: Date,
-  spaceId: string,
-): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
-  const preset = toFutureDatePreset(value)
-  if (!preset) return result
-  const range = getDateRangeForFilter(preset, today)
-  if (!range) return result
-  const agendaSource = `column:${columnKey}`
-  const resp =
-    range.start === range.end
-      ? await listBlocks({
-          agendaDate: range.start,
-          agendaSource,
-          limit: AGENDA_LIST_BLOCKS_LIMIT,
-          spaceId,
-        })
-      : await listBlocks({
-          agendaDateRange: range,
-          agendaSource,
-          limit: AGENDA_LIST_BLOCKS_LIMIT,
-          spaceId,
-        })
-  for (const b of resp.items) {
-    result.set(b.id, b)
-  }
-  return result
-}
-
-/**
- * Query blocks by a date column (due_date or scheduled_date).
- * Handles 'Overdue' (client-side filter) and preset date ranges.
- */
-async function queryDateDimension(
-  values: string[],
-  columnKey: 'due_date' | 'scheduled_date',
-  today: Date,
-  spaceId: string,
-): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
+): FilteredBlocksPropertyFilter[] {
   const todayStr = formatDate(today)
-
-  for (const value of values) {
-    const partial =
-      value === 'Overdue'
-        ? await queryOverdueForColumn(columnKey, todayStr, spaceId)
-        : await queryPresetRangeForColumn(value, columnKey, today, spaceId)
-    for (const [id, block] of partial) {
-      result.set(id, block)
-    }
+  if (value === 'Overdue') {
+    // Replicate the legacy client-side filter `column < today AND
+    // todo_state != 'DONE'` (excluding null-column blocks is implicit:
+    // the backend adds `b.<col> IS NOT NULL` automatically).
+    return [
+      { key: columnKey, operator: 'lt', valueDate: todayStr },
+      { key: 'todo_state', operator: 'neq', valueText: 'DONE' },
+    ]
   }
-  return result
+  const preset = toFutureDatePreset(value)
+  if (!preset) return []
+  const range = getDateRangeForFilter(preset, today)
+  if (!range) return []
+  if (range.start === range.end) {
+    return [{ key: columnKey, operator: 'eq', valueDate: range.start }]
+  }
+  return [{ key: columnKey, valueDateRange: toHalfOpenRange(range) }]
 }
 
 /**
- * Query blocks by a property-based date dimension (completed_at or created_at).
- *
- * PEND-35 Tier 2.10a — collapses the per-day fan-out into ONE
- * `query_by_property` call per filter value using `valueDateRange`
- * (Tier 3.4). The backend evaluates the half-open `[from, to)` window
- * server-side, so a 7-day "Last 7 days" preset that previously fired 7
- * IPCs now fires 1.
- *
- * `getDateRangeForFilter` returns an *inclusive* `{start, end}` range;
- * `valueDateRange` is half-open. We convert by advancing `end` by one
- * day so the last included calendar date stays in the result set.
+ * Translate one past-dated filter value (completedDate / createdDate)
+ * into a single property filter with a half-open `valueDateRange`.
  */
-async function queryPropertyDateDimension(
-  values: string[],
-  propertyKey: string,
+function pastDateValueToFilter(
+  value: string,
+  propertyKey: 'completed_at' | 'created_at',
   today: Date,
-  spaceId: string,
-): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
-
-  for (const value of values) {
-    const preset = toPastDatePreset(value)
-    if (!preset) continue
-    const range = getDateRangeForFilter(preset, today)
-    if (!range) continue
-    // Convert inclusive `end` -> half-open `endExclusive` (= end + 1 day).
-    // `formatDate` parses local-time; constructing from `${end}T00:00:00`
-    // and `setDate(getDate() + 1)` rolls month/year boundaries correctly.
-    const endExclusiveDate = new Date(`${range.end}T00:00:00`)
-    endExclusiveDate.setDate(endExclusiveDate.getDate() + 1)
-    const endExclusive = formatDate(endExclusiveDate)
-    const resp = await queryByProperty({
-      key: propertyKey,
-      valueDateRange: [range.start, endExclusive],
-      limit: AGENDA_QUERY_LIMIT,
-      spaceId,
-    })
-    for (const b of resp.items) {
-      result.set(b.id, b)
-    }
-  }
-  return result
+): FilteredBlocksPropertyFilter | null {
+  const preset = toPastDatePreset(value)
+  if (!preset) return null
+  const range = getDateRangeForFilter(preset, today)
+  if (!range) return null
+  return { key: propertyKey, valueDateRange: toHalfOpenRange(range) }
 }
 
-/** Query blocks matching the given tag names (resolved to IDs via prefix search). */
-async function queryTag(values: string[], spaceId: string): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
-  for (const value of values) {
-    // Resolve tag name to ID via prefix search + exact match
+/**
+ * Translate a single custom `property` dimension value (e.g. `assignee`
+ * or `assignee:Alice`) into a property filter. Bare keys (no colon) map
+ * to is-set semantics (no value field set).
+ */
+function customPropertyValueToFilter(value: string): FilteredBlocksPropertyFilter {
+  const colonIdx = value.indexOf(':')
+  if (colonIdx > 0) {
+    return {
+      key: value.slice(0, colonIdx),
+      operator: 'eq',
+      valueText: value.slice(colonIdx + 1),
+    }
+  }
+  return { key: value }
+}
+
+/**
+ * Push the property-filter translation of one dimension onto the
+ * accumulator. Tag and empty-value dimensions are handled separately
+ * by the caller.
+ */
+function appendPropertyFilters(
+  filter: AgendaFilter,
+  today: Date,
+  out: FilteredBlocksPropertyFilter[],
+): void {
+  switch (filter.dimension) {
+    case 'status':
+      if (filter.values.length > 0) {
+        out.push({ key: 'todo_state', operator: 'eq', valueTextIn: filter.values })
+      }
+      return
+    case 'priority':
+      if (filter.values.length > 0) {
+        out.push({ key: 'priority', operator: 'eq', valueTextIn: filter.values })
+      }
+      return
+    case 'dueDate':
+      for (const value of filter.values) {
+        out.push(...futureDateValueToFilters(value, 'due_date', today))
+      }
+      return
+    case 'scheduledDate':
+      for (const value of filter.values) {
+        out.push(...futureDateValueToFilters(value, 'scheduled_date', today))
+      }
+      return
+    case 'completedDate':
+      for (const value of filter.values) {
+        const pf = pastDateValueToFilter(value, 'completed_at', today)
+        if (pf) out.push(pf)
+      }
+      return
+    case 'createdDate':
+      for (const value of filter.values) {
+        const pf = pastDateValueToFilter(value, 'created_at', today)
+        if (pf) out.push(pf)
+      }
+      return
+    case 'property':
+      for (const value of filter.values) {
+        out.push(customPropertyValueToFilter(value))
+      }
+      return
+    case 'tag':
+      // Handled separately by `resolveTagFilters` (needs a `listTagsByPrefix`
+      // round-trip per prefix to map names → tag_ids).
+      return
+  }
+}
+
+/**
+ * Resolve every `tag` dimension in the filter list into a single
+ * `FilteredBlocksTagFilter` payload. One `listTagsByPrefix` IPC per
+ * distinct prefix; unresolved names are silently dropped (matches the
+ * legacy `queryTag` behaviour of skipping `undefined` exact matches).
+ */
+async function resolveTagFilters(
+  filters: AgendaFilter[],
+): Promise<FilteredBlocksTagFilter | undefined> {
+  const tagValues = filters.filter((f) => f.dimension === 'tag').flatMap((f) => f.values)
+  if (tagValues.length === 0) return undefined
+
+  const tagIds: string[] = []
+  for (const value of tagValues) {
     const candidates = await listTagsByPrefix({ prefix: value, limit: PAGINATION_LIMIT })
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
-    if (!match) continue
-    const resp = await listBlocks({ tagId: match.tag_id, limit: AGENDA_LIST_BLOCKS_LIMIT, spaceId })
-    for (const b of resp.items) {
-      result.set(b.id, b)
-    }
+    if (match) tagIds.push(match.tag_id)
   }
-  return result
-}
-
-/** Query blocks by custom property key[:value] pairs. */
-async function queryPropertyDimension(
-  values: string[],
-  spaceId: string,
-): Promise<Map<string, BlockRow>> {
-  const result = new Map<string, BlockRow>()
-  for (const filterValue of values) {
-    const colonIdx = filterValue.indexOf(':')
-    const key = colonIdx > 0 ? filterValue.slice(0, colonIdx) : filterValue
-    const value = colonIdx > 0 ? filterValue.slice(colonIdx + 1) : undefined
-    const resp = await queryByProperty({
-      key,
-      ...(value != null && { valueText: value }),
-      limit: AGENDA_QUERY_LIMIT,
-      spaceId,
-    })
-    for (const b of resp.items) {
-      result.set(b.id, b)
-    }
-  }
-  return result
-}
-
-/**
- * Intersect a non-empty list of result sets, iterating the smaller of
- * each pair to halve allocations vs. the spread-into-array + filter +
- * `new Set` pattern. PEND-27 P3 — extracted as a helper so the main
- * `executeAgendaFilters` body stays under the cognitive-complexity cap.
- */
-function intersectSets(sets: Set<string>[]): Set<string> {
-  let intersection = sets[0] as Set<string>
-  for (let i = 1; i < sets.length; i++) {
-    const other = sets[i]
-    if (!other) continue
-    const [smaller, larger] =
-      intersection.size <= other.size ? [intersection, other] : [other, intersection]
-    const next = new Set<string>()
-    for (const id of smaller) {
-      if (larger.has(id)) next.add(id)
-    }
-    intersection = next
-  }
-  return intersection
+  if (tagIds.length === 0) return undefined
+  // Multiple tag values within a single tag dimension union (legacy
+  // `queryTag` Map-merge semantics). `filtered_blocks_query` honours
+  // this with `mode: 'or'` across `tag_ids`.
+  return { tagIds, mode: 'or' }
 }
 
 // ---------------------------------------------------------------------------
@@ -367,8 +275,12 @@ function intersectSets(sets: Set<string>[]): Set<string> {
 /**
  * Execute agenda filters against the backend.
  *
- * - Empty filter list → default: all blocks with a due_date or scheduled_date.
- * - Non-empty → evaluate each dimension, then intersect result sets (AND).
+ * - Empty filter list → default unfiltered: all blocks with due_date /
+ *   scheduled_date, plus undated tasks. Pagination is walked to
+ *   exhaustion per dimension (FE-H-1 / AGENTS invariant #3).
+ * - Non-empty → ONE `filtered_blocks_query` IPC. Property filters AND
+ *   together server-side via composed-EXISTS; tag filters union via
+ *   `mode: 'or'` across resolved tag IDs.
  *
  * `spaceId` (FEAT-3 Phase 4) — when set, scopes every dispatched IPC
  * to the active space; when `null` the call is cross-space (legacy).
@@ -381,17 +293,11 @@ export async function executeAgendaFilters(
 ): Promise<ExecuteFiltersResult> {
   // FE-L-12 — normalize once at the public boundary. Every internal
   // helper takes `spaceId: string`; none of them re-apply the fallback.
-  // The empty-string fallback is the FEAT-3 Phase 4 pre-bootstrap
-  // no-match value (a `listBlocks` IPC requires a non-null `spaceId`);
-  // the semantic risk of empty-string-as-no-match is tracked separately
-  // as FE-H-22.
   const normalizedSpaceId = spaceId ?? ''
 
   if (filters.length === 0) {
     // Default: blocks with due_date or scheduled_date, plus undated tasks.
-    // FE-H-1 — paginate each query to exhaustion via `paginateAll` so we
-    // honour AGENTS invariant #3 (cursor-based pagination on ALL list
-    // queries) and never silently drop items past `AGENDA_QUERY_LIMIT`.
+    // FE-H-1 — paginate each query to exhaustion via `paginateAll`.
     const [dueItems, schedItems, undatedItems] = await Promise.all([
       paginateAll((cursor) =>
         queryByProperty({
@@ -413,7 +319,6 @@ export async function executeAgendaFilters(
         listUndatedTasks({ cursor, limit: AGENDA_QUERY_LIMIT, spaceId: normalizedSpaceId }),
       ),
     ])
-    // Merge and deduplicate by id
     const seen = new Set<string>()
     const merged: BlockRow[] = []
     for (const b of [...dueItems, ...schedItems, ...undatedItems]) {
@@ -422,75 +327,38 @@ export async function executeAgendaFilters(
         merged.push(b)
       }
     }
-    // FE-H-1 — every page already drained above, so the result envelope's
-    // `hasMore` / `cursor` collapse to the post-pagination invariant.
     return { blocks: merged, hasMore: false, cursor: null }
   }
 
-  // Execute each filter dimension and intersect
-  const resultSets: Set<string>[] = []
-  const allBlocks = new Map<string, BlockRow>()
+  // ── Active-filter path: translate every dimension into the single
+  //    `filtered_blocks_query` IPC. AND-intersection happens server-side;
+  //    no JS post-filter, no per-sub-query row cap.
   const today = new Date()
-
+  const propertyFilters: FilteredBlocksPropertyFilter[] = []
   for (const filter of filters) {
-    let blockMap = new Map<string, BlockRow>()
+    appendPropertyFilters(filter, today, propertyFilters)
+  }
+  const tagFilters = await resolveTagFilters(filters)
 
-    switch (filter.dimension) {
-      case 'status':
-        blockMap = await queryStatus(filter.values, normalizedSpaceId)
-        break
-      case 'priority':
-        blockMap = await queryPriority(filter.values, normalizedSpaceId)
-        break
-      case 'dueDate':
-        blockMap = await queryDateDimension(filter.values, 'due_date', today, normalizedSpaceId)
-        break
-      case 'scheduledDate':
-        blockMap = await queryDateDimension(
-          filter.values,
-          'scheduled_date',
-          today,
-          normalizedSpaceId,
-        )
-        break
-      case 'completedDate':
-        blockMap = await queryPropertyDateDimension(
-          filter.values,
-          'completed_at',
-          today,
-          normalizedSpaceId,
-        )
-        break
-      case 'createdDate':
-        blockMap = await queryPropertyDateDimension(
-          filter.values,
-          'created_at',
-          today,
-          normalizedSpaceId,
-        )
-        break
-      case 'tag':
-        blockMap = await queryTag(filter.values, normalizedSpaceId)
-        break
-      case 'property':
-        blockMap = await queryPropertyDimension(filter.values, normalizedSpaceId)
-        break
-    }
-
-    const ids = new Set(blockMap.keys())
-    for (const [id, block] of blockMap) {
-      allBlocks.set(id, block)
-    }
-    resultSets.push(ids)
+  // `filtered_blocks_query` rejects empty input. This can happen when
+  // the only active dimensions resolve to nothing (e.g. unknown date
+  // preset, status with `values: []`, tag with no matching prefix). The
+  // legacy code returned an empty result set in that case; preserve
+  // that shape rather than letting the backend Validation error bubble.
+  if (propertyFilters.length === 0 && !tagFilters) {
+    return { blocks: [], hasMore: false, cursor: null }
   }
 
-  // Intersect all result sets via the PEND-27 P3 helper (smaller-of-two
-  // pair walk; halves allocations vs. the previous spread+filter+new Set).
-  let blocks: BlockRow[] = []
-  if (resultSets.length > 0) {
-    const intersection = intersectSets(resultSets)
-    blocks = [...intersection].map((id) => allBlocks.get(id) as BlockRow).filter(Boolean)
-  }
+  const resp = await filteredBlocksQuery({
+    propertyFilters,
+    tagFilters,
+    spaceId: normalizedSpaceId,
+    limit: AGENDA_QUERY_LIMIT,
+  })
 
-  return { blocks, hasMore: false, cursor: null }
+  return {
+    blocks: resp.items,
+    hasMore: resp.has_more,
+    cursor: resp.next_cursor,
+  }
 }

@@ -1589,26 +1589,22 @@ describe('JournalPage', () => {
       })
     })
 
-    it('default agenda loads TODO+DOING tasks via queryByProperty with todo_state (UX-196)', async () => {
+    it('default agenda loads TODO+DOING tasks via filteredBlocksQuery with todo_state (UX-196)', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
-        if (cmd === 'query_by_property') {
-          // PEND-35 Tier 2.10a — `queryStatus` now collapses N per-value
-          // calls into ONE `query_by_property` with `valueTextIn` riding
-          // through `extraFilters`. Both TODO and DOING come back from a
-          // single IPC.
+        if (cmd === 'filtered_blocks_query') {
+          // Audit H3 — `executeAgendaFilters` now dispatches ONE
+          // `filtered_blocks_query` IPC carrying the AND-intersection of
+          // every active dimension. The status dimension translates into
+          // a single PropertyFilter with `valueTextIn: ['TODO','DOING']`.
           const params = args as {
-            key?: string
-            extraFilters?: { valueTextIn?: string[] | null } | null
+            propertyFilters?: Array<{ key?: string; valueTextIn?: string[] | null }>
           }
-          const valueTextIn = params?.extraFilters?.valueTextIn ?? null
-          if (
-            params?.key === 'todo_state' &&
-            valueTextIn?.includes('TODO') &&
-            valueTextIn?.includes('DOING')
-          ) {
+          const statusFilter = params?.propertyFilters?.find((f) => f.key === 'todo_state')
+          const valueTextIn = statusFilter?.valueTextIn ?? null
+          if (valueTextIn?.includes('TODO') && valueTextIn?.includes('DOING')) {
             return {
               items: [
                 {
@@ -1658,16 +1654,19 @@ describe('JournalPage', () => {
       await user.click(agendaTab)
 
       // UX-196: default filter is { status: ['TODO', 'DOING'] }, not empty.
-      // PEND-35 Tier 2.10a: `queryStatus` fires ONE `query_by_property`
-      // with `valueTextIn: ['TODO', 'DOING']` (not two per-value calls).
+      // Audit H3: active filters dispatch ONE `filtered_blocks_query`
+      // carrying the AND-intersected PropertyFilters; status rides
+      // through as `valueTextIn`.
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
-          'query_by_property',
+          'filtered_blocks_query',
           expect.objectContaining({
-            key: 'todo_state',
-            extraFilters: expect.objectContaining({
-              valueTextIn: ['TODO', 'DOING'],
-            }),
+            propertyFilters: expect.arrayContaining([
+              expect.objectContaining({
+                key: 'todo_state',
+                valueTextIn: ['TODO', 'DOING'],
+              }),
+            ]),
           }),
         )
       })
@@ -1744,17 +1743,31 @@ describe('JournalPage', () => {
     it("dueDate 'Overdue' filter returns blocks with due_date before today", async () => {
       const todayStr = formatDate(new Date())
       const pastDate = formatDate(subDays(new Date(), 3))
-      const futureDate = formatDate(addDays(new Date(), 3))
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
-        if (cmd === 'list_blocks') {
-          return emptyPage
-        }
-        if (cmd === 'query_by_property') {
-          const params = args as { key?: string }
-          if (params?.key === 'due_date') {
+        if (cmd === 'filtered_blocks_query') {
+          // Audit H3 — `executeAgendaFilters` translates the legacy
+          // client-side `Overdue` filter into TWO PropertyFilters intersected
+          // server-side: `due_date < today` and `todo_state != 'DONE'`.
+          // The backend returns only the post-intersection result set.
+          const params = args as {
+            propertyFilters?: Array<{
+              key?: string
+              operator?: string
+              valueDate?: string | null
+              valueText?: string | null
+            }>
+          }
+          const dueDateFilter = params?.propertyFilters?.find((f) => f.key === 'due_date')
+          const todoStateFilter = params?.propertyFilters?.find((f) => f.key === 'todo_state')
+          if (
+            dueDateFilter?.operator === 'lt' &&
+            dueDateFilter?.valueDate === todayStr &&
+            todoStateFilter?.operator === 'neq' &&
+            todoStateFilter?.valueText === 'DONE'
+          ) {
             return {
               items: [
                 {
@@ -1765,42 +1778,6 @@ describe('JournalPage', () => {
                   position: 0,
                   deleted_at: null,
                   todo_state: 'TODO',
-                  due_date: pastDate,
-                  priority: null,
-                  scheduled_date: null,
-                },
-                {
-                  id: 'TODAY-1',
-                  block_type: 'content',
-                  content: 'Today task',
-                  parent_id: 'PAGE-1',
-                  position: 1,
-                  deleted_at: null,
-                  todo_state: 'TODO',
-                  due_date: todayStr,
-                  priority: null,
-                  scheduled_date: null,
-                },
-                {
-                  id: 'FUTURE-1',
-                  block_type: 'content',
-                  content: 'Future task',
-                  parent_id: 'PAGE-1',
-                  position: 2,
-                  deleted_at: null,
-                  todo_state: 'TODO',
-                  due_date: futureDate,
-                  priority: null,
-                  scheduled_date: null,
-                },
-                {
-                  id: 'DONE-OVERDUE',
-                  block_type: 'content',
-                  content: 'Done overdue task',
-                  parent_id: 'PAGE-1',
-                  position: 3,
-                  deleted_at: null,
-                  todo_state: 'DONE',
                   due_date: pastDate,
                   priority: null,
                   scheduled_date: null,
@@ -1835,14 +1812,11 @@ describe('JournalPage', () => {
       })
     })
 
-    it("dueDate 'This week' filter queries with a date range", async () => {
+    it("dueDate 'This week' filter queries with a half-open date range", async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
-        if (cmd === 'list_blocks') {
-          return emptyPage
-        }
-        if (cmd === 'query_by_property') {
+        if (cmd === 'filtered_blocks_query') {
           return emptyPage
         }
         if (cmd === 'batch_resolve') {
@@ -1863,18 +1837,28 @@ describe('JournalPage', () => {
       })
 
       await waitFor(() => {
-        const listBlockCalls = mockedInvoke.mock.calls.filter(
-          ([cmd, args]) =>
-            cmd === 'list_blocks' &&
-            (args as { agenda?: { source?: string } })?.agenda?.source === 'column:due_date',
-        )
-        // Should be a single range call instead of 7 individual day calls
-        expect(listBlockCalls).toHaveLength(1)
+        // Audit H3 — single `filtered_blocks_query` IPC carrying a
+        // PropertyFilter with a half-open `valueDateRange` on `due_date`.
+        // (AgendaView mounts with a default status filter, so we filter
+        //  by the call that carries our test dimension to ignore the
+        //  initial-mount status-only IPC.)
+        const filteredCalls = mockedInvoke.mock.calls.filter(([cmd, args]) => {
+          if (cmd !== 'filtered_blocks_query') return false
+          const a = args as {
+            propertyFilters?: Array<{ key?: string }>
+          }
+          return Boolean(a.propertyFilters?.some((f) => f.key === 'due_date'))
+        })
+        expect(filteredCalls).toHaveLength(1)
 
-        const callArgs = listBlockCalls[0]?.[1] as {
-          agenda?: { dateRange?: { start: string; end: string } }
+        const callArgs = filteredCalls[0]?.[1] as {
+          propertyFilters?: Array<{
+            key?: string
+            valueDateRange?: [string, string] | null
+          }>
         }
-        expect(callArgs.agenda?.dateRange).toBeDefined()
+        const dueDateFilter = callArgs.propertyFilters?.find((f) => f.key === 'due_date')
+        expect(dueDateFilter?.valueDateRange).toBeDefined()
 
         const today = new Date()
         const day = today.getDay()
@@ -1883,23 +1867,33 @@ describe('JournalPage', () => {
         weekStart.setDate(today.getDate() + mondayOffset)
         const weekEnd = new Date(weekStart)
         weekEnd.setDate(weekStart.getDate() + 6)
-        expect(callArgs.agenda?.dateRange?.start).toBe(formatDate(weekStart))
-        expect(callArgs.agenda?.dateRange?.end).toBe(formatDate(weekEnd))
+        // Half-open form: end is the day AFTER weekEnd (= weekStart+7).
+        const endExclusive = new Date(weekStart)
+        endExclusive.setDate(weekStart.getDate() + 7)
+        expect(dueDateFilter?.valueDateRange?.[0]).toBe(formatDate(weekStart))
+        expect(dueDateFilter?.valueDateRange?.[1]).toBe(formatDate(endExclusive))
       })
     })
 
-    it("scheduledDate 'Today' filter queries with column:scheduled_date source", async () => {
+    it("scheduledDate 'Today' filter queries scheduled_date with today's date", async () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
-        if (cmd === 'list_blocks') {
-          const params = args as { agenda?: { source?: string; date?: string } }
-          if (
-            params?.agenda?.source === 'column:scheduled_date' &&
-            params?.agenda?.date === todayStr
-          ) {
+        if (cmd === 'filtered_blocks_query') {
+          // Audit H3 — `scheduledDate: ['Today']` translates to one
+          // PropertyFilter with `key: 'scheduled_date'`, `operator: 'eq'`,
+          // `valueDate: today`.
+          const params = args as {
+            propertyFilters?: Array<{
+              key?: string
+              operator?: string
+              valueDate?: string | null
+            }>
+          }
+          const schedFilter = params?.propertyFilters?.find((f) => f.key === 'scheduled_date')
+          if (schedFilter?.operator === 'eq' && schedFilter?.valueDate === todayStr) {
             return {
               items: [
                 {
@@ -1919,9 +1913,6 @@ describe('JournalPage', () => {
               has_more: false,
             }
           }
-          return emptyPage
-        }
-        if (cmd === 'query_by_property') {
           return emptyPage
         }
         if (cmd === 'batch_resolve') {
@@ -1946,22 +1937,25 @@ describe('JournalPage', () => {
         expect(results).toHaveAttribute('data-block-count', '1')
       })
 
-      const listBlockCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, callArgs]) =>
-          cmd === 'list_blocks' &&
-          (callArgs as { agenda?: { source?: string } })?.agenda?.source ===
-            'column:scheduled_date',
-      )
-      expect(listBlockCalls.length).toBeGreaterThanOrEqual(1)
-      expect((listBlockCalls[0]?.[1] as { agenda: { date: string } }).agenda.date).toBe(todayStr)
+      const filteredCalls = mockedInvoke.mock.calls.filter(([cmd, args]) => {
+        if (cmd !== 'filtered_blocks_query') return false
+        const a = args as { propertyFilters?: Array<{ key?: string }> }
+        return Boolean(a.propertyFilters?.some((f) => f.key === 'scheduled_date'))
+      })
+      expect(filteredCalls.length).toBeGreaterThanOrEqual(1)
+      const callArgs = filteredCalls[0]?.[1] as {
+        propertyFilters?: Array<{ key?: string; valueDate?: string | null }>
+      }
+      const schedFilter = callArgs.propertyFilters?.find((f) => f.key === 'scheduled_date')
+      expect(schedFilter?.valueDate).toBe(todayStr)
     })
 
     it("completedDate 'Today' filter queries completed_at with today's date", async () => {
       const todayStr = formatDate(new Date())
-      // PEND-35 Tier 2.10a — `queryPropertyDateDimension` collapses
-      // per-day fan-out into ONE call with `valueDateRange: [today,
-      // tomorrow]` (half-open). Compute tomorrow the same way as the
-      // module under test so DST / month-rollover stay consistent.
+      // Audit H3 — `executeAgendaFilters` now routes through
+      // `filtered_blocks_query` with `valueDateRange: [today, tomorrow]`
+      // (half-open). Compute tomorrow the same way as the module under
+      // test so DST / month-rollover stay consistent.
       const tomorrow = new Date(`${todayStr}T00:00:00`)
       tomorrow.setDate(tomorrow.getDate() + 1)
       const tomorrowStr = formatDate(tomorrow)
@@ -1969,16 +1963,16 @@ describe('JournalPage', () => {
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
-        if (cmd === 'list_blocks') {
-          return emptyPage
-        }
-        if (cmd === 'query_by_property') {
+        if (cmd === 'filtered_blocks_query') {
           const params = args as {
-            key?: string
-            extraFilters?: { valueDateRange?: [string, string] | null } | null
+            propertyFilters?: Array<{
+              key?: string
+              valueDateRange?: [string, string] | null
+            }>
           }
-          const range = params?.extraFilters?.valueDateRange ?? null
-          if (params?.key === 'completed_at' && range?.[0] === todayStr) {
+          const completedFilter = params?.propertyFilters?.find((f) => f.key === 'completed_at')
+          const range = completedFilter?.valueDateRange ?? null
+          if (range?.[0] === todayStr) {
             return {
               items: [
                 {
@@ -2022,17 +2016,27 @@ describe('JournalPage', () => {
         expect(results).toHaveAttribute('data-block-count', '1')
       })
 
-      // Verify it called query_by_property with key=completed_at and a
-      // half-open `valueDateRange: [today, tomorrow]` (PEND-35 Tier 2.10a).
-      const completedCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, callArgs]) =>
-          cmd === 'query_by_property' && (callArgs as { key?: string })?.key === 'completed_at',
-      )
-      expect(completedCalls.length).toBe(1)
-      const extras = (
-        completedCalls[0]?.[1] as { extraFilters: { valueDateRange: [string, string] } }
-      ).extraFilters
-      expect(extras.valueDateRange).toEqual([todayStr, tomorrowStr])
+      // Verify the `filtered_blocks_query` IPC for completed_at carries
+      // a PropertyFilter with the half-open range. (AgendaView mounts
+      // with a default status filter, so we filter to the call that
+      // carries the completed_at dimension to ignore the initial-mount
+      // status-only IPC.)
+      const filteredCalls = mockedInvoke.mock.calls.filter(([cmd, args]) => {
+        if (cmd !== 'filtered_blocks_query') return false
+        const a = args as { propertyFilters?: Array<{ key?: string }> }
+        return Boolean(a.propertyFilters?.some((f) => f.key === 'completed_at'))
+      })
+      expect(filteredCalls.length).toBe(1)
+      const propertyFilters = (
+        filteredCalls[0]?.[1] as {
+          propertyFilters?: Array<{
+            key?: string
+            valueDateRange?: [string, string] | null
+          }>
+        }
+      ).propertyFilters
+      const completedFilter = propertyFilters?.find((f) => f.key === 'completed_at')
+      expect(completedFilter?.valueDateRange).toEqual([todayStr, tomorrowStr])
     })
   })
 
