@@ -14,6 +14,7 @@
 | agenda-loadmore-cursor-namespace-2026-05-13 | Agenda load-more cursor-namespace mismatch | S | latent bug flagged during sql-audit H3 review; pre-existing; fix is small but its own commit |
 | agenda-sort-sql-pushdown-2026-05-13 | Agenda sort/group SQL pushdown (original H4) | M | deferred — JS sort on ≤200 items is sub-ms; SQL ORDER BY requires compound-cursor reshape |
 | dialog-responsiveness-primitive-2026-05-13 | Dialog primitive doesn't enforce header/body/footer + scrollable body; textarea drag-resize escapes frame; BugReportDialog hits all three on short windows | S (≤ half a day) | ready |
+| bug-report-zip-affordance-2026-05-13 | Bug report dialog silently downloads a zip and opens GitHub in one click — split into explicit *Download zip* + *Open GitHub issue* buttons and add an inline hint about the manual-attach step | S (~1 h) | ready |
 
 ## Recommended order
 
