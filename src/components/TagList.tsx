@@ -221,11 +221,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       <ListViewState
         loading={loading}
         items={tags}
-        skeleton={
-          <div aria-busy="true">
-            <LoadingSkeleton count={3} height="h-10" />
-          </div>
-        }
+        skeleton={<LoadingSkeleton count={3} height="h-10" loading />}
         empty={<EmptyState icon={Tag} message={t('tagList.empty')} />}
       >
         {(items) => (

@@ -139,9 +139,7 @@ export function JournalPage({
     <div ref={journalRef} tabIndex={-1} className="space-y-4 focus-ring-visible">
       {/* Loading indicator on initial fetch */}
       {loading && (
-        <div aria-busy="true">
-          <LoadingSkeleton count={3} height="h-10" data-testid="loading-skeleton" />
-        </div>
+        <LoadingSkeleton count={3} height="h-10" loading data-testid="loading-skeleton" />
       )}
 
       {/* UX-371 — small inline entry to the per-space journal template editor.

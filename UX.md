@@ -107,7 +107,7 @@ Priority badges use semantic tokens (NOT hardcoded Tailwind colors). Use `priori
 
 File: `src/components/BlockInlineControls.tsx` (`TASK_CHECKBOX_STYLES`)
 
-Task checkboxes use semantic tokens (`task-todo`, `task-doing`, `task-cancelled`, `task-done`) — never hardcoded Tailwind colors. The cycle is locked to `none → TODO → DOING → DONE → CANCELLED → none` (UX-201a, reordered by UX-234).
+Task checkboxes use semantic tokens (`task-doing`, `task-done`, `task-cancelled`, `task-custom`) — never hardcoded Tailwind colors. The TODO state has no dedicated token (it uses the default unchecked checkbox chrome). The cycle is locked to `none → TODO → DOING → DONE → CANCELLED → none` (UX-201a, reordered by UX-234).
 
 | State | Visual |
 | ------- | -------- |
@@ -208,7 +208,7 @@ File: `src/components/BlockTree.tsx`
 
 | Area | Padding |
 | ------ | --------- |
-| ProseMirror content | `px-3 py-1.5` (12px H, 6px V) |
+| ProseMirror content | `px-3 py-1` (12px H, 4px V) |
 | Code blocks | `px-3 py-2` (12px H, 8px V) |
 | Inline code | `px-1 py-0.5` (4px H, 2px V) |
 | Toolbar | `px-2 py-px` (8px H, 1px V), `gap-0.5` between buttons, `Separator` at `border-border/40` |
@@ -245,11 +245,11 @@ File: `src/components/ui/button.tsx` (button variants), `src/components/Sortable
 | Component | Desktop | Touch (coarse pointer) |
 | ----------- | --------- | ------------------------ |
 | Button (default) | `h-9` (36px) | `h-11` (44px) |
-| Button (xs) | `h-6` (24px) | `h-10` (40px) |
-| Button (sm) | `h-8` (32px) | `h-10` (40px) |
+| Button (xs) | `h-6` (24px) | `h-11` (44px) |
+| Button (sm) | `h-8` (32px) | `h-11` (44px) |
 | Button (icon) | `size-9` (36px) | `size-11` (44px) |
-| Button (icon-xs) | `size-6` (24px) | `size-10` (40px) |
-| Button (icon-sm) | `size-8` (32px) | `size-10` (40px) |
+| Button (icon-xs) | `size-6` (24px) | `size-11` (44px) |
+| Button (icon-sm) | `size-8` (32px) | `size-11` (44px) |
 | SidebarTrigger | `size-7` (28px) | `size-11` (44px) |
 | StaticBlock | auto | `min-h-[2.75rem]` |
 | Chips (tag/link) | small | `px-2.5 py-1 text-sm` |
@@ -261,7 +261,7 @@ File: `src/components/ui/button.tsx` (button variants), `src/components/Sortable
 | Drag handle / Delete | auto | `min-h-[44px] min-w-[44px]` |
 | Collapse toggle | auto | `min-h-[44px] min-w-[44px]` |
 | Task checkbox | auto | `min-h-[44px] min-w-[44px]` |
-| Priority badge | auto | `min-h-[44px] min-w-[44px]` |
+| Priority badge | auto | auto — decorative, not tappable (no `[@media(pointer:coarse)]` override). If a badge needs to become interactive, wrap it in a Button instead. |
 | Sidebar group actions | default | `after:-inset-2` (8px hit area expansion) |
 
 ### Responsive Viewport
@@ -551,7 +551,7 @@ Singleton `aria-live` announcer:
 
 - `aria-live="polite"`, `aria-atomic="true"`, `role="status"`
 - Visually hidden (off-screen clip)
-- Double-RAF pattern: clear text, then set new text via `requestAnimationFrame`
+- Single-RAF pattern: clear text, then set new text via `requestAnimationFrame` (see `src/lib/announcer.ts:53`). Older NVDA + iOS VoiceOver may occasionally miss back-to-back announcements; the single RAF was chosen to balance responsiveness against the double-RAF deadlock risk on busy main threads.
 
 ```ts
 import { announce } from '@/lib/announcer'
@@ -802,7 +802,7 @@ Toolbar button groups are defined as config arrays in `src/lib/toolbar-config.ts
 
 ### Shared Component Inventory
 
-Key reusable components. Check these before building something new:
+Key reusable components. Check these before building something new. This is the **curated short list** — for the complete inventory of all 37 shadcn/ui primitives + 120+ domain components, see `ARCHITECTURE.md` § Component inventory.
 
 | Component | File | Purpose |
 | ----------- | ------ | --------- |
@@ -818,7 +818,7 @@ Key reusable components. Check these before building something new:
 | `SectionTitle` | `ui/section-title.tsx` | h4 with color/label/count props for section headers |
 | `PopoverMenuItem` | `ui/popover-menu-item.tsx` | CVA button with active/disabled styling for menu items |
 | `CollapsiblePanelHeader` | `CollapsiblePanelHeader.tsx` | Chevron + title + count for collapsible sections |
-| `ListViewState` | (pattern) | Reusable loading/empty/loaded branching. Used by 6+ components |
+| `ListViewState` | `ListViewState.tsx` | Reusable loading/empty/loaded branching component. Used by 6+ list views. |
 | `AlertSection` | `AlertSection.tsx` | Shared overdue/upcoming section parameterized by variant |
 | `RichContentRenderer` | `RichContentRenderer.tsx` | renderRichContent + CALLOUT_CONFIG, extracted from StaticBlock (846→237 lines) |
 | `ImageLightbox` | `ImageLightbox.tsx` | Fullscreen Radix Dialog image viewer (90vw/90vh), Escape to close |
@@ -1482,7 +1482,7 @@ which uses a text-link visual treatment (FEAT-13): muted-foreground crumbs with
 
 | Indicator | Visual |
 | ----------- | -------- |
-| Sync status | Colored dot in Status view: idle=green (`emerald-500`), syncing/discovering/pairing=amber (`amber-500`), error=red (`destructive`), offline=gray (`slate-400`) |
+| Sync status | Colored dot driven by semantic tokens: `bg-sync-idle` (idle/connected), `bg-status-pending` (syncing/discovering/pairing), `bg-destructive` (error), `bg-sync-active` (active transfer). Never hardcoded Tailwind shades — the tokens carry the theme overrides. |
 | Conflict count | Badge on sidebar item |
 | Filter count | Badge on filter button |
 | Loading | Skeleton placeholders + spinner |

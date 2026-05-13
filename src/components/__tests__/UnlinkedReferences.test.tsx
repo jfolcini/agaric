@@ -613,8 +613,8 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  // 11. UX-152: Returns null when totalCount is 0
-  it('returns null when no unlinked references', async () => {
+  // 11. UX-152 / empty-state mandate: renders EmptyState when totalCount is 0
+  it('renders EmptyState when no unlinked references', async () => {
     mockedListUnlinked.mockResolvedValue(emptyResponse)
 
     const { container } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
@@ -624,12 +624,13 @@ describe('UnlinkedReferences', () => {
       expect(mockedListUnlinked).toHaveBeenCalled()
     })
 
-    // Component should return null — no section, no header, nothing
+    // Panel section is present, but renders an EmptyState (no header, no list).
     await waitFor(() => {
-      expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
+      expect(container.querySelector('.unlinked-references')).toBeInTheDocument()
     })
     expect(screen.queryByText('No Unlinked References')).not.toBeInTheDocument()
     expect(screen.queryByText('No unlinked references found.')).not.toBeInTheDocument()
+    expect(screen.getByText(t('unlinkedReferences.empty'))).toBeInTheDocument()
   })
 
   // 11b. Shows loading indicator when expanding and fetching
@@ -1134,9 +1135,11 @@ describe('UnlinkedReferences', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load unlinked references')
     })
-    // Component returns null when totalCount=0 and no filters active — that's the
-    // graceful fallback behaviour when the initial fetch fails.
-    expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
+    // UX-152 / empty-state mandate: component renders EmptyState when
+    // totalCount=0 and no filters active — that's the graceful fallback
+    // behaviour when the initial fetch fails.
+    expect(container.querySelector('.unlinked-references')).toBeInTheDocument()
+    expect(screen.getByText(t('unlinkedReferences.empty'))).toBeInTheDocument()
   })
 
   // ---------------------------------------------------------------------------

@@ -86,6 +86,7 @@ export const block: Record<string, string> = {
   'status.opsSentTooltip': 'Total operations sent to peers (resets on app restart)',
   'status.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',
   'status.materializerStatusTitle': 'Materializer Status',
+  'status.loadingLabel': 'Loading status',
   'status.foregroundQueueLabel': 'Foreground Queue',
   'status.peakLabel': 'Peak:',
   'status.backgroundQueueLabel': 'Background Queue',

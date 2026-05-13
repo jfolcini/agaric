@@ -78,6 +78,12 @@ export const settings: Record<string, string> = {
   'bugReport.copied': 'Report copied to clipboard',
   'bugReport.copyFailed': 'Failed to copy report',
   'bugReport.openIssue': 'Open in GitHub',
+  'bugReport.openGitHubIssue': 'Open GitHub issue',
+  'bugReport.downloadZip': 'Download zip',
+  'bugReport.zipDownloadHint':
+    'Saves {{fileName}} to your Downloads folder. Drag it into the GitHub issue once it opens.',
+  'bugReport.zipDownloaded':
+    'Saved {{fileName}} to Downloads. Now open the GitHub issue and attach it.',
   'bugReport.submitted': 'Bug report submitted. The GitHub issue is opening in a new tab.',
   'bugReport.loadMetadataFailed': 'Failed to collect bug-report metadata',
   'bugReport.readLogsFailed': 'Failed to read logs',

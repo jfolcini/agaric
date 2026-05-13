@@ -336,11 +336,17 @@ export function UnlinkedReferences({
         ? t('unlinkedRefs.headerOne')
         : t('unlinkedRefs.header', { count: totalCount })
 
-  // UX-152: Don't render when no unlinked references (and not loading).
-  // When filters are active, keep the panel visible so the user can
-  // clear/adjust filters — otherwise the filter controls vanish.
+  // UX-152: When no unlinked references (and not loading), render an
+  // EmptyState explaining *why* the panel is empty (UX/AGENTS mandate:
+  // never silently `return null` for empty state). When filters are active,
+  // keep the full panel visible so the user can clear/adjust filters —
+  // otherwise the filter controls vanish.
   if (!loading && totalCount === 0 && groups.length === 0 && filters.length === 0) {
-    return null
+    return (
+      <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
+        <EmptyState compact icon={Link2} message={t('unlinkedReferences.empty')} />
+      </section>
+    )
   }
 
   return (

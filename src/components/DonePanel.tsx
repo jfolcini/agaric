@@ -24,6 +24,7 @@ import { useSpaceStore } from '../stores/space'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { collectUniqueParentIds, groupBlocksByPage, mergeResolvedTitles } from './DonePanel.helpers'
+import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
@@ -186,9 +187,15 @@ export function DonePanel({
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
 
-  // UX-130: Don't render panel when no completed items
+  // UX-130 / UX empty-state mandate: render an EmptyState explaining
+  // *why* the panel is empty rather than returning null. AGENTS.md/UX.md
+  // ban silent `return null` for empty panels.
   if (!loading && blocks.length === 0) {
-    return null
+    return (
+      <section className="done-panel" aria-label={t('donePanel.completedItems')}>
+        <EmptyState compact icon={CheckCircle2} message={t('donePanel.noneYet')} />
+      </section>
+    )
   }
 
   return (

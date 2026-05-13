@@ -154,20 +154,23 @@ describe('DonePanel', () => {
     expect(await screen.findByText(t('donePanel.headerOne'))).toBeInTheDocument()
   })
 
-  // 2. Returns null when no items (UX-130)
-  it('does not render when no items', async () => {
+  // 2. UX empty-state mandate: renders EmptyState (not `return null`) when
+  // the panel has no items, so the user sees *why* it's empty.
+  it('renders EmptyState when no items', async () => {
     mockedQueryByProperty.mockResolvedValue(emptyResponse)
 
     const { container } = render(<DonePanel date="2025-06-15" />)
 
-    // UX-130: component returns null when empty. React 19 flushes the
-    // loading→empty→null transition on a later microtask, so wait on the
-    // observable end state rather than on the IPC call alone.
+    // Wait for loading → empty transition. React 19 flushes this on a
+    // later microtask, so wait on the observable end state rather than
+    // on the IPC call alone.
     await waitFor(() => {
-      expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
+      expect(container.querySelector('.done-panel')).toBeInTheDocument()
     })
     expect(mockedQueryByProperty).toHaveBeenCalled()
-    expect(screen.queryByText('No completed items yet.')).not.toBeInTheDocument()
+    // EmptyState renders the i18n message so the user knows why the panel
+    // is empty (UX/AGENTS empty-state mandate).
+    expect(screen.getByText(t('donePanel.noneYet'))).toBeInTheDocument()
   })
 
   // 3. Groups by source page with page titles
@@ -464,8 +467,8 @@ describe('DonePanel', () => {
   // Error-path tests
   // ---------------------------------------------------------------------------
 
-  // 14. queryByProperty rejects on initial load → renders nothing + logs error (UX-124, UX-130)
-  it('renders nothing when queryByProperty rejects on initial load', async () => {
+  // 14. queryByProperty rejects on initial load → renders EmptyState + logs error (UX-124, UX-130)
+  it('renders EmptyState when queryByProperty rejects on initial load', async () => {
     mockedQueryByProperty.mockRejectedValueOnce(new Error('backend error'))
 
     const { container } = render(<DonePanel date="2025-06-15" />)
@@ -474,10 +477,12 @@ describe('DonePanel', () => {
       expect(mockedQueryByProperty).toHaveBeenCalled()
     })
 
-    // UX-130: component returns null when empty (even on error)
+    // UX-130 / empty-state mandate: component renders EmptyState when
+    // empty (even on error), so the user knows why the panel is bare.
     await waitFor(() => {
-      expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
+      expect(container.querySelector('.done-panel')).toBeInTheDocument()
     })
+    expect(screen.getByText(t('donePanel.noneYet'))).toBeInTheDocument()
     // UX-124: logger.error should have been called
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
       'DonePanel',

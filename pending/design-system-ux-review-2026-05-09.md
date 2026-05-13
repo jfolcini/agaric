@@ -1,8 +1,17 @@
 # Agaric Design System — UX Review
 
 > **Status:** Tier 1 + Tier 3 hygiene mostly shipped. **Tier 1 closed:**
-> item 2 (iOS auto-zoom on `<Select>`), item 3 (`useAutoScrollOnDrag`
-> reduced-motion). **Tier 3 closed:** popover `outline-none` →
+> item 1 (Button `active:` states across all 6 variants + size-dependent
+> scale), item 2 (iOS auto-zoom on `<Select>`), item 3
+> (`useAutoScrollOnDrag` reduced-motion), item 9 (3 `return null`
+> empty-state guards → `<EmptyState compact>` in DonePanel +
+> LinkedReferences + UnlinkedReferences), item 10 (LoadingSkeleton
+> accepts `loading` prop with `role="status" aria-busy`; StatusPanel +
+> PageBrowser + TagList + JournalPage migrated).
+> **Tier 2 (doc drift) closed:** D1 (`task-todo` token), D3 (ProseMirror
+> padding), D5 (sync indicator tokens), D6 (single-RAF clarified), D8
+> (ListViewState pattern label), D9 (priority badge touch table), D10
+> (button h-11 vs h-10). **Tier 3 closed:** popover `outline-none` →
 > `outline-hidden`; select.tsx `outline-none` → `outline-hidden`;
 > `data-slot` added to 6 of 7 primitives (menu-popover-content
 > deliberately preserves inherited `data-slot="popover-content"` —

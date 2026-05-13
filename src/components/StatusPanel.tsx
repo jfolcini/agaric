@@ -18,8 +18,8 @@ import {
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -177,12 +177,13 @@ export function StatusPanel(): React.ReactElement {
           </CardHeader>
           <CardContent>
             {loading && !status && (
-              <div className="status-panel-loading grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Skeleton className="h-20 w-full rounded-lg" />
-                <Skeleton className="h-20 w-full rounded-lg" />
-                <Skeleton className="h-20 w-full rounded-lg" />
-                <Skeleton className="h-20 w-full rounded-lg" />
-              </div>
+              <LoadingSkeleton
+                count={4}
+                height="h-20"
+                loading
+                ariaLabel={t('status.loadingLabel')}
+                className="status-panel-loading grid grid-cols-1 sm:grid-cols-2 gap-4 space-y-0"
+              />
             )}
 
             {error && <p className="status-panel-error text-sm text-destructive">{error}</p>}
