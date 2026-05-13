@@ -56,11 +56,11 @@ Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions c
 ## Tier 2 — Verified, second wave
 
 **6. Most large lists are not virtualized.**
-`src/components/HistoryListView.tsx:78`, `src/components/AgendaResults.tsx:351-378`, `src/components/ConflictList.tsx:623`, `src/components/DonePanel.tsx:248`, `src/components/DuePanel.tsx:292`, and `src/components/BlockListRenderer.tsx:172` all `.map()` every row. BlockTree uses an `IntersectionObserver` placeholder pattern (`SortableBlockWrapper.tsx:80-93`) — paint is skipped offscreen but the React tree stays mounted, so reconciliation walks every row. PageBrowser is the only large list using `@tanstack/react-virtual` (`src/components/PageBrowser.tsx:14, 292`).
-**Fix:** extend the PageBrowser pattern to AgendaResults, History, Conflict, Done/Due panels. For BlockTree, evaluate replacing the IntersectionObserver scheme with windowing — placeholder mounts already imply correct measured heights.
+`src/components/HistoryListView.tsx:78`, `src/components/AgendaResults.tsx:351-378`, `src/components/DonePanel.tsx:248`, `src/components/DuePanel.tsx:292`, and `src/components/BlockListRenderer.tsx:172` all `.map()` every row. BlockTree uses an `IntersectionObserver` placeholder pattern (`SortableBlockWrapper.tsx:80-93`) — paint is skipped offscreen but the React tree stays mounted, so reconciliation walks every row. PageBrowser is the only large list using `@tanstack/react-virtual` (`src/components/PageBrowser.tsx:14, 292`).
+**Fix:** extend the PageBrowser pattern to AgendaResults, History, Done/Due panels. For BlockTree, evaluate replacing the IntersectionObserver scheme with windowing — placeholder mounts already imply correct measured heights. (ConflictList was deleted by PEND-09 Phase 5; no longer relevant.)
 
-**7. WeeklyView mounts one `BlockTree` per day; `DaySection` is not memoized.**
-`src/components/journal/WeeklyView.tsx:42` maps `entries` to `DaySection`; `src/components/journal/DaySection.tsx:38` is a plain function and `:162` mounts a `BlockTree`. Each BlockTree carries its own `SortableContext`, viewport observer, batch-attachments provider, slash-commands hook, and roving editor. Concurrent fan-out scales with the entry count.
+**7. WeeklyView mounts one `BlockTree` per day; `DaySection` is not memoized.** *(partial — DaySection now memoized.)*
+`src/components/journal/WeeklyView.tsx:42` maps `entries` to `DaySection`; `DaySection` was wrapped with `React.memo` in Session 710, but each instance still mounts a full `BlockTree` (`:162`) carrying its own `SortableContext`, viewport observer, batch-attachments provider, slash-commands hook, and roving editor. Concurrent fan-out scales with the entry count.
 **Fix:** memoize `DaySection`; consider a single shared `SortableContext` across days, and lazy-mount day BlockTrees on viewport entry.
 
 **8. GraphView simulation rebuilt on filter change.**
@@ -71,9 +71,9 @@ Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions c
 `src/components/DonePanel.tsx:165` (`grouped = groupBlocksByPage(...)`) and `:168` (`flatItems = grouped.flatMap(...)`) are bare expressions. `groupBlocksByPage` runs every render. Asymmetric with `DuePanel`, which memoizes the equivalents at lines 130/161.
 **Fix:** wrap both in `useMemo` matching DuePanel's pattern.
 
-**10. Heavy list-row components without `React.memo`.**
-`src/components/HistoryListItem.tsx:216`, `src/components/ConflictListItem.tsx:83`, `src/components/journal/DaySection.tsx:38`, `src/components/AppSidebar.tsx:104` are all plain function exports. `AppSidebar` receives ~10 store-derived props from `App.tsx`; every store change in App cascades into the sidebar tree.
-**Fix:** wrap in `React.memo`; for `AppSidebar`, also audit which selectors actually need to live in App vs the sidebar.
+**10. ~~Heavy list-row components without `React.memo`.~~** *(partial — only AppSidebar remains.)*
+HistoryListItem and `journal/DaySection` were wrapped with `React.memo` in Session 710. `ConflictListItem` was deleted by PEND-09 Phase 5 (no longer applicable). `src/components/AppSidebar.tsx:104` is still a plain function export and receives ~10 store-derived props from `App.tsx`; every store change in App cascades into the sidebar tree.
+**Fix:** wrap `AppSidebar` in `React.memo`; also audit which selectors actually need to live in App vs the sidebar.
 
 **11. `tabs.navigateToPage` chains 5 cross-store mutations per click.**
 `src/stores/tabs.ts:212` (`recordVisit`), `:228` (`navigateToDate`), `:234, 253, 266` (`setNavigationView`), `:235, 254, 267` (`setNavigationSelectedBlockId`), `:264` (tabs `set`). Each fans out to its own subscriber set on every page navigation.
@@ -152,6 +152,6 @@ Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions c
 5. Replace inline `metadata`/handlers in DuePanel/DonePanel/AgendaResults rows (#4).
 6. Run `ANALYZE=1 npm run build` to attribute the unnamed 472K/212K chunks; then decide on TipTap split (#3).
 7. Add `@tanstack/react-virtual` to AgendaResults and HistoryListView (#6).
-8. Memoize DonePanel `grouped`/`flatItems`, HistoryListItem, ConflictListItem, DaySection, AppSidebar (#9, #10).
-9. Fix Sidebar useMemo deps (#17).
+8. ~~Memoize DonePanel `grouped`/`flatItems`, HistoryListItem, DaySection~~ (closed Session 710); AppSidebar still open (#10). ConflictListItem deleted by PEND-09 Phase 5.
+9. ~~Fix Sidebar useMemo deps (#17).~~ Closed Session 710.
 10. Add a `dependency-cruiser` (or biome equivalent) check for the documented `ui/` → `stores/` import boundary.

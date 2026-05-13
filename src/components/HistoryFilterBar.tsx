@@ -11,7 +11,7 @@
 import { HelpCircle, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -115,16 +115,16 @@ export function HistoryFilterBar({
           internal op-type values shown in the Select. */}
       <Popover>
         <PopoverTrigger asChild>
-          <Button
+          <IconButton
             type="button"
             variant="ghost"
-            size="icon"
             className="h-8 w-8 text-muted-foreground"
-            aria-label={t('history.opTypeLegendLabel')}
+            tooltip={t('history.filterBar.legend')}
+            ariaLabel={t('history.opTypeLegendLabel')}
             data-testid="history-filter-legend-trigger"
           >
             <HelpCircle className="h-4 w-4" />
-          </Button>
+          </IconButton>
         </PopoverTrigger>
         <PopoverContent
           className="w-80"
@@ -147,17 +147,17 @@ export function HistoryFilterBar({
       {/* UX-275 sub-fix 3: inline ✕ to clear an active filter without
           opening the dropdown. */}
       {opTypeFilter !== null && (
-        <Button
+        <IconButton
           type="button"
           variant="ghost"
-          size="icon"
           className="h-7 w-7"
           onClick={() => onFilterChange(null)}
-          aria-label={t('history.clearFilter')}
+          tooltip={t('history.filterBar.clear')}
+          ariaLabel={t('history.clearFilter')}
           data-testid="history-filter-clear"
         >
           <X className="h-3.5 w-3.5" />
-        </Button>
+        </IconButton>
       )}
       {/* FEAT-3 Phase 8 — "All spaces" toggle.
           Off by default in HistoryView; flipping on drops the

@@ -59,15 +59,15 @@ The verified state of the system is **strong on tokens and primitives, weaker on
 **Fix:** promote `Badge` to a base with `tone`/`size`/`interactive` variants; collapse `StatusBadge` and `PriorityBadge` into it. Keep `FilterPill` and `RecentPageChip` (they're buttons-shaped-as-badges, different a11y contract). Rename `alert-list-item.tsx` → `alert-list-row.tsx` to break the badge-naming collision.
 
 **5. Page-header chrome is non-existent — every top-level view rolls its own.**
-`ViewHeader` is used by 6 views (`PageBrowser`, `HistoryView`, `SearchPanel`, `journal/AgendaView`, `PageHeader`, `ConflictList`). Six others ignore it: `JournalPage`, `TrashView`, `SettingsView`, `StatusPanel`, `GraphView`, `TemplatesView`. No shared title/breadcrumb/actions abstraction.
+`ViewHeader` is used by 5 views (`PageBrowser`, `HistoryView`, `SearchPanel`, `journal/AgendaView`, `PageHeader`). Six others ignore it: `JournalPage`, `TrashView`, `SettingsView`, `StatusPanel`, `GraphView`, `TemplatesView`. No shared title/breadcrumb/actions abstraction. (ConflictList was deleted by PEND-09 Phase 5.)
 **Fix:** introduce a `FeaturePageHeader` primitive `{title, breadcrumb?, actions?, kebab?}` and wrap every top-level view; codify in AGENTS.md.
 
 **6. Settings tabs each invent their own heading style.**
 `AgentAccessSettingsTab.tsx:264` and `GoogleCalendarSettingsTab.tsx:404` use `<h2 text-base font-medium>`; `KeyboardSettingsTab.tsx:139` uses `<h3 text-lg font-semibold>`; `DataSettingsTab.tsx:166-296` uses `Card`/`CardHeader`/`CardTitle`; `settings/HelpTab.tsx:23` uses `<h3 text-sm font-medium>`. Five tabs, four styles, two heading levels.
 **Fix:** standardize on the `Card` pattern (DataSettingsTab) and rewrite the four others.
 
-**7. Filter UI fragmented across 7+ surfaces.**
-Only `BacklinkFilterBuilder` and `GraphFilterBar` use the shared `FilterPill` / `FilterPillRow`. `HistoryFilterBar`, `ConflictList`, `DuePanelFilters`, `SearchPanel` chip bar, `AgendaFilterBuilder` all roll their own. Users moving between Search / Agenda / History / Conflicts see different filter UX every time.
+**7. Filter UI fragmented across multiple surfaces.**
+Only `BacklinkFilterBuilder` and `GraphFilterBar` use the shared `FilterPill` / `FilterPillRow`. `HistoryFilterBar`, `DuePanelFilters`, `SearchPanel` chip bar, `AgendaFilterBuilder` all roll their own. Users moving between Search / Agenda / History see different filter UX every time. (ConflictList was deleted by PEND-09 Phase 5.)
 **Fix:** standardize on `FilterPill` + `FilterPillRow` + a shared `AddFilterPopover`; migrate the divergent ones in priority order.
 
 **8. Icon-only buttons without `Tooltip` on three high-traffic surfaces.**
@@ -121,8 +121,8 @@ These cost almost nothing to fix and reduce future agent confusion.
 - **Dead tokens in `index.css:260-266`.** `--leading-relaxed`, `--tracking-tight/normal/wide` defined, never referenced, not bridged in `@theme inline`. New code uses `tracking-wider` (which has no token at all). Either bridge them or delete them.
 - **`prefers-contrast: more` block (`index.css:1119-1203`) skips many token families** — `--ring`, `--alert-*`, `--op-*`, `--date-*`, `--conflict-*`, `--task-*`, `--block-ref`, `--highlight`, `--sync-*`. Extend the high-contrast overrides to cover them.
 - **Hardcoded English fallbacks** `(empty)` in `ResultCard.tsx:74` and `BlockListItem.tsx:34,69`; `defaultValue: 'Projected'` in `DuePanel.tsx:336`; `defaultValue: 'P${v}'` in `GraphFilterBar.tsx:300,302`. Add the missing i18n keys, drop the fallbacks.
-- **Three thin renaming wrappers** around `useListMultiSelect`: `useTrashMultiSelect.ts`, `useConflictSelection.ts` (~40 LOC each, no real logic). `useHistorySelection.ts` adds genuine logic — keep that one, delete the others.
-- **Component decomposition backlog.** 14 files exceed AGENTS.md's 500-LOC threshold; worst: `BlockTree.tsx` (790), `ConflictList.tsx` (690), `RichContentRenderer.tsx` (659). `sidebar.tsx` (1078, 22 sub-components) is fat-but-cohesive — splitting `useSidebarState` and edge-swipe/keyboard handlers out is the cheapest win.
+- ~~**Three thin renaming wrappers** around `useListMultiSelect`~~ — closed. `useConflictSelection.ts` was already gone (PEND-09 Phase 5 deleted the entire conflict feature); `useTrashMultiSelect.ts` deleted Session 712 (TrashView now calls `useListMultiSelect` directly). `useHistorySelection.ts` kept as it has real logic.
+- **Component decomposition backlog.** ~13 files exceed AGENTS.md's 500-LOC threshold; worst: `BlockTree.tsx` (790), `RichContentRenderer.tsx` (659). `sidebar.tsx` (1078, 22 sub-components) is fat-but-cohesive — splitting `useSidebarState` and edge-swipe/keyboard handlers out is the cheapest win. (ConflictList.tsx no longer applicable — deleted by PEND-09 Phase 5.)
 - **`FeatureErrorBoundary` only wraps top-level views** (`ViewDispatcher.tsx`, `AppSidebar.tsx`). Heavy in-view sections — `CompactionCard`, `LinkedReferences`, `UnlinkedReferences`, `PagePropertyTable`, `GraphFilterBar` — would benefit from their own boundary so a section crash doesn't blank the page.
 - **List rendering primitive zoo.** 7 distinct row primitives across list views; `TemplatesView.tsx:186-239` and `DuePanel.tsx:343-389` (projected entries) write raw `<li>` and bypass the design system entirely.
 

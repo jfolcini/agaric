@@ -26,7 +26,7 @@ import { EmptyState } from './EmptyState'
 import { GraphFilterBar } from './GraphFilterBar'
 import { fetchGraphData, type GraphEdge, type GraphNode } from './GraphView.helpers'
 import { LoadingSkeleton } from './LoadingSkeleton'
-import { Button } from './ui/button'
+import { IconButton } from './ui/icon-button'
 
 // ── Module-level cache for stale-while-revalidate (UX-113) ────────────
 const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
@@ -229,30 +229,30 @@ export function GraphView(): React.ReactElement {
         data-testid="graph-svg"
       />
       <div className="absolute bottom-3 right-3 flex flex-col gap-1">
-        <Button
+        <IconButton
           variant="outline"
-          size="icon"
           onClick={zoomIn}
-          aria-label={withShortcut(t('graph.zoomIn'), 'graphZoomIn')}
+          tooltip={t('graph.zoomIn')}
+          ariaLabel={withShortcut(t('graph.zoomIn'), 'graphZoomIn')}
         >
           <Plus className="h-4 w-4" />
-        </Button>
-        <Button
+        </IconButton>
+        <IconButton
           variant="outline"
-          size="icon"
           onClick={zoomOut}
-          aria-label={withShortcut(t('graph.zoomOut'), 'graphZoomOut')}
+          tooltip={t('graph.zoomOut')}
+          ariaLabel={withShortcut(t('graph.zoomOut'), 'graphZoomOut')}
         >
           <Minus className="h-4 w-4" />
-        </Button>
-        <Button
+        </IconButton>
+        <IconButton
           variant="outline"
-          size="icon"
           onClick={zoomReset}
-          aria-label={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
+          tooltip={t('graph.zoomReset')}
+          ariaLabel={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
         >
           <Maximize2 className="h-4 w-4" />
-        </Button>
+        </IconButton>
       </div>
     </div>
   )

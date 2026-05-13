@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -495,16 +496,16 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               onBlur={handleTitleBlur}
               onKeyDown={handleTitleKeyDown}
             />
-            <Button
+            <IconButton
               variant="ghost"
-              size="icon"
               onClick={handleToggleStar}
-              aria-label={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
+              tooltip={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
+              ariaLabel={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
               className="shrink-0 text-muted-foreground hover:text-star data-[starred=true]:text-star"
               data-starred={starred}
             >
               <Star className="h-4 w-4" fill={starred ? 'currentColor' : 'none'} />
-            </Button>
+            </IconButton>
             <PageOutline />
             <PageHeaderMenu
               canRedo={canRedo}

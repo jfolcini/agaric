@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { CardButton } from '../card-button'
 import { CloseButtonIcon, closeButtonClassName } from '../close-button'
+import { IconButton } from '../icon-button'
 import { Input } from '../input'
 import { Label } from '../label'
 import { ListItem } from '../list-item'
@@ -585,6 +586,120 @@ describe('ToggleGroup', () => {
         <ToggleGroupItem value="a">A</ToggleGroupItem>
         <ToggleGroupItem value="b">B</ToggleGroupItem>
       </ToggleGroup>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// IconButton — UX.md mandates a tooltip on every icon-only button. The
+// `tooltip` + `ariaLabel` props are typed as mandatory `string`s so a
+// consumer cannot omit either; these tests cover the runtime contract.
+// ---------------------------------------------------------------------------
+
+describe('IconButton', () => {
+  it('renders as a button with data-slot="icon-button" and the supplied aria-label', () => {
+    render(
+      <IconButton tooltip="Star this page" ariaLabel="Star this page">
+        <span aria-hidden="true">★</span>
+      </IconButton>,
+    )
+    const btn = screen.getByRole('button', { name: 'Star this page' })
+    expect(btn).toBeInTheDocument()
+    expect(btn).toHaveAttribute('data-slot', 'icon-button')
+    expect(btn).toHaveAttribute('aria-label', 'Star this page')
+  })
+
+  it('defaults to size="icon" (36 px square)', () => {
+    render(
+      <IconButton tooltip="Tip" ariaLabel="Tip">
+        <span aria-hidden="true">i</span>
+      </IconButton>,
+    )
+    const btn = screen.getByRole('button', { name: 'Tip' })
+    expect(btn).toHaveAttribute('data-size', 'icon')
+    expect(btn.className).toContain('size-9')
+  })
+
+  it('accepts the icon-sm size and emits the expected data-size', () => {
+    render(
+      <IconButton tooltip="Tip" ariaLabel="Tip" size="icon-sm">
+        <span aria-hidden="true">i</span>
+      </IconButton>,
+    )
+    const btn = screen.getByRole('button', { name: 'Tip' })
+    expect(btn).toHaveAttribute('data-size', 'icon-sm')
+    expect(btn.className).toContain('size-8')
+  })
+
+  it('forwards Button variant (ghost/outline/...) through to data-variant', () => {
+    render(
+      <IconButton tooltip="Tip" ariaLabel="Tip" variant="outline">
+        <span aria-hidden="true">i</span>
+      </IconButton>,
+    )
+    const btn = screen.getByRole('button', { name: 'Tip' })
+    expect(btn).toHaveAttribute('data-variant', 'outline')
+  })
+
+  it('merges custom className without clobbering Button chrome', () => {
+    render(
+      <IconButton tooltip="Tip" ariaLabel="Tip" className="my-icon-btn shrink-0">
+        <span aria-hidden="true">i</span>
+      </IconButton>,
+    )
+    const btn = screen.getByRole('button', { name: 'Tip' })
+    expect(btn.className).toContain('my-icon-btn')
+    expect(btn.className).toContain('shrink-0')
+    // size="icon" base class still present
+    expect(btn.className).toContain('size-9')
+  })
+
+  it('fires onClick when clicked', async () => {
+    const handleClick = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <IconButton tooltip="Add" ariaLabel="Add item" onClick={handleClick}>
+        <span aria-hidden="true">+</span>
+      </IconButton>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Add item' }))
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the tooltip content on focus (Radix Tooltip wiring)', async () => {
+    const user = userEvent.setup()
+    render(
+      <IconButton tooltip="Zoom in" ariaLabel="Zoom in">
+        <span aria-hidden="true">+</span>
+      </IconButton>,
+    )
+    const btn = screen.getByRole('button', { name: 'Zoom in' })
+    await user.tab()
+    expect(btn).toHaveFocus()
+    // Radix portals the tooltip; look it up by role. Multiple nodes may
+    // exist (visible + a11y description), so `getAllByRole` is safer.
+    const tooltips = await screen.findAllByRole('tooltip')
+    expect(tooltips.length).toBeGreaterThan(0)
+    expect(tooltips[0]).toHaveTextContent('Zoom in')
+  })
+
+  it('forwards arbitrary DOM props (data-testid, data-starred)', () => {
+    render(
+      <IconButton tooltip="Star" ariaLabel="Star" data-testid="star-btn" data-starred={true}>
+        <span aria-hidden="true">★</span>
+      </IconButton>,
+    )
+    const btn = screen.getByTestId('star-btn')
+    expect(btn).toHaveAttribute('data-starred', 'true')
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <IconButton tooltip="Star this page" ariaLabel="Star this page">
+        <span aria-hidden="true">★</span>
+      </IconButton>,
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()

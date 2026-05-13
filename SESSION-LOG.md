@@ -7,6 +7,39 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 715 — ScrollArea + lazy-dialogs + IconButton + pending cleanup (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 3 build (general-purpose) in parallel + orchestrator-direct pending-folder audit |
+| **Items closed** | `pending/scrollarea-thin-hover-reveal-2026-05-14.md` (plan file deleted); design-system-perf-review item 12 (lazy-load 3 dialogs); design-system-ux-review Tier 1 item 8 (IconButton primitive + 3 call sites). |
+| **Items modified** | pending/README.md index (added rows for gcal-oauth, tauri-2.11-migration, and the 3 design-system audit docs as partial-shipped); design-system-maintainability/perf-review/ux-review and REVIEW-LATER.md scrubbed of stale `ConflictList` / `ConflictListItem` / `useConflictSelection` references (PEND-09 Phase 5 deleted those); perf-review items 7 + 10 + ordering rebuilt to flag what's already closed (DonePanel useMemo, HistoryListItem.memo, DaySection.memo, Sidebar deps). |
+| **Tests added** | +9 IconButton (primitives.test.tsx) |
+| **Files touched** | 15 (5 production + 1 new primitive + 1 test + 1 i18n + AGENTS.md + ARCHITECTURE.md + pending cleanup ×4 + plan-file delete) |
+
+**Summary:** three parallel subagents closed three small items, plus an orchestrator-direct pass scrubbed the pending/ folder of stale references. **ScrollArea** primitive: bar width 10/16 px → 6/8 px and `type="hover"` default (consumer `type` overrides still win via `{...props}` spread). **Lazy-load 3 dialogs**: BugReportDialog, QuickCaptureDialog, NoPeersDialog moved to `React.lazy` + `Suspense fallback={null}` with `&& open` conditional rendering, so `jszip` / `export-graph` only fetch when the user opens a dialog. **IconButton primitive**: new `src/components/ui/icon-button.tsx` with mandatory `tooltip: string` + `ariaLabel: string` props that wrap Button in a Radix Tooltip; 3 high-traffic call sites refactored (GraphView zoom controls, PageHeader star toggle, HistoryFilterBar legend + clear). AGENTS.md + ARCHITECTURE.md inventories bumped (37 → 38 primitives). **Pending-folder cleanup**: removed stale `ConflictList` / `ConflictListItem` / `useConflictSelection` references from 3 design-system audits + REVIEW-LATER.md (PEND-09 Phase 5 deleted those entities); marked perf-review items 7 and 10 as partially closed (DaySection, HistoryListItem, DonePanel `useMemo`/`memo` all shipped Sessions 710/712); README index now lists the 5 previously-uncatalogued plan files (gcal-oauth, tauri-2.11, and the 3 design-system audits) for transparency.
+
+**Verification:**
+- `npx vitest run` — 9635 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- `src/components/ui/scroll-area.tsx` — thinner bar + `type="hover"` default.
+- `src/App.tsx` — 3 dialogs converted to React.lazy + Suspense.
+- `src/components/ui/icon-button.tsx` — new primitive.
+- `src/components/GraphView.tsx`, `PageHeader.tsx`, `HistoryFilterBar.tsx` — migrated to IconButton.
+- `src/components/ui/__tests__/primitives.test.tsx` — 9 IconButton tests.
+- `src/lib/i18n/history.ts` — 2 new keys.
+- `AGENTS.md`, `ARCHITECTURE.md` — inventory bumps.
+- `pending/README.md` — 5 new index rows + cleanup.
+- `pending/REVIEW-LATER.md` — MAINT-207 ConflictList ref updated.
+- `pending/design-system-maintainability-2026-05-09.md`, `design-system-perf-review-2026-05-09.md`, `design-system-ux-review-2026-05-09.md` — stale references scrubbed; partial-shipped state reflected in body text.
+- `pending/scrollarea-thin-hover-reveal-2026-05-14.md` — deleted.
+
+**Commit plan:** single commit covering 3 plan closes + pending cleanup + Session 715 entry.
+
+---
 ## Session 714 — agenda-loadmore + journal-header plan closes (2026-05-14)
 
 | Metadata | Value |
