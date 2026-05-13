@@ -4,17 +4,24 @@
 //! Provides a `BacklinkFilter` tree for composing boolean filter queries
 //! on backlinks and evaluating them against the database.
 //!
-//! ## Evaluation strategy
+//! ## Evaluation strategy (H1: keyset + SQL COUNT)
 //!
-//! 1. **Base set** — collect all `source_id`s from `block_links` where
-//!    `target_id = ?` and the source block is not deleted/conflict.
-//! 2. **Filter** — each `BacklinkFilter` resolves to a `FxHashSet<String>`
-//!    of block_ids; filters are AND-ed together and intersected with the
-//!    base set.
-//! 3. **Sort** — sort the filtered set (Created = ULID order; property
-//!    sorts fetch values and sort by them).
-//! 4. **Paginate** — keyset cursor pagination on the sorted list.
-//! 5. **Fetch** — load full `BlockRow` data for the page.
+//! 1. **Counts** — `SELECT COUNT(*) FROM block_links bl JOIN blocks b …`
+//!    yields `total_count` directly from SQL, without materialising the
+//!    full base id set. When filters are present they resolve to a Rust
+//!    `FxHashSet` whose size is `filtered_count`.
+//! 2. **Page query (Created / default sort)** — single SQL with
+//!    `(?N IS NULL OR b.id > ?N+1)` keyset clause, optional
+//!    `b.id IN (SELECT value FROM json_each(?))` constraint when a
+//!    filtered set is present, `ORDER BY b.id ASC/DESC LIMIT N+1`. The
+//!    full `BlockRow` is projected directly — no separate fetch step.
+//! 3. **Property sort** — falls back to "materialise filtered set, sort
+//!    in Rust by property value, slice the page, batch-fetch rows" because
+//!    property sorts can't be expressed as a keyset on `b.id` without
+//!    encoding the value into the cursor. The full *unfiltered* base set
+//!    is still never materialised; `total_count` comes from SQL COUNT
+//!    and only `filtered_ids` is held in memory (small when filters are
+//!    present; intrinsic for property sort).
 
 use futures_util::future::try_join_all;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -45,16 +52,25 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 /// post-space-filter universe. `None` is the unscoped (pre-FEAT-3)
 /// behaviour.
 ///
-/// ## Algorithm
+/// ## Algorithm (H1)
 ///
-/// 1. Get base backlink set (source_ids linking to `block_id`,
-///    excluding self-references; space-scoped when `space_id` is `Some`).
-/// 2. If filters provided, resolve each to a set, AND them all together,
-///    then intersect with the base set.
-/// 3. Sort the result set.
-/// 4. Apply keyset cursor pagination.
-/// 5. Fetch full `BlockRow` data for the page.
-/// 6. Return `BacklinkQueryResponse` with `total_count`.
+/// 1. **`total_count`** — single `SELECT COUNT(*)` over `block_links` joined
+///    against `blocks` with the base predicates (target match,
+///    self-exclusion, deleted-at, space). The 50k base id set is never
+///    materialised — we count rows in SQL.
+/// 2. **Filters** — when supplied, resolve each branch to a Rust set via
+///    `resolve_filter_with_candidates`. AND-intersected across top-level
+///    filters. The resolved set is passed into the page query as a
+///    `json_each` constraint; `filtered_count` comes from a second SQL
+///    `COUNT(*)` so it correctly reflects the *intersection* with the
+///    backlink base set (filters like `SourcePage` resolve to ids
+///    outside the base set, so `filtered_ids.len()` would over-count).
+/// 3. **Sort + page** — for `Created` sort we emit a single SQL with a
+///    `(?N IS NULL OR b.id > ?N+1)` keyset clause and (when filtered) a
+///    `b.id IN (SELECT value FROM json_each(?))` constraint, projecting
+///    the full `BlockRow` columns directly. For property sorts we fall
+///    back to the materialise-and-sort path on `filtered_ids` (intrinsic
+///    to property sort).
 pub async fn eval_backlink_query(
     pool: &SqlitePool,
     block_id: &str,
@@ -63,24 +79,11 @@ pub async fn eval_backlink_query(
     page: &PageRequest,
     space_id: Option<&str>,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    // 1. Get base backlink set
-    //    `bl.source_id != ?1` excludes self-references so a block linking
-    //    to itself does not inflate `total_count` or surface as its own
-    //    backlink. The `?1` parameter is reused (no extra bind needed).
-    //    Mirrors `eval_unlinked_references` / `eval_backlink_query_grouped`.
-    //    (L-95)
-    //
-    //    FEAT-3p4 — the trailing `(?2 IS NULL OR COALESCE(...))` clause
-    //    mirrors `crate::space_filter_clause!`. Resolves the source block
-    //    to its owning page via `COALESCE(b.page_id, b.id)` and
-    //    intersects against `block_properties(key = 'space').value_ref`
-    //    when `space_id` is `Some`. Kept inline (not via the macro)
-    //    because this is dynamic SQL (`sqlx::query_scalar`) — the
-    //    macro form requires literal strings. The single `?2` is bound
-    //    twice so the `(? IS NULL OR …)` short-circuit works for the
-    //    same value.
-    let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT bl.source_id FROM block_links bl \
+    // 1. `total_count` via SQL — never materialises the base id set.
+    //    Mirrors the predicate shape (self-exclusion + deleted_at + space
+    //    scope) that the pre-H1 implementation used to build base_ids.
+    let total_count_i64: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
            AND b.deleted_at IS NULL \
@@ -90,14 +93,11 @@ pub async fn eval_backlink_query(
     )
     .bind(block_id)
     .bind(space_id)
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .collect();
+    .fetch_one(pool)
+    .await?;
+    let total_count: usize = usize::try_from(total_count_i64).unwrap_or(0);
 
-    let total_count = base_ids.len();
-
-    if base_ids.is_empty() {
+    if total_count == 0 {
         return Ok(BacklinkQueryResponse {
             items: vec![],
             next_cursor: None,
@@ -107,32 +107,116 @@ pub async fn eval_backlink_query(
         });
     }
 
-    // 2. Apply filters (AND semantics at top level)
-    let filtered_ids = if let Some(ref filter_list) = filters {
-        if filter_list.is_empty() {
-            base_ids
-        } else {
-            // Resolve all top-level filters concurrently (#319).
-            // Pass `base_ids` as candidates (I-Search-9) so leaf arms
-            // that support a candidate-scoped path (BlockType,
-            // PropertyIsEmpty) can push the IN-set into SQL instead of
-            // materialising every active block first.
+    // 2. Resolve filters (if any). The candidate-aware leaves do not
+    //    receive a base candidate set — feeding them one would require
+    //    materialising the full base set, which is exactly what H1
+    //    eliminates. Leaf SQL still filters `deleted_at IS NULL`; the
+    //    base-set predicates (target match, self-exclusion, space) are
+    //    re-applied at the page query below so the final intersection is
+    //    correct.
+    let filtered_ids_opt: Option<FxHashSet<String>> = match filters.as_ref() {
+        Some(filter_list) if !filter_list.is_empty() => {
             let futures = filter_list
                 .iter()
-                .map(|f| resolve_filter_with_candidates(pool, f, 0, Some(&base_ids)));
+                .map(|f| resolve_filter_with_candidates(pool, f, 0, None));
             let results = try_join_all(futures).await?;
-            let mut result = base_ids;
-            for set in results {
-                result.retain(|id| set.contains(id));
+            let mut iter = results.into_iter();
+            let mut acc = iter.next().unwrap_or_default();
+            for set in iter {
+                acc.retain(|id| set.contains(id));
             }
-            result
+            Some(acc)
         }
-    } else {
-        base_ids
+        _ => None,
     };
 
-    // 3. Compute filtered_count before pagination
-    let filtered_count = filtered_ids.len();
+    // Resolve sort (default = Created Asc).
+    let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
+
+    match sort {
+        BacklinkSort::Created { dir } => {
+            eval_created_sort_keyset(
+                pool,
+                block_id,
+                space_id,
+                page,
+                dir,
+                filtered_ids_opt.as_ref(),
+                total_count,
+            )
+            .await
+        }
+        BacklinkSort::PropertyText { .. }
+        | BacklinkSort::PropertyNum { .. }
+        | BacklinkSort::PropertyDate { .. } => {
+            eval_property_sort_materialised(
+                pool,
+                block_id,
+                space_id,
+                page,
+                &sort,
+                filtered_ids_opt,
+                total_count,
+            )
+            .await
+        }
+    }
+}
+
+/// Created-sort path: single SQL with keyset on `b.id`, optional
+/// `json_each` filter intersection, projects full BlockRow columns —
+/// no separate fetch step.
+async fn eval_created_sort_keyset(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    page: &PageRequest,
+    dir: SortDir,
+    filtered_ids: Option<&FxHashSet<String>>,
+    total_count: usize,
+) -> Result<BacklinkQueryResponse, AppError> {
+    // When filters resolved to an empty set, short-circuit.
+    if let Some(set) = filtered_ids {
+        if set.is_empty() {
+            return Ok(BacklinkQueryResponse {
+                items: vec![],
+                next_cursor: None,
+                has_more: false,
+                total_count,
+                filtered_count: 0,
+            });
+        }
+    }
+
+    // `filtered_count` = base predicates ∩ filter set. The pre-H1
+    // implementation intersected the resolved filter set with the
+    // backlink base set before measuring. Filters like
+    // `SourcePage` resolve to "all blocks not under page X" — millions
+    // of ids that are NOT backlinks to the target. Using
+    // `filtered_ids.len()` would over-count badly. Run the count in SQL
+    // so the intersection happens server-side.
+    let filtered_count = match filtered_ids {
+        None => total_count,
+        Some(set) => {
+            let json = serde_json::to_string(&set.iter().collect::<Vec<_>>())?;
+            let count_i64: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM block_links bl \
+                 JOIN blocks b ON b.id = bl.source_id \
+                 WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+                   AND b.deleted_at IS NULL \
+                   AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                        SELECT bp.block_id FROM block_properties bp \
+                        WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
+                   AND b.id IN (SELECT value FROM json_each(?3))",
+            )
+            .bind(block_id)
+            .bind(space_id)
+            .bind(&json)
+            .fetch_one(pool)
+            .await?;
+            usize::try_from(count_i64).unwrap_or(0)
+        }
+    };
 
     if filtered_count == 0 {
         return Ok(BacklinkQueryResponse {
@@ -144,55 +228,184 @@ pub async fn eval_backlink_query(
         });
     }
 
-    // 4. Sort
-    let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
-    let sorted_ids = sort_ids(pool, &filtered_ids, &sort).await?;
+    // ----- Compose page SQL -------------------------------------------------
+    //
+    // Reserved bind slots:
+    //   ?1  block_id (target_id + self-exclusion sentinel)
+    //   ?2  space_id (Option<&str>; NULL ⇒ unscoped)
+    //   ?3  cursor_flag (Option<i64>; NULL ⇒ no cursor)
+    //   ?4  cursor_id (String; only consulted when ?3 IS NOT NULL)
+    //   ?5  fetch_limit (i64; page.limit + 1)
+    //   ?6  filter_json (Option<String>; NULL ⇒ no filter set bound)
+    //
+    // Cursor direction encoded in the comparison operator at compose time:
+    //   Asc  → `b.id > ?4`
+    //   Desc → `b.id < ?4`
+    let cursor_cmp = match dir {
+        SortDir::Asc => ">",
+        SortDir::Desc => "<",
+    };
+    let order_dir = match dir {
+        SortDir::Asc => "ASC",
+        SortDir::Desc => "DESC",
+    };
+    let sql = format!(
+        "SELECT {cols} \
+         FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL \
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
+           AND (?3 IS NULL OR b.id {cursor_cmp} ?4) \
+           AND (?6 IS NULL OR b.id IN (SELECT value FROM json_each(?6))) \
+         ORDER BY b.id {order_dir} LIMIT ?5",
+        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
+        cursor_cmp = cursor_cmp,
+        order_dir = order_dir,
+    );
 
-    // 5. Apply cursor pagination
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.id.as_str()),
+        None => (None, ""),
+    };
+    let fetch_limit: i64 = page.limit.saturating_add(1);
+    let filter_json: Option<String> = match filtered_ids {
+        Some(set) => Some(serde_json::to_string(&set.iter().collect::<Vec<_>>())?),
+        None => None,
+    };
+
+    let rows: Vec<BlockRow> = sqlx::query_as::<_, BlockRow>(&sql)
+        .bind(block_id) // ?1
+        .bind(space_id) // ?2
+        .bind(cursor_flag) // ?3
+        .bind(cursor_id) // ?4
+        .bind(fetch_limit) // ?5
+        .bind(filter_json.as_deref()) // ?6
+        .fetch_all(pool)
+        .await?;
+
+    // Slice to honour `limit`; detect `has_more` from the +1 row.
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
+    let mut rows = rows;
+    if has_more {
+        rows.truncate(limit_usize);
+    }
+
+    let next_cursor = if has_more {
+        let last = rows.last().expect("has_more implies non-empty");
+        Some(Cursor::for_id(last.id.clone()).encode()?)
+    } else {
+        None
+    };
+
+    // MAINT-113 M2 — the SQL filters `deleted_at IS NULL`, so the rows
+    // are active by construction. Boundary cast records that claim.
+    let items: Vec<crate::pagination::ActiveBlockRow> = rows
+        .into_iter()
+        .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
+        .collect();
+
+    Ok(BacklinkQueryResponse {
+        items,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
+    })
+}
+
+/// Property-sort fallback: materialise the *filtered* (not base) id set
+/// via SQL, sort by property value in Rust, paginate the sorted slice,
+/// then batch-fetch BlockRows for the page.
+///
+/// The base id set is never materialised — `total_count` already comes
+/// from SQL `COUNT(*)`. When filters are present we intersect against
+/// the resolved filter set so only the post-filter ids are loaded.
+async fn eval_property_sort_materialised(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    page: &PageRequest,
+    sort: &BacklinkSort,
+    filtered_ids_in: Option<FxHashSet<String>>,
+    total_count: usize,
+) -> Result<BacklinkQueryResponse, AppError> {
+    // Build the post-filter id set. When filters were supplied we just
+    // intersect with the SQL-resolved backlink set; otherwise we resolve
+    // the full backlink set (intrinsic for property sort — values must
+    // be visited to know the page boundary).
+    let filter_json: Option<String> = match filtered_ids_in.as_ref() {
+        Some(set) if set.is_empty() => {
+            return Ok(BacklinkQueryResponse {
+                items: vec![],
+                next_cursor: None,
+                has_more: false,
+                total_count,
+                filtered_count: 0,
+            });
+        }
+        Some(set) => Some(serde_json::to_string(&set.iter().collect::<Vec<_>>())?),
+        None => None,
+    };
+
+    let filtered_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT bl.source_id FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL \
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
+           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",
+    )
+    .bind(block_id)
+    .bind(space_id)
+    .bind(filter_json.as_deref())
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    let filtered_count = filtered_ids.len();
+    if filtered_count == 0 {
+        return Ok(BacklinkQueryResponse {
+            items: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            filtered_count: 0,
+        });
+    }
+
+    // Sort by property value (Rust-side fetch + comparator).
+    let sorted_ids = sort_ids(pool, &filtered_ids, sort).await?;
+
+    // Cursor pagination: property sorts have no ULID-monotonic ordering,
+    // so we fall back to an O(n) position scan, mirroring the pre-H1
+    // path. Property pages are bounded by the filtered set size, which
+    // in practice is small (filters present) or capped by the user's
+    // sort key cardinality.
     let start_after = page.after.as_ref().map(|c| c.id.as_str());
     let start_idx = if let Some(after_id) = start_after {
-        match sort {
-            // Created sort uses ULID order which is lexicographic. Use
-            // `partition_point` so the predicate respects the slice
-            // direction — `binary_search_by` with the natural `cmp` on a
-            // descending slice returns `Err(0)` for any cursor target
-            // greater than the first element, silently emptying every
-            // page past page 1 in `Created { Desc }` mode (H-10).
-            //
-            // For Asc: predicate `s <= after_id` partitions the sorted
-            // slice into [≤ after_id | > after_id], and the partition
-            // index is the first position strictly greater than the
-            // cursor — i.e. the next item to return.
-            //
-            // For Desc: the slice is sorted high-to-low, so the
-            // predicate inverts to `s >= after_id`, and the partition
-            // index is the first position strictly less than the
-            // cursor — same semantics on the inverted ordering.
-            BacklinkSort::Created { dir: SortDir::Asc } => {
-                sorted_ids.partition_point(|s| s.as_str() <= after_id)
-            }
-            BacklinkSort::Created { dir: SortDir::Desc } => {
-                sorted_ids.partition_point(|s| s.as_str() >= after_id)
-            }
-            _ => {
-                // Property sorts are ordered by property value, not by ID, so
-                // binary search on ID is invalid. Fall back to O(n) position scan.
-                sorted_ids
-                    .iter()
-                    .position(|s| s.as_str() == after_id)
-                    .map(|i| i + 1)
-                    .unwrap_or(sorted_ids.len())
-            }
-        }
+        sorted_ids
+            .iter()
+            .position(|s| s.as_str() == after_id)
+            .map(|i| i + 1)
+            .unwrap_or(sorted_ids.len())
     } else {
         0
     };
-    let filtered: Vec<&str> = sorted_ids[start_idx..].iter().map(String::as_str).collect();
 
-    // page.limit is a validated positive pagination bound; safe to convert
     let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
     let fetch_limit = limit_usize.saturating_add(1);
-    let page_ids: Vec<&str> = filtered.into_iter().take(fetch_limit).collect();
+    let page_ids: Vec<&str> = sorted_ids[start_idx..]
+        .iter()
+        .map(String::as_str)
+        .take(fetch_limit)
+        .collect();
     let has_more = page_ids.len() > limit_usize;
     let actual_ids: Vec<&str> = if has_more {
         page_ids[..limit_usize].to_vec()
@@ -210,16 +423,7 @@ pub async fn eval_backlink_query(
         });
     }
 
-    // 6. Fetch full BlockRows.
-    //    MAINT-113 M2 — `actual_ids` is pre-filtered to active blocks via
-    //    the `b.deleted_at IS NULL` predicate at
-    //    the base-set query above (line ~86). The boundary cast records
-    //    that claim in the type system.
     let fetched: Vec<BlockRow> = fetch_block_rows_by_ids(pool, &actual_ids).await?;
-
-    // Reorder fetched rows to match the sorted order
-    // L-5 (PEND-25): `FxHashMap` for the small `&str -> usize` lookup —
-    // mechanical swap, no behavioural change.
     let id_order: FxHashMap<&str, usize> = actual_ids
         .iter()
         .enumerate()
@@ -232,7 +436,6 @@ pub async fn eval_backlink_query(
         .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
         .collect();
 
-    // 7. Build cursor
     let next_cursor = if has_more {
         let last = items.last().expect("has_more implies non-empty");
         Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)

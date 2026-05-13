@@ -1,6 +1,6 @@
 //! Agenda command handlers.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use sqlx::SqlitePool;
 use tracing::instrument;
@@ -436,7 +436,87 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     .fetch_all(pool)
     .await?;
 
-    let mut entries: Vec<ActiveProjectedAgendaEntry> = Vec::new();
+    // M1 (Batch 2): build the projected-entry set in a `BTreeMap` keyed by
+    // `(projected_date, block_id, source)` so the container itself enforces
+    // the `ORDER BY projected_date ASC, block_id ASC` invariant the cache
+    // path applies in SQL. Source is included in the key as a deterministic
+    // tie-breaker for the (rare) (block × source) collision case — the
+    // cache table's primary key `(block_id, projected_date, source)` admits
+    // both rows, and the cache path's ORDER BY is sort-stable across them,
+    // so threading `source` through the key preserves observable behaviour.
+    //
+    // The previous post-hoc `entries.sort_by(...)` and `entries.retain(...)`
+    // are eliminated: ordering happens at insertion time, and the cursor
+    // predicate is checked inline before each insert. This mirrors the
+    // SQL `ORDER BY` + keyset-cursor `WHERE` clause the cache path uses
+    // (line ~270-275).
+    //
+    // NOTE on "push LIMIT into SQL": the projected dates here are computed
+    // in Rust via `crate::recurrence::shift_date_once`, which parses
+    // arbitrary org-mode-style rules (`.+1d`, `++2w`, `+1m`, `monthly`, …)
+    // and does calendar-clamp month/year arithmetic. None of that
+    // translates to SQLite expressions, so the recurrence expansion itself
+    // cannot move into the SQL `query_as!` above. What we *can* do —
+    // and what this rewrite does — is enforce the same ordering + cursor
+    // + limit invariants at the generation stage instead of as Rust
+    // post-processing on a fully-materialised vector.
+    let cursor_key: Option<(&str, &str)> = after
+        .as_ref()
+        .map(|c| (c.deleted_at.as_deref().unwrap_or(""), c.id.as_str()));
+
+    // safe: `limit` is the [1, 500]-clamped per-page cap (i64 → usize on
+    // 64-bit). Captured once here so the inline cursor / cap checks below
+    // do not repeat the conversion.
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    // Generation cap: collect `limit + 1` entries so the caller can detect
+    // `has_more`. The previous code generated every entry in the range and
+    // truncated afterwards; we now stop adding new keys (or evict the
+    // current largest) once the map is saturated, so the BTreeMap is
+    // bounded.
+    let max_entries = limit_usize.saturating_add(1);
+
+    let mut entries_map: BTreeMap<(String, String, String), ActiveProjectedAgendaEntry> =
+        BTreeMap::new();
+
+    // Inline helper: insert an entry into the sorted map, honouring the
+    // cursor predicate and the `max_entries` size cap. Returns `true` if
+    // the entry was accepted (so the caller can update `projected_count`).
+    let try_insert =
+        |entries_map: &mut BTreeMap<(String, String, String), ActiveProjectedAgendaEntry>,
+         entry: ActiveProjectedAgendaEntry|
+         -> bool {
+            // Cursor predicate: keep only entries strictly AFTER the
+            // cursor's (date, id). Mirrors the cache path's
+            // `?cursor_date < projected_date OR (= AND ?cursor_id < block_id)`.
+            if let Some((cd, ci)) = cursor_key {
+                if (entry.projected_date.as_str(), entry.block.id.as_str()) <= (cd, ci) {
+                    return false;
+                }
+            }
+            let key = (
+                entry.projected_date.clone(),
+                entry.block.id.as_str().to_string(),
+                entry.source.clone(),
+            );
+            // Size-cap: if we're at capacity, only accept the new entry
+            // when it would land strictly before the current largest
+            // (i.e. it's a smaller (date, id, source) tuple). This keeps
+            // the map bounded at `max_entries` and matches the
+            // sort-then-truncate semantics of the previous code.
+            if entries_map.len() >= max_entries {
+                let largest_key = entries_map
+                    .keys()
+                    .next_back()
+                    .expect("len >= 1 implies a last key");
+                if &key >= largest_key {
+                    return false;
+                }
+                let largest_key = largest_key.clone();
+                entries_map.remove(&largest_key);
+            }
+            entries_map.insert(key, entry);
+            true
+        };
 
     for block in &rows {
         // Get the repeat rule (pre-fetched via JOIN)
@@ -561,21 +641,20 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
                 && current >= range_start
                 && current <= range_end
             {
-                if let Some(until) = until_date {
-                    if current <= until {
-                        entries.push(ActiveProjectedAgendaEntry {
+                let past_until = until_date.is_some_and(|until| current > until);
+                if !past_until {
+                    try_insert(
+                        &mut entries_map,
+                        ActiveProjectedAgendaEntry {
                             block: block.to_active_block_row(),
                             projected_date: current.format("%Y-%m-%d").to_string(),
                             source: source_name.to_string(),
-                        });
-                        projected_count += 1;
-                    }
-                } else {
-                    entries.push(ActiveProjectedAgendaEntry {
-                        block: block.to_active_block_row(),
-                        projected_date: current.format("%Y-%m-%d").to_string(),
-                        source: source_name.to_string(),
-                    });
+                        },
+                    );
+                    // `projected_count` tracks generated (in-range)
+                    // occurrences so `max_remaining` matches the original
+                    // semantics regardless of whether the cursor / size-cap
+                    // filtered the entry out of `entries_map`.
                     projected_count += 1;
                 }
             }
@@ -603,40 +682,34 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
                     break;
                 }
 
-                // Within range — add entry
+                // Within range — try to insert. `try_insert` enforces the
+                // (date, id) > cursor predicate and the `limit + 1` size
+                // cap; `projected_count` still increments so the outer
+                // `max_remaining` check stays unchanged from the previous
+                // post-hoc `retain` / `truncate` formulation.
                 if current >= range_start {
-                    entries.push(ActiveProjectedAgendaEntry {
-                        block: block.to_active_block_row(),
-                        projected_date: current.format("%Y-%m-%d").to_string(),
-                        source: source_name.to_string(),
-                    });
+                    try_insert(
+                        &mut entries_map,
+                        ActiveProjectedAgendaEntry {
+                            block: block.to_active_block_row(),
+                            projected_date: current.format("%Y-%m-%d").to_string(),
+                            source: source_name.to_string(),
+                        },
+                    );
                     projected_count += 1;
                 }
             }
         }
     }
 
-    // Sort by (projected_date, block_id) for determinism — this matches
-    // the cache path's ORDER BY so the cursor encoding is interchangeable
-    // between branches.
-    entries.sort_by(|a, b| {
-        a.projected_date
-            .cmp(&b.projected_date)
-            .then_with(|| a.block.id.cmp(&b.block.id))
-    });
+    // BTreeMap iteration order is the (date, id, source) lex order — the
+    // same comparator the old `entries.sort_by(...)` enforced post-hoc.
+    // The cursor filter is already baked into `try_insert`; the size cap
+    // (`max_entries = limit + 1`) means the map holds at most one entry
+    // past the page boundary, which we use below for the `has_more`
+    // detection.
+    let mut entries: Vec<ActiveProjectedAgendaEntry> = entries_map.into_values().collect();
 
-    // Apply cursor filter: keep only entries whose (date, id) come strictly
-    // AFTER the cursor. Same keyset comparison as the SQL `WHERE` clause.
-    if let Some(cursor) = after {
-        let cursor_date = cursor.deleted_at.as_deref().unwrap_or("");
-        let cursor_id = cursor.id.as_str();
-        entries.retain(|e| {
-            (e.projected_date.as_str(), e.block.id.as_str()) > (cursor_date, cursor_id)
-        });
-    }
-
-    // safe: `limit` is the [1, 500]-clamped per-page cap (i64 → usize on 64-bit)
-    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
     let has_more = entries.len() > limit_usize;
     if has_more {
         entries.truncate(limit_usize);

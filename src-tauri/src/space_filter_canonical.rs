@@ -239,7 +239,14 @@ mod tests {
         // the constant deliberately, audit the new/removed site for
         // canonical conformance, and (if the new site lives in a file
         // not yet listed) extend the allowlist above.
-        const EXPECTED_HITS: usize = 19;
+        // H1 (PEND-28a Batch 2) bumped this from 19 to 23: the backlink
+        // pipeline `eval_backlink_query` / `eval_backlink_query_grouped`
+        // refactor introduced four additional canonical-shape sites
+        // (SQL COUNT + filtered-COUNT + page query + materialised
+        // filtered-ids SQL in `backlink/query.rs`, COUNT +
+        // filtered-ids SQL in `backlink/grouped.rs`) while removing
+        // the two pre-H1 base-set fetches.
+        const EXPECTED_HITS: usize = 23;
         assert_eq!(
             total_hits, EXPECTED_HITS,
             "expected {EXPECTED_HITS} canonical-shape space-filter \

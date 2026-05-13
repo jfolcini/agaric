@@ -3485,3 +3485,257 @@ async fn pend18_count_agenda_batch_scope_parity() {
         "Active(TEST_SPACE_ID) must return only space A's subset"
     );
 }
+
+// ======================================================================
+// Batch 2 / M1 — list_projected_agenda fallback ordering + cursor.
+//
+// These tests target the on-the-fly fallback (`list_projected_agenda_on_the_fly`)
+// directly, which is where the previous Rust-side `entries.sort_by(...)` +
+// `entries.retain(...)` lived. The refactor swaps those post-hoc passes for a
+// `BTreeMap` keyed by `(projected_date, block_id, source)` so:
+//   - ordering is enforced at insertion time (mirrors the cache path's
+//     `ORDER BY pac.projected_date ASC, pac.block_id ASC`);
+//   - the cursor predicate `(date, id) > cursor` is checked inline before
+//     each insert (mirrors the cache path's keyset `WHERE` clause);
+//   - the map is bounded at `limit + 1` entries so the generation phase
+//     never materialises more than one page past the boundary (mirrors
+//     `LIMIT ?`).
+// The recurrence expansion itself stays in Rust — `shift_date_once` parses
+// org-mode-style rules that have no SQLite equivalent — so these tests
+// pin the OBSERVABLE behaviour (ordering, cursor walk) the new container
+// is supposed to enforce.
+//
+// We call `list_projected_agenda_on_the_fly` directly (not the wrapper
+// `list_projected_agenda_inner`) for two reasons documented in the doc
+// comment on `list_projected_agenda_on_the_fly`:
+//   1. Pinning `today` keeps the assertion stable across system-clock
+//      advances (the cache rebuild itself reads `chrono::Local::now()`).
+//   2. The fallback path is the one we're exercising; populating the
+//      cache via `set_property_inner` would short-circuit the assertion.
+// AGENTS.md test patterns explicitly allow calling the inner function
+// directly when the wrapper makes the fallback hard to trigger.
+
+/// Seed a non-DONE block carrying `due_date` + a `repeat = daily` property,
+/// bypassing the command layer (and thus the materialiser that would
+/// populate `projected_agenda_cache`). Returns nothing — the caller
+/// already knows the id it passed in.
+async fn insert_repeating_daily_block(pool: &SqlitePool, id: &str, due_date: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, todo_state, due_date) \
+         VALUES (?, 'content', 'repeating task', 'TODO', ?)",
+    )
+    .bind(id)
+    .bind(due_date)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', 'daily')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// `list_projected_agenda` fallback: entries come back already ordered by
+/// `(projected_date ASC, block_id ASC)`. Three blocks with staggered
+/// due-dates produce six daily occurrences in a six-day window; the
+/// returned vector must be lex-sorted on `(projected_date, block_id)`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_fallback_orders_by_date_asc() {
+    let (pool, _dir) = test_pool().await;
+
+    // Block IDs chosen so the lexical (ID) tie-breaker is visible: on
+    // 2026-06-04 both ZZZZ and AAAA produce an occurrence (ZZZZ's first
+    // shift from due=2026-06-03, AAAA's second shift from due=2026-06-02).
+    // The expected order on that date is AAAA < ZZZZ.
+    insert_repeating_daily_block(&pool, "AAAA_REPEAT_01", "2026-06-02").await;
+    insert_repeating_daily_block(&pool, "MMMM_REPEAT_02", "2026-06-03").await;
+    insert_repeating_daily_block(&pool, "ZZZZ_REPEAT_03", "2026-06-03").await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+    let range_start = chrono::NaiveDate::from_ymd_opt(2026, 6, 3).unwrap();
+    let range_end = chrono::NaiveDate::from_ymd_opt(2026, 6, 5).unwrap();
+
+    let resp = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        200,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entries = resp.items;
+
+    // Sanity: in `default` (no-prefix) recurrence mode the loop shifts
+    // BEFORE adding, so the base date itself is excluded unless it falls
+    // in range strictly after the first shift. AAAA's base is 06-02 (out
+    // of range), so its first in-range entry is the first shift, 06-03,
+    // then 06-04 and 06-05 → 3 entries. MMMM and ZZZZ both have base
+    // 06-03 (in range): the base is skipped (default-mode shift-first),
+    // then 06-04 and 06-05 land in range → 2 entries each. Seven total.
+    assert_eq!(
+        entries.len(),
+        7,
+        "expected 7 daily occurrences: {entries:?}"
+    );
+
+    // Lex-sorted on (projected_date, block_id) — the BTreeMap-based
+    // fallback path must return entries already in this order without a
+    // Rust-side `sort_by`. We assert that adjacent pairs satisfy the
+    // ordering predicate.
+    for window in entries.windows(2) {
+        let a = &window[0];
+        let b = &window[1];
+        let a_key = (a.projected_date.as_str(), a.block.id.as_str());
+        let b_key = (b.projected_date.as_str(), b.block.id.as_str());
+        assert!(
+            a_key < b_key,
+            "entries must be sorted by (projected_date, block_id) ASC: \
+             {a_key:?} should come before {b_key:?}"
+        );
+    }
+
+    // Spot-check the (06-04, AAAA) < (06-04, ZZZZ) tie-break in particular.
+    let day_04: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.projected_date == "2026-06-04")
+        .map(|e| e.block.id.as_str())
+        .collect();
+    assert_eq!(
+        day_04,
+        vec!["AAAA_REPEAT_01", "MMMM_REPEAT_02", "ZZZZ_REPEAT_03"],
+        "same-date entries must be sorted by block_id ASC"
+    );
+}
+
+/// `list_projected_agenda` fallback: paging via the returned cursor walks
+/// the full sorted sequence with no overlap / no gap. Call once with
+/// `limit = N` and again with the returned cursor; the second call's
+/// first entry must be the (N+1)-th entry of the first call's full
+/// ordering.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_fallback_respects_cursor() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two repeating blocks; daily rule across a 5-day window yields 10
+    // occurrences total (5 per block).
+    insert_repeating_daily_block(&pool, "CUR_A_REPEAT_01", "2026-07-01").await;
+    insert_repeating_daily_block(&pool, "CUR_B_REPEAT_02", "2026-07-01").await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap();
+    let range_start = chrono::NaiveDate::from_ymd_opt(2026, 7, 2).unwrap();
+    let range_end = chrono::NaiveDate::from_ymd_opt(2026, 7, 6).unwrap();
+
+    // Reference: full unpaginated ordering. With 10 entries and limit=200
+    // the fallback returns the lot in a single page.
+    let full = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        200,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let full_items = full.items;
+    assert_eq!(
+        full_items.len(),
+        10,
+        "expected 10 daily occurrences (5 dates × 2 blocks): {full_items:?}"
+    );
+
+    // First page: limit=3. We expect 3 entries returned and a next_cursor
+    // pointing past entry #3 (zero-indexed: full_items[2]).
+    let page_limit: i64 = 3;
+    let page1 = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        page_limit,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(page1.items.len(), 3, "page 1 should respect limit=3");
+    assert!(
+        page1.has_more,
+        "page 1 has_more must be true (10 total, limit=3)"
+    );
+    let cursor_token = page1
+        .next_cursor
+        .as_ref()
+        .expect("page 1 must hand back a cursor");
+
+    // Each entry in page 1 must match the first 3 entries of the full
+    // ordering (i.e. the SQL-equivalent ORDER BY is already applied).
+    for (idx, entry) in page1.items.iter().enumerate() {
+        assert_eq!(
+            (entry.projected_date.as_str(), entry.block.id.as_str()),
+            (
+                full_items[idx].projected_date.as_str(),
+                full_items[idx].block.id.as_str()
+            ),
+            "page 1 entry {idx} must match full ordering[{idx}]"
+        );
+    }
+
+    // Second page: decode the cursor and pass it back in. Its first
+    // entry must be `full_items[3]` (i.e. entry #N+1 where N = page_limit).
+    let decoded_cursor = crate::pagination::Cursor::decode(cursor_token).unwrap();
+    let page2 = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        page_limit,
+        pinned_today,
+        Some(&decoded_cursor),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !page2.items.is_empty(),
+        "page 2 must contain entries past the cursor"
+    );
+    let next_idx = usize::try_from(page_limit).unwrap();
+    assert_eq!(
+        (
+            page2.items[0].projected_date.as_str(),
+            page2.items[0].block.id.as_str()
+        ),
+        (
+            full_items[next_idx].projected_date.as_str(),
+            full_items[next_idx].block.id.as_str()
+        ),
+        "page 2's first entry must be full_items[{next_idx}] — no overlap, no gap"
+    );
+
+    // Defence-in-depth: page 2 must not contain any (date, id) that was
+    // already in page 1 (the cursor predicate is strict `>`, not `>=`).
+    let page1_keys: std::collections::HashSet<(String, String)> = page1
+        .items
+        .iter()
+        .map(|e| (e.projected_date.clone(), e.block.id.as_str().to_string()))
+        .collect();
+    for entry in &page2.items {
+        let key = (
+            entry.projected_date.clone(),
+            entry.block.id.as_str().to_string(),
+        );
+        assert!(
+            !page1_keys.contains(&key),
+            "page 2 must not repeat any (date, id) from page 1: {key:?}"
+        );
+    }
+}
