@@ -5,12 +5,12 @@
  * and a selection count badge. Context-specific action buttons are
  * passed as children.
  *
- * Used by HistorySelectionToolbar and ConflictBatchToolbar.
+ * Used by HistorySelectionToolbar.
  *
  * UX-260 sub-fix 4: a desktop-only Shift+Click range-select hint is
  * appended to the right of the toolbar, mirroring the
  * HistorySelectionToolbar:63-65 pattern, so the gesture surfaces in
- * every batch context (history, conflicts, trash). Hidden on touch
+ * every batch context (history, trash). Hidden on touch
  * via `hidden sm:inline` so we don't show a desktop-only affordance.
  */
 

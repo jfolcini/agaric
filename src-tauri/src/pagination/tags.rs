@@ -33,7 +33,7 @@ pub async fn list_by_tag(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
          FROM block_tags bt
          JOIN blocks b ON b.id = bt.block_id

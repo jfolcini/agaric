@@ -5,7 +5,7 @@
  * with UX-140 shift-state-propagation: shift-click applies the *target* state
  * (add or remove) of the clicked item to the entire range.
  *
- * Used by TrashView, HistoryView, and ConflictList.
+ * Used by TrashView and HistoryView.
  */
 
 import type React from 'react'

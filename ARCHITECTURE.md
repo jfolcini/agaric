@@ -69,7 +69,7 @@ Anytype, faster than Logseq.
 | -------------------------- | --------------------------------------------------------- |
 | sqlx 0.8 + sqlx-cli        | Async SQLite, compile-time query validation, migrations   |
 | blake3                     | Op log hash chaining (content-addressable, deterministic) |
-| diffy                      | Line-level three-way text merge for conflict resolution   |
+| loro                       | CRDT engine — single op-application path (PEND-09)        |
 | similar                    | Word-level diff for `compute_edit_diff` display           |
 | zstd                       | Snapshot compression (level 3)                            |
 | ciborium                   | CBOR serialisation for `log_snapshots.data`               |
@@ -178,7 +178,7 @@ read cache — safe to drop and rebuild at any time.
 Deleting any block (`delete_block` op with `cascade: true`) sets `deleted_at` on that block and
 all its descendants via a recursive CTE. A single op covers the entire subtree.
 
-- **Trash view:** `WHERE deleted_at IS NOT NULL AND is_conflict = 0`.
+- **Trash view:** `WHERE deleted_at IS NOT NULL`.
 - **Restore:** clears `deleted_at` on the target and descendants whose `deleted_at` matches the
   original timestamp. Independently deleted descendants are left soft-deleted.
 - **Permanent delete:** `purge_block` physically removes the block and descendants. Triggered by
@@ -192,12 +192,12 @@ all its descendants via a recursive CTE. A single op covers the entire subtree.
 - Deleting a tag block does NOT cascade to content blocks that reference it. The materializer
   removes `block_tags` rows; `#[ULID]` tokens render as "deleted tag" decoration.
 
-### Conflict copies
+### Conflict copies (retired)
 
-When `diffy::merge` produces a conflict, a new block is created as a copy of the conflicting
-version: `is_conflict = 1`, `conflict_source = original_block_id`. The original retains the
-common ancestor content. User sees both and chooses. On resolution: chosen content becomes a new
-`edit_block` on the original, conflict copy is deleted.
+PEND-09 Phases 3-5 deleted the conflict-copy creation path entirely. The Loro CRDT engine is
+the single op-application path (`src-tauri/src/loro/engine.rs`); there is no diffy three-way
+merge, no `is_conflict` column, no `conflict_type` column, no `get_conflicts` IPC, and no
+ConflictList view. Per-key LWW (last-writer-wins) on property updates remains — see §12.
 
 ---
 
@@ -239,7 +239,7 @@ recovery (3), drafts (2), PRAGMAs (1), and misc (3 in soft_delete, peer_refs, me
 
 ```text
 blocks              — id (ULID PK), block_type, content, parent_id, position,
-                      deleted_at, is_conflict, conflict_source, conflict_type,
+                      deleted_at, conflict_source,
                       todo_state, priority, due_date, scheduled_date, page_id
 block_tags          — (block_id, tag_id) composite PK
 block_properties    — (block_id, key) composite PK, value_text/value_num/value_date/value_ref
@@ -1340,32 +1340,32 @@ For a personal notes app with <100k blocks this is negligible — the index stay
 
 ### Strategy
 
-Three-way merge via `diffy` at **line-level** granularity. Not a CRDT library.
+**Loro CRDT engine (PEND-09 sessions 697-700).** Op application routes through a
+per-space `LoroEngine` (`src-tauri/src/loro/engine.rs`). The engine handles 11 op
+types (Create/Edit/Delete/Restore/Purge/Move/SetProperty/DeleteProperty/AddTag/RemoveTag)
+with Loro-native CRDT primitives; concurrent edits converge automatically without
+producing conflict copies. The previous diffy three-way merge layer, the `is_conflict`
+column, the `conflict_type` column, and the conflict-copy creation path were all
+deleted across Phase 3 (commit `6ffcefe7`), Phase 4 (commit `74c19a27`, migration
+`0058`), and Phase 5 (Session 700, migration `0059`).
 
-`diffy::merge` splits on `\n` boundaries. Because auto-split on blur turns each paragraph into
-its own block, most blocks are single-line. Consequence: any concurrent edit to a single-line
-block produces a conflict, even if the edits affect different words. This is an accepted trade-off
-— the alternative (a CRDT) adds significant complexity for marginal benefit at local WiFi sync
-frequency.
+Sync runs on Loro-native `LoroSyncMessage::Snapshot` / `LoroSyncMessage::Update`
+envelopes (see `src-tauri/src/sync_protocol/loro_sync.rs`). The `app_settings.pend09.loro_authoritative`
+flag is harmless residue post-Phase-3-day-9.
 
-**Rejected:** `yrs` (Yjs port), `automerge-rs` — significant complexity not needed for local WiFi
-sync. `similar` — no first-class three-way merge API. LWW for text — correctness debt.
+### Text edits
 
-### Text conflicts
-
-1. Non-overlapping edits (multi-line blocks): `diffy::merge(ancestor, ours, theirs)` →
-   `Ok(String)`. Written as new `edit_block` op. Invisible to user.
-2. Overlapping edits (or any concurrent edit to a single-line block): `Err(MergeConflict)`.
-   Original block retains ancestor content. Conflict copy created (`is_conflict = 1`). Both
-   visible. User resolves by choosing.
+Concurrent edits to the same block converge inside Loro without a user-facing
+conflict. Single-line blocks no longer "always conflict on overlap" — the CRDT
+performs a fine-grained merge. Resolution is invisible to the user.
 
 ### LWW resolution rule (property + move conflicts)
 
-Two classes of concurrent op converge by **Last-Writer-Wins (LWW)** rather than three-way
-merge: `set_property` writes to the same `(block_id, key)` and `move_block` ops on the same
-block. Both follow the same shape — exactly one write wins at materialisation time,
-deterministically, on every device that sees both ops. The losing write is silently dropped
-from materialised state. No conflict copy, no `is_conflict=1` row, no user-visible toast.
+Two classes of concurrent op converge by **Last-Writer-Wins (LWW)** at projection
+time: `set_property` writes to the same `(block_id, key)` and `move_block` ops on
+the same block. Both follow the same shape — exactly one write wins at projection
+time, deterministically, on every device that sees both ops. The losing write is
+silently dropped from materialised state. No conflict copy, no user-visible toast.
 
 **Timebase: wallclock UTC, not Lamport.** Every op's `created_at` field is populated at append
 time by `now_rfc3339()` (`crate::lib::now_rfc3339` in `src-tauri/src/lib.rs`), which returns a
@@ -1412,9 +1412,8 @@ in-app awareness log is a planned polish, not part of the rule.
 
 **What this rule does NOT cover:**
 
-- **Text-content edits.** `edit_block` ops route through the text-merge path (three-way diffy
-  merge, with conflict-copy fallback when overlapping; single-line blocks always conflict on
-  overlap — see "Text conflicts" above). Property/move LWW never produces a conflict copy.
+- **Text-content edits.** `edit_block` ops route through the Loro CRDT engine and
+  converge automatically; no LWW reconciliation is required.
 - **Tag / link adds + removes.** Set-semantics at the materialiser layer (dedup on read);
   concurrent add+remove does not invoke LWW.
 - **`delete_block` vs concurrent `edit_block` ("resurrect" path).** Edit-beats-delete: a
@@ -1431,11 +1430,6 @@ devices, OS clock-sync is typically sub-second, and same-person concurrent edits
 Backward clock jumps (NTP correction, manual date change) work correctly long-term — later
 real-world writes still win once the clock catches up — and the per-device monotonic `seq`
 is the safety net for the same-device-same-ms-after-drift edge case.
-
-### Ancestor text reconstruction
-
-Per-block LCA algorithm following `prev_edit` chains (see [Operation Log](#4-operation-log)).
-Complexity: O(chain depth). No graph library required.
 
 ---
 

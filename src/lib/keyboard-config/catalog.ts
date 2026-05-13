@@ -319,12 +319,6 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.showKeyboardShortcuts',
   },
   {
-    id: 'gotoConflicts',
-    keys: 'Alt + C',
-    category: 'keyboard.category.global',
-    description: 'keyboard.gotoConflicts',
-  },
-  {
     id: 'closeOverlays',
     keys: 'Escape',
     category: 'keyboard.category.global',

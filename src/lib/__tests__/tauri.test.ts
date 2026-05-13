@@ -24,7 +24,6 @@ import {
   countAgendaBatch,
   countAgendaBatchBySource,
   countBacklinksBatch,
-  countConflicts,
   createBlock,
   createBlocksBatch,
   createPageInSpace,
@@ -42,7 +41,6 @@ import {
   filteredBlocksQuery,
   findUndoGroup,
   firstChildForBlocks,
-  firstOpDeviceForBlocks,
   flushAllDrafts,
   flushDraft,
   getBacklinks,
@@ -52,7 +50,6 @@ import {
   getBlockHistory,
   getBlocks,
   getCompactionStatus,
-  getConflicts,
   getDeviceId,
   getLinkMetadata,
   getLogDir,
@@ -90,7 +87,6 @@ import {
   readLogsForReport,
   redoPageOp,
   removeTag,
-  resolveConflictsBatch,
   resolvePageByAlias,
   restoreAllDeleted,
   restoreBlock,
@@ -1016,65 +1012,6 @@ describe('getBlockHistory', () => {
       opTypeFilter: null,
       cursor: null,
       limit: null,
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// getConflicts
-// ---------------------------------------------------------------------------
-
-describe('getConflicts', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
-
-  it('invokes get_conflicts with all parameters', async () => {
-    const pageResp = {
-      items: [
-        {
-          id: 'C1',
-          block_type: 'content',
-          content: 'conflict',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-        },
-      ],
-      next_cursor: 'next1',
-      has_more: true,
-    }
-    mockedInvoke.mockResolvedValueOnce(pageResp)
-
-    // PEND-35 Tier 1.4 — `conflictType` and `idMin` are forwarded to
-    // the backend so cursor pagination tracks the post-filter set.
-    const result = await getConflicts({
-      cursor: 'cur1',
-      limit: 10,
-      conflictType: 'Move',
-      idMin: '01HMOCK00000000000000000000',
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
-      cursor: 'cur1',
-      limit: 10,
-      conflictType: 'Move',
-      idMin: '01HMOCK00000000000000000000',
-    })
-    expect(result).toEqual(pageResp)
-  })
-
-  it('defaults optional cursor and limit to null when no params given', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await getConflicts()
-
-    // PEND-35 Tier 1.4 — `conflictType` and `idMin` default to null
-    // alongside `cursor` and `limit`.
-    expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
-      cursor: null,
-      limit: null,
-      conflictType: null,
-      idMin: null,
     })
   })
 })
@@ -2080,41 +2017,6 @@ describe('countBacklinksBatch', () => {
 })
 
 // ---------------------------------------------------------------------------
-// countConflicts (PEND-35 Tier 2.11)
-// ---------------------------------------------------------------------------
-
-describe('countConflicts', () => {
-  it('invokes count_conflicts with a global scope when spaceId is omitted', async () => {
-    mockedInvoke.mockResolvedValueOnce(7)
-    const result = await countConflicts()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('count_conflicts', {
-      scope: { kind: 'global' },
-    })
-    // Round-trip: the wrapper unwraps `commands.countConflicts` and
-    // surfaces the raw integer to the caller (the conflicts-tab badge).
-    expect(result).toBe(7)
-  })
-
-  it('forwards spaceId as an active scope to the binding', async () => {
-    mockedInvoke.mockResolvedValueOnce(3)
-    const result = await countConflicts('SPACE_42')
-
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-    expect(result).toBe(3)
-  })
-
-  it('treats null spaceId as global (cross-space)', async () => {
-    mockedInvoke.mockResolvedValueOnce(0)
-    await countConflicts(null)
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'global' })
-  })
-})
-
-// ---------------------------------------------------------------------------
 // setScheduledDate
 // ---------------------------------------------------------------------------
 
@@ -2673,7 +2575,6 @@ describe('firstChildForBlocks', () => {
         parent_id: 'T1',
         position: 0,
         deleted_at: null,
-        conflict_type: null,
         todo_state: null,
         priority: null,
         due_date: null,
@@ -2703,7 +2604,7 @@ describe('firstChildForBlocks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// PEND-35 Tier 2.3 — getBlocks / firstOpDeviceForBlocks / resolveConflictsBatch
+// PEND-35 Tier 2.3 — getBlocks
 // ---------------------------------------------------------------------------
 
 describe('getBlocks', () => {
@@ -2716,7 +2617,6 @@ describe('getBlocks', () => {
         parent_id: null,
         position: null,
         deleted_at: null,
-        conflict_type: null,
         todo_state: null,
         priority: null,
         due_date: null,
@@ -2738,56 +2638,6 @@ describe('getBlocks', () => {
   it('returns the array unchanged from the IPC', async () => {
     mockedInvoke.mockResolvedValueOnce([])
     expect(await getBlocks(['MISSING'])).toEqual([])
-  })
-})
-
-describe('firstOpDeviceForBlocks', () => {
-  it('invokes first_op_device_for_blocks with the blockIds array', async () => {
-    const expected = { B1: 'device-A', B2: 'device-B' }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await firstOpDeviceForBlocks(['B1', 'B2'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('first_op_device_for_blocks', {
-      blockIds: ['B1', 'B2'],
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('round-trips an empty input as an empty record', async () => {
-    mockedInvoke.mockResolvedValueOnce({})
-
-    const result = await firstOpDeviceForBlocks([])
-
-    expect(mockedInvoke).toHaveBeenCalledWith('first_op_device_for_blocks', { blockIds: [] })
-    expect(result).toEqual({})
-  })
-})
-
-describe('resolveConflictsBatch', () => {
-  it('invokes resolve_conflicts_batch with the actions list', async () => {
-    const expected = { resolved: 2, failed: 0 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const actions = [
-      { blockId: 'C1', parentId: 'P1', action: 'keep' as const, content: 'new content' },
-      { blockId: 'C2', parentId: 'P2', action: 'discard' as const, content: null },
-    ]
-    const result = await resolveConflictsBatch(actions)
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('resolve_conflicts_batch', { actions })
-    expect(result).toEqual(expected)
-  })
-
-  it('returns the result object unchanged from the IPC', async () => {
-    mockedInvoke.mockResolvedValueOnce({ resolved: 0, failed: 0 })
-    expect(
-      await resolveConflictsBatch([
-        { blockId: 'X', parentId: 'Y', action: 'discard', content: null },
-      ]),
-    ).toEqual({ resolved: 0, failed: 0 })
   })
 })
 
@@ -3674,7 +3524,6 @@ describe('cross-cutting', () => {
     await removeTag('id', 'tag')
     await getBacklinks({ blockId: 'id' })
     await getBlockHistory({ blockId: 'id' })
-    await getConflicts()
     await searchBlocks({ query: 'test', spaceId: 'TEST_SPACE_01' })
     await getStatus()
     await queryByTags({ tagIds: ['t'], prefixes: [], mode: 'and' })
@@ -3737,7 +3586,6 @@ describe('cross-cutting', () => {
       'remove_tag',
       'get_backlinks',
       'get_block_history',
-      'get_conflicts',
       'search_blocks',
       'get_status',
       'query_by_tags',

@@ -9,7 +9,6 @@ items:
     parent_id: "[ULID]"
     position: 1
     deleted_at: "[TIMESTAMP]"
-    conflict_type: ~
     todo_state: ~
     priority: ~
     due_date: ~
@@ -21,7 +20,6 @@ items:
     parent_id: "[ULID]"
     position: 2
     deleted_at: "[TIMESTAMP]"
-    conflict_type: ~
     todo_state: ~
     priority: ~
     due_date: ~

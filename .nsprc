@@ -38,5 +38,21 @@
   "1117884": {
     "active": true,
     "notes": "fast-uri host confusion via better-npm-audit > table > ajv > fast-uri (audit-tool-only transitive dep, not used in production or dev runtime)"
+  },
+  "1117991": {
+    "active": true,
+    "notes": "mermaid Gantt chart infinite-loop DoS; per AGENTS.md threat model the app is single-user local-first with no adversarial input"
+  },
+  "1117995": {
+    "active": true,
+    "notes": "mermaid classDefs CSS injection; per AGENTS.md threat model the app is single-user local-first with no adversarial input"
+  },
+  "1118513": {
+    "active": true,
+    "notes": "mermaid configuration CSS injection; per AGENTS.md threat model the app is single-user local-first with no adversarial input"
+  },
+  "1118515": {
+    "active": true,
+    "notes": "mermaid classDef state-diagram HTML injection; per AGENTS.md threat model the app is single-user local-first with no adversarial input"
   }
 }

@@ -149,6 +149,7 @@ export function expandTemplateVariables(content: string, context: { pageTitle?: 
  * fall-through is gone — partial templates were never the desired
  * UX; the user expects "the template inserted" or a clean failure.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
 export async function insertTemplateBlocks(
   templatePageId: string,
   parentId: string,

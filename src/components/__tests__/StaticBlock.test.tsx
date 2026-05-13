@@ -1316,7 +1316,6 @@ describe('StaticBlock', () => {
               created_at: '2024-01-01T00:00:00Z',
               updated_at: '2024-01-01T00:00:00Z',
               deleted_at: null,
-              conflict_type: null,
               todo_state: null,
               priority: null,
               due_date: null,

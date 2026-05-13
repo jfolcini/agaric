@@ -337,7 +337,7 @@ pub async fn export_page_markdown_inner(
             BlockRow,
             r#"SELECT id, block_type, content, parent_id, position,
                     deleted_at,
-                    conflict_type, todo_state, priority, due_date, scheduled_date,
+                     todo_state, priority, due_date, scheduled_date,
                     page_id
              FROM blocks
              WHERE page_id = ?1
@@ -916,7 +916,7 @@ pub async fn get_page_inner(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at,
-                conflict_type, todo_state, priority, due_date, scheduled_date,
+                 todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks
          WHERE page_id = ?1

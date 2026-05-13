@@ -18,7 +18,6 @@ const {
   mockLoad,
   mockPageBlockRegistry,
   mockPreload,
-  mockGetConflicts,
 } = vi.hoisted(() => {
   const mockUnlisten = vi.fn()
   const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
@@ -44,9 +43,6 @@ const {
   })
 
   const mockPreload = vi.fn().mockResolvedValue(undefined)
-  const mockGetConflicts = vi
-    .fn()
-    .mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 
   return {
     mockUnlisten,
@@ -59,7 +55,6 @@ const {
     mockLoad,
     mockPageBlockRegistry,
     mockPreload,
-    mockGetConflicts,
   }
 })
 
@@ -103,10 +98,6 @@ vi.mock('@/stores/space', () => ({
   },
 }))
 
-vi.mock('@/lib/tauri', () => ({
-  getConflicts: (...args: unknown[]) => mockGetConflicts(...args),
-}))
-
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
@@ -116,7 +107,6 @@ import { announce } from '@/lib/announcer'
 
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
-const mockedToastWarning = vi.mocked(toast.warning)
 const mockedAnnounce = vi.mocked(announce)
 
 // -- Minimal renderHook (matches project pattern) -----------------------------
@@ -170,7 +160,6 @@ beforeEach(() => {
   // Reset mock defaults
   mockListen.mockResolvedValue(mockUnlisten)
   mockLoad.mockResolvedValue(undefined)
-  mockGetConflicts.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 })
 
 afterEach(() => {
@@ -483,140 +472,6 @@ describe('useSyncEvents', () => {
 
       unmount()
     })
-
-    it('shows conflict warning toast when conflicts exist after sync (#438)', async () => {
-      mockGetConflicts.mockResolvedValue({
-        items: [
-          {
-            id: 'CONFLICT1',
-            block_type: 'content',
-            content: 'conflict',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
-
-      const { unmount } = renderHook(() => useSyncEvents())
-
-      await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
-      })
-
-      const callback = getListenerCallback('sync:complete')
-      callback({
-        payload: {
-          type: 'complete',
-          remote_device_id: 'device-1',
-          ops_received: 5,
-          ops_sent: 0,
-        },
-      })
-
-      await vi.waitFor(() => {
-        expect(mockedToastWarning).toHaveBeenCalledWith(
-          'Sync completed with conflicts — review in Conflicts view',
-        )
-      })
-
-      unmount()
-    })
-
-    it('does NOT show conflict warning when no conflicts exist (#438)', async () => {
-      mockGetConflicts.mockResolvedValue({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-      })
-
-      const { unmount } = renderHook(() => useSyncEvents())
-
-      await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
-      })
-
-      const callback = getListenerCallback('sync:complete')
-      callback({
-        payload: {
-          type: 'complete',
-          remote_device_id: 'device-1',
-          ops_received: 5,
-          ops_sent: 0,
-        },
-      })
-
-      // Wait for getConflicts to be invoked (positive observable), then drain
-      // the resolved-promise microtask chain so the .then() handler completes
-      // before we assert the negative.
-      await vi.waitFor(() => expect(mockGetConflicts).toHaveBeenCalled())
-      await Promise.resolve()
-      await Promise.resolve()
-
-      expect(mockedToastWarning).not.toHaveBeenCalled()
-
-      unmount()
-    })
-
-    it('does NOT check conflicts when ops_received === 0 (#438)', async () => {
-      const { unmount } = renderHook(() => useSyncEvents())
-
-      await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
-      })
-
-      const callback = getListenerCallback('sync:complete')
-      callback({
-        payload: {
-          type: 'complete',
-          remote_device_id: 'device-1',
-          ops_received: 0,
-          ops_sent: 3,
-        },
-      })
-
-      // Conflict check is gated behind `if (ops_received > 0)` — the callback
-      // body runs synchronously without scheduling any async work in this branch.
-      // Flush a microtask as a fence before asserting the negative.
-      await Promise.resolve()
-
-      expect(mockGetConflicts).not.toHaveBeenCalled()
-
-      unmount()
-    })
-
-    it('silently ignores getConflicts failure (#438)', async () => {
-      mockGetConflicts.mockRejectedValue(new Error('IPC error'))
-
-      const { unmount } = renderHook(() => useSyncEvents())
-
-      await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
-      })
-
-      const callback = getListenerCallback('sync:complete')
-      callback({
-        payload: {
-          type: 'complete',
-          remote_device_id: 'device-1',
-          ops_received: 5,
-          ops_sent: 0,
-        },
-      })
-
-      // Wait for getConflicts to be invoked (positive observable), then drain
-      // the rejected-promise microtask chain so the .catch() handler runs
-      // before we assert the negative — should not throw.
-      await vi.waitFor(() => expect(mockGetConflicts).toHaveBeenCalled())
-      await Promise.resolve()
-      await Promise.resolve()
-
-      expect(mockedToastWarning).not.toHaveBeenCalled()
-
-      unmount()
-    })
   })
 
   describe('sync:error handler', () => {
@@ -704,45 +559,6 @@ describe('useSyncEvents', () => {
       })
 
       expect(mockedAnnounce).toHaveBeenCalledWith('3 operations received from sync')
-
-      unmount()
-    })
-
-    it('announces conflicts when sync:complete sees conflicts', async () => {
-      mockGetConflicts.mockResolvedValue({
-        items: [
-          {
-            id: 'CONFLICT1',
-            block_type: 'content',
-            content: 'conflict',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
-
-      const { unmount } = renderHook(() => useSyncEvents())
-
-      await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
-      })
-
-      const callback = getListenerCallback('sync:complete')
-      callback({
-        payload: {
-          type: 'complete',
-          remote_device_id: 'device-1',
-          ops_received: 2,
-          ops_sent: 0,
-        },
-      })
-
-      await vi.waitFor(() => {
-        expect(mockedAnnounce).toHaveBeenCalledWith('Sync completed with conflicts')
-      })
 
       unmount()
     })

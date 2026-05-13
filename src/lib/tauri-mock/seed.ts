@@ -101,7 +101,6 @@ export const SEED_IDS = {
   TAG_WORK: '000000000000000000000TAG01',
   TAG_PERSONAL: '000000000000000000000TAG02',
   TAG_IDEA: '000000000000000000000TAG03',
-  CONFLICT_01: '0000000000000000CONFLICT01',
   // -- Additional seed data for richer browser preview --
   PAGE_PROJECTS: '00000000000000000000PAGE04',
   PAGE_MEETINGS: '00000000000000000000PAGE05',
@@ -137,7 +136,6 @@ export function makeBlock(
     page_id: blockType === 'page' ? id : parentId,
     position,
     deleted_at: null,
-    conflict_type: null,
     todo_state: null,
     priority: null,
     due_date: null,
@@ -391,17 +389,6 @@ export function seedBlocks(): void {
   blocks.set(SEED_IDS.TAG_WORK, makeBlock(SEED_IDS.TAG_WORK, 'tag', 'work', null, 0))
   blocks.set(SEED_IDS.TAG_PERSONAL, makeBlock(SEED_IDS.TAG_PERSONAL, 'tag', 'personal', null, 1))
   blocks.set(SEED_IDS.TAG_IDEA, makeBlock(SEED_IDS.TAG_IDEA, 'tag', 'idea', null, 2))
-
-  // Conflict seed data — a conflict copy of BLOCK_GS_1 (edited on another device)
-  const conflict1 = makeBlock(
-    SEED_IDS.CONFLICT_01,
-    'content',
-    'Conflict version of block 1 (edited on another device)',
-    SEED_IDS.BLOCK_GS_1,
-    0,
-  )
-  conflict1['is_conflict'] = true
-  blocks.set(SEED_IDS.CONFLICT_01, conflict1)
 
   // Content blocks — children of "Quick Notes" (with backlink to Getting Started)
   blocks.set(

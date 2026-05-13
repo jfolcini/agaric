@@ -9,9 +9,9 @@
  * by PEND-06 Phase 2 — `useSyncTrigger` now consumes the Channel<T>
  * `onProgress` callback set up by `startSync` for that. The two event
  * listeners that remain carry post-sync side effects (toast / page reload
- * / conflict refresh on complete; error toast on failure) that the
- * channel-stream callback does not duplicate; if those side effects move
- * to the channel path in a later cleanup, this hook can shrink further.
+ * on complete; error toast on failure) that the channel-stream callback
+ * does not duplicate; if those side effects move to the channel path in a
+ * later cleanup, this hook can shrink further.
  *
  * No-op in browser mode (when Tauri APIs are unavailable).
  * Call once at app root (App.tsx).
@@ -23,7 +23,6 @@ import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import { getConflicts } from '@/lib/tauri'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -111,20 +110,6 @@ export function useSyncEvents(): void {
           // broken-link chips.
           const refreshSpaceId = useSpaceStore.getState().currentSpaceId
           useResolveStore.getState().preload(refreshSpaceId ?? undefined, true)
-        }
-
-        // Check for conflicts after sync (#438)
-        if (ops_received > 0) {
-          getConflicts({ limit: 1 })
-            .then((resp) => {
-              if (resp.items.length > 0) {
-                toast.warning(i18n.t('sync.completedWithConflicts'))
-                announce(i18n.t('announce.syncCompletedWithConflicts'))
-              }
-            })
-            .catch((err: unknown) => {
-              logger.warn('useSyncEvents', 'Failed to check conflicts after sync', undefined, err)
-            })
         }
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:complete handler failed', undefined, err)

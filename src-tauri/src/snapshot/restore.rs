@@ -181,11 +181,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // bind loop — leaving the column list, row source, and per-row binding
     // closure as the only varying inputs.
     //
-    // MAINT-133: `conflict_type` joined the `blocks` column list at
-    // SCHEMA_VERSION = 3. Older v1/v2 snapshots decode it as `None` (via
-    // `serde(default)` on the struct field), which is exactly what
-    // `merge/resolve.rs` writes for non-conflict blocks anyway, so the
-    // INSERT below is safe for both cases.
+    // PEND-09 Phase 5 dropped the `conflict_type` column. Older snapshot
+    // schemas (v3 onward) carry the field but post-restore the data
+    // disappears at SCHEMA_VERSION bump.
 
     macro_rules! batch_insert_snapshot_rows {
         (
@@ -232,7 +230,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         table: "blocks",
         columns: [
             "id", "block_type", "content", "parent_id", "position",
-            "deleted_at", "conflict_source", "conflict_type",
+            "deleted_at", "conflict_source",
             "todo_state", "priority", "due_date", "scheduled_date",
         ],
         rows: data.tables.blocks,
@@ -244,7 +242,6 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(b.position)
                 .bind(&b.deleted_at)
                 .bind(&b.conflict_source)
-                .bind(&b.conflict_type)
                 .bind(&b.todo_state)
                 .bind(&b.priority)
                 .bind(&b.due_date)

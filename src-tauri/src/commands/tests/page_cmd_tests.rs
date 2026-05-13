@@ -1272,7 +1272,7 @@ async fn import_markdown_single_transaction() {
     // Verify page exists
     let page: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
     )
     .fetch_optional(&pool)
     .await
@@ -1283,7 +1283,7 @@ async fn import_markdown_single_transaction() {
     // Verify all content blocks exist under the page hierarchy
     let all_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE block_type = 'content' ORDER BY position"#
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE block_type = 'content' ORDER BY position"#
     )
     .fetch_all(&pool)
     .await
@@ -1331,7 +1331,7 @@ async fn import_markdown_single_transaction() {
     // "priority" is a reserved key stored in blocks.priority column
     let refreshed_parent: BlockRow = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
         parent_block.id
     )
     .fetch_one(&pool)

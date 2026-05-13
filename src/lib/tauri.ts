@@ -9,8 +9,6 @@ export type {
   BacklinkSort,
   BlockRow,
   CompareOp,
-  ConflictResolveAction,
-  ConflictResolveBatchResult,
   CreateBlockSpec,
   DateRange,
   DeleteResponse,
@@ -40,8 +38,6 @@ import type {
   BacklinkQueryResponse,
   BacklinkSort,
   BlockRow,
-  ConflictResolveAction,
-  ConflictResolveBatchResult,
   CreateBlockSpec,
   DateRange,
   DeleteResponse,
@@ -283,16 +279,14 @@ export async function firstChildForBlocks(blockIds: string[]): Promise<Record<st
 /**
  * PEND-35 Tier 2.3 — batch-fetch full BlockRows by id.
  *
- * Sibling of `batchResolve` returning the full 13-column `BlockRow`
+ * Sibling of `batchResolve` returning the full 12-column `BlockRow`
  * (not just the lightweight `id / title / block_type / deleted`
  * projection). Consumers that need `todo_state`, `priority`, `due_date`,
- * `scheduled_date`, `content`, `parent_id`, `position`, etc. — e.g.
- * ConflictTypeRenderer — collapse a per-row `getBlock` IPC fan-out into
- * a single query.
+ * `scheduled_date`, `content`, `parent_id`, `position`, etc. collapse a
+ * per-row `getBlock` IPC fan-out into a single query.
  *
  * Soft-deleted rows are INCLUDED (unlike `batchResolve` which filters
- * them out). Pre-PEND-09 Phase 4 the call site rationale also covered
- * conflict-copy rows; those no longer exist post-`is_conflict` drop.
+ * them out).
  *
  * IDs that don't exist are silently omitted from the response — callers
  * must map by `id` and treat missing keys as "unknown / lost". Returned
@@ -301,54 +295,6 @@ export async function firstChildForBlocks(blockIds: string[]): Promise<Record<st
  */
 export async function getBlocks(ids: string[]): Promise<BlockRow[]> {
   return unwrap(await commands.getBlocks(ids))
-}
-
-/**
- * PEND-35 Tier 2.3 — batch-fetch the first-op `device_id` per block.
- *
- * For each input `block_id`, returns the `device_id` of the **first**
- * op_log row touching that block (lowest `seq`). Block IDs with no
- * op_log rows (e.g. conflict copies created by sync replay rather than
- * a local `create_block`) are simply omitted — callers treat missing
- * keys as "unknown origin".
- *
- * Replaces `Promise.all(blocks.map(b => getBlockHistory({blockId, limit:1})))`
- * in `ConflictList` (the "From: <device>" badge fan-out) with one
- * round-trip. Single SQL using the `idx_op_log_block_id` index from
- * migration 0030.
- *
- * Empty input returns an empty record (not an error). Above 1000 ids
- * rejects with `AppError::Validation`.
- */
-export async function firstOpDeviceForBlocks(blockIds: string[]): Promise<Record<string, string>> {
-  return unwrap(await commands.firstOpDeviceForBlocks(blockIds))
-}
-
-/**
- * PEND-35 Tier 2.3 — atomically resolve a batch of conflicts in a single
- * IPC.
- *
- * Each action is `{ blockId, parentId, action: 'keep' | 'discard', content?:
- * string }`. `keep` writes the conflict's content to the parent and
- * soft-deletes the conflict copy; `discard` soft-deletes the conflict
- * copy without touching the parent. Replaces the FE per-row
- * `editBlock` + `deleteBlock` IPC loop in
- * `ConflictList::handleBatchConfirm` (50 conflicts = 100 IPCs) with one
- * round-trip and one writer-lock window.
- *
- * Atomicity contract: all-or-nothing. Any error inside the batch rolls
- * back the entire transaction (no half-resolved conflicts). On success
- * `resolved == actions.length`; `failed` is reserved (always 0 today)
- * for a future per-action savepoint variant.
- *
- * Validation failures (empty list, oversize > 1000, unknown action,
- * `keep` without content) reject the whole call with
- * `AppError::Validation`.
- */
-export async function resolveConflictsBatch(
-  actions: ConflictResolveAction[],
-): Promise<ConflictResolveBatchResult> {
-  return unwrap(await commands.resolveConflictsBatch(actions))
 }
 
 /** List blocks with optional filters and cursor-based pagination.
@@ -588,31 +534,6 @@ export async function getBlockHistory(params: {
   )
 }
 
-/** List conflict blocks, paginated.
- *
- * PEND-35 Tier 1.4 — `conflictType` and `idMin` push two formerly
- * FE-side filters (the ConflictList type dropdown and the "last 7 days"
- * date filter) into SQL so cursor pagination, `total_count`, and "Load
- * more" reflect the post-filter row set.
- *
- * `idMin` is a ULID lower bound (date min — ULIDs are time-ordered).
- */
-export async function getConflicts(params?: {
-  cursor?: string | undefined
-  limit?: number | undefined
-  conflictType?: string | undefined
-  idMin?: string | undefined
-}): Promise<PageResponse<BlockRow>> {
-  return unwrap(
-    await commands.getConflicts(
-      params?.cursor ?? null,
-      params?.limit ?? null,
-      params?.conflictType ?? null,
-      params?.idMin ?? null,
-    ),
-  )
-}
-
 /** Full-text search across all blocks, paginated by relevance.
  *
  * `spaceId` (FEAT-3 Phase 4) — required. Restricts matches to blocks
@@ -805,23 +726,6 @@ export async function countBacklinksBatch(params: {
   spaceId?: string | null | undefined
 }): Promise<Record<string, number>> {
   return unwrap(await commands.countBacklinksBatch(params.pageIds, toSpaceScope(params.spaceId)))
-}
-
-/** Count active (non-deleted) conflict-copy blocks.
- *
- * PEND-35 Tier 2.11 — replaces the previous `getConflicts({limit:100})`
- * + `.items.length` pattern used by `useConflictCount` for the
- * conflicts-tab badge. The old shape materialised up to 100 full
- * `BlockRow`s every 30 s for one integer and silently capped the badge
- * at 100; this command runs a single `SELECT COUNT(*)` so the badge
- * reflects the true count regardless of magnitude.
- *
- * `spaceId` — when set, restricts the count to conflicts whose owning
- * page carries `space = <spaceId>`. `null` / `undefined` returns the
- * cross-space count. Mirrors the [`countBacklinksBatch`] scoping shape.
- */
-export async function countConflicts(spaceId?: string | null | undefined): Promise<number> {
-  return unwrap(await commands.countConflicts(toSpaceScope(spaceId)))
 }
 
 // ---------------------------------------------------------------------------

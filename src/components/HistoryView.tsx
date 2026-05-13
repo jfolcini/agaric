@@ -184,9 +184,8 @@ export function HistoryView(): React.ReactElement {
           />
 
           {/* Selection toolbar — only render when items are selected so that
-              batch actions (revert, clear) disappear after completion. Matches
-              the ConflictList pattern and keeps the "N selected" text out of
-              the DOM when nothing is selected. */}
+              batch actions (revert, clear) disappear after completion. Keeps
+              the "N selected" text out of the DOM when nothing is selected. */}
           {selectedIds.size > 0 && (
             <HistorySelectionToolbar
               selectedCount={selectedIds.size}

@@ -2,7 +2,7 @@
  * LoadingSkeleton -- reusable skeleton loading placeholder.
  *
  * Renders N skeleton rows inside a `space-y-2` wrapper.
- * Used across list views (PageBrowser, TagList, ConflictList, etc.)
+ * Used across list views (PageBrowser, TagList, etc.)
  * to show a consistent loading state.
  */
 

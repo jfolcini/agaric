@@ -37,7 +37,7 @@ pub async fn list_agenda(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
@@ -106,7 +106,7 @@ pub async fn list_agenda_range(
     let raw_rows = sqlx::query!(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id, ac.date as "ac_date: String"
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
@@ -145,7 +145,6 @@ pub async fn list_agenda_range(
             parent_id: r.parent_id,
             position: r.position,
             deleted_at: r.deleted_at,
-            conflict_type: r.conflict_type,
             todo_state: r.todo_state,
             priority: r.priority,
             due_date: r.due_date,

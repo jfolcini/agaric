@@ -50,7 +50,6 @@ export type View =
   | 'properties'
   | 'trash'
   | 'status'
-  | 'conflicts'
   | 'history'
   | 'templates'
   | 'settings'

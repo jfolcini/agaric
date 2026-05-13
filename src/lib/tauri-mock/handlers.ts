@@ -56,9 +56,6 @@ export const HANDLERS: Record<string, Handler> = {
     } else {
       items = [...blocks.values()].filter((b) => !(b['deleted_at'] as string | null))
     }
-    // Exclude conflict copies from normal queries (matches real backend).
-    // Conflicts are only returned via get_conflicts.
-    items = items.filter((b) => !b['is_conflict'])
     if (a['blockType']) items = items.filter((b) => b['block_type'] === a['blockType'])
     if (a['parentId']) items = items.filter((b) => b['parent_id'] === a['parentId'])
     // Tag filtering
@@ -109,7 +106,6 @@ export const HANDLERS: Record<string, Handler> = {
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
-      if (b['is_conflict']) continue
       if (b['content'] !== date) continue
       const blockProps = properties.get(b['id'] as string)
       const spaceProp = blockProps?.get('space')
@@ -133,7 +129,6 @@ export const HANDLERS: Record<string, Handler> = {
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
-      if (b['is_conflict']) continue
       const content = b['content'] as string | null
       if (!content || !datePattern.test(content)) continue
       if (content < startDate || content > endDate) continue
@@ -179,7 +174,6 @@ export const HANDLERS: Record<string, Handler> = {
       page_id: (a['blockType'] as string) === 'page' ? id : parentId,
       position,
       deleted_at: null,
-      conflict_type: null,
       todo_state: null,
       priority: null,
       due_date: null,
@@ -203,6 +197,7 @@ export const HANDLERS: Record<string, Handler> = {
   // mock here is sequential (good enough for the FE shape — atomicity
   // is exercised by the Rust tests). Returns the created BlockRows in
   // INPUT ORDER so callers can map template-line index → block id.
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
   create_blocks_batch: (args) => {
     const a = args as Record<string, unknown>
     const specs = (a['specs'] as Array<Record<string, unknown>>) ?? []
@@ -229,7 +224,6 @@ export const HANDLERS: Record<string, Handler> = {
         page_id: blockType === 'page' ? id : parentId,
         position,
         deleted_at: null,
-        conflict_type: null,
         todo_state: null,
         priority: null,
         due_date: null,
@@ -317,7 +311,6 @@ export const HANDLERS: Record<string, Handler> = {
       page_id: id,
       position,
       deleted_at: null,
-      conflict_type: null,
       todo_state: null,
       priority: null,
       due_date: null,
@@ -361,7 +354,6 @@ export const HANDLERS: Record<string, Handler> = {
       page_id: id,
       position: 0,
       deleted_at: null,
-      conflict_type: null,
       todo_state: null,
       priority: null,
       due_date: null,
@@ -437,13 +429,13 @@ export const HANDLERS: Record<string, Handler> = {
       throw new Error('block_ids list cannot be empty')
     }
     const now = new Date().toISOString()
-    // Resolve live roots (skip missing, already-deleted, or conflict copy).
+    // Resolve live roots (skip missing or already-deleted).
     const liveRoots = inputIds.filter((id) => {
       const b = blocks.get(id)
-      return b && !b['deleted_at'] && !b['is_conflict']
+      return b && !b['deleted_at']
     })
-    // BFS from every root, soft-delete every reachable non-conflict
-    // descendant whose `deleted_at` is currently NULL.
+    // BFS from every root, soft-delete every reachable descendant whose
+    // `deleted_at` is currently NULL.
     let count = 0
     const stack: string[] = [...liveRoots]
     const seen = new Set<string>()
@@ -453,16 +445,11 @@ export const HANDLERS: Record<string, Handler> = {
       if (seen.has(id)) continue
       seen.add(id)
       const b = blocks.get(id)
-      if (!b || b['is_conflict'] || b['deleted_at']) continue
+      if (!b || b['deleted_at']) continue
       b['deleted_at'] = now
       count++
       for (const child of blocks.values()) {
-        if (
-          child['parent_id'] === id &&
-          !child['is_conflict'] &&
-          !child['deleted_at'] &&
-          !seen.has(child['id'] as string)
-        ) {
+        if (child['parent_id'] === id && !child['deleted_at'] && !seen.has(child['id'] as string)) {
           stack.push(child['id'] as string)
         }
       }
@@ -522,7 +509,7 @@ export const HANDLERS: Record<string, Handler> = {
     let count = 0
     for (const id of ids) {
       const b = blocks.get(id)
-      if (b && b['deleted_at']) {
+      if (b?.['deleted_at']) {
         b['deleted_at'] = null
         pushOp('restore_block', { block_id: id })
         count++
@@ -544,7 +531,7 @@ export const HANDLERS: Record<string, Handler> = {
     let count = 0
     for (const id of ids) {
       const b = blocks.get(id)
-      if (b && b['deleted_at']) {
+      if (b?.['deleted_at']) {
         blocks.delete(id)
         properties.delete(id)
         blockTags.delete(id)
@@ -733,51 +720,6 @@ export const HANDLERS: Record<string, Handler> = {
     return results
   },
 
-  get_conflicts: (args) => {
-    // PEND-35 Tier 1.4 — apply optional `conflictType` and `idMin` (ULID
-    // lower bound) filters server-side so the mock's post-filter set
-    // matches the real backend's keyset pagination output.
-    const a = (args ?? {}) as Record<string, unknown>
-    const conflictType = (a['conflictType'] as string | null | undefined) ?? null
-    const idMin = (a['idMin'] as string | null | undefined) ?? null
-    const items = [...blocks.values()].filter((b) => {
-      if (b['is_conflict'] !== true) return false
-      if (b['deleted_at']) return false
-      if (conflictType != null && b['conflict_type'] !== conflictType) return false
-      if (idMin != null && (b['id'] as string) < idMin) return false
-      return true
-    })
-    return { items, next_cursor: null, has_more: false }
-  },
-
-  count_conflicts: (args) => {
-    // PEND-35 Tier 2.11 — mirror `count_conflicts_inner`'s SQL shape so
-    // mock-mode FE tests observe the same scoped count the real backend
-    // produces. Pull the active spaceId out of `{ kind, space_id }`,
-    // fall back to `null` (cross-space, legacy) for `Global`. Matches
-    // the `count_backlinks_batch` handler.
-    const a = (args ?? {}) as Record<string, unknown>
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    let count = 0
-    for (const b of blocks.values()) {
-      if (b['is_conflict'] !== true) continue
-      if (b['deleted_at']) continue
-      if (spaceId !== null) {
-        // Active-space scoping: drop conflicts whose owning page
-        // (resolved via `page_id`, falling back to the block's own id
-        // if it IS a page) doesn't carry `space = <spaceId>`. Matches
-        // the SQL `COALESCE(b.page_id, b.id) IN (... space ...)` used
-        // by `count_conflicts_inner`.
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) continue
-      }
-      count += 1
-    }
-    return count
-  },
-
   search_blocks: (args) => {
     const a = args as Record<string, unknown>
     const query = (a['query'] as string) ?? ''
@@ -821,7 +763,7 @@ export const HANDLERS: Record<string, Handler> = {
     const spaceId = (a['spaceId'] as string | null) ?? null
 
     const items = Array.from(blocks.values()).filter((b) => {
-      if (b['deleted_at'] || b['is_conflict']) return false
+      if (b['deleted_at']) return false
       if (spaceId && b['page_id'] !== spaceId && b['id'] !== spaceId) return false
       if (!todoStates.includes((b['todo_state'] as string) ?? '')) return false
       const date = b['due_date'] ?? b['scheduled_date']
@@ -878,8 +820,7 @@ export const HANDLERS: Record<string, Handler> = {
       scheduled_date: 'date',
     }
     const rowKind = ROW_FIELD_KEYS[key]
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this
-    // predicate mirrors the SQL evaluation order from
+    // The predicate below mirrors the SQL evaluation order from
     // `pagination/properties.rs::query_by_property` so the mock's
     // observable behaviour matches the backend across reserved-key /
     // non-reserved / row-fallback branches plus the four pushed-down
@@ -887,6 +828,7 @@ export const HANDLERS: Record<string, Handler> = {
     // valueTextIn, valueDate/valueDateRange). Splitting this into helpers
     // would make the SQL→TS correspondence harder to audit and would
     // duplicate the keep/drop signal across multiple closures.
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       // Push-down filters short-circuit before the property lookup so
@@ -997,6 +939,7 @@ export const HANDLERS: Record<string, Handler> = {
     const propertyFilterMatches = (
       b: Record<string, unknown>,
       pf: Record<string, unknown>,
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
     ): boolean => {
       const key = pf['key'] as string
       const valueText = (pf['valueText'] as string | null) ?? null
@@ -1089,7 +1032,6 @@ export const HANDLERS: Record<string, Handler> = {
 
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
-      if (b['is_conflict']) return false
       if (blockType !== null && b['block_type'] !== blockType) return false
       for (const pf of propertyFilters) {
         if (!propertyFilterMatches(b, pf)) return false
@@ -2059,6 +2001,7 @@ export const HANDLERS: Record<string, Handler> = {
   // Page links for graph view (F-33)
   // ---------------------------------------------------------------------------
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
   list_page_links: (args) => {
     // Scan all non-deleted blocks for [[ULID]] page link tokens and
     // return page-to-page edges (source = parent page, target = linked page).
@@ -2281,21 +2224,16 @@ export const HANDLERS: Record<string, Handler> = {
   // The Rust impl in `src-tauri/src/commands/blocks/queries.rs`
   // (`trash_descendant_counts_inner` → `pagination::trash_descendant_counts`)
   // uses a SQL JOIN on the root's `deleted_at` timestamp, so it counts
-  // only blocks deleted in the *same cascade-batch* as the root, AND it
-  // filters `is_conflict = 0` per AGENTS.md invariant #9 (recursive
-  // CTEs over `blocks` must exclude conflict copies).
+  // only blocks deleted in the *same cascade-batch* as the root.
   //
   // The mock here counts ALL soft-deleted descendants of the root via a
   // BFS over `parent_id`, regardless of *when* they were deleted.
-  // Conflict copies are excluded via `!b['is_conflict']` to align with
-  // invariant #9 — that part matches Rust.
   //
   // For the current Playwright e2e seed-data flows the two converge,
-  // because the seed deletes whole subtrees in a single batch and never
-  // produces conflict copies under a trash root. Revisit this if a
-  // Playwright spec ever creates mixed-batch trash state (e.g. partial
-  // restore-then-redelete) — at that point the mock will need to track
-  // and join on `deleted_at` like the Rust impl.
+  // because the seed deletes whole subtrees in a single batch. Revisit
+  // this if a Playwright spec ever creates mixed-batch trash state
+  // (e.g. partial restore-then-redelete) — at that point the mock will
+  // need to track and join on `deleted_at` like the Rust impl.
   // ---------------------------------------------------------------------------
 
   trash_descendant_counts: (args) => {
@@ -2312,9 +2250,6 @@ export const HANDLERS: Record<string, Handler> = {
           const id = b['id'] as string
           if (seen.has(id)) continue
           if (b['parent_id'] !== parent) continue
-          // Exclude conflict copies per AGENTS.md invariant #9 — the
-          // in-memory `is_conflict` is a boolean (see seed.ts makeBlock).
-          if (b['is_conflict']) continue
           seen.add(id)
           if (b['deleted_at']) count++
           queue.push(id)
@@ -2326,16 +2261,14 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // ---------------------------------------------------------------------------
-  // PEND-35 Tier 2.3 — three new ConflictList batch endpoints
+  // PEND-35 Tier 2.3 — get_blocks batch endpoint
   // ---------------------------------------------------------------------------
 
   // get_blocks(ids: string[]) -> BlockRow[]
   //
   // Mirrors `commands/blocks/queries.rs::get_blocks_inner`: returns the
   // full BlockRow for every id present in the seed (NOT filtered by
-  // soft-delete / conflict status — the primary consumer is ConflictList,
-  // which renders conflict copies and possibly-deleted parents). Missing
-  // ids are silently omitted so callers map by id.
+  // soft-delete). Missing ids are silently omitted so callers map by id.
   get_blocks: (args) => {
     const a = args as Record<string, unknown>
     const ids = (a['ids'] as string[]) ?? []
@@ -2350,103 +2283,14 @@ export const HANDLERS: Record<string, Handler> = {
     return out
   },
 
-  // first_op_device_for_blocks(blockIds) -> Record<string, string>
-  //
-  // Mirrors `commands/blocks/queries.rs::first_op_device_for_blocks_inner`:
-  // for each input block_id, returns the device_id of the op_log row with
-  // the smallest seq. Missing block_ids are simply omitted from the map.
-  first_op_device_for_blocks: (args) => {
-    const a = args as Record<string, unknown>
-    const blockIds = (a['blockIds'] as string[]) ?? []
-    if (blockIds.length === 0) return {}
-    const blockSet = new Set(blockIds)
-    // Pick the smallest-seq op per block_id. Tie-broken by device_id ASC,
-    // matching the SQL `MIN(device_id)` after the MIN(seq) filter. The
-    // backend stores block_id in a denormalized column; the mock keeps it
-    // inside the JSON payload (mock pushOp), so we parse it back out.
-    const best = new Map<string, { device_id: string; seq: number }>()
-    for (const op of opLog) {
-      let bid: string | undefined
-      try {
-        const parsed = JSON.parse(op.payload) as Record<string, unknown>
-        const v = parsed['block_id']
-        if (typeof v === 'string') bid = v
-      } catch {
-        // skip malformed payloads
-      }
-      if (bid == null || !blockSet.has(bid)) continue
-      const cur = best.get(bid)
-      if (
-        !cur ||
-        op.seq < cur.seq ||
-        (op.seq === cur.seq && op.device_id.localeCompare(cur.device_id) < 0)
-      ) {
-        best.set(bid, { device_id: op.device_id, seq: op.seq })
-      }
-    }
-    const out: Record<string, string> = {}
-    for (const [bid, v] of best) {
-      out[bid] = v.device_id
-    }
-    return out
-  },
-
-  // resolve_conflicts_batch(actions) -> { resolved, failed }
-  //
-  // Mirrors `commands/blocks/crud.rs::resolve_conflicts_batch_inner`: for
-  // each action, either edits the parent's content + soft-deletes the
-  // conflict copy (`keep`), or just soft-deletes the conflict copy
-  // (`discard`). Atomicity is best-effort in the mock — actions are
-  // applied sequentially and any failure throws (mirroring the
-  // all-or-nothing backend contract on first error).
-  resolve_conflicts_batch: (args) => {
-    const a = args as Record<string, unknown>
-    const actions = (a['actions'] as Array<Record<string, unknown>>) ?? []
-    if (actions.length === 0) {
-      throw new Error('actions list cannot be empty')
-    }
-    let resolved = 0
-    for (const action of actions) {
-      const blockId = action['blockId'] as string
-      const parentId = action['parentId'] as string
-      const kind = action['action'] as string
-      const content = action['content'] as string | null | undefined
-      if (kind !== 'keep' && kind !== 'discard') {
-        throw new Error(`unknown action '${kind}'`)
-      }
-      if (kind === 'keep') {
-        if (content == null) {
-          throw new Error("'keep' requires non-null content")
-        }
-        const parent = blocks.get(parentId)
-        if (!parent || parent['deleted_at']) {
-          throw new Error(`block '${parentId}' (not found or deleted)`)
-        }
-        parent['content'] = content
-        pushOp('edit_block', { block_id: parentId, to_text: content })
-      }
-      const conflict = blocks.get(blockId)
-      if (!conflict) {
-        throw new Error(`block '${blockId}' not found`)
-      }
-      if (conflict['deleted_at']) {
-        throw new Error(`block '${blockId}' is already deleted`)
-      }
-      conflict['deleted_at'] = new Date().toISOString()
-      pushOp('delete_block', { block_id: blockId })
-      resolved++
-    }
-    return { resolved, failed: 0 }
-  },
-
   // ---------------------------------------------------------------------------
   // First-child-per-parent batch (PEND-35 Tier 2.8)
   //
   // Mirrors `commands/blocks/queries.rs::first_child_for_blocks_inner`:
   // returns a map of `parentId → first BlockRow` ordered by
-  // `(position ASC, id ASC)`. Soft-deleted and conflict-copy children
-  // are filtered out so the value is always a live block. Parents
-  // with no active children are omitted from the record.
+  // `(position ASC, id ASC)`. Soft-deleted children are filtered out so
+  // the value is always a live block. Parents with no active children
+  // are omitted from the record.
   // ---------------------------------------------------------------------------
 
   first_child_for_blocks: (args) => {
@@ -2461,7 +2305,6 @@ export const HANDLERS: Record<string, Handler> = {
       if (parent == null) continue
       if (!parentSet.has(parent)) continue
       if (b['deleted_at']) continue
-      if (b['is_conflict']) continue
       const bucket = grouped.get(parent) ?? []
       bucket.push(b)
       grouped.set(parent, bucket)
@@ -2520,7 +2363,6 @@ export const HANDLERS: Record<string, Handler> = {
       page_id: parentId,
       position,
       deleted_at: null,
-      conflict_type: null,
       todo_state: null,
       priority: null,
       due_date: null,

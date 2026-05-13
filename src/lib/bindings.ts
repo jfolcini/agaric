@@ -101,8 +101,6 @@ export const commands = {
 	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
 	// Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
 	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
-	// Tauri command: list conflict-copy blocks. Delegates to [`get_conflicts_inner`].
-	getConflicts: (cursor: string | null, limit: number | null, conflictType: string | null, idMin: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_conflicts", { cursor, limit, conflictType, idMin })),
 	// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
 	getStatus: () => typedError<StatusInfo, AppErrorSchema>(__TAURI_INVOKE("get_status")),
 	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
@@ -355,8 +353,6 @@ export const commands = {
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
 	countBacklinksBatch: (pageIds: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
-	// Tauri command: count active conflict-copy blocks. Delegates to [`count_conflicts_inner`].
-	countConflicts: (scope: SpaceScope) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("count_conflicts", { scope })),
 	// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
 	setPageAliases: (pageId: string, aliases: string[]) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
 	// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
@@ -475,20 +471,6 @@ export const commands = {
 	 *  [`get_blocks_inner`].
 	 */
 	getBlocks: (ids: string[]) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("get_blocks", { ids })),
-	/**
-	 *  Tauri command: batch-resolve the first-op device per block. Delegates
-	 *  to [`first_op_device_for_blocks_inner`].
-	 */
-	firstOpDeviceForBlocks: (blockIds: string[]) => typedError<{ [key in string]: string }, AppErrorSchema>(__TAURI_INVOKE("first_op_device_for_blocks", { blockIds })),
-	/**
-	 *  Tauri command: atomically resolve a batch of conflicts. Delegates to
-	 *  [`resolve_conflicts_batch_inner`].
-	 *
-	 *  PEND-35 Tier 2.3 — collapses the FE per-row `editBlock` + `deleteBlock`
-	 *  IPC loop in `src/components/ConflictList.tsx::handleBatchConfirm` into
-	 *  one round-trip and one writer-lock window.
-	 */
-	resolveConflictsBatch: (actions: ConflictResolveAction[]) => typedError<ConflictResolveBatchResult, AppErrorSchema>(__TAURI_INVOKE("resolve_conflicts_batch", { actions })),
 	/**
 	 *  Tauri command: fetch (or refresh) link metadata for a URL. Cache
 	 *  hits return immediately; stale or missing entries trigger an HTTP
@@ -647,7 +629,6 @@ export const commands = {
 	parent_id: string | null,
 	position: number | null,
 	deleted_at: string | null,
-	conflict_type: string | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
@@ -710,7 +691,6 @@ export type ActiveBlockRow = {
 	parent_id: string | null,
 	position: number | null,
 	deleted_at: string | null,
-	conflict_type: string | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
@@ -850,7 +830,6 @@ export type BlockRow = {
 	parent_id: string | null,
 	position: number | null,
 	deleted_at: string | null,
-	conflict_type: string | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
@@ -891,69 +870,6 @@ export type CompactionStatus = {
 
 // Comparison operators for property filters.
 export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" | "StartsWith";
-
-/**
- *  One row of [`resolve_conflicts_batch_inner`]'s input list.
- *
- *  `action` is a closed-set string enum (`"keep"` | `"discard"`) — wider
- *  than a Rust enum to keep the FE wire format simple, but validated at
- *  the boundary so `serde` accepts arbitrary input and we surface a
- *  clean [`AppError::Validation`] instead of a confusing deserialise
- *  error.
- *
- *  `keep` = apply the conflict's `content` to the original block (parent)
- *  and soft-delete the conflict copy. `discard` = soft-delete the
- *  conflict copy without touching the parent. Mirrors the FE shape of
- *  `editBlock(parent_id, content)` then `deleteBlock(conflict_id)` for
- *  the keep path, and `deleteBlock(conflict_id)` for the discard path.
- */
-export type ConflictResolveAction = {
-	// The conflict-copy block id (the row whose ).
-	blockId: string,
-	/**
-	 *  The original / parent block id whose content is overwritten on `keep`.
-	 *  For `discard` actions this field is unused but still required by the
-	 *  wire format (FE consistency — the row-level resolve dialog always has
-	 *  a `parent_id` regardless of action).
-	 */
-	parentId: string,
-	/**
-	 *  `"keep"` or `"discard"`. Validated at the IPC boundary; any other
-	 *  string is rejected with [`AppError::Validation`].
-	 */
-	action: string,
-	/**
-	 *  Content to write on a `keep` action. Required for `keep`; ignored on
-	 *  `discard`.
-	 */
-	content: string | null,
-};
-
-/**
- *  Result of [`resolve_conflicts_batch_inner`]: the count of actions that
- *  landed inside the single transaction.
- *
- *  Atomicity contract: the whole batch is all-or-nothing. If any action
- *  fails (e.g. a parent block was concurrently soft-deleted between FE
- *  selection and IPC, or an `edit_block` content size validation fails),
- *  the entire transaction rolls back. `resolved` is therefore always
- *  equal to `actions.len()` on success — `failed` is reserved for a
- *  future per-action savepoint variant if we ever need it.
- */
-export type ConflictResolveBatchResult = {
-	/**
-	 *  Number of conflict actions that completed successfully (all-or-nothing,
-	 *  so this equals `actions.len()` on a successful return).
-	 */
-	resolved: number,
-	/**
-	 *  Number of conflict actions that failed within the transaction.
-	 *  Always 0 in the current implementation (rollback is all-or-nothing).
-	 *  Reserved so the FE wire shape can grow into a per-action savepoint
-	 *  variant without a binding-rebuild churn.
-	 */
-	failed: number,
-};
 
 /**
  *  One row of [`create_blocks_batch_inner`]'s input list.

@@ -142,7 +142,7 @@ async fn resolve_or_create_journal_page(
     // space. Two spaces with the same date keep distinct daily notes.
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, b.conflict_type,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
                   b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.block_type = 'page'
@@ -336,7 +336,7 @@ pub async fn get_journal_page_by_date_inner(
 
     let row = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, b.conflict_type,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
                   b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.block_type = 'page'
@@ -407,7 +407,7 @@ pub async fn list_journal_pages_in_range_inner(
 
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, b.conflict_type,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
                   b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.block_type = 'page'

@@ -6,7 +6,6 @@ has_more: false
 items:
   - block:
       block_type: content
-      conflict_type: ~
       content: recurring
       deleted_at: ~
       due_date: 2099-01-03

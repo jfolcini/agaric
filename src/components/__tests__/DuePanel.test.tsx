@@ -1200,7 +1200,6 @@ describe('DuePanel', () => {
             parent_id: null,
             position: 1,
             deleted_at: null,
-            conflict_type: null,
             todo_state: 'TODO',
             priority: null,
             due_date: tomorrowStr,

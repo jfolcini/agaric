@@ -5,7 +5,6 @@ expression: result
 has_more: false
 items:
   - block_type: content
-    conflict_type: ~
     content: findme please
     deleted_at: ~
     due_date: ~

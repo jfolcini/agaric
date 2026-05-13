@@ -99,7 +99,6 @@ macro_rules! agaric_commands {
             $crate::commands::remove_tag,
             $crate::commands::get_backlinks,
             $crate::commands::get_block_history,
-            $crate::commands::get_conflicts,
             $crate::commands::get_status,
             $crate::commands::search_blocks,
             $crate::commands::query_by_tags,
@@ -164,9 +163,6 @@ macro_rules! agaric_commands {
             $crate::commands::count_agenda_batch,
             $crate::commands::count_agenda_batch_by_source,
             $crate::commands::count_backlinks_batch,
-            // PEND-35 Tier 2.11 — count-only conflicts badge (vs. paginating
-            // `get_conflicts({limit:100})` every 30 s just for `.items.length`)
-            $crate::commands::count_conflicts,
             // Page aliases (#598)
             $crate::commands::set_page_aliases,
             $crate::commands::get_page_aliases,
@@ -209,18 +205,9 @@ macro_rules! agaric_commands {
             // First-child-per-parent batch (PEND-35 Tier 2.8) — collapses the
             // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.
             $crate::commands::first_child_for_blocks,
-            // PEND-35 Tier 2.3 — three new ConflictList batch endpoints
-            // collapse the 2N+N+1+N+1 IPCs to 3:
-            //   • get_blocks(ids) — full BlockRow batch (parents fetch).
-            //   • first_op_device_for_blocks(block_ids) — first-op device
-            //     id map (the "From: <device>" badge), single SQL via the
-            //     idx_op_log_block_id index from migration 0030.
-            //   • resolve_conflicts_batch(actions) — atomic keep/discard
-            //     batch in one IMMEDIATE tx, replacing the 2N edit+delete
-            //     IPC loop in handleBatchConfirm.
+            // PEND-35 Tier 2.3 — get_blocks batch endpoint
+            //   • get_blocks(ids) — full BlockRow batch.
             $crate::commands::get_blocks,
-            $crate::commands::first_op_device_for_blocks,
-            $crate::commands::resolve_conflicts_batch,
             // Link metadata (UX-165)
             $crate::commands::fetch_link_metadata,
             $crate::commands::get_link_metadata,

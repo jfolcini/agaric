@@ -46,7 +46,6 @@ fn sample_snapshot_data() -> SnapshotData {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -603,7 +602,6 @@ async fn apply_snapshot_empty_db() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -857,7 +855,6 @@ fn cbor_round_trip_option_f64() {
                 position: None,
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1212,7 +1209,6 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         // MAINT-133: keep this struct in lock-step with `BlockSnapshot`
         // so the encoded CBOR map covers every field the real decoder
         // expects.
-        conflict_type: Option<&'a str>,
         todo_state: Option<&'a str>,
         priority: Option<&'a str>,
         due_date: Option<&'a str>,
@@ -1251,7 +1247,6 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1304,7 +1299,6 @@ async fn apply_snapshot_rejects_invalid_block_type() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1359,7 +1353,6 @@ async fn apply_snapshot_rejects_malformed_ulid_block_id() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1411,7 +1404,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     position: Some(1),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -1425,7 +1417,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     position: Some(1),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -1440,7 +1431,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     position: None,
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -1789,7 +1779,6 @@ fn large_text_field_round_trip() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1866,7 +1855,6 @@ fn all_nullable_fields_null_round_trip() {
                 position: None,
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -2436,7 +2424,6 @@ fn snapshot_v2_round_trips_new_fields() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: Some("TODO".to_string()),
                 priority: Some("2".to_string()),
                 due_date: Some("2026-04-15".to_string()),
@@ -2679,7 +2666,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     position: Some(1),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: Some("2025-06-01".to_string()),
@@ -2693,7 +2679,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     position: None,
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -2707,7 +2692,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     position: Some(1),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -2888,7 +2872,6 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     position: Some(1),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -2902,7 +2885,6 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     position: Some(1),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: Some("2025-06-15".to_string()),
@@ -3030,7 +3012,6 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -3119,7 +3100,6 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
                 position: Some(1),
                 deleted_at: None,
                 conflict_source: None,
-                conflict_type: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -3402,7 +3382,6 @@ mod proptest_tests {
                     position,
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -3560,7 +3539,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     position: Some(1),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -3574,7 +3552,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     position: Some(2),
                     deleted_at: None,
                     conflict_source: None,
-                    conflict_type: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -3657,107 +3634,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
 }
 
 // =======================================================================
-// MAINT-133: v2 snapshot without conflict_type decodes with None
-// =======================================================================
-//
-// SCHEMA_VERSION just bumped 2 → 3 because `BlockSnapshot::conflict_type`
-// joined the snapshot pipeline. The MAINT-133 review note claimed the
-// decoder is "tolerant of missing fields"; this test verifies that
-// claim end-to-end against a hand-crafted v2-shaped CBOR blob.
-//
-// If a future refactor accidentally strips the `#[serde(default)]`
-// annotation on `conflict_type` (or replaces ciborium with a strict
-// decoder), this test will catch the regression — older v2 snapshots
-// would otherwise blow up on decode and break sync catch-up for any
-// device that hasn't yet rotated to v3.
-
-// =======================================================================
-// MAINT-133: conflict_type must survive snapshot round-trip
-// =======================================================================
-//
-// Schema migration `0007_add_conflict_type.sql` adds the `conflict_type`
-// column to `blocks`; `merge/resolve.rs` writes it on every conflict-copy
-// block. But the snapshot pipeline (BlockSnapshot struct, SELECT in
-// create.rs, INSERT in restore.rs) did not carry the column, so on any
-// user-triggered restore or peer snapshot catch-up, every conflict
-// block's `conflict_type` was silently set to NULL.
-//
-// This regression test seeds a conflict-copy block with `conflict_type`
-// set to 'Text', round-trips through `create_snapshot` +
-// `apply_snapshot`, and asserts the column survives.
-
-#[tokio::test]
-async fn maint133_conflict_type_survives_round_trip() {
-    let (pool, _dir) = test_pool().await;
-    let mat = test_materializer(&pool);
-    let device_id = "dev-1";
-
-    // Seed an "original" block (the block the conflict was forked from)
-    // and a conflict-copy block that points to it via conflict_source.
-    // The conflict block has conflict_type='Text' — exactly what
-    // `merge/resolve.rs` writes on a text-divergence conflict.
-    insert_block(&pool, "block-orig", "original content").await;
-    sqlx::query(
-        "INSERT INTO blocks \
-            (id, block_type, content, parent_id, position, \
-             conflict_source, conflict_type) \
-         VALUES (?, 'content', ?, NULL, 1, ?, 'Text')",
-    )
-    .bind("block-conflict")
-    .bind("conflicting content")
-    .bind("block-orig")
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // Need at least one op so collect_frontier() succeeds.
-    insert_op_at(&pool, device_id, "block-orig", "2025-01-01T00:00:00Z").await;
-
-    // Sanity: the seed row really has conflict_type = 'Text'.
-    let pre_round_trip: Option<String> =
-        sqlx::query_scalar("SELECT conflict_type FROM blocks WHERE id = 'block-conflict'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        pre_round_trip.as_deref(),
-        Some("Text"),
-        "pre-condition: seeded conflict block must have conflict_type='Text'"
-    );
-
-    // Round-trip: create the snapshot, then apply it back. After apply,
-    // conflict_type on block-conflict must still be 'Text' — anything
-    // else means the snapshot pipeline silently dropped the column.
-    let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
-    let snap_row = sqlx::query!(
-        "SELECT id, data FROM log_snapshots WHERE id = ?",
-        snapshot_id
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let snap_data = snap_row.data;
-
-    apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
-
-    let post_round_trip: Option<String> =
-        sqlx::query_scalar("SELECT conflict_type FROM blocks WHERE id = 'block-conflict'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        post_round_trip.as_deref(),
-        Some("Text"),
-        "MAINT-133: conflict_type must survive snapshot round-trip; \
-         got {post_round_trip:?}, expected Some(\"Text\"). The snapshot \
-         pipeline (BlockSnapshot / create SELECT / restore INSERT) is \
-         dropping the column."
-    );
-
-    mat.shutdown();
-}
-
-// =======================================================================
 // L-111: apply_snapshot must roll back chunk-1 inserts when chunk-2 fails
 // =======================================================================
 //
@@ -3804,7 +3680,6 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         position: Some(1),
         deleted_at: None,
         conflict_source: None,
-        conflict_type: None,
         todo_state: None,
         priority: None,
         due_date: None,

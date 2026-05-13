@@ -35,7 +35,7 @@ mod undated;
 mod tests;
 
 pub use agenda::{list_agenda, list_agenda_range};
-pub use hierarchy::{list_by_type, list_children, list_conflicts};
+pub use hierarchy::{list_by_type, list_children};
 pub use history::{list_block_history, list_page_history};
 pub use links::list_backlinks;
 pub use properties::query_by_property;
@@ -129,7 +129,6 @@ pub struct BlockRow {
     pub parent_id: Option<String>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
-    pub conflict_type: Option<String>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
@@ -180,7 +179,6 @@ pub struct ActiveBlockRow {
     pub parent_id: Option<String>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
-    pub conflict_type: Option<String>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
@@ -206,7 +204,6 @@ impl ActiveBlockRow {
             parent_id: row.parent_id,
             position: row.position,
             deleted_at: row.deleted_at,
-            conflict_type: row.conflict_type,
             todo_state: row.todo_state,
             priority: row.priority,
             due_date: row.due_date,
@@ -227,7 +224,6 @@ impl From<ActiveBlockRow> for BlockRow {
             parent_id: active.parent_id,
             position: active.position,
             deleted_at: active.deleted_at,
-            conflict_type: active.conflict_type,
             todo_state: active.todo_state,
             priority: active.priority,
             due_date: active.due_date,
@@ -415,9 +411,9 @@ impl Cursor {
 
     /// Cursor keyed only on `id` — all other slots `None`.
     ///
-    /// Used by `list_backlinks`, `list_by_type`, `list_conflicts`,
-    /// `list_undated_tasks`, `list_by_tag`, `query_by_property`, and
-    /// `list_agenda` (single-date variant).
+    /// Used by `list_backlinks`, `list_by_type`, `list_undated_tasks`,
+    /// `list_by_tag`, `query_by_property`, and `list_agenda`
+    /// (single-date variant).
     #[must_use]
     pub(super) fn for_id(id: String) -> Self {
         Self {

@@ -141,7 +141,6 @@ describe('get_block', () => {
       page_id: SEED_IDS.PAGE_GETTING_STARTED,
       position: 0,
       deleted_at: null,
-      conflict_type: null,
       todo_state: null,
       priority: null,
       due_date: null,
@@ -1103,47 +1102,6 @@ describe('list_property_keys', () => {
 })
 
 // ---------------------------------------------------------------------------
-// get_conflicts
-// ---------------------------------------------------------------------------
-
-describe('get_conflicts', () => {
-  it('returns seed conflict block', () => {
-    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
-    expect(result.items.length).toBeGreaterThanOrEqual(1)
-    const ids = result.items.map((b) => b['id'])
-    expect(ids).toContain(SEED_IDS.CONFLICT_01)
-  })
-
-  it('conflict block has is_conflict true', () => {
-    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
-    const conflict = result.items.find((b) => b['id'] === SEED_IDS.CONFLICT_01)
-    expect(conflict).toBeDefined()
-    expect(conflict?.['is_conflict']).toBe(true)
-  })
-
-  it('excludes non-conflict blocks', () => {
-    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
-    const ids = result.items.map((b) => b['id'])
-    expect(ids).not.toContain(SEED_IDS.PAGE_GETTING_STARTED)
-    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
-  })
-
-  it('excludes deleted conflict blocks', () => {
-    invoke('delete_block', { blockId: SEED_IDS.CONFLICT_01 })
-    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
-    const ids = result.items.map((b) => b['id'])
-    expect(ids).not.toContain(SEED_IDS.CONFLICT_01)
-  })
-
-  it('returns PageResponse shape', () => {
-    const result = invoke('get_conflicts') as Record<string, unknown>
-    expect(result).toHaveProperty('items')
-    expect(result).toHaveProperty('next_cursor', null)
-    expect(result).toHaveProperty('has_more', false)
-  })
-})
-
-// ---------------------------------------------------------------------------
 // revert_ops
 // ---------------------------------------------------------------------------
 
@@ -1277,7 +1235,7 @@ describe('list_blocks with showDeleted', () => {
     const result = invoke('list_blocks', { showDeleted: true }) as {
       items: Record<string, unknown>[]
     }
-    // Only seed conflict block is not deleted; no blocks have deleted_at set initially
+    // No blocks have deleted_at set initially
     expect(result.items).toHaveLength(0)
   })
 })

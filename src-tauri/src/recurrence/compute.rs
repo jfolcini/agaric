@@ -97,7 +97,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     // same IMMEDIATE transaction as the property reads below.
     let original: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
                   due_date, scheduled_date, page_id
            FROM blocks WHERE id = ?"#,
         block_id
@@ -518,7 +518,7 @@ mod tests_h17_m77 {
     async fn find_todo_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
         sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
                       due_date, scheduled_date, page_id
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
             original_id
@@ -885,7 +885,7 @@ mod tests_l99_l100 {
     async fn find_todo_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
         sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
                       due_date, scheduled_date, page_id
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
             original_id

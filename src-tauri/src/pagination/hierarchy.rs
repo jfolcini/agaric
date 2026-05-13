@@ -53,7 +53,7 @@ pub async fn list_children(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at,
-                conflict_type, todo_state, priority, due_date, scheduled_date,
+                 todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks b
          WHERE parent_id IS ?1 AND deleted_at IS NULL
@@ -113,7 +113,7 @@ pub async fn list_by_type(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at,
-                conflict_type, todo_state, priority, due_date, scheduled_date,
+                 todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks b
          WHERE block_type = ?1 AND deleted_at IS NULL
@@ -133,23 +133,4 @@ pub async fn list_by_type(
     .await?;
 
     build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
-}
-
-/// List conflict blocks, paginated.
-///
-/// PEND-09 Phase 4 dropped the `blocks.is_conflict` column. The
-/// conflict-copy creation path was made unreachable in Phase 3, so this
-/// query can never return rows — it is preserved as a vacuous Tauri
-/// surface so the IPC contract stays stable.
-pub async fn list_conflicts(
-    _pool: &SqlitePool,
-    _page: &PageRequest,
-    _conflict_type: Option<&str>,
-    _id_min: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
-    Ok(PageResponse {
-        items: Vec::new(),
-        next_cursor: None,
-        has_more: false,
-    })
 }
