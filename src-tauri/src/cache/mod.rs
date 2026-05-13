@@ -20,6 +20,8 @@ mod projected_agenda;
 mod tags;
 
 #[cfg(test)]
+mod cascade_tests;
+#[cfg(test)]
 mod tests;
 
 // ---------------------------------------------------------------------------
