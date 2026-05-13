@@ -70,39 +70,23 @@ describe('loadTemplatePages', () => {
 
 describe('insertTemplateBlocks', () => {
   it('creates blocks from template children via a single batch IPC', async () => {
-    // PEND-35 Tier 4.3 — `insertTemplateBlocks` walks the template
-    // subtree (listBlocks per source parent), accumulates one
-    // `CreateBlockSpec` per descendant, and fires ONE
+    // PEND-35 Tier 4.3 + limit-clamp-followup — `insertTemplateBlocks`
+    // fetches the whole template subtree in ONE `load_page_subtree`
+    // IPC, groups descendants by `parent_id`, accumulates one
+    // `CreateBlockSpec` per descendant in DFS order, and fires ONE
     // `create_blocks_batch` per depth level. For a flat template with
-    // two siblings we expect ONE list_blocks (the template root) and
-    // ONE create_blocks_batch (depth 0).
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        {
-          id: 'TC1',
-          block_type: 'content',
-          content: '## Attendees',
-          parent_id: 'TMPL',
-          position: 0,
-        },
-        { id: 'TC2', block_type: 'content', content: '## Agenda', parent_id: 'TMPL', position: 1 },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
-    // listBlocks(TC1) → no grandchildren (recursion still happens to
-    // discover descendants before the batch fires)
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
-    // listBlocks(TC2) → no grandchildren
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    // two siblings we expect ONE load_page_subtree and ONE
+    // create_blocks_batch (depth 0).
+    mockedInvoke.mockResolvedValueOnce([
+      {
+        id: 'TC1',
+        block_type: 'content',
+        content: '## Attendees',
+        parent_id: 'TMPL',
+        position: 0,
+      },
+      { id: 'TC2', block_type: 'content', content: '## Agenda', parent_id: 'TMPL', position: 1 },
+    ])
     // create_blocks_batch → both blocks created in one IPC, returned
     // in input order.
     mockedInvoke.mockResolvedValueOnce([
@@ -114,12 +98,12 @@ describe('insertTemplateBlocks', () => {
 
     expect(ids).toEqual(['NEW1', 'NEW2'])
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'list_blocks',
-      expect.objectContaining({
-        parentId: 'TMPL',
-        limit: 500,
-      }),
+      'load_page_subtree',
+      expect.objectContaining({ rootBlockId: 'TMPL' }),
     )
+    // Anti-backslide guard: NO per-parent `list_blocks` IPC fires.
+    const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listCalls).toHaveLength(0)
     // ONE create_blocks_batch call carrying both specs in input order.
     const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
     expect(batchCalls).toHaveLength(1)
@@ -145,33 +129,15 @@ describe('insertTemplateBlocks', () => {
   })
 
   it('insertTemplateBlocks copies nested children recursively', async () => {
-    // PEND-35 Tier 4.3 — for a template with depth 2 (TMPL → A → B)
-    // the batch fires once per depth level: depth 0 creates A, depth 1
-    // creates B with `parentId = NEW_A` resolved from the previous
-    // batch's response.
-    //
-    // listBlocks(TMPL) → 1 child (A)
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        { id: 'A', block_type: 'content', content: 'Heading A', parent_id: 'TMPL', position: 0 },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
-    // listBlocks(A) → 1 grandchild (B)
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        { id: 'B', block_type: 'content', content: 'Sub-bullet B', parent_id: 'A', position: 0 },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
-    // listBlocks(B) → no children
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    // PEND-35 Tier 4.3 + limit-clamp-followup — for a template with
+    // depth 2 (TMPL → A → B) the batch fires once per depth level:
+    // depth 0 creates A, depth 1 creates B with `parentId = NEW_A`
+    // resolved from the previous batch's response. Both descendants
+    // arrive in a single `load_page_subtree` response.
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'A', block_type: 'content', content: 'Heading A', parent_id: 'TMPL', position: 0 },
+      { id: 'B', block_type: 'content', content: 'Sub-bullet B', parent_id: 'A', position: 0 },
+    ])
     // create_blocks_batch (depth 0) → returns NEW_A
     mockedInvoke.mockResolvedValueOnce([
       { id: 'NEW_A', block_type: 'content', content: 'Heading A' },
@@ -199,9 +165,12 @@ describe('insertTemplateBlocks', () => {
     const depthOneSpecs = (batchCalls[1]?.[1] as { specs: Array<{ parentId: string }> }).specs
     expect(depthOneSpecs[0]?.parentId).toBe('NEW_A')
 
-    // listBlocks was called 3 times (template children, A's children, B's children)
+    // Anti-backslide guard: NO per-parent `list_blocks` IPC fires —
+    // the subtree arrives in a single `load_page_subtree` call.
     const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-    expect(listCalls).toHaveLength(3)
+    expect(listCalls).toHaveLength(0)
+    const subtreeCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'load_page_subtree')
+    expect(subtreeCalls).toHaveLength(1)
   })
 
   it('returns ids accumulated up to the failing batch level', async () => {
@@ -212,24 +181,11 @@ describe('insertTemplateBlocks', () => {
     // commit already happened.)
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    // listBlocks(TMPL) → 1 root (A)
-    mockedInvoke.mockResolvedValueOnce({
-      items: [{ id: 'A', block_type: 'content', content: 'A', parent_id: 'TMPL', position: 0 }],
-      next_cursor: null,
-      has_more: false,
-    })
-    // listBlocks(A) → 1 child (B)
-    mockedInvoke.mockResolvedValueOnce({
-      items: [{ id: 'B', block_type: 'content', content: 'B', parent_id: 'A', position: 0 }],
-      next_cursor: null,
-      has_more: false,
-    })
-    // listBlocks(B) → empty
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    // load_page_subtree(TMPL) → A (root child) + B (A's child)
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'A', block_type: 'content', content: 'A', parent_id: 'TMPL', position: 0 },
+      { id: 'B', block_type: 'content', content: 'B', parent_id: 'A', position: 0 },
+    ])
     // depth 0 → success
     mockedInvoke.mockResolvedValueOnce([{ id: 'NEW_A', block_type: 'content', content: 'A' }])
     // depth 1 → fail
@@ -247,16 +203,12 @@ describe('insertTemplateBlocks', () => {
   })
 
   it('returns empty array when template has no children', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    // load_page_subtree returns no descendants → no batch IPC fires.
+    mockedInvoke.mockResolvedValueOnce([])
 
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     expect(ids).toEqual([])
-    // Only the list_blocks call should happen — no batch IPC.
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
     const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
     expect(batchCalls).toHaveLength(0)

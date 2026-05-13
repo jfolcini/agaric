@@ -290,6 +290,35 @@ function templateListBlocksResponse(args: unknown): unknown {
   return emptyPage
 }
 
+/**
+ * `load_page_subtree` response used by `insertTemplateBlocks` after
+ * limit-clamp-followup.  Returns every active descendant of `TMPL-PAGE`
+ * as a flat `BlockRow[]` (the root is excluded by contract — see
+ * `tauri.ts:loadPageSubtree`).
+ */
+function templateLoadPageSubtreeResponse(args: unknown): unknown {
+  const params = args as { rootBlockId?: string } | undefined
+  if (params?.rootBlockId === 'TMPL-PAGE') {
+    return [
+      {
+        id: 'TC1',
+        block_type: 'content',
+        content: '## Morning Review',
+        parent_id: 'TMPL-PAGE',
+        position: 0,
+      },
+      {
+        id: 'TC2',
+        block_type: 'content',
+        content: '## Tasks',
+        parent_id: 'TMPL-PAGE',
+        position: 1,
+      },
+    ]
+  }
+  return []
+}
+
 /** `query_by_property` response that advertises the journal template page. */
 function templateQueryByPropertyResponse(args: unknown): unknown {
   const params = args as { key: string }
@@ -364,6 +393,7 @@ function makeJournalTemplateMockImpl(todayStr: string) {
     const bug48 = bug48EmptyResponse(cmd)
     if (bug48 !== BUG48_NOT_HANDLED) return bug48
     if (cmd === 'list_blocks') return templateListBlocksResponse(args)
+    if (cmd === 'load_page_subtree') return templateLoadPageSubtreeResponse(args)
     if (cmd === 'query_by_property') return templateQueryByPropertyResponse(args)
     // BUG-1 / H-3b — JournalPage now routes page creation through
     // `create_page_in_space`. The IPC returns the new page ULID as a
@@ -2492,11 +2522,14 @@ describe('JournalPage', () => {
         )
       })
 
+      // limit-clamp-followup — `insertTemplateBlocks` now fetches the
+      // whole template subtree via `load_page_subtree(rootBlockId)`
+      // instead of recursing through `list_blocks(parentId)`.
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
-          'list_blocks',
+          'load_page_subtree',
           expect.objectContaining({
-            parentId: 'TMPL-PAGE',
+            rootBlockId: 'TMPL-PAGE',
           }),
         )
       })
@@ -2547,6 +2580,7 @@ describe('JournalPage', () => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
         if (cmd === 'list_blocks') return templateListBlocksResponse(args)
+        if (cmd === 'load_page_subtree') return templateLoadPageSubtreeResponse(args)
         if (cmd === 'get_property') {
           // PEND-35 Tier 2.4c: single-key PK lookup. Returns PropertyRow | null.
           const a = (args as { blockId: string; key: string } | undefined) ?? {
