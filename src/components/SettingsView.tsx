@@ -25,6 +25,7 @@ import { ChevronRight } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
@@ -151,28 +152,32 @@ export function SettingsView(): React.ReactElement {
         <span className="text-foreground font-medium">{t(TAB_LABEL_KEYS[activeTab])}</span>
       </nav>
 
-      {/* Tab bar */}
-      <div role="tablist" aria-label={t('sidebar.settings')} className="flex gap-1 border-b">
-        {TAB_IDS.map((tab) => (
-          <button
-            type="button"
-            key={tab}
-            role="tab"
-            id={`settings-tab-${tab}`}
-            aria-selected={activeTab === tab}
-            aria-controls={`settings-panel-${tab}`}
-            className={cn(
-              'px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
-              activeTab === tab
-                ? 'border-primary text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50',
-            )}
-            onClick={() => setActiveTab(tab)}
-          >
-            {t(TAB_LABEL_KEYS[tab])}
-          </button>
-        ))}
-      </div>
+      {/* Tab bar — wraps in a horizontal ScrollArea so the row scrolls
+          instead of overflowing the panel when the window is narrow or
+          a verbose locale stretches the labels (mirrors TabBar.tsx). */}
+      <ScrollArea orientation="horizontal" className="border-b">
+        <div role="tablist" aria-label={t('sidebar.settings')} className="flex gap-1 w-max">
+          {TAB_IDS.map((tab) => (
+            <button
+              type="button"
+              key={tab}
+              role="tab"
+              id={`settings-tab-${tab}`}
+              aria-selected={activeTab === tab}
+              aria-controls={`settings-panel-${tab}`}
+              className={cn(
+                'shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
+                activeTab === tab
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50',
+              )}
+              onClick={() => setActiveTab(tab)}
+            >
+              {t(TAB_LABEL_KEYS[tab])}
+            </button>
+          ))}
+        </div>
+      </ScrollArea>
 
       {/* Tab panels */}
       <div
