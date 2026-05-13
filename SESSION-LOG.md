@@ -7,6 +7,37 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 712 — design-system UX Tier 3 follow-up batch (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 4 build (general-purpose) |
+| **Items closed** | design-system-ux-review Tier 3: toggle-group ad-hoc focus ring; useTrashMultiSelect thin wrapper deletion; hardcoded English fallbacks (4 components, 2 i18n files); `prefers-contrast: more` block extension covering 8 token families across both themes. |
+| **Items modified** | design-system-ux-review-2026-05-09.md status note updated. |
+| **Tests added** | 0 net (deleted useTrashMultiSelect.test.ts: −5; GraphFilterBar tests updated to assert raw key instead of P${v} fallback) |
+| **Files touched** | 12 (8 production + 2 i18n + 1 css + 1 test) |
+
+**Summary:** four parallel subagents closed the remaining mechanical Tier 3 hygiene items. `toggle-group.tsx:53` ad-hoc `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring` collapsed to the standard `focus-ring-visible` utility (the one item the earlier focus-ring-visible migration missed because it used `ring-2` instead of `ring-[3px]`). `src/hooks/useTrashMultiSelect.ts` deleted — it was a 40-LOC wrapper renaming the return of `useListMultiSelect`; `TrashView.tsx` now calls `useListMultiSelect` directly with the inline `getItemId`. The companion `__tests__/useTrashMultiSelect.test.ts` deleted alongside (TrashView's own tests cover the integration). `useHistorySelection` and `useListMultiSelect` left intact (real logic). Hardcoded English fallbacks (`'(empty)'` in ResultCard + BlockListItem, `defaultValue: 'Projected'` in DuePanel, `defaultValue: \`P${v}\`` in GraphFilterBar) replaced with proper i18n keys: `common.empty` (new key in `src/lib/i18n/common.ts`), `due.projected` (new key in `src/lib/i18n/agenda.ts`), and the existing `graph.filter.priorityValue.*` keys in references.ts (defaultValue arg dropped — arbitrary user-configured levels now correctly resolve to the raw i18n key as the i18n contract intends). `@media (prefers-contrast: more)` block in `src/index.css` extended with high-contrast overrides for every flagged token family (`--ring`, `--alert-*`, `--op-*`, `--date-*`, `--conflict-*`, `--task-*`, `--block-ref(-foreground)`, `--highlight`, `--sync-idle`/`--sync-active`) across both `:root` and `.dark` themes — chroma boosted, lightness pushed toward the legible end for each theme's background.
+
+**Verification:**
+- `npx vitest run` — 9608 tests pass (was 9613; −5 from useTrashMultiSelect test deletion).
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- `src/components/ui/toggle-group.tsx` — focus-ring-visible.
+- `src/hooks/useTrashMultiSelect.ts` — deleted.
+- `src/hooks/__tests__/useTrashMultiSelect.test.ts` — deleted.
+- `src/components/TrashView.tsx` — uses useListMultiSelect directly.
+- `src/components/ResultCard.tsx`, `BlockListItem.tsx`, `DuePanel.tsx`, `GraphFilterBar.tsx` — i18n keys instead of English fallbacks.
+- `src/lib/i18n/common.ts`, `agenda.ts` — new keys.
+- `src/components/__tests__/GraphFilterBar.test.tsx` — assertion updated to match raw-key i18n behavior.
+- `src/index.css` — `@media (prefers-contrast: more)` extended.
+- `pending/design-system-ux-review-2026-05-09.md` — status note updated.
+
+**Commit plan:** single commit covering all 12 file changes + Session 712 entry + plan-file status note.
+
+---
 ## Session 711 — design-system UX Tier 3 hygiene batch (2026-05-13)
 
 | Metadata | Value |

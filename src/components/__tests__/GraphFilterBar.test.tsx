@@ -376,12 +376,20 @@ describe('GraphFilterBar', () => {
       const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
       await user.selectOptions(dimensionSelect, 'priority')
 
-      // Default-valued i18n fallback is `P${level}` — three custom checkboxes.
-      expect(screen.getByRole('checkbox', { name: 'PHigh' })).toBeInTheDocument()
-      expect(screen.getByRole('checkbox', { name: 'PMid' })).toBeInTheDocument()
-      expect(screen.getByRole('checkbox', { name: 'PLow' })).toBeInTheDocument()
+      // Custom levels without matching i18n keys fall back to the raw key.
+      expect(
+        screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.High' }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.Mid' }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.Low' }),
+      ).toBeInTheDocument()
       // The default '1', '2', '3' checkboxes are not rendered.
-      expect(screen.queryByRole('checkbox', { name: 'P1' })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('checkbox', { name: t('graph.filter.priorityValue.1') }),
+      ).not.toBeInTheDocument()
     })
 
     it('re-renders when levels change via setPriorityLevels after mount', async () => {
@@ -395,17 +403,22 @@ describe('GraphFilterBar', () => {
       expect(
         screen.getByRole('checkbox', { name: t('graph.filter.priorityValue.1') }),
       ).toBeInTheDocument()
-      // P5 not present yet.
-      expect(screen.queryByRole('checkbox', { name: 'P5' })).not.toBeInTheDocument()
+      // Level 5 not present yet.
+      expect(
+        screen.queryByRole('checkbox', { name: 'graph.filter.priorityValue.5' }),
+      ).not.toBeInTheDocument()
 
       // Live update — subscribe pushes new levels.
       setPriorityLevels(['1', '2', '3', '4', '5'])
 
-      // Levels 4 and 5 have no i18n keys, so they render via the `P${level}`
-      // defaultValue fallback.
+      // Levels 4 and 5 have no i18n keys, so t() returns the raw key.
       await waitFor(() => {
-        expect(screen.getByRole('checkbox', { name: 'P4' })).toBeInTheDocument()
-        expect(screen.getByRole('checkbox', { name: 'P5' })).toBeInTheDocument()
+        expect(
+          screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.4' }),
+        ).toBeInTheDocument()
+        expect(
+          screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.5' }),
+        ).toBeInTheDocument()
       })
     })
   })

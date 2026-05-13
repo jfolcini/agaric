@@ -121,6 +121,7 @@ export const agenda: Record<string, string> = {
   'duePanel.overdueTitle': 'Overdue',
   'duePanel.projectedListLabel': 'Projected entries',
   'duePanel.projectedBadge': 'Projected',
+  'due.projected': 'Projected',
   'duePanel.upcomingTitle': 'Upcoming',
   'donePanel.empty': 'No completed items yet.',
   'agendaFilter.clearAll': 'Clear all',

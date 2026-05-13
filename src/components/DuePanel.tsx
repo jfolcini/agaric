@@ -333,7 +333,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                 {uniqueProjected.length > 0 && (
                   <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
                     <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
-                      {t('due.projected', { defaultValue: 'Projected' })}
+                      {t('due.projected')}
                     </p>
                     <ul className="space-y-1" aria-label={t('duePanel.projectedListLabel')}>
                       {uniqueProjected.map((entry) => {

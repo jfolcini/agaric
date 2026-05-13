@@ -297,9 +297,9 @@ function AddFilterForm({
                   type="checkbox"
                   checked={priorityValues.includes(v)}
                   onChange={() => setPriorityValues((c) => toggleMultiValue(c, v))}
-                  aria-label={t(`graph.filter.priorityValue.${v}`, { defaultValue: `P${v}` })}
+                  aria-label={t(`graph.filter.priorityValue.${v}`)}
                 />
-                <span>{t(`graph.filter.priorityValue.${v}`, { defaultValue: `P${v}` })}</span>
+                <span>{t(`graph.filter.priorityValue.${v}`)}</span>
               </label>
             ))}
           </div>

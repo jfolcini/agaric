@@ -7,7 +7,7 @@
  * Original location breadcrumbs via batchResolve.
  *
  * Sub-pieces extracted for testability (MAINT-128):
- *  - useTrashFilter / useTrashMultiSelect (hooks)
+ *  - useTrashFilter (hook); multi-select via shared useListMultiSelect
  *  - TrashRowItem (presentational sibling)
  *  - TrashPurgeDialog / TrashBatchPurgeDialog / TrashBatchRestoreDialog
  *    / TrashEmptyDialog / TrashRestoreAllDialog (sibling dialogs)
@@ -24,13 +24,13 @@ import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { useTrashBreadcrumbs } from '../hooks/useTrashBreadcrumbs'
 import { useTrashDescendantCounts } from '../hooks/useTrashDescendantCounts'
 import { useTrashFilter } from '../hooks/useTrashFilter'
 import { useTrashListShortcuts } from '../hooks/useTrashListShortcuts'
-import { useTrashMultiSelect } from '../hooks/useTrashMultiSelect'
 import { announce } from '../lib/announcer'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
@@ -91,7 +91,7 @@ export function TrashView(): React.ReactElement {
 
   // ── Multi-select (extracted hook) ────────────────────────────────
   const { selected, toggleSelection, selectAll, clearSelection, handleRowClick } =
-    useTrashMultiSelect({ items: filteredBlocks })
+    useListMultiSelect({ items: filteredBlocks, getItemId: (b: BlockRow) => b.id })
   const [confirmBatchPurge, setConfirmBatchPurge] = useState(false)
   const [confirmBatchRestore, setConfirmBatchRestore] = useState(false)
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false)

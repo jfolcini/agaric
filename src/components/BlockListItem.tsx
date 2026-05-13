@@ -31,7 +31,7 @@ export interface BlockListItemProps {
   content: string | null
   /** Max characters before truncation. Default 120. */
   contentMaxLength?: number
-  /** Fallback text when content is null/empty. Default "(empty)". */
+  /** Fallback text when content is null/empty. Defaults to the localized "(empty)" string. */
   emptyContentFallback?: string
   /** Nodes rendered before the content text (icons, badges, chips). */
   metadata?: React.ReactNode
@@ -66,7 +66,7 @@ export interface BlockListItemProps {
 function BlockListItemInner({
   content,
   contentMaxLength: _contentMaxLength = 120,
-  emptyContentFallback = '(empty)',
+  emptyContentFallback,
   metadata,
   pageId,
   pageTitle = '',
@@ -152,7 +152,7 @@ function BlockListItemInner({
           via contentClassName="line-clamp-2" when a truncated preview is needed
           (e.g. SearchPanel). Agenda shows full content (UX-197). */}
       <span className={cn('text-sm min-w-0 flex-1', contentClassName)}>
-        {richContent ?? emptyContentFallback}
+        {richContent ?? emptyContentFallback ?? t('common.empty')}
       </span>
 
       {/* Source page breadcrumb */}

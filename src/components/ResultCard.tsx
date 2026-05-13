@@ -10,6 +10,7 @@
 
 import type React from 'react'
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { CardButton } from '@/components/ui/card-button'
 import { Spinner } from '@/components/ui/spinner'
@@ -38,6 +39,7 @@ export function ResultCard({
   showSpinner,
   contentClassName,
 }: ResultCardProps): React.ReactElement {
+  const { t } = useTranslation()
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } =
     useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
@@ -71,7 +73,7 @@ export function ResultCard({
     <CardButton onClick={onClick} disabled={disabled}>
       <div className="flex items-center gap-2">
         <span className={cn('flex-1 text-sm line-clamp-2', contentClassName)}>
-          {richContent ?? '(empty)'}
+          {richContent ?? t('common.empty')}
         </span>
         {showSpinner && <Spinner className="shrink-0 text-muted-foreground" />}
         {(block.block_type === 'tag' || block.block_type === 'page') && (

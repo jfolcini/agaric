@@ -10,11 +10,19 @@
 > `SelectTrigger` consumes `SHARED_INPUT_CLASSES`; three inconsistent
 > `ring-offset-*` removed from HistoryListItem + TagList +
 > SpaceManageDialog; 4 dead tokens (`--leading-relaxed`,
-> `--tracking-tight/normal/wide`) removed from index.css.
-> **Still open:** Tier 1 items 1, 4–11 + every Tier 2 entry + remaining
-> Tier 3 items (`SHARED_INPUT_CLASSES` reuse on search-input was
-> investigated and declined as audit conflated concerns + the rest of
-> the Tier 3 list).
+> `--tracking-tight/normal/wide`) removed from index.css; toggle-group
+> ad-hoc `focus-visible:ring-2 ring-ring` collapsed to the standard
+> `focus-ring-visible` utility; `useTrashMultiSelect` thin wrapper +
+> its test deleted (TrashView now calls `useListMultiSelect` directly);
+> hardcoded English fallbacks `'(empty)'` / `'Projected'` / `'P${v}'`
+> replaced with proper i18n keys (`common.empty`, `due.projected`,
+> `graph.filter.priorityValue.*`); `@media (prefers-contrast: more)`
+> block extended to cover `--ring`, every `--alert-*`, `--op-*`,
+> `--date-*`, `--conflict-*`, `--task-*`, `--block-ref`, `--highlight`,
+> and `--sync-*` family (both light and dark themes).
+> **Still open:** Tier 1 items 1, 4–11 + every Tier 2 entry +
+> component-decomposition backlog + FeatureErrorBoundary in-view
+> sections + list rendering primitive zoo.
 
 **Date:** 2026-05-09
 **Method.** Round 1: four parallel subagents reviewed (a) tokens / theming / a11y, (b) UI primitives in `src/components/ui/`, (c) shared compositions in `src/components/` + `src/hooks/`, (d) feature-screen consistency across top-level views. Round 2: four independent verifiers fact-checked every claim against actual code (file/line/grep). 56 raw findings → **50 fully verified, 6 partial (line-numbers or counts off), 0 hallucinated**. Five claims that softened or reversed on verification are flagged at the end.
