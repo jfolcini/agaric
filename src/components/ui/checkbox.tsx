@@ -18,8 +18,8 @@ const Checkbox = ({
         ref={ref}
         data-slot="checkbox"
         className={cn(
-          'peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-input bg-background shadow-sm outline-hidden transition-colors',
-          'focus-visible:ring-[3px] focus-visible:ring-ring/50',
+          'peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-input bg-background shadow-sm transition-colors',
+          'focus-ring-visible',
           'disabled:cursor-not-allowed disabled:opacity-50',
           'data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=checked]:text-primary-foreground',
           '[@media(pointer:coarse)]:size-5',

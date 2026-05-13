@@ -596,9 +596,7 @@ describe('PageBrowser', () => {
 
     const pageRow = screen.getByText('Focus Page').closest('.group') as HTMLElement
     const pageBtn = within(pageRow).getByRole('button', { name: /Focus Page/i })
-    expect(pageBtn.className).toContain('focus-visible:ring-[3px]')
-    expect(pageBtn.className).toContain('focus-visible:ring-ring/50')
-    expect(pageBtn.className).toContain('focus-visible:outline-hidden')
+    expect(pageBtn.className).toContain('focus-ring-visible')
     // UX-237: focus ring must be inset so the inner ScrollArea's
     // `overflow-hidden` does not clip its left/right legs.
     expect(pageBtn).toHaveClass('focus-visible:ring-inset')
@@ -624,7 +622,7 @@ describe('PageBrowser', () => {
     ) as HTMLElement | null
     expect(focusedRow).not.toBeNull()
     // Row paints only the highlight background; the focus ring lives on the
-    // inner <button>'s `focus-visible:ring-[3px]` to avoid double-stacking.
+    // inner <button>'s `focus-ring-visible` to avoid double-stacking.
     expect(focusedRow).toHaveClass('bg-accent/30')
     expect(focusedRow).not.toHaveClass('ring-2')
     expect(focusedRow).not.toHaveClass('ring-ring/50')
@@ -635,7 +633,7 @@ describe('PageBrowser', () => {
       ? within(focusedRow).getByRole('button', { name: /Inset Page/i })
       : null
     expect(innerBtn).not.toBeNull()
-    expect(innerBtn?.className).toContain('focus-visible:ring-[3px]')
+    expect(innerBtn?.className).toContain('focus-ring-visible')
     expect(innerBtn?.className).toContain('focus-visible:ring-inset')
   })
 

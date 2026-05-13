@@ -184,7 +184,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
                * for colour-blind users. */}
               {accent === swatch.token ? (
                 <Check
-                  className="h-3 w-3 text-white drop-shadow-[0_0_1.5px_rgb(0_0_0/0.9)]"
+                  className="h-3 w-3 text-white drop-shadow-(--shadow-accent-stroke)"
                   strokeWidth={3}
                   aria-hidden="true"
                 />

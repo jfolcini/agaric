@@ -370,8 +370,7 @@ describe('AddPropertyPopover', () => {
     render(<AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
 
     const row = await screen.findByRole('button', { name: /Status/ })
-    expect(row.className).toContain('focus-visible:ring-[3px]')
-    expect(row.className).toContain('focus-visible:ring-ring/50')
+    expect(row.className).toContain('focus-ring-visible')
   })
 
   // UX-6 — the type-hint contrast fix. The hint must not use the old

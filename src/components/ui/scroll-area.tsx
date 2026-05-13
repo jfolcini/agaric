@@ -57,7 +57,7 @@ const ScrollArea = ({
         data-slot="scroll-area-viewport"
         {...viewportProps}
         className={cn(
-          'size-full rounded-[inherit] transition-[color,box-shadow] outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1',
+          'size-full rounded-[inherit] transition-[color,box-shadow] focus-ring-visible focus-visible:outline-1',
           viewportClassName,
           viewportProps?.className,
         )}

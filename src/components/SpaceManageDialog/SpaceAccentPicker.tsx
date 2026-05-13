@@ -104,7 +104,7 @@ export function SpaceAccentPicker({ spaceId }: SpaceAccentPickerProps): React.JS
              * and violet-500 where plain `text-white` falls below 4.5:1). */}
             {accent === swatch.token ? (
               <Check
-                className="h-3 w-3 text-white drop-shadow-[0_0_1.5px_rgb(0_0_0/0.9)]"
+                className="h-3 w-3 text-white drop-shadow-(--shadow-accent-stroke)"
                 strokeWidth={3}
                 aria-hidden="true"
               />

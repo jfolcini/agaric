@@ -1,8 +1,14 @@
 # Design-system maintainability — close the verified findings
 
-> **Status:** ready as a tiered plan. Tiers are independent — Tier 1 is
-> mechanical cleanup, Tier 2 is API consolidation that pays back over
-> time, Tier 3 is the bigger structural moves that need more thought
+> **Status:** Phase 1 partially shipped. Items 1a (ARCHITECTURE.md inventory
+> refresh), 1b (focus-ring-visible utility migration across 13 production
+> files + 6 test files), 1c (tests for `recent-page-chip` and `toggle-group`),
+> and 1e (TagList `pickReadableForeground` helper + `--shadow-accent-stroke`
+> token replacing the two `drop-shadow-[…]` arbitrary classes) all shipped.
+> **Still open:** 1d (text-[10px] decision needs a design pass), Phase 2
+> API consolidation, Phase 3 structural moves. Tiers remain independent —
+> Tier 1 is mechanical cleanup, Tier 2 is API consolidation that pays back
+> over time, Tier 3 is the bigger structural moves that need more thought
 > before scheduling.
 
 ## Why this exists

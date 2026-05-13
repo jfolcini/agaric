@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import {
   clearTagColor,
   getTagColors,
+  pickReadableForeground,
   setTagColor as setTagColorLocal,
   TAG_COLOR_PRESETS,
 } from '@/lib/tag-colors'
@@ -243,7 +244,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     <Badge
                       variant={color ? undefined : 'secondary'}
                       className={cn('truncate max-w-[150px]', color && 'border-transparent')}
-                      style={color ? { backgroundColor: color, color: '#fff' } : undefined}
+                      style={
+                        color
+                          ? { backgroundColor: color, color: pickReadableForeground(color) }
+                          : undefined
+                      }
                       title={tag.name || 'Unnamed'}
                     >
                       {tag.name || 'Unnamed'}

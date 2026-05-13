@@ -265,7 +265,7 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
                   'flex w-full items-center truncate rounded-sm px-2 py-1 text-left text-xs',
                   'text-muted-foreground transition-colors',
                   'hover:bg-accent hover:text-accent-foreground',
-                  'outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                  'focus-ring-visible',
                 )}
                 onClick={() => {
                   item.onSelect?.()

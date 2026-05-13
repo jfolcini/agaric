@@ -329,4 +329,39 @@ describe('useAutoScrollOnDrag', () => {
     // Should not throw — just skip scrolling
     expect(() => act(() => flushRAF(1))).not.toThrow()
   })
+
+  // 13. Reduced-motion suppresses the RAF loop entirely
+  it('skips the RAF loop when prefers-reduced-motion: reduce is set', () => {
+    const originalMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia
+
+    try {
+      const container = makeContainer({ top: 100, bottom: 600 })
+      const ref = { current: container }
+
+      renderHook(() => useAutoScrollOnDrag(ref, true))
+
+      // No RAF should have been queued under reduced motion — the effect
+      // bails out before requesting the first frame.
+      expect(rafCallbacks.size).toBe(0)
+
+      // Pointer entering the edge zone must not cause a scroll either:
+      // there's no loop to react to it.
+      act(() => firePointerMove(105))
+      const initialScrollTop = container.scrollTop
+      act(() => flushRAF(1))
+      expect(container.scrollTop).toBe(initialScrollTop)
+    } finally {
+      window.matchMedia = originalMatchMedia
+    }
+  })
 })

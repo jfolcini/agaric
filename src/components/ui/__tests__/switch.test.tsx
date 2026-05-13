@@ -116,8 +116,7 @@ describe('Switch', () => {
     render(<Switch checked={false} onCheckedChange={() => {}} aria-label="Toggle feature" />)
 
     const sw = screen.getByRole('switch', { name: 'Toggle feature' })
-    expect(sw.className).toContain('focus-visible:ring-[3px]')
-    expect(sw.className).toContain('focus-visible:ring-ring/50')
+    expect(sw.className).toContain('focus-ring-visible')
   })
 
   // -- a11y -------------------------------------------------------------------

@@ -226,7 +226,7 @@ export function TabBar(): React.ReactElement | null {
                   // UX-254: `group` enables `group-hover:` on the chevron so
                   // hovering the active tab intensifies the dropdown hint.
                   'group flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
-                  'focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-hidden',
+                  'focus-ring-visible',
                   tabClassName(i),
                 )}
                 onClick={(e) => handleTabClick(i, e)}

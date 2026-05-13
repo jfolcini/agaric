@@ -13,8 +13,7 @@
  *  - `aria-label` carries the space name + click affordance.
  *  - `title` (tooltip) shows the name + click affordance.
  *  - 44px touch target on `[@media(pointer:coarse)]` per AGENTS.md.
- *  - `focus-visible:ring-[3px] ring-ring/50` matches the Button /
- *    Input focus pattern.
+ *  - `focus-ring-visible` matches the Button / Input focus pattern.
  *
  * The accent background is sourced from the per-space `--accent-…`
  * CSS variable (e.g. `var(--accent-emerald)`), with a fallback to
@@ -101,7 +100,7 @@ export function SpaceAccentBadge({
         '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
         // Focus ring matches the Button / Input pattern in the design
         // system — see AGENTS.md "Mandatory patterns".
-        'outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+        'outline-none focus-ring-visible',
         // Subtle hover affordance — the colour stays the same; only
         // the ring widens so the click target remains visually
         // anchored to the accent colour.

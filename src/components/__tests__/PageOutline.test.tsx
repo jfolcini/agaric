@@ -196,9 +196,8 @@ describe('PageOutline', () => {
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
     const headingBtn = screen.getByRole('button', { name: 'Heading 1' })
-    expect(headingBtn).toHaveClass('focus-visible:ring-[3px]')
+    expect(headingBtn).toHaveClass('focus-ring-visible')
     expect(headingBtn).toHaveClass('focus-visible:ring-inset')
-    expect(headingBtn).toHaveClass('focus-visible:ring-ring/50')
   })
 
   it('passes axe a11y audit', async () => {

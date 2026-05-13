@@ -52,7 +52,7 @@ export function PageLink({
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        'cursor-pointer hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:rounded-sm',
+        'cursor-pointer hover:underline focus-ring-visible focus-visible:rounded-sm',
         className,
       )}
     >

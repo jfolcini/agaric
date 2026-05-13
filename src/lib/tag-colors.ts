@@ -67,3 +67,73 @@ export function clearTagColor(tagId: string): void {
   delete colors[tagId]
   localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
 }
+
+/**
+ * Pick a readable foreground (`'#000'` or `'#fff'`) for text rendered on
+ * top of an arbitrary hex background, using the WCAG 2.x relative-luminance
+ * formula. Returns whichever channel yields the higher contrast ratio
+ * against the background — equivalent to picking the side of the
+ * luminance midpoint (~0.179) that the background falls on.
+ *
+ * Note: because WCAG contrast is asymmetric (contrast vs black grows
+ * linearly while contrast vs white grows hyperbolically), most saturated
+ * mid-tone colors (e.g. Tailwind `*-500`) get HIGHER contrast against
+ * BLACK than against white, even though convention often pairs them with
+ * white text. This helper follows the math, not the convention — that is
+ * the whole point of replacing the hard-coded `'#fff'`.
+ *
+ * Accepts `#rgb`, `#rrggbb`, and `#rrggbbaa` hex strings (alpha ignored).
+ * For any input that cannot be parsed (empty, malformed, non-hex), falls
+ * back to `'#000'` so badges never render invisible white-on-white text.
+ *
+ * Used by TagList to replace the previously hard-coded `color: '#fff'`
+ * inline style, which failed WCAG contrast on light pastel tag fills.
+ */
+export function pickReadableForeground(hex: string): '#000' | '#fff' {
+  const rgb = parseHexToRgb(hex)
+  if (rgb === null) return '#000'
+
+  // WCAG relative luminance: per-channel sRGB linearization, then
+  // weighted sum. https://www.w3.org/TR/WCAG20/#relativeluminancedef
+  const toLinear = (c: number): number => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  const r = toLinear(rgb.r)
+  const g = toLinear(rgb.g)
+  const b = toLinear(rgb.b)
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+  // Contrast vs white = 1.05 / (L + 0.05); vs black = (L + 0.05) / 0.05.
+  // Pick whichever channel clears 4.5:1 first; when both clear (rare in the
+  // mid-luminance band) prefer black, which is generally more legible on
+  // saturated mid-tones than white. Equivalent to comparing against the
+  // luminance midpoint sqrt(1.05 * 0.05) - 0.05 ≈ 0.1791.
+  const contrastWithBlack = (luminance + 0.05) / 0.05
+  const contrastWithWhite = 1.05 / (luminance + 0.05)
+  return contrastWithBlack >= contrastWithWhite ? '#000' : '#fff'
+}
+
+/**
+ * Parse a hex color string into 0-255 RGB channels. Returns `null` for
+ * any input that isn't a valid 3-, 6-, or 8-digit hex color.
+ */
+function parseHexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  if (typeof hex !== 'string') return null
+  const trimmed = hex.trim()
+  const match = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(trimmed)
+  if (match === null) return null
+  let body = match[1]
+  if (body === undefined) return null
+  if (body.length === 3) {
+    body = body
+      .split('')
+      .map((c) => c + c)
+      .join('')
+  }
+  const r = Number.parseInt(body.slice(0, 2), 16)
+  const g = Number.parseInt(body.slice(2, 4), 16)
+  const b = Number.parseInt(body.slice(4, 6), 16)
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return null
+  return { r, g, b }
+}

@@ -7,6 +7,41 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 709 — design-system Tier 1 mechanical cleanup (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 6 build (general-purpose) — orchestrator-direct popover fix + tag-colors.ts type-narrow follow-up |
+| **Items closed** | design-system-maintainability Phase 1 items 1a + 1b + 1c + 1e; design-system-ux-review Tier 1 item 2 + item 3; design-system-ux-review Tier 3 popover `outline-none` → `outline-hidden`. |
+| **Items modified** | design-system-maintainability-2026-05-09.md + design-system-ux-review-2026-05-09.md (status notes added; 1d + remaining Tier 1/2/3 items still open). |
+| **Tests added** | +12 (RecentPageChip × 7, ToggleGroup × 5) primitives.test.tsx; +1 useAutoScrollOnDrag reduced-motion; tag-colors.test.ts expanded with 12 luminance / hex-parse cases; TagList.test.tsx assertion inverted to assert new helper behavior |
+| **Files touched** | 34 (13 production + 11 unit-test + ARCHITECTURE.md + 2 plan files + 5 misc) |
+
+**Summary:** ran 6 parallel subagents grouped by file-boundary so all six closed in a single batch. ARCHITECTURE.md inventory bumped from 29 → 37 shadcn/ui primitives. `focus-visible:ring-[3px] focus-visible:ring-ring/50` (with the redundant adjacent `outline-hidden`) collapsed to the `focus-ring-visible` utility across 13 production .tsx files and 6 unit-test files; 80 → 149 utility uses, 0 remaining inline forms outside the deliberate breadcrumb deviation comment. Two previously untested primitives (`recent-page-chip`, `toggle-group`) now have render + interaction + `axe(container)` coverage in `primitives.test.tsx`. `TagList`'s hard-coded `'#fff'` foreground swapped for a WCAG-correct `pickReadableForeground(hex)` helper in `src/lib/tag-colors.ts` (12 unit-test cases). Two `drop-shadow-[0_0_1.5px_rgb(0_0_0/0.9)]` arbitrary classes replaced with a new `--shadow-accent-stroke` token in `index.css` referenced via `drop-shadow-(--shadow-accent-stroke)`. SelectTrigger now resists iOS auto-zoom on coarse pointer (`text-base` at ≥16 px). `useAutoScrollOnDrag` skips the RAF loop entirely under `prefers-reduced-motion: reduce`. `popover.tsx` `outline-none` → `outline-hidden` (Tailwind v4 spelling, orchestrator-direct).
+
+**Verification:**
+- `npx vitest run` — 9613 tests pass (was 9599 pre-batch; +14 net).
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- `ARCHITECTURE.md` — primitive inventory refreshed.
+- `src/components/ui/badge.tsx`, `button.tsx`, `scroll-area.tsx`, `switch.tsx`, `checkbox.tsx`, `breadcrumb.tsx`, `sidebar.tsx`, `select.tsx`, `popover.tsx` — focus-ring utility + select coarse-pointer + popover outline-hidden.
+- `src/components/PageLink.tsx`, `PageHeaderMenu.tsx`, `TabBar.tsx`, `PageOutline.tsx`, `PageBrowser/PageBrowserRowRenderer.tsx`, `SpaceAccentBadge.tsx` — focus-ring utility migration.
+- `src/components/TagList.tsx`, `SpaceManageDialog.tsx`, `SpaceManageDialog/SpaceAccentPicker.tsx` — inline-color hot spots fixed.
+- `src/lib/tag-colors.ts` (+`pickReadableForeground` + WCAG luminance helpers) + `src/lib/__tests__/tag-colors.test.ts`.
+- `src/index.css` — `--shadow-accent-stroke` token added.
+- `src/hooks/useAutoScrollOnDrag.ts` + matching test.
+- `src/components/ui/__tests__/primitives.test.tsx` (RecentPageChip + ToggleGroup tests) + `select.test.tsx`, `switch.test.tsx`, `breadcrumb.test.tsx`, `checkbox.test.tsx`, `AddPropertyPopover.test.tsx`, `PageBrowser.test.tsx`, `PageOutline.test.tsx`, `PageTagSection.test.tsx`, `TagList.test.tsx`.
+- `pending/design-system-maintainability-2026-05-09.md` + `pending/design-system-ux-review-2026-05-09.md` — status notes added.
+
+**Process notes:** 6 parallel subagents grouped by file-boundary scaled cleanly — no merge conflicts because each subagent owned a non-overlapping slice. Two diagnostics surfaced during the run (primitives.test.tsx unused imports while 1c was still writing; tag-colors.ts `body possibly undefined` from 1e's regex destructure) and were both resolved by the time the relevant subagent finished — the second one needed a one-line type-narrow follow-up (`if (body === undefined) return null` after the regex match).
+
+**Lessons learned (for future sessions):** the `pickReadableForeground` helper is WCAG-correct, which is asymmetric — mid-tone Tailwind 500-palette colors now resolve to **black foreground** rather than white because they score higher contrast against black per the formula. The existing TagList test had to be inverted to assert the new behavior. This is a visible behavior change for users with mid-tone tag colors. If the team wants to preserve the "saturated colors get white text" visual convention, the helper would need a luminance threshold tuned to the desired crossover rather than strict WCAG max-contrast. Flagged in the helper's doc comment.
+
+**Commit plan:** single commit covering 34 files + Session 709 entry + plan-file status notes.
+
+---
 ## Session 708 — e2e test bit-rot closure (2026-05-13)
 
 | Metadata | Value |

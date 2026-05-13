@@ -252,8 +252,7 @@ describe('PageTagSection UX-1 / UX-2', () => {
     // The Button primitive applies its own focus-visible ring; assert the row
     // is a real <button> with the variant ring tokens applied.
     const tagBtn = screen.getByRole('button', { name: /^review$/ })
-    expect(tagBtn.className).toContain('focus-visible:ring-[3px]')
-    expect(tagBtn.className).toContain('focus-visible:ring-ring/50')
+    expect(tagBtn.className).toContain('focus-ring-visible')
   })
 
   it('"Create tag" row renders via the Button primitive (focus ring inherited)', () => {
@@ -268,8 +267,7 @@ describe('PageTagSection UX-1 / UX-2', () => {
     )
 
     const createBtn = screen.getByRole('button', { name: /Create "newtag"/i })
-    expect(createBtn.className).toContain('focus-visible:ring-[3px]')
-    expect(createBtn.className).toContain('focus-visible:ring-ring/50')
+    expect(createBtn.className).toContain('focus-ring-visible')
   })
 })
 
