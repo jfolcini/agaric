@@ -277,9 +277,12 @@ describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
 
 describe('useBlockDatePicker handleDatePick — date mode', () => {
   it('creates date page when none exists', async () => {
-    // 1st invoke = list_blocks (no existing page); 2nd = create_page_in_space
-    // (returns the new page's ULID as a plain string per BUG-1's contract).
-    mockedInvoke.mockResolvedValueOnce({ items: [] })
+    // 1st invoke = list_all_pages_in_space (no existing page); 2nd =
+    // create_page_in_space (returns the new page's ULID as a plain
+    // string per BUG-1's contract).  limit-clamp-followup —
+    // `listAllPagesInSpace` returns a flat `PageHeading[]`, no
+    // `.items` wrapper, no pagination clamp.
+    mockedInvoke.mockResolvedValueOnce([])
     mockedInvoke.mockResolvedValueOnce('DATE_PAGE_1')
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
@@ -289,10 +292,8 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'list_blocks',
-      expect.objectContaining({
-        blockType: 'page',
-      }),
+      'list_all_pages_in_space',
+      expect.objectContaining({ spaceId: 'SPACE_TEST' }),
     )
     // BUG-1 / H-3b — date pages route through `create_page_in_space` so
     // they own a `space` property and surface in PageBrowser. The
@@ -314,9 +315,7 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   })
 
   it('uses existing date page if found', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [{ id: 'EXISTING_PAGE', content: '2025-01-15' }],
-    })
+    mockedInvoke.mockResolvedValueOnce([{ id: 'EXISTING_PAGE', content: '2025-01-15' }])
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -329,7 +328,7 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   })
 
   it('updates pagesListRef when creating new page', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [] })
+    mockedInvoke.mockResolvedValueOnce([])
     mockedInvoke.mockResolvedValueOnce('NEW_PAGE')
     const pagesListRef = { current: [] as Array<{ id: string; title: string }> }
     const params = makeDefaultParams({ pagesListRef })

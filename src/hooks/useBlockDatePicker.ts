@@ -6,7 +6,7 @@ import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { announce } from '../lib/announcer'
 import {
   createPageInSpace,
-  listBlocks,
+  listAllPagesInSpace,
   setDueDate as setDueDateCmd,
   setProperty,
   setScheduledDate as setScheduledDateCmd,
@@ -138,10 +138,13 @@ async function handleDateMode(ctx: DatePickContext): Promise<void> {
   if (currentSpaceId === null || currentSpaceId === undefined) {
     throw new Error('No active space; cannot create date page')
   }
-  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; date pages live
-  // inside the active space, so the lookup is naturally scoped.
-  const resp = await listBlocks({ blockType: 'page', limit: 500, spaceId: currentSpaceId })
-  const existing = resp.items.find((b) => b.content === ctx.dateStr || b.content === ctx.legacyStr)
+  // limit-clamp-followup — `listAllPagesInSpace` returns every page in
+  // the active space (no pagination, no silent clamp), so journal /
+  // date pages past index 99 are no longer truncated.  The
+  // `currentSpaceId` null-check above guarantees a real spaceId, so no
+  // pre-bootstrap fallback is needed here.
+  const pages = await listAllPagesInSpace(currentSpaceId)
+  const existing = pages.find((p) => p.content === ctx.dateStr || p.content === ctx.legacyStr)
   let datePageId = existing?.id
   if (!datePageId) {
     const newPageId = await createPageInSpace({

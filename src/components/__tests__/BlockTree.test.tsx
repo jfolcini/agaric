@@ -262,8 +262,13 @@ beforeEach(() => {
   // `load()` fails silently (catch branch) and leaves the seeded
   // `pageStore.blocks` untouched.  Tests that explicitly want a
   // populated load override this with their own mockImplementation.
+  // limit-clamp-followup — `list_all_pages_in_space` returns a flat
+  // array (`PageHeading[]`), not the paginated `emptyPage` shape; the
+  // date-mode lookup in `handleDateMode` (and downstream picker-cache
+  // fallback) would call `.find`/`.map` on an object otherwise.
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+    if (cmd === 'list_all_pages_in_space') return []
     return emptyPage
   })
   try {
@@ -4242,12 +4247,10 @@ describe('BlockTree handleDatePick date format', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // Mock listBlocks to return no existing date page (so a new one is created)
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    // limit-clamp-followup — `handleDateMode` now looks up the date
+    // page via `list_all_pages_in_space`, which returns a flat
+    // `PageHeading[]` (no `.items` wrapper).
+    mockedInvoke.mockResolvedValueOnce([])
 
     // Mock create_page_in_space response for the new date page
     // (BUG-1 / H-3b: date pages route through `createPageInSpace` so
@@ -4310,38 +4313,32 @@ describe('BlockTree handleDatePick date format', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // Mock listBlocks to return an existing page in YYYY-MM-DD format
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        {
-          id: 'EXISTING_DATE_PAGE',
-          block_type: 'page',
-          content: '2025-03-15',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
+    // limit-clamp-followup — `handleDateMode` now awaits
+    // `list_all_pages_in_space`, which returns a flat `PageHeading[]`
+    // (no `.items` wrapper, no pagination).
+    mockedInvoke.mockResolvedValueOnce([
+      {
+        id: 'EXISTING_DATE_PAGE',
+        content: '2025-03-15',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
 
     await act(async () => {
       await mockCalendarOnSelect?.(new Date(2025, 2, 15))
     })
 
-    // Positive signal: handleDateMode awaits `list_blocks` (page lookup)
-    // before deciding whether to create. Wait for it, then assert the
-    // create_block path was NOT taken because the page already exists
-    // (TEST-FE-1).
+    // Positive signal: handleDateMode awaits `list_all_pages_in_space`
+    // (page lookup) before deciding whether to create. Wait for it,
+    // then assert the create_block path was NOT taken because the page
+    // already exists (TEST-FE-1).
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ blockType: 'page' }),
+        'list_all_pages_in_space',
+        expect.objectContaining({ spaceId: 'SPACE_TEST' }),
       )
     })
 
