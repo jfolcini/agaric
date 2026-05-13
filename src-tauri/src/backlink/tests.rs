@@ -5849,3 +5849,188 @@ async fn filter_source_page_include_exclude_large_json_each() {
         "300 surviving sources after include+exclude via json_each on both branches"
     );
 }
+
+// ======================================================================
+// H1 (keyset + SQL COUNT) — see `backlink/query.rs` module docs.
+//
+// The four tests below pin the new contract on `eval_backlink_query` /
+// `eval_backlink_query_grouped`: counts come from SQL COUNT(*), the
+// page query honours the user-supplied limit (we never materialise the
+// full base id set), and keyset pagination over `b.id` (ULID order)
+// reaches every source block without duplication.
+// ======================================================================
+
+/// H1: with 200 backlinks pointing at a single target page, a request
+/// for `limit=10` must return exactly 10 rows, with `has_more=true`,
+/// `total_count=200`, `filtered_count=200`, and a non-empty cursor —
+/// proving the page query honours the limit (the pre-H1 implementation
+/// would have loaded all 200 ids into a Rust set first).
+#[tokio::test]
+async fn eval_backlink_query_does_not_materialise_full_set() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "PARENT", "page", "Parent", None, None).await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    bulk_insert_n_backlink_sources(&pool, "PARENT", "TARGET", 200).await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 10, "page must honour limit=10");
+    assert!(resp.has_more, "200 backlinks > 10 ⇒ has_more must be true");
+    assert_eq!(
+        resp.total_count, 200,
+        "total_count must reflect every backlink"
+    );
+    assert_eq!(
+        resp.filtered_count, 200,
+        "filtered_count equals total when no filter is supplied"
+    );
+    assert!(
+        resp.next_cursor.is_some(),
+        "has_more=true ⇒ next_cursor must be set"
+    );
+}
+
+/// H1: keyset cursor pagination over 25 backlinks with limit=10 must
+/// consume every source block across 3 successive pages, with no
+/// duplicates and no skipped ids.
+#[tokio::test]
+async fn eval_backlink_query_keyset_paginates_correctly() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "PARENT", "page", "Parent", None, None).await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    bulk_insert_n_backlink_sources(&pool, "PARENT", "TARGET", 25).await;
+
+    let expected: FxHashSet<String> = (1..=25).map(|k| format!("BL_{k:06}")).collect();
+
+    let mut seen: FxHashSet<String> = FxHashSet::default();
+    let mut cursor: Option<String> = None;
+    for iteration in 0..4 {
+        let page = PageRequest::new(cursor, Some(10)).unwrap();
+        let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
+            .await
+            .unwrap();
+        for item in &resp.items {
+            assert!(
+                seen.insert(item.id.as_str().to_string()),
+                "duplicate id surfaced across pages: {}",
+                item.id.as_str()
+            );
+        }
+        cursor = resp.next_cursor;
+        if !resp.has_more {
+            assert!(
+                iteration < 3,
+                "expected to terminate within 3 page transitions"
+            );
+            break;
+        }
+    }
+
+    assert_eq!(
+        seen, expected,
+        "keyset pagination must visit every backlink exactly once"
+    );
+}
+
+/// H1: with 30 backlinks and a property filter that matches 10 of
+/// them, `total_count` must reflect every backlink and
+/// `filtered_count` must reflect only the property-matched subset.
+/// The page query must intersect base predicates with the filter set
+/// in SQL.
+#[tokio::test]
+async fn eval_backlink_query_with_filter_counts_correctly() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "PARENT", "page", "Parent", None, None).await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    bulk_insert_n_backlink_sources(&pool, "PARENT", "TARGET", 30).await;
+
+    // Tag the first 10 source blocks with `status = active`.
+    for k in 1..=10 {
+        insert_property(
+            &pool,
+            &format!("BL_{k:06}"),
+            "status",
+            Some("active"),
+            None,
+            None,
+        )
+        .await;
+    }
+
+    let filters = vec![BacklinkFilter::PropertyText {
+        key: "status".into(),
+        op: CompareOp::Eq,
+        value: "active".into(),
+    }];
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.total_count, 30,
+        "total_count counts every backlink, ignoring filters"
+    );
+    assert_eq!(
+        resp.filtered_count, 10,
+        "filtered_count counts only property-matched backlinks"
+    );
+    assert_eq!(resp.items.len(), 10, "all 10 matches fit in limit=50");
+    let ids: FxHashSet<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    let expected: FxHashSet<String> = (1..=10).map(|k| format!("BL_{k:06}")).collect();
+    let expected_refs: FxHashSet<&str> = expected.iter().map(String::as_str).collect();
+    assert_eq!(
+        ids, expected_refs,
+        "returned items must match the property-matched id set"
+    );
+}
+
+/// H1: the grouped variant must also paginate correctly under keyset
+/// semantics. With backlinks coming from 5 distinct source pages and
+/// limit=2, three page transitions must surface every group.
+#[tokio::test]
+async fn eval_backlink_query_grouped_paginates_correctly() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    // 5 distinct source pages, each with one content child that links to TARGET.
+    // Group ids: PG_000001..PG_000005 (alphabetical order matches insertion).
+    bulk_insert_n_pages_with_one_link(&pool, "TARGET", 5, "PG_", "BK_").await;
+
+    let mut seen_groups: FxHashSet<String> = FxHashSet::default();
+    let mut cursor: Option<String> = None;
+    for iteration in 0..4 {
+        let page = PageRequest::new(cursor, Some(2)).unwrap();
+        let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+            .await
+            .unwrap();
+        for group in &resp.groups {
+            assert!(
+                seen_groups.insert(group.page_id.clone()),
+                "duplicate group across pages: {}",
+                group.page_id
+            );
+            assert_eq!(group.blocks.len(), 1, "each fixture page has one backlink");
+        }
+        assert_eq!(
+            resp.total_count, 5,
+            "5 backlinks across the fixture (one per page)"
+        );
+        cursor = resp.next_cursor;
+        if !resp.has_more {
+            assert!(
+                iteration < 3,
+                "expected to terminate within 3 page transitions"
+            );
+            break;
+        }
+    }
+
+    let expected: FxHashSet<String> = (1..=5).map(|k| format!("PG_{k:06}")).collect();
+    assert_eq!(
+        seen_groups, expected,
+        "grouped keyset pagination must visit every source group exactly once"
+    );
+}

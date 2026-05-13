@@ -50,116 +50,99 @@ pub async fn eval_backlink_query_grouped(
     page: &PageRequest,
     space_id: Option<&str>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    // 1. Get base backlink set.
-    //    Exclude `source_id == block_id` self-links at the SQL layer so
-    //    they never enter the count or grouping pipeline (H-11). Sources
-    //    that happen to live on the *same* root page as the target are
-    //    treated separately below — they are still backlinks, but for the
-    //    grouped view we drop them so the user does not see "their own
-    //    page" listed as a source group, mirroring the convention used by
-    //    `eval_unlinked_references`.
-    //
-    //    FEAT-3p4 — the trailing `(?2 IS NULL OR COALESCE(...))` clause
-    //    mirrors `crate::space_filter_clause!`. Resolves the source
-    //    block to its owning page via `COALESCE(b.page_id, b.id)` and
-    //    intersects against `block_properties(key = 'space').value_ref`
-    //    when `space_id` is `Some`. Kept inline (not via the macro)
-    //    because this is dynamic SQL (`sqlx::query_scalar`). Applied
-    //    at the base-set step so `total_count` / `filtered_count`
-    //    reflect the post-space-filter universe.
-    let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT bl.source_id FROM block_links bl \
+    // 1. `total_count` via SQL — never materialises the full base id set.
+    //    The COUNT(*) subquery applies the same predicates as the pre-H1
+    //    base-set fetch (target match, self-exclusion, deleted_at, space
+    //    scope) AND filters out same-root-page self-references and
+    //    orphans (sources whose `page_id` doesn't resolve). The grouped
+    //    variant treats source blocks that live on the *same* root page
+    //    as the target as self-references because the UI never shows
+    //    "your own page" as a source group.
+    let total_count_i64: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
+         JOIN blocks tgt ON tgt.id = ?1 \
          WHERE bl.target_id = ?1 \
            AND bl.source_id != ?1 \
            AND b.deleted_at IS NULL \
+           AND b.page_id IS NOT NULL \
+           AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
            AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))",
     )
     .bind(block_id)
     .bind(space_id)
+    .fetch_one(pool)
+    .await?;
+    let total_count: usize = usize::try_from(total_count_i64).unwrap_or(0);
+
+    if total_count == 0 {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+            truncated: false,
+        });
+    }
+
+    // 2. Resolve filters (if any) — same shape as `eval_backlink_query`.
+    //    No candidate set is fed in; the base predicates (target match,
+    //    self-exclusion, same-page exclusion, space) are re-applied at
+    //    the page-id materialise step below.
+    let filter_json: Option<String> = match filters.as_ref() {
+        Some(filter_list) if !filter_list.is_empty() => {
+            let futures = filter_list
+                .iter()
+                .map(|f| resolve_filter_with_candidates(pool, f, 0, None));
+            let results = try_join_all(futures).await?;
+            let mut iter = results.into_iter();
+            let mut acc = iter.next().unwrap_or_default();
+            for set in iter {
+                acc.retain(|id| set.contains(id));
+            }
+            if acc.is_empty() {
+                return Ok(GroupedBacklinkResponse {
+                    groups: vec![],
+                    next_cursor: None,
+                    has_more: false,
+                    total_count,
+                    filtered_count: 0,
+                    truncated: false,
+                });
+            }
+            Some(serde_json::to_string(&acc.iter().collect::<Vec<_>>())?)
+        }
+        _ => None,
+    };
+
+    // Materialise the post-filter, post-base-predicate id set. SQL
+    // applies the same predicates as the COUNT above plus the
+    // optional filter intersection. We can't avoid materialising
+    // because the grouped path needs to bucket by root page.
+    let filtered_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT bl.source_id FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         JOIN blocks tgt ON tgt.id = ?1 \
+         WHERE bl.target_id = ?1 \
+           AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL \
+           AND b.page_id IS NOT NULL \
+           AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
+           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",
+    )
+    .bind(block_id)
+    .bind(space_id)
+    .bind(filter_json.as_deref())
     .fetch_all(pool)
     .await?
     .into_iter()
     .collect();
-
-    if base_ids.is_empty() {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: 0,
-            filtered_count: 0,
-            truncated: false,
-        });
-    }
-
-    // 1a. Resolve the target's own root page once so we can drop
-    //     same-page self-references below. If the target has no
-    //     resolvable root page (orphan target), nothing matches the
-    //     self-reference predicate and we behave as before.
-    let target_root_page_id: Option<String> = {
-        let mut target_set = FxHashSet::default();
-        target_set.insert(block_id.to_string());
-        let target_map = resolve_root_pages(pool, &target_set).await?;
-        target_map.get(block_id).map(|(pid, _)| pid.clone())
-    };
-
-    // 1b. Resolve root pages for the entire base set up front.
-    //     Orphan source blocks (no resolvable root page) and
-    //     same-page self-references must be filtered out *before*
-    //     `total_count` / `filtered_count` are computed — otherwise the
-    //     UI badge reports more items than we actually render
-    //     (AGENTS.md "Backend Patterns" #4: post-filter count is
-    //     mandatory). Reusing this `root_map` downstream also avoids a
-    //     second pass over the database.
-    let root_map = resolve_root_pages(pool, &base_ids).await?;
-    let base_ids: FxHashSet<String> = base_ids
-        .into_iter()
-        .filter(|id| match root_map.get(id) {
-            // Orphan: no resolvable root page → drop.
-            None => false,
-            // Self-reference: source's root page == target's root page → drop.
-            Some((page_id, _)) => target_root_page_id.as_deref() != Some(page_id.as_str()),
-        })
-        .collect();
-
-    let total_count = base_ids.len();
-
-    if base_ids.is_empty() {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: 0,
-            filtered_count: 0,
-            truncated: false,
-        });
-    }
-
-    // 2. Apply filters (AND semantics at top level)
-    let filtered_ids = if let Some(ref filter_list) = filters {
-        if filter_list.is_empty() {
-            base_ids
-        } else {
-            // I-Search-9: pass `base_ids` as candidates so leaf arms
-            // with a candidate-scoped SQL path (BlockType,
-            // PropertyIsEmpty) can prune at the database instead of
-            // materialising every active block first.
-            let futures = filter_list
-                .iter()
-                .map(|f| resolve_filter_with_candidates(pool, f, 0, Some(&base_ids)));
-            let results = try_join_all(futures).await?;
-            let mut result = base_ids;
-            for set in results {
-                result.retain(|id| set.contains(id));
-            }
-            result
-        }
-    } else {
-        base_ids
-    };
 
     let filtered_count = filtered_ids.len();
 
@@ -174,13 +157,15 @@ pub async fn eval_backlink_query_grouped(
         });
     }
 
-    // 3. (Root pages already resolved in step 1b — `root_map` covers
-    //     `base_ids ⊇ filtered_ids`, so every entry in `filtered_ids` has
-    //     a corresponding root-page mapping.)
+    // Resolve root pages for the materialised, post-filter id set so we
+    // can bucket downstream. Every entry in `filtered_ids` has a
+    // corresponding root-page mapping because the SQL above filters
+    // `b.page_id IS NOT NULL` and `b.page_id != target_root` — so
+    // orphans and same-page self-references are already excluded.
+    let root_map = resolve_root_pages(pool, &filtered_ids).await?;
 
-    // 4. Group blocks by root page. After step 1b every survivor has a
-    //    valid root-page entry, so the `if let Some(...)` here is now
-    //    purely defensive against a race between resolve and group.
+    // Group blocks by root page. The `if let Some(...)` here is purely
+    // defensive against a race between resolve and group.
     // L-5 (PEND-25): `FxHashMap` for the by-page bucket — keys are
     // owned `String` page-ids; the FNV hash matters here because this
     // map is built per query.

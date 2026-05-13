@@ -7,6 +7,57 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 705 — sql-audit Batch 2: H1 backlink keyset SQL + M1 agenda fallback ordering + M4 close-by-investigation (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 2 build (general-purpose, parallel) + orchestrator-direct M4 investigation |
+| **Items closed** | `pending/sql-audit-2026-05-09.md` Batch 2: H1 (backlink pipeline SQL keyset + SQL COUNT for total/filtered counts; eliminates full base-set materialization), M1 (agenda fallback ORDER BY + keyset cursor via BTreeMap; eliminates Rust-side `entries.sort_by`/`entries.retain`), M4 (closed by investigation — no fix needed). |
+| **Items modified** | sql-audit doc trimmed: deleted H1 + M1 + M4 sections; added Batch 2 + investigation lines to Status. |
+| **Tests added** | +6 Rust (4 H1 backlink keyset/count/filter coverage, 2 M1 fallback ordering + cursor) |
+| **Files touched** | 6 src files (`backlink/query.rs`, `backlink/grouped.rs`, `backlink/tests.rs`, `commands/agenda.rs`, `commands/tests/agenda_cmd_tests.rs`, `space_filter_canonical.rs`) + 1 audit doc |
+
+**Summary:** Batch 2 closes the audit's single biggest perf finding (H1). `eval_backlink_query` and `eval_backlink_query_grouped` no longer load the full base-id set into an FxHashSet before paginating — instead, two SQL COUNT(*) queries produce `total_count` / `filtered_count` and a single keyset page query (`b.id > ?` for Asc, `b.id < ?` for Desc) returns the page with filter EXISTS-style intersection inline (via `b.id IN (SELECT value FROM json_each(?))` for filter results). Property sort still materialises the post-filter id set (an intrinsic constraint — property cursors would need to encode the value), but never the full base set. M1 reshapes the projected-agenda fallback path: a `BTreeMap<(date, id, source), entry>` enforces ORDER BY at insertion, the keyset cursor predicate `(date, id) > cursor` is checked inline before insert, and a `max_entries = limit + 1` size cap is enforced during insertion — eliminating both the post-hoc `sort_by` and the `retain` cursor filter. The recurrence expansion itself stays in Rust (`crate::recurrence::shift_date_once` parses arbitrary org-mode-style rules + calendar-clamping month/year arithmetic — not translatable to SQL expressions), but the ordering / cursoring / size bound now live at insert time, not as a post-pass sweep. M4's audit-flagged concern (`tags_cache.usage_count` recompute on every change) turned out not to fire: `rebuild_tags_cache_impl` is debounced through the materializer queue, uses a single SQL GROUP BY over the UNION of `block_tags` ∪ `block_tag_refs`, both joins are fully indexed (`idx_block_tags_tag` from migration 0001 + `idx_block_tag_refs_tag` from migration 0034), and at 100k pages the rebuild stays sub-100ms.
+
+**H1 implementation notes:**
+- `eval_backlink_query` was split into two specialised inner functions: `eval_created_sort_keyset` (single SQL with `b.id` keyset; handles all non-property sort modes) and `eval_property_sort_materialised` (post-filter id materialise only; sort still in Rust because property values would need to be encoded in the cursor).
+- `eval_backlink_query_grouped` folds the base predicates (orphan + same-root-page exclusion) directly into the SQL via `JOIN blocks tgt ON tgt.id = ?1` with `b.page_id IS NOT NULL AND b.page_id != COALESCE(tgt.page_id, tgt.id)`. Both `total_count` and `filtered_count` come from SQL COUNT(*).
+- `resolve_filter_with_candidates` is now called with `candidates = None` in both entry points (was `Some(&base_ids)` pre-H1). Feeding `Some(&base_ids)` would have forced base-set materialization — exactly what H1 eliminates. The base predicates are re-applied at the page-query stage via the keyset SQL.
+- `space_filter_canonical::EXPECTED_HITS` bumped 19 → 23 (the canonical-shape drift-detection counter). Net delta: +4 sites in `backlink/query.rs` (total COUNT + filtered COUNT + page SQL + property-sort materialise), +2 sites in `backlink/grouped.rs` (total COUNT + filtered-ids SQL), -2 sites removed (the pre-H1 base-set fetches).
+
+**M1 implementation notes:**
+- The fallback path's order-enforcement-via-BTreeMap pattern is the SQL pattern's dual: the BTreeMap's `(projected_date, block_id, source)` key acts as the ORDER BY tuple; the per-insert cursor check is the WHERE clause; the `max_entries = limit + 1` cap is the LIMIT.
+- The `source` tie-breaker in the key matches the `projected_agenda_cache` PK `(block_id, projected_date, source)` — keeps fallback semantics identical to the cache path.
+
+**REVIEW-LATER impact:**
+- `pending/sql-audit-2026-05-09.md` open: 6 → 3 items (3 shipped: H1 + M1 + M4-closed).
+- Remaining: H3, H4, H7. H3 + H4 are the next batch (FE agenda fan-out → backend `filtered_blocks_query`; FE agenda sort/group → SQL ORDER BY extension). H7 is a dedicated batch (FK CASCADE migration sweep across ~10 legacy tables).
+
+**Files touched (this session):**
+- `src-tauri/src/backlink/query.rs` — `eval_backlink_query` split into `eval_created_sort_keyset` (keyset path) + `eval_property_sort_materialised` (post-filter materialise for property sort).
+- `src-tauri/src/backlink/grouped.rs` — base predicates pushed into SQL; total/filtered counts from SQL.
+- `src-tauri/src/backlink/tests.rs` — +4 tests (`eval_backlink_query_does_not_materialise_full_set`, `eval_backlink_query_keyset_paginates_correctly`, `eval_backlink_query_with_filter_counts_correctly`, `eval_backlink_query_grouped_paginates_correctly`).
+- `src-tauri/src/commands/agenda.rs` — fallback path: BTreeMap-driven ordering + insert-time cursor check + size-bounded insertion.
+- `src-tauri/src/commands/tests/agenda_cmd_tests.rs` — +2 tests (`list_projected_agenda_fallback_orders_by_date_asc`, `list_projected_agenda_fallback_respects_cursor`).
+- `src-tauri/src/space_filter_canonical.rs` — `EXPECTED_HITS` 19 → 23 (drift-detection meta-test counter).
+- `pending/sql-audit-2026-05-09.md` — H1 / M1 / M4 sections deleted; Status section updated.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3648 tests passed (was 3642 pre-batch; +6 from the new tests). 4 skipped. One unrelated flaky `sync_files` test retried green.
+- `cargo sqlx prepare -- --tests` — no `.sqlx/` deltas (all H1 / M1 SQL is runtime `sqlx::query_scalar` / `sqlx::query_as`, no macros; agenda fallback's `query_as!` macro was untouched).
+- `cargo clippy --tests` — no new warnings in any of the 6 modified files.
+
+**Process notes:**
+- The orchestrator's verification phase for Batch 1 (Session 704) showed that hand-rolled `.sqlx/` cache entries pass a clean `cargo sqlx prepare` round-trip. Reaffirms the pattern for single-query macro additions.
+- M4's "investigation-only" verdict landed in under 10 minutes of orchestrator-direct grep + read — much faster than spinning up a subagent for the question. Worth preferring orchestrator-direct for investigation-only items (≤3 file reads).
+
+**Lessons learned (for future sessions):**
+- When the audit-suggested cost is M (medium) and the task touches existing keyset/COUNT patterns elsewhere in the codebase (`filtered_blocks_query_inner`), the subagent should *read those existing patterns first* and reuse their idioms. The H1 subagent's first move was exactly this and the resulting refactor felt like a localized application of an existing house-pattern rather than a novel design.
+
+**Commit plan:** single commit covering H1 + M1 + M4-investigation-doc-update + Session 705 entry.
+
+---
 ## Session 704 — sql-audit Batch 1: H2 + H6 + L1 + L2 + M3 + stale-entry purge (2026-05-13)
 
 | Metadata | Value |
