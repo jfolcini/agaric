@@ -7,6 +7,38 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 710 — design-system perf hygiene batch (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 5 build (general-purpose) — orchestrator-direct breadcrumb `dataset` index-signature follow-up + test-mock follow-up |
+| **Items closed** | design-system-perf-review items 9 + 10 + 15 + 16 + 17 + 18 (six items). |
+| **Items modified** | design-system-perf-review-2026-05-09.md status note added; Tier 1 (items 1-5) + remaining Tier 2/3 items still open. |
+| **Tests added** | 0 net (existing tests cover behavior; 3 test mocks updated to `importOriginal` shape after calendar.tsx hoisted `buttonVariants` to module scope) |
+| **Files touched** | 13 (10 production + 3 test mocks; plan file separate) |
+
+**Summary:** five parallel subagents grouped by file-boundary closed six surgical perf items in the design-system-perf-review's Tier 2/3 backlog. `DonePanel` derived collections are now `useMemo`-wrapped to match `DuePanel`'s pattern. `HistoryListItem` and `journal/DaySection` wrapped in `React.memo` using the `BlockListItem`-style inner-function + memo'd-export shape (ConflictListItem was already removed by PEND-09 Phase 5 — the plan was stale on that name). `calendar.tsx`'s 22-key `classNames` object and its three `buttonVariants(...)` invocations hoisted to module scope; the static portion of dialog/sheet/popover/select's overlay base strings hoisted to module-scope constants so `twMerge` only re-parses caller `className`. `sidebar.tsx`'s `useMemo` deps array now lists `setOpenMobile` + `setIsResizing` explicitly (with a biome-ignore comment because Biome's rule actually treats stable setState dispatchers as *unnecessary*, but the explicit list is the design-system-perf-review's stated request). `breadcrumb.tsx`'s per-item inline `onClick` arrow replaced by event delegation on the wrapping `role="menu"` div — a single `useCallback`'d handler reads `dataset['breadcrumbOverflowItem']`, looks up the matching item via a `useRef`-mirrored items list, and dispatches `onSelect`. Three test files (`AgendaResults`/`DonePanel`/`DuePanel`) had to migrate their `vi.mock('@/components/ui/button', ...)` shape to `importOriginal()` form because `calendar.tsx` now imports `buttonVariants` at module load (transitively reached via `BlockListItem`).
+
+**Verification:**
+- `npx vitest run` — 9613 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- `src/components/DonePanel.tsx` — Perf 9 useMemo wrappers.
+- `src/components/HistoryListItem.tsx`, `src/components/journal/DaySection.tsx` — Perf 10 React.memo.
+- `src/components/ui/calendar.tsx` — Perf 15 classNames + buttonVariants hoist.
+- `src/components/ui/dialog.tsx`, `sheet.tsx`, `popover.tsx`, `select.tsx` — Perf 16 base-string hoist.
+- `src/components/ui/sidebar.tsx` — Perf 17 deps list completed.
+- `src/components/ui/breadcrumb.tsx` — Perf 18 event delegation + `dataset[…]` bracket-notation fix.
+- `src/components/__tests__/AgendaResults.test.tsx`, `DonePanel.test.tsx`, `DuePanel.test.tsx` — `vi.mock` migrated to `importOriginal` so `buttonVariants` is exported.
+- `pending/design-system-perf-review-2026-05-09.md` — status note added.
+
+**Process notes:** the Perf 15 hoist caught a transitive-import gotcha: when a previously render-time call (`buttonVariants(...)` inside calendar.tsx's render body) moves to module scope, every test that mocks `@/components/ui/button` without `importOriginal` breaks because the mock no longer surfaces `buttonVariants`. Three test files needed the standard `vi.mock(..., async (importOriginal) => { const actual = await importOriginal(); return { ...actual, Button: …mock } })` migration. Worth flagging for future module-scope hoists.
+
+**Commit plan:** single commit covering all production + test changes + Session 710 entry + plan-file status note.
+
+---
 ## Session 709 — design-system Tier 1 mechanical cleanup (2026-05-13)
 
 | Metadata | Value |

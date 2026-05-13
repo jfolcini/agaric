@@ -1,5 +1,15 @@
 # Agaric Design System — Performance Review
 
+> **Status:** Tier 2 + Tier 3 small wins shipped. Closed: items **9**
+> (DonePanel `useMemo` wrappers), **10** (React.memo on HistoryListItem +
+> DaySection — ConflictListItem was already deleted by PEND-09 Phase 5
+> so the plan is stale on that name), **15** (calendar.tsx classNames +
+> buttonVariants hoist), **16** (overlay base-string hoist on dialog +
+> sheet + popover + select), **17** (Sidebar `useMemo` deps complete),
+> **18** (Breadcrumb inline onClick replaced by event delegation).
+> **Still open:** every Tier 1 item (1-5) + Tier 2 remaining items
+> (6, 7, 8, 11, 12) + Tier 3 items (13, 14, 19).
+
 **Date:** 2026-05-09
 **Method.** Round 1: five parallel subagents reviewed (a) UI primitives in `src/components/ui/`, (b) heavy-render hotspots, (c) bundle and code-splitting, (d) zustand store fan-out, (e) perf claims in the markdown docs. Round 2: two independent verifiers fact-checked every claim against actual code (file/line/grep/`du`). Six round-1 claims were debunked or softened on verification and are excluded from this list. Findings below are confirmed against the current tree.
 

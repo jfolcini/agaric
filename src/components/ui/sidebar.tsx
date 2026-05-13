@@ -203,6 +203,11 @@ const SidebarProvider = ({
   // This makes it easier to style the sidebar with Tailwind classes.
   const state = open ? 'expanded' : 'collapsed'
 
+  // Perf 17: list every captured value — including the `useState` setters
+  // `setOpenMobile` / `setIsResizing` which React guarantees stable. Biome's
+  // useExhaustiveDependencies treats stable setters as "extra", so we suppress
+  // it here; the explicit deps list documents the full closure.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stable useState setters listed for completeness
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
       state,
@@ -223,10 +228,12 @@ const SidebarProvider = ({
       setOpen,
       isMobile,
       openMobile,
+      setOpenMobile,
       toggleSidebar,
       sidebarWidth,
       setSidebarWidth,
       isResizing,
+      setIsResizing,
     ],
   )
 

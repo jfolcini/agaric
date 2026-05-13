@@ -7,6 +7,11 @@ import { cn } from '@/lib/utils'
 
 import { CloseButtonIcon, closeButtonClassName } from './close-button'
 
+// PERF: hoisted from inline string in render — twMerge only re-parses caller className.
+// See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
+const SHEET_CONTENT_BASE =
+  'fixed z-50 flex flex-col gap-4 bg-background shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-slow data-[state=open]:animate-in data-[state=open]:duration-slower'
+
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
 }
@@ -64,7 +69,7 @@ const SheetContent = ({
         ref={ref}
         data-slot="sheet-content"
         className={cn(
-          'fixed z-50 flex flex-col gap-4 bg-background shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-slow data-[state=open]:animate-in data-[state=open]:duration-slower',
+          SHEET_CONTENT_BASE,
           side === 'right' &&
             'inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm',
           side === 'left' &&

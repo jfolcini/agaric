@@ -239,6 +239,23 @@ interface OverflowPopoverProps {
 
 function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.ReactElement {
   const [open, setOpen] = useState(false)
+  // Perf 18: avoid an inline arrow per item in `.map()` (defeats memoization
+  // of the popover content on every re-render). We use event delegation:
+  // a single stable `onClick` lives on the list container, reads the
+  // `data-breadcrumb-overflow-item` attribute already on each button, looks
+  // up the matching item, and dispatches its `onSelect`.
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  const handleListClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null
+    const button = target?.closest<HTMLElement>('[data-breadcrumb-overflow-item]')
+    if (!button) return
+    const key = button.dataset['breadcrumbOverflowItem']
+    if (!key) return
+    const item = itemsRef.current.find((it) => (it.testId ?? it.id) === key)
+    item?.onSelect?.()
+    setOpen(false)
+  }, [])
   return (
     <div className="flex shrink-0 items-center" data-slot="breadcrumb-overflow">
       <Popover open={open} onOpenChange={setOpen}>
@@ -254,7 +271,13 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
           </button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-auto min-w-[180px] max-w-[320px] p-1">
-          <div data-slot="breadcrumb-overflow-list" className="flex flex-col gap-0.5" role="menu">
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard activation of the inner <button>s dispatches a synthetic click that bubbles to this delegated handler */}
+          <div
+            data-slot="breadcrumb-overflow-list"
+            className="flex flex-col gap-0.5"
+            role="menu"
+            onClick={handleListClick}
+          >
             {items.map((item) => (
               <button
                 key={item.id}
@@ -267,10 +290,6 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
                   'hover:bg-accent hover:text-accent-foreground',
                   'focus-ring-visible',
                 )}
-                onClick={() => {
-                  item.onSelect?.()
-                  setOpen(false)
-                }}
                 title={item.label}
               >
                 {item.label}

@@ -9,7 +9,7 @@
 
 import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -162,10 +162,13 @@ export function DonePanel({
   // Group blocks by source page (parent_id → resolved page title)
   // Sort groups alphabetically by page title
   // Within each group, sort blocks by ID descending (ULID ≈ most recently created first)
-  const grouped = groupBlocksByPage(blocks, pageTitles, t('donePanel.untitled'))
+  const grouped = useMemo(
+    () => groupBlocksByPage(blocks, pageTitles, t('donePanel.untitled')),
+    [blocks, pageTitles, t],
+  )
 
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
-  const flatItems = grouped.flatMap((g) => g.items)
+  const flatItems = useMemo(() => grouped.flatMap((g) => g.items), [grouped])
 
   const {
     focusedIndex,

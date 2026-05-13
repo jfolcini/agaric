@@ -3,6 +3,11 @@ import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
+// PERF: hoisted from inline string in render — twMerge only re-parses caller className.
+// See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
+const POPOVER_CONTENT_BASE =
+  'bg-popover text-popover-foreground z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-4rem)] rounded-md border p-4 shadow-md outline-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
+
 function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
 }
@@ -32,11 +37,7 @@ const PopoverContent = ({
         data-slot="popover-content"
         align={align}
         sideOffset={sideOffset}
-        className={cn(
-          'bg-popover text-popover-foreground z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-4rem)] rounded-md border p-4 shadow-md outline-hidden',
-          'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2',
-          className,
-        )}
+        className={cn(POPOVER_CONTENT_BASE, className)}
         {...props}
       />
     </PopoverPrimitive.Portal>
