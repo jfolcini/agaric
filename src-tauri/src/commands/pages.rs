@@ -1152,3 +1152,61 @@ pub async fn list_page_links(
         .await
         .map_err(sanitize_internal_error)
 }
+
+/// Minimal page header — id + content — for callers that need every
+/// page in a space without pagination.  Used by the markdown export
+/// (`exportGraphAsZip`) which iterates every page to produce a ZIP.
+#[derive(Serialize, Type, Clone, Debug)]
+pub struct PageHeading {
+    pub id: String,
+    pub content: Option<String>,
+}
+
+/// Return every live page in `space_id`, ordered by content
+/// (case-insensitive) then id.  No pagination, no clamp.
+///
+/// The result set is bounded by the space's page count — intrinsic to
+/// the workspace.  Use this when the caller genuinely needs every
+/// page (markdown export, graph rendering); use the paginated
+/// `list_blocks_inner` for list views.
+///
+/// Returns only `(id, content)` because the two existing callers
+/// (markdown export, graph view) ignore every other column.
+#[instrument(skip(pool), err)]
+pub async fn list_all_pages_in_space_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<Vec<PageHeading>, AppError> {
+    let rows = sqlx::query_as!(
+        PageHeading,
+        r#"SELECT
+               b.id as "id!: String",
+               b.content as "content: String"
+           FROM blocks b
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             AND COALESCE(b.page_id, b.id) IN (
+                 SELECT bp.block_id FROM block_properties bp
+                 WHERE bp.key = 'space' AND bp.value_ref = ?1
+             )
+           ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC"#,
+        space_id,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Tauri command: list every page in `space_id` as `{ id, content }`.
+/// Delegates to [`list_all_pages_in_space_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_all_pages_in_space(
+    pool: State<'_, ReadPool>,
+    space_id: String,
+) -> Result<Vec<PageHeading>, AppError> {
+    list_all_pages_in_space_inner(&pool.0, &space_id)
+        .await
+        .map_err(sanitize_internal_error)
+}

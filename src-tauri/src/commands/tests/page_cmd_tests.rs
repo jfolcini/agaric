@@ -2931,3 +2931,55 @@ async fn pend18_list_page_aliases_by_prefix_scope_parity() {
     );
     assert_eq!(active_a[0].0, "P18_PG_A");
 }
+
+// ======================================================================
+// list_all_pages_in_space — no-pagination IPC for export / graph callers
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_returns_every_page_in_scope() {
+    let (pool, _dir) = test_pool().await;
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "LAPS_A1", "page", "Alpha", None, Some(1)).await;
+    insert_block(&pool, "LAPS_A2", "page", "beta", None, Some(2)).await;
+    insert_block(&pool, "LAPS_B1", "page", "Other space", None, Some(3)).await;
+    insert_block(&pool, "LAPS_DEL", "page", "Deleted", None, Some(4)).await;
+    insert_block(&pool, "LAPS_CONT", "content", "Not a page", None, Some(5)).await;
+    assign_to_space(&pool, "LAPS_A1", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_A2", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_B1", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "LAPS_DEL", TEST_SPACE_ID).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-05-09T00:00:00Z' WHERE id = 'LAPS_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+
+    // Both live pages in space A, ordered case-insensitively by content.
+    assert_eq!(
+        ids,
+        vec!["LAPS_A1", "LAPS_A2"],
+        "must include both live pages, sorted case-insensitively by content; \
+         must exclude the soft-deleted page, the foreign-space page, and the \
+         content block. got {rows:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_empty_space_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+    let rows = list_all_pages_in_space_inner(&pool, "01NOSUCHSPACE00000000000000")
+        .await
+        .unwrap();
+    assert!(
+        rows.is_empty(),
+        "unknown space must return empty; got {rows:?}"
+    );
+}

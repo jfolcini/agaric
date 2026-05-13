@@ -1,23 +1,24 @@
 import JSZip from 'jszip'
 import { logger } from './logger'
-import { exportPageMarkdown, listBlocks } from './tauri'
+import { exportPageMarkdown, listAllPagesInSpace } from './tauri'
 
 /**
  * Export all pages as a ZIP of markdown files.
  * Each page becomes a .md file named after its content (title).
  * Returns a Blob containing the ZIP.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, only pages in the active
- * space are included in the export. Pass `null` for the legacy
- * cross-space behaviour. The `?? ''` fallback at the call site is the
- * pre-bootstrap no-match sentinel.
+ * `spaceId` (FEAT-3 Phase 4) — only pages in the active space are
+ * included in the export.  The `?? ''` fallback at the call site is
+ * the pre-bootstrap no-match sentinel; `listAllPagesInSpace('')`
+ * returns an empty list.
  */
 export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
   const zip = new JSZip()
 
-  // Load all pages
-  const resp = await listBlocks({ blockType: 'page', limit: 1000, spaceId: spaceId ?? '' })
-  const pages = resp.items
+  // Load every page in the space.  `listAllPagesInSpace` returns every
+  // page in one query (no pagination, no clamp) — bounded by the
+  // space's intrinsic page count, which is what the export needs.
+  const pages = await listAllPagesInSpace(spaceId ?? '')
 
   // Export each page to markdown. Per-page failures are logged and skipped so a
   // single broken page does not reject the whole export — partial output is more

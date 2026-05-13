@@ -23,17 +23,13 @@ beforeEach(() => {
 
 describe('exportGraphAsZip', () => {
   it('creates a ZIP blob with markdown files for each page', async () => {
-    // Mock listBlocks to return 2 pages
+    // Mock list_all_pages_in_space to return 2 pages
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') {
-        return {
-          items: [
-            { id: 'P1', block_type: 'page', content: 'My Notes' },
-            { id: 'P2', block_type: 'page', content: 'Journal' },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: 'P1', content: 'My Notes' },
+          { id: 'P2', content: 'Journal' },
+        ]
       }
       if (cmd === 'export_page_markdown') {
         return '# Test content'
@@ -56,15 +52,11 @@ describe('exportGraphAsZip', () => {
     const ulid1 = '01HZA1B2C3D4E5F6G7H8J9K0M1'
     const ulid2 = '01HZA9X8Y7W6V5T4S3R2Q1P0N9'
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') {
-        return {
-          items: [
-            { id: ulid1, block_type: 'page', content: 'Same Name' },
-            { id: ulid2, block_type: 'page', content: 'Same Name' },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: ulid1, content: 'Same Name' },
+          { id: ulid2, content: 'Same Name' },
+        ]
       }
       if (cmd === 'export_page_markdown') {
         return '# Content'
@@ -89,11 +81,7 @@ describe('exportGraphAsZip', () => {
   })
 
   it('returns empty ZIP when no pages exist', async () => {
-    mockedInvoke.mockResolvedValue({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockedInvoke.mockResolvedValue([])
 
     const blob = await exportGraphAsZip(null)
     expect(blob).toBeInstanceOf(Blob)
@@ -104,16 +92,12 @@ describe('exportGraphAsZip', () => {
     // must not reject the whole export. The successful pages still land in the
     // ZIP and the failure is surfaced through `logger.warn` with the page id.
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        return {
-          items: [
-            { id: 'P1', block_type: 'page', content: 'Good One' },
-            { id: 'P2', block_type: 'page', content: 'Broken' },
-            { id: 'P3', block_type: 'page', content: 'Good Two' },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: 'P1', content: 'Good One' },
+          { id: 'P2', content: 'Broken' },
+          { id: 'P3', content: 'Good Two' },
+        ]
       }
       if (cmd === 'export_page_markdown') {
         const id = (args as { pageId: string }).pageId

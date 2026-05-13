@@ -640,6 +640,11 @@ export const commands = {
 	 *  end_date]`. Delegates to [`list_journal_pages_in_range_inner`].
 	 */
 	listJournalPagesInRange: (startDate: string, endDate: string, spaceId: string) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, spaceId })),
+	/**
+	 *  Tauri command: list every page in `space_id` as `{ id, content }`.
+	 *  Delegates to [`list_all_pages_in_space_inner`].
+	 */
+	listAllPagesInSpace: (spaceId: string) => typedError<PageHeading[], AppErrorSchema>(__TAURI_INVOKE("list_all_pages_in_space", { spaceId })),
 };
 
 /* Types */
@@ -1125,6 +1130,16 @@ export type MoveResponse = {
 export type OpRef = {
 	device_id: string,
 	seq: number,
+};
+
+/**
+ *  Minimal page header — id + content — for callers that need every
+ *  page in a space without pagination.  Used by the markdown export
+ *  (`exportGraphAsZip`) which iterates every page to produce a ZIP.
+ */
+export type PageHeading = {
+	id: string,
+	content: string | null,
 };
 
 /**
