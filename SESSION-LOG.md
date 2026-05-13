@@ -7,6 +7,55 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 707 — sql-audit Batch 4: H7 FK ON DELETE CASCADE migration sweep — SQL AUDIT CLOSED (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 1 build (general-purpose) + 1 technical review |
+| **Items closed** | `pending/sql-audit-2026-05-09.md` H7 — every FK reference to `blocks(id)` across 10 legacy tables now has `ON DELETE CASCADE` (or `SET NULL` for `block_properties.value_ref`). **SQL audit fully closed: 11 items shipped, 1 closed-by-investigation, 2 stale-removed, 1 deferred across 4 sessions (704-707).** |
+| **Items modified** | sql-audit doc Status updated: Batch 4 added; "Remaining" list emptied. |
+| **Tests added** | +15 Rust cascade tests in new `src-tauri/src/cache/cascade_tests.rs` module |
+| **Files touched** | 14 (1 new migration + 1 new test module + 11 new `.sqlx/` cache entries + cache/mod.rs wiring + audit doc) |
+
+**Summary:** the audit's only remaining "Remaining" item is shipped. Migration `0061_fk_cascade_on_blocks_legacy_tables.sql` (320 lines, single transaction) uses the SQLite 12-step table-rebuild recipe (https://www.sqlite.org/lang_altertable.html) to add `ON DELETE CASCADE` to every FK referencing `blocks(id)` on `block_tags`, `block_properties`, `block_links`, `attachments`, `tags_cache`, `pages_cache`, `agenda_cache`, `page_aliases`, `block_tag_inherited`, `projected_agenda_cache`. `block_properties.value_ref` is the single exception: it uses `ON DELETE SET NULL` because the property row belongs to its owning `block_id`, not to `value_ref` — a value_ref being deleted must null the reference, not destroy the unrelated owning row's property entry (matches the existing Rust cascade in `crud.rs:1244, 1528, 1977`).
+
+**Why this matters:** soft-delete (`UPDATE blocks SET deleted_at = ?`) continues to work via the Rust-side `cascade_soft_delete` in `soft_delete/trash.rs` (CASCADE only fires on hard DELETE). For the hard-DELETE path — purge-from-trash and a handful of cleanup paths — the schema now enforces the cascade rather than depending on Rust-side compensation. Defense-in-depth: fewer "stale cache row pointing at a deleted block" classes of bugs at 100k-page scale.
+
+**Migration safety notes (from reviewer):**
+- Each table block has a pre-cleanup statement (`DELETE FROM <t> WHERE <fk> NOT IN (SELECT id FROM blocks)` for CASCADE, `UPDATE <t> SET value_ref = NULL …` for SET NULL) before the rebuild. This is necessary because `PRAGMA foreign_keys=OFF` is a no-op inside a transaction, and sqlx wraps each migration file in its own tx — so dangling references would otherwise fail the INSERT INTO _new.
+- Every CHECK, UNIQUE, NOT NULL, DEFAULT, and PRIMARY KEY constraint preserved; every live index recreated; the 4 indexes deliberately dropped in migration 0045 (`idx_block_props_key_num`, `idx_page_aliases_page`, `idx_agenda_date`, `idx_block_properties_space`) correctly NOT recreated.
+- Migration runtime on an empty DB: 8.8 ms. Bulk `INSERT _new SELECT old` is SQLite's fast path; reviewer's untested-at-scale caveat: a real 100k-page DB will see a one-time startup pause proportional to total row count across the 10 tables.
+
+**Cascade tests (15 in `cache::cascade_tests`):** 14 per-FK tests (one per FK column across the 10 tables, plus `block_tag_inherited.inherited_from`) each insert parent + child rows and assert hard `DELETE FROM blocks WHERE id = ?` removes the child (or nulls `value_ref` for the SET NULL case). One end-to-end fan-out test inserts a parent with children across multiple tables and asserts all cascade in a single statement.
+
+**REVIEW-LATER impact:**
+- `pending/sql-audit-2026-05-09.md`: **0 remaining items.** Plan file ready for deletion per the README convention ("when a task is done, delete its plan file from `pending/`").
+- Session-705 noted out-of-scope `AgendaView.loadMoreAgenda` cursor-namespace mismatch (cursor returned from `filteredBlocksQuery` is fed to `queryByProperty`) remains as a separate follow-up — not an audit item, surfaced during H3 review.
+
+**Files touched (this session):**
+- `src-tauri/migrations/0061_fk_cascade_on_blocks_legacy_tables.sql` — new, 320 lines.
+- `src-tauri/src/cache/cascade_tests.rs` — new, 579 lines, 15 tests.
+- `src-tauri/src/cache/mod.rs` — `cascade_tests` module wired.
+- `src-tauri/.sqlx/query-{03933b13, 0a3abccf, 34c6e2fc, 37d909ef, 3ca824de, 68181538, 6d98e9ad, b8482cc1, f300cb4b, f991bcf8, fcfb70c6}*.json` — 11 new cache entries for the new test queries (must be staged before commit or `cargo sqlx prepare --check` would fail in CI).
+- `pending/sql-audit-2026-05-09.md` — Status section updated: Batch 4 shipped; Remaining list empty.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3663 tests pass, 4 skipped (was 3648 pre-batch; +15 cascade tests).
+- `cd src-tauri && cargo clippy --tests` — 0 errors in `cache/cascade_tests.rs`; pre-existing warnings in unrelated files unchanged.
+- `cd src-tauri && cargo sqlx prepare -- --tests` — clean; produces exactly the 11 expected entries.
+- Existing `soft_delete::*` tests (45 passing) confirm soft-delete path is unaffected; existing `cache::*` rebuild tests (140 passing) confirm cache logic untouched.
+
+**SQL audit close-out totals:**
+- 11 items SHIPPED across 4 sessions (704: H2/H6/L1/L2/M3, 705: H1/M1, 706: H3, 707: H7).
+- 1 closed-by-investigation (M4 — debounced fully-indexed GROUP BY, no fix needed).
+- 2 stale-removed (H5/M2 — referenced columns dropped by PEND-09 migrations 0058-0060).
+- 1 deferred (H4 — JS sort on ≤200 items per page is sub-ms; SQL ORDER BY would require compound-cursor reshape).
+- L3 ignored as audit noted (small JS sorts on bounded local data).
+
+**Commit plan:** single commit covering migration + tests + `.sqlx/` cache entries + Session 707 entry. Plan file `pending/sql-audit-2026-05-09.md` ready to delete in this same commit per the `pending/README.md` convention.
+
+---
 ## Session 706 — sql-audit Batch 3: H3 frontend agenda → filtered_blocks_query (2026-05-13)
 
 | Metadata | Value |
