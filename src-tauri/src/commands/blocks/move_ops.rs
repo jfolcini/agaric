@@ -122,9 +122,8 @@ pub async fn move_block_inner(
         // root) and the max descendant depth of the block being moved. The
         // deepest descendant will end up at parent_depth + 1 + subtree_depth.
         //
-        // Recursive members filter  — conflict copies inherit
-        // `parent_id` from the original and would otherwise inflate depth counts
-        // (invariant #9). `depth < 100` bounds each walk.
+        // Recursive members bound the walk with `depth < 100`
+        // (invariant #9).
         let depths = sqlx::query!(
             r#"WITH RECURSIVE
                path(id, depth) AS (

@@ -257,12 +257,6 @@ const STABLE_MESSAGES: &[&str] = &[
     "materializer retry queue sweep",
     "rebuild failed for fts_blocks cache",
     "error processing materializer task",
-    // merge — conflict resolution.
-    "merge completed — clean merge applied",
-    "merge completed — conflict copy created",
-    "creating conflict copy",
-    "property conflict resolved via LWW",
-    "text merge completed",
     // snapshot / compaction.
     "compaction starting",
     "compaction: no eligible ops, nothing to do",

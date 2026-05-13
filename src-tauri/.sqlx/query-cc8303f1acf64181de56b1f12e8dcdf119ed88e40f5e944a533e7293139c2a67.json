@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n               b.id as \"id!: String\",\n               COALESCE(b.content, '') as \"name!: String\",\n               accent.value_text as \"accent_color: String\"\n           FROM blocks b\n           INNER JOIN block_properties p\n               ON p.block_id = b.id\n              AND p.key = 'is_space'\n              AND p.value_text = 'true'\n           LEFT JOIN block_properties accent\n               ON accent.block_id = b.id\n              AND accent.key = 'accent_color'\n           WHERE b.deleted_at IS NULL\n           ORDER BY COALESCE(b.content, '') ASC, b.id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "accent_color: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "cc8303f1acf64181de56b1f12e8dcdf119ed88e40f5e944a533e7293139c2a67"
+}

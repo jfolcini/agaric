@@ -3,14 +3,13 @@
 //!
 //! ## Why a process global
 //!
-//! `crate::merge::engine_apply` (Phase 3 day-10 — collapsed to a thin
-//! engine dispatcher; see the module doc) is called from
-//! `merge::apply.rs`, which runs inside the merge orchestrator's
-//! async function.  That function does not (and should not) take an
-//! `AppHandle` parameter — the merge layer has been kept
-//! tauri-agnostic for testability.  But the engine state must persist
-//! across calls so successive ops mutate the same Loro doc (otherwise
-//! every op would start from an empty engine).
+//! `crate::merge::engine_apply` is called from `merge::apply.rs`,
+//! which runs inside the merge orchestrator's async function. That
+//! function does not (and should not) take an `AppHandle` parameter
+//! — the merge layer has been kept tauri-agnostic for testability.
+//! But the engine state must persist across calls so successive ops
+//! mutate the same Loro doc (otherwise every op would start from an
+//! empty engine).
 //!
 //! A `OnceLock<LoroState>` is the simplest correctness story:
 //! initialise once at bootstrap (see `crate::run` → `app.manage(...)`
@@ -21,19 +20,8 @@
 //! ## Lifetime
 //!
 //! Created in `crate::run` immediately after the device_id is known
-//! (the registry's `for_space` call requires a `device_id`).  Lives
+//! (the registry's `for_space` call requires a `device_id`). Lives
 //! for the rest of the process.
-//!
-//! ## Phase 3 day-10 — sampler field removed
-//!
-//! Pre-day-10 this struct also held a [`crate::loro::parity::ShadowParitySampler`]
-//! — the in-memory ring buffer that fed the day-4 SQLite parity sink.
-//! Day-10 deleted the sampler + sink + the `merge_parity_log` table
-//! (the diffy-vs-Loro comparison surface lost meaning when Loro
-//! became authoritative).  `LoroState` is now a thin wrapper around
-//! the registry.  Phase 4 renamed the struct from `ShadowState` to
-//! `LoroState` (the shadow-mode era is over; the engine is the single
-//! authoritative path).
 
 use std::sync::OnceLock;
 
@@ -43,12 +31,11 @@ use crate::loro::registry::LoroEngineRegistry;
 /// bootstrap; `Some(...)` thereafter.
 static GLOBAL: OnceLock<LoroState> = OnceLock::new();
 
-/// Bundle of process-global Loro state.  One instance per process.
+/// Bundle of process-global Loro state. One instance per process.
 ///
-/// Phase 3 day-10 — collapsed to just the registry.  The struct
-/// remains a struct (rather than a type alias for `LoroEngineRegistry`)
-/// so adding future fields (per-space stats, op counters, etc.)
-/// doesn't require a global field-access rewrite.
+/// Wraps the registry as a struct (rather than a type alias for
+/// `LoroEngineRegistry`) so adding future fields (per-space stats, op
+/// counters, etc.) doesn't require a global field-access rewrite.
 pub struct LoroState {
     pub registry: LoroEngineRegistry,
 }
@@ -69,10 +56,9 @@ impl Default for LoroState {
     }
 }
 
-/// Initialise the process-global state.  Idempotent — a second call
-/// is a no-op (the first install wins).  Called unconditionally from
-/// `crate::run`'s `app.setup` closure (Phase 3 day-9 retired the
-/// `loro-shadow` feature gate that previously gated the call site).
+/// Initialise the process-global state. Idempotent — a second call
+/// is a no-op (the first install wins). Called unconditionally from
+/// `crate::run`'s `app.setup` closure.
 ///
 /// Returns `true` if this call performed the initialisation, `false`
 /// if a previous call already did.

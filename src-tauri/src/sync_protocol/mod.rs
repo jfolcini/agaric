@@ -5,14 +5,12 @@
 //! BLE, …) is handled elsewhere — this module operates purely on typed
 //! [`SyncMessage`] values.
 
-// PEND-09 Phase 3 day-3 — sync wire types for Loro-based sync
+// Sync wire types for Loro-based sync
 // (`LoroSyncMessage::{Snapshot, Update}`).
 pub mod loro_sync_types;
 
-// PEND-09 Phase 3 day-4 — `prepare_outgoing` + `apply_remote`
-// helpers that build / consume the day-3 wire types.  Phase 3 day-9
-// retired the `loro-shadow` feature gate; the module compiles
-// unconditionally now.
+// `prepare_outgoing` + `apply_remote` helpers that build / consume
+// the wire types.
 pub mod loro_sync;
 
 mod operations;

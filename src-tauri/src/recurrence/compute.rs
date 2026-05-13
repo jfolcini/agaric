@@ -220,10 +220,8 @@ pub(crate) async fn handle_recurrence_in_tx(
 
     // M-78: Use MAX(position) + 1 among living siblings to avoid collision.
     // Naive `original.position + 1` collides with whatever sibling already
-    // occupies that slot, leaving two siblings sharing one position and the
-    // agenda's order non-deterministic. Mirrors the BUG-24 fix in
-    // `merge/resolve.rs::create_conflict_copy` — both call sites now share
-    // `next_sibling_position_excluding_sentinel`.
+    // occupies that slot, leaving two siblings sharing one position and
+    // the agenda's order non-deterministic.
     //
     // - If the original carries the NULL_POSITION_SENTINEL, the sibling
     //   keeps the sentinel (incrementing would overflow i64::MAX).

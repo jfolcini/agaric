@@ -1,13 +1,5 @@
-//! Phase-1 day-1 smoke tests for the Loro production scaffold.
-//!
-//! Phase 3 day-9 retired the `loro-shadow` feature gate; these tests
-//! now run as part of the default `cargo nextest run -p agaric` suite.
-//!
-//! Today's coverage is intentionally minimal: prove that the engine
-//! survives a create-then-read round-trip.  The full corpus port
-//! (~5 integration shapes from `merge/tests.rs`) and the proptest
-//! augmentation are scheduled for later Phase-1 days per
-//! SPIKE-REPORT.md §6 items 7-8.
+//! Smoke tests for the Loro production scaffold. Prove that the
+//! engine survives a create-then-read round-trip.
 
 use super::engine::{BlockSnapshot, LoroEngine};
 

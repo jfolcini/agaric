@@ -173,10 +173,8 @@ fn cancel_is_idempotent() {
     );
 }
 
-// PEND-09 Phase 3 day-6 — B-3 batch-draining test deleted alongside
-// the diffy-typed `OpBatch` wire format.  The drain pattern itself
-// (handle_message returns first message; next_message drains the
-// rest) lives on for `LoroSync` and is covered by the
+// The drain pattern (handle_message returns first message;
+// next_message drains the rest) is covered for `LoroSync` by the
 // `loro_sync_e2e_*` tests in `sync_protocol::tests`.
 
 // ── S-1: unpaired device rejection test ─────────────────────────────
@@ -1808,14 +1806,10 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
     materializer.shutdown();
 }
 
-// PEND-09 Phase 3 day-6 — TOFU + happy-path tests below were
-// hard-coded to the diffy `OpBatch` wire shape; deleted alongside the
-// `OpBatch` variant.  The TOFU code path itself is unchanged (cert
-// verification runs before protocol dispatch) and is exercised by
+// TOFU coverage: cert verification runs before protocol dispatch and
+// is exercised by
 // `inmem_handle_incoming_sync_rejects_cert_cn_mismatch` /
-// `inmem_handle_incoming_sync_rejects_cert_hash_mismatch`.  A
-// LoroSync-shaped happy-path test can land later if the maintainer
-// decides the coverage gap is worth the lines.
+// `inmem_handle_incoming_sync_rejects_cert_hash_mismatch`.
 
 // ======================================================================
 // T-16e — resolve_peer_address tests

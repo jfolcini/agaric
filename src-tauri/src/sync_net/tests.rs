@@ -124,8 +124,7 @@ fn sync_message_roundtrip_head_exchange() {
     }
 }
 
-// PEND-09 Phase 3 day-6 — `SyncMessage::OpBatch` deleted; the
-// LoroSync-shaped roundtrip is exercised by
+// The LoroSync-shaped roundtrip is exercised by
 // `sync_protocol::tests::sync_message_serde_roundtrip` and
 // `json_shape_all_variants_have_type_tag`.
 

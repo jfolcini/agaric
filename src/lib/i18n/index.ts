@@ -22,9 +22,9 @@ import { initReactI18next } from 'react-i18next'
 import { agenda } from './agenda'
 import { block } from './block'
 import { common } from './common'
-import { conflicts } from './conflicts'
 import { editor } from './editor'
 import { errors } from './errors'
+import { history } from './history'
 import { pages } from './pages'
 import { properties } from './properties'
 import { references } from './references'
@@ -43,7 +43,7 @@ const translation: Record<string, string> = {
   ...pages,
   ...properties,
   ...references,
-  ...conflicts,
+  ...history,
   ...sync,
   ...shortcuts,
   ...settings,

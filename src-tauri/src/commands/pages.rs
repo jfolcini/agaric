@@ -724,10 +724,10 @@ pub async fn list_page_links_inner(
     // `block_tags`, `block_tag_inherited`, and `block_tag_refs` to
     // mirror the UX-250 / `tag_query::resolve_tag_leaves` semantics so
     // a graph filtered by `#project` picks up inherited and inline
-    // refs identically to `queryByTags`. Soft-deleted / conflict tag
-    // blocks are not joined here because the materialised tables already
-    // exclude conflict copies via the materializer's invariant-#9
-    // guarantees on the inserter side.
+    // refs identically to `queryByTags`. Soft-deleted tag blocks are
+    // not joined here because the materialised tables already exclude
+    // them via the materializer's invariant-#9 guarantees on the
+    // inserter side.
     let links = sqlx::query_as::<_, PageLink>(
         "WITH space_members AS MATERIALIZED (
              SELECT block_id FROM block_properties

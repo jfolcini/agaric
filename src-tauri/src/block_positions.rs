@@ -1,10 +1,8 @@
 //! Helpers for computing block sibling positions in the `blocks` table.
 //!
 //! Centralises the "next sibling position, excluding the
-//! [`NULL_POSITION_SENTINEL`]" lookup that merge-conflict copies and
-//! recurrence siblings both need (BUG-24). Keeping it here avoids
-//! drift between `merge::resolve::create_conflict_copy` and
-//! `recurrence::compute::handle_recurrence`.
+//! [`NULL_POSITION_SENTINEL`]" lookup used by recurrence siblings
+//! (BUG-24).
 
 use sqlx::{Executor, Sqlite};
 

@@ -197,7 +197,7 @@ export const HANDLERS: Record<string, Handler> = {
   // mock here is sequential (good enough for the FE shape — atomicity
   // is exercised by the Rust tests). Returns the created BlockRows in
   // INPUT ORDER so callers can map template-line index → block id.
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
   create_blocks_batch: (args) => {
     const a = args as Record<string, unknown>
     const specs = (a['specs'] as Array<Record<string, unknown>>) ?? []
@@ -828,7 +828,7 @@ export const HANDLERS: Record<string, Handler> = {
     // valueTextIn, valueDate/valueDateRange). Splitting this into helpers
     // would make the SQL→TS correspondence harder to audit and would
     // duplicate the keep/drop signal across multiple closures.
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       // Push-down filters short-circuit before the property lookup so
@@ -939,7 +939,7 @@ export const HANDLERS: Record<string, Handler> = {
     const propertyFilterMatches = (
       b: Record<string, unknown>,
       pf: Record<string, unknown>,
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
     ): boolean => {
       const key = pf['key'] as string
       const valueText = (pf['valueText'] as string | null) ?? null
@@ -2001,7 +2001,7 @@ export const HANDLERS: Record<string, Handler> = {
   // Page links for graph view (F-33)
   // ---------------------------------------------------------------------------
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
   list_page_links: (args) => {
     // Scan all non-deleted blocks for [[ULID]] page link tokens and
     // return page-to-page edges (source = parent page, target = linked page).

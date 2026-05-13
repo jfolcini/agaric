@@ -69,7 +69,7 @@ Anytype, faster than Logseq.
 | -------------------------- | --------------------------------------------------------- |
 | sqlx 0.8 + sqlx-cli        | Async SQLite, compile-time query validation, migrations   |
 | blake3                     | Op log hash chaining (content-addressable, deterministic) |
-| loro                       | CRDT engine — single op-application path (PEND-09)        |
+| loro                       | CRDT engine — single op-application path                  |
 | similar                    | Word-level diff for `compute_edit_diff` display           |
 | zstd                       | Snapshot compression (level 3)                            |
 | ciborium                   | CBOR serialisation for `log_snapshots.data`               |
@@ -188,16 +188,15 @@ all its descendants via a recursive CTE. A single op covers the entire subtree.
   `block_tags`, `block_tag_inherited`, `block_properties` (both as target and as `value_ref`
   source), `block_links`, `agenda_cache`, `tags_cache`, `pages_cache`, `attachments`,
   `block_drafts`, `fts_blocks`, `page_aliases`, `projected_agenda_cache`, `blocks`
-  (`conflict_source` nullification), `blocks` (final DELETE).
+  (final DELETE).
 - Deleting a tag block does NOT cascade to content blocks that reference it. The materializer
   removes `block_tags` rows; `#[ULID]` tokens render as "deleted tag" decoration.
 
-### Conflict copies (retired)
+### Concurrent edits
 
-PEND-09 Phases 3-5 deleted the conflict-copy creation path entirely. The Loro CRDT engine is
-the single op-application path (`src-tauri/src/loro/engine.rs`); there is no diffy three-way
-merge, no `is_conflict` column, no `conflict_type` column, no `get_conflicts` IPC, and no
-ConflictList view. Per-key LWW (last-writer-wins) on property updates remains — see §12.
+The Loro CRDT engine (`src-tauri/src/loro/engine.rs`) is the single op-application path.
+Concurrent character-level edits converge via Loro's text CRDT; property updates resolve via
+per-key LWW (last-writer-wins) — see §12.
 
 ---
 
@@ -239,8 +238,8 @@ recovery (3), drafts (2), PRAGMAs (1), and misc (3 in soft_delete, peer_refs, me
 
 ```text
 blocks              — id (ULID PK), block_type, content, parent_id, position,
-                      deleted_at, conflict_source,
-                      todo_state, priority, due_date, scheduled_date, page_id
+                      deleted_at, todo_state, priority, due_date,
+                      scheduled_date, page_id
 block_tags          — (block_id, tag_id) composite PK
 block_properties    — (block_id, key) composite PK, value_text/value_num/value_date/value_ref
 block_links         — (source_id, target_id) composite PK — materializer-maintained cache
@@ -359,9 +358,9 @@ composite `(device_id, seq)` PK rather than chain re-computation.
 
 **`edit_block.prev_edit`:** Pointer to the `(device_id, seq)` of the prior edit this one is based
 on. Forms a per-block linear edit chain (a tree, with at most one parent per node — technically a
-forest across the whole op log) embedded in the global op log, used for LCA computation during
-three-way merge. Multi-parent merges live on the merge-op path via `parent_seqs`, which is a
-different (global) DAG structure — do not conflate the two.
+forest across the whole op log) embedded in the global op log, used by the history panel.
+Multi-parent links live on the merge-op path via `parent_seqs`, which is a different (global)
+DAG structure — do not conflate the two.
 
 **`from_text` — rejected:** Storing previous content alongside `to_text` was rejected because:
 (1) cross-flush Ctrl+Z is intentionally not supported; (2) the previous state is always
@@ -378,17 +377,6 @@ cache derived from `[[ULID]]` tokens in content. Never written by ops directly.
 - Drafts never participate in sync, undo, or compaction.
 - Any surviving draft at boot is a crash recovery candidate (see
   [Crash Recovery](#14-crash-recovery)).
-
-### Text ancestor reconstruction (LCA)
-
-`diffy::merge(ancestor, ours, theirs)` requires the common ancestor text for concurrent edits.
-The LCA algorithm walks `prev_edit` chains:
-
-1. Collect all ancestors of op A by following `prev_edit` pointers → `ancestors_a` set.
-2. Walk op B's chain — first node found in `ancestors_a` is the LCA.
-3. `text_at(lca)` returns `to_text` for `edit_block` or `content` for `create_block`.
-4. Complexity: O(chain depth) — trivially fast for realistic note-taking workloads.
-5. Cycle detection: max 10,000 iterations.
 
 ---
 
@@ -518,8 +506,8 @@ uses `LIMIT 1 OFFSET N` for undo-depth navigation (not a list query).
 ### Storage format
 
 `blocks.content` is a UTF-8 Markdown string with a locked inline mark set and two custom ULID
-token extensions. The format is plain text — diffed directly by `diffy`, stored as-is in SQLite,
-human-readable in any text tool.
+token extensions. The format is plain text — stored as-is in SQLite, human-readable in any
+text tool.
 
 ```text
 block_content  := (block_element | span)*
@@ -612,13 +600,6 @@ Before inserting into the FTS5 index, the materializer strips Markdown syntax:
 - Replace `((ULID))` → resolved block content preview.
 
 Original Markdown preserved in `blocks.content`.
-
-### Integration with diffy
-
-`blocks.content` is passed to `diffy::merge()` as-is. Markdown marks are ASCII characters; diffy
-handles them at line granularity. ULID tokens (`#[ULID]` at 29 characters, `[[ULID]]` at 30) are
-space-free strings treated as atomic units within a line. A merged result is always a valid
-storage-format string.
 
 ---
 
@@ -821,8 +802,7 @@ currently holds, so the user's typing does not flash off-screen as a stale BE-ro
 TipTap editor itself is **not** unmounted by the sync handler — its in-memory ProseMirror doc
 keeps the user's keystrokes. When the user blurs, the normal flush path emits a fresh
 `edit_block` op which the convergence layer reconciles with whatever the remote inserted (see
-[Merge & Conflict Resolution](#12-merge--conflict-resolution) — clean line-merge in the diffy
-path, CRDT import via the Loro path, with conflict-copy fallback when neither can resolve).
+[Merge & Conflict Resolution](#12-merge--conflict-resolution) — CRDT import via Loro).
 
 **Why FE-authoritative locally:**
 
@@ -836,7 +816,7 @@ path, CRDT import via the Loro path, with conflict-copy fallback when neither ca
   concurrent typing — a benefit that does not match the agaric UX promise.
 - **Blur is a natural breakpoint.** Users blur a block when they finish editing it (move to
   the next, click elsewhere, switch tabs). That is exactly when a remote merge becomes
-  well-defined: the user's local intent has been committed, and the merge layer can three-way
+  well-defined: the user's local intent has been committed, and the merge layer can reconcile
   it against any concurrent remote edit.
 
 **Edge case 1 — block deleted while FE editing.** If a remote `delete_block` arrives, the
@@ -871,21 +851,19 @@ absorbs divergence at next-blur time.
 - **Sync arrival handler:** `src/hooks/useSyncEvents.ts` `sync:complete` listener — calls
   `load()` on every mounted page store when `ops_received > 0`.
 - **Focus-preserving reload:** `src/stores/page-blocks.ts` `load()` action.
-- **Three-way merge / CRDT import (BE-side):** see §12 "Merge & Conflict Resolution".
+- **CRDT import (BE-side):** see §12 "Merge & Conflict Resolution".
 - **Draft autosave (the crash safety net):** `src/hooks/useDraftAutosave.ts` — polled every
   500 ms while focused; persists the live editor content as a draft row so a process crash
   mid-edit doesn't lose typing. Drafts are discarded on successful flush. **Not** the flush
   mechanism (a draft row is not an `op_log` entry) — a separate crash-recovery path.
 
-**Loro-mode equivalence.** During Loro shadow mode, the FE never sees Loro state; Loro mirrors
-applied ops for parity comparison and is read by no FE code. Post-cutover, Loro becomes the BE
-source of truth — the FE flush path still goes through `editBlock` IPC → typed `edit_block` op,
-and the materialiser projects from Loro into the same `blocks.content` row the FE reads. The
-FE coord-space contract is unchanged. A future revisit (Phase 3+) may want richer FE-side
-merge semantics (Notion-style live merge): subscribe the FE editor to Loro doc updates, bridge
-Loro's USV-coordinate edits into TipTap's UTF-16 ProseMirror transactions, track cursor
-position via Loro `Cursor`. This is **not** today's contract; today's contract is "the FE
-coord-space rule above is independent of which engine is authoritative on the BE side".
+**Loro equivalence.** Loro is the BE source of truth — the FE flush path goes through
+`editBlock` IPC → typed `edit_block` op, and the materialiser projects from Loro into the
+same `blocks.content` row the FE reads.  The FE coord-space contract is independent of the
+BE engine.  A future revisit may want richer FE-side merge semantics (Notion-style live
+merge): subscribe the FE editor to Loro doc updates, bridge Loro's USV-coordinate edits
+into TipTap's UTF-16 ProseMirror transactions, track cursor position via Loro `Cursor`.
+That is not today's contract.
 
 ---
 
@@ -949,10 +927,6 @@ App
 │   ├── HistoryListItem            — individual op entry with badge
 │   └── HistorySelectionToolbar    — batch selection toolbar
 ├── StatusPanel                    — materializer queue metrics
-├── ConflictList                   — pending conflict copies
-│   ├── ConflictBatchToolbar       — select/deselect all toolbar
-│   ├── ConflictListItem           — single conflict card
-│   └── ConflictTypeRenderer       — type-specific conflict renderer
 ├── PropertiesView                 — system-wide property definitions
 │   ├── PropertyDefinitionsList    — CRUD with search
 │   ├── TaskStatesSection          — task state cycle editor
@@ -1340,24 +1314,19 @@ For a personal notes app with <100k blocks this is negligible — the index stay
 
 ### Strategy
 
-**Loro CRDT engine (PEND-09 sessions 697-700).** Op application routes through a
-per-space `LoroEngine` (`src-tauri/src/loro/engine.rs`). The engine handles 11 op
-types (Create/Edit/Delete/Restore/Purge/Move/SetProperty/DeleteProperty/AddTag/RemoveTag)
-with Loro-native CRDT primitives; concurrent edits converge automatically without
-producing conflict copies. The previous diffy three-way merge layer, the `is_conflict`
-column, the `conflict_type` column, and the conflict-copy creation path were all
-deleted across Phase 3 (commit `6ffcefe7`), Phase 4 (commit `74c19a27`, migration
-`0058`), and Phase 5 (Session 700, migration `0059`).
+**Loro CRDT engine.** Op application routes through a per-space `LoroEngine`
+(`src-tauri/src/loro/engine.rs`). The engine handles 11 op types
+(Create/Edit/Delete/Restore/Purge/Move/SetProperty/DeleteProperty/AddTag/RemoveTag)
+with Loro-native CRDT primitives; concurrent edits converge automatically.
 
 Sync runs on Loro-native `LoroSyncMessage::Snapshot` / `LoroSyncMessage::Update`
-envelopes (see `src-tauri/src/sync_protocol/loro_sync.rs`). The `app_settings.pend09.loro_authoritative`
-flag is harmless residue post-Phase-3-day-9.
+envelopes (see `src-tauri/src/sync_protocol/loro_sync.rs`).
 
 ### Text edits
 
 Concurrent edits to the same block converge inside Loro without a user-facing
-conflict. Single-line blocks no longer "always conflict on overlap" — the CRDT
-performs a fine-grained merge. Resolution is invisible to the user.
+conflict.  The CRDT performs a fine-grained merge; resolution is invisible to
+the user.
 
 ### LWW resolution rule (property + move conflicts)
 
@@ -1365,7 +1334,7 @@ Two classes of concurrent op converge by **Last-Writer-Wins (LWW)** at projectio
 time: `set_property` writes to the same `(block_id, key)` and `move_block` ops on
 the same block. Both follow the same shape — exactly one write wins at projection
 time, deterministically, on every device that sees both ops. The losing write is
-silently dropped from materialised state. No conflict copy, no user-visible toast.
+silently dropped from materialised state.
 
 **Timebase: wallclock UTC, not Lamport.** Every op's `created_at` field is populated at append
 time by `now_rfc3339()` (`crate::lib::now_rfc3339` in `src-tauri/src/lib.rs`), which returns a
@@ -1377,7 +1346,7 @@ whose Lamport clock has not advanced should not "lose" to an online device that 
 online a real-world day later, despite the user remembering the offline write happened
 second. Wallclock matches user intuition for "later".
 
-**Property LWW (`resolve_property_conflict`, `merge::resolve`).** Compare `created_at` via
+**Property LWW.** Compare `created_at` via
 `chrono::DateTime::parse_from_rfc3339`. Later wins. On exact tie, larger `device_id` (lex)
 wins. On full tie (same device, same millisecond), larger `seq` wins — a tertiary tiebreaker
 that guarantees commutativity even in pathological same-device-same-ms cases. On parse failure,
@@ -1803,7 +1772,8 @@ the camera permission and are always available as fallbacks.
 ## 20. Sync & Networking
 
 Local WiFi sync between devices. No cloud. Discovery via mDNS, pairing via passphrase/QR code,
-transport via TLS WebSocket, protocol via op streaming with three-way merge.
+transport via TLS WebSocket, protocol via Loro-native `LoroSyncMessage` Snapshot/Update wire
+format.
 
 ### Rust crates
 
@@ -1895,14 +1865,15 @@ Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → Transf
    and no snapshot covers it → `RESET_REQUIRED`. UI confirms before wiping.
 4. **Op streaming:** Diverging ops sent as `OpBatch`. Receiver inserts with original
    `(device_id, seq)` via `INSERT OR IGNORE` (duplicate delivery is idempotent).
-5. **Merge:** `merge_diverged_blocks()` handles four conflict types:
+5. **Merge:** the per-space `LoroEngine` imports incoming Loro updates, and the
+   materializer projects engine state into SQL.  Resolution by op class:
 
-| Conflict              | Resolution                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------- |
-| Concurrent text edits | `diffy::merge` via `merge::merge_block`. Non-overlapping → clean merge. Overlapping → conflict copy. |
-| Property conflicts    | LWW on `created_at` with `device_id` tiebreaker via `merge::resolve_property_conflict`.              |
-| Move conflicts        | LWW on `created_at`. Block moved into deleted subtree → reparent to root.                            |
-| Delete + edit         | Edit wins. Block resurrected via synthetic `restore_block` op before applying `edit_block`.          |
+| Op class              | Resolution                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| Concurrent text edits | Loro CRDT fine-grained text merge — converges automatically, no user-visible conflict.      |
+| Property conflicts    | LWW on `created_at` with `device_id` tiebreaker.                                            |
+| Move conflicts        | LWW on `created_at`. Block moved into deleted subtree → reparent to root.                   |
+| Delete + edit         | Edit wins. Block resurrected via synthetic `restore_block` op before applying `edit_block`. |
 
 <!-- markdownlint-disable-next-line MD029 -->
 6. **Complete:** `complete_sync()` updates `peer_refs` atomically.
@@ -2270,9 +2241,10 @@ architectural changes were required.
 
 - **FEAT-5g** — Android OAuth + background connector for GCal (deferred — design sketch only,
   large effort; depends on FEAT-3p9 landing first).
-- **MAINT-113** — `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` and
-  `depth < 100` in every recursive CTE) into the type system. Low-priority elegance refactor;
-  the convention plus review plus documented invariant already work.
+- **MAINT-113** — `ActiveBlockId` newtype to lift invariant #9 (the `depth < 100` recursive
+  CTE bound, and the variant-specific `deleted_at IS NULL` filter on each call site) into
+  the type system. Low-priority elegance refactor; the convention plus review plus
+  documented invariant already work.
 - **MAINT-114** — consolidation audit of `.github/workflows/`. Spike-then-commit; abandon if
   the merged file isn't shorter than the sum.
 - **MAINT-128** — god-component decomposition of `PropertyRowEditor.tsx` (539 LOC, 5 typed

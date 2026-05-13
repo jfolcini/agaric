@@ -1,12 +1,8 @@
-//! `op_log_histogram` — PEND-09 Phase 2 day-4 read-only diagnostic.
+//! `op_log_histogram` — read-only diagnostic.
 //!
-//! Closes Phase-2 Gate 4 (see `SESSION-LOG.md` Session 698 Phase 2 day-4
-//! entry). Runs against the maintainer's real `notes.db` to confirm the
-//! spike's synthetic 30/50/10/5/5 op-mix proxy (preserved at git tag
-//! `pend-09/spike-archive`) is in the right ballpark — i.e. that
-//! kill-criterion-#3's 358× wall-clock margin is robust to the actual
-//! distribution. The wide margin means a 10× error in the proxy does not
-//! flip the verdict; this gate is about *knowing*, not gating.
+//! Runs against a `notes.db` to print the op_log distribution and
+//! flag any op type whose share differs more than 2×/0.5× from a
+//! reference mix.
 //!
 //! ## Behaviour
 //!
@@ -17,10 +13,8 @@
 //!   2 DESC, op_type ASC` (deterministic tie-break on op_type to keep
 //!   stdout reproducible across runs).
 //! - Computes percentages and pretty-prints a table.
-//! - Compares each row against the spike's proxy mix; flags any op type
-//!   that runs more than 2× over or less than 0.5× under the proxy. The
-//!   flag is **informational only** — the cutover-soak is the gate that
-//!   actually validates kill-criterion #3 against real load.
+//! - Flags op types whose share differs more than 2× over or 0.5×
+//!   under the reference mix. Flags are **informational only**.
 //!
 //! ## Exit codes
 //!
@@ -77,7 +71,7 @@ fn parse_args(args: &[String]) -> ParsedArgs {
 
 fn print_help() {
     println!(
-        "op_log_histogram — PEND-09 Phase 2 day-4 read-only diagnostic\n\
+        "op_log_histogram — read-only diagnostic\n\
          \n\
          USAGE:\n    \
              op_log_histogram <NOTES_DB>\n    \
@@ -353,7 +347,7 @@ fn fmt_permyriad(p: u64) -> String {
 /// than U+2500 box-drawing so the output is grep-friendly.
 pub(crate) fn format_histogram(hist: &Histogram, db_path: &std::path::Path) -> String {
     let mut out = String::new();
-    out.push_str("PEND-09 Phase 2 day-4 — op_log histogram\n");
+    out.push_str("op_log histogram\n");
     out.push_str(&format!("DB path: {}\n\n", db_path.display()));
 
     if hist.is_empty() {
@@ -973,14 +967,12 @@ mod tests {
     // 4. End-to-end DB round-trip — covers the SQL ordering contract
     // -----------------------------------------------------------------------
 
-    /// PEND-09 Phase 2 day-9 — locks the read-only contract on the
-    /// histogram bin's pool.  The bin opens `notes.db` with
+    /// Locks the read-only contract on the histogram bin's pool. The
+    /// bin opens `notes.db` with
     /// `SqliteConnectOptions::read_only(true)` so it can run safely
     /// against a live DB while the main app is writing; this test
     /// asserts that an INSERT through that pool hard-fails (not just
-    /// silently no-ops or warns).  The day-4 reviewer flagged the
-    /// read-only contract was doc-only; this test makes it
-    /// load-bearing.
+    /// silently no-ops or warns).
     ///
     /// SQLite's read-only mode rejects writes at the engine level,
     /// not the schema level — so even an INSERT into the canonical

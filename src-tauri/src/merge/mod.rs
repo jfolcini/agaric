@@ -1,57 +1,23 @@
 //! Engine dispatch surface into the per-space `LoroEngine`.
 //!
-//! ## History (delete-trail)
-//!
-//! - Phase 3 day-6 deleted `merge_block_text_only` (the diffy
-//!   three-way text-merge entry point); its only caller
-//!   (`sync_protocol::operations::merge_diverged_blocks`) was deleted
-//!   the same day.
-//! - Phase 3 day-7 deleted `merge::detect`
-//!   (`merge_text` + `walk_to_create_block_root`) and `merge::resolve`
-//!   (`create_conflict_copy`, `create_conflict_copy_with_reindex`,
-//!   `resolve_property_conflict`) along with the now-empty
-//!   `merge::types` module.
-//! - Phase 3 day-9 retired the `loro-shadow` feature gate; the helpers
-//!   in this module compile unconditionally.
-//! - Phase 3 day-10 deleted the parity sink (ring buffer + SQLite
-//!   table + classifier + flush task).  `shadow_apply` no longer
-//!   records a `ParityEvent`; it just dispatches the op onto the
-//!   per-space `LoroEngine`.  The `diffy_result_summary` parameter is
-//!   preserved at the call site (the materializer cohort-fanout
-//!   helpers still build a summary string for log output) but the
-//!   parity-record sink is gone.  `diffy_summary_for` similarly
-//!   collapsed to a logging-only helper and is kept for the
-//!   handful of debug log lines that still reference it.
-//! - Phase 4 cleanup — renamed `shadow_apply` → `engine_apply`,
-//!   `shadow_dispatch_for_record` → `dispatch_for_record`, removed
-//!   `diffy_summary_for` (and the `diffy_result_summary` parameter on
-//!   `engine_apply`).  The shadow-mode era is over; the engine is the
-//!   single authoritative path and "shadow" naming is no longer
-//!   meaningful.
-//!
-//! What remains in this module:
+//! Public helpers:
 //! - `engine_apply` — engine dispatcher; per-op-type match arms call
 //!   `LoroEngine::apply_*`, errors trace-log and skip.
-//! - `dispatch_for_record` — `OpRecord` → `OpPayload` dispatch
-//!   helper used by the materializer.
+//! - `dispatch_for_record` — `OpRecord` → `OpPayload` dispatch helper
+//!   used by the materializer.
 
 mod apply;
 
-// PEND-09 Phase 1 day-3 — re-export the engine dispatcher so the
-// materializer (`materializer::handlers::apply_op`) and any other
-// per-op call sites can reach it without depending on the
-// `merge::apply` private module path.
+// Re-export the engine dispatcher so the materializer
+// (`materializer::handlers::apply_op`) and any other per-op call
+// sites can reach it without depending on the `merge::apply` private
+// module path.
 pub(crate) use apply::dispatch_for_record;
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 1 day-2 — engine dispatch hook.
-//
-// `engine_apply` is the call site that runs every applied op through
-// the per-space Loro `LoroEngine`.  Phase 3 day-10 collapsed it to a
-// pure dispatcher: pre-day-10 it also recorded a `ParityEvent` into
-// the in-memory sampler; the sampler + sink are gone, so the helper
-// is now just "look up the engine, dispatch on op_type, log on
-// failure".
+// engine_apply — the call site that runs every applied op through the
+// per-space Loro `LoroEngine`. Look up the engine, dispatch on
+// op_type, log on failure.
 // ---------------------------------------------------------------------------
 
 /// Engine dispatch entry point.
@@ -94,12 +60,11 @@ pub(crate) fn engine_apply(
     };
     let engine = guard.engine_mut();
 
-    // Dispatch on op_type.  Phase-2 day-8.5 expanded coverage to TEN
-    // op types (the original five — CreateBlock / EditBlock /
-    // DeleteBlock / MoveBlock / SetProperty — plus AddTag / RemoveTag
-    // / RestoreBlock / PurgeBlock / DeleteProperty).  AddAttachment /
-    // DeleteAttachment remain log+skip — those are file-blob ops and
-    // the file lives outside the CRDT state.
+    // Dispatch on op_type. Covers ten op types (CreateBlock /
+    // EditBlock / DeleteBlock / MoveBlock / SetProperty / AddTag /
+    // RemoveTag / RestoreBlock / PurgeBlock / DeleteProperty).
+    // AddAttachment / DeleteAttachment log+skip — those are file-blob
+    // ops and the file lives outside the CRDT state.
     let dispatch_result: Result<(), crate::error::AppError> = match op {
         crate::op::OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
@@ -156,10 +121,10 @@ pub(crate) fn engine_apply(
         crate::op::OpPayload::DeleteProperty(p) => engine
             .apply_delete_property(p.block_id.as_str(), &p.key)
             .map(|_| ()),
-        // AddAttachment / DeleteAttachment are out of scope per
-        // Phase-2 day-8.5: attachments are file-blobs that live
-        // outside CRDT state — the file body sits on disk under
-        // `app_data_dir`, not inside the per-space LoroDoc.
+        // AddAttachment / DeleteAttachment are out of scope:
+        // attachments are file-blobs that live outside CRDT state —
+        // the file body sits on disk under `app_data_dir`, not inside
+        // the per-space LoroDoc.
         other => {
             tracing::debug!(
                 op_id,

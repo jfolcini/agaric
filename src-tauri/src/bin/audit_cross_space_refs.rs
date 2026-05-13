@@ -339,15 +339,15 @@ async fn audit_a3(
 /// whose target resolves to a different space than the source block.
 ///
 /// Strategy: load every (block_id, space) pair into an in-memory map,
-/// then iterate non-conflict, non-deleted blocks scanning each content
-/// string with the canonical regexes. For each matched ULID, look up its
-/// space in the map; if it differs from the source's space, count it.
+/// then iterate non-deleted blocks scanning each content string with
+/// the canonical regexes. For each matched ULID, look up its space in
+/// the map; if it differs from the source's space, count it.
 async fn audit_a4(
     pool: &SqlitePool,
     limit: usize,
     names: &FxHashMap<String, String>,
 ) -> Result<CategoryReport, sqlx::Error> {
-    // 1. Build block_id → resolved_space map (non-conflict, non-deleted).
+    // 1. Build block_id → resolved_space map (non-deleted).
     let space_rows = sqlx::query!(
         r#"SELECT b.id AS "id!",
               (SELECT bp.value_ref FROM block_properties bp
@@ -364,7 +364,7 @@ async fn audit_a4(
         space_of.insert(r.id, r.space);
     }
 
-    // 2. Scan content of every non-deleted, non-conflict block.
+    // 2. Scan content of every non-deleted block.
     let content_rows = sqlx::query!(
         r#"SELECT id AS "id!", content AS "content?"
            FROM blocks
@@ -844,7 +844,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn audit_ignores_deleted_and_conflict_blocks() {
+    async fn audit_ignores_deleted_blocks() {
         let (pool, _dir) = make_pool().await;
         seed_spaces(&pool).await;
         insert_page(&pool, PAGE_PERSONAL, PERSONAL, "P").await;
@@ -862,7 +862,7 @@ mod tests {
         .await
         .unwrap();
 
-        // BLOCK_WORK is a conflict copy.
+        // BLOCK_WORK is a live block in the other space.
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
              VALUES (?, 'content', 'y', ?, 1, ?)",
@@ -874,7 +874,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Cross-space link between two excluded blocks — must not be flagged.
+        // Cross-space link from a deleted source — must not be flagged.
         insert_block_link(&pool, BLOCK_PERSONAL, BLOCK_WORK).await;
         // Inline cross-space token in deleted source — must not be flagged.
         sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
@@ -885,11 +885,8 @@ mod tests {
             .unwrap();
 
         let report = run_audit(&pool, 10).await.unwrap();
-        assert_eq!(report.a1.count, 0, "deleted/conflict rows must be skipped");
-        assert_eq!(
-            report.a4.count, 0,
-            "deleted/conflict source must be skipped"
-        );
+        assert_eq!(report.a1.count, 0, "deleted source rows must be skipped");
+        assert_eq!(report.a4.count, 0, "deleted source must be skipped");
     }
 
     // -----------------------------------------------------------------------

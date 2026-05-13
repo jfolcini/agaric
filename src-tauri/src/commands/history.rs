@@ -56,11 +56,10 @@ pub async fn apply_reverse_in_tx(
         OpPayload::DeleteBlock(p) => {
             // Cascade soft-delete (same as delete_block_inner).
             //
-            // `descendants_cte_active!()` pins invariant #9:
-            // (conflict copies aren't swept into the reverse cascade —
-            // they have independent lifecycles) AND `deleted_at IS NULL`
-            // (don't re-sweep already-deleted descendants), with `depth < 100`
-            // bounding the walk. Shared CTE lives in `crate::block_descendants`.
+            // `descendants_cte_active!()` filters `deleted_at IS NULL`
+            // so already-deleted descendants aren't re-swept; `depth
+            // < 100` bounds the walk. Shared CTE lives in
+            // `crate::block_descendants`.
             let now = now_rfc3339();
             sqlx::query(concat!(
                 crate::descendants_cte_active!(),
@@ -75,10 +74,9 @@ pub async fn apply_reverse_in_tx(
         OpPayload::RestoreBlock(p) => {
             // Cascade restore (same as restore_block_inner).
             //
-            // `descendants_cte_standard!()` pins invariant #9:
-            // (conflict copies have independent lifecycles and must not be
-            // bulk-restored with the original) and `depth < 100`. Shared CTE
-            // lives in `crate::block_descendants`.
+            // `descendants_cte_standard!()` with `depth < 100` bounds
+            // the walk. Shared CTE lives in
+            // `crate::block_descendants`.
             sqlx::query(concat!(
                 crate::descendants_cte_standard!(),
                 "UPDATE blocks SET deleted_at = NULL \
@@ -374,10 +372,8 @@ pub async fn restore_page_to_op_inner(
         .fetch_all(pool)
         .await?
     } else {
-        // Recursive CTE must filter  in the recursive member —
-        // conflict copies inherit `parent_id` from the original block and would
-        // otherwise leak into page-scoped results. `depth < 100` bounds the walk
-        // against runaway recursion on corrupted data (invariant #9).
+        // Recursive CTE with `depth < 100` to bound the walk against
+        // runaway recursion on corrupted data (invariant #9).
         sqlx::query_as::<_, (String, i64, String)>(
             "WITH RECURSIVE page_blocks(id, depth) AS ( \
                SELECT id, 0 FROM blocks WHERE id = ?1 \
@@ -464,10 +460,8 @@ pub async fn undo_page_op_inner(
     // Uses the write pool for consistency — these reads feed into the write
     // transaction below.
     //
-    // Recursive CTE must filter  in the recursive member —
-    // conflict copies inherit `parent_id` from the original block and would
-    // otherwise leak into page-scoped results. `depth < 100` bounds the walk
-    // against runaway recursion on corrupted data (invariant #9).
+    // Recursive CTE with `depth < 100` to bound the walk against
+    // runaway recursion on corrupted data (invariant #9).
     //
     // `LIMIT 1 OFFSET ?2` is a deliberate carve-out of invariant #3 ("no
     // offset pagination"): we are not paginating a list, we are fetching the

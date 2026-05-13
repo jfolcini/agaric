@@ -4280,34 +4280,6 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
 }
 
 // ======================================================================
-// Regression: move_block recursive CTEs must filter
-// (AGENTS.md invariant #9). Conflict copies inherit `parent_id` from the
-// original block and would otherwise be re-parented into a moved subtree
-// or inflate the depth-check subtree count.
-// ======================================================================
-
-/// Insert a conflict-copy block directly with  and an
-/// optional `page_id` pin. Mirrors the shape produced by
-/// `merge::resolve::create_conflict_copy`.
-async fn insert_conflict_copy_with_page(
-    pool: &SqlitePool,
-    id: &str,
-    parent_id: &str,
-    page_id: Option<&str>,
-) {
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-         VALUES (?, 'content', 'conflict', ?, 999, ?)",
-    )
-    .bind(id)
-    .bind(parent_id)
-    .bind(page_id)
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
-// ======================================================================
 // PEND-18 Phase 2 — SpaceScope parity test (blocks/queries.rs)
 // ======================================================================
 //
@@ -4421,13 +4393,13 @@ async fn first_child_for_blocks_breaks_ties_by_id() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn first_child_for_blocks_excludes_deleted_and_conflict() {
+async fn first_child_for_blocks_excludes_deleted() {
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "FC_EX_PAR", "page", "parent", None, Some(1)).await;
-    // Position-1 child is soft-deleted; position-2 child is a conflict
-    // copy; position-3 child is the active first sibling. The query
-    // must skip the deleted + conflict rows and surface position-3.
+    // Position-1 child is soft-deleted; position-3 child is the active
+    // first sibling. The query must skip the deleted row and surface
+    // position-3.
     insert_block(
         &pool,
         "FC_EX_DEL",
@@ -4441,7 +4413,6 @@ async fn first_child_for_blocks_excludes_deleted_and_conflict() {
         .execute(&pool)
         .await
         .unwrap();
-    insert_conflict_copy_with_page(&pool, "FC_EX_CC", "FC_EX_PAR", None).await;
     insert_block(
         &pool,
         "FC_EX_OK",
@@ -4461,8 +4432,8 @@ async fn first_child_for_blocks_excludes_deleted_and_conflict() {
         .expect("FC_EX_PAR has at least one active child");
     assert_eq!(
         row.id, "FC_EX_OK",
-        "the deleted (pos=1) and conflict-copy (pos=999) rows must be \
-         excluded so position-3 wins as the first ACTIVE sibling. got {row:?}"
+        "the deleted (pos=1) row must be excluded so position-3 wins as \
+         the first ACTIVE sibling. got {row:?}"
     );
 }
 

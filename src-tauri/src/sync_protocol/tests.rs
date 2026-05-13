@@ -638,17 +638,15 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
     let materializer = Materializer::new(pool.clone());
     let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
 
-    // PEND-09 Phase 4 — manually set `state = Complete` to set up
-    // the terminal-state precondition. The state validation match in
-    // `handle_message` reads `self.state` (the source of truth), so
-    // setting it directly is sufficient to exercise the
-    // terminal-state reject branch. (The empty-registry path now
-    // short-circuits to `SyncComplete` rather than emitting a
-    // sentinel-empty `LoroSync`, so we can no longer drive to
-    // Complete through `handle_message` alone without scaffolding
-    // a real shadow registry — the dedicated coverage for that
-    // path lives in
-    // `loro_sync_orchestrator_handles_empty_registry_without_panic`.)
+    // Manually set `state = Complete` to set up the terminal-state
+    // precondition. The state validation match in `handle_message`
+    // reads `self.state` (the source of truth), so setting it directly
+    // is sufficient to exercise the terminal-state reject branch. (The
+    // empty-registry path short-circuits to `SyncComplete` rather than
+    // emitting a sentinel-empty `LoroSync`, so we cannot drive to
+    // Complete through `handle_message` alone without scaffolding a
+    // real Loro registry — the dedicated coverage for that path lives
+    // in `loro_sync_orchestrator_handles_empty_registry_without_panic`.)
     let _start = orch.start().await.unwrap();
     orch.state = SyncState::Complete;
     assert_eq!(
@@ -711,15 +709,14 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
         "state should be ExchangingHeads after start"
     );
 
-    // PEND-09 Phase 4 — directly set `state = StreamingOps` to set
-    // up the precondition. Driving via HeadExchange is brittle now:
-    // the empty-registry short-circuit transitions to `Complete`
-    // instead, and a sibling test in this binary may have populated
-    // the process-global `OnceLock` registry which would route us
-    // through the per-space LoroSync path. The state-validation
-    // match in `handle_message` reads `self.state` (the source of
-    // truth), so setting it directly exercises the same rejection
-    // branch deterministically.
+    // Directly set `state = StreamingOps` to set up the precondition.
+    // Driving via HeadExchange is brittle: the empty-registry short-
+    // circuit transitions to `Complete` instead, and a sibling test in
+    // this binary may have populated the process-global `OnceLock`
+    // registry which would route us through the per-space LoroSync
+    // path. The state-validation match in `handle_message` reads
+    // `self.state` (the source of truth), so setting it directly
+    // exercises the same rejection branch deterministically.
     orch.state = SyncState::StreamingOps;
 
     // Send a HeadExchange in StreamingOps → should fail with the
@@ -958,13 +955,13 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
     .await
     .unwrap();
 
-    // PEND-09 Phase 4 — install shadow state and register a real
-    // space so `head_exchange_outgoing_loro` takes the per-space
-    // LoroSync path (transitioning to `StreamingOps`) instead of the
-    // empty-registry short-circuit (which would transition straight
-    // to `Complete` and bypass the BUG-27 SyncComplete handler we
-    // are exercising here). The block payload itself is irrelevant
-    // — we just need at least one registered space.
+    // Install Loro state and register a real space so
+    // `head_exchange_outgoing_loro` takes the per-space LoroSync path
+    // (transitioning to `StreamingOps`) instead of the empty-registry
+    // short-circuit (which would transition straight to `Complete` and
+    // bypass the BUG-27 SyncComplete handler we are exercising here).
+    // The block payload itself is irrelevant — we just need at least
+    // one registered space.
     let state = crate::loro::shared::install_for_test();
     let space = crate::space::SpaceId::from_trusted("01HZBUG27EMPTYPEERIDXXXXXXX");
     {
@@ -993,12 +990,9 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
         })
         .await
         .unwrap();
-    // PEND-09 Phase 3 day-6 — `OpBatch` deleted; HeadExchange emits
-    // a `LoroSync` (Phase-3 day-9 retired the `loro-shadow` feature
-    // gate so this is now the only path). Phase 4 — the
-    // empty-registry case short-circuits to `SyncComplete`, but
-    // this test installs a real space (above) to keep the per-space
-    // LoroSync path active.
+    // HeadExchange emits a `LoroSync`. The empty-registry case
+    // short-circuits to `SyncComplete`, but this test installs a real
+    // space (above) to keep the per-space LoroSync path active.
     assert!(
         matches!(after_head, Some(SyncMessage::LoroSync { .. })),
         "HeadExchange with only local device_id still proceeds (it only becomes \
@@ -1446,14 +1440,13 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
         "state should be ExchangingHeads after start"
     );
 
-    // PEND-09 Phase 4 — directly set `state = StreamingOps`. Driving
-    // via an empty-heads HeadExchange would now short-circuit to
-    // `Complete` (collapsed sentinel-empty `LoroSync` workaround),
-    // and a sibling test in this binary may have populated the
-    // process-global `OnceLock` registry which would route us
-    // through the per-space LoroSync path. State validation reads
-    // `self.state` directly, so this scaffolding exercises the same
-    // rejection branch deterministically.
+    // Directly set `state = StreamingOps`. Driving via an empty-heads
+    // HeadExchange would short-circuit to `Complete`, and a sibling
+    // test in this binary may have populated the process-global
+    // `OnceLock` registry which would route us through the per-space
+    // LoroSync path. State validation reads `self.state` directly, so
+    // this scaffolding exercises the same rejection branch
+    // deterministically.
     orch.state = SyncState::StreamingOps;
 
     // Send a HeadExchange — must be rejected
@@ -1561,18 +1554,17 @@ async fn handle_message_emits_within_sync_msg_span() {
 }
 
 // ======================================================================
-// PEND-09 Phase 3 day-5 — LoroSync wire integration tests
+// LoroSync wire integration tests
 // ======================================================================
 
 /// Smoke test — the orchestrator's outgoing HeadExchange path does
-/// NOT panic when shadow state is initialised.  When the registry has
-/// zero registered spaces (PEND-09 Phase 4 — collapsed the day-5
-/// sentinel-empty `LoroSync` workaround), HeadExchange short-circuits
-/// straight to `SyncComplete` so the responder can advance cleanly.
-/// When sibling tests in the same binary have already populated the
-/// shared `OnceLock` registry with spaces, the response is a real
-/// `LoroSync` and the orchestrator transitions to `StreamingOps` as
-/// in the production path.
+/// NOT panic when Loro state is initialised. When the registry has
+/// zero registered spaces, HeadExchange short-circuits straight to
+/// `SyncComplete` so the responder can advance cleanly. When sibling
+/// tests in the same binary have already populated the shared
+/// `OnceLock` registry with spaces, the response is a real `LoroSync`
+/// and the orchestrator transitions to `StreamingOps` as in the
+/// production path.
 ///
 /// Locks the no-op happy-path invariant: an orchestrator that boots
 /// into a process whose `LoroEngineRegistry` has not yet been touched
@@ -1583,7 +1575,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    // Ensure shadow state is installed (first call wins; subsequent
+    // Ensure Loro state is installed (first call wins; subsequent
     // calls are no-ops since OnceLock).
     let _state = crate::loro::shared::install_for_test();
 
@@ -1598,14 +1590,14 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
         .await
         .expect("HeadExchange must not error under the engine path");
 
-    // PEND-09 Phase 4 — accept either response shape:
+    // Accept either response shape:
     //
     // * Empty-registry short-circuit → `SyncComplete` (state ==
     //   `Complete`).
     // * Sibling-populated registry → real `LoroSync` (state ==
     //   `StreamingOps`).
     //
-    // Either way: never an `OpBatch`-shaped message and never a panic.
+    // Either way: never a panic.
     match resp {
         Some(SyncMessage::SyncComplete { .. }) => {
             assert_eq!(
@@ -1652,13 +1644,14 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
 /// End-to-end — orchestrator A prepares an outgoing `LoroSync` for a
 /// space whose engine has one block, the message is serde-round-tripped
 /// through JSON (the wire format), then applied via
-/// `loro_sync::apply_remote` to a fresh registry B.  Engine B's SQL
-/// projection of the block matches A's.  Day-5 happy-path E2E.
+/// `loro_sync::apply_remote` to a fresh registry B. Engine B's SQL
+/// projection of the block matches A's.
 ///
 /// This test bypasses `crate::loro::shared` (process-global) and calls
-/// the day-4 helpers directly so test isolation across this binary's
-/// other shadow-state tests is preserved.  The orchestrator path is
-/// covered by [`loro_sync_orchestrator_handles_empty_registry_without_panic`]
+/// the lower-level helpers directly so test isolation across this
+/// binary's other Loro-state tests is preserved. The orchestrator path
+/// is covered by
+/// [`loro_sync_orchestrator_handles_empty_registry_without_panic`]
 /// above.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1672,7 +1665,7 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
     let materializer_b = Materializer::new(pool_b.clone());
 
     // Use a unique space + block id pair to avoid collisions with
-    // other tests in this binary that may share installed shadow
+    // other tests in this binary that may share installed Loro
     // state.
     let space = SpaceId::from_trusted("01HZPHASE3D5SYNCEEEEEEEEEE");
     let block_id_a = "01HZPHASE3D5SYNCBLKAAAAAAAA";
@@ -1686,8 +1679,8 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
             .expect("create");
     }
 
-    // Build outgoing LoroSync via the day-4 helper. Wrap into the
-    // SyncMessage envelope (the day-5 wire shape).
+    // Build outgoing LoroSync via the prepare helper. Wrap into the
+    // SyncMessage envelope (the wire shape).
     let inner = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", None)
         .await
         .expect("prepare_outgoing");
@@ -1790,17 +1783,15 @@ async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
 }
 
 // ======================================================================
-// PEND-09 Phase 3 day-12 — end-to-end Loro-sync integration tests
+// End-to-end Loro-sync integration tests
 // ======================================================================
 //
 // These tests exercise the full `prepare_outgoing` → wire round-trip →
-// `apply_remote` cycle through more cases than the day-5 happy-path
-// E2E (`loro_sync_e2e_round_trip_block_visible_on_b`).  Each test
-// drives the public sync helpers directly (no real sockets) and
-// asserts engine-state convergence + the SQL projection on the
-// receiving side.
+// `apply_remote` cycle through several scenarios. Each test drives the
+// public sync helpers directly (no real sockets) and asserts
+// engine-state convergence + the SQL projection on the receiving side.
 //
-// Coverage picked (per Phase-3-plan §3 day 12 menu):
+// Coverage:
 //
 // * Scenario 1 — multi-block, multi-space initial snapshot.
 // * Scenario 2 — incremental Update against an already-seeded peer.

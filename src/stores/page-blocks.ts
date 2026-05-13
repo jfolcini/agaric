@@ -593,7 +593,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       }
     },
 
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
     moveDown: async (blockId: string) => {
       const { blocks, blocksById, rootParentId } = get()
       const block = blocksById.get(blockId)

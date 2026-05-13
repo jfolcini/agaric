@@ -1,8 +1,7 @@
 //! Word-level two-way diff for undo/redo history display.
 //!
 //! Uses the `similar` crate's `TextDiff::from_words()` to produce
-//! `DiffSpan` items with `{Equal, Delete, Insert}` tags.  Independent
-//! from the line-level `diffy` merge path used by sync.
+//! `DiffSpan` items with `{Equal, Delete, Insert}` tags.
 
 use serde::Serialize;
 use similar::{ChangeTag, TextDiff};

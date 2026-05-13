@@ -3,34 +3,13 @@ use crate::op_log::OpRecord;
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 
-// PEND-09 Phase 3 day-6 — `merge_block_text_only` deleted.  The
-// three-way text-merge entry point's only caller was the diffy-side
-// `sync_protocol::operations::merge_diverged_blocks`, which day 6
-// also deleted (the orchestrator emits `LoroSyncMessage` instead, and
-// Loro's CRDT import is the convergence path).
-//
-// PEND-09 Phase 3 day-7 — `merge::detect`, `merge::resolve`, and
-// `merge::types` deleted along with the now-orphan
-// `merge_text` / `create_conflict_copy` / `resolve_property_conflict`
-// surface.
-//
-// PEND-09 Phase 3 day-9 — `loro-shadow` feature gate retired; the
-// dispatcher and tests below compile unconditionally.
-//
-// PEND-09 Phase 3 day-10 — parity sink + classifier + flush task
-// deleted.  `engine_apply` is now a pure engine dispatcher (no
-// `ParityEvent` recording); the unit tests below verify engine state
-// after dispatch but no longer assert on a sampler ring.  The
-// "parity_sampler_records_one_event_per_call" test was removed in the
-// same pass — its target sampler is gone.
-
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 1 day-2 — engine dispatch helper.
+// Engine dispatch helper.
 //
 // Threads an op_log `OpRecord` (the materializer authoritative output)
-// into `merge::engine_apply`.  Resolves the block's owning space via
+// into `merge::engine_apply`. Resolves the block's owning space via
 // `crate::space::resolve_block_space` and walks the global engine state
-// installed at bootstrap.  Failures are logged-and-skipped so the
+// installed at bootstrap. Failures are logged-and-skipped so the
 // engine-dispatch path can never break the materializer.
 // ---------------------------------------------------------------------------
 
@@ -41,23 +20,10 @@ pub(crate) async fn dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
         return;
     };
 
-    // PEND-09 Phase 2 day-9.5 — fix latent JSON-parse bug.
-    //
-    // `OpPayload` is `#[serde(tag = "op_type")]` (internally tagged), but
-    // `op_log::serialize_inner_payload` strips the tag (it lives in the
-    // `op_log.op_type` column, not the JSON blob).  So a direct
-    // `from_str::<OpPayload>(&record.payload)` ALWAYS fails on production
-    // payloads — the parse demands the tag, but the JSON doesn't have it.
-    //
-    // Effect (Phase 1 day-2 .. day-9.5): every op flowing through this
-    // helper silently logged a warn and returned, NO ops reached the
-    // engine via this path.  Day-9 worked around it for `restore_block`
-    // by parsing the inner struct directly inside
-    // `dispatch_restore_descendants_shadow`; this fix unblocks every
-    // other op type.
-    //
-    // Pattern mirrors `materializer::handlers::apply_op_tx` — branch on
-    // `record.op_type` (the dedicated `op_log` column), parse the
+    // `OpPayload` is `#[serde(tag = "op_type")]` (internally tagged),
+    // but `op_log::serialize_inner_payload` strips the tag (it lives
+    // in the `op_log.op_type` column, not the JSON blob). Branch on
+    // `record.op_type` (the dedicated column), parse the
     // corresponding inner-only struct, then re-wrap as `OpPayload` so
     // the rest of the function (block-id extraction, space resolve,
     // `engine_apply` call) is untouched.
@@ -180,10 +146,10 @@ pub(crate) async fn dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
     super::engine_apply(&op_id, &payload, &record.device_id, &space_id, state);
 }
 
-/// PEND-09 Phase 2 day-9.5 — shared warn-and-return helper for the
-/// per-variant inner-payload parse arms in `dispatch_for_record`.
-/// Pulling the warn into a single function keeps the dispatcher's match
-/// arms uniform and the per-arm boilerplate to one line.
+/// Shared warn-and-return helper for the per-variant inner-payload
+/// parse arms in `dispatch_for_record`. Pulling the warn into a
+/// single function keeps the dispatcher's match arms uniform and the
+/// per-arm boilerplate to one line.
 fn dispatch_log_parse_err(record: &OpRecord, err: &serde_json::Error) {
     tracing::warn!(
         device_id = %record.device_id,
@@ -195,10 +161,7 @@ fn dispatch_log_parse_err(record: &OpRecord, err: &serde_json::Error) {
 }
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 1 day-2 — engine-dispatch unit tests.
-//
-// Phase 3 day-9 dropped the `feature = "loro-shadow"` clause from this
-// gate (now `cfg(test)` only).  These exercise `engine_apply` directly.
+// Engine-dispatch unit tests. Exercise `engine_apply` directly.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -349,20 +312,13 @@ mod engine_apply_unit_tests {
         }
     }
 
-    // PEND-09 Phase 3 day-10 — `parity_sampler_records_one_event_per_call`
-    // was removed here.  Its target — the `ShadowParitySampler` ring
-    // owned by `LoroState` — got deleted alongside the
-    // `merge_parity_log` table (the diffy↔Loro comparison surface lost
-    // meaning post-cutover).  The dispatcher is now log+skip on error
-    // with no observable record-keeping; the engine-side mutation tests
-    // above + below remain as the engine-effect oracle.
-
     // ---------------------------------------------------------------------
-    // Phase-2 day-8.5 — dispatcher coverage for the five newly-mirrored
-    // op types (AddTag / RemoveTag / RestoreBlock / PurgeBlock /
-    // DeleteProperty).  Each test seeds the engine with a CreateBlock,
-    // dispatches the new op via `engine_apply`, and asserts the engine
-    // reflects the mutation (mutation-test of the dispatcher arm).
+    // Dispatcher coverage for the five op types beyond the basic
+    // CreateBlock / EditBlock / DeleteBlock / MoveBlock / SetProperty
+    // set (AddTag / RemoveTag / RestoreBlock / PurgeBlock /
+    // DeleteProperty). Each test seeds the engine with a CreateBlock,
+    // dispatches the new op via `engine_apply`, and asserts the
+    // engine reflects the mutation.
     // ---------------------------------------------------------------------
 
     /// Valid ULID fixture for the tag-id position.  Distinct from
@@ -503,40 +459,21 @@ mod engine_apply_unit_tests {
             "delete_property must remove the key entirely"
         );
     }
-
-    // PEND-09 Phase 3 day-10 — `shadow_apply_records_match_for_new_op_types`
-    // and `shadow_apply_skips_attachment_ops` were removed here.  Both
-    // asserted on `state.sampler.total_pushed()` / `total_diverged()` —
-    // the parity-sampler ring is gone post-day-10.  The "skips
-    // attachment ops" half was a no-op observation against the same
-    // sampler counter; with the counter gone there is nothing
-    // observable to assert.  The dispatch arms themselves are still
-    // exercised by the per-op-type tests above (each asserts the
-    // engine reflects the mutation), so coverage is unchanged where
-    // it matters — only the sampler-counter assertion is removed.
 }
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 2 day-9.5 — regression coverage for the latent JSON-parse
-// bug in `dispatch_for_record`.
+// Regression coverage for the `dispatch_for_record` payload-parsing
+// path.
 //
-// Background: from Phase 1 day-2 (commit `dcfc3637`) until day-9.5, the
-// dispatcher attempted `serde_json::from_str::<OpPayload>(&record.payload)`,
-// but `op_log::serialize_inner_payload` strips the `op_type` tag (it lives
-// in the dedicated column).  `OpPayload` is internally tagged, so the
-// parse ALWAYS failed — every op silently logged a warn and returned.
-//
-// Day-9 worked around it for `restore_block` inside
-// `dispatch_restore_descendants_shadow` (parsing the inner struct
-// directly).  Day-9.5 fixes the upstream dispatcher so EVERY op type
-// flows through.
-//
+// `OpPayload` is internally tagged on `op_type`, but
+// `op_log::serialize_inner_payload` strips the tag (the op_type lives
+// in the dedicated column). The dispatcher therefore branches on
+// `record.op_type` and parses the inner-only payload struct directly.
 // These tests build real `OpRecord`s via `op_log::append_local_op`
 // (which exercises the same `serialize_inner_payload` path that
 // production uses) and assert the engine state is mutated by
-// `dispatch_for_record`.  A future change that regresses the
-// dispatcher (e.g. switches back to the tagged parse, or drops a
-// match arm) will fail these tests.
+// `dispatch_for_record`. A future change that drops a match arm or
+// reverts to a tagged parse will fail them.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -557,7 +494,7 @@ mod dispatch_for_record_regression {
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().expect("tempdir");
-        let db_path = dir.path().join("shadow_dispatch.db");
+        let db_path = dir.path().join("engine_dispatch.db");
         let pool = init_pool(&db_path).await.expect("init_pool");
         (pool, dir)
     }
@@ -629,12 +566,8 @@ mod dispatch_for_record_regression {
             .flatten()
     }
 
-    /// PEND-09 Phase 2 day-9.5 — `CreateBlock` must reach the engine
-    /// when threaded through `dispatch_for_record`.
-    ///
-    /// Pre-fix this test failed: the JSON parse logged a warn and
-    /// returned without touching the engine, so `engine_block_content`
-    /// was `None`.
+    /// `CreateBlock` must reach the engine when threaded through
+    /// `dispatch_for_record`.
     #[tokio::test]
     async fn dispatch_for_record_applies_create_block() {
         let (pool, _dir) = fresh_pool().await;
@@ -656,7 +589,7 @@ mod dispatch_for_record_regression {
             .expect("append");
 
         // Sanity: the persisted payload must NOT carry the `op_type`
-        // tag (this is the precondition the day-9.5 fix targets — if a
+        // tag (the dispatcher parses the inner-only payload — if a
         // future change starts including the tag, the dispatcher's
         // inner-only parse needs to be revisited).
         assert!(
@@ -669,18 +602,17 @@ mod dispatch_for_record_regression {
         dispatch_for_record(&pool, &record).await;
 
         // Engine must now hold the block with the content from the
-        // payload.  This is the load-bearing assertion.
+        // payload. This is the load-bearing assertion.
         assert_eq!(
             engine_block_content(state).as_deref(),
             Some("hello-from-record"),
-            "dispatch_for_record must apply CreateBlock to the engine \
-             (regression: latent JSON-parse bug returned without applying)"
+            "dispatch_for_record must apply CreateBlock to the engine"
         );
     }
 
-    /// PEND-09 Phase 2 day-9.5 — `EditBlock` and `SetProperty` must
-    /// also reach the engine.  Two variants in one test to give the
-    /// regression net more breadth without spinning up two pools.
+    /// `EditBlock` and `SetProperty` must also reach the engine. Two
+    /// variants in one test to give the regression net more breadth
+    /// without spinning up two pools.
     #[tokio::test]
     async fn dispatch_for_record_applies_edit_and_set_property() {
         let (pool, _dir) = fresh_pool().await;

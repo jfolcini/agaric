@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks b\n         WHERE parent_id IS ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR (\n                position > ?3\n                OR (position = ?3 AND id > ?4)))\n           AND (?6 IS NULL OR COALESCE(b.page_id, b.id) IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?6))\n         ORDER BY position ASC, id ASC\n         LIMIT ?5",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "block_type",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "parent_id",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "position",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "todo_state",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "due_date",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "scheduled_date",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "page_id",
+        "ordinal": 10,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "b81e15430b8b87038511d31ff1f81cfe2c4c08dd015fee97fb5f7bf83e7a92ca"
+}

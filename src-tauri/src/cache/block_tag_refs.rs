@@ -51,7 +51,7 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
 
     let content = match row {
         Some(r) => r.content.unwrap_or_default(),
-        // Block not found, deleted, or a conflict copy — remove all rows.
+        // Block not found or deleted — remove all rows.
         None => String::new(),
     };
 

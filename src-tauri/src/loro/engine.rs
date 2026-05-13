@@ -13,9 +13,7 @@
 //! - `apply_delete_block` (soft-delete via `deleted_at`)
 //! - `apply_move_block` (reparent + position update)
 //!
-//! Plus the Phase-2 day-8.5 op-coverage extension required before the
-//! day-9 cutover toggle (without these, projecting from Loro would
-//! produce stale `block_tags` / trash / property-deletion state):
+//! Extended op coverage:
 //!
 //! - `apply_add_tag` / `apply_remove_tag`
 //! - `apply_restore_block` (undelete)
@@ -24,17 +22,15 @@
 //!
 //! `AddAttachment` / `DeleteAttachment` are intentionally out of
 //! scope: those ops carry file blobs that live outside the CRDT
-//! state.  `block_links` is also not here — it is a derived cache
+//! state. `block_links` is also not here — it is a derived cache
 //! re-parsed from `blocks.content`, no engine support needed.
 //!
-//! Plus the read-back surface needed for shadow-mode parity checks:
-//! `read_block`, `read_property`, `read_parent`, `read_position`,
-//! `read_deleted`, `read_tags`, `count_alive_blocks`,
-//! `list_children_walk`.
+//! Read-back surface: `read_block`, `read_property`, `read_parent`,
+//! `read_position`, `read_deleted`, `read_tags`,
+//! `count_alive_blocks`, `list_children_walk`.
 //!
-//! And the sync surface: `export_snapshot` / `import` for round-tripping
-//! Loro docs over the wire (Phase 2 / sync wiring) and for
-//! parity-test fixtures.
+//! Sync surface: `export_snapshot` / `import` for round-tripping Loro
+//! docs over the wire and for test fixtures.
 //!
 //! ## Differences from the spike crate
 //!
@@ -147,11 +143,9 @@ const FIELD_DELETED_AT: &str = "deleted_at";
 
 /// Read-back projection of a block's state from the Loro doc.
 ///
-/// Sufficient for shadow-mode parity equality checks against the SQL
-/// `blocks` row projection.  Phase 1 day-1 keeps this minimal — the
-/// full ~10-field Block shape (`archived_at`, `todo_state`, etc.)
-/// lives in derived tables and is composed at the materializer
-/// boundary, not the engine boundary.
+/// The full Block shape (`todo_state`, `priority`, etc.) lives in
+/// derived columns and is composed at the materializer boundary, not
+/// the engine boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockSnapshot {
     pub block_id: String,
@@ -286,15 +280,11 @@ impl LoroEngine {
     /// the engine's current content and splicing only the differing
     /// middle.
     ///
-    /// Ported from the spike's `apply_edit_via_diff_splice` (see
-    /// the archived `tests/parity_corpus.rs` ~line 100; git tag
-    /// `pend-09/spike-archive`).  Production
-    /// `EditBlock` ops carry a `to_text` snapshot of the whole new
-    /// content (line-granularity diffy diffs the LCA against this
-    /// string).  Loro wants character-level splices so two peers'
-    /// concurrent edits land at non-overlapping character ranges when
-    /// the new_content strings differ at non-overlapping regions —
-    /// that's the headline win of the migration.
+    /// Production `EditBlock` ops carry a `to_text` snapshot of the
+    /// whole new content. Loro wants character-level splices so two
+    /// peers' concurrent edits land at non-overlapping character
+    /// ranges when the `new_content` strings differ at non-overlapping
+    /// regions — that's the CRDT convergence win.
     ///
     /// Returns `Err(AppError::Validation)` if the block is missing.
     pub fn apply_edit_via_diff_splice(
@@ -491,8 +481,6 @@ impl LoroEngine {
     /// Idempotent:
     ///   * key absent on this block -> Ok(()) no-op.
     ///   * block has never had any properties -> Ok(()) no-op.
-    ///
-    /// Phase-2 day-8.5: gap-fill before the day-9 cutover toggle.
     pub fn apply_delete_property(&mut self, block_id: &str, key: &str) -> Result<(), AppError> {
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         let Some(voc) = props_root.get(block_id) else {
@@ -609,8 +597,8 @@ impl LoroEngine {
     pub fn apply_restore_block(&mut self, block_id: &str) -> Result<(), AppError> {
         // Silent no-op when the block is absent — mirrors SQL
         // `apply_restore_block_tx`'s UPDATE-matching-zero-rows
-        // semantics.  After cutover, a RestoreBlock op for a block
-        // purged on a peer must not propagate as a hard error.
+        // semantics. A RestoreBlock op for a block purged on a peer
+        // must not propagate as a hard error.
         let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
         if blocks.get(block_id).is_none() {
             return Ok(());
@@ -636,8 +624,7 @@ impl LoroEngine {
     /// descendants.  The materializer's purge cascade enumerates the
     /// descendant set via the recursive CTE and dispatches one
     /// `PurgeBlock` per descendant; each descendant's own apply call
-    /// reaches this method.  The day-9 cutover keeps the same
-    /// dispatch shape, so per-block scope is correct.
+    /// reaches this method. Per-block scope is correct.
     ///
     /// Idempotent: if the block is already absent (concurrent purge,
     /// or never created), all three deletions are no-ops.
@@ -987,8 +974,8 @@ impl LoroEngine {
     /// Import `bytes` into the doc and return every block_id present
     /// in the post-import top-level `blocks` LoroMap.
     ///
-    /// PEND-09 Phase 3 day-4 — sync-pull projection driver.  The
-    /// receiver's caller passes each returned block_id to
+    /// Sync-pull projection driver. The receiver's caller passes each
+    /// returned block_id to
     /// [`crate::loro::projection::project_block_full_to_sql`] so the
     /// SQL `blocks` row mirrors the engine's post-import state.
     ///
@@ -1008,10 +995,8 @@ impl LoroEngine {
     ///
     /// The brute-force walk costs O(N_blocks) per sync-pull — same
     /// asymptotic shape as `count_alive_blocks` / `list_children_walk`
-    /// (Phase-0 day-7 measured at 250-2500x slower than indexed SQL,
-    /// SPIKE-REPORT.md §4.4) — but sync-pull is a cold path bounded
-    /// by the op-streaming cadence, so the cost is amortised against
-    /// network latency.
+    /// — but sync-pull is a cold path bounded by the op-streaming
+    /// cadence, so the cost is amortised against network latency.
     ///
     /// ## Edge cases
     ///
@@ -1021,8 +1006,8 @@ impl LoroEngine {
     /// * If the import added zero new ops (peer was up-to-date), the
     ///   walk still returns every block_id — the projection helper
     ///   becomes a sequence of idempotent `INSERT OR REPLACE`s, which
-    ///   is correct but wasteful.  Day-5 may short-circuit on
-    ///   `ImportStatus.success.is_empty()` to skip the walk.
+    ///   is correct but wasteful. A future iteration may short-circuit
+    ///   on `ImportStatus.success.is_empty()` to skip the walk.
     pub fn import_with_changed_blocks(
         &mut self,
         bytes: &[u8],
@@ -1043,17 +1028,11 @@ impl LoroEngine {
     /// Encode the doc's current op-log version vector for transport
     /// over the wire.
     ///
-    /// Wraps `LoroDoc::oplog_vv()`
-    /// (`loro-1.12.0/src/lib.rs:887`) and serialises the result via
-    /// `VersionVector::encode()` (`postcard::to_allocvec` —
-    /// `loro-internal-1.12.0/src/version.rs:843-845`).  The output
-    /// is opaque bytes; the receiver round-trips via
-    /// `VersionVector::decode` (Loro 1.12 wire-stable per
-    /// `SESSION-LOG.md` Session 699 Phase 3 §7.7).
-    ///
-    /// PEND-09 Phase 3 day-3 — companion to `export_update_since`,
-    /// used by sync push to (a) advertise the local frontier and
-    /// (b) build the `from_vv` field of [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Update`]
+    /// Wraps `LoroDoc::oplog_vv()` and serialises the result via
+    /// `VersionVector::encode()` (Loro 1.12 wire-stable). Used by sync
+    /// push to (a) advertise the local frontier and (b) build the
+    /// `from_vv` field of
+    /// [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Update`]
     /// at send time.
     pub fn version_vector(&self) -> Vec<u8> {
         self.doc.oplog_vv().encode()
@@ -1073,10 +1052,9 @@ impl LoroEngine {
     ///
     /// Returns `AppError::Validation` if `since_vv` is not a
     /// well-formed encoded version vector — the receiver should
-    /// fall back to a [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot`]
-    /// in that case (day-5 receiver dispatch).
-    ///
-    /// PEND-09 Phase 3 day-3 — companion to `version_vector`.
+    /// fall back to a
+    /// [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot`]
+    /// in that case.
     pub fn export_update_since(&self, since_vv: &[u8]) -> Result<Vec<u8>, AppError> {
         let vv = VersionVector::decode(since_vv).map_err(|e| {
             AppError::Validation(format!("loro: export_update_since: decode vv: {e}"))
@@ -1297,17 +1275,13 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// Phase-2 day-8.5 engine-coverage tests.
-//
-// Cover `apply_add_tag` / `apply_remove_tag` / `apply_restore_block` /
-// `apply_purge_block` / `apply_delete_property` — each new method gets
-// a happy-path test plus an idempotence test.  These run in the
-// default-feature build (no `loro-shadow` gate) because the engine
-// module itself is feature-gated at the parent (`src/loro/mod.rs`)
-// — so when this `#[cfg(test)]` module compiles, the feature is on.
+// Engine-coverage tests for `apply_add_tag` / `apply_remove_tag` /
+// `apply_restore_block` / `apply_purge_block` /
+// `apply_delete_property`. Each method gets a happy-path test plus an
+// idempotence test.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
-mod day_85_op_coverage_tests {
+mod op_coverage_tests {
     use super::LoroEngine;
 
     const BLOCK_A: &str = "01HZ00000000000000000000AB";
@@ -1427,7 +1401,7 @@ mod day_85_op_coverage_tests {
         // SQL semantics: `apply_restore_block_tx`'s UPDATE matches zero
         // rows when the block_id is absent — that's not an error.
         // Engine must align: a RestoreBlock op for a block purged on a
-        // peer must not propagate as a hard error post-cutover.
+        // peer must not propagate as a hard error.
         let mut engine = LoroEngine::new();
         engine
             .apply_restore_block(BLOCK_A)
@@ -1582,20 +1556,16 @@ mod day_85_op_coverage_tests {
 }
 
 // ---------------------------------------------------------------------------
-// PEND-09 Phase 3 day-3 — version-vector + incremental-update tests.
-//
-// Cover the two new wire-facing methods on `LoroEngine`:
+// Version-vector + incremental-update tests for the two wire-facing
+// methods on `LoroEngine`:
 //   * `version_vector` — `oplog_vv().encode()` round-trips byte-stable
 //     via `VersionVector::decode`.
 //   * `export_update_since` — the bytes produced by passing in a
 //     captured pre-vv contain only ops added AFTER that vv (the
 //     incremental-sync invariant).
-//
-// Phase 3 day-9 retired the `loro-shadow` feature gate; the engine
-// module compiles unconditionally now and so does this test module.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
-mod day_3_sync_vv_tests {
+mod sync_vv_tests {
     use super::LoroEngine;
     use loro::VersionVector;
 
