@@ -37,7 +37,7 @@ Frontend "I want all" call sites that ignore those ceilings:
 | ---------- | ----------- | ------------- | --------- | -------- |
 | HIGH | `src/stores/page-blocks.ts:125` | 500 | recursive subtree, no per-parent cursor | page editor truncates any parent with >100 children |
 | HIGH | `src/components/PropertyRowEditor.tsx:254` | 500 | one-shot list, JS `.filter()` | ref picker silently misses pages past 100 |
-| HIGH | `src/components/GraphView.helpers.ts:55, 62, 76` | 5000 | one-shot list | graph shows wrong subset at >100 pages |
+| ~~HIGH~~ DONE | ~~`src/components/GraphView.helpers.ts:55, 62, 76`~~ | ~~5000~~ | now routes through `list_all_pages_in_space(spaceId, tagIds)` IPC (no pagination, no clamp) | — |
 | ~~HIGH~~ DONE | ~~`src/lib/export-graph.ts:19`~~ | ~~1000~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp) | — |
 | HIGH | `src/components/GraphView.helpers.ts:146` | 1000 | one-shot `queryByProperty` | template list truncated |
 | MEDIUM | `src/hooks/useDuePanelData.ts:210, 261` | 500 | routes via agenda (cap 500) — at-edge | OK today, fragile to refactor |

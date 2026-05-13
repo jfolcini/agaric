@@ -1153,13 +1153,22 @@ pub async fn list_page_links(
         .map_err(sanitize_internal_error)
 }
 
-/// Minimal page header — id + content — for callers that need every
-/// page in a space without pagination.  Used by the markdown export
-/// (`exportGraphAsZip`) which iterates every page to produce a ZIP.
-#[derive(Serialize, Type, Clone, Debug)]
+/// Page header for callers that need every page in a space without
+/// pagination.  Used by the markdown export (`exportGraphAsZip`) and by
+/// the graph view, which both want the full set in one shot.
+///
+/// Includes the four agenda-shaped native columns on `blocks`
+/// (`todo_state` / `priority` / `due_date` / `scheduled_date`) because
+/// the graph node renderer keys node colour / icons on them.  The
+/// markdown exporter ignores them.
+#[derive(Serialize, Type, Clone, Debug, sqlx::FromRow)]
 pub struct PageHeading {
     pub id: String,
     pub content: Option<String>,
+    pub todo_state: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
 }
 
 /// Return every live page in `space_id`, ordered by content
@@ -1170,18 +1179,54 @@ pub struct PageHeading {
 /// page (markdown export, graph rendering); use the paginated
 /// `list_blocks_inner` for list views.
 ///
-/// Returns only `(id, content)` because the two existing callers
+/// When `tag_ids` is `Some(non-empty)`, restricts the result to pages
+/// that carry at least one of those tags via the direct
+/// `block_tags(block_id, tag_id)` table.  Inherited tags are
+/// intentionally excluded — mirrors the existing GraphView semantics
+/// (its previous `queryByTags(include_inherited=false)` call).
+///
+/// Returns only `(id, content)` because the existing callers
 /// (markdown export, graph view) ignore every other column.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool, tag_ids), err)]
 pub async fn list_all_pages_in_space_inner(
     pool: &SqlitePool,
     space_id: &str,
+    tag_ids: Option<&[String]>,
 ) -> Result<Vec<PageHeading>, AppError> {
+    if let Some(tags) = tag_ids.filter(|t| !t.is_empty()) {
+        // Tag-filter branch: build an `IN (?, ?, ...)` clause inline.  We
+        // can't use `query_as!` because the placeholder count is dynamic.
+        let placeholders = std::iter::repeat_n("?", tags.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT b.id, b.content, b.todo_state, b.priority, b.due_date, b.scheduled_date \
+             FROM blocks b \
+             WHERE b.block_type = 'page' \
+               AND b.deleted_at IS NULL \
+               AND COALESCE(b.page_id, b.id) IN ( \
+                   SELECT bp.block_id FROM block_properties bp \
+                   WHERE bp.key = 'space' AND bp.value_ref = ?) \
+               AND b.id IN ( \
+                   SELECT block_id FROM block_tags WHERE tag_id IN ({placeholders})) \
+             ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC",
+        );
+        let mut q = sqlx::query_as::<_, PageHeading>(&sql).bind(space_id);
+        for t in tags {
+            q = q.bind(t);
+        }
+        return Ok(q.fetch_all(pool).await?);
+    }
+
     let rows = sqlx::query_as!(
         PageHeading,
         r#"SELECT
                b.id as "id!: String",
-               b.content as "content: String"
+               b.content as "content: String",
+               b.todo_state as "todo_state: String",
+               b.priority as "priority: String",
+               b.due_date as "due_date: String",
+               b.scheduled_date as "scheduled_date: String"
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
@@ -1197,7 +1242,8 @@ pub async fn list_all_pages_in_space_inner(
     Ok(rows)
 }
 
-/// Tauri command: list every page in `space_id` as `{ id, content }`.
+/// Tauri command: list every page in `space_id` as `{ id, content }`,
+/// optionally restricted to pages carrying at least one of `tag_ids`.
 /// Delegates to [`list_all_pages_in_space_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
@@ -1205,8 +1251,9 @@ pub async fn list_all_pages_in_space_inner(
 pub async fn list_all_pages_in_space(
     pool: State<'_, ReadPool>,
     space_id: String,
+    tag_ids: Option<Vec<String>>,
 ) -> Result<Vec<PageHeading>, AppError> {
-    list_all_pages_in_space_inner(&pool.0, &space_id)
+    list_all_pages_in_space_inner(&pool.0, &space_id, tag_ids.as_deref())
         .await
         .map_err(sanitize_internal_error)
 }

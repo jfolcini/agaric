@@ -1461,9 +1461,16 @@ export async function exportPageMarkdown(pageId: string): Promise<string> {
  * clamp — bounded by the space's intrinsic page count.  Use when the
  * caller genuinely needs every page (markdown export, graph rendering);
  * use `listBlocks` for paginated list views.
+ *
+ * `tagIds`, when non-empty, restricts the result to pages carrying at
+ * least one of those tags via the direct `block_tags` table.  Inherited
+ * tags are intentionally excluded — mirrors the GraphView semantics.
  */
-export async function listAllPagesInSpace(spaceId: string): Promise<PageHeading[]> {
-  return unwrap(await commands.listAllPagesInSpace(spaceId))
+export async function listAllPagesInSpace(
+  spaceId: string,
+  tagIds: string[] | null = null,
+): Promise<PageHeading[]> {
+  return unwrap(await commands.listAllPagesInSpace(spaceId, tagIds))
 }
 
 // ---------------------------------------------------------------------------

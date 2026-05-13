@@ -26,7 +26,6 @@ import { EmptyState } from './EmptyState'
 import { GraphFilterBar } from './GraphFilterBar'
 import { fetchGraphData, type GraphEdge, type GraphNode } from './GraphView.helpers'
 import { LoadingSkeleton } from './LoadingSkeleton'
-import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 
 // ── Module-level cache for stale-while-revalidate (UX-113) ────────────
@@ -35,7 +34,6 @@ const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 interface GraphCache {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  hasMore: boolean
   timestamp: number
 }
 
@@ -78,7 +76,6 @@ export function GraphView(): React.ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
-  const [hasMore, setHasMore] = useState(false)
   const [tags, setTags] = useState<Array<{ tag_id: string; name: string }>>([])
   const [filters, setFilters] = useState<GraphFilter[]>([])
 
@@ -114,7 +111,6 @@ export function GraphView(): React.ReactElement {
     if (graphCache) {
       setNodes(graphCache.nodes)
       setEdges(graphCache.edges)
-      setHasMore(graphCache.hasMore)
       setLoading(false)
 
       // If cache is still fresh, skip refetch
@@ -129,13 +125,11 @@ export function GraphView(): React.ReactElement {
         graphCacheMap.set(tagCacheKey, {
           nodes: result.nodes,
           edges: result.edges,
-          hasMore: result.hasMore,
           timestamp: Date.now(),
         })
 
         setNodes(result.nodes)
         setEdges(result.edges)
-        setHasMore(result.hasMore)
       } catch (err) {
         if (cancelled) return
         logger.error('GraphView', 'failed to load graph data', undefined, err)
@@ -198,17 +192,6 @@ export function GraphView(): React.ReactElement {
           filteredCount={filteredNodes.length}
         />
       </div>
-      {hasMore && (
-        <Badge
-          variant="secondary"
-          className="absolute bottom-2 left-2 z-10"
-          data-testid="graph-truncated-badge"
-        >
-          {tagFilterIds.length > 0
-            ? t('graph.truncated', { count: nodes.length })
-            : t('graph.truncatedFilterHint', { count: nodes.length })}
-        </Badge>
-      )}
       {/*
        * UX-244: `position: absolute; inset: 0` is required for the SVG to fill
        * the `.graph-view` (relative) container. Bare `h-full` on an inline SVG

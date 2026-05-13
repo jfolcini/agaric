@@ -35,6 +35,7 @@ beforeEach(() => {
   // commands don't crash the components under test.
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_page_links') return []
+    if (cmd === 'list_all_pages_in_space') return []
     return emptyPage
   })
   // Reset the space store between tests so seeding is explicit.
@@ -101,9 +102,9 @@ describe('FEAT-3 Phase 4 — space scoping integration', () => {
   it('GraphView.helpers.fetchGraphData scopes every IPC call to the active space', async () => {
     await fetchGraphData([], 'SPACE_GRAPH')
 
-    // `listBlocks` is required-`spaceId`; the wrapper forwards it as-is.
-    const listBlocksArgs = lastInvokeArgs('list_blocks')
-    expect(listBlocksArgs['spaceId']).toBe('SPACE_GRAPH')
+    // `list_all_pages_in_space` takes the bare `spaceId: string` shape.
+    const listAllPagesArgs = lastInvokeArgs('list_all_pages_in_space')
+    expect(listAllPagesArgs['spaceId']).toBe('SPACE_GRAPH')
     // PEND-18 Phase 3: `listPageLinks` and `queryByProperty` now take
     // a `scope: SpaceScope` tagged-enum on the IPC boundary; the
     // wrapper translates `spaceId | null` into `{ kind: 'active', ... }`.
