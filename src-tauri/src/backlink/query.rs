@@ -401,11 +401,18 @@ pub(super) async fn resolve_root_pages_cte(
 // ---------------------------------------------------------------------------
 
 /// List all distinct property keys currently in use across all blocks.
+///
+/// The `LIMIT 1000` cap is practical insurance against a runaway schema:
+/// real workloads carry on the order of tens of distinct property keys,
+/// and 1000 is well beyond any realistic UI render budget (key pickers,
+/// filter dropdowns). Callers that need the full universe (admin /
+/// migration paths) should query `block_properties` directly.
 pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    let rows =
-        sqlx::query_scalar::<_, String>("SELECT DISTINCT key FROM block_properties ORDER BY key")
-            .fetch_all(pool)
-            .await?;
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT key FROM block_properties ORDER BY key LIMIT 1000",
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(rows)
 }
 

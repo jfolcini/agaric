@@ -1851,6 +1851,28 @@ async fn list_property_keys_empty_when_no_properties() {
     assert!(keys.is_empty(), "no properties should yield empty list");
 }
 
+/// Safety cap: `list_property_keys` ends with `LIMIT 1000` so a runaway
+/// property-key schema cannot blow up the UI render budget. Insert
+/// 1001 distinct property keys on a single block and assert the result
+/// is clamped to exactly 1000 — proves the cap is enforced and the
+/// query did not silently fall back to all rows.
+#[tokio::test]
+async fn list_property_keys_caps_at_1000() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "BLK_CAP", "content", "many props").await;
+    for i in 0..1001 {
+        let key = format!("prop_{i:05}");
+        insert_property(&pool, "BLK_CAP", &key, Some("v"), None, None).await;
+    }
+    let keys = list_property_keys(&pool).await.unwrap();
+    assert_eq!(
+        keys.len(),
+        1000,
+        "list_property_keys must cap at LIMIT 1000; got {}",
+        keys.len()
+    );
+}
+
 // ======================================================================
 // eval_backlink_query with filters integrated
 // ======================================================================
@@ -2013,6 +2035,173 @@ async fn filter_property_date_gte() {
     let set = resolve_filter(&pool, &filter, 0).await.unwrap();
     assert!(!set.contains("SRC_A"), "2025-01-15 is not >= 2025-02-20");
     assert!(set.contains("SRC_B"), "2025-02-20 >= 2025-02-20");
+}
+
+// ======================================================================
+// PERF-27 inline-SQL operator coverage for PropertyNum / PropertyDate.
+// These tests exercise the post-PERF-27 SQL-pushdown shape (replacing
+// the prior Rust-side `.fetch_all` + `.filter()` evaluation).
+// ======================================================================
+
+// PERF-27: `Eq` is now SQL `=` rather than `|a - b| < f64::EPSILON`.
+// The classic 0.1 + 0.2 vs 0.3 floating-point gotcha gives us two
+// values that differ by ≈5.55e-17 — strictly less than f64::EPSILON
+// (≈2.22e-16) — so the OLD EPSILON-tolerant comparison would have
+// treated them as equal, while SQL `=` (the new push-down) does not.
+// This pins the audit's correctness fix so future refactors can't
+// silently reintroduce the tolerance.
+#[tokio::test]
+async fn filter_property_num_eq_uses_sql_equals_not_epsilon() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+
+    // Sanity-check the platform's IEEE-754 behaviour: these two
+    // values are distinct but within f64::EPSILON of each other.
+    let lhs: f64 = 0.1 + 0.2; // 0.30000000000000004
+    let rhs: f64 = 0.3;
+    assert_ne!(
+        lhs, rhs,
+        "platform precondition: 0.1 + 0.2 != 0.3 in IEEE-754"
+    );
+    assert!(
+        (lhs - rhs).abs() < f64::EPSILON,
+        "platform precondition: |0.1+0.2 - 0.3| < f64::EPSILON \
+         (the OLD Rust-side check would have considered them equal)"
+    );
+
+    insert_property(&pool, "SRC_A", "score", None, Some(rhs), None).await; // 0.3
+    insert_property(&pool, "SRC_B", "score", None, Some(lhs), None).await; // 0.30000000000000004
+
+    let filter = BacklinkFilter::PropertyNum {
+        key: "score".into(),
+        op: CompareOp::Eq,
+        value: 0.3,
+    };
+    let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+    assert!(
+        set.contains("SRC_A"),
+        "SRC_A (exactly 0.3) must match SQL `=` 0.3"
+    );
+    // Pinned: the SQL `=` push-down matches
+    // `pagination/properties.rs::query_by_property` and does NOT
+    // re-introduce the old f64::EPSILON tolerance.
+    assert!(
+        !set.contains("SRC_B"),
+        "SRC_B (0.1 + 0.2 = 0.30000000000000004) is a distinct f64 \
+         and must NOT match SQL `=` 0.3"
+    );
+}
+
+// PERF-27: `Contains` / `StartsWith` are nonsensical for numeric
+// properties.  The post-pushdown implementation short-circuits to an
+// empty set rather than running a string-LIKE on `value_num`.
+#[tokio::test]
+async fn filter_property_num_contains_and_starts_with_return_empty() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    insert_property(&pool, "SRC_A", "score", None, Some(123.0), None).await;
+    insert_property(&pool, "SRC_B", "score", None, Some(1230.0), None).await;
+
+    let contains = BacklinkFilter::PropertyNum {
+        key: "score".into(),
+        op: CompareOp::Contains,
+        value: 123.0,
+    };
+    let set_contains = resolve_filter(&pool, &contains, 0).await.unwrap();
+    assert!(
+        set_contains.is_empty(),
+        "Contains is meaningless for numeric props — must return empty"
+    );
+
+    let starts_with = BacklinkFilter::PropertyNum {
+        key: "score".into(),
+        op: CompareOp::StartsWith,
+        value: 123.0,
+    };
+    let set_starts_with = resolve_filter(&pool, &starts_with, 0).await.unwrap();
+    assert!(
+        set_starts_with.is_empty(),
+        "StartsWith is meaningless for numeric props — must return empty"
+    );
+}
+
+// PERF-27: `Contains` on date strings is a substring LIKE pushed into
+// SQL.  Verifies the operator returns the expected matches and that
+// `%` / `_` in the needle are escaped so they match literally rather
+// than as LIKE wildcards.
+#[tokio::test]
+async fn filter_property_date_contains_pushed_into_sql() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    insert_property(&pool, "SRC_A", "due", None, None, Some("2025-01-15")).await;
+    insert_property(&pool, "SRC_B", "due", None, None, Some("2025-02-20")).await;
+    // A pathological date-shaped string with a literal `%` to prove
+    // the escape logic.  (We store it in `value_date`; the SQL doesn't
+    // validate the format — it only compares lexicographically.)
+    insert_property(&pool, "SRC_C", "due", None, None, Some("2025-%1-30")).await;
+
+    // Plain substring match: "2025-01" matches SRC_A only.
+    let filter = BacklinkFilter::PropertyDate {
+        key: "due".into(),
+        op: CompareOp::Contains,
+        value: "2025-01".into(),
+    };
+    let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+    assert!(set.contains("SRC_A"), "2025-01-15 contains '2025-01'");
+    assert!(
+        !set.contains("SRC_B"),
+        "2025-02-20 does not contain '2025-01'"
+    );
+    assert!(
+        !set.contains("SRC_C"),
+        "2025-%1-30 does not contain '2025-01'"
+    );
+
+    // `%` in the needle must be treated literally, not as a LIKE
+    // wildcard — otherwise "%" alone would match every row.
+    let filter_pct = BacklinkFilter::PropertyDate {
+        key: "due".into(),
+        op: CompareOp::Contains,
+        value: "%".into(),
+    };
+    let set_pct = resolve_filter(&pool, &filter_pct, 0).await.unwrap();
+    assert!(
+        set_pct.contains("SRC_C"),
+        "SRC_C contains a literal '%' and must match"
+    );
+    assert!(
+        !set_pct.contains("SRC_A"),
+        "SRC_A has no literal '%' — must not match an unescaped '%' wildcard"
+    );
+    assert!(
+        !set_pct.contains("SRC_B"),
+        "SRC_B has no literal '%' — must not match an unescaped '%' wildcard"
+    );
+}
+
+// PERF-27: `StartsWith` on date strings is a prefix LIKE pushed into
+// SQL.  Mirrors the PropertyText prefix behaviour: `escape_like` makes
+// `%` / `_` / `\` literal.
+#[tokio::test]
+async fn filter_property_date_starts_with_pushed_into_sql() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    insert_property(&pool, "SRC_A", "due", None, None, Some("2025-01-15")).await;
+    insert_property(&pool, "SRC_B", "due", None, None, Some("2025-02-20")).await;
+    insert_property(&pool, "SRC_C", "due", None, None, Some("2024-12-31")).await;
+
+    let filter = BacklinkFilter::PropertyDate {
+        key: "due".into(),
+        op: CompareOp::StartsWith,
+        value: "2025-".into(),
+    };
+    let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+    assert!(set.contains("SRC_A"), "2025-01-15 starts with '2025-'");
+    assert!(set.contains("SRC_B"), "2025-02-20 starts with '2025-'");
+    assert!(
+        !set.contains("SRC_C"),
+        "2024-12-31 does not start with '2025-'"
+    );
 }
 
 // ======================================================================
