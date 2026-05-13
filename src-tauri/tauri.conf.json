@@ -26,23 +26,17 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": [
-        "https://github.com/jfolcini/agaric/releases/latest/download/latest.json"
-      ],
+      "endpoints": ["https://github.com/jfolcini/agaric/releases/latest/download/latest.json"],
       "pubkey": ""
     },
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "agaric"
-        ]
+        "schemes": ["agaric"]
       },
       "mobile": [
         {
           "host": "agaric.app",
-          "pathPrefix": [
-            "/o/"
-          ]
+          "pathPrefix": ["/o/"]
         }
       ]
     }
