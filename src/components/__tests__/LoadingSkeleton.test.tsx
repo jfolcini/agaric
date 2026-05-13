@@ -89,6 +89,47 @@ describe('LoadingSkeleton', () => {
     expect(wrapper.getAttribute('role')).toBe('status')
   })
 
+  // PEND-? — the `loading` prop (default `true`) opts the primitive into
+  // an a11y-compliant wrapper so callers no longer have to wrap it in
+  // their own `<div aria-busy="true">`.
+  describe('loading prop (a11y wrapper)', () => {
+    it('defaults to loading=true and wraps in role="status" + aria-busy="true"', () => {
+      const { container } = render(<LoadingSkeleton />)
+      const wrapper = container.firstElementChild as HTMLElement
+      expect(wrapper.getAttribute('aria-busy')).toBe('true')
+      expect(wrapper.getAttribute('role')).toBe('status')
+      expect(wrapper.getAttribute('aria-label')).toBe('Loading')
+    })
+
+    it('uses the provided ariaLabel when loading=true', () => {
+      const { container } = render(<LoadingSkeleton ariaLabel="Loading pages" />)
+      const wrapper = container.firstElementChild as HTMLElement
+      expect(wrapper.getAttribute('aria-label')).toBe('Loading pages')
+    })
+
+    it('omits the a11y wrapper attributes when loading=false', () => {
+      const { container } = render(<LoadingSkeleton loading={false} />)
+      const wrapper = container.firstElementChild as HTMLElement
+      expect(wrapper.getAttribute('aria-busy')).toBeNull()
+      expect(wrapper.getAttribute('role')).toBeNull()
+      expect(wrapper.getAttribute('aria-label')).toBeNull()
+    })
+
+    it('still renders the skeleton rows when loading=false', () => {
+      const { container } = render(<LoadingSkeleton loading={false} count={4} />)
+      const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+      expect(skeletons).toHaveLength(4)
+    })
+
+    it('lets explicit aria attributes override the loading defaults', () => {
+      const { container } = render(<LoadingSkeleton aria-label="Custom" role="alert" />)
+      const wrapper = container.firstElementChild as HTMLElement
+      // Explicit caller props win over the loading-default wrapper attrs.
+      expect(wrapper.getAttribute('aria-label')).toBe('Custom')
+      expect(wrapper.getAttribute('role')).toBe('alert')
+    })
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<LoadingSkeleton />)
     const results = await axe(container)
@@ -97,6 +138,12 @@ describe('LoadingSkeleton', () => {
 
   it('has no a11y violations with custom props', async () => {
     const { container } = render(<LoadingSkeleton count={2} height="h-10" className="custom" />)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('has no a11y violations when loading=false', async () => {
+    const { container } = render(<LoadingSkeleton loading={false} />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

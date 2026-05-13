@@ -6,6 +6,7 @@
  * Uses cursor-based pagination with "Load more" button.
  */
 
+import { Link } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +28,7 @@ import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { BacklinkGroupRenderer } from './BacklinkGroupRenderer'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
+import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
@@ -279,13 +281,23 @@ export function LinkedReferences({
   const headerLabel =
     totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
 
-  // UX-152: Don't render when no references (and not loading).
-  // When filters are active, keep the panel visible so the user can
-  // clear/adjust filters — otherwise the filter controls vanish.
+  // UX-152: When no references (and not loading), render an EmptyState
+  // explaining *why* the panel is empty (UX/AGENTS mandate: never silently
+  // `return null` for empty state). When filters are active, keep the full
+  // panel visible so the user can clear/adjust filters — otherwise the
+  // filter controls vanish.
   const hasActiveFilters =
     filters.length > 0 || sourcePageIncluded.length > 0 || sourcePageExcluded.length > 0
   if (!loading && totalCount === 0 && groups.length === 0 && !hasActiveFilters) {
-    return null
+    return (
+      <section
+        className="linked-references"
+        data-testid="linked-references"
+        aria-label={t('references.panelLabel')}
+      >
+        <EmptyState compact icon={Link} message={t('linkedReferences.empty')} />
+      </section>
+    )
   }
 
   return (

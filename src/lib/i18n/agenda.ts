@@ -124,6 +124,7 @@ export const agenda: Record<string, string> = {
   'due.projected': 'Projected',
   'duePanel.upcomingTitle': 'Upcoming',
   'donePanel.empty': 'No completed items yet.',
+  'donePanel.noneYet': 'No completed items yet.',
   'agendaFilter.clearAll': 'Clear all',
   'agendaFilter.clearAllLabel': 'Clear all filters',
   'duePanel.daysOverdue_one': '{{count}}d overdue',

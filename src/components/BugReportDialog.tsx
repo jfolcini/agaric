@@ -6,14 +6,20 @@
  *      OFF), nested "redact file paths and device ID" switch (default ON,
  *      visible only when logs-on).
  *   2. Preview — scrollable, read-only Markdown body + list of log files
- *      that will be packaged in the ZIP.
- *   3. Footer — Cancel / Copy report / Open in GitHub. The primary button
- *      is disabled until the user ticks the "I've reviewed what will be
- *      shared" checkbox.
+ *      that will be packaged in the ZIP. When logs are ON an inline hint
+ *      under the list names the zip and reminds the user they will need
+ *      to drag it into the GitHub issue manually.
+ *   3. Footer — Cancel / Copy report / [Download zip] / Open GitHub issue.
+ *      The "Download zip" button is rendered only when logs are ON. The
+ *      "Open GitHub issue" button is disabled until the user ticks the
+ *      "I've reviewed what will be shared" checkbox.
  *
- * Flow on primary click:
- *   - If logs ON:  readLogsForReport(redact) → buildReportZip → downloadBlob → openUrl
- *   - If logs OFF: openUrl directly
+ * Flow (PEND-bug-report-zip-affordance):
+ *   - logs ON:  user clicks "Download zip" (readLogsForReport → buildReportZip
+ *               → downloadBlob → success toast naming the file), then clicks
+ *               "Open GitHub issue" (openUrl). Dialog stays open so the user
+ *               can re-download if the OS save dialog is dismissed.
+ *   - logs OFF: user clicks "Open in GitHub" (openUrl), dialog closes.
  *   - On IPC/JSZip failure: toast.error + logger.warn; dialog stays open.
  *
  * Errors are never swallowed silently — every `.catch` routes through
@@ -236,14 +242,31 @@ export function BugReportDialog({
     },
   })
 
+  // PEND-bug-report-zip-affordance: dedicated handler for the new
+  // "Download zip" footer button. Runs steps 1-3 from the old combined
+  // flow (readLogsForReport → buildReportZip → downloadBlob) and shows a
+  // success toast that names the saved file. The dialog stays open so
+  // the user can then click "Open GitHub issue" and drag the file in.
+  const handleDownloadZip = useCallback(async () => {
+    if (submitting) return
+    if (metadata == null) return
+    setSubmitting(true)
+    try {
+      const ok = await executeBuildZip({ redact, metadata })
+      if (ok === undefined) return
+      toast.success(t('bugReport.zipDownloaded', { fileName: zipFileName }))
+    } finally {
+      setSubmitting(false)
+    }
+  }, [submitting, metadata, redact, executeBuildZip, zipFileName, t])
+
   const handleSubmit = useCallback(async () => {
     if (submitting) return
     setSubmitting(true)
     try {
-      if (includeLogs && metadata != null) {
-        const ok = await executeBuildZip({ redact, metadata })
-        if (ok === undefined) return
-      }
+      // PEND-bug-report-zip-affordance: with the footer split, the zip
+      // is now downloaded via the separate "Download zip" button before
+      // this handler ever runs. handleSubmit only opens the GitHub URL.
       // MAINT-177: openUrl resolves false when the Tauri shell errored AND
       // window.open was popup-blocked / returned null. In that case neither
       // path actually opened a tab, so we must NOT claim success — surface an
@@ -267,11 +290,18 @@ export function BugReportDialog({
         return
       }
       toast.success(t('bugReport.submitted'))
-      onOpenChange(false)
+      // PEND-bug-report-zip-affordance: when logs are ON, keep the
+      // dialog open after opening the GitHub tab so the user can copy
+      // the saved zip path or re-trigger Download zip if they dismissed
+      // the OS save dialog by accident. With logs OFF there is no
+      // follow-up step, so close as before.
+      if (!includeLogs) {
+        onOpenChange(false)
+      }
     } finally {
       setSubmitting(false)
     }
-  }, [submitting, includeLogs, metadata, redact, executeBuildZip, issueUrl, onOpenChange, t])
+  }, [submitting, includeLogs, issueUrl, onOpenChange, t])
 
   // MAINT-120: re-fetch logs and surface the contents of one entry inline
   // for preview. `setPreviewLoading` toggles outside the hook because it
@@ -472,6 +502,14 @@ export function BugReportDialog({
                       ))}
                   </ul>
                 </ScrollArea>
+                {/* PEND-bug-report-zip-affordance: inline hint that names
+                    the zip and tells the user they'll have to drag it
+                    into the GitHub issue manually. The footer's
+                    "Download zip" + "Open GitHub issue" split matches
+                    this wording. */}
+                <p className="text-xs text-muted-foreground" data-testid="bug-report-zip-hint">
+                  {t('bugReport.zipDownloadHint', { fileName: zipFileName })}
+                </p>
               </div>
             )}
 
@@ -517,15 +555,36 @@ export function BugReportDialog({
           >
             {t('bugReport.copy')}
           </Button>
+          {/* PEND-bug-report-zip-affordance: split the old "Open in
+              GitHub" button into two explicit actions when logs are ON.
+              The local file save and the browser navigation are now two
+              distinct clicks, so the user can redo a step if the OS
+              save dialog is dismissed, and the dialog no longer
+              auto-closes mid-task. */}
+          {includeLogs && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                void handleDownloadZip()
+              }}
+              disabled={submitting || loadingMetadata || loadingLogs || metadata == null}
+              aria-label={t('bugReport.downloadZip')}
+              data-testid="bug-report-download-zip"
+            >
+              {submitting ? <Spinner /> : null}
+              {t('bugReport.downloadZip')}
+            </Button>
+          )}
           <Button
             onClick={() => {
               void handleSubmit()
             }}
             disabled={!confirmed || submitting || loadingMetadata || body.length === 0}
-            aria-label={t('bugReport.openIssue')}
+            aria-label={includeLogs ? t('bugReport.openGitHubIssue') : t('bugReport.openIssue')}
+            data-testid="bug-report-open-github"
           >
             {submitting ? <Spinner /> : null}
-            {t('bugReport.openIssue')}
+            {includeLogs ? t('bugReport.openGitHubIssue') : t('bugReport.openIssue')}
           </Button>
         </DialogFooter>
 

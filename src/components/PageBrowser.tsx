@@ -360,9 +360,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       </ViewHeader>
 
       {(!spaceIsReady || (loading && pages.length === 0)) && (
-        <div aria-busy="true">
-          <LoadingSkeleton count={3} height="h-10" className="page-browser-loading" />
-        </div>
+        <LoadingSkeleton count={3} height="h-10" loading className="page-browser-loading" />
       )}
 
       {spaceIsReady && !loading && pages.length === 0 && (

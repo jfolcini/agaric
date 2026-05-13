@@ -197,6 +197,8 @@ export const references: Record<string, string> = {
   'tags.createFailed': 'Failed to create tag',
   'references.panelLabel': 'References',
   'unlinkedRefs.panelLabel': 'Unlinked references',
+  'linkedReferences.empty': 'No backlinks to this page yet.',
+  'unlinkedReferences.empty': 'No unlinked mentions of this page.',
   'backlink.filtersLabel': 'Backlink filters',
   'backlink.appliedFiltersLabel': 'Applied filters',
   'tagList.deleteTagLabel': 'Delete tag',

@@ -7,6 +7,39 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 713 — UX Tier 1 + bug-report-zip plan close (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 4 build (general-purpose) + orchestrator-direct UX.md doc-drift sweep |
+| **Items closed** | design-system-ux-review Tier 1 items 1 + 9 + 10; Tier 2 doc-drift D1/D3/D5/D6/D8/D9/D10; `pending/bug-report-zip-affordance-2026-05-13.md` (plan file deleted, README index row removed). |
+| **Items modified** | design-system-ux-review-2026-05-09.md status note updated; UX.md (7 doc-drift fixes). |
+| **Tests added** | +5 LoadingSkeleton a11y wrapper tests; +4 BugReportDialog tests (Download zip + zip-hint + footer split). Several existing tests updated (EmptyState assertions on DonePanel/LinkedReferences/UnlinkedReferences; BugReportDialog test renamed). |
+| **Files touched** | 21 (8 production + 5 i18n + 5 unit-test + UX.md + plan-file deletion + README) |
+
+**Summary:** four parallel subagents + orchestrator-direct doc-drift closed five surgical Tier 1/Tier 2 items plus the bug-report-zip plan. Button primitive now has `active:scale-[0.98]` (or `:scale-95` for icon sizes) + per-variant `active:bg-*` shifts across all 6 variants — press feedback propagates to ~84 consumer sites for free. Three `return null` empty-state guards in DonePanel/LinkedReferences/UnlinkedReferences now render `<EmptyState compact icon={...} message={t(...)} />` per the AGENTS.md empty-state mandate; new i18n keys `donePanel.noneYet`, `linkedReferences.empty`, `unlinkedReferences.empty`. `LoadingSkeleton` extended with an optional `loading` prop that wraps output in `<div role="status" aria-busy aria-label="Loading">`; StatusPanel migrated from 4 raw `<Skeleton>` divs to the primitive; PageBrowser + TagList + JournalPage migrated to drop their per-call `<div aria-busy>` wrappers. BugReportDialog footer now splits into `[Cancel] [Copy report] [Download zip] [Open GitHub issue]` when `includeLogs` is ON, with an inline `bugReport.zipDownloadHint` under the logs list interpolating the computed `zipFileName`; dialog stays open after `Open GitHub issue` so the user can attach the zip; `Download zip` runs the read-logs → buildZip → download flow with a success toast and stays open. Plan file deleted; README index row removed. UX.md fixed for D1 (task-todo doc → reality), D3 (ProseMirror padding), D5 (sync semantic tokens), D6 (single-RAF clarified), D8 (ListViewState is a real component not a pattern), D9 (priority badge has no coarse-pointer rule by design), D10 (button touch heights are h-11 not h-10), plus a curated-inventory clarifier pointing to ARCHITECTURE.md.
+
+**Verification:**
+- `npx vitest run` — 9617 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- `src/components/ui/button.tsx` — `active:` states.
+- `src/components/DonePanel.tsx`, `LinkedReferences.tsx`, `UnlinkedReferences.tsx` — EmptyState renders.
+- `src/components/LoadingSkeleton.tsx` — `loading` prop with a11y wrapper.
+- `src/components/StatusPanel.tsx`, `PageBrowser.tsx`, `TagList.tsx`, `JournalPage.tsx` — migrated to new LoadingSkeleton signature.
+- `src/components/BugReportDialog.tsx` — footer split + inline hint + dialog-stays-open.
+- `src/lib/i18n/agenda.ts`, `references.ts`, `block.ts`, `settings.ts` — new keys.
+- `src/components/__tests__/BugReportDialog.test.tsx`, `DonePanel.test.tsx`, `LinkedReferences.test.tsx`, `UnlinkedReferences.test.tsx`, `LoadingSkeleton.test.tsx` — assertions updated to match new behavior.
+- `UX.md` — 7 doc-drift fixes + inventory clarifier.
+- `pending/bug-report-zip-affordance-2026-05-13.md` — deleted.
+- `pending/README.md` — index row removed.
+- `pending/design-system-ux-review-2026-05-09.md` — status note updated.
+
+**Commit plan:** single commit covering all 21 file edits + Session 713 entry.
+
+---
 ## Session 712 — design-system UX Tier 3 follow-up batch (2026-05-13)
 
 | Metadata | Value |

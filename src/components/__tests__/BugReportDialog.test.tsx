@@ -409,7 +409,56 @@ describe('BugReportDialog', () => {
     expect(screen.getByRole('button', { name: t('bugReport.openIssue') })).not.toBeDisabled()
   })
 
-  it('primary click with logs ON downloads a ZIP and then opens the GitHub URL', async () => {
+  // PEND-bug-report-zip-affordance: the old "Open in GitHub" button was
+  // split into a separate "Download zip" + "Open GitHub issue" pair when
+  // logs are ON. Each click is independent — Download zip writes the
+  // file, Open GitHub issue navigates — and the dialog stays open after
+  // openUrl so the user can re-download if the OS save dialog was
+  // dismissed.
+  it('Download zip writes the ZIP file and shows a success toast', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+    await screen.findByText(/## Description/)
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'read_logs_for_report'),
+      ).toHaveLength(1)
+    })
+
+    const downloadBtn = screen.getByRole('button', { name: t('bugReport.downloadZip') })
+    await user.click(downloadBtn)
+
+    await waitFor(() => {
+      expect(downloadBlobMock).toHaveBeenCalledTimes(1)
+    })
+    const downloadCall = downloadBlobMock.mock.calls[0]
+    expect(downloadCall).toBeDefined()
+    const [blob, filename] = downloadCall ?? []
+    expect(blob).toBeInstanceOf(Blob)
+    expect(filename).toMatch(/^agaric-bug-report-\d{4}-\d{2}-\d{2}\.zip$/)
+
+    // openUrl must NOT have been called — Download zip is a local-only
+    // action; opening GitHub is a separate click now.
+    expect(openUrlMock).not.toHaveBeenCalled()
+
+    // Success toast names the saved file so the user knows where it
+    // landed.
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith(
+        t('bugReport.zipDownloaded', { fileName: filename as string }),
+      )
+    })
+
+    // Dialog stays open after Download zip — user still needs to click
+    // Open GitHub issue.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  })
+
+  it('Open GitHub issue (logs ON) opens the URL and keeps the dialog open', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
@@ -424,21 +473,49 @@ describe('BugReportDialog', () => {
     })
 
     await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
-    await user.click(screen.getByRole('button', { name: t('bugReport.openIssue') }))
-
-    await waitFor(() => {
-      expect(downloadBlobMock).toHaveBeenCalledTimes(1)
-    })
-    const downloadCall = downloadBlobMock.mock.calls[0]
-    expect(downloadCall).toBeDefined()
-    const [blob, filename] = downloadCall ?? []
-    expect(blob).toBeInstanceOf(Blob)
-    expect(filename).toMatch(/^agaric-bug-report-\d{4}-\d{2}-\d{2}\.zip$/)
+    await user.click(screen.getByRole('button', { name: t('bugReport.openGitHubIssue') }))
 
     await waitFor(() => {
       expect(openUrlMock).toHaveBeenCalledTimes(1)
     })
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    // Open GitHub issue is now a navigation-only click — no zip
+    // download side-effect.
+    expect(downloadBlobMock).not.toHaveBeenCalled()
+    expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.submitted'))
+    // PEND-bug-report-zip-affordance: dialog stays open when logs are
+    // ON so the user can copy the saved zip path or re-trigger Download
+    // zip if the OS save dialog was dismissed.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  })
+
+  // PEND-bug-report-zip-affordance: inline hint under the logs list
+  // names the saved zip and tells the user they will have to drag it
+  // into the GitHub issue manually.
+  it('renders the zip-download hint under the logs list when logs are ON', async () => {
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await screen.findByText(/## Description/)
+
+    // Hint must not exist when logs are OFF.
+    expect(screen.queryByTestId('bug-report-zip-hint')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+    await screen.findByText('agaric.log')
+
+    const hint = await screen.findByTestId('bug-report-zip-hint')
+    // Hint text interpolates the same filename that downloadBlob would
+    // receive — verify the date-stamped zip filename appears.
+    expect(hint.textContent ?? '').toMatch(/agaric-bug-report-\d{4}-\d{2}-\d{2}\.zip/)
+  })
+
+  it('Download zip button is not rendered when logs are OFF', async () => {
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await screen.findByText(/## Description/)
+    expect(
+      screen.queryByRole('button', { name: t('bugReport.downloadZip') }),
+    ).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
