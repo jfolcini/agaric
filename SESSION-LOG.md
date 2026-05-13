@@ -7,6 +7,38 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 714 — agenda-loadmore + journal-header plan closes (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 2 build (general-purpose) in parallel |
+| **Items closed** | `pending/agenda-loadmore-cursor-namespace-2026-05-13.md` + `pending/journal-header-responsive-2026-05-13.md`. Both plan files deleted; README index rows removed. |
+| **Items modified** | — |
+| **Tests added** | +6 agenda-filters (loadMoreAgendaFilters page-2 AND-intersection invariant + tag-filter resolution + null/non-null spaceId + short-circuit) + 1 AgendaView (load-more branch on active filters) + 2 JournalControls (xs single-letter labels + flex-col stack); 1 JournalPage test updated. |
+| **Files touched** | 11 (7 production + 4 test) |
+
+**Summary:** two pending plans closed in parallel. **agenda-loadmore-cursor-namespace** — Option A from the plan: `loadMoreAgenda` in `AgendaView.tsx` now branches on `agendaFilters.length > 0` and routes through the new `loadMoreAgendaFilters({ filters, cursor, spaceId })` helper in `agenda-filters.ts`, which mirrors `executeAgendaFilters`'s translation logic and forwards the cursor to `filteredBlocksQuery`. The no-filter branch keeps the existing `queryByProperty` path (cursor namespace matches). Page 2 of an active-filter agenda now preserves the AND-intersection — covered by a regression-guard test asserting every page-2 block satisfies every active filter. **journal-header-responsive** — three localised diffs: deleted the redundant `<SidebarTrigger className="md:hidden" />` from App.tsx (the mobile rail's `CollapseButton` is the always-visible entry); header now `flex min-h-14 flex-col sm:flex-row` with `py-2 sm:py-0` padding for the two-row mobile stack; JournalControls root restructured into a stack-on-mobile layout with mode tabs on row 1 and date nav on row 2; mode-tab visible labels collapse to single letters (D/W/M/A) under ~480 px via `[@media(min-width:480px)]:` arbitrary variants while `aria-label` keeps the full word; the standalone Agenda button gated `hidden sm:inline-flex`. Existing `JournalPage` `flex-wrap` assertion updated to assert the new `flex-col sm:flex-row` shape.
+
+**Verification:**
+- `npx vitest run` — 9626 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- `src/lib/agenda-filters.ts` — new `loadMoreAgendaFilters` helper.
+- `src/lib/__tests__/agenda-filters.test.ts` — 6 new tests for `loadMoreAgendaFilters`.
+- `src/components/journal/AgendaView.tsx` — `loadMoreAgenda` branched on active filters.
+- `src/components/journal/__tests__/AgendaView.test.tsx` — load-more branch tests.
+- `src/App.tsx` — SidebarTrigger removed; header stacked on mobile.
+- `src/components/JournalControls.tsx` — two-row stack + single-letter labels.
+- `src/components/__tests__/JournalControls.test.tsx` — 2 new tests.
+- `src/components/__tests__/JournalPage.test.tsx` — flex-wrap assertion updated.
+- `pending/agenda-loadmore-cursor-namespace-2026-05-13.md`, `journal-header-responsive-2026-05-13.md` — deleted.
+- `pending/README.md` — index rows removed.
+
+**Commit plan:** single commit covering both plan closes + Session 714 entry.
+
+---
 ## Session 713 — UX Tier 1 + bug-report-zip plan close (2026-05-13)
 
 | Metadata | Value |

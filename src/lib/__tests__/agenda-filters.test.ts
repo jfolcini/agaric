@@ -12,6 +12,7 @@ import { makeBlock } from '../../__tests__/fixtures'
 import {
   AGENDA_QUERY_LIMIT,
   executeAgendaFilters,
+  loadMoreAgendaFilters,
   toFutureDatePreset,
   toPastDatePreset,
 } from '../agenda-filters'
@@ -842,5 +843,172 @@ describe('executeAgendaFilters', () => {
       const call = filteredCalls()[0] as Record<string, unknown>
       expect(call['scope']).toEqual({ kind: 'active', space_id: '' })
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// loadMoreAgendaFilters — page 2 of the active-filter agenda
+// ---------------------------------------------------------------------------
+//
+// Pins the cursor-namespace fix: page 2 must continue the AND-intersection
+// minted by page 1. The previous implementation called `query_by_property`
+// with a `filtered_blocks_query` cursor — a silent namespace mismatch that
+// returned the right *shape* but the wrong *set* (no AND across filters).
+// See: pending/agenda-loadmore-cursor-namespace-2026-05-13.md (Option A).
+
+describe('loadMoreAgendaFilters', () => {
+  it('routes through filtered_blocks_query with the saved cursor (NOT query_by_property)', async () => {
+    const page2Block = makeBlock({ id: 'b2', todo_state: 'TODO', priority: '1' })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [page2Block], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    const result = await loadMoreAgendaFilters(
+      [
+        { dimension: 'status', values: ['TODO'] },
+        { dimension: 'priority', values: ['1'] },
+      ],
+      'CURSOR_PAGE_2',
+      null,
+    )
+
+    // Page 2 rides on filtered_blocks_query — the same IPC that minted
+    // the cursor — so the keyset is consistent.
+    expect(filteredCalls()).toHaveLength(1)
+    const cmds = mockedInvoke.mock.calls.map(([cmd]) => cmd)
+    expect(cmds.filter((c) => c === 'query_by_property')).toHaveLength(0)
+
+    // Cursor is forwarded verbatim; every active filter is translated
+    // into the IPC payload so the backend continues the AND-intersection.
+    const call = filteredCalls()[0] as Record<string, unknown>
+    expect(call['cursor']).toBe('CURSOR_PAGE_2')
+    const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+    expect(propertyFilters).toHaveLength(2)
+    expect(propertyFilters[0]).toMatchObject({ key: 'todo_state', valueTextIn: ['TODO'] })
+    expect(propertyFilters[1]).toMatchObject({ key: 'priority', valueTextIn: ['1'] })
+
+    // Page 2 result is forwarded as-is.
+    expect(result.blocks).toHaveLength(1)
+    expect(result.blocks[0]?.id).toBe('b2')
+    expect(result.hasMore).toBe(false)
+    expect(result.cursor).toBeNull()
+  })
+
+  it("page 2's blocks satisfy every active filter (AND-intersection preserved)", async () => {
+    // Returns three blocks; every one matches BOTH filters (todo_state in
+    // ['TODO','DOING'] AND priority='1'). This is what the backend
+    // composed-EXISTS shape guarantees — the assertion pins that
+    // load-more does not silently drop AND-membership.
+    const blocks = [
+      makeBlock({ id: 'b10', todo_state: 'TODO', priority: '1' }),
+      makeBlock({ id: 'b11', todo_state: 'DOING', priority: '1' }),
+      makeBlock({ id: 'b12', todo_state: 'TODO', priority: '1' }),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: blocks, next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    const filters: Parameters<typeof loadMoreAgendaFilters>[0] = [
+      { dimension: 'status', values: ['TODO', 'DOING'] },
+      { dimension: 'priority', values: ['1'] },
+    ]
+    const result = await loadMoreAgendaFilters(filters, 'CURSOR_PAGE_2', null)
+
+    // Every returned block satisfies every active filter — the
+    // AND-intersection that page 1 established carries through.
+    for (const b of result.blocks) {
+      expect(['TODO', 'DOING']).toContain(b.todo_state)
+      expect(b.priority).toBe('1')
+    }
+  })
+
+  it('resolves tag filters before dispatching (mirror executeAgendaFilters)', async () => {
+    const block = makeBlock({ id: 'tagged-p2' })
+    mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+      const a = args as Record<string, unknown>
+      if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-x') {
+        return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
+      }
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [block], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    await loadMoreAgendaFilters(
+      [
+        { dimension: 'status', values: ['TODO'] },
+        { dimension: 'tag', values: ['tag-x'] },
+      ],
+      'CURSOR_PAGE_2',
+      null,
+    )
+
+    expect(filteredCalls()).toHaveLength(1)
+    const call = filteredCalls()[0] as Record<string, unknown>
+    expect(call['cursor']).toBe('CURSOR_PAGE_2')
+    expect(call['tagFilters']).toMatchObject({ tagIds: ['TID_X'], mode: 'or' })
+  })
+
+  it('short-circuits with empty result when no dimension resolves to a payload', async () => {
+    // status with empty values + tag that resolves to nothing → no
+    // property filters, no tag filters. Must not dispatch
+    // filtered_blocks_query (the backend would reject empty input).
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyPage
+    })
+
+    const result = await loadMoreAgendaFilters(
+      [
+        { dimension: 'status', values: [] },
+        { dimension: 'tag', values: ['nonexistent-tag'] },
+      ],
+      'CURSOR_PAGE_2',
+      null,
+    )
+
+    expect(result.blocks).toHaveLength(0)
+    expect(result.hasMore).toBe(false)
+    expect(result.cursor).toBeNull()
+    expect(filteredCalls()).toHaveLength(0)
+  })
+
+  it('normalizes a null spaceId to "" (FE-L-12 boundary)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    await loadMoreAgendaFilters([{ dimension: 'status', values: ['TODO'] }], 'CURSOR_PAGE_2', null)
+
+    const call = filteredCalls()[0] as Record<string, unknown>
+    expect(call['scope']).toEqual({ kind: 'active', space_id: '' })
+  })
+
+  it('forwards a non-null spaceId verbatim', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    await loadMoreAgendaFilters(
+      [{ dimension: 'status', values: ['TODO'] }],
+      'CURSOR_PAGE_2',
+      'space-abc',
+    )
+
+    const call = filteredCalls()[0] as Record<string, unknown>
+    expect(call['scope']).toEqual({ kind: 'active', space_id: 'space-abc' })
   })
 })

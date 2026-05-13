@@ -11,10 +11,10 @@
 | PEND-09 | CRDT migration (Loro), merge-layer only | L (11-15 weeks) | ready as a **planned spike + multi-phase migration** |
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
 | PEND-38 | Import progress streaming (`Channel<T>` Tier 3) | L restructure + S emission | deferred — needs `import_markdown` parse/apply split with per-block savepoints before channel work has UX value |
-| agenda-loadmore-cursor-namespace-2026-05-13 | Agenda load-more cursor-namespace mismatch | S | latent bug flagged during sql-audit H3 review; pre-existing; fix is small but its own commit |
 | agenda-sort-sql-pushdown-2026-05-13 | Agenda sort/group SQL pushdown (original H4) | M | deferred — JS sort on ≤200 items is sub-ms; SQL ORDER BY requires compound-cursor reshape |
 | dialog-responsiveness-primitive-2026-05-13 | Dialog primitive doesn't enforce header/body/footer + scrollable body; textarea drag-resize escapes frame; BugReportDialog hits all three on short windows | S (≤ half a day) | ready |
-| journal-header-responsive-2026-05-13 | Journal header overflows on mobile; the `md:hidden` `SidebarTrigger` is redundant (rail's CollapseButton is the always-visible mobile entry); two-row stack + compact mode tabs | S (~1 h) | ready |
+| page-browser-pagination-ux-2026-05-14 | Pages view feels paged even though it's already virtualised — add `total_count` on listBlocks + "X of Y" progress + scroll-position restore + auto-load near bottom (keep button as a11y fallback) | M (~1.5 days) | ready |
+| scrollarea-thin-hover-reveal-2026-05-14 | ScrollArea bar (10/16 px) overlays content on every scroll surface — thin it to 4/8 px and default the Radix Root to `type="hover"` so it reveals on interaction | XS (≤ 1 h) | ready |
 
 ## Recommended order
 

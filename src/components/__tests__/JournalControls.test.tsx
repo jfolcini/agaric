@@ -144,6 +144,44 @@ describe('JournalControls', () => {
     expect(dateDisplay.className).not.toMatch(/(?:^|\s)min-w-\[100px\]/)
   })
 
+  // PEND journal-header-responsive: under ~480 px the visible mode-tab text
+  // collapses to its first letter (D/W/M/A); the full word stays on aria-label
+  // and the longform span is hidden via `[@media(min-width:480px)]:` variants.
+  // We assert the two spans co-exist with mutually exclusive visibility
+  // classes so visual width shrinks while the accessible name is unchanged.
+  it('mode-tab labels include both full and single-letter spans for xs collapse', () => {
+    render(<JournalControls />)
+
+    const dailyTab = screen.getByRole('tab', { name: /daily view/i })
+    // Full word visible at >=480px, hidden below.
+    const fullSpan = dailyTab.querySelector('span.hidden')
+    // Single letter visible below 480px, hidden above.
+    const compactSpan = dailyTab.querySelector(
+      'span.\\[\\@media\\(min-width\\:480px\\)\\]\\:hidden',
+    )
+
+    expect(fullSpan).not.toBeNull()
+    expect(compactSpan).not.toBeNull()
+    expect(fullSpan?.className).toContain('[@media(min-width:480px)]:inline')
+    expect(compactSpan?.textContent).toBe('D')
+    // Accessible name still uses the long form via aria-label.
+    expect(dailyTab).toHaveAttribute('aria-label', expect.stringMatching(/daily view/i))
+  })
+
+  // PEND journal-header-responsive: the header root container stacks vertically
+  // on phones and inlines on sm:+, so the four mode tabs and the date-nav row
+  // each get their own row on narrow viewports instead of being clipped by
+  // the 56 px header height. Assertion is on the className flags (the test
+  // env doesn't apply media queries, so we verify the responsive utilities
+  // are present rather than computing the rendered layout).
+  it('journal-header root uses flex-col sm:flex-row for the two-row mobile stack', () => {
+    render(<JournalControls />)
+
+    const root = screen.getByTestId('journal-header')
+    expect(root.className).toContain('flex-col')
+    expect(root.className).toContain('sm:flex-row')
+  })
+
   it('hides the prev/next nav in agenda mode', () => {
     useJournalStore.setState({
       mode: 'agenda',

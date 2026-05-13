@@ -362,3 +362,59 @@ export async function executeAgendaFilters(
     cursor: resp.next_cursor,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Load-more for the active-filter branch
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the next page of an active-filter agenda by re-running the same
+ * filter translation `executeAgendaFilters` used and passing the saved
+ * `cursor` to `filtered_blocks_query`.
+ *
+ * Fixes the cursor-namespace mismatch where `AgendaView.loadMoreAgenda`
+ * was previously calling `query_by_property` with a cursor minted by
+ * `filtered_blocks_query` — the cursor's `b.id` was meaningless in the
+ * `query_by_property` keyset, so page 2 silently returned the wrong
+ * result set (right shape, no AND-intersection of the active filters).
+ *
+ * Mirror semantics of `executeAgendaFilters`:
+ * - Same `propertyFilters` / `tagFilters` translation per dimension.
+ * - Same short-circuit when every dimension resolves to nothing.
+ * - Same `spaceId` normalization at the boundary (FE-L-12).
+ */
+export async function loadMoreAgendaFilters(
+  filters: AgendaFilter[],
+  cursor: string,
+  spaceId: string | null,
+): Promise<ExecuteFiltersResult> {
+  const normalizedSpaceId = spaceId ?? ''
+
+  const today = new Date()
+  const propertyFilters: FilteredBlocksPropertyFilter[] = []
+  for (const filter of filters) {
+    appendPropertyFilters(filter, today, propertyFilters)
+  }
+  const tagFilters = await resolveTagFilters(filters)
+
+  // Mirror `executeAgendaFilters`: short-circuit when every dimension
+  // resolves to an empty payload, rather than letting the backend
+  // Validation error bubble.
+  if (propertyFilters.length === 0 && !tagFilters) {
+    return { blocks: [], hasMore: false, cursor: null }
+  }
+
+  const resp = await filteredBlocksQuery({
+    propertyFilters,
+    tagFilters,
+    spaceId: normalizedSpaceId,
+    limit: AGENDA_QUERY_LIMIT,
+    cursor,
+  })
+
+  return {
+    blocks: resp.items,
+    hasMore: resp.has_more,
+    cursor: resp.next_cursor,
+  }
+}

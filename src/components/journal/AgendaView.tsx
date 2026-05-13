@@ -6,7 +6,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { logger } from '@/lib/logger'
 import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
-import { executeAgendaFilters } from '../../lib/agenda-filters'
+import { executeAgendaFilters, loadMoreAgendaFilters } from '../../lib/agenda-filters'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, paginationLimit, queryByProperty } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
@@ -86,25 +86,48 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     }
   }, [agendaFilters, refreshKey, currentSpaceId])
 
-  /** Load the next page of agenda results (used for default unfiltered view). */
+  /**
+   * Load the next page of agenda results.
+   *
+   * Two cursor namespaces are in play here — they cannot be mixed:
+   * - Active filters → page 1 came from `filteredBlocksQuery`; page 2
+   *   must continue that AND-intersection by routing back through the
+   *   same IPC with the same filter payload. Done via
+   *   `loadMoreAgendaFilters`, which re-runs the filter translation.
+   * - No filters → page 1 came from `queryByProperty` (todo_state);
+   *   the cursor lives in that keyset namespace and load-more stays on
+   *   the same IPC.
+   *
+   * The previous implementation always used `queryByProperty` regardless
+   * of the active-filter state, so the cursor minted by
+   * `filtered_blocks_query` was silently mis-interpreted and page 2
+   * dropped the AND-intersection.
+   */
   const loadMoreAgenda = useCallback(async () => {
     if (!agendaCursor) return
     setAgendaLoading(true)
     try {
-      const resp = await queryByProperty({
-        key: 'todo_state',
-        cursor: agendaCursor,
-        limit: paginationLimit(200),
-        spaceId: currentSpaceId,
-      })
-      setFilteredBlocks((prev) => [...prev, ...resp.items])
-      setAgendaHasMore(resp.has_more)
-      setAgendaCursor(resp.next_cursor)
+      if (agendaFilters.length > 0) {
+        const result = await loadMoreAgendaFilters(agendaFilters, agendaCursor, currentSpaceId)
+        setFilteredBlocks((prev) => [...prev, ...result.blocks])
+        setAgendaHasMore(result.hasMore)
+        setAgendaCursor(result.cursor)
+      } else {
+        const resp = await queryByProperty({
+          key: 'todo_state',
+          cursor: agendaCursor,
+          limit: paginationLimit(200),
+          spaceId: currentSpaceId,
+        })
+        setFilteredBlocks((prev) => [...prev, ...resp.items])
+        setAgendaHasMore(resp.has_more)
+        setAgendaCursor(resp.next_cursor)
+      }
     } catch (err) {
       logger.warn('AgendaView', 'Failed to load more agenda items', undefined, err)
     }
     setAgendaLoading(false)
-  }, [agendaCursor, currentSpaceId])
+  }, [agendaCursor, agendaFilters, currentSpaceId])
 
   return (
     <div className="agenda-view space-y-4" data-testid="agenda-view">
