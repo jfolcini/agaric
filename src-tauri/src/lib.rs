@@ -233,6 +233,9 @@ macro_rules! agaric_commands {
             // Journal page lookup (BUG-48) — database-native date queries
             $crate::commands::get_journal_page_by_date,
             $crate::commands::list_journal_pages_in_range,
+            // All-pages-in-space (export / graph) — no-pagination IPC for callers
+            // that genuinely need every page in the space
+            $crate::commands::list_all_pages_in_space,
         ]
     };
 }

@@ -143,6 +143,28 @@ export const HANDLERS: Record<string, Handler> = {
     return items
   },
 
+  // Every page in the active space as `{ id, content }`.  No pagination,
+  // no clamp — bounded by the space's intrinsic page count.  Backs
+  // `exportGraphAsZip` and (future) graph rendering.
+  list_all_pages_in_space: (args) => {
+    const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
+    const items: Array<{ id: string; content: string | null }> = []
+    for (const b of blocks.values()) {
+      if (b['block_type'] !== 'page') continue
+      if (b['deleted_at']) continue
+      const blockProps = properties.get(b['id'] as string)
+      const spaceProp = blockProps?.get('space')
+      if (spaceProp?.['value_ref'] !== spaceId) continue
+      items.push({ id: b['id'] as string, content: (b['content'] as string | null) ?? null })
+    }
+    items.sort((x, y) => {
+      const c = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
+      return c !== 0 ? c : x.id.localeCompare(y.id)
+    })
+    return items
+  },
+
   list_undated_tasks: () => {
     const items = [...blocks.values()].filter(
       (b) =>
