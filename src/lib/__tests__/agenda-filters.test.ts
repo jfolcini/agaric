@@ -1,8 +1,9 @@
 /**
  * Tests for src/lib/agenda-filters.ts — pure filter execution engine.
  *
- * Verifies each filter dimension, intersection logic, empty filters,
- * and edge cases (blocks with no matching properties).
+ * Verifies the AgendaFilter[] → `filtered_blocks_query` translation
+ * (audit H3), the tag-id resolution path, the empty-filter default
+ * branch, and edge cases.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -70,7 +71,18 @@ describe('toPastDatePreset', () => {
 })
 
 // ---------------------------------------------------------------------------
-// executeAgendaFilters
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Extract every `filtered_blocks_query` invocation argument. */
+function filteredCalls(): Array<Record<string, unknown>> {
+  return mockedInvoke.mock.calls
+    .filter(([cmd]) => cmd === 'filtered_blocks_query')
+    .map(([, args]) => args as Record<string, unknown>)
+}
+
+// ---------------------------------------------------------------------------
+// executeAgendaFilters — empty filter list (default unfiltered branch)
 // ---------------------------------------------------------------------------
 
 describe('executeAgendaFilters', () => {
@@ -97,6 +109,11 @@ describe('executeAgendaFilters', () => {
       expect(result.blocks.map((b) => b.id)).toEqual(['due-1', 'sched-1'])
       expect(result.hasMore).toBe(false)
       expect(result.cursor).toBeNull()
+    })
+
+    it('does NOT dispatch filtered_blocks_query when filters are empty', async () => {
+      await executeAgendaFilters([], null)
+      expect(filteredCalls()).toHaveLength(0)
     })
 
     it('deduplicates blocks present in both due_date and scheduled_date results', async () => {
@@ -153,39 +170,6 @@ describe('executeAgendaFilters', () => {
       expect(result.blocks.map((b) => b.id)).toEqual(['due-1', 'undated-1'])
     })
 
-    it('deduplicates blocks between dated and undated results', async () => {
-      const block = makeBlock({
-        id: 'shared-1',
-        todo_state: 'TODO',
-        due_date: '2025-01-15',
-        page_id: 'PAGE1',
-      })
-
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'list_undated_tasks') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        if (a['key'] === 'due_date') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        if (a['key'] === 'scheduled_date') {
-          return emptyPage
-        }
-        return emptyPage
-      })
-
-      const result = await executeAgendaFilters([], null)
-
-      expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('shared-1')
-    })
-
-    // FE-H-1 — pin the post-fix invariant: the default branch threads
-    // `next_cursor` through each of due_date / scheduled_date /
-    // list_undated_tasks until exhausted (AGENTS invariant #3), so a
-    // multi-page response must surface every page's items in `blocks`,
-    // not just the first 500.
     it('paginates undated_tasks across multiple pages and merges all items', async () => {
       const page1Block = makeBlock({ id: 'undated-page-1', todo_state: 'TODO' })
       const page2Block = makeBlock({ id: 'undated-page-2', todo_state: 'TODO' })
@@ -195,11 +179,9 @@ describe('executeAgendaFilters', () => {
         if (cmd !== 'list_undated_tasks') return emptyPage
         undatedCallCount++
         if (undatedCallCount === 1) {
-          // First call: caller must not have a cursor yet.
           expect((args as Record<string, unknown>)['cursor']).toBeNull()
           return { items: [page1Block], next_cursor: 'CURSOR_PAGE_2', has_more: true }
         }
-        // Second call: caller must thread the previous next_cursor back in.
         expect((args as Record<string, unknown>)['cursor']).toBe('CURSOR_PAGE_2')
         return { items: [page2Block], next_cursor: null, has_more: false }
       })
@@ -208,51 +190,43 @@ describe('executeAgendaFilters', () => {
 
       expect(undatedCallCount).toBe(2)
       expect(result.blocks.map((b) => b.id).sort()).toEqual(['undated-page-1', 'undated-page-2'])
-      // Every page drained internally — caller sees the post-pagination invariant.
       expect(result.hasMore).toBe(false)
       expect(result.cursor).toBeNull()
     })
   })
 
-  describe('active filters do not fetch undated tasks', () => {
-    it('does not call listUndatedTasks when filters are active', async () => {
-      const todoBlock = makeBlock({ id: 'todo-1', todo_state: 'TODO', page_id: 'PAGE1' })
+  // -------------------------------------------------------------------------
+  // active-filter branch — single filtered_blocks_query call
+  // -------------------------------------------------------------------------
 
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        const extras = (a['extraFilters'] ?? null) as Record<string, unknown> | null
-        const valueTextIn = (extras?.['valueTextIn'] ?? null) as string[] | null
-        if (a['key'] === 'todo_state' && valueTextIn?.includes('TODO')) {
-          return { items: [todoBlock], next_cursor: null, has_more: false }
+  describe('active filters dispatch a single filtered_blocks_query IPC', () => {
+    it('does not call listUndatedTasks / queryByProperty / listBlocks when filters are active', async () => {
+      const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
       })
 
       await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
 
-      // Verify list_undated_tasks was never called
-      const undatedCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_undated_tasks')
-      expect(undatedCalls).toHaveLength(0)
+      const cmds = mockedInvoke.mock.calls.map(([cmd]) => cmd)
+      expect(cmds.filter((c) => c === 'list_undated_tasks')).toHaveLength(0)
+      expect(cmds.filter((c) => c === 'query_by_property')).toHaveLength(0)
+      expect(cmds.filter((c) => c === 'list_blocks')).toHaveLength(0)
+      // Exactly ONE filtered_blocks_query.
+      expect(filteredCalls()).toHaveLength(1)
     })
   })
 
-  describe('status filter', () => {
-    // PEND-35 Tier 2.10a — fires ONE query_by_property with `valueTextIn`
-    // covering every status value, instead of N per-value IPCs.
-    it('fires a single query_by_property with valueTextIn for all values', async () => {
+  describe('status filter translation', () => {
+    it('translates a multi-value status filter into ONE PropertyFilter with valueTextIn', async () => {
       const todoBlock = makeBlock({ id: 'todo-1', todo_state: 'TODO' })
       const doingBlock = makeBlock({ id: 'doing-1', todo_state: 'DOING' })
 
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        if (cmd !== 'query_by_property') return emptyPage
-        const a = args as Record<string, unknown>
-        const extras = a['extraFilters'] as Record<string, unknown> | null
-        const valueTextIn = extras?.['valueTextIn'] as string[] | null
-        if (
-          a['key'] === 'todo_state' &&
-          valueTextIn?.includes('TODO') &&
-          valueTextIn?.includes('DOING')
-        ) {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
           return { items: [todoBlock, doingBlock], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -263,58 +237,41 @@ describe('executeAgendaFilters', () => {
         null,
       )
 
-      // ONE IPC, not two: per-value fan-out is collapsed via valueTextIn.
-      const qbpCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'query_by_property')
-      expect(qbpCalls).toHaveLength(1)
-
       expect(result.blocks).toHaveLength(2)
-      expect(result.blocks.map((b) => b.id).sort()).toEqual(['doing-1', 'todo-1'])
-    })
-
-    it('calls invoke with correct arguments', async () => {
-      await executeAgendaFilters([{ dimension: 'status', values: ['TODO', 'DOING'] }], null)
-
-      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
-      // boundary, so the IPC layer always sees a string.
-      // PEND-35 Tier 2.10a — `valueTextIn` rides through `extraFilters`.
-      expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-        key: 'todo_state',
-        valueText: null,
-        valueDate: null,
-        operator: null,
-        cursor: null,
-        limit: 200,
-        scope: { kind: 'active', space_id: '' },
-        extraFilters: {
-          excludeParentId: null,
-          contentNonEmpty: null,
+      expect(filteredCalls()).toHaveLength(1)
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'filtered_blocks_query',
+        expect.objectContaining({
+          propertyFilters: [
+            expect.objectContaining({
+              key: 'todo_state',
+              operator: 'eq',
+              valueTextIn: ['TODO', 'DOING'],
+            }),
+          ],
+          tagFilters: null,
           blockType: null,
-          valueTextIn: ['TODO', 'DOING'],
-          valueDateRange: null,
-        },
-      })
+          scope: { kind: 'active', space_id: '' },
+          cursor: null,
+          limit: 200,
+        }),
+      )
     })
 
     it('skips IPC entirely when status values list is empty', async () => {
       const result = await executeAgendaFilters([{ dimension: 'status', values: [] }], null)
       expect(result.blocks).toHaveLength(0)
-      const qbpCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'query_by_property')
-      expect(qbpCalls).toHaveLength(0)
+      expect(filteredCalls()).toHaveLength(0)
     })
   })
 
-  describe('priority filter', () => {
-    // PEND-35 Tier 2.10a — same per-value fan-out collapse as status.
-    it('fires a single query_by_property with valueTextIn for all values', async () => {
+  describe('priority filter translation', () => {
+    it('translates a multi-value priority filter into ONE PropertyFilter with valueTextIn', async () => {
       const p1Block = makeBlock({ id: 'p1-1', priority: '1' })
       const p2Block = makeBlock({ id: 'p2-1', priority: '2' })
 
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        if (cmd !== 'query_by_property') return emptyPage
-        const a = args as Record<string, unknown>
-        const extras = a['extraFilters'] as Record<string, unknown> | null
-        const valueTextIn = extras?.['valueTextIn'] as string[] | null
-        if (a['key'] === 'priority' && valueTextIn?.includes('1') && valueTextIn?.includes('2')) {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
           return { items: [p1Block, p2Block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -325,94 +282,76 @@ describe('executeAgendaFilters', () => {
         null,
       )
 
-      const qbpCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'query_by_property')
-      expect(qbpCalls).toHaveLength(1)
       expect(result.blocks).toHaveLength(2)
-      expect(result.blocks.map((b) => b.id).sort()).toEqual(['p1-1', 'p2-1'])
-    })
-
-    it('calls invoke with correct arguments', async () => {
-      await executeAgendaFilters([{ dimension: 'priority', values: ['1'] }], null)
-
-      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
-      // boundary, so the IPC layer always sees a string.
-      // PEND-35 Tier 2.10a — `valueTextIn` rides through `extraFilters`.
-      expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-        key: 'priority',
-        valueText: null,
-        valueDate: null,
-        operator: null,
-        cursor: null,
-        limit: 200,
-        scope: { kind: 'active', space_id: '' },
-        extraFilters: {
-          excludeParentId: null,
-          contentNonEmpty: null,
-          blockType: null,
-          valueTextIn: ['1'],
-          valueDateRange: null,
-        },
-      })
+      expect(filteredCalls()).toHaveLength(1)
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'filtered_blocks_query',
+        expect.objectContaining({
+          propertyFilters: [
+            expect.objectContaining({
+              key: 'priority',
+              operator: 'eq',
+              valueTextIn: ['1', '2'],
+            }),
+          ],
+        }),
+      )
     })
 
     it('skips IPC entirely when priority values list is empty', async () => {
       const result = await executeAgendaFilters([{ dimension: 'priority', values: [] }], null)
       expect(result.blocks).toHaveLength(0)
-      const qbpCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'query_by_property')
-      expect(qbpCalls).toHaveLength(0)
+      expect(filteredCalls()).toHaveLength(0)
     })
   })
 
-  describe('dueDate filter', () => {
-    it('handles Today by querying with agendaDate', async () => {
+  describe('dueDate filter translation', () => {
+    it('Today → PropertyFilter with valueDate=today, operator=eq', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'due-today', due_date: '2025-03-15' })
-      mockedInvoke.mockResolvedValue({
-        items: [block],
-        next_cursor: null,
-        has_more: false,
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: null, has_more: false }
+        }
+        return emptyPage
       })
 
       const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
 
       expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('due-today')
-
-      // Should have called list_blocks with nested agenda.date
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
+        'filtered_blocks_query',
         expect.objectContaining({
-          agenda: expect.objectContaining({
-            date: '2025-03-15',
-            source: 'column:due_date',
-          }),
+          propertyFilters: [
+            expect.objectContaining({
+              key: 'due_date',
+              operator: 'eq',
+              valueDate: '2025-03-15',
+            }),
+          ],
         }),
       )
     })
 
-    it('handles This week by querying with agendaDateRange', async () => {
+    it('This week → PropertyFilter with half-open valueDateRange', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-12T12:00:00')) // Wednesday
 
-      mockedInvoke.mockResolvedValue(emptyPage)
-
       await executeAgendaFilters([{ dimension: 'dueDate', values: ['This week'] }], null)
 
-      // Should have called list_blocks with nested agenda.dateRange
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({
-          agenda: expect.objectContaining({
-            dateRange: { start: '2025-03-10', end: '2025-03-16' },
-            source: 'column:due_date',
-          }),
-        }),
-      )
+      // Mon..Sun = 2025-03-10..2025-03-16; half-open: [2025-03-10, 2025-03-17).
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'due_date',
+        valueDateRange: ['2025-03-10', '2025-03-17'],
+      })
     })
 
-    it('handles Overdue by client-filtering blocks before today', async () => {
+    it('Overdue → two AND PropertyFilters: due_date<today + todo_state!=DONE', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
@@ -421,116 +360,9 @@ describe('executeAgendaFilters', () => {
         due_date: '2025-03-10',
         todo_state: 'TODO',
       })
-      const doneBlock = makeBlock({
-        id: 'done-1',
-        due_date: '2025-03-10',
-        todo_state: 'DONE',
-      })
-      const futureBlock = makeBlock({
-        id: 'future-1',
-        due_date: '2025-03-20',
-        todo_state: 'TODO',
-      })
-
-      mockedInvoke.mockResolvedValue({
-        items: [overdueBlock, doneBlock, futureBlock],
-        next_cursor: null,
-        has_more: false,
-      })
-
-      const result = await executeAgendaFilters(
-        [{ dimension: 'dueDate', values: ['Overdue'] }],
-        null,
-      )
-
-      // Only overdue non-DONE blocks
-      expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('overdue-1')
-    })
-
-    it('excludes DONE blocks from Overdue results', async () => {
-      vi.useFakeTimers()
-      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
-
-      const doneBlock = makeBlock({
-        id: 'done-1',
-        due_date: '2025-03-10',
-        todo_state: 'DONE',
-      })
-
-      mockedInvoke.mockResolvedValue({
-        items: [doneBlock],
-        next_cursor: null,
-        has_more: false,
-      })
-
-      const result = await executeAgendaFilters(
-        [{ dimension: 'dueDate', values: ['Overdue'] }],
-        null,
-      )
-
-      expect(result.blocks).toHaveLength(0)
-    })
-
-    it('skips unknown date values', async () => {
-      const result = await executeAgendaFilters(
-        [{ dimension: 'dueDate', values: ['Unknown period'] }],
-        null,
-      )
-
-      expect(result.blocks).toHaveLength(0)
-    })
-  })
-
-  // -----------------------------------------------------------------------
-  // queryDateDimension branch coverage (via executeAgendaFilters with
-  // dimension: 'dueDate'). Uses a fixed `today` so preset resolution
-  // is deterministic regardless of the real system clock.
-  // -----------------------------------------------------------------------
-
-  describe('queryDateDimension branches', () => {
-    const fixedToday = new Date('2024-01-15T00:00:00')
-
-    beforeEach(() => {
-      vi.useFakeTimers()
-      vi.setSystemTime(fixedToday)
-    })
-
-    it('Overdue: excludes DONE blocks, null-date blocks, and future-dated blocks', async () => {
-      const overdueBlock = makeBlock({
-        id: 'overdue-keep',
-        due_date: '2024-01-10',
-        todo_state: 'TODO',
-      })
-      const doneBlock = makeBlock({
-        id: 'done-drop',
-        due_date: '2024-01-10',
-        todo_state: 'DONE',
-      })
-      const nullDateBlock = makeBlock({
-        id: 'null-drop',
-        due_date: null,
-        todo_state: 'TODO',
-      })
-      const futureBlock = makeBlock({
-        id: 'future-drop',
-        due_date: '2024-01-20',
-        todo_state: 'TODO',
-      })
-      const todayBlock = makeBlock({
-        id: 'today-drop',
-        due_date: '2024-01-15',
-        todo_state: 'TODO',
-      })
-
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'query_by_property' && a['key'] === 'due_date') {
-          return {
-            items: [overdueBlock, doneBlock, nullDateBlock, futureBlock, todayBlock],
-            next_cursor: null,
-            has_more: false,
-          }
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [overdueBlock], next_cursor: null, has_more: false }
         }
         return emptyPage
       })
@@ -541,60 +373,42 @@ describe('executeAgendaFilters', () => {
       )
 
       expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('overdue-keep')
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(2)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'due_date',
+        operator: 'lt',
+        valueDate: '2025-03-15',
+      })
+      expect(propertyFilters[1]).toMatchObject({
+        key: 'todo_state',
+        operator: 'neq',
+        valueText: 'DONE',
+      })
     })
 
-    it('Today preset dispatches to listBlocks with agendaDate (single-day branch)', async () => {
-      await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
-
-      const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-      expect(listBlocksCalls).toHaveLength(1)
-      const [, args] = listBlocksCalls[0] as [string, Record<string, unknown>]
-      const agenda = args['agenda'] as Record<string, unknown>
-      expect(agenda['date']).toBe('2024-01-15')
-      expect(agenda['dateRange']).toBeNull()
-      expect(agenda['source']).toBe('column:due_date')
-    })
-
-    it('Next 7 days preset dispatches to listBlocks with agendaDateRange (range branch)', async () => {
-      await executeAgendaFilters([{ dimension: 'dueDate', values: ['Next 7 days'] }], null)
-
-      const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-      expect(listBlocksCalls).toHaveLength(1)
-      const [, args] = listBlocksCalls[0] as [string, Record<string, unknown>]
-      const agenda = args['agenda'] as Record<string, unknown>
-      expect(agenda['dateRange']).toEqual({ start: '2024-01-15', end: '2024-01-21' })
-      expect(agenda['date']).toBeNull()
-      expect(agenda['source']).toBe('column:due_date')
-    })
-
-    it('unknown value (no Overdue match, no preset match) returns an empty result', async () => {
+    it('skips unknown date values entirely (no filter dispatched)', async () => {
       const result = await executeAgendaFilters(
-        [{ dimension: 'dueDate', values: ['Never heard of it'] }],
+        [{ dimension: 'dueDate', values: ['Unknown period'] }],
         null,
       )
-
       expect(result.blocks).toHaveLength(0)
-      const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-      expect(listBlocksCalls).toHaveLength(0)
-      const overdueCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'query_by_property' && (args as Record<string, unknown>)['key'] === 'due_date',
-      )
-      expect(overdueCalls).toHaveLength(0)
+      expect(filteredCalls()).toHaveLength(0)
     })
   })
 
-  describe('scheduledDate filter', () => {
-    it('handles Today by querying with agendaDate for scheduled_date', async () => {
+  describe('scheduledDate filter translation', () => {
+    it('Today → PropertyFilter with valueDate on scheduled_date column', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'sched-today', scheduled_date: '2025-03-15' })
-      mockedInvoke.mockResolvedValue({
-        items: [block],
-        next_cursor: null,
-        has_more: false,
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: null, has_more: false }
+        }
+        return emptyPage
       })
 
       const result = await executeAgendaFilters(
@@ -604,63 +418,49 @@ describe('executeAgendaFilters', () => {
 
       expect(result.blocks).toHaveLength(1)
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
+        'filtered_blocks_query',
         expect.objectContaining({
-          agenda: expect.objectContaining({
-            date: '2025-03-15',
-            source: 'column:scheduled_date',
-          }),
+          propertyFilters: [
+            expect.objectContaining({
+              key: 'scheduled_date',
+              operator: 'eq',
+              valueDate: '2025-03-15',
+            }),
+          ],
         }),
       )
     })
 
-    it('handles Overdue by client-filtering blocks with scheduled_date before today', async () => {
+    it('Overdue → two AND PropertyFilters on scheduled_date + todo_state', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
-      const overdueBlock = makeBlock({
-        id: 'overdue-sched',
-        scheduled_date: '2025-03-10',
-        todo_state: 'TODO',
-      })
-      const doneBlock = makeBlock({
-        id: 'done-sched',
-        scheduled_date: '2025-03-10',
-        todo_state: 'DONE',
-      })
+      await executeAgendaFilters([{ dimension: 'scheduledDate', values: ['Overdue'] }], null)
 
-      mockedInvoke.mockResolvedValue({
-        items: [overdueBlock, doneBlock],
-        next_cursor: null,
-        has_more: false,
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(2)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'scheduled_date',
+        operator: 'lt',
+        valueDate: '2025-03-15',
       })
-
-      const result = await executeAgendaFilters(
-        [{ dimension: 'scheduledDate', values: ['Overdue'] }],
-        null,
-      )
-
-      expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('overdue-sched')
+      expect(propertyFilters[1]).toMatchObject({
+        key: 'todo_state',
+        operator: 'neq',
+        valueText: 'DONE',
+      })
     })
   })
 
-  describe('completedDate filter', () => {
-    // PEND-35 Tier 2.10a — collapses N per-day fan-out into ONE
-    // `query_by_property` call with `valueDateRange: [from, toExclusive]`.
-    // For "Today" the half-open window is [today, today+1).
-    it('queries completed_at with valueDateRange covering the preset range', async () => {
+  describe('completedDate filter translation', () => {
+    it('Today → PropertyFilter on completed_at with half-open valueDateRange', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'completed-1', todo_state: 'DONE' })
-
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        if (cmd !== 'query_by_property') return emptyPage
-        const a = args as Record<string, unknown>
-        const extras = a['extraFilters'] as Record<string, unknown> | null
-        const range = extras?.['valueDateRange'] as [string, string] | null
-        if (a['key'] === 'completed_at' && range?.[0] === '2025-03-15') {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -672,26 +472,40 @@ describe('executeAgendaFilters', () => {
       )
 
       expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('completed-1')
-      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
-      // boundary, so the IPC layer always sees a string.
-      // PEND-35 Tier 2.10a — `valueDateRange` rides through `extraFilters`,
-      // half-open: end is the day AFTER the last included day.
-      expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({
         key: 'completed_at',
-        valueText: null,
-        valueDate: null,
-        operator: null,
-        cursor: null,
-        limit: 200,
-        scope: { kind: 'active', space_id: '' },
-        extraFilters: {
-          excludeParentId: null,
-          contentNonEmpty: null,
-          blockType: null,
-          valueTextIn: null,
-          valueDateRange: ['2025-03-15', '2025-03-16'],
-        },
+        valueDateRange: ['2025-03-15', '2025-03-16'],
+      })
+    })
+
+    it('Last 7 days → half-open [day1, day8) valueDateRange', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      await executeAgendaFilters([{ dimension: 'completedDate', values: ['Last 7 days'] }], null)
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'completed_at',
+        valueDateRange: ['2025-03-09', '2025-03-16'],
+      })
+    })
+
+    it('rolls endExclusive across month boundaries', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-01-31T12:00:00'))
+
+      await executeAgendaFilters([{ dimension: 'completedDate', values: ['Today'] }], null)
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters[0]).toMatchObject({
+        valueDateRange: ['2025-01-31', '2025-02-01'],
       })
     })
 
@@ -700,78 +514,19 @@ describe('executeAgendaFilters', () => {
         [{ dimension: 'completedDate', values: ['Next 7 days'] }],
         null,
       )
-
       expect(result.blocks).toHaveLength(0)
-    })
-
-    // PEND-35 Tier 2.10a — the canonical multi-day preset. Previously
-    // fired 7 IPCs (one per day); now fires exactly 1 with a half-open
-    // [day1, day8) `valueDateRange`. Pins the IPC-count delta + the
-    // half-open boundary semantic.
-    it('Last 7 days fires exactly one query_by_property with half-open valueDateRange', async () => {
-      vi.useFakeTimers()
-      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
-
-      // For "Last 7 days" today=2025-03-15, the inclusive range is
-      // 2025-03-09 .. 2025-03-15 (day1 .. day7).  Half-open form:
-      // [2025-03-09, 2025-03-16).
-      const block = makeBlock({ id: 'completed-1', todo_state: 'DONE' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd !== 'query_by_property') return emptyPage
-        return { items: [block], next_cursor: null, has_more: false }
-      })
-
-      const result = await executeAgendaFilters(
-        [{ dimension: 'completedDate', values: ['Last 7 days'] }],
-        null,
-      )
-
-      // ONE IPC, not seven.
-      const qbpCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'query_by_property')
-      expect(qbpCalls).toHaveLength(1)
-
-      // The single call carries the half-open [day1, day8) window.
-      const [, args] = qbpCalls[0] as [string, Record<string, unknown>]
-      expect(args['key']).toBe('completed_at')
-      const extras = args['extraFilters'] as Record<string, unknown>
-      expect(extras['valueDateRange']).toEqual(['2025-03-09', '2025-03-16'])
-
-      expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('completed-1')
-    })
-
-    // Pins the month-rollover edge of the half-open `endExclusive`
-    // conversion (range.end = '2025-01-31' must roll to '2025-02-01',
-    // not stay '2025-01-32').
-    it('rolls endExclusive over month boundaries', async () => {
-      vi.useFakeTimers()
-      vi.setSystemTime(new Date('2025-01-31T12:00:00'))
-
-      mockedInvoke.mockResolvedValue(emptyPage)
-
-      await executeAgendaFilters([{ dimension: 'completedDate', values: ['Today'] }], null)
-
-      const qbpCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'query_by_property')
-      expect(qbpCalls).toHaveLength(1)
-      const [, args] = qbpCalls[0] as [string, Record<string, unknown>]
-      const extras = args['extraFilters'] as Record<string, unknown>
-      expect(extras['valueDateRange']).toEqual(['2025-01-31', '2025-02-01'])
+      expect(filteredCalls()).toHaveLength(0)
     })
   })
 
-  describe('createdDate filter', () => {
-    it('queries created_at with valueDateRange covering the preset range', async () => {
+  describe('createdDate filter translation', () => {
+    it('Today → PropertyFilter on created_at with half-open valueDateRange', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'created-1' })
-
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        if (cmd !== 'query_by_property') return emptyPage
-        const a = args as Record<string, unknown>
-        const extras = a['extraFilters'] as Record<string, unknown> | null
-        const range = extras?.['valueDateRange'] as [string, string] | null
-        if (a['key'] === 'created_at' && range?.[0] === '2025-03-15') {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -783,42 +538,25 @@ describe('executeAgendaFilters', () => {
       )
 
       expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('created-1')
-      // FE-L-12 — `null` is normalized to `''` at the executeAgendaFilters
-      // boundary, so the IPC layer always sees a string.
-      // PEND-35 Tier 2.10a — `valueDateRange` rides through `extraFilters`.
-      expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters[0]).toMatchObject({
         key: 'created_at',
-        valueText: null,
-        valueDate: null,
-        operator: null,
-        cursor: null,
-        limit: 200,
-        scope: { kind: 'active', space_id: '' },
-        extraFilters: {
-          excludeParentId: null,
-          contentNonEmpty: null,
-          blockType: null,
-          valueTextIn: null,
-          valueDateRange: ['2025-03-15', '2025-03-16'],
-        },
+        valueDateRange: ['2025-03-15', '2025-03-16'],
       })
     })
   })
 
-  describe('tag filter', () => {
-    it('resolves tag name to ID then queries blocks by tagId', async () => {
+  describe('tag filter translation', () => {
+    it('resolves a tag name to tagIds via listTagsByPrefix and rides through tagFilters', async () => {
       const block = makeBlock({ id: 'tagged-1' })
 
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (cmd === 'list_tags_by_prefix') {
-          if (a['prefix'] === 'tag-abc') {
-            return [{ tag_id: 'TAG_ID_ABC', name: 'tag-abc', usage_count: 1 }]
-          }
-          return []
+        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-abc') {
+          return [{ tag_id: 'TAG_ID_ABC', name: 'tag-abc', usage_count: 1 }]
         }
-        if (cmd === 'list_blocks' && a['tagId'] === 'TAG_ID_ABC') {
+        if (cmd === 'filtered_blocks_query') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -827,21 +565,24 @@ describe('executeAgendaFilters', () => {
       const result = await executeAgendaFilters([{ dimension: 'tag', values: ['tag-abc'] }], null)
 
       expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('tagged-1')
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_tags_by_prefix',
         expect.objectContaining({ prefix: 'tag-abc' }),
       )
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ tagId: 'TAG_ID_ABC' }),
+        'filtered_blocks_query',
+        expect.objectContaining({
+          tagFilters: expect.objectContaining({
+            tagIds: ['TAG_ID_ABC'],
+            mode: 'or',
+          }),
+        }),
       )
     })
 
-    it('merges results from multiple tag values', async () => {
-      const block1 = makeBlock({ id: 'tagged-1' })
-      const block2 = makeBlock({ id: 'tagged-2' })
-
+    // H3 — pin the exactly-once tag-resolution path. Each prefix should
+    // round-trip listTagsByPrefix exactly once, not per-call-site.
+    it('resolves each tag name exactly once', async () => {
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
         if (cmd === 'list_tags_by_prefix') {
@@ -849,31 +590,64 @@ describe('executeAgendaFilters', () => {
           if (a['prefix'] === 'tag-2') return [{ tag_id: 'TID_2', name: 'tag-2', usage_count: 1 }]
           return []
         }
-        if (cmd === 'list_blocks' && a['tagId'] === 'TID_1') {
-          return { items: [block1], next_cursor: null, has_more: false }
-        }
-        if (cmd === 'list_blocks' && a['tagId'] === 'TID_2') {
-          return { items: [block2], next_cursor: null, has_more: false }
+        return emptyPage
+      })
+
+      await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], null)
+
+      const prefixCalls = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'list_tags_by_prefix',
+      ) as Array<[string, Record<string, unknown>]>
+      // Exactly 2 lookups, one per distinct prefix.
+      expect(prefixCalls).toHaveLength(2)
+      const prefixes = prefixCalls.map(([, a]) => a['prefix']).sort()
+      expect(prefixes).toEqual(['tag-1', 'tag-2'])
+    })
+
+    it('combines multiple tag values into a single tagFilters payload with mode=or', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        const a = args as Record<string, unknown>
+        if (cmd === 'list_tags_by_prefix') {
+          if (a['prefix'] === 'tag-1') return [{ tag_id: 'TID_1', name: 'tag-1', usage_count: 1 }]
+          if (a['prefix'] === 'tag-2') return [{ tag_id: 'TID_2', name: 'tag-2', usage_count: 1 }]
+          return []
         }
         return emptyPage
       })
 
+      await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], null)
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      expect(call['tagFilters']).toMatchObject({
+        tagIds: ['TID_1', 'TID_2'],
+        mode: 'or',
+      })
+    })
+
+    it('returns empty (no filtered_blocks_query) when tag resolution yields nothing', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_tags_by_prefix') return []
+        return emptyPage
+      })
+
       const result = await executeAgendaFilters(
-        [{ dimension: 'tag', values: ['tag-1', 'tag-2'] }],
+        [{ dimension: 'tag', values: ['nonexistent-tag'] }],
         null,
       )
 
-      expect(result.blocks).toHaveLength(2)
+      expect(result.blocks).toHaveLength(0)
+      // No filtered_blocks_query — empty input would be rejected by the
+      // backend with Validation; the FE short-circuits.
+      expect(filteredCalls()).toHaveLength(0)
     })
   })
 
-  describe('property filter', () => {
-    it('queries by key:value pairs', async () => {
+  describe('property filter translation', () => {
+    it('key:value → PropertyFilter with valueText', async () => {
       const block = makeBlock({ id: 'prop-1' })
 
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (a['key'] === 'assignee' && a['valueText'] === 'Alice') {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -885,15 +659,20 @@ describe('executeAgendaFilters', () => {
       )
 
       expect(result.blocks).toHaveLength(1)
-      expect(result.blocks[0]?.id).toBe('prop-1')
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'assignee',
+        operator: 'eq',
+        valueText: 'Alice',
+      })
     })
 
-    it('queries by key only when no colon is present', async () => {
+    it('bare key (no colon) → PropertyFilter without a value field (is-set semantics)', async () => {
       const block = makeBlock({ id: 'prop-2' })
 
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (a['key'] === 'custom_key' && a['valueText'] === null) {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -905,32 +684,26 @@ describe('executeAgendaFilters', () => {
       )
 
       expect(result.blocks).toHaveLength(1)
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters[0]).toMatchObject({ key: 'custom_key' })
+      // valueText / valueTextIn / valueDate / valueDateRange must all be
+      // unset (null / empty after marshalling in tauri.ts).
+      expect(propertyFilters[0]?.['valueText']).toBeNull()
+      expect(propertyFilters[0]?.['valueDate']).toBeNull()
+      expect(propertyFilters[0]?.['valueDateRange']).toBeNull()
+      expect(propertyFilters[0]?.['valueTextIn']).toEqual([])
     })
   })
 
-  describe('filter combinations (intersection)', () => {
-    it('intersects results from two filter dimensions', async () => {
+  describe('filter combinations (AND-intersection is now SQL-side)', () => {
+    it('two dimensions ride in ONE filtered_blocks_query with both PropertyFilters', async () => {
       const sharedBlock = makeBlock({ id: 'shared-1', todo_state: 'TODO', priority: '1' })
-      const todoOnlyBlock = makeBlock({ id: 'todo-only', todo_state: 'TODO' })
-      const prioOnlyBlock = makeBlock({ id: 'prio-only', priority: '1' })
 
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        const extras = (a['extraFilters'] ?? null) as Record<string, unknown> | null
-        const valueTextIn = (extras?.['valueTextIn'] ?? null) as string[] | null
-        if (a['key'] === 'todo_state' && valueTextIn?.includes('TODO')) {
-          return {
-            items: [sharedBlock, todoOnlyBlock],
-            next_cursor: null,
-            has_more: false,
-          }
-        }
-        if (a['key'] === 'priority' && valueTextIn?.includes('1')) {
-          return {
-            items: [sharedBlock, prioOnlyBlock],
-            next_cursor: null,
-            has_more: false,
-          }
+      // Backend returns the post-intersection result directly; no JS fan-out.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [sharedBlock], next_cursor: null, has_more: false }
         }
         return emptyPage
       })
@@ -943,35 +716,51 @@ describe('executeAgendaFilters', () => {
         null,
       )
 
-      // Only the block present in BOTH result sets
       expect(result.blocks).toHaveLength(1)
       expect(result.blocks[0]?.id).toBe('shared-1')
+      // Exactly ONE IPC carries both filters — the SQL composed-EXISTS
+      // shape does the AND server-side.
+      expect(filteredCalls()).toHaveLength(1)
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(2)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'todo_state',
+        valueTextIn: ['TODO'],
+      })
+      expect(propertyFilters[1]).toMatchObject({
+        key: 'priority',
+        valueTextIn: ['1'],
+      })
     })
 
-    it('returns empty when intersection is empty', async () => {
-      const todoBlock = makeBlock({ id: 'todo-1', todo_state: 'TODO' })
-      const prioBlock = makeBlock({ id: 'prio-1', priority: '1' })
-
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
+    it('tag + property dimensions combine into one IPC with both propertyFilters and tagFilters', async () => {
+      const block = makeBlock({ id: 'shared-1' })
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a['key'] === 'todo_state') {
-          return { items: [todoBlock], next_cursor: null, has_more: false }
+        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-x') {
+          return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
         }
-        if (a['key'] === 'priority') {
-          return { items: [prioBlock], next_cursor: null, has_more: false }
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
       })
 
-      const result = await executeAgendaFilters(
+      await executeAgendaFilters(
         [
           { dimension: 'status', values: ['TODO'] },
-          { dimension: 'priority', values: ['1'] },
+          { dimension: 'tag', values: ['tag-x'] },
         ],
         null,
       )
 
-      expect(result.blocks).toHaveLength(0)
+      expect(filteredCalls()).toHaveLength(1)
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({ key: 'todo_state', valueTextIn: ['TODO'] })
+      expect(call['tagFilters']).toMatchObject({ tagIds: ['TID_X'], mode: 'or' })
     })
   })
 
@@ -999,35 +788,44 @@ describe('executeAgendaFilters', () => {
     })
   })
 
-  it('always returns hasMore=false and cursor=null', async () => {
-    const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
-    mockedInvoke.mockResolvedValue({
-      items: [block],
-      next_cursor: null,
-      has_more: false,
+  describe('pagination envelope', () => {
+    it('forwards hasMore=true and the cursor from the backend response', async () => {
+      const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: 'CURSOR_NEXT', has_more: true }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
+
+      expect(result.hasMore).toBe(true)
+      expect(result.cursor).toBe('CURSOR_NEXT')
+      expect(result.blocks).toHaveLength(1)
     })
 
-    const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
+    it('forwards hasMore=false / cursor=null when the page is exhausted', async () => {
+      const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: null, has_more: false }
+        }
+        return emptyPage
+      })
 
-    expect(result.hasMore).toBe(false)
-    expect(result.cursor).toBeNull()
+      const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
+      expect(result.hasMore).toBe(false)
+      expect(result.cursor).toBeNull()
+    })
   })
 
   describe('spaceId normalization at the boundary (FE-L-12)', () => {
-    it('normalizes a null spaceId to "" once, so every dispatched IPC sees a string', async () => {
-      // Use a filter set that exercises both `query_by_property` (status,
-      // priority, dueDate Overdue) and `list_blocks` (dueDate preset, tag),
-      // so we observe that BOTH IPC types receive `''` rather than `null`.
-      vi.useFakeTimers()
-      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
-
+    it('normalizes a null spaceId to "" before dispatching filtered_blocks_query', async () => {
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        if (cmd === 'list_tags_by_prefix') {
-          const a = args as Record<string, unknown>
-          if (a['prefix'] === 'tag-x') {
-            return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
-          }
-          return []
+        const a = args as Record<string, unknown>
+        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-x') {
+          return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
         }
         return emptyPage
       })
@@ -1035,33 +833,14 @@ describe('executeAgendaFilters', () => {
       await executeAgendaFilters(
         [
           { dimension: 'status', values: ['TODO'] },
-          { dimension: 'dueDate', values: ['Today'] },
           { dimension: 'tag', values: ['tag-x'] },
         ],
         null,
       )
 
-      // Every dispatched query_by_property / list_blocks / list_undated_tasks
-      // call must carry the empty-string fallback (never null / undefined).
-      // PEND-18 Phase 3: `query_by_property` and `list_undated_tasks` now
-      // take `scope: SpaceScope` on the IPC boundary, so the empty-string
-      // fallback rides through `{ kind: 'active', space_id: '' }`.
-      // `list_blocks` still takes the legacy `spaceId: string`.
-      const scopeCmds = new Set(['query_by_property', 'list_undated_tasks'])
-      const legacySpaceIdCmds = new Set(['list_blocks'])
-      const dispatched = mockedInvoke.mock.calls.filter(([cmd]) => {
-        const c = cmd as string
-        return scopeCmds.has(c) || legacySpaceIdCmds.has(c)
-      })
-      expect(dispatched.length).toBeGreaterThan(0)
-      for (const [cmd, args] of dispatched) {
-        const a = args as Record<string, unknown>
-        if (legacySpaceIdCmds.has(cmd as string)) {
-          expect(a['spaceId']).toBe('')
-        } else {
-          expect(a['scope']).toEqual({ kind: 'active', space_id: '' })
-        }
-      }
+      // The filtered_blocks_query call carries the empty-string fallback.
+      const call = filteredCalls()[0] as Record<string, unknown>
+      expect(call['scope']).toEqual({ kind: 'active', space_id: '' })
     })
   })
 })

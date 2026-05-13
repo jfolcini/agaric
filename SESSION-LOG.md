@@ -7,6 +7,49 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 706 — sql-audit Batch 3: H3 frontend agenda → filtered_blocks_query (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 1 build (general-purpose) + 1 technical review |
+| **Items closed** | `pending/sql-audit-2026-05-09.md` H3 (FE silent-cap correctness regression on agenda AND-intersection). H4 deferred — see audit doc. |
+| **Items modified** | sql-audit doc Status updated: Batch 3 added, H4 marked deferred with rationale, Remaining list shrunk to [H7]. |
+| **Tests added** | +5 frontend (filter-translation correctness for every dimension + AND-intersection-in-single-IPC pin + exactly-once tag resolution + spaceId normalization) plus 5 updated `JournalPage.test.tsx` agenda integration tests |
+| **Files touched** | 4 (1 src + 3 tests + 1 audit doc) |
+
+**Summary:** `executeAgendaFilters` now makes EXACTLY ONE `filteredBlocksQuery` call for the active-filter branch (plus optional `listTagsByPrefix` for tag-id resolution). The pre-H3 fan-out (1 IPC per filter dimension, each silently capped at 200 rows, then `intersectSets` in JS) is gone — the AND-intersection moves into SQL via composed EXISTS clauses, fixing the audit's named correctness regression (any block outside the top-200 of any sub-query was previously silently dropped from the intersection).
+
+**Filter translation map (FE → backend):**
+- status / priority → `propertyFilters: [{key: 'todo_state'|'priority', operator: 'eq', valueTextIn: [...]}]` — backend routes these reserved keys to direct `b.<col>` predicates (`is_reserved_property_key` at `op.rs:350-355`).
+- dueDate Overdue → two AND filters `due_date<today` + `todo_state!=DONE` (the `todo_state != 'DONE'` constraint preserves pre-H3 semantics where Overdue excluded completed tasks).
+- dueDate Today → `valueDate: today` with operator `eq`.
+- dueDate ranges (This week / Last 30 days / etc.) → half-open `valueDateRange: [from, toExclusive)` to avoid the 23:59:59-boundary class of bugs.
+- scheduledDate parallels dueDate on the `scheduled_date` column.
+- completedDate / createdDate → `propertyFilters` on non-reserved keys `completed_at` / `created_at` (stored in `block_properties`, not as `blocks` columns); routed through the EXISTS path automatically.
+- tag → `tagFilters: { tagIds: [...], mode: 'or' }` after one `listTagsByPrefix` resolution per tag value.
+
+**H4 deferred (this session):** with H3 landed, the JS sort runs on ≤200 items per page (PAGINATION_MAX) — a sub-millisecond cost. A SQL-side ORDER BY would require reshaping the keyset cursor from `b.id` to a compound `(date, id)` tuple, a bigger design change. Revisit only if profiling shows the per-page sort is measurably hot, or if the practical agenda size grows past one page.
+
+**Out of scope (flagged for follow-up by reviewer):** `AgendaView.loadMoreAgenda` still calls `queryByProperty({key: 'todo_state', ...})` directly with a cursor. After H3, the cursor returned from `filteredBlocksQuery` is from a different cursor namespace than `queryByProperty` expects — so chaining the two in the active-filter branch's `loadMoreAgenda` would yield an inconsistent second page. Today this only fires when both (1) filters are active AND (2) `has_more` is true (≥200 items in the AND-intersection result), which is uncommon. Pre-H3 behaviour was equally suspect; H3 didn't introduce the issue. Noted for a future cleanup.
+
+**REVIEW-LATER impact:**
+- `pending/sql-audit-2026-05-09.md` open: 3 → 1 item. Remaining: H7 only.
+
+**Files touched (this session):**
+- `src/lib/agenda-filters.ts` — full rewrite of `executeAgendaFilters` active-filter branch. Deleted: 8 helper functions for the fan-out path (`queryStatus` / `queryPriority` / `queryDateDimension` / `queryOverdueForColumn` / `queryPresetRangeForColumn` / `queryPropertyDateDimension` / `queryTag` / `queryPropertyDimension`), `intersectSets`, `isOverdue`, `AGENDA_LIST_BLOCKS_LIMIT` constant. Added: 5 translation helpers (`appendPropertyFilters` / `futureDateValueToFilters` / `pastDateValueToFilter` / `customPropertyValueToFilter` / `toHalfOpenRange`) + `resolveTagFilters`.
+- `src/lib/__tests__/agenda-filters.test.ts` — rewrote 70+ assertions against the new IPC shape; added the AND-intersection-in-single-IPC pin and exactly-once tag-resolution test.
+- `src/components/__tests__/JournalPage.test.tsx` — updated 5 agenda integration tests to mock `filtered_blocks_query` instead of `query_by_property` / `list_blocks`.
+- `pending/sql-audit-2026-05-09.md` — H3 + H4 sections deleted; Status section updated with Batch 3 + H4 deferral rationale.
+
+**Verification:**
+- `npx vitest run` — 9588 tests pass (was 9588 baseline; net 0 change after deleting fan-out tests + adding intersection tests).
+- `npx tsc -p tsconfig.app.json --noEmit` — 0 errors.
+- `grep -rn "intersectSets\|resultSets\|AGENDA_LIST_BLOCKS_LIMIT" src/` — 0 matches (dead code fully purged).
+
+**Commit plan:** single commit covering agenda-filters.ts rewrite + test updates + Session 706 entry.
+
+---
 ## Session 705 — sql-audit Batch 2: H1 backlink keyset SQL + M1 agenda fallback ordering + M4 close-by-investigation (2026-05-13)
 
 | Metadata | Value |
