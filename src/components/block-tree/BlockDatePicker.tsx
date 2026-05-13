@@ -18,9 +18,8 @@ import { useTranslation } from 'react-i18next'
 import { useWeekStart } from '../../hooks/useWeekStart'
 import { parseDate } from '../../lib/parse-date'
 import { Calendar } from '../ui/calendar'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
-import { ScrollArea } from '../ui/scroll-area'
 
 export function BlockDatePicker({
   onSelect,
@@ -60,7 +59,7 @@ export function BlockDatePicker({
         {/* Radix requires DialogTitle for accessibility — visually hidden since aria-label is used */}
         <DialogTitle className="sr-only">{t('journal.datePickerLabel')}</DialogTitle>
         <DialogDescription className="sr-only">{t('dateChip.placeholder')}</DialogDescription>
-        <ScrollArea className="max-sm:max-h-[70vh]">
+        <DialogBody>
           <div className="pb-2">
             <div className="flex items-center gap-2">
               <Input
@@ -99,7 +98,7 @@ export function BlockDatePicker({
             )}
           </div>
           <Calendar mode="single" weekStartsOn={weekStartsOn} showOutsideDays onSelect={onSelect} />
-        </ScrollArea>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   )

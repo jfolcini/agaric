@@ -7,6 +7,36 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 716 — Dialog + Sheet responsiveness primitives (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 2 build (general-purpose) in parallel |
+| **Items closed** | `pending/dialog-responsiveness-primitive-2026-05-13.md` + `pending/block-history-sheet-fix-2026-05-14.md`. Both plan files deleted; README index rows removed. |
+| **Items modified** | — |
+| **Tests added** | +3 sheet (SheetBody contract), +1 dialog (DialogBody contract), +1 alert-dialog (AlertDialogBody contract), +1 HistoryFilterBar (single-row), +1 HistoryListItem (lock chip column), +1 HistorySheet (sm:max-w-lg). Several existing tests updated to new wrapper shape. |
+| **Files touched** | 24 (3 primitives + 1 textarea fix + 11 consumer migrations + 8 test files + 2 plan-file deletions + README) |
+
+**Summary:** two parallel subagents closed paired Dialog/Sheet responsiveness plans. **Dialog primitive** — `DIALOG_CONTENT_BASE` flipped `grid + overflow-y-auto` → `flex flex-col + overflow-hidden`; new exported `DialogBody` slot wraps a ScrollArea with `flex-1 min-h-0 -mx-6` + inner `space-y-4 min-w-0` (matching the plan). `alert-dialog.tsx` gets the same treatment with a sibling `AlertDialogBody` slot — two separate consts kept (byte-identical, in-lockstep comment) rather than introducing a shared util. `textarea.tsx` gets `resize-y` so drag-resize can't escape horizontally. 11 consumers migrated (BugReport, PdfViewer, SpaceManage, QueryBuilder, QuickCapture, Rename, Welcome, BlockDatePicker, Pairing, ConfirmDialog desktop branch). `ConfirmDestructiveAction` / `SpaceDeleteButton` / `BlockBatchActionMenu` / the GoogleCalendar disconnect AlertDialog left as-is (title + description + footer, no body). `ImageLightbox` left as-is (full-screen lightbox shape). **Sheet primitive** — same shape: `SHEET_CONTENT_BASE` now `flex flex-col overflow-hidden p-6` (was `gap-4` only); new `SheetBody` slot mirrors `DialogBody`. SheetHeader + SheetFooter dropped their own `p-4` to avoid compounding with the new SheetContent padding. **Block-history Sheet specifics** — width override `sm:max-w-lg` (32 rem ≈ 512 px) on `<SheetContent>`; HistoryFilterBar compacted (standalone label dropped, container `flex flex-wrap items-center gap-2`, help + clear next to Select); non-reversible lock chip moved to its own row (`flex flex-col items-start` wrapper).
+
+**Verification:**
+- `npx vitest run` — 9646 tests pass.
+- `npx tsc --noEmit` — clean.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- Primitives: `src/components/ui/dialog.tsx`, `alert-dialog.tsx`, `sheet.tsx`, `textarea.tsx`.
+- Dialog consumers (11): BugReportDialog, PdfViewerDialog, SpaceManageDialog, QueryBuilderModal, QuickCaptureDialog, RenameDialog, WelcomeModal, BlockDatePicker, PairingDialog, ConfirmDialog.
+- Sheet consumers (1): HistorySheet.
+- Block-history specifics: HistoryFilterBar, HistoryListItem.
+- Test files: dialog.test, alert-dialog.test, sheet.test, BugReportDialog.test, PairingDialog.test, HistorySheet.test, HistoryFilterBar.test, HistoryListItem.test.
+- Plan files deleted: dialog-responsiveness-primitive-2026-05-13.md, block-history-sheet-fix-2026-05-14.md.
+- README index: 2 rows removed.
+
+**Commit plan:** single commit covering both plan closes + Session 716 entry.
+
+---
 ## Session 715 — ScrollArea + lazy-dialogs + IconButton + pending cleanup (2026-05-14)
 
 | Metadata | Value |

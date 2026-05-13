@@ -827,17 +827,20 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ── PEND-28b M1: scrollable body keeps title and footer fixed ───────
-  describe('scrollable body layout (PEND-28b M1)', () => {
-    it('renders the form body inside a ScrollArea with title and footer outside', async () => {
+  // ── PEND-28b M1 → pending/dialog-responsiveness-primitive-2026-05-13:
+  // scrollable body keeps title and footer fixed. The custom ScrollArea
+  // wrapper became a DialogBody slot baked into the Dialog primitive; the
+  // ScrollArea is now an implementation detail of DialogBody.
+  describe('scrollable body layout', () => {
+    it('renders the form body inside the DialogBody slot with title and footer outside', async () => {
       render(<BugReportDialog open={true} onOpenChange={() => {}} />)
 
       await screen.findByText(/## Description/)
 
-      // The body wrapper carries the data-slot from the design-system
-      // ScrollArea primitive — guarantees future renames stay caught.
+      // The body wrapper carries the dialog-body data-slot exposed by the
+      // shared DialogBody primitive — guarantees future renames stay caught.
       const body = screen.getByTestId('bug-report-body')
-      expect(body).toHaveAttribute('data-slot', 'scroll-area')
+      expect(body).toHaveAttribute('data-slot', 'dialog-body')
 
       // Title is rendered as a sibling of the ScrollArea, not inside
       // it, so it stays visible while the body scrolls.

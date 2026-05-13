@@ -723,7 +723,10 @@ describe('PairingDialog', () => {
     vi.useRealTimers()
   })
 
-  it('dialog body has overflow-y-auto for small screens', async () => {
+  it('dialog body renders the DialogBody primitive so a tall dialog scrolls instead of clipping', async () => {
+    // pending/dialog-responsiveness-primitive-2026-05-13: DialogBody owns the
+    // scrollable region (flex-1 min-h-0 + ScrollArea); the frame stays
+    // overflow-hidden via the DialogContent base so header/footer remain pinned.
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_pairing')
         return { passphrase: 'word1 word2 word3 word4', qr_svg: '<svg></svg>' }
@@ -735,9 +738,10 @@ describe('PairingDialog', () => {
     await waitFor(() => {
       const dialog = document.querySelector('.pairing-dialog')
       expect(dialog).toBeInTheDocument()
-      const scrollArea = dialog?.querySelector('[data-slot="scroll-area"]')
-      expect(scrollArea).toBeInTheDocument()
-      expect(scrollArea?.className).toContain('max-h-[calc(100dvh-4rem)]')
+      const body = dialog?.querySelector('[data-slot="dialog-body"]')
+      expect(body).toBeInTheDocument()
+      expect(body?.className).toContain('flex-1')
+      expect(body?.className).toContain('min-h-0')
     })
   })
 

@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 import {
   Dialog,
+  DialogBody,
   DialogClose,
   DialogContent,
   DialogDescription,
@@ -35,6 +36,7 @@ describe('Dialog displayName', () => {
     ['DialogClose', DialogClose],
     ['DialogOverlay', DialogOverlay],
     ['DialogContent', DialogContent],
+    ['DialogBody', DialogBody],
     ['DialogHeader', DialogHeader],
     ['DialogFooter', DialogFooter],
     ['DialogTitle', DialogTitle],
@@ -69,7 +71,9 @@ describe('Dialog ref forwarding', () => {
 // ---------------------------------------------------------------------------
 
 describe('DialogContent viewport cap', () => {
-  it('caps height to dynamic viewport and scrolls overflow', () => {
+  it('caps height to dynamic viewport with flex-col + overflow-hidden so the body scrolls', () => {
+    // pending/dialog-responsiveness-primitive-2026-05-13: DialogContent owns the
+    // viewport cap + pinned header/footer; DialogBody owns the scrollable region.
     const { baseElement } = render(
       <Dialog open>
         <DialogContent>
@@ -81,7 +85,27 @@ describe('DialogContent viewport cap', () => {
     const content = baseElement.querySelector('[data-slot="dialog-content"]')
     expect(content).not.toBeNull()
     expect(content?.className).toContain('max-h-[calc(100dvh-2rem)]')
-    expect(content?.className).toContain('overflow-y-auto')
+    expect(content?.className).toContain('flex')
+    expect(content?.className).toContain('flex-col')
+    expect(content?.className).toContain('overflow-hidden')
+  })
+
+  it('DialogBody renders a ScrollArea-backed slot with the flex-1 min-h-0 scroll pattern', () => {
+    const { baseElement } = render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Title</DialogTitle>
+          <DialogDescription>Description</DialogDescription>
+          <DialogBody>
+            <p>Body</p>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>,
+    )
+    const body = baseElement.querySelector('[data-slot="dialog-body"]')
+    expect(body).not.toBeNull()
+    expect(body?.className).toContain('flex-1')
+    expect(body?.className).toContain('min-h-0')
   })
 })
 

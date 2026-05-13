@@ -33,6 +33,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -112,30 +113,32 @@ export function QuickCaptureDialog({
           <DialogTitle>{t('quickCapture.dialogTitle')}</DialogTitle>
           <DialogDescription>{t('settings.quickCapture.description')}</DialogDescription>
         </DialogHeader>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            void handleSubmit()
-          }}
-        >
-          <Textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder={t('quickCapture.placeholder')}
-            aria-label={t('quickCapture.captureInputLabel')}
-            disabled={submitting}
-            // Cmd / Ctrl + Enter as a power-user submit shortcut.
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                e.preventDefault()
-                void handleSubmit()
-              }
+        <DialogBody>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              void handleSubmit()
             }}
-            rows={4}
-            data-testid="quick-capture-textarea"
-          />
-        </form>
+          >
+            <Textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder={t('quickCapture.placeholder')}
+              aria-label={t('quickCapture.captureInputLabel')}
+              disabled={submitting}
+              // Cmd / Ctrl + Enter as a power-user submit shortcut.
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault()
+                  void handleSubmit()
+                }
+              }}
+              rows={4}
+              data-testid="quick-capture-textarea"
+            />
+          </form>
+        </DialogBody>
         <DialogFooter>
           <Button
             variant="outline"

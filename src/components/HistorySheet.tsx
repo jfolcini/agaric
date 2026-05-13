@@ -8,8 +8,14 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { HistoryPanel } from './HistoryPanel'
-import { ScrollArea } from './ui/scroll-area'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from './ui/sheet'
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from './ui/sheet'
 
 export interface HistorySheetProps {
   blockId: string | null
@@ -25,16 +31,19 @@ export function HistorySheet({
   const { t } = useTranslation()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right">
+      {/* `sm:max-w-lg` (≈512 px) overrides the Sheet primitive's default
+          `sm:max-w-sm` (≈384 px) — history rows are dense (timestamp +
+          op-icon + author + multi-line preview + diff toggle + restore
+          button) and 384 px guarantees aggressive single-word wrapping in
+          the diff content. 512 px keeps the filter bar on one row and the
+          diff hunks readable. Per-call override; other Sheet consumers
+          keep the default width. */}
+      <SheetContent side="right" className="sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{t('history.title')}</SheetTitle>
           <SheetDescription>{t('history.description')}</SheetDescription>
         </SheetHeader>
-        <ScrollArea className="flex-1 overflow-hidden">
-          <div className="mt-4 space-y-3 px-4 pb-4">
-            {blockId && <HistoryPanel blockId={blockId} />}
-          </div>
-        </ScrollArea>
+        <SheetBody>{blockId && <HistoryPanel blockId={blockId} />}</SheetBody>
       </SheetContent>
     </Sheet>
   )

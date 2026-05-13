@@ -14,8 +14,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { announce } from '@/lib/announcer'
@@ -449,13 +454,13 @@ export function PairingDialog({
             }
           }}
         >
-          <ScrollArea className="max-h-[calc(100dvh-4rem)]">
-            <div ref={dialogRef}>
-              {/* Header */}
-              <DialogHeader className="text-left mb-4">
-                <DialogTitle>{t('pairing.dialogTitle')}</DialogTitle>
-              </DialogHeader>
+          {/* Header */}
+          <DialogHeader className="text-left mb-4">
+            <DialogTitle>{t('pairing.dialogTitle')}</DialogTitle>
+          </DialogHeader>
 
+          <DialogBody>
+            <div ref={dialogRef}>
               {/* Error message with Retry button (#282) */}
               {error && (
                 <div
@@ -530,7 +535,7 @@ export function PairingDialog({
                 {error}
               </div>
             </div>
-          </ScrollArea>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 

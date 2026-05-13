@@ -4,11 +4,14 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 import { CloseButtonIcon, closeButtonClassName } from './close-button'
+import { ScrollArea } from './scroll-area'
 
 // PERF: hoisted from inline string in render — twMerge only re-parses caller className.
 // See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
+// LAYOUT: `flex flex-col + overflow-hidden` make header/footer pinned while DialogBody
+// owns the scrollable region. See pending/dialog-responsiveness-primitive-2026-05-13.md.
 const DIALOG_CONTENT_BASE =
-  'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-lg border p-6 shadow-lg duration-moderate sm:max-w-lg'
+  'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 flex flex-col w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-lg border p-6 shadow-lg duration-moderate sm:max-w-lg'
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -74,6 +77,28 @@ const DialogContent = ({
 }
 DialogContent.displayName = 'DialogContent'
 
+interface DialogBodyProps {
+  ref?: React.Ref<HTMLDivElement>
+  className?: string
+  children?: React.ReactNode
+  'data-testid'?: string
+}
+
+const DialogBody = ({ ref, className, children, ...rest }: DialogBodyProps) => {
+  return (
+    <ScrollArea
+      ref={ref}
+      data-slot="dialog-body"
+      data-testid={rest['data-testid']}
+      className={cn('flex-1 min-h-0 -mx-6', className)}
+      viewportClassName="px-6"
+    >
+      <div className="space-y-4 min-w-0">{children}</div>
+    </ScrollArea>
+  )
+}
+DialogBody.displayName = 'DialogBody'
+
 const DialogHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) => {
   return (
     <div
@@ -132,6 +157,7 @@ DialogDescription.displayName = 'DialogDescription'
 
 export {
   Dialog,
+  DialogBody,
   DialogClose,
   DialogContent,
   DialogDescription,

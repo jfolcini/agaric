@@ -6,11 +6,18 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 import { CloseButtonIcon, closeButtonClassName } from './close-button'
+import { ScrollArea } from './scroll-area'
 
 // PERF: hoisted from inline string in render — twMerge only re-parses caller className.
 // See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
+//
+// `flex flex-col overflow-hidden p-6` is baked into the base so consumers
+// can drop a `<SheetBody>` slot and get a properly height-constrained
+// scrollable region without re-stating padding / overflow at every call
+// site — mirrors the DialogContent shape from
+// pending/dialog-responsiveness-primitive-2026-05-13.md.
 const SHEET_CONTENT_BASE =
-  'fixed z-50 flex flex-col gap-4 bg-background shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
+  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-background p-6 shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -96,12 +103,16 @@ const SheetContent = ({
 }
 SheetContent.displayName = 'SheetContent'
 
+// Header/Footer dropped their own `p-4` when SheetContent gained `p-6`
+// (mirrors DialogHeader/DialogFooter, which also rely on DialogContent's
+// padding frame). Avoids the double-padding regression — the title now
+// sits at the same 24 px gutter as the SheetBody contents below.
 const SheetHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) => {
   return (
     <div
       ref={ref}
       data-slot="sheet-header"
-      className={cn('flex flex-col gap-1.5 p-4', className)}
+      className={cn('flex flex-col gap-1.5', className)}
       {...props}
     />
   )
@@ -113,7 +124,7 @@ const SheetFooter = ({ ref, className, ...props }: React.ComponentProps<'div'>) 
     <div
       ref={ref}
       data-slot="sheet-footer"
-      className={cn('mt-auto flex flex-col gap-2 p-4', className)}
+      className={cn('mt-auto flex flex-col gap-2', className)}
       {...props}
     />
   )
@@ -152,8 +163,36 @@ const SheetDescription = ({
 }
 SheetDescription.displayName = 'SheetDescription'
 
+/**
+ * SheetBody — scrollable content slot for `<SheetContent>`.
+ *
+ * Wraps children in a `ScrollArea` constrained to `flex-1 min-h-0` so it
+ * shares the SheetContent's available height (everything not consumed by
+ * the header/footer) instead of overflowing past the viewport. The
+ * `-mx-6` + `viewportClassName="px-6"` trick lets the scrollbar sit in
+ * the SheetContent's padding gutter while keeping the inner content
+ * indented by the same 24 px the header uses — so left edges align.
+ *
+ * Optional: pre-existing consumers that render their own ad-hoc body
+ * wrappers continue to work since SheetContent's base padding/overflow
+ * was added defensively. Prefer SheetBody for new code.
+ */
+interface SheetBodyProps {
+  ref?: React.Ref<HTMLDivElement>
+  className?: string
+  children?: React.ReactNode
+}
+
+const SheetBody = ({ ref, className, children }: SheetBodyProps) => (
+  <ScrollArea ref={ref} className={cn('flex-1 min-h-0 -mx-6', className)} viewportClassName="px-6">
+    <div className="space-y-4 min-w-0">{children}</div>
+  </ScrollArea>
+)
+SheetBody.displayName = 'SheetBody'
+
 export {
   Sheet,
+  SheetBody,
   SheetClose,
   SheetContent,
   SheetDescription,

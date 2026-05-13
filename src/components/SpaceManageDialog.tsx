@@ -50,13 +50,13 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
 import { createSpace, getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
@@ -375,13 +375,13 @@ export function SpaceManageDialog({
             <DialogTitle>{t('space.manageDialogTitle')}</DialogTitle>
             <DialogDescription>{t('space.manageDialogDescription')}</DialogDescription>
           </DialogHeader>
-          <ScrollArea className="max-h-[85vh]">
+          <DialogBody>
             <SpaceOnboardingHint open={open} availableSpaceCount={availableSpaces.length} />
             <div data-slot="space-manage-list">{rows}</div>
             <div className="flex justify-end pt-2">
               <CreateSpaceForm onCreated={handleRefresh} />
             </div>
-          </ScrollArea>
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </TooltipProvider>
