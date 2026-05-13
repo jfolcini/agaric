@@ -430,7 +430,8 @@ async fn seed_page_with_ops(
         let total_ms = base_secs * 1000 + offset_ms;
         let secs = total_ms / 1000;
         let ms = (total_ms % 1000) as i32;
-        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, ms as u32 * 1_000_000)
+        let ms_u32 = u32::try_from(ms).expect("ms is in 0..1000 by construction");
+        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, ms_u32 * 1_000_000)
             .expect("valid timestamp");
         let ts = dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
         op_log::append_local_op_at(pool, device_id, payload, ts)

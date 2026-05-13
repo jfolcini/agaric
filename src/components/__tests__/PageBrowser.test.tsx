@@ -575,10 +575,12 @@ describe('PageBrowser', () => {
 
     const { container } = render(<PageBrowser />)
 
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
+    // Wait for the rendered page before auditing — wrapping axe() in
+    // waitFor() retries the (slow) audit each tick and reliably blows
+    // past the 1s default. Direct findByText is the settle signal.
+    await screen.findByText('Accessible page')
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   it('page item button has focus-visible ring classes', async () => {
@@ -1531,11 +1533,10 @@ describe('PageBrowser', () => {
       })
 
       const { container } = render(<PageBrowser />)
+      await screen.findByText('Accessible page')
 
-      await waitFor(async () => {
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 
@@ -2007,10 +2008,8 @@ describe('PageBrowser', () => {
       expect(screen.getByText('Starred')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
-      await waitFor(async () => {
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
 
     it('FEAT-12: a11y audit passes on filtered state with grouping', async () => {
@@ -2032,10 +2031,12 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'Apple')
 
-      await waitFor(async () => {
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
+      // The filter is synchronous on `setState` — by the time
+      // user.type resolves the filtered DOM is rendered. axe() runs
+      // once; do not wrap in waitFor() (its retry-the-slow-audit loop
+      // reliably blows past the 1s default — past flake source).
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
 
     // ---------------------------------------------------------------
@@ -2302,10 +2303,11 @@ describe('PageBrowser', () => {
       expect(screen.getByText('Starred')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
-      await waitFor(async () => {
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
+      // DOM is settled by the synchronous getByText assertions above;
+      // wrapping axe() in waitFor() retries the (slow) audit each tick
+      // and reliably blows past the 1s default — was a flake source.
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
 
     it('star buttons pass a11y audit', async () => {
@@ -2324,10 +2326,8 @@ describe('PageBrowser', () => {
 
       await screen.findByText('Starred Page')
 
-      await waitFor(async () => {
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
 
     // UX-226: ScrollArea replaces bare overflow-y-auto on the page list

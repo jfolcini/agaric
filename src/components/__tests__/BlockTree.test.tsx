@@ -1948,6 +1948,17 @@ describe('BlockTree resolve cache preload', () => {
       due_date: null,
       scheduled_date: null,
     }
+    const handleBatchResolve = (args: unknown) => {
+      const ids = ((args as { ids?: string[] } | undefined)?.ids as string[]) ?? []
+      return ids
+        .filter((id: string) => id === CONTENT_ULID)
+        .map((id: string) => ({
+          id,
+          title: 'Referenced block',
+          block_type: 'content',
+          deleted: false,
+        }))
+    }
     // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'load_page_subtree') {
@@ -1955,22 +1966,8 @@ describe('BlockTree resolve cache preload', () => {
         if (a?.['rootBlockId'] === 'PAGE_1') return [blockWithLink]
         return []
       }
-      if (cmd === 'list_blocks') {
-        if (args?.blockType === 'page') return emptyPage
-        return emptyPage
-      }
-      if (cmd === 'batch_resolve') {
-        // biome-ignore lint/suspicious/noExplicitAny: test mock
-        const ids = ((args as any)?.ids as string[]) ?? []
-        return ids
-          .filter((id: string) => id === CONTENT_ULID)
-          .map((id: string) => ({
-            id,
-            title: 'Referenced block',
-            block_type: 'content',
-            deleted: false,
-          }))
-      }
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'batch_resolve') return handleBatchResolve(args)
       if (cmd === 'get_batch_properties') {
         const result: Record<string, unknown[]> = {}
         for (const id of args?.blockIds ?? []) result[id] = []

@@ -59,7 +59,7 @@ const BLOCK_ID_POOL: &[&str] = &[
 /// One of [`BLOCK_ID_POOL`] uniformly at random.  Keeping the pool
 /// tiny is intentional — see module docstring "3-block pool".
 fn block_id_strategy() -> impl Strategy<Value = String> {
-    proptest::sample::select(BLOCK_ID_POOL).prop_map(|s| s.to_string())
+    proptest::sample::select(BLOCK_ID_POOL).prop_map(std::string::ToString::to_string)
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ fn content_strategy() -> impl Strategy<Value = String> {
 /// of production property keys (`status`, `priority`, `due_date`, …).
 fn prop_key_strategy() -> impl Strategy<Value = String> {
     proptest::sample::select(vec!["status", "priority", "due_date", "owner"])
-        .prop_map(|s| s.to_string())
+        .prop_map(std::string::ToString::to_string)
 }
 
 /// Short property value text.  Bounded as `content_strategy` — see
@@ -251,7 +251,7 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
 fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate::error::AppError> {
     match op {
         OpPayload::CreateBlock(p) => {
-            let parent = p.parent_id.as_ref().map(|id| id.as_str());
+            let parent = p.parent_id.as_ref().map(BlockId::as_str);
             let position = p.position.unwrap_or(0);
             engine.apply_create_block(
                 p.block_id.as_str(),
@@ -268,7 +268,7 @@ fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate:
             engine.apply_delete_block(p.block_id.as_str())?;
         }
         OpPayload::MoveBlock(p) => {
-            let parent = p.new_parent_id.as_ref().map(|id| id.as_str());
+            let parent = p.new_parent_id.as_ref().map(BlockId::as_str);
             engine.apply_move_block(p.block_id.as_str(), parent, p.new_position)?;
         }
         OpPayload::SetProperty(p) => {
