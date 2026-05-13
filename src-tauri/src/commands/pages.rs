@@ -1257,3 +1257,46 @@ pub async fn list_all_pages_in_space(
         .await
         .map_err(sanitize_internal_error)
 }
+
+/// Return the IDs of every page in `space_id` whose `template`
+/// property is set to `'true'`.  Used by the graph view to flag
+/// template pages with a visual marker; no pagination, no clamp —
+/// templates are a small, bounded set by convention.
+#[instrument(skip(pool), err)]
+pub async fn list_template_page_ids_in_space_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query_scalar!(
+        r#"SELECT b.id as "id!: String"
+           FROM blocks b
+           JOIN block_properties bp_tpl
+               ON bp_tpl.block_id = b.id
+              AND bp_tpl.key = 'template'
+              AND bp_tpl.value_text = 'true'
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             AND COALESCE(b.page_id, b.id) IN (
+                 SELECT bp.block_id FROM block_properties bp
+                 WHERE bp.key = 'space' AND bp.value_ref = ?1
+             )"#,
+        space_id,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Tauri command: list template page IDs in `space_id`.
+/// Delegates to [`list_template_page_ids_in_space_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_template_page_ids_in_space(
+    pool: State<'_, ReadPool>,
+    space_id: String,
+) -> Result<Vec<String>, AppError> {
+    list_template_page_ids_in_space_inner(&pool.0, &space_id)
+        .await
+        .map_err(sanitize_internal_error)
+}

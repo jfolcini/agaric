@@ -3048,3 +3048,67 @@ async fn list_all_pages_in_space_tag_filter_or_mode() {
         "empty tag-filter slice must not exclude anything; got {rows:?}",
     );
 }
+
+// ======================================================================
+// list_template_page_ids_in_space — graph view template flagging
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_template_page_ids_in_space_returns_template_pages_only() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "TPL_T1", "page", "Template One", None, Some(1)).await;
+    insert_block(&pool, "TPL_T2", "page", "Template Two", None, Some(2)).await;
+    insert_block(&pool, "TPL_REG", "page", "Regular Page", None, Some(3)).await;
+    insert_block(&pool, "TPL_DEL", "page", "Deleted Template", None, Some(4)).await;
+    insert_block(
+        &pool,
+        "TPL_FOREIGN",
+        "page",
+        "Foreign Template",
+        None,
+        Some(5),
+    )
+    .await;
+    assign_to_space(&pool, "TPL_T1", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_T2", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_REG", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_DEL", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_FOREIGN", TEST_SPACE_B_ID).await;
+
+    // Stamp template=true on three pages (one live in space A, one
+    // soft-deleted in space A, one in space B).
+    for id in ["TPL_T1", "TPL_T2", "TPL_DEL", "TPL_FOREIGN"] {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'template', 'true')",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // Stamp template=false on the regular page (should not surface).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES ('TPL_REG', 'template', 'false')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-05-09T00:00:00Z' WHERE id = 'TPL_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut ids = list_template_page_ids_in_space_inner(&pool, TEST_SPACE_ID)
+        .await
+        .unwrap();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["TPL_T1".to_string(), "TPL_T2".to_string()],
+        "must include only live template-true pages in the scope; \
+         must exclude template=false, soft-deleted, and foreign-space pages",
+    );
+}

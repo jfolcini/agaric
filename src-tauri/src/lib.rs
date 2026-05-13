@@ -236,6 +236,7 @@ macro_rules! agaric_commands {
             // All-pages-in-space (export / graph) — no-pagination IPC for callers
             // that genuinely need every page in the space
             $crate::commands::list_all_pages_in_space,
+            $crate::commands::list_template_page_ids_in_space,
         ]
     };
 }

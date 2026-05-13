@@ -184,6 +184,26 @@ export const HANDLERS: Record<string, Handler> = {
     return items
   },
 
+  // Every page in the space whose `template` property is set to 'true'.
+  // No pagination, no clamp; the graph view uses this to flag templates.
+  list_template_page_ids_in_space: (args) => {
+    const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
+    const ids: string[] = []
+    for (const b of blocks.values()) {
+      if (b['block_type'] !== 'page') continue
+      if (b['deleted_at']) continue
+      const blockProps = properties.get(b['id'] as string)
+      if (!blockProps) continue
+      const spaceProp = blockProps.get('space')
+      if (spaceProp?.['value_ref'] !== spaceId) continue
+      const tplProp = blockProps.get('template')
+      if (tplProp?.['value_text'] !== 'true') continue
+      ids.push(b['id'] as string)
+    }
+    return ids
+  },
+
   list_undated_tasks: () => {
     const items = [...blocks.values()].filter(
       (b) =>

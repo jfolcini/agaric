@@ -188,8 +188,6 @@ class MockWorker {
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
-
 // Save original Worker so we can restore it
 const OriginalWorker = globalThis['Worker'] as typeof Worker | undefined
 
@@ -233,7 +231,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -256,7 +254,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -300,7 +298,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -343,7 +341,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.reject(new Error('network failure'))
       if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -370,7 +368,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.reject(new Error('network failure'))
       if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -391,7 +389,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -417,7 +415,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -450,7 +448,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -478,7 +476,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -504,7 +502,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -532,7 +530,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
     }
@@ -608,7 +606,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -645,7 +643,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -673,7 +671,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -703,7 +701,7 @@ describe('GraphView', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -734,7 +732,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -754,7 +752,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -772,7 +770,7 @@ describe('GraphView', () => {
         if (cmd === 'list_all_pages_in_space')
           return Promise.resolve([{ id: 'page-1', content: 'Page One', block_type: 'page' }])
         if (cmd === 'list_page_links') return Promise.reject(new Error('link fetch failed'))
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -793,7 +791,7 @@ describe('GraphView', () => {
             { id: 'page-2', content: 'Page Two', block_type: 'page' },
           ])
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -838,7 +836,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -875,7 +873,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -903,7 +901,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -931,7 +929,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -965,7 +963,7 @@ describe('GraphView', () => {
         mockedInvoke.mockImplementation((cmd: string) => {
           if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
           if (cmd === 'list_page_links') return Promise.resolve([])
-          if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+          if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
           return Promise.resolve(null)
         })
 
@@ -997,7 +995,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.reject(new Error('network failure'))
         if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1019,7 +1017,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1043,7 +1041,7 @@ describe('GraphView', () => {
           return new Promise((resolve) => {
             resolveLinks = resolve
           })
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1091,7 +1089,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1124,7 +1122,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1159,7 +1157,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1198,7 +1196,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1257,7 +1255,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1297,7 +1295,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1343,7 +1341,7 @@ describe('GraphView', () => {
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1377,7 +1375,7 @@ describe('GraphView', () => {
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 
@@ -1387,10 +1385,10 @@ describe('GraphView', () => {
         expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
 
-      // Verify queryByProperty for templates was called
+      // Verify list_template_page_ids_in_space was called
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'query_by_property',
-        expect.objectContaining({ key: 'template', valueText: 'true' }),
+        'list_template_page_ids_in_space',
+        expect.objectContaining({ spaceId: '' }),
       )
       // Verify list_all_pages_in_space was called (no tag filter)
       expect(mockedInvoke).toHaveBeenCalledWith(
@@ -1415,7 +1413,7 @@ describe('GraphView', () => {
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
 

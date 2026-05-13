@@ -39,7 +39,7 @@ Frontend "I want all" call sites that ignore those ceilings:
 | HIGH | `src/components/PropertyRowEditor.tsx:254` | 500 | one-shot list, JS `.filter()` | ref picker silently misses pages past 100 |
 | ~~HIGH~~ DONE | ~~`src/components/GraphView.helpers.ts:55, 62, 76`~~ | ~~5000~~ | now routes through `list_all_pages_in_space(spaceId, tagIds)` IPC (no pagination, no clamp) | — |
 | ~~HIGH~~ DONE | ~~`src/lib/export-graph.ts:19`~~ | ~~1000~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp) | — |
-| HIGH | `src/components/GraphView.helpers.ts:146` | 1000 | one-shot `queryByProperty` | template list truncated |
+| ~~HIGH~~ DONE | ~~`src/components/GraphView.helpers.ts:146`~~ | ~~1000~~ | now routes through `list_template_page_ids_in_space` IPC (no pagination, no clamp) | — |
 | MEDIUM | `src/hooks/useDuePanelData.ts:210, 261` | 500 | routes via agenda (cap 500) — at-edge | OK today, fragile to refactor |
 | MEDIUM | `src/components/SearchPanel.tsx:138` | 20 | list + JS `.filter()` | page picker can't find pages past index 19 |
 | MEDIUM | `src/hooks/useBlockDatePicker.ts:143` | 500 | one-shot | date-picker page list truncated |

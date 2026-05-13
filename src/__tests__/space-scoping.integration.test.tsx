@@ -36,6 +36,7 @@ beforeEach(() => {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_page_links') return []
     if (cmd === 'list_all_pages_in_space') return []
+    if (cmd === 'list_template_page_ids_in_space') return []
     return emptyPage
   })
   // Reset the space store between tests so seeding is explicit.
@@ -102,16 +103,16 @@ describe('FEAT-3 Phase 4 — space scoping integration', () => {
   it('GraphView.helpers.fetchGraphData scopes every IPC call to the active space', async () => {
     await fetchGraphData([], 'SPACE_GRAPH')
 
-    // `list_all_pages_in_space` takes the bare `spaceId: string` shape.
+    // `list_all_pages_in_space` + `list_template_page_ids_in_space` both
+    // take the bare `spaceId: string` shape.
     const listAllPagesArgs = lastInvokeArgs('list_all_pages_in_space')
     expect(listAllPagesArgs['spaceId']).toBe('SPACE_GRAPH')
-    // PEND-18 Phase 3: `listPageLinks` and `queryByProperty` now take
-    // a `scope: SpaceScope` tagged-enum on the IPC boundary; the
+    const listTemplateArgs = lastInvokeArgs('list_template_page_ids_in_space')
+    expect(listTemplateArgs['spaceId']).toBe('SPACE_GRAPH')
+    // PEND-18 Phase 3: `listPageLinks` takes `scope: SpaceScope`; the
     // wrapper translates `spaceId | null` into `{ kind: 'active', ... }`.
     const listPageLinksArgs = lastInvokeArgs('list_page_links')
     expect(listPageLinksArgs['scope']).toEqual({ kind: 'active', space_id: 'SPACE_GRAPH' })
-    const queryByPropertyArgs = lastInvokeArgs('query_by_property')
-    expect(queryByPropertyArgs['scope']).toEqual({ kind: 'active', space_id: 'SPACE_GRAPH' })
   })
 
   it('TemplatesView lists templates scoped to the current space', async () => {
