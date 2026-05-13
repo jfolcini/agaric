@@ -16,8 +16,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { logger } from '../lib/logger'
 import { Button } from './ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
-import { ScrollArea } from './ui/scroll-area'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog'
 
 // Set worker path — served from public/
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -229,7 +235,7 @@ export function PdfViewerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col">
+      <DialogContent className="max-w-5xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle>{filename}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -237,29 +243,25 @@ export function PdfViewerDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div ref={containerRef} className="flex-1 min-h-0">
-          <ScrollArea className="h-full bg-muted/30 rounded-md">
-            <div className="flex items-start justify-center">
-              {loading && (
-                <div className="flex items-center justify-center p-8" data-testid="pdf-loading">
-                  <span className="text-muted-foreground text-sm">{t('pdfViewer.loading')}</span>
-                </div>
-              )}
+        <DialogBody ref={containerRef} className="bg-muted/30 rounded-md">
+          <div className="flex items-start justify-center">
+            {loading && (
+              <div className="flex items-center justify-center p-8" data-testid="pdf-loading">
+                <span className="text-muted-foreground text-sm">{t('pdfViewer.loading')}</span>
+              </div>
+            )}
 
-              {error && (
-                <div className="flex items-center justify-center p-8" data-testid="pdf-error">
-                  <span className="text-destructive text-sm">
-                    {t('pdfViewer.error', { error })}
-                  </span>
-                </div>
-              )}
+            {error && (
+              <div className="flex items-center justify-center p-8" data-testid="pdf-error">
+                <span className="text-destructive text-sm">{t('pdfViewer.error', { error })}</span>
+              </div>
+            )}
 
-              {!loading && !error && numPages > 0 && (
-                <canvas ref={canvasRef} className="max-w-full" data-testid="pdf-canvas" />
-              )}
-            </div>
-          </ScrollArea>
-        </div>
+            {!loading && !error && numPages > 0 && (
+              <canvas ref={canvasRef} className="max-w-full" data-testid="pdf-canvas" />
+            )}
+          </div>
+        </DialogBody>
 
         {!loading && !error && numPages > 0 && (
           <div className="flex items-center justify-center gap-4 pt-2" data-testid="pdf-nav">

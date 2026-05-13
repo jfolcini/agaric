@@ -86,10 +86,15 @@ export function HistoryFilterBar({
   const { t } = useTranslation()
 
   return (
-    <div className="history-filter-bar flex flex-col sm:flex-row sm:items-center gap-3">
-      <label htmlFor="op-type-filter" className="text-sm font-medium text-muted-foreground">
-        {t('history.filterLabel')}
-      </label>
+    // PEND block-history-sheet-fix: the bar uses `flex flex-wrap items-center`
+    // so it fills available width and wraps row-by-row only when it actually
+    // runs out of space — works for both the wide HistoryView and the narrow
+    // ~512 px Sheet without a media query. The Select trigger, help-popover
+    // (?), and clear-✕ live in the same flex row so they read as one cluster.
+    // The standalone `<label>` was dropped because the Select already has an
+    // `aria-label` — the visible duplicate was just stealing a vertical row
+    // at narrow widths.
+    <div className="history-filter-bar flex flex-wrap items-center gap-2">
       <Select
         value={opTypeFilter ?? '__all__'}
         onValueChange={(val) => onFilterChange(val === '__all__' ? null : val)}
@@ -145,7 +150,8 @@ export function HistoryFilterBar({
         </PopoverContent>
       </Popover>
       {/* UX-275 sub-fix 3: inline ✕ to clear an active filter without
-          opening the dropdown. */}
+          opening the dropdown. Sits next to the Select trigger so it
+          reads as part of the same filter control. */}
       {opTypeFilter !== null && (
         <IconButton
           type="button"
@@ -167,7 +173,7 @@ export function HistoryFilterBar({
           either prop is omitted (e.g., per-page HistoryPanel mode). */}
       {showAllSpaces !== undefined && onShowAllSpacesChange !== undefined && (
         <div
-          className="history-filter-bar-all-spaces sm:ml-auto flex items-center gap-2"
+          className="history-filter-bar-all-spaces ml-auto flex items-center gap-2"
           title={t('history.allSpacesTooltip')}
         >
           <Label

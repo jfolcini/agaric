@@ -68,28 +68,35 @@ describe('HistorySheet', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  // PEND-28 M12: the override `w-3/4 sm:w-80` locked the sheet to 320 px on
-  // sm+ and produced a 270 px-wide drawer on a 360 px phone (75 %). Dropping
-  // the override falls back to the Sheet primitive's baseline (`w-3/4`
-  // mobile, `sm:max-w-sm` = 384 px on sm+), which gives more room for the
-  // history list.
-  it('SheetContent uses the Sheet primitive baseline width (no w-80 override)', () => {
+  // block-history-sheet-fix-2026-05-14: the Sheet was widened from
+  // `sm:max-w-sm` (≈384 px) to `sm:max-w-lg` (≈512 px) so dense history
+  // rows (timestamp + op-icon + author + multi-line preview + diff toggle
+  // + restore button) don't single-word-wrap and the filter bar stays
+  // one row. Per-call override; other Sheet consumers keep the default.
+  it('SheetContent carries `sm:max-w-lg` width override (~512 px)', () => {
     render(<HistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
-    // SheetContent renders with role="dialog"
     const dialog = screen.getByRole('dialog')
-    // Baseline mobile width comes from the Sheet primitive (w-3/4)…
+    // Baseline mobile width comes from the Sheet primitive (w-3/4) — the
+    // override only kicks in at the `sm:` breakpoint.
     expect(dialog).toHaveClass('w-3/4')
-    // …and the sm+ cap is `sm:max-w-sm` (384 px) — not the old `sm:w-80` override.
-    expect(dialog).toHaveClass('sm:max-w-sm')
+    expect(dialog).toHaveClass('sm:max-w-lg')
+    // The previous default (`sm:max-w-sm`) is still present on the base
+    // class string (tailwind-merge collapses to the per-call override at
+    // runtime), but the new `lg` override must be there.
     expect(dialog.className).not.toContain('sm:w-80')
   })
 
-  it('has padding wrapper inside ScrollArea', () => {
+  // block-history-sheet-fix-2026-05-14: body wrapper is now `<SheetBody>`
+  // (a ScrollArea with `flex-1 min-h-0 -mx-6 / viewportClassName="px-6"`)
+  // instead of the ad-hoc `<div className="mt-4 space-y-3 px-4 pb-4">`.
+  // The new pattern aligns left edges with the SheetHeader and keeps the
+  // LoadMoreButton at the bottom of the panel reachable on short windows.
+  it('wraps HistoryPanel in a SheetBody (ScrollArea with `flex-1 min-h-0`)', () => {
     render(<HistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
     const panel = screen.getByTestId('history-panel')
-    const wrapper = panel.closest('.px-4')
-    expect(wrapper).toBeInTheDocument()
-    expect(wrapper).toHaveClass('mt-4', 'space-y-3', 'pb-4')
+    const scrollRoot = panel.closest('[data-slot="scroll-area"]')
+    expect(scrollRoot).not.toBeNull()
+    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-6')
   })
 
   it('has no a11y violations when open', async () => {

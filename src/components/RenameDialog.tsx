@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -111,35 +112,37 @@ export function RenameDialog({
           <DialogTitle>{title ?? t('rename.title')}</DialogTitle>
           <DialogDescription>{description ?? t('rename.deviceName')}</DialogDescription>
         </DialogHeader>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            handleSave()
-          }}
-        >
-          <Input
-            value={name}
-            onChange={(e) => {
-              // Strip control chars eagerly so paste of binary noise can't
-              // even appear in the field. Trimming is deferred until submit
-              // so users can still type spaces between words.
-              setName(e.target.value.replace(CONTROL_CHARS, ''))
-              if (!touched) setTouched(true)
+        <DialogBody>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleSave()
             }}
-            onBlur={() => setTouched(true)}
-            placeholder={placeholder ?? t('rename.placeholder')}
-            aria-label={ariaLabel ?? t('device.deviceNameLabel')}
-            aria-invalid={showError ? true : undefined}
-            aria-describedby={showError ? errorId : undefined}
-            maxLength={MAX_RENAME_LENGTH * 2}
-            autoFocus
-          />
-          {showError && errorMessage ? (
-            <p id={errorId} className="rename-error mt-1 text-xs text-destructive" role="alert">
-              {errorMessage}
-            </p>
-          ) : null}
-        </form>
+          >
+            <Input
+              value={name}
+              onChange={(e) => {
+                // Strip control chars eagerly so paste of binary noise can't
+                // even appear in the field. Trimming is deferred until submit
+                // so users can still type spaces between words.
+                setName(e.target.value.replace(CONTROL_CHARS, ''))
+                if (!touched) setTouched(true)
+              }}
+              onBlur={() => setTouched(true)}
+              placeholder={placeholder ?? t('rename.placeholder')}
+              aria-label={ariaLabel ?? t('device.deviceNameLabel')}
+              aria-invalid={showError ? true : undefined}
+              aria-describedby={showError ? errorId : undefined}
+              maxLength={MAX_RENAME_LENGTH * 2}
+              autoFocus
+            />
+            {showError && errorMessage ? (
+              <p id={errorId} className="rename-error mt-1 text-xs text-destructive" role="alert">
+                {errorMessage}
+              </p>
+            ) : null}
+          </form>
+        </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('rename.cancel')}

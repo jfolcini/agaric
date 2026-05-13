@@ -67,18 +67,24 @@ beforeEach(() => {
 })
 
 describe('HistoryFilterBar', () => {
-  it('renders filter label and dropdown', () => {
+  // block-history-sheet-fix-2026-05-14: the standalone visible label was
+  // dropped — the Select's `aria-label="Filter by operation type"` is the
+  // accessible name, and the visible duplicate was stealing a vertical
+  // row at narrow widths (the Sheet at ≈360 px). The combobox is still
+  // queryable by its accessible name; that's the regression-resilient
+  // contract.
+  it('renders the filter dropdown queryable by accessible name', () => {
     const onFilterChange = vi.fn()
     render(<HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} {...baseProps} />)
 
-    expect(screen.getByText('Filter:')).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: /Filter by operation type/ })).toBeInTheDocument()
   })
 
-  // PEND-28b M9: the row container stacks on phones and switches to a row
-  // at the `sm:` breakpoint so the "All spaces" toggle doesn't run off the
-  // right edge on a 360 px viewport.
-  it('row container stacks on mobile and switches to a row at sm:', () => {
+  // block-history-sheet-fix-2026-05-14: the row container is now
+  // `flex flex-wrap items-center gap-2` (was `flex flex-col sm:flex-row`).
+  // The wrap-on-overflow model works for both the wide HistoryView and
+  // the narrow ~512 px Sheet without a media query.
+  it('row container uses `flex flex-wrap items-center` (compact, wraps when needed)', () => {
     const onFilterChange = vi.fn()
     const { container } = render(
       <HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} {...baseProps} />,
@@ -86,8 +92,39 @@ describe('HistoryFilterBar', () => {
 
     const row = container.querySelector('.history-filter-bar')
     expect(row).not.toBeNull()
-    expect(row?.className).toContain('flex-col')
-    expect(row?.className).toContain('sm:flex-row')
+    expect(row?.className).toContain('flex-wrap')
+    expect(row?.className).toContain('items-center')
+    expect(row?.className).not.toContain('flex-col')
+    expect(row?.className).not.toContain('sm:flex-row')
+  })
+
+  // block-history-sheet-fix-2026-05-14: regression guard — at the
+  // default render width, all expected controls are visible in one row
+  // (the bar is `flex flex-wrap` so they only wrap when they actually
+  // overflow). Enumerate via role queries since the controls are
+  // queryable by accessible name even without a visible label.
+  it('renders all filter controls as siblings in a single flex row', () => {
+    const onFilterChange = vi.fn()
+    const onShowAllSpacesChange = vi.fn()
+    const { container } = render(
+      <HistoryFilterBar
+        opTypeFilter="edit_block"
+        onFilterChange={onFilterChange}
+        showAllSpaces={false}
+        onShowAllSpacesChange={onShowAllSpacesChange}
+      />,
+    )
+
+    const row = container.querySelector('.history-filter-bar')
+    expect(row).not.toBeNull()
+
+    // The Select trigger (rendered as a `combobox` by the global Radix
+    // Select mock), the legend `?` button, the clear `✕` button, and the
+    // "All spaces" switch should all be present.
+    expect(screen.getByRole('combobox', { name: /Filter by operation type/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Op type legend' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: /All spaces/i })).toBeInTheDocument()
   })
 
   it('shows all op type options', () => {

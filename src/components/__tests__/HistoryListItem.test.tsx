@@ -885,6 +885,21 @@ describe('BlockHistoryItem', () => {
     expect(screen.getByText('Non-reversible action')).toBeInTheDocument()
   })
 
+  // block-history-sheet-fix-2026-05-14: the non-restorable branch wraps
+  // the metadata core + the lock chip in a `flex flex-col` container so
+  // the chip drops onto its own line below the timestamp/device-id strip
+  // instead of competing for horizontal width. Every `create_block` row
+  // is non-restorable, so this was the single largest contributor to
+  // "crowded row" in the narrow Sheet.
+  it('non-restorable rows render the lock chip in a `flex-col` wrapper, not inline with the metadata', () => {
+    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
+    const lockLabel = screen.getByText('Non-reversible action')
+    const wrapper = lockLabel.closest('[data-testid="block-history-row-0"]')
+    expect(wrapper).not.toBeNull()
+    expect(wrapper).toHaveClass('flex', 'flex-col', 'items-start')
+    expect(wrapper).not.toHaveClass('items-center')
+  })
+
   it('does not show the lock affordance on restorable rows', () => {
     // Restorable rows shouldn't carry the "non-reversible" label —
     // that would be visually misleading (these rows DO respond to

@@ -23,7 +23,7 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
+import { AlertDialogAction, AlertDialogBody, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
@@ -96,7 +96,17 @@ export function ConfirmDialog({
               where Radix Dialog's Description serves the same a11y role. */}
           <parts.Description>{description}</parts.Description>
         </Header>
-        {children}
+        {/*
+          PEND dialog-responsiveness-primitive-2026-05-13: when the caller
+          supplies extra body content beyond the title+description, route it
+          through AlertDialogBody on desktop so a tall body scrolls and the
+          footer stays visible. The mobile Sheet path keeps its native flow
+          since a sibling Sheet primitive (SheetBody) is being introduced
+          separately. AlertDialogs with no children (the common confirm-
+          dialog shape) remain unchanged.
+        */}
+        {children != null &&
+          (parts.isMobile ? children : <AlertDialogBody>{children}</AlertDialogBody>)}
         <Footer>
           {parts.isMobile ? (
             <>
