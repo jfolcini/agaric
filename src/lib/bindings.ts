@@ -651,6 +651,11 @@ export const commands = {
 	 *  Delegates to [`list_template_page_ids_in_space_inner`].
 	 */
 	listTemplatePageIdsInSpace: (spaceId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_template_page_ids_in_space", { spaceId })),
+	/**
+	 *  Tauri command: load every active descendant under `root_block_id`
+	 *  in `space_id`.  Delegates to [`load_page_subtree_inner`].
+	 */
+	loadPageSubtree: (rootBlockId: string, spaceId: string) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
 };
 
 /* Types */

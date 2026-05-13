@@ -184,6 +184,35 @@ export const HANDLERS: Record<string, Handler> = {
     return items
   },
 
+  // Every active descendant under `rootBlockId` (one SELECT via the
+  // materializer-maintained `page_id` index in production). Replaces
+  // the FE-side recursive `listBlocks` walk.
+  load_page_subtree: (args) => {
+    const a = args as Record<string, unknown>
+    const rootBlockId = a['rootBlockId'] as string
+    const spaceId = a['spaceId'] as string
+    // Space-membership check — mirrors the backend.
+    const rootProps = properties.get(rootBlockId)
+    const rootSpace = rootProps?.get('space')
+    if (rootSpace?.['value_ref'] !== spaceId) {
+      throw new Error(`block '${rootBlockId}' not in current space '${spaceId}'`)
+    }
+    const items: Record<string, unknown>[] = []
+    for (const b of blocks.values()) {
+      if (b['id'] === rootBlockId) continue
+      if (b['deleted_at']) continue
+      if (b['page_id'] !== rootBlockId) continue
+      items.push(b)
+    }
+    items.sort((x, y) => {
+      const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+      const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+      if (px !== py) return px - py
+      return (x['id'] as string).localeCompare(y['id'] as string)
+    })
+    return items
+  },
+
   // Every page in the space whose `template` property is set to 'true'.
   // No pagination, no clamp; the graph view uses this to flag templates.
   list_template_page_ids_in_space: (args) => {

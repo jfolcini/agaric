@@ -68,16 +68,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
       ]
-      // Root level returns A and B
-      mockedInvoke.mockResolvedValueOnce({
-        items: blocks,
-        next_cursor: null,
-        has_more: false,
-      })
-      // Children of A — empty
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
-      // Children of B — empty
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce(blocks)
 
       await store.getState().load()
 
@@ -99,7 +90,7 @@ describe('PageBlockStore', () => {
       const loadPromise = store.getState().load()
       expect(store.getState().loading).toBe(true)
 
-      resolvePromise({ items: [], next_cursor: null, has_more: false })
+      resolvePromise([])
       await loadPromise
 
       expect(store.getState().loading).toBe(false)
@@ -114,19 +105,15 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocks).toEqual([])
     })
 
-    it('passes parentId through to list_blocks', async () => {
+    it('passes rootBlockId through to load_page_subtree', async () => {
       const s = createPageBlockStore('PARENT_42')
-      mockedInvoke.mockResolvedValue({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValue([])
 
       await s.getState().load()
 
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ parentId: 'PARENT_42' }),
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PARENT_42' }),
       )
     })
 
@@ -144,15 +131,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'old backend content' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'updated B from backend' }),
       ]
-      mockedInvoke.mockResolvedValueOnce({
-        items: backendBlocks,
-        next_cursor: null,
-        has_more: false,
-      })
-      // Children of A — empty
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
-      // Children of B — empty
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce(backendBlocks)
 
       await store.getState().load()
 
@@ -177,14 +156,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
         makeBlock({ id: 'C', parent_id: 'PAGE_1', content: 'new C from backend' }),
       ]
-      mockedInvoke.mockResolvedValueOnce({
-        items: backendBlocks,
-        next_cursor: null,
-        has_more: false,
-      })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce(backendBlocks)
 
       await store.getState().load()
 
@@ -208,13 +180,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'new A from backend' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
       ]
-      mockedInvoke.mockResolvedValueOnce({
-        items: backendBlocks,
-        next_cursor: null,
-        has_more: false,
-      })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce(backendBlocks)
 
       await store.getState().load()
 
@@ -226,11 +192,11 @@ describe('PageBlockStore', () => {
 
     it('FE-H-22 — skips IPC entirely when currentSpaceId is null (pre-bootstrap)', async () => {
       // Pre-bootstrap state: the space store has not hydrated yet.
-      // Earlier code would forward `?? ''` to `list_blocks` and rely on
-      // the backend treating `''` as a no-match SQL filter. We now fail
-      // closed: no IPC, no state change. The page stays in its initial
-      // `loading: true` slot until the space hydrates and load() is
-      // re-invoked.
+      // Earlier code would forward `?? ''` to the page-load IPC and
+      // rely on the backend treating `''` as a no-match SQL filter.
+      // We now fail closed: no IPC, no state change.  The page stays
+      // in its initial `loading: true` slot until the space hydrates
+      // and load() is re-invoked.
       useSpaceStore.setState({ currentSpaceId: null })
       const blocksBefore = store.getState().blocks
       const loadingBefore = store.getState().loading
@@ -240,125 +206,6 @@ describe('PageBlockStore', () => {
       expect(mockedInvoke).not.toHaveBeenCalled()
       expect(store.getState().blocks).toBe(blocksBefore)
       expect(store.getState().loading).toBe(loadingBefore)
-    })
-  })
-
-  // ---------------------------------------------------------------------------
-  // loadSubtree MAX_SUBTREE_BLOCKS recursion cap
-  // ---------------------------------------------------------------------------
-  describe('load — MAX_SUBTREE_BLOCKS recursion cap', () => {
-    // The cap exists in `loadSubtree()` (`src/stores/page-blocks.ts`) to
-    // prevent runaway recursion if the database is corrupted into a cycle
-    // or a pathologically wide tree. The constant is internal (2000), so
-    // these tests exercise the contract: the recursion terminates and the
-    // total invoke / block count stays bounded even when the backend would
-    // happily keep returning children.
-
-    it('skips recursing into children when a single response saturates the cap', async () => {
-      // 2000 blocks is the documented internal cap. Returning exactly 2000
-      // at the root makes the cap-after-fetch branch trigger immediately —
-      // no listBlocks call should be made for any child.
-      const items = Array.from({ length: 2000 }, (_, i) =>
-        makeBlock({
-          id: `B${String(i).padStart(4, '0')}`,
-          parent_id: 'PAGE_1',
-          position: i,
-        }),
-      )
-      mockedInvoke.mockResolvedValueOnce({
-        items,
-        next_cursor: null,
-        has_more: false,
-      })
-
-      await store.getState().load()
-
-      // Exactly one invoke: the root listBlocks call. No grandchild fan-out.
-      expect(mockedInvoke).toHaveBeenCalledTimes(1)
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ parentId: 'PAGE_1' }),
-      )
-      // The full batch survives — the cap stops recursion, not the page load.
-      expect(store.getState().blocks).toHaveLength(2000)
-      expect(store.getState().loading).toBe(false)
-    })
-
-    it('terminates recursion in a deep wide tree without exceeding the cap budget', async () => {
-      // Every listBlocks call returns 500 children, all of which would have
-      // children themselves. Without `MAX_SUBTREE_BLOCKS`, the breadth-first
-      // Promise.all expansion would scale as branching * branching * … per
-      // depth level. With the cap the cap-before-fetch and cap-after-fetch
-      // branches throttle the recursion to a small constant multiple of
-      // (cap / batch).
-      let callCount = 0
-      mockedInvoke.mockImplementation(async () => {
-        callCount++
-        return {
-          items: Array.from({ length: 500 }, (_, i) =>
-            makeBlock({ id: `B${callCount}-${i}`, parent_id: 'PAGE_1' }),
-          ),
-          next_cursor: null,
-          has_more: false,
-        }
-      })
-
-      await store.getState().load()
-
-      // 5s vitest default catches a hang. The cap keeps total invokes
-      // sub-linear in depth: cap=2000, batch=500 ⇒ ≤ ~4 levels recurse,
-      // each a 500-fan-out ⇒ a few thousand calls absolute ceiling. Without
-      // the cap we'd see millions.
-      expect(callCount).toBeLessThan(2500)
-      expect(store.getState().loading).toBe(false)
-    })
-
-    it('blocks recursion into grandchildren once the cap is reached', async () => {
-      // Level 0: 1500 blocks (count = 1500, still under cap).
-      // Level 1: each of the 1500 children fetches 600 blocks. The first
-      //   child to resume pushes count to 2100 ≥ cap, so the cap-after
-      //   branch returns without scheduling grandchildren. Subsequent
-      //   children also return without recursing. Net: ZERO level-2 calls.
-      let level1Calls = 0
-      let level2Calls = 0
-      mockedInvoke.mockImplementation(async (_cmd, args) => {
-        const parentId = (args as { parentId?: string } | undefined)?.parentId ?? ''
-        if (parentId === 'PAGE_1') {
-          return {
-            items: Array.from({ length: 1500 }, (_, i) =>
-              makeBlock({
-                id: `R${String(i).padStart(4, '0')}`,
-                parent_id: 'PAGE_1',
-              }),
-            ),
-            next_cursor: null,
-            has_more: false,
-          }
-        }
-        if (parentId.startsWith('R')) {
-          level1Calls++
-          return {
-            items: Array.from({ length: 600 }, (_, i) => makeBlock({ id: `C-${parentId}-${i}` })),
-            next_cursor: null,
-            has_more: false,
-          }
-        }
-        if (parentId.startsWith('C-')) {
-          level2Calls++
-        }
-        return { items: [], next_cursor: null, has_more: false }
-      })
-
-      await store.getState().load()
-
-      // Level-1 calls are scheduled before count crosses the cap (cap-before
-      // sees count=1500), so they all fetch — that's the natural Promise.all
-      // breadth-first behaviour. The cap's job is to stop the *next* level.
-      expect(level1Calls).toBe(1500)
-      // Level-2 grandchildren would only be scheduled if a level-1 call
-      // recursed past the cap-after check. The cap prevents that entirely.
-      expect(level2Calls).toBe(0)
-      expect(store.getState().loading).toBe(false)
     })
   })
 
@@ -1025,7 +872,7 @@ describe('PageBlockStore', () => {
         new_parent_id: 'A',
         new_position: 0,
       })
-      // list_blocks (reload from load())
+      // load_page_subtree (reload from load())
       mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
 
       await store.getState().moveToParent('B', 'A', 0)
@@ -1036,8 +883,8 @@ describe('PageBlockStore', () => {
         newPosition: 0,
       })
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ parentId: 'PAGE_1' }),
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
       )
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
@@ -1073,7 +920,7 @@ describe('PageBlockStore', () => {
         resolveMove = resolve
       })
       mockedInvoke.mockReturnValueOnce(movePending)
-      // list_blocks call(s) for the load() that follows moveBlock resolve. Cover root + any child fetches.
+      // load_page_subtree call for the load() that follows moveBlock resolve.
       mockedInvoke.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 
       const promise = store.getState().moveToParent('B', 'A', 0)
@@ -1424,7 +1271,7 @@ describe('PageBlockStore', () => {
         newPosition: -1, // prevSibling(A).position(0) - 1
       })
       // PEND-35 Tier 4.1 — same-parent moveUp must NOT trigger a re-list IPC.
-      expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
       // The blocks array is reordered locally with the echoed position.
       const blocks = store.getState().blocks
       expect(blocks[0]?.id).toBe('B')
@@ -1482,7 +1329,7 @@ describe('PageBlockStore', () => {
         newPosition: -1, // prevSibling(A).position(0) - 1
       })
       // Tier 4.1 — same-parent path skips re-list.
-      expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
     })
 
     it('falls back to full reload if backend echoes a different parent (Tier 4.1 cross-parent guard)', async () => {
@@ -1498,14 +1345,14 @@ describe('PageBlockStore', () => {
         new_parent_id: 'OTHER',
         new_position: -1,
       })
-      // list_blocks (fallback reload)
+      // load_page_subtree (fallback reload)
       mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
 
       await store.getState().moveUp('B')
 
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ parentId: 'PAGE_1' }),
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
       )
     })
   })
@@ -1534,7 +1381,7 @@ describe('PageBlockStore', () => {
         newPosition: 6, // nextSibling(B).position(5) + 1
       })
       // PEND-35 Tier 4.1 — same-parent moveDown must NOT trigger a re-list IPC.
-      expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
       const blocks = store.getState().blocks
       expect(blocks[0]?.id).toBe('B')
       expect(blocks[1]?.id).toBe('A')
@@ -1586,8 +1433,8 @@ describe('PageBlockStore', () => {
       await store.getState().moveDown('A')
 
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ parentId: 'PAGE_1' }),
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
       )
     })
   })
@@ -1769,9 +1616,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
       ]
-      mockedInvoke.mockResolvedValueOnce({ items, next_cursor: null, has_more: false })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce(items)
 
       await store.getState().load()
 

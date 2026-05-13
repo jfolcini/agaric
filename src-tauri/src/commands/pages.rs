@@ -1300,3 +1300,94 @@ pub async fn list_template_page_ids_in_space(
         .await
         .map_err(sanitize_internal_error)
 }
+
+/// Safety bound on the FE page-tree loader.  Pages with deeper / wider
+/// trees than this should already be the user's signal to split the
+/// page; the loader truncates rather than blocking the editor.
+pub(crate) const PAGE_SUBTREE_MAX_BLOCKS: i64 = 10_000;
+
+/// Load every active descendant under `root_block_id` in `space_id`,
+/// in a single SELECT against the materializer-maintained `page_id`
+/// index.  No per-parent pagination, no per-call clamp the FE can
+/// silently overrun — replaces the FE-side recursive `listBlocks`
+/// walk that was capped at the 100-row default and silently truncated
+/// any parent with >100 children.
+///
+/// The returned set excludes the root block itself and any soft-deleted
+/// descendant; it is bounded by [`PAGE_SUBTREE_MAX_BLOCKS`] as a safety
+/// rail against pathologically large pages.
+///
+/// Order is `(position, id)` ascending — the FE reassembles via
+/// `buildFlatTree` which groups by `parent_id`, so the global order is
+/// not load-bearing, but keyset-style ordering keeps the truncation
+/// boundary deterministic when the cap fires.
+#[instrument(skip(pool), err)]
+pub async fn load_page_subtree_inner(
+    pool: &SqlitePool,
+    root_block_id: &str,
+    space_id: &str,
+) -> Result<Vec<BlockRow>, AppError> {
+    BlockId::from_string(root_block_id)?;
+
+    // FEAT-3 Phase 7 — enforce space membership.  A request whose root
+    // page does not carry `space = ?space_id` is rejected with
+    // `Validation`, matching `get_page_inner`.
+    let space_match = sqlx::query_scalar!(
+        r#"SELECT 1 AS "ok!: i32" FROM block_properties
+           WHERE block_id = ? AND key = 'space' AND value_ref = ?"#,
+        root_block_id,
+        space_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    if space_match.is_none() {
+        return Err(AppError::Validation(format!(
+            "block '{root_block_id}' not in current space '{space_id}'"
+        )));
+    }
+
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position,
+                deleted_at, todo_state, priority, due_date,
+                scheduled_date, page_id
+           FROM blocks
+           WHERE page_id = ?1
+             AND id != ?1
+             AND deleted_at IS NULL
+           ORDER BY COALESCE(position, ?2) ASC, id ASC
+           LIMIT ?3"#,
+        root_block_id,
+        NULL_POSITION_SENTINEL,
+        PAGE_SUBTREE_MAX_BLOCKS,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    if i64::try_from(rows.len()).unwrap_or(i64::MAX) >= PAGE_SUBTREE_MAX_BLOCKS {
+        tracing::warn!(
+            root_block_id,
+            max_blocks = PAGE_SUBTREE_MAX_BLOCKS,
+            rows_returned = rows.len(),
+            "load_page_subtree: result at the safety cap; descendants \
+             may have been truncated. Consider splitting the page."
+        );
+    }
+
+    Ok(rows)
+}
+
+/// Tauri command: load every active descendant under `root_block_id`
+/// in `space_id`.  Delegates to [`load_page_subtree_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn load_page_subtree(
+    pool: State<'_, ReadPool>,
+    root_block_id: String,
+    space_id: String,
+) -> Result<Vec<BlockRow>, AppError> {
+    load_page_subtree_inner(&pool.0, &root_block_id, &space_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
