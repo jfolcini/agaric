@@ -20,9 +20,9 @@ test.describe('Smoke tests', () => {
     for (const label of exactNavLabels) {
       await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible()
     }
-    // Conflicts / Trash have optional count badges that become part of the
+    // Trash has an optional count badge that becomes part of the
     // accessible name when non-zero — match on prefix instead of exact.
-    await expect(page.getByRole('button', { name: /^Conflicts/ })).toBeVisible()
+    // (Conflicts nav-item removed in Session 700 / PEND-09 Phase 5.)
     await expect(page.getByRole('button', { name: /^Trash/ })).toBeVisible()
   })
 
