@@ -10,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchGraphData } from '../GraphView.helpers'
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -21,7 +20,7 @@ describe('fetchGraphData', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -42,7 +41,7 @@ describe('fetchGraphData', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -58,7 +57,7 @@ describe('fetchGraphData', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -74,7 +73,7 @@ describe('fetchGraphData', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -90,7 +89,7 @@ describe('fetchGraphData', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -110,12 +109,7 @@ describe('fetchGraphData', () => {
           { id: 'page-2', content: 'Template Page' },
         ])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property')
-        return Promise.resolve({
-          items: [{ id: 'page-2' }],
-          next_cursor: null,
-          has_more: false,
-        })
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve(['page-2'])
       return Promise.resolve(null)
     })
 
@@ -142,7 +136,7 @@ describe('fetchGraphData', () => {
           { source_id: 'page-1', target_id: 'page-3', ref_count: 1 },
           { source_id: 'page-1', target_id: 'unknown', ref_count: 1 },
         ])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -162,7 +156,7 @@ describe('fetchGraphData', () => {
           { source_id: 'page-1', target_id: 'missing', ref_count: 1 },
           { source_id: 'missing', target_id: 'page-1', ref_count: 1 },
         ])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -178,7 +172,7 @@ describe('fetchGraphData', () => {
           { id: 'page-2', content: null },
         ])
       if (cmd === 'list_page_links') return Promise.resolve([])
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 
@@ -191,7 +185,7 @@ describe('fetchGraphData', () => {
       if (cmd === 'list_all_pages_in_space')
         return Promise.resolve([{ id: 'page-1', content: 'Page One' }])
       if (cmd === 'list_page_links') return Promise.reject(new Error('boom'))
-      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
 

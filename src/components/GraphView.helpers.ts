@@ -9,7 +9,7 @@
 
 import type { SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
 import type { PageHeading } from '@/lib/tauri'
-import { listAllPagesInSpace, listPageLinks, queryByProperty } from '@/lib/tauri'
+import { listAllPagesInSpace, listPageLinks, listTemplatePageIdsInSpace } from '@/lib/tauri'
 
 export interface GraphNode extends SimulationNodeDatum {
   id: string
@@ -103,17 +103,13 @@ export async function fetchGraphData(
   // post-filtered `nodeIds` set; with the push-down the response is
   // already shape-restricted to the visible subgraph.
   const linksTagIds: string[] | null = tagFilterIds.length > 0 ? [...tagFilterIds] : null
-  const [pages, links, templatesResp] = await Promise.all([
+  const [pages, links, templateIdList] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
     listPageLinks({ spaceId, tagIds: linksTagIds }),
-    queryByProperty({ key: 'template', valueText: 'true', limit: 1000, spaceId }),
+    listTemplatePageIdsInSpace(spaceId ?? ''),
   ])
 
-  const templateIds = new Set<string>(
-    templatesResp.items
-      .map((p) => p.id as string | undefined)
-      .filter((id): id is string => typeof id === 'string'),
-  )
+  const templateIds = new Set<string>(templateIdList)
 
   const nodeIds = new Set<string>(pages.map((p) => p.id))
   const backlinkCounts = countBacklinks(links, nodeIds)

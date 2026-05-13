@@ -1473,6 +1473,16 @@ export async function listAllPagesInSpace(
   return unwrap(await commands.listAllPagesInSpace(spaceId, tagIds))
 }
 
+/**
+ * Return the IDs of every page in `spaceId` whose `template` property
+ * is set to `'true'`.  No pagination, no clamp — templates are a
+ * small bounded set by convention.  Used by the graph view to flag
+ * template pages with a visual marker.
+ */
+export async function listTemplatePageIdsInSpace(spaceId: string): Promise<string[]> {
+  return unwrap(await commands.listTemplatePageIdsInSpace(spaceId))
+}
+
 // ---------------------------------------------------------------------------
 // Attachment commands (F-7)
 // ---------------------------------------------------------------------------

@@ -646,6 +646,11 @@ export const commands = {
 	 *  Delegates to [`list_all_pages_in_space_inner`].
 	 */
 	listAllPagesInSpace: (spaceId: string, tagIds: string[] | null) => typedError<PageHeading[], AppErrorSchema>(__TAURI_INVOKE("list_all_pages_in_space", { spaceId, tagIds })),
+	/**
+	 *  Tauri command: list template page IDs in `space_id`.
+	 *  Delegates to [`list_template_page_ids_in_space_inner`].
+	 */
+	listTemplatePageIdsInSpace: (spaceId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_template_page_ids_in_space", { spaceId })),
 };
 
 /* Types */
