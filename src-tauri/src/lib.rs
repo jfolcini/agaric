@@ -237,6 +237,9 @@ macro_rules! agaric_commands {
             // that genuinely need every page in the space
             $crate::commands::list_all_pages_in_space,
             $crate::commands::list_template_page_ids_in_space,
+            // Page subtree loader — single SELECT against the `page_id` index;
+            // replaces the FE-side recursive `listBlocks` walk
+            $crate::commands::load_page_subtree,
         ]
     };
 }

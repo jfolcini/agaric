@@ -1483,6 +1483,19 @@ export async function listTemplatePageIdsInSpace(spaceId: string): Promise<strin
   return unwrap(await commands.listTemplatePageIdsInSpace(spaceId))
 }
 
+/**
+ * Load every active descendant under `rootBlockId` in `spaceId` — a
+ * single SELECT against the materializer-maintained `page_id` index.
+ * Replaces the FE-side recursive `listBlocks` walk that silently
+ * clamped each parent to 100 children.
+ *
+ * Excludes the root block and soft-deleted descendants.  Result order
+ * is not load-bearing — `buildFlatTree` regroups by `parent_id`.
+ */
+export async function loadPageSubtree(rootBlockId: string, spaceId: string): Promise<BlockRow[]> {
+  return unwrap(await commands.loadPageSubtree(rootBlockId, spaceId))
+}
+
 // ---------------------------------------------------------------------------
 // Attachment commands (F-7)
 // ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ Frontend "I want all" call sites that ignore those ceilings:
 
 | Severity | File:line | Limit asked | Pattern | Hazard |
 | ---------- | ----------- | ------------- | --------- | -------- |
-| HIGH | `src/stores/page-blocks.ts:125` | 500 | recursive subtree, no per-parent cursor | page editor truncates any parent with >100 children |
+| ~~HIGH~~ DONE | ~~`src/stores/page-blocks.ts:125`~~ | ~~500~~ | now routes through `load_page_subtree` IPC — single SELECT against the `page_id` index, no per-parent recursion; FE-side `loadSubtree` helper deleted | — |
 | ~~HIGH~~ DONE | ~~`src/components/PropertyRowEditor.tsx:254`~~ | ~~500~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp); the existing client-side filter still works | — |
 | ~~HIGH~~ DONE | ~~`src/components/GraphView.helpers.ts:55, 62, 76`~~ | ~~5000~~ | now routes through `list_all_pages_in_space(spaceId, tagIds)` IPC (no pagination, no clamp) | — |
 | ~~HIGH~~ DONE | ~~`src/lib/export-graph.ts:19`~~ | ~~1000~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp) | — |

@@ -33,8 +33,8 @@ import {
 } from '../lib/block-tree-ops'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
-import type { BlockRow, PageResponse } from '../lib/tauri'
-import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'
+import type { BlockRow } from '../lib/tauri'
+import { createBlock, deleteBlock, editBlock, loadPageSubtree, moveBlock } from '../lib/tauri'
 import { buildFlatTree, type FlatBlock, getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from './blocks'
 import { useSpaceStore } from './space'
@@ -105,35 +105,6 @@ export interface PageBlockState {
    * both side effects).
    */
   appendBlock: (row: BlockRow) => void
-}
-
-// ── Recursive subtree loader ─────────────────────────────────────────────
-
-const MAX_SUBTREE_BLOCKS = 2000
-
-async function loadSubtree(
-  parentId: string | undefined,
-  spaceId: string,
-  maxDepth = 10,
-  currentDepth = 0,
-  loaded: { count: number } = { count: 0 },
-): Promise<BlockRow[]> {
-  if (currentDepth >= maxDepth) return []
-  if (loaded.count >= MAX_SUBTREE_BLOCKS) return []
-  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Subtrees never
-  // cross spaces, so the same id is threaded through the recursion.
-  const resp: PageResponse<BlockRow> = await listBlocks({ parentId, limit: 500, spaceId })
-  const blocks = resp.items
-  if (blocks.length === 0) return blocks
-
-  loaded.count += blocks.length
-  if (loaded.count >= MAX_SUBTREE_BLOCKS) return blocks
-
-  const childArrays = await Promise.all(
-    blocks.map((b) => loadSubtree(b.id, spaceId, maxDepth, currentDepth + 1, loaded)),
-  )
-
-  return [...blocks, ...childArrays.flat()]
 }
 
 /** Notify the undo store that a new action occurred on the given page. */
@@ -235,10 +206,14 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const spaceId = useSpaceStore.getState().currentSpaceId
       if (spaceId == null) return
       const rootParentId = get().rootParentId
+      if (rootParentId == null) return
       set({ loading: true })
       try {
         const start = performance.now()
-        const allBlocks = await loadSubtree(rootParentId ?? undefined, spaceId)
+        // Single-SELECT descendant load via the materializer-maintained
+        // `page_id` index — replaces the recursive per-parent
+        // `listBlocks` walk that silently clamped each level to 100.
+        const allBlocks = await loadPageSubtree(rootParentId, spaceId)
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
         let newBlocks = buildFlatTree(allBlocks, rootParentId)

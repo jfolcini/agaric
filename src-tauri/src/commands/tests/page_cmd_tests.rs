@@ -3112,3 +3112,121 @@ async fn list_template_page_ids_in_space_returns_template_pages_only() {
          must exclude template=false, soft-deleted, and foreign-space pages",
     );
 }
+
+// ======================================================================
+// load_page_subtree — single-SELECT page-tree loader
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_returns_active_descendants_excluding_root() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(
+        &pool,
+        "01HZPAGE000000000000000PGE",
+        "page",
+        "Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZSCH1000000000000000001",
+        "content",
+        "C1",
+        Some("01HZPAGE000000000000000PGE"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZSCH2000000000000000002",
+        "content",
+        "C2",
+        Some("01HZPAGE000000000000000PGE"),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZGRAND000000000000000A1",
+        "content",
+        "G1",
+        Some("01HZSCH1000000000000000001"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZDEM000000000000000DEM0",
+        "content",
+        "Deleted",
+        Some("01HZPAGE000000000000000PGE"),
+        Some(3),
+    )
+    .await;
+    assign_to_space(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-05-09T00:00:00Z' WHERE id = '01HZDEM000000000000000DEM0'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // `page_id` is materializer-maintained in production; backfill by
+    // hand for the test fixture so the WHERE page_id = ? filter hits.
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let rows = load_page_subtree_inner(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID)
+        .await
+        .unwrap();
+    let mut ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec![
+            "01HZGRAND000000000000000A1",
+            "01HZSCH1000000000000000001",
+            "01HZSCH2000000000000000002",
+        ],
+        "must return every active descendant (children + grandchild), \
+         excluding the page root and the soft-deleted block; got {rows:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_rejects_foreign_space() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(
+        &pool,
+        "01HZPGFRGN000000000000000B",
+        "page",
+        "P",
+        None,
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, "01HZPGFRGN000000000000000B", TEST_SPACE_B_ID).await;
+
+    let err = load_page_subtree_inner(&pool, "01HZPGFRGN000000000000000B", TEST_SPACE_ID)
+        .await
+        .expect_err("foreign-space request must error");
+    match err {
+        AppError::Validation(msg) => assert!(
+            msg.contains("not in current space"),
+            "validation message should explain space mismatch; got: {msg}",
+        ),
+        other => panic!("expected Validation error; got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_rejects_malformed_root_id() {
+    let (pool, _dir) = test_pool().await;
+    let err = load_page_subtree_inner(&pool, "not-a-ulid", "01TESTSPACE000000000000001")
+        .await
+        .expect_err("malformed ULID must error");
+    matches!(err, AppError::Ulid(_));
+}
