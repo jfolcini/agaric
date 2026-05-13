@@ -415,15 +415,18 @@ test.describe('External link editing and removal', () => {
     // Wait for popover to close
     await expect(page.getByTestId('link-edit-popover')).not.toBeVisible()
 
-    // Click on the link text to ensure cursor is inside the link, then
-    // immediately use Ctrl+K to re-open the popover in edit mode. Under
-    // heavy parallel load the toolbar may not have rendered the External
-    // link button with aria-pressed=true yet; Ctrl+K dispatches the
-    // custom event directly on the editor DOM regardless of toolbar
-    // state, so the popover always opens in edit mode (Update/Remove
-    // buttons present) when the cursor is inside a link mark (TEST-3
-    // flake, session 679 verification pass).
+    // Click into the editor to restore focus, then Ctrl+A to select the
+    // entire link text (the block's contents ARE the link after the
+    // selection-replacing apply above). With the link mark fully covered
+    // by the selection, `editor.isActive('link')` is deterministically
+    // true when Ctrl+K dispatches `open-link-popover`, so the popover
+    // opens in edit mode with `initialUrl` pre-filled. The previous
+    // `link.click()` form was timing-sensitive — a single-click can
+    // land on the boundary of the link mark, leaving `state.link`
+    // false at render time and `currentUrl` empty (CI flake captured
+    // in run 25817711409, fixed here).
     await link.click()
+    await page.keyboard.press('Control+a')
     await page.keyboard.press('Control+k')
 
     // Verify popover shows "Update" button and pre-filled URL
