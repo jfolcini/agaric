@@ -4,7 +4,7 @@ import {
   createBlocksBatch,
   firstChildForBlocks,
   getProperty,
-  listBlocks,
+  loadPageSubtree,
   queryByProperty,
 } from './tauri'
 
@@ -138,16 +138,19 @@ export function expandTemplateVariables(content: string, context: { pageTitle?: 
  * Returns the IDs of all created blocks.
  *
  * PEND-35 Tier 4.3 — replaces the per-descendant `createBlock` IPC loop
- * with a single `createBlocksBatch` call. The whole template subtree is
- * walked first (the `listBlocks` traversal still happens once per
- * source parent — distinct concern from the create-fan-out audit), the
- * specs are accumulated with the source-id → batch-index mapping
- * tracked so each child's `parentId` resolves to the freshly-created
- * destination block from the same batch. Atomicity changes: a single
- * malformed spec now rolls the whole template back instead of
- * partially landing the prefix. The previous per-block try/catch
- * fall-through is gone — partial templates were never the desired
- * UX; the user expects "the template inserted" or a clean failure.
+ * with a single `createBlocksBatch` call. limit-clamp-followup — the
+ * walk-children traversal also collapsed from one `listBlocks` IPC per
+ * source parent (silently clamped to 100 children per level) into a
+ * single `loadPageSubtree` IPC that returns the entire template subtree
+ * in one SELECT against the materializer-maintained `page_id` index.
+ * The specs are accumulated in DFS order with the source-id → batch-
+ * index mapping tracked so each child's `parentId` resolves to the
+ * freshly-created destination block from the same batch. Atomicity
+ * changes: a single malformed spec now rolls the whole template back
+ * instead of partially landing the prefix. The previous per-block
+ * try/catch fall-through is gone — partial templates were never the
+ * desired UX; the user expects "the template inserted" or a clean
+ * failure.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
 export async function insertTemplateBlocks(
@@ -156,9 +159,15 @@ export async function insertTemplateBlocks(
   spaceId: string | null,
   context?: { pageTitle?: string },
 ): Promise<string[]> {
-  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Templates belong
-  // to a single space, so the recursive copy walks within `spaceId`. The
-  // `?? ''` fallback is the pre-bootstrap no-match sentinel.
+  // Templates belong to a single space, so the descendant fetch is
+  // scoped to `spaceId`. The `?? ''` fallback exists for the pre-
+  // bootstrap call paths inherited from the previous `listBlocks`
+  // implementation; `loadPageSubtree`'s backend rejects an empty
+  // spaceId with `AppError::Validation` (the root cannot carry
+  // `space = ''`), so a real null-spaceId call propagates a loud
+  // error instead of silently returning `[]`.  In practice
+  // `insertTemplateBlocks` is only reached via user action after
+  // bootstrap, so the fallback should never trigger.
   const effectiveSpaceId = spaceId ?? ''
 
   // Collect specs in DFS order. Each spec's `parentId` is either the
@@ -170,13 +179,29 @@ export async function insertTemplateBlocks(
   type DeferredSpec = { spec: CreateBlockSpec; resolveParentFromIndex: number | null }
   const deferred: DeferredSpec[] = []
 
-  async function walkChildren(sourceParentId: string, destParentIndex: number | null) {
-    const resp = await listBlocks({
-      parentId: sourceParentId,
-      limit: 500,
-      spaceId: effectiveSpaceId,
-    })
-    for (const child of resp.items) {
+  // Single IPC fetches every descendant of the template root (root
+  // itself excluded). Group by `parent_id` and sort each sibling group
+  // by `position` so the DFS below reproduces the exact ordering the
+  // old per-parent `listBlocks` walk produced.
+  const descendants = await loadPageSubtree(templatePageId, effectiveSpaceId)
+  const childrenByParent = new Map<string, BlockRow[]>()
+  for (const block of descendants) {
+    const pid = block.parent_id
+    if (pid == null) continue
+    const siblings = childrenByParent.get(pid)
+    if (siblings) siblings.push(block)
+    else childrenByParent.set(pid, [block])
+  }
+  for (const siblings of childrenByParent.values()) {
+    siblings.sort(
+      (a, b) => (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER),
+    )
+  }
+
+  function walkChildren(sourceParentId: string, destParentIndex: number | null): void {
+    const children = childrenByParent.get(sourceParentId)
+    if (!children) return
+    for (const child of children) {
       const expandedContent = expandTemplateVariables(child.content ?? '', context ?? {})
       const myIndex = deferred.length
       deferred.push({
@@ -193,11 +218,11 @@ export async function insertTemplateBlocks(
         resolveParentFromIndex: destParentIndex,
       })
       // Recurse: grandchildren of `child` will reference `myIndex`.
-      await walkChildren(child.id, myIndex)
+      walkChildren(child.id, myIndex)
     }
   }
 
-  await walkChildren(templatePageId, null)
+  walkChildren(templatePageId, null)
 
   if (deferred.length === 0) return []
 
