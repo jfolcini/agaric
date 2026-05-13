@@ -41,11 +41,17 @@ export function ChevronToggle({
   className,
 }: ChevronToggleProps) {
   if (loading) {
-    return <Spinner className={cn(chevronToggleVariants({ size }), className)} />
+    return (
+      <Spinner
+        data-slot="chevron-toggle"
+        className={cn(chevronToggleVariants({ size }), className)}
+      />
+    )
   }
 
   return (
     <ChevronRight
+      data-slot="chevron-toggle"
       className={cn(chevronToggleVariants({ size }), isExpanded && 'rotate-90', className)}
     />
   )

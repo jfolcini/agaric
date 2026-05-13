@@ -7,6 +7,36 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 711 — design-system UX Tier 3 hygiene batch (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 5 build (general-purpose) — orchestrator-direct grep + scoping |
+| **Items closed** | design-system-ux-review Tier 3 items: data-slot on 6/7 primitives, select.tsx outline-hidden, SelectTrigger SHARED_INPUT_CLASSES, sheet duration alignment, ring-offset normalization (×3 sites), index.css dead tokens (×4). |
+| **Items modified** | design-system-ux-review-2026-05-09.md status note updated. |
+| **Tests added** | 0 new; existing 9613 tests cover behavior |
+| **Files touched** | 12 (10 production + index.css + plan file) |
+
+**Summary:** five parallel subagents grouped by file-boundary closed the Tier 3 mechanical hygiene backlog of design-system-ux-review. `data-slot` added to 6 primitives (alert-list-item, chevron-toggle, close-button, filter-pill, status-badge, status-icon) — menu-popover-content deliberately preserves its inherited `data-slot="popover-content"` because three existing tests assert it. Tailwind v3 `outline-none` swept to `outline-hidden` in select.tsx (popover.tsx was done in Session 709). `SelectTrigger` now consumes `SHARED_INPUT_CLASSES` like Input/Textarea, with the trigger-specific border/size/data-attr classes layered after the shared base; consequence — SelectTrigger now picks up the same `aria-invalid` destructive ring/border treatment as Input. `sheet.tsx` `duration-slow` / `duration-slower` → `duration-moderate` to match dialog/alert-dialog (sheet was visibly draggier per the audit). Three `ring-offset-*` removed from HistoryListItem:271 (`focus-visible:ring-offset-1`), TagList:294 (`focus-visible:ring-offset-2`), and SpaceManageDialog:174,177 (`ring-offset-background` + `ring-offset-2`) — `--color-ring-offset` isn't defined in `@theme`, so the offset produced a white halo in dark mode. Four dead tokens (`--leading-relaxed`, `--tracking-tight`, `--tracking-normal`, `--tracking-wide`) removed from `src/index.css` after confirming zero `var(--)` references in `src/`; the orphaned `/* Letter-spacing */` section header removed alongside. `search-input.tsx`'s clear button was investigated as part of the SHARED_INPUT_CLASSES sweep and intentionally NOT modified — its `<input>` is composed via the `Input` primitive which already applies the shared base, and the clear button is a `<button>` not an `<input>` (audit conflated concerns). Plan file annotated accordingly.
+
+**Verification:**
+- `npx vitest run` — 9613 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- `src/components/ui/alert-list-item.tsx`, `chevron-toggle.tsx`, `close-button.tsx`, `filter-pill.tsx`, `status-badge.tsx`, `status-icon.tsx` — `data-slot` added.
+- `src/components/ui/select.tsx` — `outline-hidden` + `SHARED_INPUT_CLASSES` consumed.
+- `src/components/ui/sheet.tsx` — `duration-moderate` aligned with dialog/alert-dialog.
+- `src/components/HistoryListItem.tsx`, `TagList.tsx`, `SpaceManageDialog.tsx` — `ring-offset-*` removed.
+- `src/index.css` — 4 dead tokens deleted.
+- `pending/design-system-ux-review-2026-05-09.md` — status note updated.
+
+**Process notes:** the `menu-popover-content` data-slot decision is worth flagging — its tests assert `data-slot="popover-content"` (the inherited Radix slot) because external selectors target the underlying Radix popover, not the composition wrapper. Adding a `data-slot="menu-popover-content"` override would silently break those tests. Left as-is; doc updated to reflect.
+
+**Commit plan:** single commit covering all 12 file edits + Session 711 entry + plan-file status note.
+
+---
 ## Session 710 — design-system perf hygiene batch (2026-05-13)
 
 | Metadata | Value |

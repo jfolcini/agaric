@@ -16,7 +16,7 @@ const closeButtonClassName =
 const CloseButtonIcon = ({ ref, ...props }: React.ComponentProps<'span'>) => {
   const { t } = useTranslation()
   return (
-    <span ref={ref} {...props}>
+    <span ref={ref} data-slot="close-button-icon" {...props}>
       <XIcon className="size-4 [@media(pointer:coarse)]:size-5" />
       <span className="sr-only">{t('ui.close')}</span>
     </span>

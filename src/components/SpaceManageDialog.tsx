@@ -171,10 +171,10 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
               aria-pressed={accent === swatch.token}
               onClick={() => setAccent(swatch.token)}
               className={cn(
-                'inline-flex items-center justify-center rounded-full ring-offset-background transition-all',
+                'inline-flex items-center justify-center rounded-full transition-all',
                 'h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
                 'focus-ring-visible',
-                accent === swatch.token && 'ring-2 ring-ring ring-offset-2',
+                accent === swatch.token && 'ring-2 ring-ring',
               )}
               style={{ backgroundColor: `var(--${swatch.token})` }}
               data-accent-token={swatch.token}

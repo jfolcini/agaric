@@ -1,11 +1,20 @@
 # Agaric Design System — UX Review
 
-> **Status:** small Tier 1 + Tier 3 hygiene shipped. Tier 1 item 2 (iOS
-> auto-zoom on `<Select>` — `[@media(pointer:coarse)]:text-base` appended
-> to the two SelectTrigger size strings) and item 3 (`useAutoScrollOnDrag`
-> reduced-motion guard) are closed. Tier 3 popover `outline-none` →
-> `outline-hidden` is closed. **Still open:** Tier 1 items 1, 4–11 +
-> remaining Tier 3 items + every Tier 2 entry.
+> **Status:** Tier 1 + Tier 3 hygiene mostly shipped. **Tier 1 closed:**
+> item 2 (iOS auto-zoom on `<Select>`), item 3 (`useAutoScrollOnDrag`
+> reduced-motion). **Tier 3 closed:** popover `outline-none` →
+> `outline-hidden`; select.tsx `outline-none` → `outline-hidden`;
+> `data-slot` added to 6 of 7 primitives (menu-popover-content
+> deliberately preserves inherited `data-slot="popover-content"` —
+> its tests assert that); sheet animation duration → `duration-moderate`;
+> `SelectTrigger` consumes `SHARED_INPUT_CLASSES`; three inconsistent
+> `ring-offset-*` removed from HistoryListItem + TagList +
+> SpaceManageDialog; 4 dead tokens (`--leading-relaxed`,
+> `--tracking-tight/normal/wide`) removed from index.css.
+> **Still open:** Tier 1 items 1, 4–11 + every Tier 2 entry + remaining
+> Tier 3 items (`SHARED_INPUT_CLASSES` reuse on search-input was
+> investigated and declined as audit conflated concerns + the rest of
+> the Tier 3 list).
 
 **Date:** 2026-05-09
 **Method.** Round 1: four parallel subagents reviewed (a) tokens / theming / a11y, (b) UI primitives in `src/components/ui/`, (c) shared compositions in `src/components/` + `src/hooks/`, (d) feature-screen consistency across top-level views. Round 2: four independent verifiers fact-checked every claim against actual code (file/line/grep). 56 raw findings → **50 fully verified, 6 partial (line-numbers or counts off), 0 hallucinated**. Five claims that softened or reversed on verification are flagged at the end.
