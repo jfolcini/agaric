@@ -7,6 +7,51 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 704 — sql-audit Batch 1: H2 + H6 + L1 + L2 + M3 + stale-entry purge (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 5 build (general-purpose, parallel) + 1 technical review |
+| **Items closed** | `pending/sql-audit-2026-05-09.md` Batch 1: H2 (PropertyNum/Date inline SQL), H6 (SQLite performance PRAGMAs), L1 (`list_tags_for_block` LIMIT), L2 (`list_property_keys` LIMIT), M3 (`flush_all_drafts` cap). Removed H5 + M2 from the audit doc as stale (predicate referenced `is_conflict`/`conflict_type` columns dropped in PEND-09 migrations 0058-0060). |
+| **Items modified** | sql-audit doc reshaped: deleted H5 + M2, added Status + Remaining sections |
+| **Tests added** | +8 Rust (4 PERF-27 PropertyNum/Date coverage, 1 PRAGMA assertion, 1 list_tags_for_block cap, 1 list_property_keys cap, 1 flush_all_drafts cap) |
+| **Files touched** | 7 (5 src files + 2 new `.sqlx/` cache entries + 1 audit doc) |
+
+**Summary:** Batch 1 of the SQL audit is shipped. The headline H2 fix removes the `f64::EPSILON` Eq tolerance on PropertyNum (now strict SQL `=`, matching `pagination/properties.rs::query_by_property`) and pushes Num/Date comparison operators into SQL — eliminating the `fetch_all` + Rust `.filter()` pattern that PERF-27 had already closed for PropertyText. H6 adds three connection-level pragmas (`cache_size=-65536` = 64 MB, `mmap_size=268435456` = 256 MB, `temp_store=MEMORY`) applied to both read and write pools and to the test-pool. L1 / L2 / M3 add safety LIMITs to three previously-unbounded queries. M3 also emits a `tracing::warn!` when the cap is reached (1000 per boot, oldest-first; subsequent boots flush the remainder — idempotent by design).
+
+**H5 + M2 stale-entry rationale:** the audit dated 2026-05-09, before PEND-09 Phase 4+5 dropped the `is_conflict` column (migration 0058), `conflict_type` column (0059), and `conflict_source` column (0060). H5's proposed `idx_blocks_todo_alive` predicate referenced `is_conflict = 0` (gone); M2 proposed extending `idx_blocks_conflict` (also gone, dropped alongside `is_conflict` in 0058). Both audit items are obsolete and were deleted from the doc rather than implemented as no-ops.
+
+**REVIEW-LATER impact:**
+- `pending/sql-audit-2026-05-09.md` open: 13 → 6 items (5 shipped + 2 stale-removed).
+- Remaining: H1, H3, H4, H7, M1, M4. H3/H4 should be the next batch (FE agenda intersection → backend `filtered_blocks_query`; FE agenda sort/group → SQL ORDER BY).
+
+**Files touched (this session):**
+- `src-tauri/src/backlink/filters.rs` (+85 / -64) — PropertyNum/PropertyDate inline-SQL operator pushdown.
+- `src-tauri/src/backlink/query.rs` (+15 / -4) — `list_property_keys` LIMIT 1000 + rationale comment.
+- `src-tauri/src/backlink/tests.rs` (+189 / 0) — 5 new tests (PERF-27 Num/Date arms + L2 cap).
+- `src-tauri/src/commands/drafts.rs` (+118 / -3) — `flush_all_drafts_inner` LIMIT 1000 + `tracing::warn!` + cap test.
+- `src-tauri/src/db.rs` (+42 / 0) — three new PRAGMAs + assertion test.
+- `src-tauri/src/tag_query/query.rs` (+30 / -2) — `list_tags_for_block` LIMIT 1000 + cap test.
+- `src-tauri/.sqlx/query-78b43cccd602b74421254cfb03026abe2300d72f0b9ab89f70d1e78136762f4e.json` — new (L1 cache entry).
+- `src-tauri/.sqlx/query-8ebb953fd57d63550e96fb2df7454db91e3cf03a6f9594cbb3c03b07dc0fc56c.json` — new (M3 cache entry).
+- `pending/sql-audit-2026-05-09.md` — H5 + M2 deleted; Status / Remaining sections added.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3642 tests passed, 4 skipped (was 3634 pre-batch).
+- Technical reviewer ran `cargo sqlx prepare -- --tests`: cache clean after re-prepare (hand-rolled L1 cache entry verified to match `cargo sqlx prepare` output).
+- `cargo clippy --tests`: no new warnings in any of the 5 modified files. (17 pre-existing warnings remain in `commands/tests/{block,history,property}_cmd_tests.rs` + `loro/engine_proptest.rs` — out of scope.)
+
+**Process notes:**
+- Two of five parallel build subagents (H2, M3) reported as "rejected" mid-flight but had already written complete, correct implementations before the rejection signal landed. Tests pass; reviewer approved. Lesson: a `rejected` status mid-flight does not mean the working tree is untouched — verify by diff before re-running.
+- The hand-rolled `.sqlx/` cache entry for L1 (subagent declined to run `cargo sqlx prepare` because it would touch unrelated entries) survived a clean `cargo sqlx prepare -- --tests` re-run, confirming the format is identical to what the tool produces. Worth pinning as a lightweight pattern for single-query cache additions.
+
+**Lessons learned (for future sessions):**
+- Audit docs decay: always verify cited migrations + columns against current HEAD before scheduling work, especially for audits >2 weeks old. Sessions since PEND-09 cutover have aggressively dropped columns; the audit's H5 / M2 became obsolete by Session 700.
+
+**Commit plan:** single commit covering all five items + audit-doc reshape.
+
+---
 ## Session 703 — limit-clamp-followup CLOSED: useDuePanelData + Phase 1 strict clamps + Phase 3 typed boundary (2026-05-13)
 
 | Metadata | Value |
@@ -2633,7 +2678,7 @@ Docs / housekeeping:
 - **Session 450 (2026-04-21)** — FEAT-4g + FEAT-5d + FEAT-5b MCP + GCal + OAuth.
 - **Session 420 (2026-04-19)** — MAINT-48: React 18 → 19 major upgrade (40 files, zero breaking changes).
 
-For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
+For older milestones, see the archived [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 
 ### How to find a session
 

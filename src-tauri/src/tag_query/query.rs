@@ -204,12 +204,18 @@ pub async fn list_all_tags_in_space(
 }
 
 /// List all tag_ids associated with a block.
+///
+/// The `LIMIT 1000` cap is practical insurance against a runaway row
+/// count surfacing in the UI: in real use a block carries on the order
+/// of ≤100 tags, and 1000 is well below any UI render budget. Callers
+/// that need every tag (admin / migration paths) should query
+/// `block_tags` directly.
 pub async fn list_tags_for_block(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query_scalar!(
-        "SELECT tag_id FROM block_tags WHERE block_id = ?1 ORDER BY tag_id",
+        "SELECT tag_id FROM block_tags WHERE block_id = ?1 ORDER BY tag_id LIMIT 1000",
         block_id
     )
     .fetch_all(pool)
@@ -617,6 +623,29 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let result = list_tags_for_block(&pool, "DOES_NOT_EXIST").await.unwrap();
         assert!(result.is_empty());
+    }
+
+    /// Safety cap: `list_tags_for_block` ends with `LIMIT 1000` so a
+    /// runaway tag count cannot blow up the UI render budget. Insert
+    /// 1001 distinct tags on a single block and assert the result is
+    /// clamped to exactly 1000 — proves the cap is enforced and the
+    /// query did not silently fall back to all rows.
+    #[tokio::test]
+    async fn list_tags_for_block_caps_at_1000() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_CAP", "content", "many tags").await;
+        for i in 0..1001 {
+            let tag_id = format!("TAG_{i:05}");
+            insert_block(&pool, &tag_id, "tag", &tag_id).await;
+            insert_tag_assoc(&pool, "BLK_CAP", &tag_id).await;
+        }
+        let result = list_tags_for_block(&pool, "BLK_CAP").await.unwrap();
+        assert_eq!(
+            result.len(),
+            1000,
+            "list_tags_for_block must cap at LIMIT 1000; got {}",
+            result.len()
+        );
     }
 
     /// I-Search-14 — defense-in-depth: the final projection SELECT in

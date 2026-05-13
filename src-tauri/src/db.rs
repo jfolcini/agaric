@@ -389,6 +389,15 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
         // journal_size_limit caps the on-disk WAL at 50 MB to prevent unbounded growth.
         .pragma("wal_autocheckpoint", "5000")
         .pragma("journal_size_limit", "52428800") // 50 MB WAL size cap
+        // Page cache: 64 MB (negative value = KB per SQLite docs).
+        // Default 2000 pages (~8 MB) thrashes on 100k+ block databases.
+        .pragma("cache_size", "-65536")
+        // Memory-mapped read region: 256 MB. Default is 0 (disabled).
+        // Cuts hot-query latency 2-10x on multi-hundred-MB DBs.
+        .pragma("mmap_size", "268435456")
+        // Keep temp B-trees in RAM during large sorts/distinct/groupby
+        // instead of spilling to disk. Default is FILE.
+        .pragma("temp_store", "MEMORY")
         .busy_timeout(std::time::Duration::from_secs(5))
 }
 
@@ -835,6 +844,39 @@ mod tests {
             Some(5000),
             "read pool wal_autocheckpoint should be 5000 pages"
         );
+    }
+
+    // ======================================================================
+    // Performance PRAGMAs: cache_size, mmap_size, temp_store
+    // ======================================================================
+
+    #[tokio::test]
+    async fn init_pool_sets_performance_pragmas() {
+        let (pool, _dir) = test_pool().await;
+
+        // cache_size: stored as a negative value meaning KB. -65536 = 64 MB.
+        let cache_size = sqlx::query_scalar::<_, i64>("PRAGMA cache_size")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cache_size, -65536, "cache_size should be -65536 (64 MB)");
+
+        // mmap_size: 256 MB memory-mapped read region.
+        let mmap_size = sqlx::query_scalar::<_, i64>("PRAGMA mmap_size")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            mmap_size, 268_435_456,
+            "mmap_size should be 268435456 (256 MB)"
+        );
+
+        // temp_store: 2 == MEMORY (0 == DEFAULT, 1 == FILE, 2 == MEMORY).
+        let temp_store = sqlx::query_scalar::<_, i64>("PRAGMA temp_store")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(temp_store, 2, "temp_store should be 2 (MEMORY)");
     }
 
     // ======================================================================

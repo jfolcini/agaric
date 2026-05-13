@@ -165,10 +165,35 @@ pub async fn flush_all_drafts_inner(
     //    (`updated_at ASC`) so the `edit_block` ops land in a
     //    deterministic sequence — useful when correlating boot-recovery
     //    logs with op_log entries after the fact.
-    let drafts =
-        sqlx::query!("SELECT block_id, content FROM block_drafts ORDER BY updated_at ASC",)
-            .fetch_all(&mut **tx)
-            .await?;
+    //
+    //    Audit M3: cap the SELECT at `FLUSH_ALL_DRAFTS_CAP` rows. In
+    //    pathological scenarios (e.g. ~10k unflushed drafts after a
+    //    crash) the unbounded query would allocate the entire row set
+    //    in one go on a boot-recovery path. We deliberately do NOT
+    //    loop / chunk here: `flush_all_drafts_inner` is idempotent —
+    //    the function ORDER BYs oldest-first, so any row past the cap
+    //    stays in `block_drafts` and gets picked up by the next boot's
+    //    invocation. Contract: flush up to the cap per boot, then
+    //    return.
+    // i64 to feed directly into sqlx's integer-bind slot below; the
+    // `usize`-typed sibling is used for the post-fetch length check.
+    // Two literal consts to avoid a `i64 as usize` / `usize as i64` cast
+    // (both flagged by clippy's `cast_possible_*` lints).
+    const FLUSH_ALL_DRAFTS_CAP: i64 = 1000;
+    const FLUSH_ALL_DRAFTS_CAP_USIZE: usize = 1000;
+    let drafts = sqlx::query!(
+        "SELECT block_id, content FROM block_drafts ORDER BY updated_at ASC LIMIT ?",
+        FLUSH_ALL_DRAFTS_CAP,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    if drafts.len() == FLUSH_ALL_DRAFTS_CAP_USIZE {
+        tracing::warn!(
+            cap = FLUSH_ALL_DRAFTS_CAP,
+            "flush_all_drafts: hit hard cap; remaining drafts will be flushed on the next boot",
+        );
+    }
 
     let mut flushed: i64 = 0;
 
@@ -550,5 +575,88 @@ mod tests_h12 {
             !draft_exists(&pool, LIVE_BLOCK).await,
             "draft row must be deleted after a successful flush",
         );
+    }
+
+    // -- Audit M3: hard cap on flush_all_drafts_inner ---------------------
+    //
+    // Seed `cap + 1` drafts on live blocks, run `flush_all_drafts_inner`,
+    // and assert it flushed exactly `cap` rows — leaving the single
+    // newest draft (highest `updated_at`) in `block_drafts` for the next
+    // boot. The ordering invariant (oldest-first) is what makes the cap
+    // safe: dropping the youngest is idempotent because it stays in the
+    // table.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn flush_all_drafts_inner_caps_at_1000() {
+        let (pool, _dir) = test_pool().await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        // 1001 live blocks, each with a draft. Use an ascending
+        // `updated_at` so the ORDER BY is deterministic and we know
+        // exactly which row must survive (the last one).
+        let total: i64 = 1001;
+        for i in 0..total {
+            let block_id = format!("01HZM3CAP{:017}", i);
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', 'initial', NULL, 1)",
+            )
+            .bind(&block_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            // Format `updated_at` so lexicographic order matches insertion
+            // order — `block_drafts.updated_at` is TEXT (ISO-ish) and the
+            // SELECT does `ORDER BY updated_at ASC`.
+            let ts = format!("2025-01-01T00:00:{:09}Z", i);
+            sqlx::query(
+                "INSERT INTO block_drafts (block_id, content, updated_at) \
+                 VALUES (?, ?, ?)",
+            )
+            .bind(&block_id)
+            .bind(format!("draft-content-{i}"))
+            .bind(&ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let baseline: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(baseline, total, "fixture must seed exactly {total} drafts");
+
+        let result = flush_all_drafts_inner(&pool, DEVICE, &mat)
+            .await
+            .expect("flush_all_drafts_inner must succeed under the cap");
+
+        assert_eq!(
+            result.flushed, 1000,
+            "audit M3: flush_all_drafts_inner must cap at 1000 per boot"
+        );
+
+        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            remaining, 1,
+            "exactly one draft (the most-recent) must remain for the next boot"
+        );
+
+        // The surviving row is the one with the highest `updated_at`,
+        // i.e. the last block we inserted (index = total - 1).
+        let survivor_id: String = sqlx::query_scalar("SELECT block_id FROM block_drafts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let expected_survivor = format!("01HZM3CAP{:017}", total - 1);
+        assert_eq!(
+            survivor_id, expected_survivor,
+            "ORDER BY updated_at ASC + LIMIT 1000 must leave the newest draft behind"
+        );
+
+        mat.shutdown();
     }
 }

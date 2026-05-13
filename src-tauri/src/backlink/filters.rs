@@ -174,64 +174,85 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::PropertyNum { key, op, value } => {
-                let rows = sqlx::query_as::<_, (String, Option<f64>)>(
-                    "SELECT bp.block_id, bp.value_num \
+                // PERF-27: push operator comparison into SQL so SQLite filters
+                // by operator rather than materialising every row with this
+                // key and filtering in Rust.  Mirrors the `PropertyText` arm
+                // above.
+                //
+                // Behaviour note: `Eq` now uses SQL `=` rather than the prior
+                // `f64::EPSILON` Rust-side check.  This matches how
+                // `pagination/properties.rs::query_by_property` compares
+                // numeric properties.  `Contains` / `StartsWith` are
+                // meaningless for numeric values and short-circuit to an
+                // empty set (matching the prior `false` filter behaviour).
+                let sql_op = match op {
+                    CompareOp::Eq => "=",
+                    CompareOp::Neq => "<>",
+                    CompareOp::Lt => "<",
+                    CompareOp::Gt => ">",
+                    CompareOp::Lte => "<=",
+                    CompareOp::Gte => ">=",
+                    CompareOp::Contains | CompareOp::StartsWith => {
+                        return Ok(FxHashSet::default());
+                    }
+                };
+                let sql = format!(
+                    "SELECT bp.block_id \
                      FROM block_properties bp \
                      JOIN blocks b ON b.id = bp.block_id \
                      WHERE bp.key = ?1 AND bp.value_num IS NOT NULL \
-                       AND b.deleted_at IS NULL",
-                )
-                .bind(key)
-                .fetch_all(pool)
-                .await?;
-
-                Ok(rows
-                    .into_iter()
-                    .filter(|(_, v)| {
-                        let v = v.expect("value_num guaranteed non-null by SQL WHERE clause");
-                        match op {
-                            CompareOp::Eq => (v - value).abs() < f64::EPSILON,
-                            CompareOp::Neq => (v - value).abs() >= f64::EPSILON,
-                            CompareOp::Lt => v < *value,
-                            CompareOp::Gt => v > *value,
-                            CompareOp::Lte => v <= *value,
-                            CompareOp::Gte => v >= *value,
-                            CompareOp::Contains | CompareOp::StartsWith => false,
-                        }
-                    })
-                    .map(|(id, _)| id)
-                    .collect())
+                       AND bp.value_num {sql_op} ?2 \
+                       AND b.deleted_at IS NULL"
+                );
+                let rows = sqlx::query_scalar::<_, String>(&sql)
+                    .bind(key)
+                    .bind(*value)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::PropertyDate { key, op, value } => {
-                let rows = sqlx::query_as::<_, (String, Option<String>)>(
-                    "SELECT bp.block_id, bp.value_date \
+                // PERF-27: push operator comparison into SQL so SQLite filters
+                // by operator rather than materialising every row with this
+                // key and filtering in Rust.  Mirrors the `PropertyText` arm
+                // above.
+                //
+                // SQLite string comparison is lexicographic, which on
+                // ISO-8601 date strings (YYYY-MM-DD…) preserves chronological
+                // order and matches the prior Rust `&str` compare semantics.
+                // `Contains` / `StartsWith` use the same `escape_like` +
+                // `ESCAPE '\\'` shape as `PropertyText` so `%` / `_` / `\`
+                // in user input match literally.
+                let (sql_op, needs_escape) = match op {
+                    CompareOp::Eq => ("=", false),
+                    CompareOp::Neq => ("<>", false),
+                    CompareOp::Lt => ("<", false),
+                    CompareOp::Gt => (">", false),
+                    CompareOp::Lte => ("<=", false),
+                    CompareOp::Gte => (">=", false),
+                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
+                };
+                let bind_value: String = match op {
+                    CompareOp::Contains => format!("%{}%", escape_like(value)),
+                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
+                    _ => value.clone(),
+                };
+                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
+                let sql = format!(
+                    "SELECT bp.block_id \
                      FROM block_properties bp \
                      JOIN blocks b ON b.id = bp.block_id \
                      WHERE bp.key = ?1 AND bp.value_date IS NOT NULL \
-                       AND b.deleted_at IS NULL",
-                )
-                .bind(key)
-                .fetch_all(pool)
-                .await?;
-
-                Ok(rows
-                    .into_iter()
-                    .filter(|(_, v)| {
-                        let v = v.as_deref().unwrap_or("");
-                        match op {
-                            CompareOp::Eq => v == value.as_str(),
-                            CompareOp::Neq => v != value.as_str(),
-                            CompareOp::Lt => v < value.as_str(),
-                            CompareOp::Gt => v > value.as_str(),
-                            CompareOp::Lte => v <= value.as_str(),
-                            CompareOp::Gte => v >= value.as_str(),
-                            CompareOp::Contains => v.contains(value.as_str()),
-                            CompareOp::StartsWith => v.starts_with(value.as_str()),
-                        }
-                    })
-                    .map(|(id, _)| id)
-                    .collect())
+                       AND bp.value_date {sql_op} ?2{escape_clause} \
+                       AND b.deleted_at IS NULL"
+                );
+                let rows = sqlx::query_scalar::<_, String>(&sql)
+                    .bind(key)
+                    .bind(&bind_value)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::PropertyIsSet { key } => {
