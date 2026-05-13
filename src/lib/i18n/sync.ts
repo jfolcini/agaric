@@ -83,7 +83,6 @@ export const sync: Record<string, string> = {
   'sync.failedForDevice': 'Sync failed for device {{deviceId}}...',
   'sync.opsReceived_one': 'Synced {{count}} change from device',
   'sync.opsReceived_other': 'Synced {{count}} changes from device',
-  'sync.completedWithConflicts': 'Sync completed with conflicts \u2014 review in Conflicts view',
   'sync.failed': 'Sync failed: {{message}}',
   'sync.retryAction': 'Retry sync',
   'sync.backOnline': 'Back online. Syncing\u2026',

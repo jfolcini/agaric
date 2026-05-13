@@ -132,7 +132,7 @@ pub async fn list_blocks_inner(
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(pool)
@@ -166,7 +166,7 @@ pub async fn get_active_block_inner(
 ) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(pool)
@@ -469,18 +469,14 @@ pub async fn first_child_for_blocks(
 ///
 /// Sibling of [`batch_resolve_inner`], differing in two ways:
 ///
-///   1. Returns the full 13-column [`BlockRow`] (not just the lightweight
+///   1. Returns the full 12-column [`BlockRow`] (not just the lightweight
 ///      `id / title / block_type / deleted` projection). Consumers that
 ///      need `todo_state`, `priority`, `due_date`, `scheduled_date`,
-///      `content`, `parent_id`, `position`, etc. — e.g.
-///      `ConflictTypeRenderer` — get a single round-trip instead of
-///      per-row `get_block` IPCs.
-///   2. Does **not** filter . This is deliberate: the
-///      primary consumer is `ConflictList` (PEND-35 Tier 2.3), which
-///      surfaces conflict rows themselves  and their
-///      parents (which may be soft-deleted). Filtering would defeat the
-///      use-case. Soft-deleted rows are likewise included so the caller
-///      sees the full state.
+///      `content`, `parent_id`, `position`, etc. get a single
+///      round-trip instead of per-row `get_block` IPCs.
+///   2. Does **not** filter `deleted_at IS NULL`. Soft-deleted rows are
+///      included so the caller sees the full state for any consumer
+///      that intentionally wants to surface tombstoned rows.
 ///
 /// Empty input rejects with [`AppError::Validation`] (mirrors
 /// [`batch_resolve_inner`]). Above [`crate::commands::properties::MAX_BATCH_BLOCK_IDS`]
@@ -491,10 +487,6 @@ pub async fn first_child_for_blocks(
 /// response — callers must map by `id` and treat missing keys as
 /// "unknown / lost". Returned rows are NOT guaranteed to be in input
 /// order; let the FE map by `id` (the canonical batch shape).
-///
-/// PEND-35 Tier 2.3 — collapses the `Promise.allSettled(uniqueIds.map(getBlock))`
-/// fan-out in `src/components/ConflictList.tsx` (one IPC per unique
-/// `parent_id` across the visible conflict list) into one query.
 ///
 /// # Errors
 ///
@@ -543,107 +535,6 @@ pub async fn get_blocks(
     ids: Vec<String>,
 ) -> Result<Vec<BlockRow>, AppError> {
     get_blocks_inner(&pool.0, ids)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Batch-resolve the first-op `device_id` for a list of block IDs.
-///
-/// For each input `block_id`, returns the `device_id` of the **first**
-/// op_log row touching that block (lowest `seq`). The op_log PK is
-/// `(device_id, seq)`; `seq` is per-device monotonic but we surface
-/// MIN(seq) globally because the FE consumer (ConflictList's "From:
-/// <device>" badge) wants the device that originally introduced the
-/// conflict, not the latest editor.
-///
-/// Block IDs with no op_log rows are simply omitted from the response —
-/// e.g. conflict copies created by sync replay rather than a local
-/// `create_block` op may not have any local op trail. Callers must
-/// treat missing keys as "unknown origin".
-///
-/// Uses the native `op_log.block_id` column (migration 0030) and its
-/// `idx_op_log_block_id` index — same plan that
-/// [`super::crud::find_prev_edit_in_tx`] relies on, no full-scan
-/// `json_extract` fallback.
-///
-/// PEND-35 Tier 2.3 — collapses the `Promise.all(blocks.map(b =>
-/// getBlockHistory({blockId, limit:1})))` fan-out in
-/// `src/components/ConflictList.tsx` (one IPC per visible conflict,
-/// plus a `limit:1` page each just to read `items[0].device_id`) into
-/// one query.
-///
-/// Empty input returns an empty map (not an error). Above
-/// [`crate::commands::properties::MAX_BATCH_BLOCK_IDS`] rejects with
-/// [`AppError::Validation`].
-///
-/// # Errors
-///
-/// - [`AppError::Validation`] — `block_ids.len()` >
-///   [`crate::commands::properties::MAX_BATCH_BLOCK_IDS`]
-#[instrument(skip(pool, block_ids), err)]
-pub async fn first_op_device_for_blocks_inner(
-    pool: &SqlitePool,
-    block_ids: Vec<String>,
-) -> Result<HashMap<String, String>, AppError> {
-    if block_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    if block_ids.len() > crate::commands::properties::MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids length {} exceeds maximum {}",
-            block_ids.len(),
-            crate::commands::properties::MAX_BATCH_BLOCK_IDS,
-        )));
-    }
-    let ids_json = serde_json::to_string(&block_ids)?;
-
-    // For each input block_id, return the device_id of the row with the
-    // smallest `seq`. The op_log PK is `(device_id, seq)`, so a single
-    // block can have rows from multiple devices; we want the FIRST row
-    // chronologically (lowest seq within the rows targeting that block).
-    // Tie-breaker: smallest device_id ASC for determinism if two devices
-    // happen to share the same MIN seq value.
-    //
-    // The correlated subquery `MIN(seq) ... WHERE block_id = ol.block_id`
-    // is index-served by `idx_op_log_block_id` (migration 0030); the
-    // outer `block_id IN (json_each(...))` filter narrows to the input
-    // set. Single round-trip, single planner step per input id.
-    let sql = "WITH first_ops AS ( \
-                  SELECT ol.block_id, ol.device_id, ol.seq \
-                  FROM op_log ol \
-                  WHERE ol.block_id IN (SELECT value FROM json_each(?1)) \
-                    AND ol.seq = ( \
-                       SELECT MIN(seq) FROM op_log \
-                       WHERE block_id = ol.block_id \
-                    ) \
-               ) \
-               SELECT block_id, MIN(device_id) AS device_id \
-               FROM first_ops \
-               GROUP BY block_id";
-    let rows = sqlx::query_as::<_, (Option<String>, String)>(sql)
-        .bind(ids_json)
-        .fetch_all(pool)
-        .await?;
-
-    let mut map: HashMap<String, String> = HashMap::with_capacity(rows.len());
-    for (block_id, device_id) in rows {
-        if let Some(bid) = block_id {
-            map.insert(bid, device_id);
-        }
-    }
-    Ok(map)
-}
-
-/// Tauri command: batch-resolve the first-op device per block. Delegates
-/// to [`first_op_device_for_blocks_inner`].
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn first_op_device_for_blocks(
-    pool: State<'_, ReadPool>,
-    block_ids: Vec<String>,
-) -> Result<HashMap<String, String>, AppError> {
-    first_op_device_for_blocks_inner(&pool.0, block_ids)
         .await
         .map_err(sanitize_internal_error)
 }

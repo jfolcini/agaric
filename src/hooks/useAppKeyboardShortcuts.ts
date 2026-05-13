@@ -11,7 +11,7 @@
  * - **journal** — `prevDayWeekMonth`, `nextDayWeekMonth`, `goToToday`.
  *   Listens at `document` (everything else listens at `window`); only
  *   fires while `currentView === 'journal'`.
- * - **global** — `gotoConflicts`, `focusSearch`, `createNewPage`.
+ * - **global** — `focusSearch`, `createNewPage`.
  *   Routed through `matchesShortcutBinding` so Settings rebinding (BUG-18)
  *   works for every entry.
  * - **space** — `switchSpace1` … `switchSpace9` digit hotkeys.
@@ -209,7 +209,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     return () => document.removeEventListener('keydown', handleJournalNav)
   }, [t])
 
-  // ── Global shortcuts (focusSearch, createNewPage, gotoConflicts) ──
+  // ── Global shortcuts (focusSearch, createNewPage) ──
   // All go through matchesShortcutBinding so rebinding in Settings takes
   // effect (BUG-18).
   useEffect(() => {
@@ -217,18 +217,6 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       // MAINT-105: ignore auto-repeat so holding the shortcut doesn't
       // re-fire view changes / new-page creation on every keypress.
       if (e.repeat) return
-      const target = e.target as HTMLElement | null
-      const typingInField =
-        target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
-
-      // Alt+C → jump to Conflicts view (UX-216). Only fire when not typing.
-      if (matchesShortcutBinding(e, 'gotoConflicts')) {
-        if (typingInField) return
-        e.preventDefault()
-        useNavigationStore.getState().setView('conflicts')
-        announce(t('announce.conflictsOpened'))
-        return
-      }
 
       if (matchesShortcutBinding(e, 'focusSearch')) {
         e.preventDefault()

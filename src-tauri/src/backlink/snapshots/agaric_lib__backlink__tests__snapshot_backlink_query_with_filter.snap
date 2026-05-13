@@ -9,7 +9,6 @@ items:
     parent_id: ~
     position: ~
     deleted_at: ~
-    conflict_type: ~
     todo_state: ~
     priority: ~
     due_date: ~

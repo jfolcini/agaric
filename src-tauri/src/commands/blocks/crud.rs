@@ -266,7 +266,6 @@ pub(crate) async fn create_block_in_tx(
             parent_id,
             position: Some(effective_position),
             deleted_at: None,
-            conflict_type: None,
             todo_state: None,
             priority: None,
             due_date: None,
@@ -443,7 +442,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -522,7 +521,6 @@ pub async fn edit_block_inner(
         parent_id,
         position,
         deleted_at: None,
-        conflict_type: None,
         todo_state: None,
         priority: None,
         due_date: None,
@@ -2391,7 +2389,7 @@ pub(crate) async fn set_property_in_tx(
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -2481,7 +2479,6 @@ pub(crate) async fn set_property_in_tx(
             parent_id: existing.parent_id,
             position: existing.position,
             deleted_at: existing.deleted_at,
-            conflict_type: existing.conflict_type,
             todo_state: if key == "todo_state" {
                 value_text.clone()
             } else {
@@ -2773,329 +2770,6 @@ pub async fn purge_blocks_by_ids(
     block_ids: Vec<String>,
 ) -> Result<BulkTrashResponse, AppError> {
     purge_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-// ===========================================================================
-// PEND-35 Tier 2.3 — resolve_conflicts_batch
-// ===========================================================================
-
-/// One row of [`resolve_conflicts_batch_inner`]'s input list.
-///
-/// `action` is a closed-set string enum (`"keep"` | `"discard"`) — wider
-/// than a Rust enum to keep the FE wire format simple, but validated at
-/// the boundary so `serde` accepts arbitrary input and we surface a
-/// clean [`AppError::Validation`] instead of a confusing deserialise
-/// error.
-///
-/// `keep` = apply the conflict's `content` to the original block (parent)
-/// and soft-delete the conflict copy. `discard` = soft-delete the
-/// conflict copy without touching the parent. Mirrors the FE shape of
-/// `editBlock(parent_id, content)` then `deleteBlock(conflict_id)` for
-/// the keep path, and `deleteBlock(conflict_id)` for the discard path.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ConflictResolveAction {
-    /// The conflict-copy block id (the row whose ).
-    pub block_id: String,
-    /// The original / parent block id whose content is overwritten on `keep`.
-    /// For `discard` actions this field is unused but still required by the
-    /// wire format (FE consistency — the row-level resolve dialog always has
-    /// a `parent_id` regardless of action).
-    pub parent_id: String,
-    /// `"keep"` or `"discard"`. Validated at the IPC boundary; any other
-    /// string is rejected with [`AppError::Validation`].
-    pub action: String,
-    /// Content to write on a `keep` action. Required for `keep`; ignored on
-    /// `discard`.
-    pub content: Option<String>,
-}
-
-/// Result of [`resolve_conflicts_batch_inner`]: the count of actions that
-/// landed inside the single transaction.
-///
-/// Atomicity contract: the whole batch is all-or-nothing. If any action
-/// fails (e.g. a parent block was concurrently soft-deleted between FE
-/// selection and IPC, or an `edit_block` content size validation fails),
-/// the entire transaction rolls back. `resolved` is therefore always
-/// equal to `actions.len()` on success — `failed` is reserved for a
-/// future per-action savepoint variant if we ever need it.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ConflictResolveBatchResult {
-    /// Number of conflict actions that completed successfully (all-or-nothing,
-    /// so this equals `actions.len()` on a successful return).
-    pub resolved: i64,
-    /// Number of conflict actions that failed within the transaction.
-    /// Always 0 in the current implementation (rollback is all-or-nothing).
-    /// Reserved so the FE wire shape can grow into a per-action savepoint
-    /// variant without a binding-rebuild churn.
-    pub failed: i64,
-}
-
-/// PEND-35 Tier 2.3 — atomically resolve a batch of conflicts in a
-/// single `BEGIN IMMEDIATE` transaction.
-///
-/// Each [`ConflictResolveAction`] expands to either:
-///
-/// - `keep`  → write the conflict's `content` to the parent block (the
-///   equivalent of `edit_block_inner`), then soft-delete the conflict
-///   copy (the equivalent of `delete_block_inner`).
-/// - `discard` → soft-delete the conflict copy only.
-///
-/// Replaces the FE per-row `editBlock` + `deleteBlock` IPC loop in
-/// `src/components/ConflictList.tsx` (50 conflicts = 100 IPCs). The new
-/// path is one IPC, one writer-lock window, one op_log scope.
-///
-/// # Atomicity contract — all-or-nothing
-///
-/// Mirrors [`crate::commands::flush_all_drafts_inner`]: any error inside
-/// the loop rolls back the entire transaction (no partial commits, no
-/// half-resolved conflicts). The FE callsite only renders a success
-/// toast on `Ok(_)`, so this matches the user's expectation that "Keep
-/// all selected" either fully succeeds or fully fails.
-///
-/// # Per-action behaviour
-///
-/// - `keep` follows the same shape as [`edit_block_inner`]: validate
-///   parent exists + active, validate content length, look up
-///   `prev_edit`, append one `edit_block` op, update the `blocks` row.
-///   Then it follows the same shape as [`delete_block_inner`] for the
-///   conflict copy: append one `delete_block` op, run
-///   [`crate::soft_delete::reparent_orphan_conflict_copies`] (idempotent),
-///   and run the standard `descendants_cte_active` cascade UPDATE.
-/// - `discard` skips the edit step and runs the delete shape directly.
-///
-/// # Validation
-///
-/// - Empty `actions` list → [`AppError::Validation`].
-/// - `actions.len()` > [`MAX_BATCH_BLOCK_IDS`] → [`AppError::Validation`].
-/// - Unknown `action` string (anything other than `"keep"` /
-///   `"discard"`) → [`AppError::Validation`].
-/// - `keep` action with `content == None` → [`AppError::Validation`].
-///
-/// # Errors
-///
-/// - [`AppError::Validation`] — any of the above shape errors.
-/// - [`AppError::NotFound`] — a `parent_id` (keep) or `block_id` row is
-///   missing or already soft-deleted; rolls back the whole batch.
-/// - [`AppError::InvalidOperation`] — a `block_id` is already deleted;
-///   rolls back the whole batch.
-/// - [`AppError::Database`] — propagated from sqlx; rolls back the whole
-///   batch.
-#[instrument(skip(pool, device_id, materializer, actions), err)]
-pub async fn resolve_conflicts_batch_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-    actions: Vec<ConflictResolveAction>,
-) -> Result<ConflictResolveBatchResult, AppError> {
-    if actions.is_empty() {
-        return Err(AppError::Validation("actions list cannot be empty".into()));
-    }
-    if actions.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "actions list too large: {} > {}",
-            actions.len(),
-            MAX_BATCH_BLOCK_IDS,
-        )));
-    }
-    // Validate the action enum at the boundary. `serde` accepted `String`
-    // so we get a clean Validation error instead of a deserialise error
-    // for unknown variants.
-    for (i, a) in actions.iter().enumerate() {
-        match a.action.as_str() {
-            "keep" => {
-                if a.content.is_none() {
-                    return Err(AppError::Validation(format!(
-                        "actions[{i}]: 'keep' requires non-null content"
-                    )));
-                }
-            }
-            "discard" => {}
-            other => {
-                return Err(AppError::Validation(format!(
-                    "actions[{i}]: unknown action '{other}'; expected 'keep' or 'discard'"
-                )));
-            }
-        }
-    }
-
-    let mut tx = CommandTx::begin_immediate(pool, "resolve_conflicts_batch").await?;
-
-    // Single timestamp for every op_log + cascade UPDATE row in this
-    // batch — same convention as `delete_blocks_by_ids_inner`. Gives the
-    // op_log a clean "this is one batch" lex-monotonic anchor.
-    let now = now_rfc3339();
-    let gcal_hook_active = materializer.is_gcal_hook_active();
-    let mut resolved: i64 = 0;
-
-    // FEAT-5i — defer GCal notification until after the outer commit.
-    // We collect (op_record, snapshot) pairs inside the loop and dispatch
-    // them via `materializer.notify_gcal_for_op` after `commit_and_dispatch`.
-    let mut gcal_pending: Vec<(
-        Arc<crate::op_log::OpRecord>,
-        crate::gcal_push::dirty_producer::BlockDateSnapshot,
-    )> = Vec::new();
-
-    for action in &actions {
-        // I-CommandsCRUD-2 — uppercase normalisation so lowercase ULIDs
-        // from imports / scripted callers resolve the same row.
-        let block_id = action.block_id.to_ascii_uppercase();
-        let parent_id = action.parent_id.to_ascii_uppercase();
-
-        // ---- "keep" branch: edit the parent first ------------------------
-        if action.action == "keep" {
-            let to_text = action.content.as_ref().expect("validated above").clone();
-
-            if to_text.len() > MAX_CONTENT_LENGTH {
-                return Err(AppError::Validation(format!(
-                    "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
-                    to_text.len()
-                )));
-            }
-
-            // Validate parent exists + active inside the tx (TOCTOU-safe).
-            let existing = sqlx::query!(
-                "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
-                parent_id
-            )
-            .fetch_optional(&mut **tx)
-            .await?;
-            let existing = existing.ok_or_else(|| {
-                AppError::NotFound(format!("block '{parent_id}' (not found or deleted)"))
-            })?;
-            let parent_block_type = existing.block_type;
-
-            // FEAT-5i — snapshot pre-edit dates for GCal notifier.
-            let parent_gcal_snapshot = if gcal_hook_active {
-                Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &parent_id).await?)
-            } else {
-                None
-            };
-
-            // prev_edit lookup (mirrors `edit_block_inner`).
-            let prev_edit = find_prev_edit_in_tx(&mut tx, &parent_id).await?;
-
-            let parent_payload = OpPayload::EditBlock(EditBlockPayload {
-                block_id: BlockId::from_trusted(&parent_id),
-                to_text: to_text.clone(),
-                prev_edit,
-            });
-            let parent_op =
-                op_log::append_local_op_in_tx(&mut tx, device_id, parent_payload, now.clone())
-                    .await?;
-
-            sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
-                .bind(&to_text)
-                .bind(&parent_id)
-                .execute(&mut **tx)
-                .await?;
-
-            let parent_op = Arc::new(parent_op);
-            tx.enqueue_edit_background(Arc::clone(&parent_op), parent_block_type);
-            if let Some(snap) = parent_gcal_snapshot {
-                gcal_pending.push((Arc::clone(&parent_op), snap));
-            }
-        }
-
-        // ---- delete the conflict copy (both branches) --------------------
-        // Mirrors `delete_block_inner`'s shape: validate the row exists
-        // + active, snapshot for GCal, append op, reparent orphan
-        // conflict copies (idempotent + scoped to this seed), run the
-        // descendants_cte_active cascade UPDATE.
-        let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
-            .fetch_optional(&mut **tx)
-            .await?;
-        let row = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
-        if row.deleted_at.is_some() {
-            return Err(AppError::InvalidOperation(format!(
-                "block '{block_id}' is already deleted"
-            )));
-        }
-
-        let conflict_gcal_snapshot = if gcal_hook_active {
-            Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
-        } else {
-            None
-        };
-
-        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: BlockId::from_trusted(&block_id),
-        });
-        let conflict_op =
-            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
-
-        // M-81 — re-parent orphan conflict copies before the cascade UPDATE.
-        // Idempotent + scoped to this seed; mirrors `delete_block_inner`.
-        crate::soft_delete::reparent_orphan_conflict_copies(&mut tx, device_id, &block_id, &now)
-            .await?;
-
-        // Cascade soft-delete via the standard active CTE.
-        sqlx::query(concat!(
-            crate::descendants_cte_active!(),
-            "UPDATE blocks SET deleted_at = ? \
-             WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-        ))
-        .bind(&block_id)
-        .bind(&now)
-        .execute(&mut **tx)
-        .await?;
-
-        // PEND-26 N2 — surface saturation warn per resolved root.
-        if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
-            tracing::warn!(
-                block_id = %block_id,
-                op = "resolve_conflicts_batch",
-                "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
-                 below depth 100 were not soft-deleted. Tree is pathologically deep.",
-            );
-        }
-
-        // P-4 — sweep inherited tag rows for the soft-deleted subtree.
-        crate::tag_inheritance::remove_subtree_inherited(&mut tx, &block_id).await?;
-
-        let conflict_op = Arc::new(conflict_op);
-        tx.enqueue_background(Arc::clone(&conflict_op));
-        if let Some(snap) = conflict_gcal_snapshot {
-            gcal_pending.push((Arc::clone(&conflict_op), snap));
-        }
-
-        resolved += 1;
-    }
-
-    tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit for every pending
-    // edit/delete. Mirrors the per-op pattern in `edit_block_inner` and
-    // `delete_block_inner`; we just buffer until after the batch commit.
-    for (op_record, snapshot) in &gcal_pending {
-        materializer.notify_gcal_for_op(op_record, snapshot);
-    }
-
-    Ok(ConflictResolveBatchResult {
-        resolved,
-        failed: 0,
-    })
-}
-
-/// Tauri command: atomically resolve a batch of conflicts. Delegates to
-/// [`resolve_conflicts_batch_inner`].
-///
-/// PEND-35 Tier 2.3 — collapses the FE per-row `editBlock` + `deleteBlock`
-/// IPC loop in `src/components/ConflictList.tsx::handleBatchConfirm` into
-/// one round-trip and one writer-lock window.
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn resolve_conflicts_batch(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
-    actions: Vec<ConflictResolveAction>,
-) -> Result<ConflictResolveBatchResult, AppError> {
-    resolve_conflicts_batch_inner(&pool.0, device_id.as_str(), &materializer, actions)
         .await
         .map_err(sanitize_internal_error)
 }

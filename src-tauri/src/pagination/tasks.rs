@@ -28,7 +28,7 @@ pub async fn list_unfinished_tasks(
     let raw_rows = sqlx::query!(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id, COALESCE(b.due_date, b.scheduled_date) as "sort_date: String"
          FROM blocks b
          WHERE b.deleted_at IS NULL
@@ -62,7 +62,6 @@ pub async fn list_unfinished_tasks(
             parent_id: r.parent_id,
             position: r.position,
             deleted_at: r.deleted_at,
-            conflict_type: r.conflict_type,
             todo_state: r.todo_state,
             priority: r.priority,
             due_date: r.due_date,

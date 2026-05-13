@@ -60,12 +60,12 @@
 #[allow(dead_code)]
 pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str =
     "id, block_type, content, parent_id, position, deleted_at, \
-     conflict_type, todo_state, \
+     todo_state, \
      priority, due_date, scheduled_date, page_id";
 
 /// Canonical SELECT column list for the **runtime** sqlx form
 /// (`sqlx::query_as::<_, BlockRow>(&sql)` and the analogous
-/// `ActiveBlockRow` form). Same 12 columns as
+/// `ActiveBlockRow` form). Same 11 columns as
 /// [`BLOCK_ROW_CANONICAL_SELECT`].
 ///
 /// Used by the 3 runtime `sqlx::query_as::<_, BlockRow>(…)` sites
@@ -77,7 +77,7 @@ pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str =
 /// coverage that Test B gives the macro sites.
 pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str =
     "id, block_type, content, parent_id, position, deleted_at, \
-     conflict_type, todo_state, \
+     todo_state, \
      priority, due_date, scheduled_date, page_id";
 
 /// Canonical field list for `BlockRow` in struct-declaration order.
@@ -96,7 +96,6 @@ pub(crate) const BLOCK_ROW_CANONICAL_FIELDS: &[&str] = &[
     "parent_id",
     "position",
     "deleted_at",
-    "conflict_type",
     "todo_state",
     "priority",
     "due_date",

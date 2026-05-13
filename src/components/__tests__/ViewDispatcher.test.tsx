@@ -1,7 +1,7 @@
 /**
  * Tests for the `ViewDispatcher` component + the helper hooks
- * (`useHeaderLabel`, `useConflictCount`, `useTrashCount`) that were
- * extracted from App.tsx in MAINT-124 step 4.
+ * (`useHeaderLabel`, `useTrashCount`) that were extracted from App.tsx
+ * in MAINT-124 step 4.
  *
  * Pins the new public surface in isolation; full integration scenarios
  * remain covered by the existing App.test.tsx.
@@ -16,7 +16,6 @@ import { t } from '../../lib/i18n'
 import { useNavigationStore } from '../../stores/navigation'
 import { useTabsStore } from '../../stores/tabs'
 import {
-  useConflictCount,
   useHeaderLabel,
   useTrashCount,
   ViewDispatcher,
@@ -36,9 +35,6 @@ vi.mock('../JournalPage', () => ({
   JournalPage: () => <div data-testid="journal-mock">journal</div>,
   JournalControls: () => <div />,
   GlobalDateControls: () => <div />,
-}))
-vi.mock('../ConflictList', () => ({
-  ConflictList: () => <div data-testid="conflict-list-mock">conflicts</div>,
 }))
 vi.mock('../GraphView', () => ({
   GraphView: () => <div data-testid="graph-view-mock">graph</div>,
@@ -121,7 +117,6 @@ describe('ViewDispatcher — routing', () => {
     ['properties', 'properties-view-mock'],
     ['settings', 'settings-view-mock'],
     ['status', 'status-panel-mock'],
-    ['conflicts', 'conflict-list-mock'],
     ['history', 'history-view-mock'],
     ['templates', 'templates-view-mock'],
     ['graph', 'graph-view-mock'],
@@ -235,65 +230,8 @@ describe('useHeaderLabel', () => {
 })
 
 // ---------------------------------------------------------------------------
-// useConflictCount / useTrashCount polling
+// useTrashCount polling
 // ---------------------------------------------------------------------------
-
-describe('useConflictCount', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  // PEND-35 Tier 2.11 — `useConflictCount` now polls `count_conflicts`
-  // (a single `SELECT COUNT(*)`) instead of `get_conflicts({limit:100})`
-  // + `.items.length`. The old shape silently capped the badge at 100;
-  // the new IPC returns a plain integer.
-  it('polls count_conflicts every 30 s', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'count_conflicts') return 2
-      return emptyPage
-    })
-
-    const { result } = renderHook(() => useConflictCount())
-
-    // Initial fetch
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
-    })
-    expect(mockedInvoke).toHaveBeenCalledWith('count_conflicts', expect.any(Object))
-    const initialCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'count_conflicts').length
-    expect(initialCalls).toBe(1)
-    expect(result.current).toBe(2)
-
-    // Advance to the next polling tick
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000)
-    })
-    const afterTickCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'count_conflicts',
-    ).length
-    expect(afterTickCalls).toBe(2)
-  })
-
-  // PEND-35 Tier 2.11 audit symptom: the previous `getConflicts({limit:100})`
-  // shape masked counts > 100 because the second page was never fetched.
-  // `count_conflicts` returns the true count regardless of magnitude.
-  it('surfaces counts > 100 — regression for the silently-capped shape', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'count_conflicts') return 427
-      return emptyPage
-    })
-
-    const { result } = renderHook(() => useConflictCount())
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
-    })
-    expect(result.current).toBe(427)
-  })
-})
 
 describe('useTrashCount', () => {
   beforeEach(() => {

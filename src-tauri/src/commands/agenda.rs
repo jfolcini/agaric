@@ -235,7 +235,6 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
         Option<String>,
         Option<String>,
-        Option<String>,
     )> = sqlx::query_as(
         // FEAT-3p4 — ?7 (space_id) drives the shared space-filter clause.
         // Mirrors `crate::space_filter_clause!` — kept inline because this
@@ -244,7 +243,7 @@ pub async fn list_projected_agenda_inner(
         // intersects against `block_properties(key = 'space').value_ref`.
         "SELECT pac.block_id, pac.projected_date, pac.source,
                 b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.conflict_type,
+                b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
          FROM projected_agenda_cache pac
@@ -305,12 +304,11 @@ pub async fn list_projected_agenda_inner(
                 parent_id: row.6,
                 position: row.7,
                 deleted_at: row.8,
-                conflict_type: row.9,
-                todo_state: row.10,
-                priority: row.11,
-                due_date: row.12,
-                scheduled_date: row.13,
-                page_id: row.14,
+                todo_state: row.9,
+                priority: row.10,
+                due_date: row.11,
+                scheduled_date: row.12,
+                page_id: row.13,
             },
             projected_date: row.1,
             source: row.2,
@@ -399,7 +397,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         RepeatingBlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
                 bp.value_text AS repeat_rule,
                 bp_until.value_date AS repeat_until,

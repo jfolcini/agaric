@@ -84,7 +84,6 @@ function CollapseButton() {
 export interface AppSidebarProps {
   currentView: View
   onSelectView: (view: Exclude<View, 'page-editor'>) => void
-  conflictCount: number
   trashCount: number
   syncState: SyncState
   syncPeers: PeerInfo[]
@@ -104,7 +103,6 @@ export interface AppSidebarProps {
 export function AppSidebar({
   currentView,
   onSelectView,
-  conflictCount,
   trashCount,
   syncState,
   syncPeers,
@@ -181,13 +179,6 @@ export function AppSidebar({
                       >
                         <item.icon />
                         <span>{label}</span>
-                        {item.id === 'conflicts' && conflictCount > 0 && (
-                          <SidebarMenuBadge
-                            aria-label={t('sidebar.conflictCount', { count: conflictCount })}
-                          >
-                            {conflictCount}
-                          </SidebarMenuBadge>
-                        )}
                         {item.id === 'trash' && trashCount > 0 && (
                           <SidebarMenuBadge
                             aria-label={t('sidebar.trashCount', { count: trashCount })}

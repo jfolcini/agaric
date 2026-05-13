@@ -53,7 +53,6 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     page_id: null,
     position: 0,
     deleted_at: null,
-    conflict_type: null,
     todo_state: null,
     priority: null,
     due_date: null,

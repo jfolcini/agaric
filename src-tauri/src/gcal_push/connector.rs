@@ -1293,8 +1293,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, conflict_type, page_id) \
-             VALUES (?, 'page', 'Test Page', NULL, 0, NULL, NULL, ?)",
+             deleted_at, page_id) \
+             VALUES (?, 'page', 'Test Page', NULL, 0, NULL, ?)",
         )
         .bind(&page_id)
         .bind(&page_id)
@@ -1304,8 +1304,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, conflict_type, todo_state, due_date, page_id) \
-             VALUES (?, 'content', ?, ?, 1, NULL, NULL, 'TODO', ?, ?)",
+             deleted_at, todo_state, due_date, page_id) \
+             VALUES (?, 'content', ?, ?, 1, NULL, 'TODO', ?, ?)",
         )
         .bind(&block_id)
         .bind(content)

@@ -173,10 +173,6 @@ describe('key existence', () => {
     // Shortcuts
     'shortcuts.title',
 
-    // Conflict
-    'conflict.typeText',
-    'conflict.typeProperty',
-
     // Status / peer address
     'status.peerAddress',
     'status.importTitle',
@@ -218,7 +214,6 @@ describe('key existence', () => {
       'propertiesView',
       'tags',
       'shortcuts',
-      'conflict',
       'status',
     ]
 

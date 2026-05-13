@@ -146,7 +146,6 @@ describe('useNavigationStore', () => {
         'properties',
         'trash',
         'status',
-        'conflicts',
         'history',
         'templates',
         'settings',

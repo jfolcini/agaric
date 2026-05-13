@@ -108,22 +108,6 @@ pub async fn get_backlinks_inner(
     pagination::list_backlinks(pool, &block_id, &page, scope.as_filter_param()).await
 }
 
-/// List conflict-copy blocks. PEND-09 Phase 4 dropped the underlying
-/// `is_conflict` column; this entry point is a vacuous shell preserved
-/// for IPC-surface stability — it returns an empty page. The
-/// `conflict_type` / `id_min` parameters are accepted but ignored.
-#[instrument(skip(pool), err)]
-pub async fn get_conflicts_inner(
-    pool: &SqlitePool,
-    cursor: Option<String>,
-    limit: Option<i64>,
-    conflict_type: Option<String>,
-    id_min: Option<String>,
-) -> Result<PageResponse<BlockRow>, AppError> {
-    let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_conflicts(pool, &page, conflict_type.as_deref(), id_min.as_deref()).await
-}
-
 /// Return current materializer queue metrics and system status.
 #[instrument(skip(materializer, scheduler))]
 pub async fn get_status_inner(
@@ -379,41 +363,6 @@ pub async fn list_unlinked_references_inner(
         .await
 }
 
-/// Count active (non-deleted) conflict-copy blocks.
-///
-/// PEND-35 Tier 2.11 — replaces the FE pattern of paginating
-/// [`get_conflicts_inner`] with `limit: 100` just to read
-/// `data.items.length` for the conflicts-tab badge. Materialising up to
-/// 100 full [`BlockRow`]s every 30 s for a single integer is wasteful;
-/// worse, the count is silently capped at 100 since the badge cannot
-/// see past the first page. This helper runs a single
-/// `SELECT COUNT(*)` so the badge surfaces the true count regardless of
-/// magnitude.
-///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the count to
-/// blocks whose owning page (resolved via `COALESCE(b.page_id, b.id)`)
-/// carries `space = ?space_id`. The shape mirrors every sibling
-/// space-scoped read (see `count_backlinks_batch_inner`,
-/// `crate::backlink::query::eval_backlink_query`). [`SpaceScope::Global`]
-/// preserves the cross-space count for legacy callers.
-///
-/// PEND-09 Phase 4 dropped the `blocks.is_conflict` column. The
-/// conflict-copy creation path was made unreachable in Phase 3, so this
-/// counter can never be non-zero — it is preserved as a vacuous Tauri
-/// surface so the IPC contract stays stable.
-///
-/// # Errors
-///
-/// - Database errors propagated from sqlx (none are issued, but the
-///   signature is preserved).
-#[instrument(skip(_pool), err)]
-pub async fn count_conflicts_inner(
-    _pool: &SqlitePool,
-    _scope: &SpaceScope,
-) -> Result<i64, AppError> {
-    Ok(0)
-}
-
 /// Count backlinks per target page for a batch of page IDs in a single query.
 ///
 /// Returns a `HashMap<page_id, count>` for pages that have at least one
@@ -488,22 +437,6 @@ pub async fn get_backlinks(
     scope: SpaceScope,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     get_backlinks_inner(&pool.0, block_id, cursor, limit, &scope)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: list conflict-copy blocks. Delegates to [`get_conflicts_inner`].
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn get_conflicts(
-    pool: State<'_, ReadPool>,
-    cursor: Option<String>,
-    limit: Option<i64>,
-    conflict_type: Option<String>,
-    id_min: Option<String>,
-) -> Result<PageResponse<BlockRow>, AppError> {
-    get_conflicts_inner(&pool.0, cursor, limit, conflict_type, id_min)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -681,19 +614,6 @@ pub async fn count_backlinks_batch(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: count active conflict-copy blocks. Delegates to [`count_conflicts_inner`].
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn count_conflicts(
-    pool: State<'_, ReadPool>,
-    scope: SpaceScope,
-) -> Result<i64, AppError> {
-    count_conflicts_inner(&pool.0, &scope)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
 // ---------------------------------------------------------------------------
 // PEND-35 Tier 2.10b — `filtered_blocks_query`
 // ---------------------------------------------------------------------------
@@ -853,7 +773,7 @@ pub async fn filtered_blocks_query_inner(
     // EXISTS-subquery slots are appended starting at ?6.
     let mut sql = String::from(
         "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.deleted_at, b.conflict_type, \
+                b.deleted_at, \
                 b.todo_state, b.priority, b.due_date, b.scheduled_date, \
                 b.page_id \
          FROM blocks b \

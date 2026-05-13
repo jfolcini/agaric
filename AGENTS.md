@@ -64,7 +64,7 @@ prek run --all-files         # Pre-commit hooks
 6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.
 7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
 8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism
-9. **Recursive CTEs over `blocks` must bound `depth < 100`** in the recursive member to prevent runaway recursion on corrupted `parent_id` chains. (Historical note: this invariant also required filtering `is_conflict = 0`; PEND-09 Phase 4 dropped that column when the conflict-copy creation path became unreachable, so only the depth bound remains.)
+9. **Recursive CTEs over `blocks` must bound `depth < 100`** in the recursive member to prevent runaway recursion on corrupted `parent_id` chains. (Historical note: this invariant also required filtering `is_conflict = 0` / `conflict_type IS NULL`; PEND-09 Phase 4 dropped `is_conflict` and Phase 5 dropped `conflict_type` once the conflict-copy creation path became unreachable, so only the depth bound remains.)
 
 ## Architectural Stability
 

@@ -5,7 +5,6 @@ expression: result
 has_more: false
 items:
   - block_type: page
-    conflict_type: ~
     content: Alpha
     deleted_at: ~
     due_date: ~

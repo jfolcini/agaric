@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 // Schema version
 // ---------------------------------------------------------------------------
 
-// MAINT-133: bumped 2 → 3 when `BlockSnapshot::conflict_type` joined the
-// snapshot pipeline. The decoder accepts `1..=SCHEMA_VERSION`, and the
-// `serde(default)` annotations on the new (and previously-added) `Option`
-// fields mean older v1/v2 blobs decode cleanly with `None` for any
-// missing field — see `decode_rejects_bad_version` and the v2-format
-// regression test in tests.rs.
+// PEND-09 Phase 5: SCHEMA_VERSION stays at 3 — the `conflict_type`
+// column dropped from `blocks` is omitted from `BlockSnapshot`'s
+// serialised form. v3 snapshots written before this drop deserialise
+// cleanly because `serde(default)` swallows the previously-present
+// `conflict_type` field; the value is dropped on the floor when
+// the row is restored. Older v1/v2 blobs continue to deserialise
+// the same way they always did.
 pub(crate) const SCHEMA_VERSION: u32 = 3;
 
 // ---------------------------------------------------------------------------
@@ -27,12 +28,6 @@ pub struct BlockSnapshot {
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
     pub conflict_source: Option<String>,
-    /// MAINT-133: type of conflict ('Text', 'Property', 'Move', 'DeleteEdit')
-    /// for conflict-copy blocks; NULL for non-conflict blocks. Added to the
-    /// snapshot pipeline alongside SCHEMA_VERSION = 3 so older v1/v2 blobs
-    /// (which omit the field entirely) decode with `None` via `serde(default)`.
-    #[serde(default)]
-    pub conflict_type: Option<String>,
     #[serde(default)]
     pub todo_state: Option<String>,
     #[serde(default)]

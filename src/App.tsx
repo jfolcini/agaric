@@ -13,12 +13,7 @@ import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
-import {
-  useConflictCount,
-  useHeaderLabel,
-  useTrashCount,
-  ViewDispatcher,
-} from './components/ViewDispatcher'
+import { useHeaderLabel, useTrashCount, ViewDispatcher } from './components/ViewDispatcher'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
 import { useAppBootRecovery } from './hooks/useAppBootRecovery'
 import { useAppDialogs } from './hooks/useAppDialogs'
@@ -72,7 +67,6 @@ function App() {
   const goBack = useTabsStore((s) => s.goBack)
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
-  const conflictCount = useConflictCount()
   const trashCount = useTrashCount()
   const { theme: currentTheme, isDark, toggleTheme } = useTheme()
   const syncState = useSyncStore((s) => s.state)
@@ -393,7 +387,6 @@ function App() {
         <AppSidebar
           currentView={currentView}
           onSelectView={setView}
-          conflictCount={conflictCount}
           trashCount={trashCount}
           syncState={syncState}
           syncPeers={syncPeers}

@@ -186,7 +186,6 @@ struct FtsSearchRow {
     parent_id: Option<String>,
     position: Option<i64>,
     deleted_at: Option<String>,
-    conflict_type: Option<String>,
     todo_state: Option<String>,
     priority: Option<String>,
     due_date: Option<String>,
@@ -278,7 +277,7 @@ pub async fn search_fts(
     // and (FEAT-3 Phase 2) space_id.
     let mut sql = String::from(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.conflict_type,
+                b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
                 fts.rank as search_rank
@@ -423,7 +422,6 @@ pub async fn search_fts(
             parent_id: r.parent_id,
             position: r.position,
             deleted_at: r.deleted_at,
-            conflict_type: r.conflict_type,
             todo_state: r.todo_state,
             priority: r.priority,
             due_date: r.due_date,

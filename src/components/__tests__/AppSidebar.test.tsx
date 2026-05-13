@@ -24,7 +24,6 @@ function defaultProps(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps
   return {
     currentView: 'journal',
     onSelectView: vi.fn(),
-    conflictCount: 0,
     trashCount: 0,
     syncState: 'idle',
     syncPeers: [],
@@ -106,20 +105,6 @@ describe('AppSidebar', () => {
 
     expect(pagesButton).toHaveAttribute('aria-current', 'page')
     expect(journalButton).not.toHaveAttribute('aria-current', 'page')
-  })
-
-  it('renders the conflicts badge only when conflictCount > 0', () => {
-    const { rerender, props } = renderSidebar({ conflictCount: 0 })
-    expect(
-      screen.queryByLabelText(t('sidebar.conflictCount', { count: 3 })),
-    ).not.toBeInTheDocument()
-
-    rerender(
-      <SidebarProvider>
-        <AppSidebar {...props} conflictCount={3} />
-      </SidebarProvider>,
-    )
-    expect(screen.getByLabelText(t('sidebar.conflictCount', { count: 3 }))).toBeInTheDocument()
   })
 
   it('calls onNewPage / onSyncClick / onShowShortcuts from the footer actions', async () => {

@@ -188,7 +188,6 @@ await waitFor(() => {
 
 - `src/hooks/__tests__/useGraphSimulation.test.ts` — `act(async)` around a worker-dispatched error.
 - `src/components/__tests__/AttachmentList.test.tsx` — `act(async)` around `vi.advanceTimersByTime(3100)`.
-- `src/components/__tests__/ConflictList.test.tsx` — `findByText` after `findByText` so the second IPC resolution flushes.
 - `src/components/__tests__/BacklinkFilterBuilder.test.tsx` — `waitFor` on the Radix popover trigger label before clicking Apply (TEST-3 fix).
 
 The root `AGENTS.md` also flags this pattern at a higher level — this section lists the concrete recipes per frontend test style.
@@ -216,7 +215,7 @@ Vitest's default `waitFor` timeout is 1 s and the default per-test timeout is 5 
 
 Shared fixture factories live in `src/__tests__/fixtures/index.ts` — use these instead of per-file definitions:
 ```ts
-import { makeBlock, makePage, makeConflict, makeDailyPage, emptyPage } from '../fixtures'
+import { makeBlock, makePage, makeDailyPage, emptyPage } from '../fixtures'
 
 makeBlock({ id: 'BLK_1', content: 'hello' })  // Partial<T> override — everything else gets defaults
 makePage({ id: 'PAGE_1' })

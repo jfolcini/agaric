@@ -5,13 +5,13 @@
  * - The `currentView`-based switch over view components (was the
  *   `ViewRouter` function in App.tsx).
  * - The `lazy()` imports for each top-level view component
- *   (Settings, Conflicts, Trash, etc.). `KeyboardShortcuts` and
+ *   (Settings, Trash, etc.). `KeyboardShortcuts` and
  *   `WelcomeModal` stay lazy-imported in App.tsx because they render
  *   OUTSIDE this switch (top-level overlays).
  * - The shared `<ViewFallback>` Suspense skeleton.
- * - The view-related counter hooks (`useConflictCount`,
- *   `useTrashCount`) — both poll their IPC every 30 s with refetch
- *   on focus / visibility change, identical to the originals.
+ * - The view-related counter hook (`useTrashCount`) — polls its IPC
+ *   every 30 s with refetch on focus / visibility change, identical
+ *   to the original.
  * - `useHeaderLabel` — used by the App shell header, exported so
  *   App.tsx can keep its existing import.
  *
@@ -23,7 +23,7 @@
 import { lazy, type ReactElement, Suspense, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useItemCount } from '../hooks/useItemCount'
-import { countConflicts, listBlocks } from '../lib/tauri'
+import { listBlocks } from '../lib/tauri'
 import { useNavigationStore, type View } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
 import { type PageEntry, selectPageStack, useTabsStore } from '../stores/tabs'
@@ -45,7 +45,6 @@ import { NAV_ITEMS } from './nav-items'
 // Each lazy() import automatically becomes its own Rollup chunk. The
 // Suspense fallback uses `LoadingSkeleton` (the shared primitive) so the
 // transient state matches the rest of the app visually.
-const ConflictList = lazy(() => import('./ConflictList').then((m) => ({ default: m.ConflictList })))
 const GraphView = lazy(() => import('./GraphView').then((m) => ({ default: m.GraphView })))
 const HistoryView = lazy(() => import('./HistoryView').then((m) => ({ default: m.HistoryView })))
 const PageBrowser = lazy(() => import('./PageBrowser').then((m) => ({ default: m.PageBrowser })))
@@ -76,26 +75,6 @@ export function useHeaderLabel(): string {
   }
   const item = NAV_ITEMS.find((item) => item.id === currentView)
   return item ? t(item.labelKey) : ''
-}
-
-/** Returns the number of unresolved conflicts. Polls every 30 s and on focus.
- *
- * PEND-35 Tier 2.11 — calls `countConflicts` (a single `SELECT COUNT(*)`)
- * instead of paginating `getConflicts({limit:100})` and reading
- * `.items.length`. The old shape materialised up to 100 full
- * `BlockRow`s every 30 s for one integer and silently capped the badge
- * at 100; the new IPC reflects the true count regardless of magnitude.
- *
- * `currentSpaceId` scopes the count to the active space so the badge
- * matches what `ConflictList` actually renders (which is itself
- * conflict-list-scoped — see `getConflicts` callers downstream).
- */
-export function useConflictCount(): number {
-  const currentView = useNavigationStore((s) => s.currentView)
-  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view or space changes (user may have resolved conflicts / switched spaces)
-  const queryFn = useCallback(() => countConflicts(currentSpaceId), [currentView, currentSpaceId])
-  return useItemCount(queryFn, 30_000)
 }
 
 /** Returns the number of trashed items. Polls every 30 s and on focus. */
@@ -222,14 +201,6 @@ export function ViewDispatcher({
         <FeatureErrorBoundary name="Status">
           <Suspense fallback={<ViewFallback />}>
             <StatusPanel />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'conflicts':
-      return (
-        <FeatureErrorBoundary name="Conflicts">
-          <Suspense fallback={<ViewFallback />}>
-            <ConflictList />
           </Suspense>
         </FeatureErrorBoundary>
       )

@@ -81,14 +81,6 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     expect(useNavigationStore.getState().currentView).toBe('search')
   })
 
-  it('Alt+C (gotoConflicts) sets navigation view to "conflicts"', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
-
-    fireEvent.keyDown(window, { key: 'c', altKey: true })
-
-    expect(useNavigationStore.getState().currentView).toBe('conflicts')
-  })
-
   it('Ctrl+N (createNewPage) routes through createPageInSpace and navigates', async () => {
     const { createPageInSpace } = await import('../../lib/tauri')
     const mockedCreate = vi.mocked(createPageInSpace)
@@ -288,14 +280,6 @@ describe('useAppKeyboardShortcuts — modifier discipline', () => {
     expect(useNavigationStore.getState().currentView).toBe('journal')
   })
 
-  it('plain "c" does NOT switch to conflicts view (only Alt+C does)', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
-
-    fireEvent.keyDown(window, { key: 'c' })
-
-    expect(useNavigationStore.getState().currentView).toBe('journal')
-  })
-
   it('auto-repeat events are ignored (MAINT-105)', () => {
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
@@ -321,21 +305,6 @@ describe('useAppKeyboardShortcuts — typing-in-field gating', () => {
       expect(useJournalStore.getState().currentDate).toBe(initial)
     } finally {
       input.remove()
-    }
-  })
-
-  it('Alt+C skips when target is contentEditable', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
-
-    const editable = document.createElement('div')
-    editable.contentEditable = 'true'
-    Object.defineProperty(editable, 'isContentEditable', { value: true })
-    document.body.appendChild(editable)
-    try {
-      fireEvent.keyDown(editable, { key: 'c', altKey: true })
-      expect(useNavigationStore.getState().currentView).toBe('journal')
-    } finally {
-      editable.remove()
     }
   })
 })

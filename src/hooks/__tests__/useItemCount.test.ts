@@ -1,20 +1,15 @@
 /**
- * Tests for useItemCount — the polling-badge hook that powers the
- * conflicts-tab and trash-tab counters in the sidebar.
+ * Tests for useItemCount — the polling-badge hook that powers
+ * sidebar counters (e.g. the trash-tab badge).
  *
- * PEND-35 Tier 2.11 — `useConflictCount` now routes through the
- * cheaper `count_conflicts` IPC (a single `SELECT COUNT(*)`) instead
- * of paginating `getConflicts({limit:100})` and reading
- * `data.items.length`. The hook itself accepts both shapes — paginated
- * page envelopes (legacy callsites still on full-row IPCs, e.g. the
- * trash badge) AND plain `number` returns (count-only IPCs) — so the
- * tier-by-tier audit migration can land without churning every
- * consumer at once.
+ * The hook accepts both shapes — paginated page envelopes (e.g. the
+ * trash badge polling `listBlocks({ showDeleted: true, limit: 100 })`)
+ * AND plain `number` returns (count-only IPCs).
  *
- * The "counts > 100" case is the audit-reported regression: the old
- * `getConflicts({limit:100})` shape silently capped the badge at 100
- * because the second page was never fetched. The number-shape path
- * exercised here surfaces the true count regardless of magnitude.
+ * The "counts > 100" case is a regression guard: paginated-page
+ * counters silently cap at the page limit because the second page is
+ * never fetched. The number-shape path surfaces the true count
+ * regardless of magnitude.
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -47,10 +42,10 @@ describe('useItemCount', () => {
     expect(queryFn).toHaveBeenCalledOnce()
   })
 
-  it('surfaces counts > 100 — regression for the silently-capped getConflicts({limit:100}) shape', async () => {
-    // PEND-35 Tier 2.11 audit symptom: under the old `.items.length`
-    // shape the badge maxed out at 100 because the second page was
-    // never fetched. The count-only IPC must surface the true count.
+  it('surfaces counts > 100 — regression guard for the silently-capped page-shape', async () => {
+    // Under a `.items.length` shape the badge maxes out at the page
+    // limit because the second page is never fetched. The count-only
+    // IPC must surface the true count.
     const queryFn = vi.fn().mockResolvedValue(427)
     const { result } = renderHook(() => useItemCount(queryFn, 30_000))
 

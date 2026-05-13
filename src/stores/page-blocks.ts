@@ -306,7 +306,6 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           parent_id: result.parent_id,
           position: result.position,
           deleted_at: null,
-          conflict_type: null,
           todo_state: null,
           priority: null,
           due_date: null,
@@ -594,6 +593,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       }
     },
 
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing, surfaced when file was touched in PEND-09 Phase 5
     moveDown: async (blockId: string) => {
       const { blocks, blocksById, rootParentId } = get()
       const block = blocksById.get(blockId)

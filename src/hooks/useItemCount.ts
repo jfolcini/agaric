@@ -2,16 +2,11 @@
  * useItemCount — reusable hook that polls a Tauri IPC command and
  * returns a count for a sidebar / tab badge.
  *
- * Uses the same `usePollingQuery` pattern as `useHasConflicts` in App.tsx.
- *
  * Accepts either:
- *  - a paginated command returning `{ items: unknown[] }` (legacy
- *    callsites whose backend doesn't yet have a count-only IPC — e.g.
+ *  - a paginated command returning `{ items: unknown[] }` (e.g.
  *    the trash badge polls `listBlocks({ showDeleted: true, limit: 100 })`),
  *  - a count-only command returning `number` (the cheaper shape — used
- *    by `useConflictCount` after PEND-35 Tier 2.11 routed the badge
- *    through `count_conflicts` instead of paginating
- *    `getConflicts({limit:100})` every 30 s for `data.items.length`).
+ *    by callsites that have a dedicated `SELECT COUNT(*)` IPC).
  *
  * The two-shape contract lets per-callsite migrations land independently
  * without churning every consumer at once.

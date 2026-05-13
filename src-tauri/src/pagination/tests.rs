@@ -1,7 +1,7 @@
 //! Tests for cursor-based keyset pagination — cursor codec, page request
 //! validation, and all eight paginated query functions (list_children,
 //! list_by_type, list_trash, list_by_tag, list_agenda, list_backlinks,
-//! list_block_history, list_conflicts).  Covers first-page,
+//! list_block_history).  Covers first-page,
 //! cursor-continuation, last-page, empty results, ordering, tiebreakers,
 //! soft-delete exclusion, cursor stability after inserts, exhaustive walks,
 //! seq-field backward compatibility, and all op types in history.
@@ -2853,27 +2853,6 @@ async fn test_list_block_history_uses_native_block_id_column() {
     );
 }
 
-#[tokio::test]
-async fn test_list_conflicts_empty() {
-    let (pool, _dir) = test_pool().await;
-
-    // Only normal blocks, no conflicts
-    insert_block(&pool, "NORMAL01", "content", "normal", None, None).await;
-
-    let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_conflicts(&pool, &page, None, None).await.unwrap();
-
-    assert!(
-        resp.items.is_empty(),
-        "no conflict blocks must return empty"
-    );
-    assert!(!resp.has_more, "empty conflicts should not indicate more");
-    assert!(
-        resp.next_cursor.is_none(),
-        "empty conflicts should have no cursor"
-    );
-}
-
 // ====================================================================
 // insta snapshot tests — HistoryEntry
 // ====================================================================
@@ -3220,7 +3199,7 @@ async fn list_children_ifnull_oracle(
     let rows = sqlx::query_as::<_, BlockRow>(
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at,
-                conflict_type, todo_state, priority, due_date, scheduled_date, page_id
+                 todo_state, priority, due_date, scheduled_date, page_id
          FROM blocks
          WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (
@@ -4650,7 +4629,6 @@ mod active_row_conversions {
             parent_id: Some("PAR_ABC".to_string()),
             position: Some(42),
             deleted_at: Some("2024-01-01T00:00:00Z".to_string()),
-            conflict_type: Some("lww".to_string()),
             todo_state: Some("TODO".to_string()),
             priority: Some("A".to_string()),
             due_date: Some("2024-12-31".to_string()),
@@ -4694,7 +4672,6 @@ mod active_row_conversions {
             parent_id: None,
             position: None,
             deleted_at: None,
-            conflict_type: None,
             todo_state: None,
             priority: None,
             due_date: None,

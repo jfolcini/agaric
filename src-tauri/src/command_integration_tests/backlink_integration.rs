@@ -1801,24 +1801,6 @@ async fn get_block_history_empty_for_nonexistent_block() {
 }
 
 // ======================================================================
-// get_conflicts — wiring tests
-// ======================================================================
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_conflicts_empty_when_none_exist() {
-    let (pool, _dir) = test_pool().await;
-
-    let resp = get_conflicts_inner(&pool, None, None, None, None)
-        .await
-        .unwrap();
-
-    assert!(
-        resp.items.is_empty(),
-        "no conflicts should exist in a fresh DB"
-    );
-}
-
-// ======================================================================
 // list_backlinks_grouped — happy paths, edge cases, filters
 // ======================================================================
 

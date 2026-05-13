@@ -206,7 +206,7 @@ pub async fn query_by_property(
         //       binds the range to the date column directly)
         let sql = format!(
             "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                    b.deleted_at, b.conflict_type, \
+                    b.deleted_at,  \
                     b.todo_state, b.priority, b.due_date, b.scheduled_date, \
                     b.page_id \
              FROM blocks b \
@@ -253,7 +253,7 @@ pub async fn query_by_property(
         //   ?12/?13  value_date_range half-open `[from, to)` against `bp.value_date`
         let sql = format!(
             "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                    b.deleted_at, b.conflict_type, \
+                    b.deleted_at,  \
                     b.todo_state, b.priority, b.due_date, b.scheduled_date, \
                     b.page_id \
              FROM block_properties bp \

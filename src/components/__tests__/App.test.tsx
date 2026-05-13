@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders with sidebar and default view (Journal)
  *  - Clicking nav items switches views
- *  - All 6 views render (Journal, Pages, Tags, Trash, Status, Conflicts)
+ *  - All views render (Journal, Pages, Tags, Trash, Status)
  *  - a11y compliance
  */
 
@@ -218,7 +218,6 @@ describe('App', () => {
     expect(sidebar.getByText(t('sidebar.tags'))).toBeInTheDocument()
     expect(sidebar.getByText(t('sidebar.trash'))).toBeInTheDocument()
     expect(sidebar.getByText(t('sidebar.status'))).toBeInTheDocument()
-    expect(sidebar.getByText(t('sidebar.conflicts'))).toBeInTheDocument()
   })
 
   it('renders the app branding', async () => {
@@ -343,24 +342,6 @@ describe('App', () => {
     // StatusPanel should render
     await waitFor(() => {
       expect(screen.getByText(t('status.materializerStatusTitle'))).toBeInTheDocument()
-    })
-  })
-
-  it('switches to Conflicts view', async () => {
-    const user = userEvent.setup()
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-    })
-
-    // Click Conflicts in sidebar
-    const sidebar = getSidebar()
-    await user.click(sidebar.getByText(t('sidebar.conflicts')))
-
-    // ConflictList should render its empty state
-    await waitFor(() => {
-      expect(screen.getByText(t('conflict.noConflicts'))).toBeInTheDocument()
     })
   })
 
@@ -522,71 +503,6 @@ describe('App', () => {
     await waitFor(() => {
       expect(announce).toHaveBeenCalledWith(t('announce.searchOpened'))
     })
-  })
-
-  it('Alt+C switches to conflicts view (UX-216)', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-    })
-
-    fireEvent.keyDown(window, { key: 'c', altKey: true })
-
-    await waitFor(() => {
-      expect(useNavigationStore.getState().currentView).toBe('conflicts')
-    })
-  })
-
-  it('Alt+C announces "Conflicts view opened" (UX-216)', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-    })
-
-    fireEvent.keyDown(window, { key: 'c', altKey: true })
-
-    await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith(t('announce.conflictsOpened'))
-    })
-  })
-
-  it('Alt+C does not fire when focus is in an input field (UX-216)', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-    })
-
-    useNavigationStore.setState({ currentView: 'journal' })
-
-    // Create an input and simulate Alt+C from it
-    const input = document.createElement('input')
-    document.body.appendChild(input)
-    try {
-      fireEvent.keyDown(input, { key: 'c', altKey: true })
-      // Allow any event loop to settle
-      await Promise.resolve()
-      expect(useNavigationStore.getState().currentView).toBe('journal')
-    } finally {
-      document.body.removeChild(input)
-    }
-  })
-
-  it('plain "c" does NOT switch to conflicts view (UX-216)', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-    })
-
-    useNavigationStore.setState({ currentView: 'journal' })
-
-    fireEvent.keyDown(window, { key: 'c' })
-
-    // Must stay on journal
-    expect(useNavigationStore.getState().currentView).toBe('journal')
   })
 
   it('Ctrl+N announces "New page created"', async () => {
@@ -947,75 +863,6 @@ describe('App', () => {
       fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
       await waitFor(() => {
         expect(useNavigationStore.getState().currentView).toBe('search')
-      })
-    })
-  })
-
-  // ── Conflict badge indicator ────────────────────────────────────────────
-
-  describe('conflict badge indicator', () => {
-    // PEND-35 Tier 2.11 — `useConflictCount` now polls `count_conflicts`
-    // (a single `SELECT COUNT(*)`) instead of paginating
-    // `getConflicts({limit:100})` for `.items.length`. The new IPC
-    // returns a plain integer; tests mock it accordingly.
-    it('shows conflict badge with count when count_conflicts returns a positive number', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'count_conflicts') return 2
-        return emptyPage
-      })
-
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('2 unresolved conflicts')).toBeInTheDocument()
-      })
-    })
-
-    it('hides conflict badge when count_conflicts returns zero', async () => {
-      // Default mock already returns emptyPage for all commands; the
-      // hook's `data == null` fallback (and number-shape `data === 0`)
-      // both resolve to a hidden badge.
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      // Give the hook time to resolve
-      await waitFor(() => {
-        expect(screen.queryByLabelText(/unresolved conflicts/)).not.toBeInTheDocument()
-      })
-    })
-
-    it('re-polls conflicts on window focus event (#293)', async () => {
-      // Initially no conflicts
-      let conflictCount = 0
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'count_conflicts') return conflictCount
-        return emptyPage
-      })
-
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      // Initially no conflict badge
-      await waitFor(() => {
-        expect(screen.queryByLabelText(/unresolved conflicts/)).not.toBeInTheDocument()
-      })
-
-      // Now conflicts appear on the backend
-      conflictCount = 1
-
-      // Dispatch focus event to trigger re-poll
-      fireEvent(window, new Event('focus'))
-
-      // The conflict badge should appear after the focus-triggered poll
-      await waitFor(() => {
-        expect(screen.getByLabelText('1 unresolved conflicts')).toBeInTheDocument()
       })
     })
   })
@@ -1808,7 +1655,6 @@ describe('App', () => {
       'graph',
       'trash',
       'status',
-      'conflicts',
       'history',
       'templates',
       'settings',

@@ -1,62 +1,20 @@
 /**
- * i18n namespace: conflicts
+ * i18n namespace: history / trash / undo / redo / diff / compaction.
  *
- * Flat dotted keys merged into the `en.translation` resource
- * by `src/lib/i18n/index.ts`. Do not import this file directly
- * from app code; use `t('namespace.key')` via the index.
+ * Flat dotted keys merged into the `en.translation` resource by
+ * `src/lib/i18n/index.ts`. Do not import this file directly from app
+ * code; use `t('namespace.key')` via the index.
+ *
+ * The file is named `conflicts.ts` for historical reasons (the
+ * conflict-management surface that originally lived here was deleted
+ * in PEND-09 Phase 5; the surrounding bundle of unrelated keys
+ * remained). Renaming the file is a separate, mechanical refactor
+ * tracked outside this session.
  */
 
 export const conflicts: Record<string, string> = {
   'history.title': 'Block History',
   'history.description': 'View and revert the mutation history for this block.',
-  'conflict.typeText': 'Text conflict — content edited on multiple devices',
-  'conflict.typeProperty': 'Property conflict — property changed on multiple devices',
-  'conflict.typeMove': 'Move conflict — block moved to different locations',
-  'conflict.expand': 'Expand conflict details',
-  'conflict.collapse': 'Collapse conflict details',
-  'conflict.typeTextDescription':
-    'Same block was edited on two devices. Pick which version to keep.',
-  'conflict.typePropertyDescription':
-    'A block property (state, priority, due date) was changed on two devices.',
-  'conflict.typeTagDescription': 'The same tag was added or changed on two devices.',
-  'conflict.typeDateDescription': 'A scheduled or due date on this block diverged across devices.',
-  'conflict.typeMoveDescription':
-    'The block was moved to different parents or positions on two devices.',
-  'conflict.keepTooltip': 'Use the incoming version',
-  'conflict.discardTooltip': 'Delete the conflict copy',
-  'conflict.originalNotFound': 'Original block not found — showing conflict content only',
-  'conflict.keepDisabledNoOriginal': 'Cannot keep — original block is missing',
-  'conflict.filterByType': 'Filter by type',
-  'conflict.filterByDevice': 'Filter by device',
-  'conflict.filterByDate': 'Filter by date',
-  'conflict.allTypes': 'All types',
-  'conflict.allDevices': 'All devices',
-  'conflict.last7Days': 'Last 7 days',
-  'conflict.allTime': 'All time',
-  'conflict.noMatchingFilters': 'No conflicts match the current filters.',
-  'conflict.propertyState': 'State: ',
-  'conflict.propertyPriority': 'Priority: ',
-  'conflict.propertyDue': 'Due: ',
-  'conflict.propertyScheduled': 'Scheduled: ',
-  'conflict.contentAlsoChanged': 'Content also changed',
-  'conflict.propertyChanges': 'Property changes',
-  'conflict.moveConflictHeader': 'Move conflict',
-  'conflict.moveParent': 'Parent: ',
-  'conflict.movePosition': 'Position: ',
-  'conflict.currentLabel': 'Current: ',
-  'conflict.incomingLabel': 'Incoming: ',
-  'conflict.helpText':
-    'Keep replaces the current content with the incoming version. Discard removes the conflicting version.',
-  'conflict.keepDescription': 'This will replace the current content with the incoming version.',
-  'conflict.discardDescription': 'This will permanently remove the conflicting version.',
-  'conflict.batchKeepDescription':
-    'This will replace {{count}} block(s) with their incoming versions.',
-  'conflict.batchDiscardDescription':
-    'This will permanently remove {{count}} conflicting version(s).',
-  'conflict.keepConfirmAction': 'Yes, keep',
-  'conflict.discardConfirmAction': 'Yes, discard',
-  'conflict.batchKeepAction': 'Yes, keep all',
-  'conflict.batchDiscardAction': 'Yes, discard all',
   'history.opTypeEdit': 'Edit',
   'history.opTypeCreate': 'Create',
   'history.opTypeDelete': 'Delete',
@@ -96,34 +54,6 @@ export const conflicts: Record<string, string> = {
   'diff.nextHunk': 'Next change',
   'diff.prevHunk': 'Previous change',
   'diff.regionLabel': 'Diff content',
-  'conflict.emptyContent': '(empty)',
-  'conflict.originalNotAvailable': '(original not available)',
-  'conflict.updateSuccessDeleteFailed': 'Updated original but failed to remove conflict copy.',
-  'conflict.retryDeleteButton': 'Retry delete',
-  'conflict.conflictCopyRemoved': 'Conflict copy removed',
-  'conflict.retryFailed': 'Retry failed \u2014 please delete the conflict manually.',
-  'conflict.keptSelectedVersion': 'Kept selected version',
-  'conflict.undoButton': 'Undo',
-  'conflict.resolutionUndone': 'Resolution undone',
-  'conflict.undoFailed': 'Failed to undo \u2014 check the original page.',
-  'conflict.conflictDiscarded': 'Conflict discarded',
-  'conflict.discardUndone': 'Discard undone',
-  'conflict.undoDiscardFailed': 'Failed to undo discard.',
-  'conflict.noConflicts':
-    'No conflicts. Conflicts appear when the same block is edited on multiple devices.',
-  'conflict.keepLabel': 'Keep Incoming',
-  'conflict.discardLabel': 'Reject incoming',
-  'conflict.refreshLabel': 'Refresh conflict list',
-  'conflict.deselectAllButton': 'Deselect all',
-  'conflict.selectAllButton': 'Select all',
-  'conflict.keepAllButton': 'Keep All Incoming',
-  'conflict.discardAllButton': 'Discard All Incoming',
-  'conflict.selectConflictLabel': 'Select conflict {{id}}',
-  'conflict.viewOriginalLabel': 'View original block for {{id}}',
-  'conflict.viewOriginalButton': 'View original',
-  'conflict.keepIncomingLabel': 'Keep incoming version for block {{id}}',
-  'conflict.discardConflictLabel': 'Discard conflict for block {{id}}',
-  'conflicts.sourceDevice': 'Source device',
   'history.filterLabel': 'Filter:',
   'history.allTypesOption': 'All types',
   'history.selectedBadge': 'selected',
@@ -273,12 +203,6 @@ export const conflicts: Record<string, string> = {
   'trash.restoreFailed': 'Failed to restore block',
   'trash.blockPurged': 'Block permanently deleted',
   'trash.purgeFailed': 'Failed to purge block',
-  'conflict.unresolvedLabel': 'Has unresolved conflicts',
-  'conflict.loadFailed': 'Failed to load conflicts',
-  'conflict.keepIncomingTitle': 'Keep incoming version?',
-  'conflict.discardTitle': 'Discard conflict?',
-  'conflict.keepAllSelectedTitle': 'Keep all selected?',
-  'conflict.discardAllSelectedTitle': 'Discard all selected?',
   'trash.loadFailed': 'Failed to load trash',
   'history.loadedMoreEntries': 'Loaded {{count}} more entries',
   'compaction.title': 'Op Log Compaction',
@@ -296,19 +220,7 @@ export const conflicts: Record<string, string> = {
   'compaction.failed': 'Failed to compact op log',
   'compaction.loadFailed': 'Failed to load compaction status',
   'trash.deletedPrefix': 'Deleted:',
-  'conflict.resolvedAnnounce': 'Conflict resolved \u2014 kept incoming version',
-  'conflict.discardedAnnounce': 'Conflict discarded',
-  'conflict.resolveError': 'Failed to resolve conflict: {{error}}',
-  'conflict.discardError': 'Failed to discard conflict: {{error}}',
-  'conflict.batchError': '{{failCount}} of {{count}} operations failed',
-  'conflict.batchKeptCount': 'Kept {{count}} conflict(s)',
-  'conflict.batchDiscardedCount': 'Discarded {{count}} conflict(s)',
-  'conflicts.batchProgress': 'Resolving {{current}} of {{total}}\u2026',
   'history.restoreConfirmDescription':
     'This will replace the current block content with the version from {{timestamp}}. You can undo this change.',
-  'conflicts.listLabel': 'Conflict list',
   'history.diff.empty': 'No changes',
-  'conflict.keepIncoming': 'Use incoming',
-  'conflict.useIncomingHelp': 'Replace the original block with the incoming version',
-  'conflict.rejectIncomingHelp': 'Discard the incoming version; keep the original',
 }

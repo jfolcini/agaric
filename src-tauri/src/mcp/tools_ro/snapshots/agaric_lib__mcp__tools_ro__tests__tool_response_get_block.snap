@@ -3,7 +3,6 @@ source: src/mcp/tools_ro.rs
 expression: result
 ---
 block_type: content
-conflict_type: ~
 content: text
 deleted_at: ~
 due_date: ~

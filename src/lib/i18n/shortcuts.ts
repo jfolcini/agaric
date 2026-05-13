@@ -87,7 +87,6 @@ export const shortcuts: Record<string, string> = {
   'keyboard.createNewPage': 'Create new page',
   'keyboard.showKeyboardShortcuts': 'Show keyboard shortcuts',
   'keyboard.exportPageMarkdown': 'Export page as Markdown',
-  'keyboard.gotoConflicts': 'Open Conflicts view',
   'keyboard.closeOverlays': 'Close overlays, cancel editing, clear selection',
   'keyboard.category.pageEditor': 'Page Editor',
   'keyboard.condition.inPageEditor': 'When viewing a page',
