@@ -825,9 +825,9 @@ checks `blocksById.get(focusedBlockId)` — the block is absent in the freshly-f
 the conditional falls through and the block disappears from the rendered tree. React unmounts
 the `EditableBlock`; TipTap's underlying view is destroyed. **The user's in-progress edits are
 lost** in this case — they are not flushed back to the deleted block (that would require a
-flushed `edit_block` op, which never happened). The BE-side resurrection rule
-(edit-beats-delete in `merge_diverged_blocks`) only fires when both ops landed in `op_log`;
-un-flushed FE keystrokes never enter the DAG. This is the **documented loss case**: the flush
+flushed `edit_block` op, which never happened). Un-flushed FE keystrokes never enter the
+op log, so Loro never sees them and the BE delete is unopposed.  This is the **documented
+loss case**: the flush
 boundary is the contract — until you blur, your edits are not durable. The draft-autosave path
 (see below) is the safety net for the *crash* variant of this case, not the *delete* variant.
 
@@ -1328,77 +1328,30 @@ Concurrent edits to the same block converge inside Loro without a user-facing
 conflict.  The CRDT performs a fine-grained merge; resolution is invisible to
 the user.
 
-### LWW resolution rule (property + move conflicts)
+### Property and move convergence
 
-Two classes of concurrent op converge by **Last-Writer-Wins (LWW)** at projection
-time: `set_property` writes to the same `(block_id, key)` and `move_block` ops on
-the same block. Both follow the same shape — exactly one write wins at projection
-time, deterministically, on every device that sees both ops. The losing write is
-silently dropped from materialised state.
+Concurrent `set_property` writes to the same `(block_id, key)` and concurrent
+`move_block` ops on the same block both route through `LoroMap::insert` (per-block
+properties map, and the block's `parent_id` / `position` fields respectively).
+Loro's internal Lamport ordering picks the winner deterministically on every
+device that sees both ops; the losing write is dropped from the engine's
+materialised state.  No DAG walk, no dispatcher-level resolver, no post-resolution
+guard.
 
-**Timebase: wallclock UTC, not Lamport.** Every op's `created_at` field is populated at append
-time by `now_rfc3339()` (`crate::lib::now_rfc3339` in `src-tauri/src/lib.rs`), which returns a
-fixed-width `YYYY-MM-DDTHH:MM:SS.sssZ` string from `chrono::Utc::now()`. The `Z` suffix is
-load-bearing: it makes lexicographic order match instant order, which is what the dispatcher
-relies on. `op_log::append_local_op_in_tx` carries a `debug_assert!` enforcing the `Z`
-suffix at write time. Wallclock — not Lamport — is the deliberate choice: an offline device
-whose Lamport clock has not advanced should not "lose" to an online device that came back
-online a real-world day later, despite the user remembering the offline write happened
-second. Wallclock matches user intuition for "later".
+### Other op classes
 
-**Property LWW.** Compare `created_at` via
-`chrono::DateTime::parse_from_rfc3339`. Later wins. On exact tie, larger `device_id` (lex)
-wins. On full tie (same device, same millisecond), larger `seq` wins — a tertiary tiebreaker
-that guarantees commutativity even in pathological same-device-same-ms cases. On parse failure,
-fall back to lex compare on the raw string with a `tracing::warn!`; given the `Z`-suffix
-invariant this is unreachable in practice and exists as defence-in-depth.
+- **Tag / link adds + removes.** `LoroMap` set-semantics — concurrent add+remove
+  converges via the CRDT's per-key Lamport ordering.
+- **`delete_block` vs concurrent `edit_block`.** Both ops apply at the engine level
+  (delete sets `deleted_at` on the block map; edit updates the content). The block
+  ends up soft-deleted with its edited content; the user can restore from trash to
+  recover the edited body.
+- **`move_block` vs `delete_block`.** Commutative — both ops apply in sequence and
+  the block ends up deleted regardless of order.
 
-**Move LWW (inline in `sync_protocol::operations`).** Same shape, with two intentional
-simplifications relative to the property path: (a) the timestamp compare is lex on the raw
-`String`, not RFC-3339-parsed — sound today because every op routes through
-`now_rfc3339()` but would silently mis-order a future ingest path that mixed `Z` with
-`+00:00`; (b) no `seq` tertiary tiebreak — on full tie the local-side op (`op_a`) wins by
-default. Cross-device `device_id` ties are impossible by construction (each device's id is
-a ULID), and same-device-same-ms is non-occurring inside a single device's monotonically
-advancing `seq`.
-
-**Concurrency detection without DAG walk.** The dispatcher does not walk the op DAG to decide
-whether two ops are concurrent. It uses a simpler proxy: post-sync, find `(block_id, key)`
-pairs with `HAVING COUNT(DISTINCT device_id) > 1` and feed the latest op per device to the
-resolver. This catches every real divergence; it also catches some already-resolved cases
-(one device's later op already cites the other in `parent_seqs`). Those are filtered by the
-**post-resolution idempotency guard** (M-43 for properties, M-44 for moves): if the
-materialised value already matches the LWW winner, the dispatcher emits no new op. Without
-this guard the dispatcher would re-emit the same winning `set_property` on every sync round,
-flooding the op log.
-
-**Convergence applies the winner via a fresh op.** When the dispatcher picks a winner, it
-emits a new `set_property` (or `move_block`) op carrying the winner's value. That op enters
-`op_log` like any other write, propagates on the next sync, and brings both devices'
-materialised state to the same row. The losing intent is **not** preserved — recoverable
-only by walking `op_log` directly (audit / debugger). A future "remote-overrode-your-move"
-in-app awareness log is a planned polish, not part of the rule.
-
-**What this rule does NOT cover:**
-
-- **Text-content edits.** `edit_block` ops route through the Loro CRDT engine and
-  converge automatically; no LWW reconciliation is required.
-- **Tag / link adds + removes.** Set-semantics at the materialiser layer (dedup on read);
-  concurrent add+remove does not invoke LWW.
-- **`delete_block` vs concurrent `edit_block` ("resurrect" path).** Edit-beats-delete: a
-  synthetic `restore_block` op precedes the edit. Intentionally biased toward not losing
-  user content, not LWW.
-- **`move_block` vs `delete_block`.** Commutative — both ops apply in sequence and the
-  block ends up deleted regardless of order.
-
-**Wallclock skew is bounded by the user's own devices.** The rule trusts each device's clock
-at op-append time. A device whose clock is 30s fast will reliably "win" against a device with
-a correct clock even if the user-perceived order disagrees. There is no NTP dependency. The
-mitigation is the threat model: agaric is single-user offline-first; the user owns both
-devices, OS clock-sync is typically sub-second, and same-person concurrent edits are rare.
-Backward clock jumps (NTP correction, manual date change) work correctly long-term — later
-real-world writes still win once the clock catches up — and the per-device monotonic `seq`
-is the safety net for the same-device-same-ms-after-drift edge case.
+**Same-device tiebreak.** Loro's per-peer monotonic counter is the tiebreaker for
+two writes from the same device at the same logical time — non-occurring under
+normal use, but a safety net against pathological replay.
 
 ---
 
@@ -1866,14 +1819,15 @@ Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → Transf
 4. **Op streaming:** Diverging ops sent as `OpBatch`. Receiver inserts with original
    `(device_id, seq)` via `INSERT OR IGNORE` (duplicate delivery is idempotent).
 5. **Merge:** the per-space `LoroEngine` imports incoming Loro updates, and the
-   materializer projects engine state into SQL.  Resolution by op class:
+   materializer projects engine state into SQL.  All concurrent op classes resolve
+   inside Loro via the CRDT's own Lamport ordering:
 
-| Op class              | Resolution                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| Concurrent text edits | Loro CRDT fine-grained text merge — converges automatically, no user-visible conflict.      |
-| Property conflicts    | LWW on `created_at` with `device_id` tiebreaker.                                            |
-| Move conflicts        | LWW on `created_at`. Block moved into deleted subtree → reparent to root.                   |
-| Delete + edit         | Edit wins. Block resurrected via synthetic `restore_block` op before applying `edit_block`. |
+| Op class              | Resolution                                                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent text edits | `LoroText` fine-grained character-level merge — converges automatically, no user-visible conflict.                                          |
+| Property conflicts    | `LoroMap::insert` on the per-block props map — Loro's internal Lamport LWW per `(block_id, key)`.                                           |
+| Move conflicts        | `LoroMap::insert` on the block's `parent_id` + `position` fields — Loro's internal Lamport LWW per field.                                   |
+| Delete + edit         | Both apply at the engine level (delete sets `deleted_at`, edit updates content); the block ends up soft-deleted with its edited content.    |
 
 <!-- markdownlint-disable-next-line MD029 -->
 6. **Complete:** `complete_sync()` updates `peer_refs` atomically.
