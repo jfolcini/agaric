@@ -13,6 +13,7 @@
 | PEND-38 | Import progress streaming (`Channel<T>` Tier 3) | L restructure + S emission | deferred — needs `import_markdown` parse/apply split with per-block savepoints before channel work has UX value |
 | agenda-loadmore-cursor-namespace-2026-05-13 | Agenda load-more cursor-namespace mismatch | S | latent bug flagged during sql-audit H3 review; pre-existing; fix is small but its own commit |
 | agenda-sort-sql-pushdown-2026-05-13 | Agenda sort/group SQL pushdown (original H4) | M | deferred — JS sort on ≤200 items is sub-ms; SQL ORDER BY requires compound-cursor reshape |
+| dialog-responsiveness-primitive-2026-05-13 | Dialog primitive doesn't enforce header/body/footer + scrollable body; textarea drag-resize escapes frame; BugReportDialog hits all three on short windows | S (≤ half a day) | ready |
 
 ## Recommended order
 
