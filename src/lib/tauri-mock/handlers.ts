@@ -1150,6 +1150,36 @@ export const HANDLERS: Record<string, Handler> = {
     }))
   },
 
+  // Every tag in the given space.  No pagination, no clamp; bounded by
+  // the space's intrinsic tag count.  Mirrors the backend's space-scope
+  // filter via `block_properties(key='space').value_ref` on the tag
+  // block itself.
+  list_all_tags_in_space: (args) => {
+    const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
+    const tagRows: Array<{
+      tag_id: string
+      name: string
+      usage_count: number
+      updated_at: string
+    }> = []
+    for (const b of blocks.values()) {
+      if (b['block_type'] !== 'tag') continue
+      if (b['deleted_at']) continue
+      const blockProps = properties.get(b['id'] as string)
+      const spaceProp = blockProps?.get('space')
+      if (spaceProp?.['value_ref'] !== spaceId) continue
+      tagRows.push({
+        tag_id: b['id'] as string,
+        name: (b['content'] as string) ?? '',
+        usage_count: 0,
+        updated_at: new Date().toISOString(),
+      })
+    }
+    tagRows.sort((x, y) => x.name.localeCompare(y.name))
+    return tagRows
+  },
+
   list_tags_for_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
@@ -1607,6 +1637,26 @@ export const HANDLERS: Record<string, Handler> = {
       result[pid] = count
     }
     return result
+  },
+
+  count_trash: (args) => {
+    // limit-clamp-followup — dedicated count IPC backing the
+    // `useTrashCount` badge.  Mirrors the backend's
+    // `count_trash_inner`: count soft-deleted blocks whose owning
+    // page carries `space = <space_id>`.  The page-owner resolution
+    // is the same `COALESCE(page_id, id)` lookup as
+    // `count_backlinks_batch` above.
+    const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
+    if (!spaceId) return 0
+    let count = 0
+    for (const b of blocks.values()) {
+      if (!b['deleted_at']) continue
+      const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+      const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+      if (ownerSpace === spaceId) count++
+    }
+    return count
   },
 
   // ---------------------------------------------------------------------------

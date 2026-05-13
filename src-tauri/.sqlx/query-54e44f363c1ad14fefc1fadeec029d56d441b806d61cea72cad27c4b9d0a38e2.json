@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n               b.id as \"id!: String\",\n               b.content as \"content: String\",\n               b.todo_state as \"todo_state: String\",\n               b.priority as \"priority: String\",\n               b.due_date as \"due_date: String\",\n               b.scheduled_date as \"scheduled_date: String\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND COALESCE(b.page_id, b.id) IN (\n                 SELECT bp.block_id FROM block_properties bp\n                 WHERE bp.key = 'space' AND bp.value_ref = ?1\n             )\n           ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "content: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "todo_state: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "due_date: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "scheduled_date: String",
+        "ordinal": 5,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "54e44f363c1ad14fefc1fadeec029d56d441b806d61cea72cad27c4b9d0a38e2"
+}

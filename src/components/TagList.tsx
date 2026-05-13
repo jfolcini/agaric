@@ -32,11 +32,12 @@ import {
   deleteBlock,
   deleteProperty,
   editBlock,
-  listTagsByPrefix,
+  listAllTagsInSpace,
   purgeBlock,
   setProperty,
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadingSkeleton } from './LoadingSkeleton'
@@ -60,7 +61,18 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const loadTags = useCallback(async () => {
     setLoading(true)
     try {
-      const resp = await listTagsByPrefix({ prefix: '', limit: 500 })
+      // limit-clamp-followup — was
+      // `listTagsByPrefix({ prefix: '', limit: 500 })`, which the
+      // backend silently clamped to 200 (`MAX_TAGS_PREFIX`).  Routes
+      // through `list_all_tags_in_space`, the no-pagination IPC that
+      // returns every tag in the active space.  The `?? ''` fallback
+      // mirrors `useBlockResolve.searchPagesViaCache` for the pre-
+      // bootstrap case — the backend treats an empty `space_id` as a
+      // no-match filter (space IDs are ULIDs; the `value_ref = ''`
+      // comparison never matches), so we get an empty list instead of
+      // a runtime null deref.
+      const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
+      const resp = await listAllTagsInSpace(spaceId)
       setTags(resp)
     } catch (error) {
       logger.error('TagList', 'failed to load tags', undefined, error)

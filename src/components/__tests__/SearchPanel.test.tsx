@@ -55,6 +55,22 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
   ...overrides,
 })
 
+// limit-clamp-followup — the page picker now calls `list_all_pages_in_space`
+// (returns a flat `PageHeading[]`) on the short-query branch (≤2 chars) and
+// `search_blocks` (the existing `PageResponse<BlockRow>` shape) on the
+// long-query branch (>2 chars). `makePageHeading` constructs the
+// `PageHeading` shape; tests opening the picker with an empty query rely on
+// the short-query branch.
+const makePageHeading = (overrides?: Partial<Record<string, unknown>>) => ({
+  id: 'PAGE1',
+  content: 'Untitled',
+  todo_state: null,
+  priority: null,
+  due_date: null,
+  scheduled_date: null,
+  ...overrides,
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
@@ -1349,18 +1365,8 @@ describe('SearchPanel', () => {
     it('shows "in: Page Name" chip after selecting a page filter', async () => {
       const user = userEvent.setup()
 
-      // Mock list_blocks to return pages for the page picker
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({
-            id: 'PAGE1',
-            block_type: 'page',
-            content: 'My Notes',
-          }),
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
+      // Mock list_all_pages_in_space (short-query branch) for the page picker
+      mockedInvoke.mockResolvedValueOnce([makePageHeading({ id: 'PAGE1', content: 'My Notes' })])
 
       render(<SearchPanel />)
 
@@ -1410,18 +1416,8 @@ describe('SearchPanel', () => {
     it('removes page chip when clicking X', async () => {
       const user = userEvent.setup()
 
-      // Mock list_blocks for page picker
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({
-            id: 'PAGE1',
-            block_type: 'page',
-            content: 'Test Page',
-          }),
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
+      // Mock list_all_pages_in_space (short-query branch) for the page picker
+      mockedInvoke.mockResolvedValueOnce([makePageHeading({ id: 'PAGE1', content: 'Test Page' })])
 
       render(<SearchPanel />)
 
@@ -1478,18 +1474,8 @@ describe('SearchPanel', () => {
     it('shows and uses Clear all to remove all filters', async () => {
       const user = userEvent.setup()
 
-      // Mock list_blocks for page picker
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({
-            id: 'PAGE1',
-            block_type: 'page',
-            content: 'My Page',
-          }),
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
+      // Mock list_all_pages_in_space (short-query branch) for the page picker
+      mockedInvoke.mockResolvedValueOnce([makePageHeading({ id: 'PAGE1', content: 'My Page' })])
 
       render(<SearchPanel />)
 
@@ -1523,18 +1509,10 @@ describe('SearchPanel', () => {
     it('passes filters to searchBlocks invoke', async () => {
       const user = userEvent.setup()
 
-      // Mock list_blocks for page picker
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({
-            id: 'PAGE1',
-            block_type: 'page',
-            content: 'Filtered Page',
-          }),
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
+      // Mock list_all_pages_in_space (short-query branch) for the page picker
+      mockedInvoke.mockResolvedValueOnce([
+        makePageHeading({ id: 'PAGE1', content: 'Filtered Page' }),
+      ])
 
       render(<SearchPanel />)
 
@@ -1575,18 +1553,8 @@ describe('SearchPanel', () => {
     it('has no a11y violations with filters active', async () => {
       const user = userEvent.setup()
 
-      // Mock list_blocks for page picker
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({
-            id: 'PAGE1',
-            block_type: 'page',
-            content: 'A11y Page',
-          }),
-        ],
-        next_cursor: null,
-        has_more: false,
-      })
+      // Mock list_all_pages_in_space (short-query branch) for the page picker
+      mockedInvoke.mockResolvedValueOnce([makePageHeading({ id: 'PAGE1', content: 'A11y Page' })])
 
       const { container } = render(<SearchPanel />)
 
@@ -1605,22 +1573,23 @@ describe('SearchPanel', () => {
       expect(results).toHaveNoViolations()
     })
 
-    // UX-248 — Unicode-aware fold: page picker matches Turkish /
-    // German / accented content via `matchesSearchFolded`.
-    it('page picker matches Turkish İstanbul when query is lowercase istanbul', async () => {
+    // UX-248 — Unicode-aware fold: short-query branch matches Turkish /
+    // German / accented content via `matchesSearchFolded`. The
+    // limit-clamp-followup typeahead split (≤2 chars → `list_all_pages_in_space`,
+    // >2 chars → FTS5 `search_blocks`) keeps `matchesSearchFolded` on the
+    // short branch where FTS5 wouldn't fold, so this test types a 2-char
+    // query to exercise that path.
+    it('page picker matches Turkish İstanbul when query is lowercase 2-char "is"', async () => {
       const user = userEvent.setup()
 
       // The page-picker effect refires on every `pageSearch` change, so
       // use `mockResolvedValue` (persistent) rather than `Once` so every
-      // `listBlocks({ blockType: 'page', limit: 20 })` call resolves.
-      const pagePayload = {
-        items: [
-          makeSearchResult({ id: 'PAGE1', block_type: 'page', content: 'İstanbul trip' }),
-          makeSearchResult({ id: 'PAGE2', block_type: 'page', content: 'Ankara plans' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-      }
+      // `list_all_pages_in_space(spaceId)` call (short-query branch)
+      // resolves.
+      const pagePayload = [
+        makePageHeading({ id: 'PAGE1', content: 'İstanbul trip' }),
+        makePageHeading({ id: 'PAGE2', content: 'Ankara plans' }),
+      ]
       mockedInvoke.mockResolvedValue(pagePayload)
 
       render(<SearchPanel />)
@@ -1631,11 +1600,82 @@ describe('SearchPanel', () => {
       })
 
       const searchInput = screen.getByPlaceholderText(t('search.searchPages'))
-      await user.type(searchInput, 'istanbul')
+      await user.type(searchInput, 'is')
 
       await waitFor(() => {
         expect(screen.getByText('İstanbul trip')).toBeInTheDocument()
         expect(screen.queryByText('Ankara plans')).not.toBeInTheDocument()
+      })
+    })
+
+    // limit-clamp-followup row `SearchPanel.tsx:138` — regression: before
+    // the fix, the page picker called `list_blocks({ blockType: 'page',
+    // limit: 20 })` and filtered client-side, so any page past
+    // alphabetical index 19 was invisible to the picker. The new
+    // dispatcher routes short queries (≤2 chars) through
+    // `list_all_pages_in_space` (no pagination, no clamp) and long
+    // queries (>2 chars) through `search_blocks` (FTS5,
+    // relevance-ranked), so a 30th-alphabetical page is now reachable.
+    it('finds a page past alphabetical index 19 via the long-query FTS5 branch', async () => {
+      const user = userEvent.setup()
+
+      // 30 alphabetically-sorted page headings; "zebra-page" sits past
+      // the old 20-row clamp.
+      const pages = Array.from({ length: 30 }, (_, i) =>
+        makePageHeading({ id: `PAGE${i}`, content: `page-${String(i).padStart(2, '0')}` }),
+      )
+      pages[29] = makePageHeading({ id: 'PAGE_ZEBRA', content: 'zebra-page' })
+
+      // The page-picker effect refires per-keystroke, so dispatch by
+      // command name rather than relying on FIFO `Once` ordering. The
+      // short-query branch (≤2 chars) hits `list_all_pages_in_space`
+      // and the long-query branch (>2 chars) hits `search_blocks`.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') return pages
+        if (cmd === 'search_blocks') {
+          return {
+            items: [
+              makeSearchResult({
+                id: 'PAGE_ZEBRA',
+                block_type: 'page',
+                content: 'zebra-page',
+              }),
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return null
+      })
+
+      render(<SearchPanel />)
+
+      await user.click(screen.getByRole('button', { name: t('search.addPage') }))
+      // Picker opens with no query → short-query branch returns ALL 30
+      // PageHeadings, so the 30th page ("zebra-page") is visible. This
+      // proves the old 20-row clamp is gone for the empty-query case.
+      await waitFor(() => {
+        expect(screen.getByText('zebra-page')).toBeInTheDocument()
+      })
+
+      const searchInput = screen.getByPlaceholderText(t('search.searchPages'))
+      await user.type(searchInput, 'zebra')
+
+      // Verify the FTS5 IPC was hit (long-query branch), not list_blocks.
+      await waitFor(() => {
+        const calls = mockedInvoke.mock.calls.map((c) => c[0])
+        expect(calls).toContain('search_blocks')
+        expect(calls).not.toContain('list_blocks')
+      })
+
+      // Pick the zebra page from the long-query result list.
+      await waitFor(() => {
+        expect(screen.getByText('zebra-page')).toBeInTheDocument()
+      })
+      await user.click(screen.getByText('zebra-page'))
+
+      await waitFor(() => {
+        expect(screen.getByText('in: zebra-page')).toBeInTheDocument()
       })
     })
   })

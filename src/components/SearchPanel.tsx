@@ -43,7 +43,13 @@ import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow, TagCacheRow } from '../lib/tauri'
-import { batchResolve, getBlock, listBlocks, listTagsByPrefix, searchBlocks } from '../lib/tauri'
+import {
+  batchResolve,
+  getBlock,
+  listAllPagesInSpace,
+  listTagsByPrefix,
+  searchBlocks,
+} from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { EmptyState } from './EmptyState'
@@ -123,24 +129,58 @@ export function SearchPanel(): React.ReactElement {
   const { filterPageId, filterPageTitle, filterTagIds, filterTagNames } = filterState
   const hasFilters = hasActiveFilters(filterState)
 
-  // PEND-30 D-3 — page picker: scoped to the current space. The
-  // server-side `listBlocks` returns up to 20 pages; the client-side
-  // `matchesSearchFolded` filter applies UX-248 Unicode-aware folding
-  // so `İstanbul` ↔ `istanbul` etc. match consistently with PageBrowser
-  // and HighlightMatch.
+  // PEND-30 D-3 / limit-clamp-followup row `SearchPanel.tsx:138` —
+  // page picker: scoped to the current space. Mirrors the
+  // `useBlockResolve.searchPages` dispatcher precedent (short vs long
+  // query branches) so the picker can find pages past the previous
+  // hardcoded 20-row clamp.
+  //
+  //  - Short queries (≤2 chars): `list_all_pages_in_space` returns the
+  //    full unbounded set of pages (no pagination, no clamp). We
+  //    project the `PageHeading` rows into the `BlockRow` shape the
+  //    popover renderer expects (only `id`/`content` are read
+  //    downstream — see `renderItem`/`keyExtractor`/`handleSelectPage`
+  //    below — so the remaining `BlockRow` fields are stub values
+  //    sufficient to satisfy the type). UX-248 Unicode-aware folding
+  //    (`matchesSearchFolded`) still runs client-side for `İstanbul`
+  //    ↔ `istanbul` parity with PageBrowser and HighlightMatch.
+  //  - Long queries (>2 chars): `searchBlocks` (FTS5) returns
+  //    relevance-ranked results filtered to `block_type === 'page'`.
+  //    FTS5 has its own tokenizer so we drop the JS folding here.
   const pagePopover = usePopoverEntity<BlockRow>({
     logLabel: 'page',
     extraDeps: [currentSpaceId],
     searchFn: async (q) => {
-      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. `?? ''` is
+      const trimmed = q.trim()
+      // FEAT-3 Phase 4 — both IPCs require `spaceId`. `?? ''` is
       // the pre-bootstrap no-match fallback (see SearchPanel main
       // `queryFn`).
-      const res = await listBlocks({
-        blockType: 'page',
+      const spaceId = currentSpaceId ?? ''
+      if (trimmed.length <= 2) {
+        const pages = await listAllPagesInSpace(spaceId)
+        const projected: BlockRow[] = pages.map((p) => ({
+          id: p.id,
+          block_type: 'page',
+          content: p.content,
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          todo_state: p.todo_state,
+          priority: p.priority,
+          due_date: p.due_date,
+          scheduled_date: p.scheduled_date,
+          page_id: null,
+        }))
+        return trimmed
+          ? projected.filter((b) => matchesSearchFolded(b.content ?? '', trimmed))
+          : projected
+      }
+      const res = await searchBlocks({
+        query: trimmed,
         limit: 20,
-        spaceId: currentSpaceId ?? '',
+        spaceId,
       })
-      return q ? res.items.filter((b) => matchesSearchFolded(b.content ?? '', q)) : res.items
+      return res.items.filter((b) => b.block_type === 'page')
     },
   })
 

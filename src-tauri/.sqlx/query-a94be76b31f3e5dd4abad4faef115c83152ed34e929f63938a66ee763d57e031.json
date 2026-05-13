@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tc.tag_id, tc.name, tc.usage_count, tc.updated_at\n         FROM tags_cache tc\n         WHERE tc.tag_id IN (\n             SELECT bp.block_id FROM block_properties bp\n             WHERE bp.key = 'space' AND bp.value_ref = ?1\n         )\n         ORDER BY tc.name",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "usage_count",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a94be76b31f3e5dd4abad4faef115c83152ed34e929f63938a66ee763d57e031"
+}
