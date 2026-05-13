@@ -49,6 +49,7 @@ const ScrollArea = ({
     <ScrollAreaPrimitive.Root
       ref={ref}
       data-slot="scroll-area"
+      type="hover"
       className={cn('relative overflow-hidden', className)}
       {...props}
     >
@@ -90,9 +91,9 @@ const ScrollBar = ({
       className={cn(
         'flex touch-none p-px transition-colors select-none',
         orientation === 'vertical' &&
-          'h-full w-2.5 border-l border-l-transparent [@media(pointer:coarse)]:w-4',
+          'h-full w-1.5 border-l border-l-transparent [@media(pointer:coarse)]:w-2',
         orientation === 'horizontal' &&
-          'h-2.5 flex-col border-t border-t-transparent [@media(pointer:coarse)]:h-4',
+          'h-1.5 flex-col border-t border-t-transparent [@media(pointer:coarse)]:h-2',
         className,
       )}
       {...props}

@@ -188,6 +188,8 @@ export const history: Record<string, string> = {
   'history.entriesLabel': 'History entries',
   'history.nonReversibleLabel': 'Non-reversible action',
   'history.clearFilter': 'Clear filter',
+  'history.filterBar.legend': 'Show op type legend',
+  'history.filterBar.clear': 'Clear active filter',
   'history.touchNavLabel': 'List navigation',
   'history.touchNavPrev': 'Previous entry',
   'history.touchNavNext': 'Next entry',

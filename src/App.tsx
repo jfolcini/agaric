@@ -3,10 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
-import { BugReportDialog } from './components/BugReportDialog'
 import { GlobalDateControls, JournalControls } from './components/JournalPage'
-import { NoPeersDialog } from './components/NoPeersDialog'
-import { QuickCaptureDialog } from './components/QuickCaptureDialog'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
 import { SpaceTopStripe } from './components/SpaceTopStripe'
 import { TabBar } from './components/TabBar'
@@ -57,6 +54,23 @@ const KeyboardShortcuts = lazy(() =>
 )
 const WelcomeModal = lazy(() =>
   import('./components/WelcomeModal').then((m) => ({ default: m.WelcomeModal })),
+)
+// PERF (design-system review tier-2 #12): the three shell-level dialogs
+// below are mounted unconditionally near the bottom of `App` but only
+// render content when their `open` boolean flips true. Code-splitting
+// them keeps `BugReportDialog → bug-report-zip.ts → jszip` (≈96 KB
+// `export-graph` chunk), the `QuickCaptureDialog` editor surface, and
+// the `NoPeersDialog` alert-dialog tree off the critical path until the
+// user actually triggers each one. Each component is a named export so
+// the dynamic-import re-export shape is required for `React.lazy`.
+const BugReportDialog = lazy(() =>
+  import('./components/BugReportDialog').then((m) => ({ default: m.BugReportDialog })),
+)
+const QuickCaptureDialog = lazy(() =>
+  import('./components/QuickCaptureDialog').then((m) => ({ default: m.QuickCaptureDialog })),
+)
+const NoPeersDialog = lazy(() =>
+  import('./components/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
 )
 
 function App() {
@@ -482,33 +496,54 @@ function App() {
        * `initialTitle` / `initialDescription` are conditionally spread so
        * the dialog only sees them once a prefill payload exists, keeping
        * `exactOptionalPropertyTypes` happy.
+       *
+       * PERF (design-system review tier-2 #12): gated on `bugReportOpen`
+       * and wrapped in `<Suspense fallback={null}>` so the jszip-heavy
+       * `export-graph` chunk only loads when the user actually opens the
+       * dialog. `useAppDialogs` sets the prefill payload *before*
+       * flipping `bugReportOpen=true`, so by the time the gate evaluates
+       * truthy the prefill is already in place.
        */}
-      <BugReportDialog
-        open={bugReportOpen}
-        onOpenChange={(open) => {
-          setBugReportOpen(open)
-          if (!open) setBugReportPrefill(null)
-        }}
-        {...(bugReportPrefill != null
-          ? {
-              initialTitle: bugReportPrefill.message,
-              initialDescription: bugReportPrefill.stack ?? '',
-            }
-          : {})}
-      />
+      {bugReportOpen && (
+        <Suspense fallback={null}>
+          <BugReportDialog
+            open={bugReportOpen}
+            onOpenChange={(open) => {
+              setBugReportOpen(open)
+              if (!open) setBugReportPrefill(null)
+            }}
+            {...(bugReportPrefill != null
+              ? {
+                  initialTitle: bugReportPrefill.message,
+                  initialDescription: bugReportPrefill.stack ?? '',
+                }
+              : {})}
+          />
+        </Suspense>
+      )}
       {/* FEAT-12: Quick-capture dialog — driven by the global hotkey
-          registered in App's startup effect. Mounted unconditionally so
-          the global shortcut handler can flip `open` instantly. */}
-      <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
+          registered in App's startup effect. Gated on `quickCaptureOpen`
+          + lazy-loaded so the editor surface stays off the critical path
+          until the chord fires. */}
+      {quickCaptureOpen && (
+        <Suspense fallback={null}>
+          <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
+        </Suspense>
+      )}
       {/* BUG-2: shell-level dialog opened by the sidebar Sync button when
           there are zero paired peers. Replaces the silent
           `peers.length === 0` no-op with a discoverable affordance that
-          links the user to the pairing flow. */}
-      <NoPeersDialog
-        open={showNoPeersDialog}
-        onOpenChange={setShowNoPeersDialog}
-        onOpenSettings={handleOpenSyncSettings}
-      />
+          links the user to the pairing flow. Lazy + Suspense so the
+          alert-dialog tree only ships once the no-peers branch fires. */}
+      {showNoPeersDialog && (
+        <Suspense fallback={null}>
+          <NoPeersDialog
+            open={showNoPeersDialog}
+            onOpenChange={setShowNoPeersDialog}
+            onOpenSettings={handleOpenSyncSettings}
+          />
+        </Suspense>
+      )}
       <Toaster position={isMobile ? 'top-center' : 'bottom-right'} richColors closeButton />
     </BootGate>
   )

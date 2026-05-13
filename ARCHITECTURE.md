@@ -1156,7 +1156,7 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 
 **Editor**: SuggestionList
 
-**shadcn/ui (37)**: alert-dialog, alert-list-item, badge, breadcrumb, button, calendar, card, card-button, checkbox, chevron-toggle, close-button, dialog, filter-pill, input, label, list-item, menu-popover-content, popover, popover-menu-item, priority-badge, recent-page-chip, scroll-area, search-input, section-title, select, separator, sheet, sidebar, skeleton, sonner, spinner, status-badge, status-icon, switch, textarea, toggle-group, tooltip
+**shadcn/ui (38)**: alert-dialog, alert-list-item, badge, breadcrumb, button, calendar, card, card-button, checkbox, chevron-toggle, close-button, dialog, filter-pill, icon-button, input, label, list-item, menu-popover-content, popover, popover-menu-item, priority-badge, recent-page-chip, scroll-area, search-input, section-title, select, separator, sheet, sidebar, skeleton, sonner, spinner, status-badge, status-icon, switch, textarea, toggle-group, tooltip
 
 ### Utility modules (src/lib/ — 37 modules)
 

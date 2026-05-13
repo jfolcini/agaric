@@ -223,7 +223,7 @@ Each is documented with file:line evidence:
 - **`SectionGroupHeader`** — `DuePanel.tsx:284` styles a section
   header inline as `px-3 py-1 text-xs font-semibold uppercase
   tracking-wide bg-muted/50 rounded`. Same shape recurs in
-  `HistoryPanel`, `ConflictList` (header rows). Extract to
+  `HistoryPanel` (header rows). Extract to
   `src/components/ui/section-group-header.tsx`. Note: a `SectionTitle`
   primitive already exists — confirm the visual deltas before deciding
   whether to add a sibling or extend `SectionTitle` with a `density`
@@ -295,7 +295,6 @@ keeps the gain durable.
 | --- | --- | --- |
 | `src/components/ui/sidebar.tsx` | 1078 | shadcn-canonical; leave alone unless a real change drives it |
 | `src/components/BlockTree.tsx` | 790 | recursion + DnD overlay logic could split |
-| `src/components/ConflictList.tsx` | 690 | already has helper components in `ConflictList/` subfolder; finish the extraction |
 | `src/components/RichContentRenderer.tsx` | 659 | per-mark renderers extractable |
 | `src/components/HistoryListItem.tsx` | 645 | per-op renderers (create/edit/move/tag) extractable |
 | `src/components/GoogleCalendarSettingsTab.tsx` | 637 | extract OAuth state + sync-status + form into siblings |
