@@ -96,7 +96,10 @@ export function JournalControls(): React.ReactElement {
   const todayButtonHidden = mode === 'daily' && isSameDay(currentDate, new Date())
 
   return (
-    <div className="flex flex-1 items-center gap-2 flex-wrap" data-testid="journal-header">
+    <div
+      className="flex flex-1 flex-col sm:flex-row sm:items-center gap-2"
+      data-testid="journal-header"
+    >
       {/* Mode switcher */}
       <div
         className="flex items-center gap-0.5"
@@ -126,13 +129,17 @@ export function JournalControls(): React.ReactElement {
               aria-label={ariaLabels[m]}
               onClick={() => setMode(m)}
             >
-              {tabLabels[m]}
+              {/* PEND: compact labels under ~480px so the four tabs don't
+                  crowd the calendar icon out of row 1 on phones. The
+                  `aria-label` above keeps the full word for screen readers. */}
+              <span className="hidden [@media(min-width:480px)]:inline">{tabLabels[m]}</span>
+              <span className="[@media(min-width:480px)]:hidden">{tabLabels[m]?.charAt(0)}</span>
             </Button>
           )
         })}
       </div>
 
-      <div className="flex-1" />
+      <div className="hidden sm:block flex-1" />
 
       {/* Date navigation — prev/next/date-display hidden in agenda mode (no
           date context), but Today + Agenda + calendar stay visible so the
@@ -216,6 +223,7 @@ export function JournalControls(): React.ReactElement {
           <Button
             variant="outline"
             size="xs"
+            className="hidden sm:inline-flex"
             onClick={() => {
               navigateToDate(new Date(), 'agenda')
             }}

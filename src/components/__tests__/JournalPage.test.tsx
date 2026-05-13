@@ -2843,7 +2843,12 @@ describe('JournalPage', () => {
   // ── Mobile responsiveness ───────────────────────────────────────────
 
   describe('mobile responsiveness', () => {
-    it('journal header has flex-wrap for mobile responsiveness', async () => {
+    it('journal header stacks vertically on mobile via flex-col sm:flex-row', async () => {
+      // PEND journal-header-responsive: the previous shape relied on
+      // `flex-wrap` to keep controls reachable on narrow screens, but the
+      // 56 px header height clipped anything that wrapped past the first
+      // row. The new shape stacks the mode tabs and the date-nav row on
+      // their own rows under sm:, and inlines them at sm:+.
       mockEmptyResponses()
 
       renderJournal()
@@ -2854,7 +2859,8 @@ describe('JournalPage', () => {
 
       const tablist = screen.getByRole('tablist')
       const parent = tablist.parentElement as HTMLElement
-      expect(parent.className).toContain('flex-wrap')
+      expect(parent.className).toContain('flex-col')
+      expect(parent.className).toContain('sm:flex-row')
     })
 
     // PEND-28 M11: the previous shape (`min-w-[100px] sm:min-w-[140px]`)

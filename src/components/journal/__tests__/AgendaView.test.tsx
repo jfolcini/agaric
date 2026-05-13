@@ -23,6 +23,7 @@ import { axe } from 'vitest-axe'
 // ── Mock agenda-filters ─────────────────────────────────────────────
 vi.mock('../../../lib/agenda-filters', () => ({
   executeAgendaFilters: vi.fn(),
+  loadMoreAgendaFilters: vi.fn(),
 }))
 
 // ── Mock tauri lib ──────────────────────────────────────────────────
@@ -117,11 +118,12 @@ vi.mock('../../AgendaResults', () => ({
 }))
 
 import { makeBlock as _makeBlock } from '../../../__tests__/fixtures'
-import { executeAgendaFilters } from '../../../lib/agenda-filters'
+import { executeAgendaFilters, loadMoreAgendaFilters } from '../../../lib/agenda-filters'
 import { batchResolve, queryByProperty } from '../../../lib/tauri'
 import { AgendaView } from '../AgendaView'
 
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
+const mockedLoadMoreAgendaFilters = vi.mocked(loadMoreAgendaFilters)
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
 
@@ -153,6 +155,11 @@ beforeEach(() => {
     items: [],
     next_cursor: null,
     has_more: false,
+  })
+  mockedLoadMoreAgendaFilters.mockResolvedValue({
+    blocks: [],
+    hasMore: false,
+    cursor: null,
   })
   // Clear localStorage for sort/group preferences
   localStorage.removeItem('agaric:agenda:groupBy')
@@ -460,8 +467,13 @@ describe('AgendaView', () => {
     })
   })
 
-  // 10. Load more calls queryByProperty with cursor
-  it('load more fetches next page', async () => {
+  // 10. Load more — with active filters, routes through loadMoreAgendaFilters
+  //
+  // Cursor-namespace fix (agenda-loadmore-cursor-namespace-2026-05-13): page 2
+  // of an active-filter agenda must re-run filtered_blocks_query with the
+  // saved filter payload + cursor, NOT query_by_property (whose keyset
+  // namespace is incompatible with the filtered_blocks_query cursor).
+  it('load more routes through loadMoreAgendaFilters when filters are active', async () => {
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: [makeBlock({ id: 'B1' })],
       hasMore: true,
@@ -474,7 +486,61 @@ describe('AgendaView', () => {
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'true')
     })
 
-    // Simulate load more
+    // Page 2 comes from the filtered helper — same IPC that minted the cursor.
+    mockedLoadMoreAgendaFilters.mockResolvedValueOnce({
+      blocks: [makeBlock({ id: 'B2' })],
+      hasMore: false,
+      cursor: null,
+    })
+
+    loadMoreRef.current?.()
+
+    await waitFor(() => {
+      // Default agenda filters (TODO + DOING) are forwarded so the backend
+      // continues the AND-intersection.
+      expect(mockedLoadMoreAgendaFilters).toHaveBeenCalledWith(
+        [{ dimension: 'status', values: ['TODO', 'DOING'] }],
+        'cursor_page2',
+        null,
+      )
+    })
+
+    // Critically: queryByProperty must NOT be touched when filters are active.
+    expect(mockedQueryByProperty).not.toHaveBeenCalled()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '2')
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'false')
+    })
+  })
+
+  // 10b. Load more — no filters routes through queryByProperty (cursor namespace matches).
+  it('load more routes through queryByProperty when no filters are active', async () => {
+    // First mount with default TODO+DOING filter, then clear it so the
+    // default-unfiltered branch is exercised on load-more.
+    mockedExecuteAgendaFilters.mockResolvedValue({
+      blocks: [makeBlock({ id: 'B1' })],
+      hasMore: true,
+      cursor: 'cursor_page2',
+    })
+
+    render(<AgendaView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'true')
+    })
+
+    // Clear filters via AgendaResults' clearFilters callback — this is
+    // the only way the FE drops into the no-filter branch.
+    clearFiltersRef.current?.()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute(
+        'data-has-active-filters',
+        'false',
+      )
+    })
+
     mockedQueryByProperty.mockResolvedValueOnce({
       items: [makeBlock({ id: 'B2' })],
       next_cursor: null,
@@ -494,10 +560,8 @@ describe('AgendaView', () => {
       })
     })
 
-    await waitFor(() => {
-      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '2')
-      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'false')
-    })
+    // And the filtered helper is NOT used on the no-filter branch.
+    expect(mockedLoadMoreAgendaFilters).not.toHaveBeenCalled()
   })
 
   // 11. Sort/group controls pass through to AgendaResults

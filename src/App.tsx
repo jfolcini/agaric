@@ -11,7 +11,7 @@ import { RecentPagesStrip } from './components/RecentPagesStrip'
 import { SpaceTopStripe } from './components/SpaceTopStripe'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
-import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
+import { SidebarInset, SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { useHeaderLabel, useTrashCount, ViewDispatcher } from './components/ViewDispatcher'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
@@ -404,8 +404,7 @@ function App() {
         />
         <SidebarInset>
           <ViewHeaderOutletProvider>
-            <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
-              <SidebarTrigger className="md:hidden" />
+            <header className="flex min-h-14 shrink-0 flex-col sm:flex-row sm:items-center gap-2 border-b bg-background px-4 py-2 sm:py-0">
               {currentView === 'journal' ? (
                 <JournalControls />
               ) : (
