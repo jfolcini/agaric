@@ -213,7 +213,7 @@ export interface HistoryListItemProps {
 // Component
 // ---------------------------------------------------------------------------
 
-export function HistoryListItem({
+function HistoryListItemInner({
   entry,
   index,
   isSelected,
@@ -358,6 +358,9 @@ export function HistoryListItem({
     </div>
   )
 }
+
+export const HistoryListItem = React.memo(HistoryListItemInner)
+HistoryListItem.displayName = 'HistoryListItem'
 
 // ---------------------------------------------------------------------------
 // BlockHistoryItem — per-block history row with restore-with-preview panel

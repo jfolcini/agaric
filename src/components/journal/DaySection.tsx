@@ -6,6 +6,7 @@
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -35,7 +36,7 @@ interface DaySectionProps {
   onAddBlock: (dateStr: string) => void
 }
 
-export function DaySection({
+function DaySectionInner({
   entry,
   headingLevel = 'h3',
   hideHeading = false,
@@ -246,3 +247,6 @@ export function DaySection({
     </section>
   )
 }
+
+export const DaySection = memo(DaySectionInner)
+DaySection.displayName = 'DaySection'

@@ -59,16 +59,20 @@ vi.mock('lucide-react', () => ({
   Repeat: (props: Record<string, unknown>) => <svg data-testid="repeat-icon" {...props} />,
 }))
 
-vi.mock('@/components/ui/button', () => ({
-  Button: ({
-    children,
-    ...props
-  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) => (
-    <button type="button" {...props}>
-      {children}
-    </button>
-  ),
-}))
+vi.mock('@/components/ui/button', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/ui/button')>()
+  return {
+    ...actual,
+    Button: ({
+      children,
+      ...props
+    }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) => (
+      <button type="button" {...props}>
+        {children}
+      </button>
+    ),
+  }
+})
 
 import { toast } from 'sonner'
 import { makeBlock } from '../../__tests__/fixtures'

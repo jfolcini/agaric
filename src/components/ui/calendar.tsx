@@ -21,6 +21,53 @@ export type CalendarProps = DayPickerProps & {
   ref?: React.Ref<HTMLDivElement>
 }
 
+// Hoisted to module scope: `buttonVariants` arguments are literal, so the
+// resulting class strings never change between renders. Computing once at
+// module load avoids redundant work on every render of <Calendar>.
+const NAV_BUTTON_CLASS = cn(
+  buttonVariants({ variant: 'outline' }),
+  'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 [@media(pointer:coarse)]:size-10',
+)
+const DAY_BUTTON_CLASS = cn(
+  buttonVariants({ variant: 'ghost' }),
+  'size-8 p-0 font-normal aria-selected:opacity-100 [@media(pointer:coarse)]:size-11',
+)
+
+// Hoisted to module scope: the entire `classNames` skeleton is composed of
+// literal strings (no closure / prop / state dependencies), so it can be
+// shared across every render. The render body spreads caller-supplied
+// `classNames` on top of this base.
+const BASE_CLASS_NAMES = {
+  root: 'rdp',
+  months: 'flex flex-col sm:flex-row gap-2 relative',
+  month: 'flex flex-col gap-4',
+  month_caption: 'flex items-center justify-center pt-1 pb-2 text-sm font-medium h-10',
+  caption_label: 'text-sm font-medium',
+  nav: 'absolute top-0 inset-x-0 flex items-center justify-between h-10 pt-1 px-1',
+  button_previous: NAV_BUTTON_CLASS,
+  button_next: NAV_BUTTON_CLASS,
+  month_grid: 'w-full border-collapse space-y-1',
+  weekdays: 'flex',
+  weekday:
+    'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem] [@media(pointer:coarse)]:w-11',
+  week: 'flex w-full mt-2',
+  day: cn(
+    'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent [&:has([aria-selected].outside)]:bg-accent/50 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md',
+    'h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
+  ),
+  day_button: DAY_BUTTON_CLASS,
+  range_end: 'day-range-end',
+  selected:
+    'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground rounded-md',
+  today: 'bg-accent text-accent-foreground rounded-md ring-2 ring-primary/50',
+  outside: 'outside text-muted-foreground aria-selected:text-muted-foreground opacity-50',
+  disabled: 'text-muted-foreground opacity-50',
+  range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
+  hidden: 'invisible',
+  week_number: 'text-[0.7rem] text-muted-foreground w-8 text-center',
+  week_number_header: 'text-[0.7rem] text-muted-foreground w-8',
+} as const
+
 const Calendar = ({
   ref,
   className,
@@ -37,43 +84,7 @@ const Calendar = ({
         showOutsideDays={showOutsideDays}
         className={cn('p-3', className)}
         classNames={{
-          root: 'rdp',
-          months: 'flex flex-col sm:flex-row gap-2 relative',
-          month: 'flex flex-col gap-4',
-          month_caption: 'flex items-center justify-center pt-1 pb-2 text-sm font-medium h-10',
-          caption_label: 'text-sm font-medium',
-          nav: 'absolute top-0 inset-x-0 flex items-center justify-between h-10 pt-1 px-1',
-          button_previous: cn(
-            buttonVariants({ variant: 'outline' }),
-            'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 [@media(pointer:coarse)]:size-10',
-          ),
-          button_next: cn(
-            buttonVariants({ variant: 'outline' }),
-            'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 [@media(pointer:coarse)]:size-10',
-          ),
-          month_grid: 'w-full border-collapse space-y-1',
-          weekdays: 'flex',
-          weekday:
-            'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem] [@media(pointer:coarse)]:w-11',
-          week: 'flex w-full mt-2',
-          day: cn(
-            'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent [&:has([aria-selected].outside)]:bg-accent/50 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md',
-            'h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
-          ),
-          day_button: cn(
-            buttonVariants({ variant: 'ghost' }),
-            'size-8 p-0 font-normal aria-selected:opacity-100 [@media(pointer:coarse)]:size-11',
-          ),
-          range_end: 'day-range-end',
-          selected:
-            'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground rounded-md',
-          today: 'bg-accent text-accent-foreground rounded-md ring-2 ring-primary/50',
-          outside: 'outside text-muted-foreground aria-selected:text-muted-foreground opacity-50',
-          disabled: 'text-muted-foreground opacity-50',
-          range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
-          hidden: 'invisible',
-          week_number: 'text-[0.7rem] text-muted-foreground w-8 text-center',
-          week_number_header: 'text-[0.7rem] text-muted-foreground w-8',
+          ...BASE_CLASS_NAMES,
           ...classNames,
         }}
         components={{
