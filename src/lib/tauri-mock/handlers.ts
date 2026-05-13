@@ -145,10 +145,17 @@ export const HANDLERS: Record<string, Handler> = {
 
   // Every page in the active space as `{ id, content }`.  No pagination,
   // no clamp — bounded by the space's intrinsic page count.  Backs
-  // `exportGraphAsZip` and (future) graph rendering.
+  // `exportGraphAsZip` and graph rendering.
+  //
+  // `tagIds`, when non-empty, restricts the result to pages carrying at
+  // least one of those tags via the direct `block_tags` table (mock
+  // models direct tags only — same surface as the real backend's
+  // direct-tag filter; inherited tags intentionally not modelled here).
   list_all_pages_in_space: (args) => {
     const a = args as Record<string, unknown>
     const spaceId = a['spaceId'] as string
+    const rawTagIds = a['tagIds'] as string[] | null | undefined
+    const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
     const items: Array<{ id: string; content: string | null }> = []
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
@@ -156,6 +163,18 @@ export const HANDLERS: Record<string, Handler> = {
       const blockProps = properties.get(b['id'] as string)
       const spaceProp = blockProps?.get('space')
       if (spaceProp?.['value_ref'] !== spaceId) continue
+      if (tagFilter) {
+        const tagsForBlock = blockTags.get(b['id'] as string)
+        if (!tagsForBlock) continue
+        let hit = false
+        for (const t of tagsForBlock) {
+          if (tagFilter.has(t)) {
+            hit = true
+            break
+          }
+        }
+        if (!hit) continue
+      }
       items.push({ id: b['id'] as string, content: (b['content'] as string | null) ?? null })
     }
     items.sort((x, y) => {

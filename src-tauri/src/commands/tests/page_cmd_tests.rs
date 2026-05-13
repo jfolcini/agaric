@@ -2957,7 +2957,7 @@ async fn list_all_pages_in_space_returns_every_page_in_scope() {
         .await
         .unwrap();
 
-    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID)
+    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, None)
         .await
         .unwrap();
     let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
@@ -2975,11 +2975,76 @@ async fn list_all_pages_in_space_returns_every_page_in_scope() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_all_pages_in_space_empty_space_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let rows = list_all_pages_in_space_inner(&pool, "01NOSUCHSPACE00000000000000")
+    let rows = list_all_pages_in_space_inner(&pool, "01NOSUCHSPACE00000000000000", None)
         .await
         .unwrap();
     assert!(
         rows.is_empty(),
         "unknown space must return empty; got {rows:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_tag_filter_or_mode() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "LAPS_TF_PA", "page", "Alpha", None, Some(1)).await;
+    insert_block(&pool, "LAPS_TF_PB", "page", "Beta", None, Some(2)).await;
+    insert_block(&pool, "LAPS_TF_PC", "page", "Gamma", None, Some(3)).await;
+    assign_to_space(&pool, "LAPS_TF_PA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_TF_PB", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_TF_PC", TEST_SPACE_ID).await;
+
+    // Two distinct tags.  PA carries TAG_X, PB carries TAG_Y, PC carries neither.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('LAPS_TF_TX', 'tag', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('LAPS_TF_TY', 'tag', 'y')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('LAPS_TF_PA', 'LAPS_TF_TX')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('LAPS_TF_PB', 'LAPS_TF_TY')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Filter on TAG_X only: PA returns.
+    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, Some(&["LAPS_TF_TX".into()]))
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        vec!["LAPS_TF_PA"],
+        "single-tag filter must surface only the tagged page; got {rows:?}",
+    );
+
+    // Filter on TAG_X OR TAG_Y: both PA + PB return; PC is excluded.
+    let rows = list_all_pages_in_space_inner(
+        &pool,
+        TEST_SPACE_ID,
+        Some(&["LAPS_TF_TX".into(), "LAPS_TF_TY".into()]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        vec!["LAPS_TF_PA", "LAPS_TF_PB"],
+        "multi-tag filter must union across tags; got {rows:?}",
+    );
+
+    // Empty tag slice: behaves as if no filter passed (returns all pages).
+    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, Some(&[]))
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        vec!["LAPS_TF_PA", "LAPS_TF_PB", "LAPS_TF_PC"],
+        "empty tag-filter slice must not exclude anything; got {rows:?}",
     );
 }

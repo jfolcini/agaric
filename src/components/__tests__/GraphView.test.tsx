@@ -231,10 +231,9 @@ describe('GraphView', () => {
 
   it('shows empty state when no pages exist', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(emptyPage)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -255,10 +254,9 @@ describe('GraphView', () => {
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -300,10 +298,9 @@ describe('GraphView', () => {
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -344,10 +341,9 @@ describe('GraphView', () => {
 
   it('shows error state on fetch failure', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.reject(new Error('network failure'))
+      if (cmd === 'list_all_pages_in_space') return Promise.reject(new Error('network failure'))
       if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -372,10 +368,9 @@ describe('GraphView', () => {
   // SVG should NOT be in the DOM (the error branch returns early).
   it('renders the EmptyState fallback (not the SVG) on fetch failure', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.reject(new Error('network failure'))
+      if (cmd === 'list_all_pages_in_space') return Promise.reject(new Error('network failure'))
       if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -394,10 +389,9 @@ describe('GraphView', () => {
 
   it('has no a11y violations with empty state', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(emptyPage)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve([])
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -421,10 +415,9 @@ describe('GraphView', () => {
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -455,10 +448,9 @@ describe('GraphView', () => {
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -484,10 +476,9 @@ describe('GraphView', () => {
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-nonexistent' }]
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -511,10 +502,9 @@ describe('GraphView', () => {
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -540,10 +530,9 @@ describe('GraphView', () => {
 
     function mockGraphData() {
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
     }
@@ -617,10 +606,9 @@ describe('GraphView', () => {
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -655,10 +643,9 @@ describe('GraphView', () => {
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -684,10 +671,9 @@ describe('GraphView', () => {
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -715,10 +701,9 @@ describe('GraphView', () => {
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
       if (cmd === 'list_page_links') return Promise.resolve([])
       if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
       return Promise.resolve(null)
     })
 
@@ -747,10 +732,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -768,10 +752,9 @@ describe('GraphView', () => {
       vi.clearAllMocks()
       MockWorker.instances = []
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -786,15 +769,10 @@ describe('GraphView', () => {
 
     it('handles partial failure (listBlocks succeeds, listPageLinks fails)', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks')
-          return Promise.resolve({
-            items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
-            next_cursor: null,
-            has_more: false,
-          })
+        if (cmd === 'list_all_pages_in_space')
+          return Promise.resolve([{ id: 'page-1', content: 'Page One', block_type: 'page' }])
         if (cmd === 'list_page_links') return Promise.reject(new Error('link fetch failed'))
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -809,18 +787,13 @@ describe('GraphView', () => {
 
     it('handles pages with no links', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks')
-          return Promise.resolve({
-            items: [
-              { id: 'page-1', content: 'Page One', block_type: 'page' },
-              { id: 'page-2', content: 'Page Two', block_type: 'page' },
-            ],
-            next_cursor: null,
-            has_more: false,
-          })
+        if (cmd === 'list_all_pages_in_space')
+          return Promise.resolve([
+            { id: 'page-1', content: 'Page One', block_type: 'page' },
+            { id: 'page-2', content: 'Page Two', block_type: 'page' },
+          ])
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -863,10 +836,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -901,10 +873,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -930,10 +901,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -959,10 +929,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -994,10 +963,9 @@ describe('GraphView', () => {
         }
 
         mockedInvoke.mockImplementation((cmd: string) => {
-          if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+          if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
           if (cmd === 'list_page_links') return Promise.resolve([])
           if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-          if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
           return Promise.resolve(null)
         })
 
@@ -1027,10 +995,9 @@ describe('GraphView', () => {
   describe('error handling', () => {
     it('logs error when data fetch fails', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.reject(new Error('network failure'))
+        if (cmd === 'list_all_pages_in_space') return Promise.reject(new Error('network failure'))
         if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1050,10 +1017,9 @@ describe('GraphView', () => {
 
     it('does not crash on empty response', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(emptyPage)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1069,7 +1035,7 @@ describe('GraphView', () => {
       let resolveLinks!: (v: unknown) => void
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks')
+        if (cmd === 'list_all_pages_in_space')
           return new Promise((resolve) => {
             resolveBlocks = resolve
           })
@@ -1078,7 +1044,6 @@ describe('GraphView', () => {
             resolveLinks = resolve
           })
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1111,64 +1076,6 @@ describe('GraphView', () => {
     })
   })
 
-  describe('truncation warning (PERF-9a)', () => {
-    it('shows truncation badge when has_more is true', async () => {
-      const pagesResponse = {
-        items: [
-          { id: 'page-1', content: 'Page One', block_type: 'page' },
-          { id: 'page-2', content: 'Page Two', block_type: 'page' },
-        ],
-        next_cursor: 'cursor-xyz',
-        has_more: true,
-      }
-
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
-        if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
-        return Promise.resolve(null)
-      })
-
-      render(<GraphView />)
-
-      await waitFor(() => {
-        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
-      })
-
-      const badge = screen.getByTestId('graph-truncated-badge')
-      expect(badge).toBeInTheDocument()
-      expect(badge).toHaveTextContent('Showing 2 of many pages')
-    })
-
-    it('does not show truncation badge when has_more is false', async () => {
-      const pagesResponse = {
-        items: [
-          { id: 'page-1', content: 'Page One', block_type: 'page' },
-          { id: 'page-2', content: 'Page Two', block_type: 'page' },
-        ],
-        next_cursor: null,
-        has_more: false,
-      }
-
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
-        if (cmd === 'list_page_links') return Promise.resolve([])
-        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
-        return Promise.resolve(null)
-      })
-
-      render(<GraphView />)
-
-      await waitFor(() => {
-        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
-      })
-
-      expect(screen.queryByTestId('graph-truncated-badge')).not.toBeInTheDocument()
-    })
-  })
-
   describe('WebWorker (PERF-9b)', () => {
     it('spawns a Worker and posts start message with graph data', async () => {
       const pagesResponse = {
@@ -1182,10 +1089,9 @@ describe('GraphView', () => {
       const linksResponse = [{ source_id: 'page-1', target_id: 'page-2', ref_count: 1 }]
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1216,10 +1122,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1252,10 +1157,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1292,10 +1196,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1352,10 +1255,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1393,10 +1295,9 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1436,14 +1337,13 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'list_tags_by_prefix')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1471,14 +1371,13 @@ describe('GraphView', () => {
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'list_tags_by_prefix')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 
@@ -1493,40 +1392,30 @@ describe('GraphView', () => {
         'query_by_property',
         expect.objectContaining({ key: 'template', valueText: 'true' }),
       )
-      // Verify listBlocks was called with page type (no tag filter)
+      // Verify list_all_pages_in_space was called (no tag filter)
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'list_blocks',
-        expect.objectContaining({ blockType: 'page', tagId: null }),
+        'list_all_pages_in_space',
+        expect.objectContaining({ tagIds: null }),
       )
     })
 
-    it('filters tag results to only pages', async () => {
-      // When filtering by tag, the API may return mixed block types
-      const mixedResponse = {
-        items: [
-          { id: 'page-1', content: 'Page One', block_type: 'page' },
-          { id: 'block-1', content: 'A heading block', block_type: 'heading' },
-          { id: 'page-2', content: 'Page Two', block_type: 'page' },
-          { id: 'block-2', content: 'Some text', block_type: 'text' },
-        ],
-        next_cursor: null,
-        has_more: false,
-      }
+    it('renders only pages from list_all_pages_in_space (backend already filters)', async () => {
+      // The backend filters to `block_type = 'page'` server-side, so the
+      // response only contains pages.  The mock returns the post-filter
+      // shape: PageHeading rows.
+      const pagesItems = [
+        { id: 'page-1', content: 'Page One' },
+        { id: 'page-2', content: 'Page Two' },
+      ]
 
-      // Directly render with a tag filter pre-applied by asserting the
-      // mixed-type behaviour on load. Since the GraphFilterBar is its own
-      // component with its own tests, we don't drive the popover UI here.
-      // Instead we verify the component's internal fetch-and-filter
-      // behaviour by including mixed block types in the response.
       mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_blocks') return Promise.resolve(mixedResponse)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesItems)
         if (cmd === 'list_page_links') return Promise.resolve([])
         if (cmd === 'list_tags_by_prefix')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
         if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
-        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
         return Promise.resolve(null)
       })
 

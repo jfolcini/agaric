@@ -641,10 +641,11 @@ export const commands = {
 	 */
 	listJournalPagesInRange: (startDate: string, endDate: string, spaceId: string) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, spaceId })),
 	/**
-	 *  Tauri command: list every page in `space_id` as `{ id, content }`.
+	 *  Tauri command: list every page in `space_id` as `{ id, content }`,
+	 *  optionally restricted to pages carrying at least one of `tag_ids`.
 	 *  Delegates to [`list_all_pages_in_space_inner`].
 	 */
-	listAllPagesInSpace: (spaceId: string) => typedError<PageHeading[], AppErrorSchema>(__TAURI_INVOKE("list_all_pages_in_space", { spaceId })),
+	listAllPagesInSpace: (spaceId: string, tagIds: string[] | null) => typedError<PageHeading[], AppErrorSchema>(__TAURI_INVOKE("list_all_pages_in_space", { spaceId, tagIds })),
 };
 
 /* Types */
@@ -1133,13 +1134,22 @@ export type OpRef = {
 };
 
 /**
- *  Minimal page header — id + content — for callers that need every
- *  page in a space without pagination.  Used by the markdown export
- *  (`exportGraphAsZip`) which iterates every page to produce a ZIP.
+ *  Page header for callers that need every page in a space without
+ *  pagination.  Used by the markdown export (`exportGraphAsZip`) and by
+ *  the graph view, which both want the full set in one shot.
+ *
+ *  Includes the four agenda-shaped native columns on `blocks`
+ *  (`todo_state` / `priority` / `due_date` / `scheduled_date`) because
+ *  the graph node renderer keys node colour / icons on them.  The
+ *  markdown exporter ignores them.
  */
 export type PageHeading = {
 	id: string,
 	content: string | null,
+	todo_state: string | null,
+	priority: string | null,
+	due_date: string | null,
+	scheduled_date: string | null,
 };
 
 /**

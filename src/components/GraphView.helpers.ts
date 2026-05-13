@@ -2,13 +2,14 @@
  * GraphView helpers — data-fetch extraction (MAINT-56) and shared types.
  *
  * `fetchGraphData` consolidates the tag-dimension-driven page/link/template
- * fetch into a single helper that returns a normalised `{ nodes, edges, hasMore }`
+ * fetch into a single helper that returns a normalised `{ nodes, edges }`
  * result. Keeping it at module scope lets the calling effect stay linear and
  * testable without hauling d3 types around.
  */
 
 import type { SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
-import { listBlocks, listPageLinks, queryByProperty, queryByTags } from '@/lib/tauri'
+import type { PageHeading } from '@/lib/tauri'
+import { listAllPagesInSpace, listPageLinks, queryByProperty } from '@/lib/tauri'
 
 export interface GraphNode extends SimulationNodeDatum {
   id: string
@@ -30,79 +31,41 @@ export interface GraphEdge extends SimulationLinkDatum<GraphNode> {
 export interface GraphFetchResult {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  hasMore: boolean
-}
-
-type PageItem = Record<string, unknown>
-interface PagesResponse {
-  items: PageItem[]
-  has_more: boolean
 }
 
 /**
- * Select the right page-listing call based on how many tag IDs were picked.
- * Server-side tag filter paths diverge (no tag / single tag / multi tag), so
- * we centralise the decision here.
+ * Fetch every page in the active space (optionally restricted to pages
+ * carrying at least one of `tagFilterIds`).  Routes through
+ * `list_all_pages_in_space` which has no pagination and no clamp —
+ * the graph view genuinely wants every node.
+ *
+ * `?? ''` is the intentional pre-bootstrap fallback: the empty string
+ * forces a no-match SQL filter (returning an empty list) instead of a
+ * runtime null deref.
  */
 function fetchPages(
   tagFilterIds: readonly string[],
   spaceId: string | null,
-): Promise<PagesResponse> {
-  // `listBlocks` requires `spaceId` after FEAT-3 Phase 4. `?? ''` is the
-  // intentional pre-bootstrap fallback: the empty string forces a no-match
-  // SQL filter (returning an empty page) instead of a runtime null deref.
-  if (tagFilterIds.length === 0) {
-    return listBlocks({
-      blockType: 'page',
-      limit: 5000,
-      spaceId: spaceId ?? '',
-    }) as Promise<PagesResponse>
-  }
-  if (tagFilterIds.length === 1) {
-    return listBlocks({
-      tagId: tagFilterIds[0],
-      limit: 5000,
-      spaceId: spaceId ?? '',
-    }) as Promise<PagesResponse>
-  }
-  // PEND-35 Tier 2.9 — push the `block_type = 'page'` predicate into SQL
-  // so the unbounded `limit:5000` over-fetch can no longer ship up to
-  // 5000 non-page rows the renderer would discard. The post-filter that
-  // used to live below the `Promise.all` boundary is now redundant.
-  return queryByTags({
-    tagIds: [...tagFilterIds],
-    prefixes: [],
-    mode: 'or',
-    limit: 5000,
-    spaceId,
-    blockType: 'page',
-  }) as Promise<PagesResponse>
-}
-
-function readString(p: PageItem, key: string): string | null {
-  const value = p[key]
-  return typeof value === 'string' ? value : null
+): Promise<PageHeading[]> {
+  const tagIds = tagFilterIds.length > 0 ? [...tagFilterIds] : null
+  return listAllPagesInSpace(spaceId ?? '', tagIds)
 }
 
 function buildNodes(
-  items: PageItem[],
+  items: PageHeading[],
   templateIds: Set<string>,
   backlinkCounts: Map<string, number>,
 ): GraphNode[] {
-  return items.map((p) => {
-    const id = p['id'] as string
-    const content = readString(p, 'content')
-    return {
-      id,
-      label: content && content.length > 0 ? content : 'Untitled',
-      todo_state: readString(p, 'todo_state'),
-      priority: readString(p, 'priority'),
-      due_date: readString(p, 'due_date'),
-      scheduled_date: readString(p, 'scheduled_date'),
-      is_template: templateIds.has(id),
-      backlink_count: backlinkCounts.get(id) ?? 0,
-    }
-  })
+  return items.map((p) => ({
+    id: p.id,
+    label: p.content && p.content.length > 0 ? p.content : 'Untitled',
+    todo_state: p.todo_state,
+    priority: p.priority,
+    due_date: p.due_date,
+    scheduled_date: p.scheduled_date,
+    is_template: templateIds.has(p.id),
+    backlink_count: backlinkCounts.get(p.id) ?? 0,
+  }))
 }
 
 function countBacklinks(
@@ -140,23 +103,21 @@ export async function fetchGraphData(
   // post-filtered `nodeIds` set; with the push-down the response is
   // already shape-restricted to the visible subgraph.
   const linksTagIds: string[] | null = tagFilterIds.length > 0 ? [...tagFilterIds] : null
-  const [pagesResp, links, templatesResp] = await Promise.all([
+  const [pages, links, templatesResp] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
     listPageLinks({ spaceId, tagIds: linksTagIds }),
     queryByProperty({ key: 'template', valueText: 'true', limit: 1000, spaceId }),
   ])
 
-  // PEND-35 Tier 2.9 — `queryByTags` now applies `block_type = 'page'`
-  // server-side, so the previous JS post-filter is gone.
-  const items = pagesResp.items
-
-  const templateIds = new Set(
-    templatesResp.items.map((p) => p.id).filter((id): id is string => typeof id === 'string'),
+  const templateIds = new Set<string>(
+    templatesResp.items
+      .map((p) => p.id as string | undefined)
+      .filter((id): id is string => typeof id === 'string'),
   )
 
-  const nodeIds = new Set(items.map((p) => p['id'] as string))
+  const nodeIds = new Set<string>(pages.map((p) => p.id))
   const backlinkCounts = countBacklinks(links, nodeIds)
-  const nodes = buildNodes(items, templateIds, backlinkCounts)
+  const nodes = buildNodes(pages, templateIds, backlinkCounts)
   const edges: GraphEdge[] = links
     .filter((l) => nodeIds.has(l.source_id) && nodeIds.has(l.target_id))
     .map((l) => ({
@@ -165,5 +126,5 @@ export async function fetchGraphData(
       ref_count: l.ref_count,
     }))
 
-  return { nodes, edges, hasMore: pagesResp.has_more }
+  return { nodes, edges }
 }
