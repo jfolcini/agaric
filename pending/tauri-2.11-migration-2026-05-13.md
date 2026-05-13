@@ -1,11 +1,72 @@
 # Tauri 2.10 → 2.11 migration — 2026-05-13
 
-> **Status:** **blocked** (dependabot PR #1). Tauri 2.11.x changed the
-> internal symbol scheme that `tauri-specta::collect_commands!` /
-> `agaric_commands!` rely on; a straight `cargo update tauri` produces
-> 120 compile errors. Migration is non-trivial. Tracked here so the
-> security advisory motivating the bump (Tauri Origin Confusion
-> Issue, dependabot alert, medium severity) is not lost.
+> **Status:** **blocked — needs upstream fix** (dependabot PR #1).
+> Tauri 2.11.x changed the internal symbol scheme that
+> `tauri-specta::collect_commands!` / `agaric_commands!` rely on;
+> two attempted fixes (Session 707) both failed to resolve the macro
+> path mismatch. Tracked here so the security advisory motivating the
+> bump (Tauri Origin Confusion Issue, dependabot alert, medium
+> severity) is not lost.
+
+## Investigation log — Session 707 (2026-05-13)
+
+Two paths attempted and ruled out:
+
+**Path 1 — upgrade `tauri-specta` in lockstep.** Bumped `specta` /
+`specta-typescript` / `tauri-specta` to `=2.0.0-rc.25` (the latest
+available) alongside `tauri = 2.11.1`. `tauri-specta` rc.25 still
+delegates to `tauri::generate_handler!` internally (see
+`/home/javier/.cargo/registry/src/.../tauri-specta-2.0.0-rc.25/src/macros.rs:42-50`),
+which builds the macro path by appending `__tauri_command_name_<cmd>`
+to the **last segment of the function path**. For
+`$crate::commands::create_block`, generate_handler looks up
+`commands::__tauri_command_name_create_block!()` — but in tauri-macros
+2.6.1 (`/home/javier/.cargo/registry/src/.../tauri-macros-2.6.1/src/command/wrapper.rs:299`)
+the macro is now generated with `#[macro_export]` placing it at the
+**crate root** (`agaric::__tauri_command_name_create_block`). Path
+mismatch → 120 `E0433: cannot find __tauri_command_name_<cmd> in
+commands` errors. Verdict: **needs upstream tauri-specta release that
+matches the new tauri 2.11 macro layout**, or a tauri-side fix to
+generate_handler that handles macro_export'd macros at the crate root.
+
+**Path 2 — pass unqualified command names to `collect_commands!`.**
+Rewrote `agaric_commands!` to expand to `{{ use $crate::commands::*;
+::tauri_specta::collect_commands![create_block, edit_block, …] }}`,
+so generate_handler would mutate `create_block` →
+`__tauri_command_name_create_block!()` (no module prefix). The
+macro_export'd macros at the crate root are accessible by short name
+from anywhere in the crate via the 2015 macro scope rule. **Did not
+work** — rustc reported `cannot find macro
+__tauri_command_name_<cmd>` for many of the commands, with a hint
+suggesting `__cmd__<cmd>` as a similar name. Investigation suggests
+tauri 2.11 may have changed which symbols are macro_export'd
+versus module-scoped, and that the `pub use crate::name;` re-export
+trick fails with `error: macro-expanded macro_export macros from the
+current crate cannot be referred to by absolute paths`.
+
+## Recommended path forward
+
+**Wait for an upstream fix.** Either:
+
+1. **tauri-specta releases a new RC** that adapts to the new tauri
+   2.11 macro layout. The maintainer (`oscartbeaumont`) has historically
+   tracked tauri's breaking changes within a few weeks.
+2. **tauri's `generate_handler!` is fixed** to either resolve the
+   macro at the crate root automatically, OR to not require the
+   path-appended macro form.
+
+Once one of these lands, retry the lockstep bump:
+```
+cargo update --precise <new_version> tauri-specta --manifest-path src-tauri/Cargo.toml
+cargo update --precise 2.11.1 tauri --manifest-path src-tauri/Cargo.toml
+```
+…and re-run the full nextest suite.
+
+**Alternative:** vendor `tauri-specta` locally and patch
+`collect_commands!` to look up the macro at the crate root
+(`$crate::__tauri_command_name_<cmd>!()`). The fork would be small
+(macros.rs is ~50 lines). Carries the cost of tracking upstream until
+the real release lands.
 
 ## The breaking change
 
