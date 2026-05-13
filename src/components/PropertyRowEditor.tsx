@@ -34,8 +34,8 @@ import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { useDateInput } from '../hooks/useDateInput'
 import { setPriorityLevels } from '../lib/priority-levels'
-import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
-import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
+import type { PageHeading, PropertyDefinition, PropertyRow } from '../lib/tauri'
+import { listAllPagesInSpace, setProperty, updatePropertyDefOptions } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
@@ -230,7 +230,7 @@ export function PropertyRowEditor({
 
   // --- Ref picker popover state ---
   const [refPickerOpen, setRefPickerOpen] = useState(false)
-  const [refPages, setRefPages] = useState<BlockRow[]>([])
+  const [refPages, setRefPages] = useState<PageHeading[]>([])
   const [refSearch, setRefSearch] = useState('')
   /** UX-272 sub-fix 8 — id of the page currently being saved, or null. */
   const [savingRefPageId, setSavingRefPageId] = useState<string | null>(null)
@@ -248,12 +248,14 @@ export function PropertyRowEditor({
     // empty "Select page" list with no indication that the load failed.
     // The toast + `logger.error` on the catch path remains the only
     // failure surface the user sees.
-    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
-    // fallback is intentional pre-bootstrap behaviour: empty string
-    // forces a no-match SQL filter rather than a runtime null deref.
-    listBlocks({ blockType: 'page', limit: 500, spaceId: currentSpaceId ?? '' })
-      .then((res) => {
-        setRefPages(res.items)
+    // FEAT-3 Phase 4 — `listAllPagesInSpace` requires `spaceId`.  The
+    // `?? ''` fallback is intentional pre-bootstrap behaviour: empty
+    // string forces a no-match SQL filter rather than a runtime null
+    // deref.  `listAllPagesInSpace` has no clamp (the ref picker filters
+    // client-side), so any workspace size shows up correctly here.
+    listAllPagesInSpace(currentSpaceId ?? '')
+      .then((pages) => {
+        setRefPages(pages)
         setRefPickerOpen(true)
       })
       .catch((err: unknown) => {
@@ -271,7 +273,7 @@ export function PropertyRowEditor({
   }, [refPages, refSearch])
 
   const handleSelectRefPage = useCallback(
-    async (page: BlockRow) => {
+    async (page: PageHeading) => {
       // UX-272 sub-fix 8 — show a Spinner gated on the same Promise as the
       // save so it never sticks if the IPC call rejects.
       setSavingRefPageId(page.id)
