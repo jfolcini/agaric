@@ -41,12 +41,12 @@ Frontend "I want all" call sites that ignore those ceilings:
 | ~~HIGH~~ DONE | ~~`src/lib/export-graph.ts:19`~~ | ~~1000~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp) | — |
 | ~~HIGH~~ DONE | ~~`src/components/GraphView.helpers.ts:146`~~ | ~~1000~~ | now routes through `list_template_page_ids_in_space` IPC (no pagination, no clamp) | — |
 | MEDIUM | `src/hooks/useDuePanelData.ts:210, 261` | 500 | routes via agenda (cap 500) — at-edge | OK today, fragile to refactor |
-| MEDIUM | `src/components/SearchPanel.tsx:138` | 20 | list + JS `.filter()` | page picker can't find pages past index 19 |
+| ~~MEDIUM~~ DONE | ~~`src/components/SearchPanel.tsx:138`~~ | ~~20~~ | page-picker `searchFn` now mirrors `useBlockResolve.searchPages`: ≤2 chars → `list_all_pages_in_space` (no pagination, no clamp) projected to `BlockRow` with `matchesSearchFolded` applied client-side; >2 chars → `searchBlocks` (FTS5) filtered to `block_type === 'page'` (no JS folding — FTS5 has its own tokenizer) | — |
 | ~~MEDIUM~~ DONE | ~~`src/hooks/useBlockDatePicker.ts:143`~~ | ~~500~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp); the existing `.find()` over `dateStr`/`legacyStr` keeps working on the flat `PageHeading[]` shape | — |
 | ~~MEDIUM~~ DONE | ~~`src/hooks/useBlockResolve.ts:99`~~ | ~~500~~ | `searchPagesViaCache` now hydrates from `list_all_pages_in_space` (no pagination, no clamp); the empty-`spaceId` pre-bootstrap fallback is preserved (backend treats `''` as a no-match `value_ref` filter) | — |
 | ~~MEDIUM~~ DONE | ~~`src/lib/template-utils.ts:175`~~ | ~~500~~ | `insertTemplateBlocks`'s recursive `listBlocks(parentId)` walk collapsed into a single `load_page_subtree(templatePageId, spaceId)` IPC; DFS order rebuilt from the flat result by grouping on `parent_id` and sorting on `position` | — |
-| MEDIUM | `src/components/TagList.tsx:63` | 500 | `listTagsByPrefix` (cap 200) | tag list truncated past 200 |
-| LOW | `src/components/ViewDispatcher.tsx:111` | 100 | trash count badge | wrong badge count at >100 trash items |
+| ~~MEDIUM~~ DONE | ~~`src/components/TagList.tsx:63`~~ | ~~500~~ | now routes through `list_all_tags_in_space` IPC (no pagination, no clamp); tags are space-scoped via `block_properties(key='space')` on the tag block, mirroring `list_all_pages_in_space_inner`'s filter shape | — |
+| ~~LOW~~ DONE | ~~`src/components/ViewDispatcher.tsx:111`~~ | ~~100~~ | `useTrashCount` now routes through the dedicated `count_trash(spaceId)` IPC (`SELECT COUNT(*)` in SQL) instead of `listBlocks({ showDeleted: true, limit: 100 }).items.length`; badge is accurate regardless of trash size | — |
 
 Verified safe (use cursor pagination correctly): `PageBrowser.tsx:70`,
 `TrashView.tsx:67`, `stores/resolve.ts:158`, `SpaceManageDialog.tsx:280`

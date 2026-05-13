@@ -318,6 +318,26 @@ pub async fn list_tags_by_prefix_inner(
     tag_query::list_tags_by_prefix(pool, &prefix, limit).await
 }
 
+/// Return every tag in `space_id`, ordered by name.  No pagination,
+/// no clamp — bounded by the space's intrinsic tag count.
+///
+/// limit-clamp-followup — backs the tag-management list view
+/// (`TagList.tsx`), which used to call
+/// `list_tags_by_prefix({ prefix: "", limit: 500 })` and silently get
+/// only 200 rows because `list_tags_by_prefix_inner` clamps at
+/// `MAX_TAGS_PREFIX = 200`.  Tags are space-scoped via
+/// `block_properties(key = 'space')` on the tag block (see
+/// `add_tag_inner`'s cross-space guard), so this command takes a
+/// `space_id` and applies the same filter shape as
+/// `list_all_pages_in_space_inner`.
+#[instrument(skip(pool), err)]
+pub async fn list_all_tags_in_space_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<Vec<TagCacheRow>, AppError> {
+    tag_query::list_all_tags_in_space(pool, space_id).await
+}
+
 /// List every tag in the tag cache with cursor-based pagination
 /// (M-85, AGENTS.md invariant #3).
 ///
@@ -466,6 +486,20 @@ pub async fn list_tags_for_block(
     block_id: String,
 ) -> Result<Vec<String>, AppError> {
     list_tags_for_block_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list every tag in `space_id` as `TagCacheRow[]`. No
+/// pagination, no clamp.  Delegates to [`list_all_tags_in_space_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_all_tags_in_space(
+    pool: State<'_, ReadPool>,
+    space_id: String,
+) -> Result<Vec<TagCacheRow>, AppError> {
+    list_all_tags_in_space_inner(&pool.0, &space_id)
         .await
         .map_err(sanitize_internal_error)
 }

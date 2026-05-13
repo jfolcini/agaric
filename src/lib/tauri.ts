@@ -730,6 +730,24 @@ export async function countBacklinksBatch(params: {
   return unwrap(await commands.countBacklinksBatch(params.pageIds, toSpaceScope(params.spaceId)))
 }
 
+/** Count soft-deleted blocks in a space. Used by the sidebar trash badge.
+ *
+ * Limit-clamp follow-up — `useTrashCount` previously fed the badge from
+ * `listBlocks({ showDeleted: true, limit: 100, spaceId }).items.length`,
+ * which silently clamped at 100 and would have been wrong for any
+ * workspace with more than 100 soft-deleted blocks. This wrapper pushes
+ * the count into SQL via a `SELECT COUNT(*)` IPC so the badge is always
+ * accurate regardless of trash size.
+ *
+ * Pass `''` for the pre-bootstrap window before a space is active — the
+ * backend `value_ref` filter treats the empty string as a no-match, so
+ * the result is `0`. Mirrors the `?? ''` fallback used by the legacy
+ * `listBlocks` call site and by `TrashView`.
+ */
+export async function countTrash(spaceId: string): Promise<number> {
+  return unwrap(await commands.countTrash(spaceId))
+}
+
 // ---------------------------------------------------------------------------
 // Block fixed-field commands (thin wrappers for reserved properties)
 // ---------------------------------------------------------------------------
@@ -1481,6 +1499,22 @@ export async function listAllPagesInSpace(
  */
 export async function listTemplatePageIdsInSpace(spaceId: string): Promise<string[]> {
   return unwrap(await commands.listTemplatePageIdsInSpace(spaceId))
+}
+
+/**
+ * List every tag in `spaceId` as `TagCacheRow[]`.  No pagination, no
+ * clamp — bounded by the space's intrinsic tag count.  Use when the
+ * caller genuinely needs every tag (the tag-management list view);
+ * use `listTagsByPrefix` for typeahead pickers.
+ *
+ * limit-clamp-followup — replaces `TagList.tsx`'s
+ * `listTagsByPrefix({ prefix: '', limit: 500 })` call, which the
+ * backend silently clamped to 200 via `MAX_TAGS_PREFIX`.  Tags are
+ * space-scoped via `block_properties(key='space')` on the tag block
+ * itself (see `commands/tags.rs` cross-space guard).
+ */
+export async function listAllTagsInSpace(spaceId: string): Promise<TagCacheRow[]> {
+  return unwrap(await commands.listAllTagsInSpace(spaceId))
 }
 
 /**

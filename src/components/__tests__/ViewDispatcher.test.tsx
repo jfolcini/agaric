@@ -242,14 +242,14 @@ describe('useTrashCount', () => {
     vi.useRealTimers()
   })
 
-  it('polls list_blocks (showDeleted) every 30 s', async () => {
+  it('polls count_trash every 30 s', async () => {
+    // Limit-clamp follow-up — the hook now routes through the dedicated
+    // `count_trash` IPC (returns a plain `number`) instead of the legacy
+    // `list_blocks({ showDeleted: true, limit: 100 }).items.length` shape
+    // that silently clamped the badge at 100. The polling interval is
+    // unchanged.
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks')
-        return {
-          items: [{ id: 'b1' }, { id: 'b2' }, { id: 'b3' }],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'count_trash') return 137 as unknown as never
       return emptyPage
     })
 
@@ -258,14 +258,16 @@ describe('useTrashCount', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
-    const initialCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks').length
+    const initialCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'count_trash').length
     expect(initialCalls).toBe(1)
-    expect(result.current).toBe(3)
+    // 137 > 100 — the legacy shape would have clamped this to 100; the
+    // new IPC returns the true count from `SELECT COUNT(*)`.
+    expect(result.current).toBe(137)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000)
     })
-    const afterTickCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks').length
+    const afterTickCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'count_trash').length
     expect(afterTickCalls).toBe(2)
   })
 })

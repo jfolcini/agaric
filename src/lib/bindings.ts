@@ -176,6 +176,11 @@ export const commands = {
 	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
 	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
 	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppErrorSchema>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
+	/**
+	 *  Tauri command: list every tag in `space_id` as `TagCacheRow[]`. No
+	 *  pagination, no clamp.  Delegates to [`list_all_tags_in_space_inner`].
+	 */
+	listAllTagsInSpace: (spaceId: string) => typedError<TagCacheRow[], AppErrorSchema>(__TAURI_INVOKE("list_all_tags_in_space", { spaceId })),
 	// Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].
 	listTagsForBlock: (blockId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
 	/**
@@ -461,6 +466,11 @@ export const commands = {
 	 *  Delegates to [`trash_descendant_counts_inner`].
 	 */
 	trashDescendantCounts: (rootIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("trash_descendant_counts", { rootIds })),
+	/**
+	 *  Tauri command: count soft-deleted blocks in a space. Delegates to
+	 *  [`count_trash_inner`].
+	 */
+	countTrash: (spaceId: string) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("count_trash", { spaceId })),
 	/**
 	 *  Tauri command: batch-fetch the first child per parent block. Delegates
 	 *  to [`first_child_for_blocks_inner`].

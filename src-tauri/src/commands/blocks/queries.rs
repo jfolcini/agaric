@@ -536,3 +536,196 @@ pub async fn get_blocks(
         .await
         .map_err(sanitize_internal_error)
 }
+
+/// Count soft-deleted blocks scoped to a single space.
+///
+/// Limit-clamp follow-up (`pending/limit-clamp-followup-2026-05-09.md`,
+/// row at `src/components/ViewDispatcher.tsx:111`) — the sidebar trash
+/// badge previously fed `useItemCount` with the page envelope from
+/// `listBlocks({ showDeleted: true, limit: 100, spaceId })` and used
+/// `.items.length`. That count silently clamped at 100 and would have
+/// been wrong for any workspace with more than 100 soft-deleted blocks.
+/// This IPC pushes the count into SQL so the badge is always accurate
+/// regardless of trash size.
+///
+/// The space-filter shape mirrors `pagination::list_trash` (and the
+/// `space_filter_clause` family in `pagination/{hierarchy,trash}.rs`):
+/// `COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM
+/// block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?1)`.
+/// A soft-deleted block retains its `page_id` column value so the
+/// filter applies identically to live and deleted blocks.
+///
+/// Returns the raw row count — descendants of a deleted root are
+/// counted individually. The badge only needs a non-zero / count
+/// summary; root-vs-descendant accounting is the trash view's job
+/// (see `trash_descendant_counts_inner`).
+///
+/// # Errors
+///
+/// - [`AppError::Database`] — propagated from sqlx.
+#[instrument(skip(pool), err)]
+pub async fn count_trash_inner(pool: &SqlitePool, space_id: &str) -> Result<i64, AppError> {
+    let count: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) FROM blocks b
+           WHERE b.deleted_at IS NOT NULL
+             AND COALESCE(b.page_id, b.id) IN (
+                 SELECT bp.block_id FROM block_properties bp
+                 WHERE bp.key = 'space' AND bp.value_ref = ?1
+             )"#,
+        space_id,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+/// Tauri command: count soft-deleted blocks in a space. Delegates to
+/// [`count_trash_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn count_trash(pool: State<'_, ReadPool>, space_id: String) -> Result<i64, AppError> {
+    count_trash_inner(&pool.0, &space_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const SPACE_A_ID: &str = "SPACE_AA";
+    const SPACE_B_ID: &str = "SPACE_BB";
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Insert a space block (page with `is_space = 'true'`). Mirrors the
+    /// helper used by `pagination::tests` so the `block_properties.value_ref
+    /// → blocks(id)` FK is satisfied for later `space` assignments.
+    async fn insert_space_block(pool: &SqlitePool, id: &str, name: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, 1, ?)",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Assign a block to a space by writing the `block_properties(key='space',
+    /// value_ref=<space_id>)` row directly. Bypasses the command layer.
+    async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(block_id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a live (non-deleted) page block at the top level (no parent).
+    async fn insert_live_page(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'page', 'live', NULL, 1)",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a soft-deleted page block at the top level. `page_id` is left
+    /// NULL — `COALESCE(page_id, id) = id` so the space lookup resolves via
+    /// the block's own `space` property.
+    async fn insert_deleted_page(pool: &SqlitePool, id: &str, deleted_at: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'page', 'trash', NULL, 1, ?)",
+        )
+        .bind(id)
+        .bind(deleted_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn count_trash_returns_count_of_soft_deleted_blocks_in_space() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+
+        // 3 soft-deleted blocks in SPACE_A.
+        for (i, id) in ["TRSH_A1", "TRSH_A2", "TRSH_A3"].iter().enumerate() {
+            insert_deleted_page(&pool, id, &format!("2025-02-{:02}T00:00:00+00:00", i + 1)).await;
+            assign_to_space(&pool, id, SPACE_A_ID).await;
+        }
+
+        // 2 live (non-deleted) blocks in SPACE_A — must not be counted.
+        for id in ["LIVE_A1", "LIVE_A2"] {
+            insert_live_page(&pool, id).await;
+            assign_to_space(&pool, id, SPACE_A_ID).await;
+        }
+
+        let count = count_trash_inner(&pool, SPACE_A_ID).await.unwrap();
+        assert_eq!(
+            count, 3,
+            "count_trash must return exactly the soft-deleted blocks in the space \
+             (live blocks excluded)"
+        );
+    }
+
+    #[tokio::test]
+    async fn count_trash_excludes_blocks_from_other_spaces() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+        insert_space_block(&pool, SPACE_B_ID, "Work").await;
+
+        // 2 soft-deleted blocks in SPACE_A.
+        for (i, id) in ["TRSH_A1", "TRSH_A2"].iter().enumerate() {
+            insert_deleted_page(&pool, id, &format!("2025-02-{:02}T00:00:00+00:00", i + 1)).await;
+            assign_to_space(&pool, id, SPACE_A_ID).await;
+        }
+
+        // 3 soft-deleted blocks in SPACE_B — must not appear when counting SPACE_A.
+        for (i, id) in ["TRSH_B1", "TRSH_B2", "TRSH_B3"].iter().enumerate() {
+            insert_deleted_page(&pool, id, &format!("2025-03-{:02}T00:00:00+00:00", i + 1)).await;
+            assign_to_space(&pool, id, SPACE_B_ID).await;
+        }
+
+        let count_a = count_trash_inner(&pool, SPACE_A_ID).await.unwrap();
+        let count_b = count_trash_inner(&pool, SPACE_B_ID).await.unwrap();
+        assert_eq!(
+            count_a, 2,
+            "SPACE_A trash count must exclude SPACE_B blocks; got {count_a}"
+        );
+        assert_eq!(
+            count_b, 3,
+            "SPACE_B trash count must exclude SPACE_A blocks; got {count_b}"
+        );
+    }
+}

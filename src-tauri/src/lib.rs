@@ -106,6 +106,13 @@ macro_rules! agaric_commands {
             $crate::commands::filtered_blocks_query,
             $crate::commands::list_unfinished_tasks,
             $crate::commands::list_tags_by_prefix,
+            // limit-clamp-followup — `TagList.tsx`'s tag-management list
+            // view used to call `list_tags_by_prefix({ prefix: '',
+            // limit: 500 })` and silently get only 200 rows (the
+            // `MAX_TAGS_PREFIX` ceiling).  `list_all_tags_in_space`
+            // returns every tag in the space with no pagination and no
+            // clamp.
+            $crate::commands::list_all_tags_in_space,
             $crate::commands::list_tags_for_block,
             $crate::commands::set_property,
             $crate::commands::set_todo_state,
@@ -196,6 +203,11 @@ macro_rules! agaric_commands {
             $crate::commands::purge_all_deleted,
             // Trash descendant counts (UX-243)
             $crate::commands::trash_descendant_counts,
+            // Trash count badge (limit-clamp follow-up, ViewDispatcher trash badge)
+            // — pushes the count into SQL so the badge is accurate beyond 100
+            // soft-deleted items. Replaces the legacy `listBlocks({ showDeleted:
+            // true, limit: 100 }).items.length` shape that silently clamped.
+            $crate::commands::count_trash,
             // First-child-per-parent batch (PEND-35 Tier 2.8) — collapses the
             // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.
             $crate::commands::first_child_for_blocks,

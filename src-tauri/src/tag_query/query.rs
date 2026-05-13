@@ -152,6 +152,42 @@ pub async fn list_tags_by_prefix(
     Ok(rows)
 }
 
+/// Return every tag in `space_id`, ordered by name. No pagination, no
+/// clamp.
+///
+/// Tags are space-scoped: each tag block (`block_type = 'tag'`) carries
+/// its own `block_properties(key = 'space', value_ref = <space_id>)`
+/// row (see `spaces::cross_space_validation` and the `add_tag` cross-
+/// space guard at `commands/tags.rs:116`). The space filter therefore
+/// applies the same `value_ref` predicate used by
+/// `list_all_pages_in_space_inner` but keyed on the tag block itself
+/// rather than on a page's owning block.
+///
+/// The result set is bounded by the space's intrinsic tag count
+/// (workspaces typically have tens to hundreds of distinct tags). Use
+/// this when the caller genuinely needs every tag (the tag-management
+/// list view); use the prefix-paginated `list_tags_by_prefix` for
+/// typeahead pickers.
+pub async fn list_all_tags_in_space(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<Vec<TagCacheRow>, AppError> {
+    let rows = sqlx::query_as!(
+        TagCacheRow,
+        r#"SELECT tc.tag_id, tc.name, tc.usage_count, tc.updated_at
+         FROM tags_cache tc
+         WHERE tc.tag_id IN (
+             SELECT bp.block_id FROM block_properties bp
+             WHERE bp.key = 'space' AND bp.value_ref = ?1
+         )
+         ORDER BY tc.name"#,
+        space_id,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// List all tag_ids associated with a block.
 pub async fn list_tags_for_block(
     pool: &SqlitePool,
@@ -428,6 +464,116 @@ mod tests {
             plan.contains("idx_tags_cache_name_nocase"),
             "expected query plan to use the NOCASE index added by \
              migration 0050, got plan:\n{plan}"
+        );
+    }
+
+    /// Helper: assign a `space` property to a tag block (mirrors
+    /// `block_properties` rows the materializer would normally write).
+    async fn assign_tag_to_space(pool: &SqlitePool, tag_id: &str, space_id: &str) {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) \
+             VALUES (?, 'space', ?)",
+        )
+        .bind(tag_id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Seed the space block so the FK on `block_properties.value_ref →
+    /// blocks(id)` is satisfied.  Idempotent.
+    async fn ensure_space_block(pool: &SqlitePool, space_id: &str) {
+        sqlx::query(
+            "INSERT OR IGNORE INTO blocks (id, block_type, content) \
+             VALUES (?, 'page', 'Space')",
+        )
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_all_tags_in_space_returns_every_tag_in_scope() {
+        let (pool, _dir) = test_pool().await;
+        let space_a = "01TAGSPACEA0000000000000001";
+        ensure_space_block(&pool, space_a).await;
+
+        // Seed 350 tag rows in space_a — well above the
+        // `MAX_TAGS_PREFIX = 200` cap that `list_tags_by_prefix`
+        // applies, to prove this path is unclamped.
+        for i in 0..350 {
+            let id = format!("TAG_{i:04}");
+            let name = format!("tag-{i:04}");
+            insert_block(&pool, &id, "tag", &name).await;
+            insert_tag_cache(&pool, &id, &name, 1).await;
+            assign_tag_to_space(&pool, &id, space_a).await;
+        }
+
+        let result = list_all_tags_in_space(&pool, space_a).await.unwrap();
+        assert_eq!(
+            result.len(),
+            350,
+            "must return every tag in the space (no clamp); got {} rows",
+            result.len()
+        );
+        // ORDER BY name keeps the result deterministic.
+        assert_eq!(result[0].name, "tag-0000");
+        assert_eq!(result[349].name, "tag-0349");
+    }
+
+    #[tokio::test]
+    async fn list_all_tags_in_space_excludes_other_spaces() {
+        let (pool, _dir) = test_pool().await;
+        let space_a = "01TAGSPACEA0000000000000001";
+        let space_b = "01TAGSPACEB0000000000000002";
+        ensure_space_block(&pool, space_a).await;
+        ensure_space_block(&pool, space_b).await;
+
+        insert_block(&pool, "TAG_AA", "tag", "alpha").await;
+        insert_tag_cache(&pool, "TAG_AA", "alpha", 3).await;
+        assign_tag_to_space(&pool, "TAG_AA", space_a).await;
+
+        insert_block(&pool, "TAG_AB", "tag", "beta").await;
+        insert_tag_cache(&pool, "TAG_AB", "beta", 2).await;
+        assign_tag_to_space(&pool, "TAG_AB", space_a).await;
+
+        insert_block(&pool, "TAG_BB", "tag", "bravo").await;
+        insert_tag_cache(&pool, "TAG_BB", "bravo", 5).await;
+        assign_tag_to_space(&pool, "TAG_BB", space_b).await;
+
+        // Unscoped tag — must be excluded from every space result.
+        insert_block(&pool, "TAG_OO", "tag", "orphan").await;
+        insert_tag_cache(&pool, "TAG_OO", "orphan", 1).await;
+
+        let in_a = list_all_tags_in_space(&pool, space_a).await.unwrap();
+        let ids_a: Vec<&str> = in_a.iter().map(|r| r.tag_id.as_str()).collect();
+        assert_eq!(
+            ids_a,
+            vec!["TAG_AA", "TAG_AB"],
+            "space A must surface only its own tags, ordered by name; \
+             must exclude space B's tag and the unscoped orphan",
+        );
+
+        let in_b = list_all_tags_in_space(&pool, space_b).await.unwrap();
+        let ids_b: Vec<&str> = in_b.iter().map(|r| r.tag_id.as_str()).collect();
+        assert_eq!(
+            ids_b,
+            vec!["TAG_BB"],
+            "space B must surface only its own tag",
+        );
+    }
+
+    #[tokio::test]
+    async fn list_all_tags_in_space_empty_space_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        let result = list_all_tags_in_space(&pool, "01NOSUCHSPACE00000000000000")
+            .await
+            .unwrap();
+        assert!(
+            result.is_empty(),
+            "unknown space must return empty; got {result:?}"
         );
     }
 

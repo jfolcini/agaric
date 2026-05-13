@@ -7,6 +7,69 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 702 — limit-clamp-followup: Phase 2c/2d/2e remaining MEDIUM + LOW rows (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 3 build (all completed successfully — the edit-policy change from Session 701 unblocked subagent edits) + 1 SearchPanel orchestrator-direct fixups not needed |
+| **Items closed** | three MEDIUM/LOW rows in `pending/limit-clamp-followup-2026-05-09.md` (`SearchPanel.tsx:138`, `TagList.tsx:63`, `ViewDispatcher.tsx:111`) |
+| **Items modified** | — |
+| **Tests added** | +2 Rust (`count_trash` happy-path + cross-space exclusion) + 3 Rust (`list_all_tags_in_space` empty / cross-space / 350-tag scale) + several FE assertions adjusted; one new FE pin test (TagList routes via `list_all_tags_in_space`); one new FE regression test (SearchPanel finds a page past alphabetical index 19) |
+| **Files touched** | 17 (2 new backend IPCs + 5 .sqlx hashes + bindings regen + 3 FE consumers + mocks + SESSION-LOG + pending doc) |
+
+**Summary:** Adds two backend Tauri IPCs (`count_trash(spaceId) -> i64` and `list_all_tags_in_space(spaceId) -> Vec<TagCacheRow>`), each with `_inner` helpers and `#[cfg(test)] mod tests` (test_pool + TempDir pattern). Wires three FE call sites through the no-clamp IPCs:
+- `ViewDispatcher.useTrashCount` now calls `count_trash` (was `listBlocks({ showDeleted: true, limit: 100 }).items.length`, silently clamped at 100; the badge was wrong for trash sizes > 100).
+- `TagList.loadTags` now calls `list_all_tags_in_space` (was `listTagsByPrefix({ prefix: '', limit: 500 })`, silently clamped at `MAX_TAGS_PREFIX = 200`).
+- `SearchPanel.pagePopover.searchFn` dispatches by query length, mirroring `useBlockResolve.searchPages`: short queries hit `listAllPagesInSpace` (projected to `BlockRow` so `usePopoverEntity<BlockRow>` stays unchanged) + `matchesSearchFolded`; long queries hit `searchBlocks` FTS5 (no JS folding — FTS5 tokenizes itself).
+
+**Space-scoping research (tags):** Tags are space-scoped via their own `block_properties(key='space', value_ref=…)` row on the tag block (`block_type='tag'`). Cited at `commands/tags.rs:116-117` (`add_tag_inner` calls `resolve_block_space`), `spaces/cross_space_validation.rs:209-211` (test fixtures), and `bin/audit_cross_space_refs.rs:637`. The new `list_all_tags_in_space_inner` mirrors `list_all_pages_in_space_inner`'s filter shape, joining `tags_cache` to `block_properties` on `tag_id`.
+
+**REVIEW-LATER impact:**
+- Phase 2 MEDIUM rows: 3 → 1 (only `useDuePanelData` remains).
+- Phase 2 LOW rows: 1 → 0 (`ViewDispatcher` closed).
+- Phase 1 strict clamp is now unblocked except for the `useDuePanelData` row.
+
+**Files touched (this session):**
+- `src-tauri/src/commands/blocks/queries.rs` (+206 — `count_trash_inner` + Tauri wrapper + 2 tests)
+- `src-tauri/src/commands/tags.rs` (+34 — `list_all_tags_in_space_inner` + wrapper)
+- `src-tauri/src/tag_query/query.rs` (+146 — `list_all_tags_in_space` query + 3 tests)
+- `src-tauri/src/tag_query/mod.rs` (+1 — re-export)
+- `src-tauri/src/commands/mod.rs` (re-exports for both new IPCs)
+- `src-tauri/src/lib.rs` (registrations for both new IPCs)
+- `src-tauri/.sqlx/` (+5 new query hash files)
+- `src/components/SearchPanel.tsx` (+40 — short-query / long-query dispatch)
+- `src/components/__tests__/SearchPanel.test.tsx` (+110 — five page-picker mocks rewired, +1 regression test for the 30th page)
+- `src/components/TagList.tsx` (+1 — call swap + spaceId threading)
+- `src/components/__tests__/TagList.test.tsx` (+21 — routing-pin test)
+- `src/components/ViewDispatcher.tsx` (-1/+1 — `useTrashCount` IPC swap)
+- `src/components/__tests__/ViewDispatcher.test.tsx` (-8/+13 — mock now uses `137` to exercise > 100 case)
+- `src/components/__tests__/App.test.tsx` (-12/+7 — trash badge integration mock updated)
+- `src/lib/tauri.ts` (+34 — two wrappers: `countTrash`, `listAllTagsInSpace`)
+- `src/lib/bindings.ts` (regen)
+- `src/lib/tauri-mock/handlers.ts` (+50 — `list_all_tags_in_space` + `count_trash` mock handlers)
+- `pending/limit-clamp-followup-2026-05-09.md` (3 rows marked DONE)
+
+**Verification:**
+- `npx vitest run` — 9592 tests pass across 396 files.
+- `cd src-tauri && cargo nextest run` — 3633 tests pass; 1 perf-test flake (`collect_metadata_completes_quickly_for_oversized_log_file`) under concurrent load, passed when re-run in isolation.
+- `cd src-tauri && cargo sqlx prepare -- --tests` — 5 new query hashes added.
+- `cd src-tauri && cargo nextest run regenerate_ts_bindings --run-ignored=ignored-only` — bindings regenerated.
+- `prek run --all-files` — pending (orchestrator step).
+
+**Process notes:**
+- The edit-policy change between Session 701 and 702 let all three build subagents finish their full work without bouncing off `Edit` denials. Round-tripping permission failures back to the orchestrator was the dominant wall-clock cost in 701; eliminating it brought 702 to a straightforward parallel run.
+- Subagents were instructed to skip `cargo sqlx prepare` and `bindings.ts` regen so the orchestrator could run them once after all three completed, avoiding contention on those generated artifacts.
+- One subagent (count_trash) hand-wrote a `bindings.ts` stub to keep its own FE tests green pre-orchestrator. The orchestrator-run regen produced an identical file, so the manual stub was load-bearing for the subagent's verification only and is now identical to the generated output.
+- `tauri-mock/handlers-drift.test.ts` caught a missing `count_trash` handler on the orchestrator's first full-suite run; the orchestrator added a parity-shape mock (filter blocks with `deleted_at` set, scoped by `COALESCE(page_id, id) → space`) inline before committing.
+
+**Lessons learned (for future sessions):**
+- Whenever a batch adds a new Tauri command, the `handlers-drift.test.ts` invariant requires a parity mock in `tauri-mock/handlers.ts` (or an explicit allowlist with justification). Subagent prompts should call this out next time to avoid an orchestrator-side patch.
+- When two backend subagents both add new SQL queries + new Tauri commands, defer `cargo sqlx prepare` + the bindings regen to the orchestrator. The two subagents working in parallel on the same generated files would deadlock or trample each other's output otherwise.
+
+**Commit plan:** single bundled commit covering all three rows + SESSION-LOG entry (per user direction — splitting per-row would require manual slicing of the shared mod.rs / lib.rs / tauri.ts / bindings.ts / handlers.ts diffs, with no narrative benefit at this batch size).
+
+---
 ## Session 701 — limit-clamp-followup: MEDIUM Phase 2c page-list hooks (2026-05-13)
 
 | Metadata | Value |

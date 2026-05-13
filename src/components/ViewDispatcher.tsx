@@ -23,7 +23,7 @@
 import { lazy, type ReactElement, Suspense, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useItemCount } from '../hooks/useItemCount'
-import { listBlocks } from '../lib/tauri'
+import { countTrash } from '../lib/tauri'
 import { useNavigationStore, type View } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
 import { type PageEntry, selectPageStack, useTabsStore } from '../stores/tabs'
@@ -84,10 +84,13 @@ export function useTrashCount(): number {
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view or space changes (user may have restored items / switched spaces)
   const queryFn = useCallback(
     () =>
-      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; trash is
-      // scoped to the active space. `?? ''` is the pre-bootstrap
-      // no-match fallback (see TrashView for the rationale).
-      listBlocks({ showDeleted: true, limit: 100, spaceId: currentSpaceId ?? '' }),
+      // Limit-clamp follow-up (FEAT-3 Phase 4 trash badge): the legacy
+      // shape was `listBlocks({ showDeleted: true, limit: 100, spaceId })
+      // .items.length`, which silently clamped the badge count at 100.
+      // `countTrash` pushes the count into SQL so the badge is accurate
+      // regardless of trash size. `?? ''` is the pre-bootstrap no-match
+      // fallback (see `TrashView` / the `countTrash` wrapper for context).
+      countTrash(currentSpaceId ?? ''),
     [currentView, currentSpaceId],
   )
   return useItemCount(queryFn, 30_000)

@@ -79,6 +79,27 @@ describe('TagList', () => {
     expect(screen.getByText('work')).toBeInTheDocument()
   })
 
+  // limit-clamp-followup — pins that the initial load goes through
+  // `list_all_tags_in_space` (no clamp, no pagination) and NOT through
+  // `list_tags_by_prefix` (clamped at MAX_TAGS_PREFIX=200).  Regressing
+  // back to the prefix call would silently truncate workspaces with
+  // more than 200 tags.
+  it('loadTags routes through list_all_tags_in_space (limit-clamp-followup)', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'a-tag')])
+
+    render(<TagList />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_all_tags_in_space',
+        expect.objectContaining({ spaceId: expect.any(String) }),
+      )
+    })
+    // Belt-and-braces: the legacy prefix command must not be invoked
+    // on initial load.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_tags_by_prefix', expect.anything())
+  })
+
   it('displays usage counts next to tag names', async () => {
     mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
 

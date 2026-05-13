@@ -870,23 +870,13 @@ describe('App', () => {
   // ── Trash badge ─────────────────────────────────────────────────────────
 
   describe('trash badge', () => {
-    it('shows trash badge with count when listBlocks (showDeleted) returns items', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'list_blocks' && (args as Record<string, unknown>)?.['showDeleted']) {
-          return {
-            items: [
-              {
-                id: 'DELETED_1',
-                block_type: 'page',
-                content: 'deleted page',
-                parent_id: null,
-                position: 0,
-              },
-            ],
-            next_cursor: null,
-            has_more: false,
-          }
-        }
+    it('shows trash badge with count when count_trash returns a positive number', async () => {
+      // Limit-clamp follow-up — the badge now routes through the dedicated
+      // `count_trash` IPC (returns a plain `number`) instead of the legacy
+      // `list_blocks({ showDeleted: true, limit: 100 }).items.length` shape
+      // that silently clamped the badge at 100.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'count_trash') return 1 as unknown as never
         return emptyPage
       })
 
