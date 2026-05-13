@@ -1,23 +1,9 @@
-//! PEND-09 Phase 3 day-3 — wire types for Loro-based sync.
+//! Wire types for Loro-based sync.
 //!
-//! These types replace the diffy-typed `OpBatch`
-//! (`super::types::SyncMessage::OpBatch`, deleted on day 5) with
-//! CRDT-binary deltas exported by Loro's `LoroDoc::export(...)` —
-//! `ExportMode::Snapshot` for a full state-plus-history blob and
-//! `ExportMode::updates(&peer_vv)` for an incremental delta against
-//! a known peer version vector.  See
-//! `SESSION-LOG.md` Session 699 Phase 3 §2.1, §3 day 3, §8.3.
-//!
-//! Phase 3 day-9 retired the `loro-shadow` feature gate; the matching
-//! engine API (`engine::version_vector`, `engine::export_update_since`)
-//! and these wire types now compile uniformly in every build.
-//!
-//! ## What's NOT here yet
-//!
-//! Day 3 ships only the types + their serde round-trip tests.  Day
-//! 4 wires them into `sync_daemon` + `sync_protocol::operations`'s
-//! sender side, behind a feature gate that picks Loro vs diffy at
-//! send time; day 5 swings the receiver and deletes `OpBatch`.
+//! These types carry CRDT-binary deltas exported by Loro's
+//! `LoroDoc::export(...)` — `ExportMode::Snapshot` for a full
+//! state-plus-history blob and `ExportMode::updates(&peer_vv)` for an
+//! incremental delta against a known peer version vector.
 
 use serde::{Deserialize, Serialize};
 

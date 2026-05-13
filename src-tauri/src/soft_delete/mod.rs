@@ -5,12 +5,6 @@ mod trash;
 
 pub use restore::restore_block;
 pub use trash::{cascade_soft_delete, soft_delete_block};
-// M-81 — re-exported `pub(crate)` so the production write path
-// `commands::blocks::crud::delete_block_inner` can call the same
-// re-parent helper that `cascade_soft_delete` uses internally, keeping
-// the conflict-copy re-parent semantics in one place across both
-// cascade sites without widening the helper's public surface.
-pub(crate) use trash::reparent_orphan_conflict_copies;
 
 use sqlx::SqlitePool;
 
@@ -47,13 +41,10 @@ mod tests {
     const BLOCK_B: &str = "BLK_B02";
     const PARENT: &str = "PAR001";
     const CHILD: &str = "CHD001";
-    const CHILD2: &str = "CHD002";
     const GRANDCHILD: &str = "GCH001";
     const FIXED_DELETED_AT: &str = "2025-01-01T00:00:00+00:00";
-    /// Device id stamped on the M-81 re-parent op log entries that
-    /// `cascade_soft_delete` now emits for orphaned conflict copies. Tests
-    /// that don't trigger a re-parent (the vast majority) will not write
-    /// any op log rows, but the parameter is required by the signature.
+    /// Device id stamped on op log entries written by cascade soft-delete
+    /// tests.
     const TEST_DEVICE: &str = "soft-delete-test-device";
 
     async fn test_pool() -> (SqlitePool, TempDir) {
@@ -282,81 +273,6 @@ mod tests {
             .unwrap();
         assert_eq!(get_deleted_at(&pool, "TREE_B").await, None);
         assert_eq!(get_deleted_at(&pool, "TREE_B_C").await, None);
-    }
-
-    // ======================================================================
-    // M-81: re-parent orphaned conflict copies on cascade soft-delete
-    // ======================================================================
-
-    /// Direct INSERT helper for a conflict copy. Conflict copies share their
-    /// original's `parent_id` at creation time but carry ,
-    /// so the cascade CTE's  filter (invariant #9) skips
-    /// them — leaving them pointing at a soft-deleted ancestor unless
-    /// `cascade_soft_delete` re-parents them. M-81 closes that gap.
-    async fn insert_conflict_copy(
-        pool: &SqlitePool,
-        id: &str,
-        parent_id: &str,
-        position: i64,
-        conflict_source: &str,
-    ) {
-        sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, conflict_source) \
-             VALUES (?, 'content', 'conflict copy', ?, ?, ?)",
-            id,
-            parent_id,
-            position,
-            conflict_source,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    async fn get_parent_id(pool: &SqlitePool, id: &str) -> Option<String> {
-        sqlx::query!("SELECT parent_id FROM blocks WHERE id = ?", id)
-            .fetch_one(pool)
-            .await
-            .unwrap()
-            .parent_id
-    }
-
-    /// M-81 invariant: a conflict copy whose `parent_id` is OUTSIDE the
-    /// cascade subtree is untouched by the cascade — neither its
-    /// `parent_id` nor the op log are mutated on its behalf.
-    #[tokio::test]
-    async fn cascade_does_not_reparent_conflict_copy_outside_subtree_m81() {
-        let (pool, _dir) = test_pool().await;
-        // Two roots: PARENT (cascade target) and SIBLING (untouched).
-        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
-        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
-        insert_block(&pool, "M81SIB", "page", "sibling root", None, Some(2)).await;
-        // Conflict copy's parent is SIBLING — *outside* the cascade subtree.
-        insert_conflict_copy(&pool, CHILD2, "M81SIB", 1, CHILD).await;
-
-        cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
-            .await
-            .unwrap();
-
-        // CC is unaffected: still alive, still parented under SIBLING.
-        assert_eq!(get_deleted_at(&pool, CHILD2).await, None);
-        assert_eq!(
-            get_parent_id(&pool, CHILD2).await,
-            Some("M81SIB".to_string()),
-            "conflict copy outside the cascade subtree must keep its parent_id",
-        );
-        // No op log entries — nothing was re-parented.
-        let move_count: i64 = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) AS "n!: i64" FROM op_log WHERE device_id = ? AND op_type = 'move_block'"#,
-            TEST_DEVICE
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            move_count, 0,
-            "no move_block op must be emitted when no re-parent is needed",
-        );
     }
 
     // ======================================================================

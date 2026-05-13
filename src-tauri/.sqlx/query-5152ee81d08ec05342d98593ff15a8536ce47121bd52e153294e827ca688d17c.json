@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT deleted_at\n           FROM blocks\n           WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "deleted_at",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "5152ee81d08ec05342d98593ff15a8536ce47121bd52e153294e827ca688d17c"
+}

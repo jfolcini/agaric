@@ -16,12 +16,9 @@ use crate::error::AppError;
 pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
-    // 1. Get current content (combined with step 2 in the same tx to avoid
-    //    an extra connection round-trip).
-    //
-    // Filter  so conflict-copy source blocks do not contribute
-    // outbound links to `block_links` — mirrors `cache/block_tag_refs.rs` and
-    // prevents conflict copies from leaking into `list_backlinks` (M-14).
+    // 1. Get current content (combined with step 2 in the same tx to
+    //    avoid an extra connection round-trip). Soft-deleted blocks
+    //    do not contribute outbound links to `block_links` (M-14).
     let row = sqlx::query!(
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
@@ -136,11 +133,8 @@ pub async fn reindex_block_links_split(
 ) -> Result<(), AppError> {
     // Read phase from read_pool
 
-    // 1. Get current content
-    //
-    // Filter  so conflict-copy source blocks do not contribute
-    // outbound links to `block_links` — mirrors the single-pool variant above
-    // and prevents conflict copies from leaking into `list_backlinks` (M-14).
+    // 1. Get current content. Soft-deleted blocks do not contribute
+    //    outbound links to `block_links` (M-14).
     let row = sqlx::query!(
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,

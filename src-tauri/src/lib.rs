@@ -15,13 +15,7 @@ pub mod hash;
 pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;
-// PEND-09 Phase 1 day-1 — production-side scaffold for the Loro CRDT
-// migration.  As of Phase 3 day-9 the `loro-shadow` feature gate is
-// retired and this module compiles unconditionally — the Loro engine
-// is the only materializer path.  See `SESSION-LOG.md` Session 698
-// for the Phase-1 readiness checklist (the spike crate that authored
-// the original report was archived in Phase-2 day-8; see git tag
-// `pend-09/spike-archive`).
+// Loro CRDT engine — the only materializer path.
 pub mod loro;
 pub mod materializer;
 pub mod mcp;
@@ -335,11 +329,7 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 mod command_integration_tests;
 #[cfg(test)]
 mod integration_tests;
-// PEND-09 Phase 3 day-6 — `sync_integration_tests` removed.  The
-// module exercised the diffy-typed sync stack
-// (`compute_ops_to_send` / `apply_remote_ops` / `merge_diverged_blocks`
-// / `OpBatch`); all four targets were deleted today.  The
-// LoroSync-equivalent integration tests live in
+// LoroSync end-to-end integration tests live in
 // `sync_protocol::tests` (`loro_sync_e2e_*`).
 
 /// L-2: Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
@@ -681,33 +671,17 @@ pub fn run() {
             // hooks it.
             materializer.set_app_data_dir(app_data_dir.clone());
 
-            // PEND-09 Phase 2 day-9 — boot ordering for the cutover toggle.
-            //
-            // The day-6 review flagged that `rehydrate_registry` was
-            // running inside a `tauri::async_runtime::spawn` later in
-            // setup, which is fire-and-forget — for shadow mode that
-            // was tolerable (Loro state is observation-only) but for
-            // cutover the per-space `LoroEngine` registry MUST be
-            // populated before the materializer dispatches its first
-            // op.  Recovery (`recover_at_boot` below) replays
-            // unmaterialised ops through the materializer, so any op
-            // it replays would race the rehydrate spawn and land in an
-            // empty engine.
-            //
-            // Fix: run the shadow-state init + rehydrate + cutover-flag
-            // load synchronously (via `block_on`) BEFORE recovery.  The
-            // boot-latency cost is one `loro_doc_state` table scan +
-            // one `app_settings` row read — single-digit ms at typical
-            // workspace scales (cutover plan §5.1 sizing).  The
-            // periodic flush task itself is still spawned later (it's
-            // a long-running background task; blocking on it would
-            // pin boot indefinitely).
-            // PEND-09 Phase 3 day-9 — the `loro-shadow` feature gate is
-            // retired; this block runs unconditionally now (the engine
-            // is the only materializer path).  The cutover-flag init
-            // also disappeared with the gate — `is_loro_authoritative`
-            // is "always true" post-day-9, so there is no flag to read
-            // from `app_settings`.
+            // Boot ordering: the per-space `LoroEngine` registry MUST
+            // be populated before the materializer dispatches its first
+            // op. Recovery (`recover_at_boot` below) replays
+            // unmaterialised ops through the materializer, so any op it
+            // replays would race a deferred rehydrate and land in an
+            // empty engine. Run the Loro state init + rehydrate
+            // synchronously (via `block_on`) BEFORE recovery. The
+            // boot-latency cost is one `loro_doc_state` table scan —
+            // single-digit ms at typical workspace scales. The periodic
+            // flush task is spawned separately (it's a long-running
+            // background task; blocking on it would pin boot).
             {
                 let installed = crate::loro::shared::init();
                 tracing::info!(
@@ -969,40 +943,12 @@ pub fn run() {
             // a cheap `Arc`-based clone.
             let materializer_for_gcal = materializer.clone();
 
-            // PEND-09 Phase 1 day-5 — clone the write pool BEFORE it
-            // moves into Tauri managed state so the periodic parity-
-            // flush task (spawned below) has its own handle.  Cheap:
-            // `SqlitePool` is an `Arc`-based clone.
-            let pool_for_loro_flush = pools.write.clone();
-
-            // PEND-09 Phase 2 day-9 — boot rehydration moved earlier in
-            // setup (pre-recovery, synchronous via `block_on`).  The
-            // earlier site uses `device_id` directly before the move
-            // into `app.manage(DeviceId::new(device_id))`, so the local
-            // clone the spawn-version needed is no longer required.
-
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
             app.manage(DeviceId::new(device_id));
             app.manage(PersistedCert::new(sync_cert));
             app.manage(materializer);
-
-            // PEND-09 Phase 3 day-10 — the periodic parity-flush + purge
-            // + snapshot task is gone.  The flush + purge halves drained
-            // the in-memory parity sampler into `merge_parity_log`; both
-            // the sampler and the table are deleted.  The snapshot half
-            // (`save_all_engines`) used to ride the same tick; it now
-            // has no host scheduler.  The day-12 sync rebuild adds a
-            // fresh scheduler back if it ends up load-bearing.  Until
-            // then `loro::snapshot::save_all_engines` is callable
-            // directly from a shutdown hook or from a sync-pull path
-            // when one lands.
-            //
-            // The `pool_for_loro_flush` clone above is kept so the
-            // surrounding setup-closure compile shape is unchanged for
-            // when the day-12 scheduler re-introduces it.
-            let _ = pool_for_loro_flush;
 
             // Sync state (#275, #278)
             app.manage(commands::PairingState(std::sync::Mutex::new(None)));

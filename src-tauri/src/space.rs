@@ -242,9 +242,9 @@ impl SpaceScope {
 /// correlated subquery in `COALESCE` short-circuits when the
 /// inner `page_id` lookup yields a row.
 ///
-/// Both ends of the COALESCE chain are conflict / soft-delete
-/// filtered to mirror AGENTS.md invariant #9 — conflict copies
-/// and tombstones must never participate in space resolution:
+/// Both ends of the COALESCE chain are soft-delete filtered to
+/// mirror AGENTS.md invariant #9 — tombstones must never participate
+/// in space resolution:
 ///
 /// * Inner subquery — the **input** block must be live for its
 ///   `page_id` to flow through the COALESCE.
@@ -252,9 +252,8 @@ impl SpaceScope {
 ///   that *holds* the `space` property (the page, after the
 ///   COALESCE resolves) must be live too. This is what catches
 ///   case (d) above: an input block whose `page_id` references a
-///   conflict / soft-deleted page falls through to its own id,
-///   which has no `space` property, and the resolver returns
-///   `None`.
+///   soft-deleted page falls through to its own id, which has no
+///   `space` property, and the resolver returns `None`.
 ///
 /// # Lifetime
 ///

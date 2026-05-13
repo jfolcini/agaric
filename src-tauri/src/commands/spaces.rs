@@ -535,10 +535,10 @@ mod tests {
     // ---------------------------------------------------------------------
     //
     // Covers the happy path, op-log atomicity, and every validation
-    // branch (nonexistent target, missing `is_space` flag, soft-deleted
-    // target, conflict copy, nested-parent path). Each test uses a
-    // fresh `test_pool()` + `bootstrap_spaces()` so the seeded Personal
-    // / Work spaces are available as valid targets.
+    // branch (nonexistent target, missing `is_space` flag,
+    // soft-deleted target, nested-parent path). Each test uses a
+    // fresh `test_pool()` + `bootstrap_spaces()` so the seeded
+    // Personal / Work spaces are available as valid targets.
 
     /// Count every row in `op_log`. Used to assert append-only
     /// atomicity: a validation failure must leave the log unchanged.

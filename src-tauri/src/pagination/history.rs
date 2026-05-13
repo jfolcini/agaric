@@ -162,10 +162,8 @@ pub async fn list_page_history(
         });
     }
 
-    // Recursive CTE must filter  in the recursive member —
-    // conflict copies inherit `parent_id` from the original block and would
-    // otherwise leak into page-scoped results. `depth < 100` bounds the walk
-    // against runaway recursion on corrupted data (invariant #9).
+    // Recursive CTE with `depth < 100` to bound the walk against
+    // runaway recursion on corrupted data (invariant #9).
     let rows = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \

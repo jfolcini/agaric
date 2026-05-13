@@ -1,38 +1,20 @@
-//! PEND-09 — randomised `LoroEngine` regression streams.
+//! Randomised `LoroEngine` regression streams.
 //!
-//! ## History
-//!
-//! Originally landed Phase 1 day-8 as `loro/parity_proptest.rs`
-//! (commit `89df17a2`) — proptest streams driven through both Loro
-//! and the diffy-shaped summary path, asserting the bucket A/B/C/D
-//! classifier never produced a `Bucket::D` (kill criterion #2).  The
-//! two-device sub-module landed Phase 2 day-2 (`a9849adc`) to
-//! exercise concurrent-merge convergence over Loro's `import`.
-//!
-//! Phase 3 day-10 repurposed the file: the parity sink + classifier +
-//! `merge_parity_log` table + diffy summary surface all got deleted
-//! (Loro is now authoritative; there is no diffy oracle to compare
-//! against).  What survived is the **engine convergence net** — the
-//! same proptest infrastructure now asserts:
+//! Asserts:
 //!
 //! * Single-author streams: every well-formed op succeeds against a
 //!   fresh engine, and the post-apply read-back matches the typed
-//!   input.  Catches engine-side regressions where an op's effect is
+//!   input. Catches engine-side regressions where an op's effect is
 //!   lost / corrupted in `LoroEngine::apply_*`.
 //! * Two-device streams: two engines that imported each other's
 //!   exported snapshots converge to the same read-back state across
-//!   every block_id touched + every property key written.  Catches
+//!   every block_id touched + every property key written. Catches
 //!   `loro` upstream regressions in `import` / `export_snapshot` /
-//!   per-key LWW behaviour.
+//!   per-key LWW behaviour. Load-bearing surface for the sync trust
+//!   assumption: if two `LoroEngine` instances diverge after mutual
+//!   snapshot exchange, the sync apply path is wrong.
 //!
-//! The two-device tests are the load-bearing surface for Phase 3's
-//! sync-rebuild trust assumption: if two `LoroEngine` instances
-//! diverge after mutual snapshot exchange, the sync apply path the
-//! day-5 `apply_remote_loro_batch` builds on is wrong.  The 1024
-//! cases × 4 streams reported in `SESSION-LOG.md` Session 699
-//! Phase 3 §7.1 came from this file under its old name.
-//!
-//! ## Configuration choices (preserved from parity_proptest.rs)
+//! ## Configuration choices
 //!
 //! - **256 cases** (proptest default) — empirically <1 s wall-clock on
 //!   the test box for the mixed-op stream, comfortably under the
@@ -262,12 +244,10 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
     }
 }
 
-/// Drive one op onto the engine.  Equivalent to the per-op-type
-/// dispatch arm that lived in `merge::engine_apply` (formerly
-/// `shadow_apply`) before Phase 3 day-10 deleted the parity-sink path.
-/// Returns `Ok(())` on success;
-/// the proptest body asserts no errors fire (well-formed streams must
-/// always succeed against a fresh engine).
+/// Drive one op onto the engine. Mirrors the per-op-type dispatch arm
+/// in `merge::engine_apply`. Returns `Ok(())` on success; the proptest
+/// body asserts no errors fire (well-formed streams must always
+/// succeed against a fresh engine).
 fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate::error::AppError> {
     match op {
         OpPayload::CreateBlock(p) => {
@@ -397,23 +377,18 @@ proptest! {
 }
 
 // ===========================================================================
-// PEND-09 Phase 2 day-2 — two-device concurrent-merge proptest streams.
+// Two-device concurrent-merge proptest streams.
 //
-// The single-author streams above prove the engine's apply path doesn't
-// drop or corrupt ops.  What they CANNOT catch is divergence-on-merge —
-// the failure mode where two devices, having both applied valid op
-// streams independently, produce different states after exchanging
-// snapshots.  This sub-module starts a fresh `LoroEngine` per device
-// with distinct peer ids, runs independently-generated op streams on
-// each, mutually `import` snapshots, and asserts both engines read
-// back identical state across a representative key set.
-//
-// Phase 3 day-10 narrative shift: when this sub-module was written
-// (Phase 2 day-2) it was the C-bucket-rich case backing the
-// merge_parity_log classifier story.  After day-10 the parity sink is
-// gone and the classifier is gone — the convergence assertion stands
-// on its own as the load-bearing CRDT correctness check the day-5
-// `apply_remote_loro_batch` will trust.
+// The single-author streams above prove the engine's apply path
+// doesn't drop or corrupt ops. What they CANNOT catch is
+// divergence-on-merge — the failure mode where two devices, having
+// both applied valid op streams independently, produce different
+// states after exchanging snapshots. This sub-module starts a fresh
+// `LoroEngine` per device with distinct peer ids, runs
+// independently-generated op streams on each, mutually `import`
+// snapshots, and asserts both engines read back identical state
+// across a representative key set. Load-bearing CRDT correctness
+// check for the sync apply path.
 //
 // ## Scope: Loro-side convergence only
 //

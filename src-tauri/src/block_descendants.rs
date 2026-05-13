@@ -281,24 +281,6 @@ mod tests {
         }
     }
 
-    /// None of the CTEs should reference the dropped `is_conflict`
-    /// column post-PEND-09 Phase 4.
-    #[test]
-    fn ctes_do_not_reference_is_conflict() {
-        for cte in [
-            DESCENDANTS_CTE_STANDARD,
-            DESCENDANTS_CTE_ACTIVE,
-            DESCENDANTS_CTE_PURGE,
-            ANCESTORS_CTE_STANDARD,
-            ANCESTORS_CTE_ACTIVE,
-        ] {
-            assert!(
-                !cte.contains("is_conflict"),
-                "CTE must not reference the dropped is_conflict column",
-            );
-        }
-    }
-
     /// The active variant additionally filters already-deleted descendants
     /// so the soft-delete cascade doesn't re-sweep them with a new
     /// `deleted_at` timestamp.

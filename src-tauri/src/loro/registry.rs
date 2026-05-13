@@ -1,17 +1,16 @@
-//! Per-space [`LoroEngine`] registry — Phase-1 day-2 deliverable.
+//! Per-space [`LoroEngine`] registry.
 //!
-//! Phase 1 day-2 lights up the `merge::engine_apply` hook into a real
-//! dual-write path.  The hook needs a `LoroEngine` per active space
-//! that outlives individual op-applies (otherwise every applied op
-//! would start from an empty doc — defeating the purpose).
+//! The `merge::engine_apply` hook needs a `LoroEngine` per active
+//! space that outlives individual op-applies (otherwise every applied
+//! op would start from an empty doc — defeating the purpose).
 //!
 //! ## Why per-space
 //!
-//! SPIKE-REPORT.md §4.1 settled on a per-space-doc design: each space
-//! owns one [`LoroEngine`] / `LoroDoc`, and ops only mutate the doc
-//! whose space they belong to.  Cross-space ops are impossible by
-//! construction (every op carries a `block_id` whose owning page
-//! resolves to exactly one space — see [`crate::space::resolve_block_space`]).
+//! Each space owns one [`LoroEngine`] / `LoroDoc`, and ops only
+//! mutate the doc whose space they belong to. Cross-space ops are
+//! impossible by construction (every op carries a `block_id` whose
+//! owning page resolves to exactly one space — see
+//! [`crate::space::resolve_block_space`]).
 //!
 //! ## Lifetime
 //!
@@ -24,11 +23,10 @@
 //! ## Concurrency
 //!
 //! A single top-level `Mutex<HashMap<SpaceId, LoroEngine>>` is the
-//! simplest correctness story.  The shadow-apply rate is bounded by
-//! human typing / sync cadence — well below the rate at which the
-//! coarse-grained lock would matter.  Phase-2 may switch to per-space
-//! mutexes if the parity-sampling rate climbs (e.g. during a 100K-op
-//! replay) but day-2 keeps it simple.
+//! simplest correctness story. The apply rate is bounded by human
+//! typing / sync cadence — well below the rate at which the
+//! coarse-grained lock would matter. A future iteration could switch
+//! to per-space mutexes if benchmarks show contention.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
@@ -92,13 +90,13 @@ impl LoroEngineRegistry {
 
     /// All [`SpaceId`]s currently registered, in arbitrary order.
     ///
-    /// PEND-09 Phase 3 day-5 — used by the sync orchestrator to
-    /// enumerate which spaces to push when entering `StreamingOps`.
-    /// The returned `Vec` is a snapshot (cloned under the lock); the
-    /// caller may iterate without holding the registry mutex.
-    /// Concurrent `for_space` calls that lazy-create new engines after
-    /// this snapshot are simply not visible to the current sync round
-    /// — they will be picked up by the next `HeadExchange`.
+    /// Used by the sync orchestrator to enumerate which spaces to
+    /// push when entering `StreamingOps`. The returned `Vec` is a
+    /// snapshot (cloned under the lock); the caller may iterate
+    /// without holding the registry mutex. Concurrent `for_space`
+    /// calls that lazy-create new engines after this snapshot are
+    /// simply not visible to the current sync round — they will be
+    /// picked up by the next `HeadExchange`.
     pub fn space_ids(&self) -> Vec<SpaceId> {
         let guard = match self.inner.lock() {
             Ok(g) => g,
@@ -122,18 +120,15 @@ impl LoroEngineRegistry {
     }
 
     /// Install a pre-built [`LoroEngine`] under `space_id`, replacing
-    /// any existing entry.  Used by the boot rehydration pass
+    /// any existing entry. Used by the boot rehydration pass
     /// ([`crate::loro::snapshot::rehydrate_registry`]) to seed the
     /// registry with engines whose `LoroDoc` has already been imported
     /// from a persisted snapshot, so a subsequent
     /// [`for_space`](Self::for_space) call observes a doc that is not
-    /// empty.
-    ///
-    /// PEND-09 Phase 2 day-6.  Decision rationale (option (c) from the
-    /// day-6 spec): keeping `for_space` synchronous and pre-populating
-    /// the registry on app boot avoids both the `for_space`-becomes-
-    /// async ripple (option (a)) and the `block_in_place` /
-    /// `block_on` hack (option (b)).
+    /// empty. Keeping `for_space` synchronous and pre-populating the
+    /// registry on app boot avoids both the
+    /// `for_space`-becomes-async ripple and the `block_in_place` /
+    /// `block_on` hack.
     pub fn install_engine(&self, space_id: SpaceId, engine: LoroEngine) {
         let mut guard = match self.inner.lock() {
             Ok(g) => g,
@@ -243,11 +238,10 @@ mod tests {
 
     #[test]
     fn install_engine_seeds_registry_so_for_space_returns_pre_built_engine() {
-        // PEND-09 Phase 2 day-6 — the boot rehydration pass uses
-        // `install_engine` to inject engines whose docs were imported
-        // from a persisted snapshot.  A subsequent `for_space` call
-        // must observe the pre-built engine (NOT lazy-instantiate a
-        // fresh empty one).
+        // The boot rehydration pass uses `install_engine` to inject
+        // engines whose docs were imported from a persisted snapshot.
+        // A subsequent `for_space` call must observe the pre-built
+        // engine (NOT lazy-instantiate a fresh empty one).
         let r = LoroEngineRegistry::new();
         let space = SpaceId::from_trusted(SPACE_A);
 

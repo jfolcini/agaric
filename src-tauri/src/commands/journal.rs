@@ -39,8 +39,8 @@ pub async fn today_journal_inner(
 /// if it does not exist.
 ///
 /// `date` must be in `YYYY-MM-DD` format. If a `page` block with that
-/// exact content already exists in `space_id` (and is not deleted, not a
-/// conflict copy), its [`BlockRow`] is returned. Otherwise a new page
+/// exact content already exists in `space_id` (and is not deleted),
+/// its [`BlockRow`] is returned. Otherwise a new page
 /// block is created with its `space` property atomically set in the
 /// same `BEGIN IMMEDIATE` transaction.
 ///

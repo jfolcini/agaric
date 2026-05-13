@@ -5,14 +5,12 @@ use std::collections::BTreeMap;
 // Schema version
 // ---------------------------------------------------------------------------
 
-// PEND-09 Phase 5: SCHEMA_VERSION stays at 3 — the `conflict_type`
-// column dropped from `blocks` is omitted from `BlockSnapshot`'s
-// serialised form. v3 snapshots written before this drop deserialise
-// cleanly because `serde(default)` swallows the previously-present
-// `conflict_type` field; the value is dropped on the floor when
-// the row is restored. Older v1/v2 blobs continue to deserialise
-// the same way they always did.
-pub(crate) const SCHEMA_VERSION: u32 = 3;
+// Schema version bumps when the on-the-wire snapshot shape changes
+// (column added or removed from `BlockSnapshot` / sibling row types).
+// Older blobs still deserialise as long as every dropped field carries
+// `#[serde(default)]` on intermediate versions; values for retired
+// columns are simply discarded on restore.
+pub(crate) const SCHEMA_VERSION: u32 = 4;
 
 // ---------------------------------------------------------------------------
 // Row types (CBOR + DB round-trip)
@@ -27,7 +25,6 @@ pub struct BlockSnapshot {
     pub parent_id: Option<String>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
-    pub conflict_source: Option<String>,
     #[serde(default)]
     pub todo_state: Option<String>,
     #[serde(default)]

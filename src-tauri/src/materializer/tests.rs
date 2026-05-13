@@ -3767,17 +3767,12 @@ async fn purge_handler_cleans_projected_agenda_cache() {
 //
 // Regression contract:
 //   1. Final DB state matches the pre-refactor handler (every row in
-//      the subtree — including conflict copies — is gone).
+//      the subtree is gone).
 //   2. The temp namespace is clean afterwards (no leaked
 //      `_purge_descendants` row in `sqlite_temp_master`).
-//   3. Purge intentionally walks conflict copies (invariant #9's
-//      documented exception) — verified by including a conflict-copy
-//      child in the tree and asserting it is purged with the rest.
 // ======================================================================
 
-/// Build a tree of 100+ blocks rooted at `root_id`, with one
-// copy mixed in to confirm the purge variant
-/// intentionally walks conflicts.
+/// Build a tree of 100+ blocks rooted at `root_id`.
 async fn seed_purge_tree(pool: &SqlitePool, root_id: &str) -> usize {
     insert_block_direct(pool, root_id, "page", "purge-root").await;
     // Build a deliberately-bushy tree: 10 first-level children, each
@@ -3810,19 +3805,7 @@ async fn seed_purge_tree(pool: &SqlitePool, root_id: &str) -> usize {
             .unwrap();
         }
     }
-    // Pin one conflict-copy child onto the root so the purge sweep
-    // proves it walks conflicts (invariant #9 exception).
-    let conflict_id = format!("{root_id}_CONFLICT");
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, 'content', 'conflict-copy', ?, 99)",
-    )
-    .bind(&conflict_id)
-    .bind(root_id)
-    .execute(pool)
-    .await
-    .unwrap();
-    1 + 10 + 100 + 1 // = 112
+    1 + 10 + 100 // = 111
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3864,8 +3847,7 @@ async fn purge_handler_cascades_through_100_block_tree_and_cleans_temp_table() {
         .await
         .unwrap();
 
-    // 1. Every block in the subtree (including the conflict copy) is
-    //    physically gone.
+    // 1. Every block in the subtree is physically gone.
     let post_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id LIKE 'PURGE_BIG%'")
             .fetch_one(&pool)
@@ -3873,22 +3855,10 @@ async fn purge_handler_cascades_through_100_block_tree_and_cleans_temp_table() {
             .unwrap();
     assert_eq!(
         post_count, 0,
-        "every block in the purged subtree (including the conflict copy) must be gone"
+        "every block in the purged subtree must be gone"
     );
 
-    // 2. The conflict-copy child specifically — invariant #9's
-    //    documented exception means purge intentionally walks it.
-    let conflict_exists: Option<String> =
-        sqlx::query_scalar("SELECT id FROM blocks WHERE id = 'PURGE_BIG_CONFLICT'")
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
-    assert!(
-        conflict_exists.is_none(),
-        "conflict copy must be purged alongside the rest of the subtree (invariant #9 exception)"
-    );
-
-    // 3. The TEMP table must NOT leak across handler invocations. The
+    // 2. The TEMP table must NOT leak across handler invocations. The
     //    explicit `DROP TABLE _purge_descendants` at the bottom of the
     //    handler keeps the connection's temp namespace empty.
     //

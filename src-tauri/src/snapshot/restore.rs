@@ -181,10 +181,6 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // bind loop — leaving the column list, row source, and per-row binding
     // closure as the only varying inputs.
     //
-    // PEND-09 Phase 5 dropped the `conflict_type` column. Older snapshot
-    // schemas (v3 onward) carry the field but post-restore the data
-    // disappears at SCHEMA_VERSION bump.
-
     macro_rules! batch_insert_snapshot_rows {
         (
             table: $table:literal,
@@ -230,7 +226,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         table: "blocks",
         columns: [
             "id", "block_type", "content", "parent_id", "position",
-            "deleted_at", "conflict_source",
+            "deleted_at",
             "todo_state", "priority", "due_date", "scheduled_date",
         ],
         rows: data.tables.blocks,
@@ -241,7 +237,6 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(&b.parent_id)
                 .bind(b.position)
                 .bind(&b.deleted_at)
-                .bind(&b.conflict_source)
                 .bind(&b.todo_state)
                 .bind(&b.priority)
                 .bind(&b.due_date)

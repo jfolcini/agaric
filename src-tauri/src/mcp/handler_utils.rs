@@ -99,9 +99,7 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
 /// `page_id` is set to `id` by `create_block_in_tx`), else `b.page_id`
 /// (an inherited reference to the page block at the top of the parent
 /// chain). The page's space comes from
-/// `block_properties(key = 'space', value_ref)`. Conflict copies are
-/// excluded via  per AGENTS.md invariant #9 — a
-/// conflict copy must not satisfy a space-scope check.
+/// `block_properties(key = 'space', value_ref)`.
 ///
 /// # Returns
 ///
@@ -137,9 +135,8 @@ pub(crate) async fn validate_block_in_space(
     .await?;
 
     match row {
-        // Block doesn't exist (or only as a conflict copy) — defer to
-        // the downstream `*_inner` to surface NotFound with a
-        // tool-specific message.
+        // Block doesn't exist — defer to the downstream `*_inner` to
+        // surface NotFound with a tool-specific message.
         None => Ok(()),
         // Block exists but has no `space` property on its owning page —
         // either a tag block (global, no owning page) or a corrupted

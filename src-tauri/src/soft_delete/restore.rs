@@ -7,9 +7,8 @@ use crate::error::AppError;
 /// Restore a soft-deleted block and descendants sharing the same `deleted_at`
 /// timestamp.
 ///
-/// Recursive member filters  — conflict copies have
-/// independent lifecycles and must not be bulk-restored with the original
-/// (invariant #9). `depth < 100` bounds the walk.
+/// Recursive member bounds the walk with `depth < 100` (invariant
+/// #9).
 ///
 /// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_STANDARD`.
 /// This site inlines the SQL because `sqlx::query!` requires a string

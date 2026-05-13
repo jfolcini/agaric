@@ -225,13 +225,11 @@ pub async fn batch_resolve_inner(
     // space-scoped callers ([`SpaceScope::Active`]) get the
     // foreign-target-drops-out behaviour the spec demands.
     //
-    // AGENTS.md invariant #9 —  filter prevents conflict
-    // copies from leaking into resolution results. A conflict copy carries
-    // its own ULID + the same content as the original; without this guard
-    // a `[[ULID]]` chip targeting the original would resolve to either the
-    // original or its conflict copy depending on row ordering, surfacing
-    // duplicate / corrupted titles in breadcrumbs and link chips. Mirrors
-    // the pattern in every other space-scoped query we ship.
+    // Soft-deleted rows are excluded via the `deleted_at IS NOT NULL`
+    // surfacing in the result row; the resolver itself does not need
+    // an extra filter because page-id resolution already filters by
+    // active rows and the chip caller treats `deleted: true` as a
+    // sentinel.
     let rows = sqlx::query_as!(
         ResolvedBlockRow,
         r#"SELECT
@@ -354,9 +352,9 @@ pub async fn batch_resolve(
 ///
 /// Given a list of trash-root ids (as returned by `list_blocks({ show_deleted: true })`),
 /// return a map of `root_id -> descendant_count`. Descendants are blocks
-/// sharing the root's `deleted_at` timestamp, excluding the root itself and
-/// any conflict copies. Roots with zero descendants are omitted — callers
-/// should default to `0` for missing entries.
+/// sharing the root's `deleted_at` timestamp, excluding the root itself.
+/// Roots with zero descendants are omitted — callers should default to
+/// `0` for missing entries.
 ///
 /// # Errors
 ///

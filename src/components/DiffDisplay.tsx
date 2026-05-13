@@ -247,9 +247,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded
-            ? t('conflict.diffCollapse')
-            : t('conflict.diffShowMore', { count: hiddenCount })}
+          {expanded ? t('diff.collapse') : t('diff.showMore', { count: hiddenCount })}
         </Button>
       )}
     </div>

@@ -338,27 +338,4 @@ mod tests {
             "the two ancestors_walk arms must be identical apart from the seed depth literal",
         );
     }
-
-    /// None of the macro bodies should contain a stray `is_conflict`
-    /// reference after PEND-09 Phase 4 dropped the column.
-    #[test]
-    fn macros_do_not_reference_is_conflict() {
-        for (name, body) in [
-            ("descendants_active", tag_inh_descendants_active!()),
-            ("subtree_active", tag_inh_subtree_active!()),
-            ("subtree_unfiltered", tag_inh_subtree_unfiltered!()),
-            ("ancestors_walk(0)", tag_inh_ancestors_walk!(0)),
-            ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
-            ("descendant_tags_full", tag_inh_descendant_tags_full!()),
-            (
-                "tagged_descendants_in_subtree",
-                tag_inh_tagged_descendants_in_subtree!(),
-            ),
-        ] {
-            assert!(
-                !body.contains("is_conflict"),
-                "{name} must not reference the dropped is_conflict column",
-            );
-        }
-    }
 }

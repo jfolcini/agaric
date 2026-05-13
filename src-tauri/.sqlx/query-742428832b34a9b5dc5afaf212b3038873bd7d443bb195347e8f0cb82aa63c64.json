@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE descendants(id, depth) AS ( SELECT id, 0 FROM blocks WHERE id = ? UNION ALL SELECT b.id, d.depth + 1 FROM blocks b INNER JOIN descendants d ON b.parent_id = d.id WHERE d.depth < 100 ) UPDATE blocks SET deleted_at = NULL WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "742428832b34a9b5dc5afaf212b3038873bd7d443bb195347e8f0cb82aa63c64"
+}

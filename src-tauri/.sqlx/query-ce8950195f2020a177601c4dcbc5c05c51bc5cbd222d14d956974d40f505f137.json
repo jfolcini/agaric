@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE ancestors(cur_id, depth) AS (\n              SELECT b.id, 0 FROM blocks b\n              WHERE b.id = ?\n              UNION ALL\n              SELECT parent.id, a.depth + 1\n              FROM ancestors a\n              JOIN blocks child ON child.id = a.cur_id\n              JOIN blocks parent ON parent.id = child.parent_id\n              WHERE a.depth < 100\n           )\n           SELECT COALESCE(\n               (SELECT bp.value_ref\n                FROM ancestors a\n                JOIN block_properties bp ON bp.block_id = a.cur_id\n                WHERE bp.key = 'space'\n                ORDER BY a.depth ASC\n                LIMIT 1),\n               (SELECT a.cur_id\n                FROM ancestors a\n                JOIN block_properties bp ON bp.block_id = a.cur_id\n                WHERE bp.key = 'is_space' AND bp.value_text = 'true'\n                ORDER BY a.depth ASC\n                LIMIT 1)\n           ) AS \"space?: String\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "space?: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ce8950195f2020a177601c4dcbc5c05c51bc5cbd222d14d956974d40f505f137"
+}

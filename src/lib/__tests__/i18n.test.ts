@@ -13,9 +13,9 @@ import { i18n } from '../i18n'
 import { agenda } from '../i18n/agenda'
 import { block } from '../i18n/block'
 import { common } from '../i18n/common'
-import { conflicts } from '../i18n/conflicts'
 import { editor } from '../i18n/editor'
 import { errors } from '../i18n/errors'
+import { history } from '../i18n/history'
 import { pages } from '../i18n/pages'
 import { properties } from '../i18n/properties'
 import { references } from '../i18n/references'
@@ -373,7 +373,7 @@ describe('no duplicate keys', () => {
       pages,
       properties,
       references,
-      conflicts,
+      history,
       sync,
       shortcuts,
       settings,

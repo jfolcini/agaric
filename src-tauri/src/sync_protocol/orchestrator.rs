@@ -28,8 +28,7 @@
 //!   short-circuit straight to `SyncComplete` — no streaming-phase
 //!   payload — and the remote's state validation accepts
 //!   `SyncComplete` in `ExchangingHeads` to absorb the empty-stream
-//!   case (PEND-09 Phase 4 — collapsed the day-5 sentinel
-//!   zero-byte `LoroSync` workaround).
+//!   case.
 //! * Importing received [`crate::sync_protocol::loro_sync_types::LoroSyncMessage`]s
 //!   via [`crate::sync_protocol::loro_sync::apply_remote`].
 //! * Emitting fine-grained progress events through an attached
@@ -111,12 +110,11 @@ use crate::peer_refs;
 pub struct SyncOrchestrator {
     pool: SqlitePool,
     device_id: String,
-    /// Held for API stability across the day-6 cutover; the loro-sync
-    /// receiver path applies engine state directly via
+    /// Held for API stability; the loro-sync receiver path applies
+    /// engine state directly via
     /// [`crate::sync_protocol::loro_sync::apply_remote`] (which writes
     /// the SQL projection inside its own tx) and does not need to
-    /// enqueue materializer tasks. Day 9+ may drop the field once the
-    /// daemon stops constructing orchestrators with one.
+    /// enqueue materializer tasks.
     #[allow(dead_code)]
     materializer: Materializer,
     pub(crate) state: SyncState,
@@ -131,10 +129,10 @@ pub struct SyncOrchestrator {
     /// `None` as the empty-string sentinel documented on
     /// [`peer_refs::update_on_sync`].
     last_sent_hash: Option<String>,
-    /// PEND-09 Phase 3 day-5 — pending [`LoroSyncMessage`]s queued for
-    /// streaming. Populated when entering [`SyncState::StreamingOps`]
-    /// from [`crate::loro::shared`] (one [`LoroSyncMessage::Snapshot`]
-    /// per registered space — initial sync only; per-peer-vv-tracked
+    /// Pending [`LoroSyncMessage`]s queued for streaming. Populated
+    /// when entering [`SyncState::StreamingOps`] from
+    /// [`crate::loro::shared`] (one [`LoroSyncMessage::Snapshot`] per
+    /// registered space — initial sync only; per-peer-vv-tracked
     /// Updates are a follow-up); drained one per call to
     /// [`next_message`](Self::next_message).
     pending_loro_messages: VecDeque<crate::sync_protocol::loro_sync_types::LoroSyncMessage>,
@@ -247,8 +245,8 @@ impl SyncOrchestrator {
                 });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
-            // PEND-09 Phase 3 day-5 — LoroSync valid after HeadExchange
-            // (i.e. in `StreamingOps`) or as the responder's first
+            // LoroSync valid after HeadExchange (i.e. in
+            // `StreamingOps`) or as the responder's first
             // post-HeadExchange message (in `ExchangingHeads`).
             (
                 SyncState::StreamingOps | SyncState::ExchangingHeads,
@@ -267,9 +265,9 @@ impl SyncOrchestrator {
             // SyncComplete valid in StreamingOps (Complete is terminal,
             // already caught above) and in ExchangingHeads (the
             // empty-stream short-circuit: when the remote has zero
-            // registered spaces, `head_exchange_outgoing_loro` skips the
-            // streaming phase entirely and replies with `SyncComplete`
-            // directly — see PEND-09 Phase 4 sentinel collapse).
+            // registered spaces, `head_exchange_outgoing_loro` skips
+            // the streaming phase entirely and replies with
+            // `SyncComplete` directly).
             (
                 SyncState::StreamingOps | SyncState::ExchangingHeads,
                 SyncMessage::SyncComplete { .. },
@@ -356,30 +354,26 @@ impl SyncOrchestrator {
                     }));
                 }
 
-                // PEND-09 Phase 3 day-6 — outgoing streaming-phase
-                // payload is one [`SyncMessage::LoroSync`] per
-                // registered space (built from [`crate::loro::shared`]).
-                // Day-9 retired the `loro-shadow` feature gate so this
-                // is now the only path. PEND-09 Phase 4 — the residual
-                // edge case (registry exists but is empty) now
-                // short-circuits to `SyncMessage::SyncComplete` rather
-                // than emitting a zero-byte sentinel `LoroSync`.
+                // Outgoing streaming-phase payload is one
+                // [`SyncMessage::LoroSync`] per registered space (built
+                // from [`crate::loro::shared`]). If the registry exists
+                // but is empty the head-exchange short-circuits to
+                // `SyncMessage::SyncComplete` rather than emitting a
+                // zero-byte sentinel `LoroSync`.
                 return self.head_exchange_outgoing_loro().await;
             }
 
-            // ---- LoroSync (PEND-09 Phase 3 day-5) ----------------------------
-            // Dispatch to the day-4 `apply_remote` helper.  Phase 3
-            // day-9 retired the `loro-shadow` feature gate so this is
-            // unconditional now.  PEND-09 Phase 4 — the day-5
-            // empty-sentinel short-circuit was collapsed: senders no
-            // longer emit a zero-byte `Snapshot` for the no-spaces
-            // case, so the receiver always has real bytes to import.
+            // ---- LoroSync ----------------------------
+            // Dispatch each `LoroSync` payload to `apply_remote`. The
+            // sender never emits a zero-byte `Snapshot` for the no-
+            // spaces case, so the receiver always has real bytes to
+            // import.
             SyncMessage::LoroSync { msg, is_last } => {
                 {
                     use crate::sync_protocol::loro_sync;
 
                     match crate::loro::shared::get() {
-                        Some(shadow) => {
+                        Some(loro_state) => {
                             self.state = SyncState::ApplyingOps;
                             self.session.state = SyncState::ApplyingOps;
                             self.emit(crate::sync_events::SyncEvent::Progress {
@@ -391,7 +385,7 @@ impl SyncOrchestrator {
                             });
                             loro_sync::apply_remote(
                                 &self.pool,
-                                &shadow.registry,
+                                &loro_state.registry,
                                 &self.device_id,
                                 msg,
                             )
@@ -414,8 +408,8 @@ impl SyncOrchestrator {
 
                 // Final LoroSync of the batch — transition to Complete
                 // and send our SyncComplete with the latest local head
-                // hash. No diffy-style merge step; Loro's import has
-                // already converged the engine state.
+                // hash. Loro's import has already converged the engine
+                // state, so no further merge step is needed.
                 let last_hash = get_local_heads(&self.pool)
                     .await?
                     .into_iter()
@@ -576,9 +570,9 @@ impl SyncOrchestrator {
         }
     }
 
-    /// PEND-09 Phase 3 day-5 — build and queue outgoing
-    /// [`SyncMessage::LoroSync`] messages, one per [`SpaceId`] currently
-    /// held in [`crate::loro::shared::get`]'s registry.
+    /// Build and queue outgoing [`SyncMessage::LoroSync`] messages,
+    /// one per [`SpaceId`] currently held in
+    /// [`crate::loro::shared::get`]'s registry.
     ///
     /// Strategy:
     /// * Snapshot every registered space via
@@ -589,13 +583,12 @@ impl SyncOrchestrator {
     ///   else with `is_last: false`. The receiver transitions to
     ///   `Merging`/`Complete` when it processes the `is_last: true`
     ///   message.
-    /// * If the registry has no spaces (no shadow init, no spaces
-    ///   touched yet, etc.), short-circuit straight to
+    /// * If the registry has no spaces (Loro state not yet initialised,
+    ///   no spaces touched yet, etc.), short-circuit straight to
     ///   [`SyncMessage::SyncComplete`] — no streaming-phase payload at
-    ///   all. PEND-09 Phase 4 — collapsed the day-5 sentinel
-    ///   zero-byte `LoroSync` workaround. The receiver's state
-    ///   validation accepts `SyncComplete` in `ExchangingHeads` so the
-    ///   peer advances cleanly without ever entering `StreamingOps`.
+    ///   all. The receiver's state validation accepts `SyncComplete` in
+    ///   `ExchangingHeads` so the peer advances cleanly without ever
+    ///   entering `StreamingOps`.
     ///
     /// State transition: `ExchangingHeads` → `StreamingOps` (when at
     /// least one space is registered) or `ExchangingHeads` →
@@ -605,12 +598,12 @@ impl SyncOrchestrator {
         use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
 
         // Look up the process-global registry and snapshot its
-        // currently-registered space ids.  If shadow state was never
+        // currently-registered space ids. If Loro state was never
         // initialised (e.g., a test that skipped the bootstrap path),
         // treat it as an empty registry — we still need to advance
         // the remote's state machine, just with zero ops sent.
-        let shadow_opt = crate::loro::shared::get();
-        let space_ids: Vec<crate::space::SpaceId> = match shadow_opt {
+        let loro_state_opt = crate::loro::shared::get();
+        let space_ids: Vec<crate::space::SpaceId> = match &loro_state_opt {
             Some(s) => s.registry.space_ids(),
             None => {
                 tracing::warn!(
@@ -622,11 +615,11 @@ impl SyncOrchestrator {
             }
         };
 
-        // PEND-09 Phase 4 — empty-stream short-circuit.  No registered
-        // spaces means there is nothing to ship; reply with
-        // `SyncComplete` directly so we do not waste a round-trip on
-        // an empty `LoroSync`.  The remote's state validation accepts
-        // `SyncComplete` in `ExchangingHeads` for exactly this case.
+        // Empty-stream short-circuit. No registered spaces means there
+        // is nothing to ship; reply with `SyncComplete` directly so we
+        // do not waste a round-trip on an empty `LoroSync`. The
+        // remote's state validation accepts `SyncComplete` in
+        // `ExchangingHeads` for exactly this case.
         if space_ids.is_empty() {
             let last_hash = get_local_heads(&self.pool)
                 .await?
@@ -644,18 +637,18 @@ impl SyncOrchestrator {
             return Ok(Some(SyncMessage::SyncComplete { last_hash }));
         }
 
-        // `space_ids` is non-empty here, so `shadow_opt` was `Some`
+        // `space_ids` is non-empty here, so `loro_state_opt` was `Some`
         // when we read it (the `None` branch produced an empty Vec).
-        let shadow =
-            shadow_opt.expect("space_ids non-empty implies shadow_opt was Some on the read above");
+        let loro_state = loro_state_opt
+            .expect("space_ids non-empty implies loro_state_opt was Some on the read above");
 
-        // Enumerate spaces and build one LoroSync per space.  The
+        // Enumerate spaces and build one LoroSync per space. The
         // `peer_vv = None` choice ships a full snapshot; per-peer-vv
-        // tracking (and hence Update messages) is plan §10.5 / day-12+.
+        // tracking (and hence Update messages) is a follow-up.
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
         for sid in &space_ids {
-            let m =
-                loro_sync::prepare_outgoing(&shadow.registry, sid, &self.device_id, None).await?;
+            let m = loro_sync::prepare_outgoing(&loro_state.registry, sid, &self.device_id, None)
+                .await?;
             messages.push_back(m);
         }
         self.session.ops_sent = messages.len();
@@ -723,12 +716,11 @@ impl SyncOrchestrator {
     /// }
     /// ```
     pub fn next_message(&mut self) -> Option<SyncMessage> {
-        // PEND-09 Phase 4: when `head_exchange_outgoing_loro`'s
-        // registry-empty branch fires, the queue stays empty and the
-        // session reply is `SyncComplete` (returned directly from
-        // `handle_message`) — `next_message` then returns `None`
-        // immediately.  Otherwise it drains the per-space pending
-        // queue one message at a time.
+        // When `head_exchange_outgoing_loro`'s registry-empty branch
+        // fires, the queue stays empty and the session reply is
+        // `SyncComplete` (returned directly from `handle_message`) —
+        // `next_message` then returns `None` immediately. Otherwise it
+        // drains the per-space pending queue one message at a time.
         if let Some(msg) = self.pending_loro_messages.pop_front() {
             let is_last = self.pending_loro_messages.is_empty();
             return Some(SyncMessage::LoroSync { msg, is_last });

@@ -45,7 +45,6 @@ fn sample_snapshot_data() -> SnapshotData {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -601,7 +600,6 @@ async fn apply_snapshot_empty_db() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -854,7 +852,6 @@ fn cbor_round_trip_option_f64() {
                 parent_id: None,
                 position: None,
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1205,7 +1202,6 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         parent_id: Option<&'a str>,
         position: Option<i64>,
         deleted_at: Option<&'a str>,
-        conflict_source: Option<&'a str>,
         // MAINT-133: keep this struct in lock-step with `BlockSnapshot`
         // so the encoded CBOR map covers every field the real decoder
         // expects.
@@ -1246,7 +1242,6 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1298,7 +1293,6 @@ async fn apply_snapshot_rejects_invalid_block_type() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1352,7 +1346,6 @@ async fn apply_snapshot_rejects_malformed_ulid_block_id() {
                 parent_id: Some("not-a-valid-ulid!@#".to_string()),
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1403,7 +1396,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -1416,7 +1408,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     parent_id: Some("blk-parent".to_string()),
                     position: Some(1),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -1430,7 +1421,6 @@ async fn apply_snapshot_full_all_5_tables() {
                     parent_id: None,
                     position: None,
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -1778,7 +1768,6 @@ fn large_text_field_round_trip() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1854,7 +1843,6 @@ fn all_nullable_fields_null_round_trip() {
                 parent_id: None,
                 position: None,
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -1885,10 +1873,6 @@ fn all_nullable_fields_null_round_trip() {
     assert!(block.parent_id.is_none(), "parent_id should be None");
     assert!(block.position.is_none(), "position should be None");
     assert!(block.deleted_at.is_none(), "deleted_at should be None");
-    assert!(
-        block.conflict_source.is_none(),
-        "conflict_source should be None"
-    );
 
     let prop = &decoded.tables.block_properties[0];
     assert!(
@@ -2423,7 +2407,6 @@ fn snapshot_v2_round_trips_new_fields() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: Some("TODO".to_string()),
                 priority: Some("2".to_string()),
                 due_date: Some("2026-04-15".to_string()),
@@ -2600,12 +2583,12 @@ async fn compact_op_log_transaction_happy_path() {
 }
 
 #[test]
-fn snapshot_version_4_rejected() {
+fn snapshot_version_above_max_rejected() {
     let mut up_to_seqs = BTreeMap::new();
     up_to_seqs.insert("dev".to_string(), 1);
 
     let data = SnapshotData {
-        schema_version: 4,
+        schema_version: SCHEMA_VERSION + 1,
         snapshot_device_id: "dev".to_string(),
         up_to_seqs,
         up_to_hash: "h".to_string(),
@@ -2622,7 +2605,10 @@ fn snapshot_version_4_rejected() {
 
     let encoded = encode_snapshot(&data).unwrap();
     let result = decode_snapshot(&encoded[..]);
-    assert!(result.is_err(), "schema_version 4 should be rejected");
+    assert!(
+        result.is_err(),
+        "schema_version above SCHEMA_VERSION should be rejected"
+    );
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("unsupported schema version"),
@@ -2665,7 +2651,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: Some("2025-06-01".to_string()),
@@ -2678,7 +2663,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     parent_id: None,
                     position: None,
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -2691,7 +2675,6 @@ async fn apply_snapshot_rebuilds_caches() {
                     parent_id: Some("page-1".to_string()),
                     position: Some(1),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -2871,7 +2854,6 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -2884,7 +2866,6 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     parent_id: Some("tpl-page".to_string()),
                     position: Some(1),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: Some("2025-06-15".to_string()),
@@ -3011,7 +2992,6 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -3099,7 +3079,6 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
                 parent_id: None,
                 position: Some(1),
                 deleted_at: None,
-                conflict_source: None,
                 todo_state: None,
                 priority: None,
                 due_date: None,
@@ -3381,7 +3360,6 @@ mod proptest_tests {
                     parent_id,
                     position,
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -3538,7 +3516,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -3551,7 +3528,6 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     parent_id: None,
                     position: Some(2),
                     deleted_at: None,
-                    conflict_source: None,
                     todo_state: None,
                     priority: None,
                     due_date: None,
@@ -3679,7 +3655,6 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         parent_id: None,
         position: Some(1),
         deleted_at: None,
-        conflict_source: None,
         todo_state: None,
         priority: None,
         due_date: None,

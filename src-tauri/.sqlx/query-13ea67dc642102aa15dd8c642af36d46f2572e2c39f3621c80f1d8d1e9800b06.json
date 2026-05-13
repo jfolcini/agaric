@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'set_property' AND (block_id = ? OR block_id = ?)",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "13ea67dc642102aa15dd8c642af36d46f2572e2c39f3621c80f1d8d1e9800b06"
+}

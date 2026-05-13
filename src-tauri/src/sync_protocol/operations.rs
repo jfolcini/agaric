@@ -9,14 +9,12 @@ use crate::peer_refs;
 // ---------------------------------------------------------------------------
 // Core functions
 // ---------------------------------------------------------------------------
-
-// PEND-09 Phase 3 day-6 — `compute_ops_to_send`, `apply_remote_ops`,
-// and `merge_diverged_blocks` deleted.  The orchestrator's
-// streaming-phase payload is now `LoroSyncMessage` (delta or full
-// snapshot of the per-space `LoroDoc`); Loro's CRDT import converges
-// concurrent edits without a three-way diffy text merge.  See
+//
+// The orchestrator's streaming-phase payload is `LoroSyncMessage`
+// (delta or full snapshot of the per-space `LoroDoc`); Loro's CRDT
+// import converges concurrent edits. See
 // `sync_protocol::loro_sync::{prepare_outgoing, apply_remote}` for the
-// replacement push/apply helpers.
+// push/apply helpers.
 
 /// Get the latest `(device_id, seq, hash)` per device in the op log.
 pub async fn get_local_heads(pool: &SqlitePool) -> Result<Vec<DeviceHead>, AppError> {

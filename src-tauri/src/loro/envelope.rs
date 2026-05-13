@@ -1,22 +1,10 @@
-//! `loro_batch` op-log payload envelope — Phase-1 day-3 deliverable.
+//! `loro_batch` op-log payload envelope.
 //!
-//! Per SPIKE-REPORT.md §6 item 4 and the plan's Q7 risks-table entry
-//! (`Op-type dispatcher breaks when every op_type=='loro_batch'`),
-//! Phase 2 cutover will rewrite every typed op-log row's `payload`
-//! column to a binary `LoroBatch` envelope carrying both the Loro
-//! exported batch bytes AND a small versioning preamble.  Day-3
-//! ships the **schema** for that envelope so day-4 and day-5 can
-//! treat it as fixed-shape data without further design churn.
-//!
-//! ## What this module is NOT yet
-//!
-//! Day-3 introduces the type, a roundtrip test, and a
-//! `From<&OpRecord>` conversion helper.  No production call site
-//! writes a `LoroBatch` to `op_log.payload`, and no reader decodes
-//! one — Phase 1 dual-writes the diffy result as the typed payload
-//! and observes Loro alongside.  That changes in Phase 2 (cutover),
-//! at which point this envelope becomes the on-the-wire shape for
-//! every new `op_type='loro_batch'` row.
+//! Reserved for a future on-the-wire shape carrying both Loro
+//! exported batch bytes AND a small versioning preamble for
+//! `op_type='loro_batch'` rows. Today only the type, a roundtrip
+//! test, and a `From<&OpRecord>` conversion helper exist — no
+//! production call site writes a `LoroBatch` to `op_log.payload` yet.
 //!
 //! ## Why a JSON `Value` for `payload`
 //!
@@ -62,15 +50,10 @@ use crate::op_log::OpRecord;
 ///
 /// ## Version history
 ///
-/// * `1` — Phase-1 day-3.  Envelope carries `(loro_version,
-///   payload_version, original_op_type, payload)` only — the typed
-///   `OpPayload` JSON `Value` is the on-the-wire body.  No
-///   Loro-exported bytes.
-/// * `2` — Phase-2 day-3 (this commit).  Envelopes can additionally
-///   carry Loro-exported `export(ExportMode::*)` bytes via the
-///   `loro_bytes` field.  The cutover writer (Phase-2 day 9) is what
-///   actually populates that field; today's bump is schema-only so
-///   the writer has fixed-shape data to land into.
+/// * `1` — Envelope carries `(loro_version, payload_version,
+///   original_op_type, payload)` only; no Loro-exported bytes.
+/// * `2` — Adds the `loro_bytes` field carrying
+///   `LoroDoc::export(ExportMode::*)` bytes.
 ///
 /// **Backward compatibility.**  v1 envelopes remain readable
 /// indefinitely: the new `loro_bytes` field is `#[serde(default,
@@ -92,8 +75,8 @@ pub const CURRENT_PAYLOAD_VERSION: u8 = 1;
 /// `loro_batch` op-log payload envelope.
 ///
 /// See module-level docs for the why.  Fields are versioned + typed
-/// so day-4 (persistent parity sink) and day-5 (op_log row writer)
-/// can treat this as a fixed shape.
+/// so the persistent parity sink and op_log row writer can treat
+/// this as a fixed shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoroBatch {
     /// Loro library major version this payload was produced against.
@@ -106,8 +89,7 @@ pub struct LoroBatch {
     /// The original [`crate::op::OpType`] discriminator (snake_case
     /// string — `"create_block"`, `"edit_block"`, …) preserved here
     /// so the materializer dispatcher can still route by op type
-    /// after the row's `op_log.op_type` column flips to
-    /// `'loro_batch'` in Phase 2.
+    /// when the row's `op_log.op_type` column carries `'loro_batch'`.
     pub original_op_type: String,
 
     /// The typed `OpPayload` body, kept as a JSON `Value` so the
@@ -120,11 +102,9 @@ pub struct LoroBatch {
     /// Loro-exported batch bytes for the op(s) in this row.
     ///
     /// Empty (`Vec::new()`) when the envelope was constructed from a
-    /// typed-only `OpRecord` — the Phase-1 path uses the typed
-    /// `payload` field above.  The Phase-2 cutover writer (day 9)
-    /// populates this with `LoroDoc::export(ExportMode::*)` bytes so
-    /// a remote peer can apply the batch via Loro's own import path
-    /// rather than re-running the diffy projection.
+    /// typed-only `OpRecord`. When populated, carries
+    /// `LoroDoc::export(ExportMode::*)` bytes so a remote peer can
+    /// apply the batch via Loro's own import path.
     ///
     /// ## Wire-format back-compat (v1 → v2)
     ///
@@ -152,9 +132,9 @@ impl LoroBatch {
     /// Construct an envelope at the current versions, given the
     /// original op-type string + decoded payload value.
     ///
-    /// `loro_bytes` is initialised empty — same shape as Phase 1.
-    /// Use [`LoroBatch::with_loro_bytes`] when you have Loro-exported
-    /// bytes to attach (Phase-2 cutover writer; not yet wired).
+    /// `loro_bytes` is initialised empty.  Use
+    /// [`LoroBatch::with_loro_bytes`] when you have Loro-exported
+    /// bytes to attach.
     pub fn new(original_op_type: String, payload: serde_json::Value) -> Self {
         Self {
             loro_version: CURRENT_LORO_VERSION,
@@ -170,10 +150,6 @@ impl LoroBatch {
     /// of Loro-exported batch bytes (typically the result of
     /// `LoroDoc::export(ExportMode::updates(&since_vv))` or
     /// `ExportMode::Snapshot`).
-    ///
-    /// Phase-2 cutover writer entry-point (day 9).  Day-3's job is to
-    /// land the constructor + the schema; no production call site
-    /// invokes it yet.
     pub fn with_loro_bytes(
         original_op_type: String,
         payload: serde_json::Value,
@@ -191,13 +167,8 @@ impl LoroBatch {
 
 /// Wrap an `OpRecord` as a `LoroBatch` envelope.
 ///
-/// Day-3 has no callers in production — the impl exists so day-4
-/// can call it from the persistent-parity-sink writer + day-5 can
-/// call it from the op_log row rewrite path without further design
-/// churn.
-///
-/// `loro_bytes` is left empty: this is the typed-only Phase-1 shape.
-/// Phase-2 cutover code that has Loro-exported bytes goes through
+/// `loro_bytes` is left empty: this is the typed-only shape.  Code
+/// that has Loro-exported bytes goes through
 /// [`LoroBatch::with_loro_bytes`] instead.
 ///
 /// Returns a `Result` because `OpRecord.payload` is a JSON string
@@ -221,7 +192,7 @@ mod tests {
     /// JSON roundtrip: encode → decode → assert equal.  Locks the
     /// wire shape so a future `serde` rename or field reorder
     /// shows up as a hard test failure rather than a silent
-    /// payload-decode bug at Phase 2.
+    /// payload-decode bug.
     #[test]
     fn json_roundtrip_preserves_all_fields() {
         let original = LoroBatch::new(
@@ -284,7 +255,7 @@ mod tests {
     }
 
     /// A malformed `OpRecord.payload` string makes `TryFrom` fail
-    /// rather than panic — Phase 2 readers must surface this as a
+    /// rather than panic — readers must surface this as a
     /// skip-with-warning, not a crash.
     #[test]
     fn try_from_op_record_rejects_invalid_json() {

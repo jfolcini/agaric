@@ -1,34 +1,26 @@
-//! PEND-09 Phase 3 day-4 — Loro-based sync push + apply helpers.
-//!
-//! Day-4 deliverable: **additive**.  The diffy-typed `OpBatch` wire
-//! format (`super::types::SyncMessage::OpBatch`) and the `apply_remote_ops`
-//! / `compute_ops_to_send` functions in `super::operations` still
-//! ship in parallel.  Day-5 (`merge_block_text_only` deletion +
-//! `OpBatch` removal) makes this the only path.
+//! Loro-based sync push + apply helpers.
 //!
 //! ## Module layout
 //!
-//! * [`prepare_outgoing`] — sender side.  Given a peer's last-known
+//! * [`prepare_outgoing`] — sender side. Given a peer's last-known
 //!   version vector (or `None` for initial sync), produce a
 //!   [`super::loro_sync_types::LoroSyncMessage`] carrying either a
 //!   full snapshot or an incremental update.
-//! * [`apply_remote`] — receiver side.  Given a parsed
+//! * [`apply_remote`] — receiver side. Given a parsed
 //!   [`super::loro_sync_types::LoroSyncMessage`], import the bytes
 //!   into the per-space engine and project every changed block into
 //!   the SQL `blocks` table inside a single transaction.
 //!
-//! ## What's NOT here yet
+//! ## TODOs
 //!
-//! * Transport wiring.  The orchestrator
-//!   (`super::orchestrator`) still sends `OpBatch` messages; day-5
-//!   swings the dispatch.
-//! * `peer_refs.loro_vv_bytes` schema / read.  Day-4 callers pass the
-//!   peer's vv as `Option<&[u8]>`; the read-from-SQL piece lands with
-//!   the day-4 push wiring (see plan §10.5).
-//! * Snapshot-fallback request.  An [`super::loro_sync_types::LoroSyncMessage::Update`]
-//!   whose `from_vv` is ahead of the receiver's `oplog_vv` cannot be
-//!   imported safely; day-5 receiver dispatch adds the
-//!   "request-fresh-snapshot" path.  Today this surfaces as a Loro
+//! * `peer_refs.loro_vv_bytes` schema / read. Callers pass the peer's
+//!   vv as `Option<&[u8]>`; the read-from-SQL piece lands with the
+//!   push wiring.
+//! * Snapshot-fallback request. An
+//!   [`super::loro_sync_types::LoroSyncMessage::Update`] whose
+//!   `from_vv` is ahead of the receiver's `oplog_vv` cannot be
+//!   imported safely; the receiver dispatch will add the
+//!   "request-fresh-snapshot" path. Today this surfaces as a Loro
 //!   import error, which [`apply_remote`] forwards as
 //!   [`crate::error::AppError::Validation`].
 
@@ -54,8 +46,7 @@ use crate::sync_protocol::loro_sync_types::{LoroSyncMessage, LORO_SYNC_PROTOCOL_
 /// first call for `space_id` since process boot.  Production callers
 /// pass the process-stable UUID-v4 from `crate::device`.
 ///
-/// PEND-09 Phase 3 day-4 — sender-side helper.  Day-5 wires this
-/// into `super::orchestrator`'s session loop.
+/// Sender-side helper.
 pub async fn prepare_outgoing(
     registry: &LoroEngineRegistry,
     space_id: &SpaceId,
@@ -94,14 +85,10 @@ pub async fn prepare_outgoing(
 /// invalidate per-space caches (FE event emission, agenda recompute,
 /// etc.) at the materializer boundary.
 ///
-/// Atomicity contract (per
-/// `SESSION-LOG.md` Session 699 Phase 3 §2.4 / §7.3): the engine import
-/// happens **before** the SQL transaction.  A crash between the two
-/// leaves the engine ahead of SQL; boot crash recovery (day-12+)
-/// reconciles by re-running projection over each engine block.
-///
-/// PEND-09 Phase 3 day-4 — receiver-side helper.  Day-5 wires this
-/// into `super::orchestrator`'s session loop.
+/// Atomicity contract: the engine import happens **before** the SQL
+/// transaction. A crash between the two leaves the engine ahead of
+/// SQL; boot crash recovery reconciles by re-running projection over
+/// each engine block.
 pub async fn apply_remote(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -137,7 +124,7 @@ pub async fn apply_remote(
                      (this build speaks {LORO_SYNC_PROTOCOL_VERSION})",
                 )));
             }
-            // TODO day-5/day-12: verify peer's `from_vv` is reachable
+            // TODO: verify peer's `from_vv` is reachable
             // from our current `oplog_vv()`; if not, return a
             // "request-snapshot-fallback" signal instead of
             // forwarding the Loro import error.  See module docstring.

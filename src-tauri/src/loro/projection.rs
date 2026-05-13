@@ -1,60 +1,44 @@
-//! PEND-09 Phase 2 day-11 — Loro-to-SQL projection helpers.
+//! Loro-to-SQL projection helpers.
 //!
-//! ## Why this module exists
-//!
-//! The cutover plan §3 day-9 + §8.4 calls for a reorder where, when
-//! `is_loro_authoritative()` returns `true`, the materializer applies
-//! each op to the per-space [`crate::loro::engine::LoroEngine`] FIRST,
-//! reads the post-apply state, and PROJECTS that state into SQL — so
-//! the SQL `blocks` / `block_properties` / `block_tags` rows are
-//! derived from the CRDT, not computed by diffy.
+//! The materializer applies each op to the per-space
+//! [`crate::loro::engine::LoroEngine`] FIRST, reads the post-apply
+//! state, and PROJECTS that state into SQL — so the SQL `blocks` /
+//! `block_properties` / `block_tags` rows are derived from the CRDT.
 //!
 //! Each function in this module is a per-op-type projection helper:
-//! given a typed payload (or a read-back snapshot from the engine) and
-//! a borrowed `&mut SqliteConnection` from the caller's transaction, it
-//! writes the SQL rows that mirror the engine's post-apply state.
+//! given a typed payload (or a read-back snapshot from the engine)
+//! and a borrowed `&mut SqliteConnection` from the caller's
+//! transaction, it writes the SQL rows that mirror the engine's
+//! post-apply state.
 //!
 //! ## Atomic semantics
 //!
 //! Each helper uses the SAME `&mut SqliteConnection` the caller is
-//! using.  If the projection fails, the caller's transaction rolls
+//! using. If the projection fails, the caller's transaction rolls
 //! back (no partial SQL state escapes); but the engine state is NOT
 //! rolled back (Loro 1.x does not expose a transaction primitive we
-//! can wrap).  This trade-off is acceptable because the op_log is the
+//! can wrap). This trade-off is acceptable because the op_log is the
 //! source of truth: a snapshot+replay rebuilds engine state from the
-//! same op_log the materializer reads.  See
-//! `pending/PEND-09-apply-op-reorder.md` §5 for the full rationale.
+//! same op_log the materializer reads.
 //!
 //! ## Coverage
 //!
-//! Day-11 shipped Create / Edit / SetProperty / Purge (with unit tests).
-//! Day-12 added Delete + Move (with cascade UPDATE for delete).
-//! **Day-13** adds the final five op types: Restore, DeleteProperty,
-//! AddTag, RemoveTag (with the `apply_*_via_loro` wrappers in
-//! `materializer/handlers.rs` running the post-projection
-//! `tag_inheritance::*` calls AFTER the projection, exactly as the
-//! diffy-side path does), and PurgeBlock's cutover branch wired
-//! through.  All 12 op types now have projection helpers + cutover
-//! branches; only the two attachment ops bypass the projection (per
-//! the cutover plan §8.2 — file blobs live outside CRDT state).
+//! All twelve op types have projection helpers; the two attachment
+//! ops bypass the projection (file blobs live outside CRDT state).
 //!
 //! ## What this module does NOT do
 //!
-//! - Run the engine apply.  The caller is responsible for invoking
+//! - Run the engine apply. The caller is responsible for invoking
 //!   `engine.apply_*` and reading back the post-apply state before
-//!   calling these projection helpers.  This split keeps the engine
+//!   calling these projection helpers. This split keeps the engine
 //!   guard's lifetime bounded (the projection runs after the guard is
 //!   dropped) and makes the helpers unit-testable from synthetic
 //!   payloads.
-//! - Project attachment ops.  `AddAttachment` / `DeleteAttachment`
-//!   carry file blobs that live outside the CRDT state per the cutover
-//!   plan §8.2; their SQL UPDATEs continue to run unconditionally on
-//!   the diffy-side path regardless of the cutover flag.
+//! - Project attachment ops. `AddAttachment` / `DeleteAttachment`
+//!   carry file blobs that live outside the CRDT state.
 //! - Rebuild derived caches (`block_links`, `block_tag_inherited`).
 //!   The caller continues to invoke `cache::reindex_*` /
-//!   `tag_inheritance::*` AFTER projection, exactly as today's
-//!   `apply_*_tx` helpers do — only the source of truth (engine vs
-//!   diffy) shifts.
+//!   `tag_inheritance::*` AFTER projection.
 
 use sqlx::SqliteConnection;
 
@@ -62,21 +46,18 @@ use crate::error::AppError;
 use crate::loro::engine::BlockSnapshot;
 use crate::op::{is_reserved_property_key, SetPropertyPayload};
 
-/// Project a `CreateBlock` engine state into SQL.  Mirrors the
-/// existing `apply_create_block_tx` shape so that flipping the cutover
-/// flag does not change the written SQL row's columns.
+/// Project a `CreateBlock` engine state into SQL.
 ///
 /// `snapshot` is the engine's read-back state for the freshly-created
-/// block (after `engine.apply_create_block(...)` ran).  `payload.position`
+/// block (after `engine.apply_create_block(...)` ran). `payload.position`
 /// is `Option<i64>` on the payload but the engine flattens to `i64`,
 /// so the snapshot's `position` is the source of truth here.
 ///
-/// **Note on `tag_inheritance::inherit_parent_tags`.**  Today's
-/// `apply_create_block_tx` invokes this helper as the second step.
-/// The projection helper does **not** call it — the caller (the
-/// branch in `apply_op_tx`) is responsible for invoking it after the
-/// projection, mirroring the diffy-side ordering.  Keeps the helper
-/// pure (just the row INSERT) so it's directly unit-testable.
+/// **Note on `tag_inheritance::inherit_parent_tags`.** The projection
+/// helper does NOT call it — the caller (the per-op branch in
+/// `apply_op_tx`) is responsible for invoking it after the
+/// projection. Keeps the helper pure (just the row INSERT) so it's
+/// directly unit-testable.
 pub async fn project_create_block_to_sql(
     conn: &mut SqliteConnection,
     snapshot: &BlockSnapshot,
@@ -96,14 +77,13 @@ pub async fn project_create_block_to_sql(
     Ok(())
 }
 
-/// Project an `EditBlock` engine state into SQL.  Mirrors
-/// `apply_edit_block_tx`'s `UPDATE blocks SET content = ? WHERE id = ?
-/// AND deleted_at IS NULL` shape — the only difference is the
-/// `content` value comes from the engine's post-apply read-back, not
-/// the payload's `to_text` field directly.  In a single-author
-/// scenario the two are identical; in a concurrent-edit scenario the
-/// engine's character-level merge produces different content from
-/// either peer's `to_text` (that's the headline win of the cutover).
+/// Project an `EditBlock` engine state into SQL via
+/// `UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS
+/// NULL`. The `content` value comes from the engine's post-apply
+/// read-back, not the payload's `to_text` field directly. In a
+/// single-author scenario the two are identical; in a concurrent-edit
+/// scenario the engine's character-level merge produces different
+/// content from either peer's `to_text` (the CRDT convergence win).
 pub async fn project_edit_block_to_sql(
     conn: &mut SqliteConnection,
     snapshot: &BlockSnapshot,
@@ -116,8 +96,7 @@ pub async fn project_edit_block_to_sql(
     Ok(())
 }
 
-/// Project a `SetProperty` engine state into SQL.  Mirrors the per-key
-/// match in `apply_set_property_tx`:
+/// Project a `SetProperty` engine state into SQL.
 ///
 /// - **Reserved keys** (`todo_state`, `priority`, `due_date`,
 ///   `scheduled_date`) update the dedicated `blocks` column, NOT
@@ -126,23 +105,12 @@ pub async fn project_edit_block_to_sql(
 ///   `block_properties` with the typed value columns set per the
 ///   payload.
 ///
-/// Today's diffy-side helper takes a `SetPropertyPayload` and reads
-/// the value fields directly off it.  The projection helper does the
-/// same — the engine's post-apply state for a property is "the value
-/// just written", which equals the payload's value field by
-/// construction.  We keep the payload reference rather than going
-/// through `engine.read_property` because the property's typed-vs-text
-/// shape (`value_num`, `value_date`, `value_ref`, `value_bool`) is
-/// flattened to a single string in the engine; SQL needs the typed
-/// columns separately.
-///
-/// This is the engine-state-vs-payload-state asymmetry the cutover
-/// plan §8.2 calls out: the engine compresses to "a string", SQL
-/// preserves the typed shape for read-side filters
-/// (`WHERE value_num > ?` etc.).  Day-11 keeps the typed-shape source
-/// of truth on the payload side — the engine's post-apply state on
-/// `block_properties` is "this key was set"; the typed value flows
-/// through unchanged.
+/// The engine compresses property values to a single string; SQL
+/// preserves the typed shape (`value_num`, `value_date`, `value_ref`,
+/// `value_bool`) for read-side filters (`WHERE value_num > ?` etc.).
+/// The projection therefore reads the typed value fields off the
+/// payload directly — the engine's post-apply state for a property
+/// equals the payload's value field by construction.
 pub async fn project_set_property_to_sql(
     conn: &mut SqliteConnection,
     payload: &SetPropertyPayload,
@@ -212,25 +180,19 @@ pub async fn project_set_property_to_sql(
     Ok(())
 }
 
-/// Project a `PurgeBlock` engine state into SQL.  Hard-delete: the
+/// Project a `PurgeBlock` engine state into SQL. Hard-delete: the
 /// row in `blocks` plus the row in `block_properties` plus rows in
 /// `block_tags` keyed on this `block_id`.
 ///
-/// **Day-11 simplification.**  Today's full `apply_purge_block_tx`
-/// runs a 15-statement cascade against a TEMP table of descendants —
-/// the cascade walks `block_tags`, `block_tag_inherited`,
-/// `block_properties`, `block_links`, `agenda_cache`, `tags_cache`,
-/// `pages_cache`, `attachments`, `block_drafts`, `conflict_source`,
-/// `fts_blocks`, `page_aliases`, `projected_agenda_cache`, then
-/// `blocks`.  The projection helper here only handles the per-block-id
-/// rows in the three tables the engine knows about (`blocks`,
-/// `block_properties`, `block_tags`).  The full descendant cascade
-/// remains with the SQL-side `apply_purge_block_tx` and does NOT move
-/// into the projection — when the cutover branch runs, it invokes the
-/// engine's `apply_purge_block` (per-block-id) for the seed AND every
-/// descendant, then runs `apply_purge_block_tx` for the SQL-side
-/// cascade unchanged.  Keeping the SQL cascade outside the projection
-/// keeps day-11's scope bounded.  Day-12+ may consolidate.
+/// The full SQL-side cascade against the descendant CTE — sweeping
+/// `block_tag_inherited`, `block_links`, `agenda_cache`, `tags_cache`,
+/// `pages_cache`, `attachments`, `block_drafts`, `fts_blocks`,
+/// `page_aliases`, `projected_agenda_cache`, and `blocks` — lives in
+/// `apply_purge_block_tx`. This projection handles only the per-
+/// block-id rows in the three tables the engine knows about
+/// (`blocks`, `block_properties`, `block_tags`); the cascade caller
+/// invokes the engine's `apply_purge_block` for the seed plus every
+/// descendant and the SQL-side helper for the rest.
 pub async fn project_purge_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -254,28 +216,25 @@ pub async fn project_purge_block_to_sql(
 // Day-11 stubs — wired in day-12+
 // ---------------------------------------------------------------------------
 
-/// Project a `DeleteBlock` engine state into SQL.  The engine's
+/// Project a `DeleteBlock` engine state into SQL. The engine's
 /// `apply_delete_block` writes a fixed-marker `deleted_at` value (the
 /// CRDT only needs to know "deleted vs not"); the SQL side stamps the
 /// real timestamp from `record.created_at` so `block_lifecycle`
-/// reports / restore-cohort lookups remain accurate.  The caller passes
+/// reports / restore-cohort lookups remain accurate. The caller passes
 /// the timestamp string explicitly rather than reading it back from
 /// the engine — see `apply_delete_block_via_loro` for the wiring.
 ///
-/// **Cascade scope.**  This projection only updates the per-block row.
-/// The diffy-side `apply_delete_block_tx` walks the descendant CTE and
-/// soft-deletes every active descendant in one UPDATE; the cutover-on
-/// path keeps that cascade behaviour by running the same CTE-driven
-/// UPDATE here.  The engine's `apply_delete_block` is per-block-id only,
-/// so the engine-side fan-out for descendants is a separate concern
-/// (today's diffy path only calls the engine on the seed; a complete
-/// cutover-on cascade fanout is a follow-up — same shape as
-/// `dispatch_restore_descendants_shadow`).  Day-12 keeps the projection
-/// behaviour SQL-equivalent to the diffy path.
+/// **Cascade scope.** This projection walks the descendant CTE and
+/// soft-deletes every active descendant in one UPDATE. The engine's
+/// `apply_delete_block` is per-block-id only, so the engine-side
+/// fan-out for descendants is handled by the post-commit dispatch
+/// (`dispatch_restore_descendants` is the symmetric helper for
+/// restore); SQL state for the cohort is correct as soon as this
+/// projection runs.
 ///
-/// **Idempotence.**  The `WHERE deleted_at IS NULL` filter on the CTE
-/// makes a re-apply a no-op for rows already soft-deleted at any earlier
-/// timestamp.
+/// **Idempotence.** The `WHERE deleted_at IS NULL` filter on the CTE
+/// makes a re-apply a no-op for rows already soft-deleted at any
+/// earlier timestamp.
 pub async fn project_delete_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -300,16 +259,14 @@ pub async fn project_delete_block_to_sql(
 /// concurrent reparents on the engine side, and we project that
 /// post-LWW state here.
 ///
-/// **Sibling-shift.**  The diffy-side `apply_move_block_tx` does NOT
-/// shift sibling positions either: a `MoveBlock` op's `new_position` is
-/// taken at face value, with whatever ordering collisions accepting the
-/// LWW outcome.  Loro's per-key LWW means two devices moving distinct
-/// blocks to the same position resolve to the same final state on both
-/// sides (same `(parent_id, position)` per block), and a single SQL row
-/// per block keeps the projection 1:1 with the engine state.  Net: no
-/// sibling-shift on either side.  Position uniqueness is not enforced
-/// in the schema; concurrent moves to the same position are an
-/// application-layer concern.
+/// **Sibling-shift.** A `MoveBlock` op's `new_position` is taken at
+/// face value; ordering collisions accept the LWW outcome. Loro's
+/// per-key LWW means two devices moving distinct blocks to the same
+/// position resolve to the same final state on both sides (same
+/// `(parent_id, position)` per block), and a single SQL row per block
+/// keeps the projection 1:1 with the engine state. Position
+/// uniqueness is not enforced in the schema; concurrent moves to the
+/// same position are an application-layer concern.
 pub async fn project_move_block_to_sql(
     conn: &mut SqliteConnection,
     snapshot: &BlockSnapshot,
@@ -323,23 +280,19 @@ pub async fn project_move_block_to_sql(
     Ok(())
 }
 
-/// Project a `RestoreBlock` engine state into SQL.  Mirrors the cohort
+/// Project a `RestoreBlock` engine state into SQL. Mirrors the cohort
 /// UPDATE in `apply_restore_block_tx` — clears `deleted_at` for every
 /// block in the descendant CTE that was soft-deleted at the same
 /// `deleted_at_ref` timestamp.
 ///
-/// **Engine fan-out trade-off (day-13).**  The engine's
-/// `apply_restore_block` is per-block-id only, so the cutover-on path
-/// only applies the SEED block to the engine.  The descendant cohort's
-/// engine state is NOT reconciled by the projection — it relies on
-/// `dispatch_restore_descendants_shadow` running post-commit (which
-/// already exists from day-9).  This matches day-12's delete-cascade
-/// approach: SQL handles the full cohort; engine state for descendants
-/// will be reconciled by op-log replay if/when the engine is rebuilt.
-/// The cohort-fanout-on-engine integration is a day-14+ TODO — same
-/// shape as the delete-cascade fanout.
+/// **Engine fan-out trade-off.** The engine's `apply_restore_block` is
+/// per-block-id only, so only the SEED block is applied to the engine
+/// here. The descendant cohort's engine state is reconciled by the
+/// post-commit `dispatch_restore_descendants` fanout (SQL state for
+/// the full cohort is correct as soon as this projection runs; engine
+/// state for descendants follows).
 ///
-/// **Idempotence.**  The `WHERE deleted_at = ?` filter on the CTE makes
+/// **Idempotence.** The `WHERE deleted_at = ?` filter on the CTE makes
 /// a re-apply a no-op for rows that have already been restored
 /// (their `deleted_at` is now NULL and won't match `= ?`).
 pub async fn project_restore_block_to_sql(
@@ -415,13 +368,12 @@ pub async fn project_delete_property_to_sql(
     Ok(())
 }
 
-/// Project an `AddTag` engine state into SQL.  Mirrors the
-/// `INSERT OR IGNORE INTO block_tags` shape of `apply_add_tag_tx`.
+/// Project an `AddTag` engine state into SQL via
+/// `INSERT OR IGNORE INTO block_tags`.
 ///
-/// **Note on `tag_inheritance::propagate_tag_to_descendants`.**  The
-/// caller (the cutover branch in `apply_op_tx`) is responsible for
-/// invoking it AFTER the projection, mirroring the diffy-side ordering.
-/// Keeps the helper pure.
+/// **Note on `tag_inheritance::propagate_tag_to_descendants`.** The
+/// caller (the per-op branch in `apply_op_tx`) is responsible for
+/// invoking it AFTER the projection. Keeps the helper pure.
 pub async fn project_add_tag_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -454,19 +406,18 @@ pub async fn project_remove_tag_to_sql(
     Ok(())
 }
 
-/// PEND-09 Phase 3 day-4 — project an engine-side block snapshot to
-/// SQL after a sync-pull import.  Drives the `apply_remote` side of
+/// Project an engine-side block snapshot to SQL after a sync-pull
+/// import. Drives the `apply_remote` side of
 /// [`crate::sync_protocol::loro_sync`].
 ///
 /// Behaviour:
 ///
 /// * `Some(snapshot)` → `INSERT OR REPLACE` the `blocks` row with
-///   `(id, block_type, content, parent_id, position)`.
-///   Other columns (`deleted_at`, reserved-property hot-path columns)
-///   are left to per-op projection helpers running alongside this
-///   one — day-4's scope is the core block shape that
-///   [`crate::loro::engine::BlockSnapshot`] carries.  Day-5 / day-12
-///   may extend.
+///   `(id, block_type, content, parent_id, position)`. Other columns
+///   (`deleted_at`, reserved-property hot-path columns) are left to
+///   per-op projection helpers running alongside this one — the
+///   scope here is the core block shape that
+///   [`crate::loro::engine::BlockSnapshot`] carries.
 /// * `None` → engine has no record of `block_id`.  The plan
 ///   (`SESSION-LOG.md` Session 699 Phase 3 §3 day 4) defers the
 ///   purge-from-SQL semantics: an absent engine record could mean
@@ -708,7 +659,7 @@ mod tests {
         .expect("fetch props count");
         assert_eq!(
             props_count.0, 0,
-            "reserved key must NOT write to block_properties (matches diffy-side semantics)"
+            "reserved key must NOT write to block_properties"
         );
 
         // Non-reserved key — INSERT OR REPLACE into block_properties
@@ -844,8 +795,8 @@ mod tests {
     #[tokio::test]
     async fn project_delete_block_idempotent() {
         // A second call with a later timestamp must NOT clobber the
-        // first soft-delete's timestamp — mirrors the diffy-side
-        // `WHERE deleted_at IS NULL` filter.  The cohort identity in
+        // first soft-delete's timestamp — the `WHERE deleted_at IS
+        // NULL` filter enforces this. The cohort identity in
         // RestoreBlock relies on the same timestamp persisting across
         // re-applies of the delete op.
         let (pool, _dir) = fresh_pool().await;

@@ -10,8 +10,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 
 use agaric_lib::commands::{
     batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,
-    get_block_history_inner, get_block_inner, get_conflicts_inner, list_blocks_inner,
-    set_property_inner,
+    get_block_history_inner, get_block_inner, list_blocks_inner, set_property_inner,
 };
 // FEAT-3p4 — inline copies of the test helpers, mirrored from
 // `agaric_lib::commands::tests::common`. The `tests` module is
@@ -909,53 +908,6 @@ fn bench_get_block_history(c: &mut Criterion) {
 }
 
 // ===========================================================================
-// get_conflicts benchmarks
-// ===========================================================================
-
-/// Benchmark get_conflicts_inner: fetch first page of conflict blocks from a DB
-/// where 10% of rows are marked as conflicts.
-fn bench_get_conflicts(c: &mut Criterion) {
-    let mut group = c.benchmark_group("get_conflicts");
-
-    for db_size in [100, 1_000, 10_000] {
-        let rt = Runtime::new().unwrap();
-        let dir = TempDir::new().unwrap();
-        let pool = rt.block_on(fresh_pool(&dir, &format!("conflicts_{db_size}")));
-        let ids = rt.block_on(seed_blocks_bulk(&pool, db_size));
-
-        // Mark 10% of blocks as conflicts via direct SQL.
-        rt.block_on(async {
-            let conflict_count = db_size / 10;
-            let mut tx = pool.begin().await.unwrap();
-            for id in ids.iter().take(conflict_count) {
-                sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await
-                    .unwrap();
-            }
-            tx.commit().await.unwrap();
-        });
-
-        group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{db_size}_blocks")),
-            &db_size,
-            |b, _| {
-                b.to_async(&rt).iter(|| {
-                    let pool = pool.clone();
-                    async move {
-                        get_conflicts_inner(&pool, None, Some(50), None, None)
-                            .await
-                            .unwrap()
-                    }
-                })
-            },
-        );
-    }
-    group.finish();
-}
-
-// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -993,12 +945,7 @@ criterion_group!(
     bench_list_blocks_at_scale,
 );
 
-criterion_group!(
-    read_benches,
-    bench_get_block,
-    bench_get_block_history,
-    bench_get_conflicts,
-);
+criterion_group!(read_benches, bench_get_block, bench_get_block_history,);
 
 criterion_main!(
     create_benches,

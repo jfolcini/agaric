@@ -1,22 +1,17 @@
-//! Per-space LoroDoc snapshot persistence — PEND-09 Phase 2 day-6.
+//! Per-space LoroDoc snapshot persistence.
 //!
 //! ## Why this exists
 //!
-//! [`LoroEngineRegistry`] is currently a process-local
-//! `HashMap<SpaceId, LoroEngine>` that is rebuilt from scratch on every
-//! process restart — engines are instantiated lazily on first hit and
-//! the `LoroDoc` only contains state derived from ops applied during
-//! the current process lifetime.  For Phase-1 shadow mode this is
-//! sufficient: parity samples are evaluated within a single op-apply,
-//! and a freshly-instantiated engine is a valid baseline.
-//!
-//! For Phase-2 cutover the engine becomes **authoritative** — the
-//! materializer projects from `LoroDoc` state into SQL.  A cold-start
-//! engine would project an empty doc on top of existing SQL state,
-//! corrupting the user's workspace.  The plan (Q4 from `SESSION-LOG.md`
-//! Session 698 + day-6 spec in Session 698 Phase 2 day-6 entry) says: persist
-//! per-space `LoroDoc` snapshots in a `loro_doc_state` SQLite table,
-//! rehydrate on app boot, periodically re-snapshot in the background.
+//! [`LoroEngineRegistry`] is a process-local
+//! `HashMap<SpaceId, LoroEngine>` that is rebuilt from scratch on
+//! every process restart — engines are instantiated lazily on first
+//! hit and the `LoroDoc` only contains state derived from ops applied
+//! during the current process lifetime. The engine is authoritative:
+//! the materializer projects from `LoroDoc` state into SQL. A
+//! cold-start engine would project an empty doc on top of existing
+//! SQL state, corrupting the user's workspace. We persist per-space
+//! `LoroDoc` snapshots in a `loro_doc_state` SQLite table, rehydrate
+//! on app boot, and periodically re-snapshot in the background.
 //!
 //! ## Surface
 //!
@@ -90,10 +85,9 @@ fn now_ms() -> i64 {
 /// Persist the engine's current snapshot to `loro_doc_state`.
 ///
 /// Replaces any existing row for `space_id` (`INSERT OR REPLACE`).
-/// `op_count` resets to 0 on every save — the column is reserved for a
-/// future "snapshot every N ops" cadence (Phase-2 cutover plan option
-/// archived in `SESSION-LOG.md` Session 698 Phase 2 day-6 entry) and is
-/// currently unused by the time-driven scheduler.
+/// `op_count` resets to 0 on every save — the column is reserved for
+/// a future "snapshot every N ops" cadence and is currently unused by
+/// the time-driven scheduler.
 pub async fn save_snapshot(
     pool: &SqlitePool,
     space_id: &SpaceId,
@@ -162,7 +156,7 @@ pub async fn rehydrate_registry(
         Err(e) => {
             tracing::warn!(
                 error = %e,
-                "loro-shadow: rehydrate_registry: load_all_space_snapshots failed; \
+                "loro:rehydrate_registry: load_all_space_snapshots failed; \
                  starting with empty registry",
             );
             return 0;
@@ -178,7 +172,7 @@ pub async fn rehydrate_registry(
                 tracing::warn!(
                     space_id = %space_id_str,
                     error = %e,
-                    "loro-shadow: rehydrate_registry: with_peer_id failed; skipping space",
+                    "loro:rehydrate_registry: with_peer_id failed; skipping space",
                 );
                 continue;
             }
@@ -187,7 +181,7 @@ pub async fn rehydrate_registry(
             tracing::warn!(
                 space_id = %space_id_str,
                 error = %e,
-                "loro-shadow: rehydrate_registry: import failed; skipping space",
+                "loro:rehydrate_registry: import failed; skipping space",
             );
             continue;
         }
@@ -221,7 +215,7 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
                 tracing::warn!(
                     space_id = %space_id,
                     error = %e,
-                    "loro-shadow: save_all_engines: export_snapshot failed; skipping space",
+                    "loro:save_all_engines: export_snapshot failed; skipping space",
                 );
                 continue;
             }
@@ -243,7 +237,7 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
                 tracing::warn!(
                     space_id = %space_id,
                     error = %e,
-                    "loro-shadow: save_all_engines: INSERT OR REPLACE failed; skipping space",
+                    "loro:save_all_engines: INSERT OR REPLACE failed; skipping space",
                 );
             }
         }
