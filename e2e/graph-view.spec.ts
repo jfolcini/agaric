@@ -55,8 +55,14 @@ test.describe('Graph view', () => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
-    // Wait for nodes to render
-    const nodeGroup = page.locator('[data-testid="graph-view"] svg g.node').first()
+    // Target a non-date-titled page. `tabsStore.navigateToPage` routes
+    // YYYY-MM-DD page titles into the Journal view, which has no
+    // `aria-label="Page title"` element. The seeded daily page uses
+    // today's date as its title, so `.first()` is non-deterministic in
+    // that regard — pick "Getting Started" explicitly.
+    const nodeGroup = page
+      .locator('[data-testid="graph-view"] svg g.node')
+      .filter({ hasText: 'Getting Started' })
     await expect(nodeGroup).toBeVisible()
 
     // Click the hit-area circle (44px target, `pointer-events: all`) rather than

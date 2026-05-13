@@ -165,8 +165,11 @@ test.describe('Delete attachment', () => {
     // Success toast
     await expect(page.getByText(/Deleted report\.pdf/i)).toBeVisible()
 
-    // The attachment list should now show the empty state
-    // (the <ul> is replaced by the EmptyState component)
-    await expect(page.getByText('No attachments yet.')).toBeVisible()
+    // SortableBlock unmounts both the attachment badge and the AttachmentList
+    // when `attachmentCount > 0` becomes false (SortableBlock.tsx:368) — the
+    // EmptyState inside AttachmentList is never rendered through this flow.
+    // Confirm the deletion by waiting for both surfaces to disappear.
+    await expect(page.getByTestId('attachment-badge')).toHaveCount(0)
+    await expect(page.getByRole('list', { name: 'Attachments' })).toHaveCount(0)
   })
 })

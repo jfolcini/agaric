@@ -189,6 +189,16 @@ export function seedBlocks(): void {
     SEED_IDS.PAGE_DAILY,
     SEED_IDS.PAGE_PROJECTS,
     SEED_IDS.PAGE_MEETINGS,
+    // Tag blocks are space-scoped in the backend (`block_properties` row
+    // with `key='space'`). `list_all_tags_in_space` and
+    // `load_page_subtree` both filter on this. Seed tag blocks and the
+    // meeting-notes template page need the same property or the Tags
+    // view shows zero seed tags and the template picker fails to
+    // expand.
+    SEED_IDS.TAG_WORK,
+    SEED_IDS.TAG_PERSONAL,
+    SEED_IDS.TAG_IDEA,
+    SEED_IDS.PAGE_TMPL_MEETING,
   ]) {
     if (!properties.has(pageId)) properties.set(pageId, new Map())
     properties.get(pageId)?.set('space', {

@@ -7,6 +7,34 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 708 — e2e test bit-rot closure (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | `pending/e2e-test-bitrot-2026-05-13.md` — all 5 listed open items resolved (4 tag-management + 1 templates fixed via mock seed; attachments + graph-view tests updated; Ctrl+Shift+1 already passing). |
+| **Items modified** | — |
+| **Tests added** | 0 new; 7 previously-failing e2e tests now green |
+| **Files touched** | 3 (`src/lib/tauri-mock/seed.ts`, `e2e/attachments.spec.ts`, `e2e/graph-view.spec.ts`) + plan file deletion |
+
+**Summary:** investigated the 5 open items in the e2e bit-rot plan and closed them. Tag-management (4 tests) and templates (1 test) shared a single root cause — the mock seed never assigned `space` properties to the `TAG_WORK` / `TAG_PERSONAL` / `TAG_IDEA` blocks or the `PAGE_TMPL_MEETING` page, so `list_all_tags_in_space` and `load_page_subtree` filtered them out. Extended the existing space-property loop in `seed.ts` to include the four blocks. Attachments delete test asserted the `AttachmentList` empty state, but SortableBlock unmounts both the badge and the list when `attachmentCount === 0` (`SortableBlock.tsx:368`), so the empty state is unreachable from that flow — switched the assertion to badge + list disappearance. Graph-view click test used `.first()` on `svg g.node`, which can pick the date-titled daily seed page; date titles route to Journal view (`tabs.ts:220-231`), which has no `aria-label="Page title"` element — filter the locator by `hasText: 'Getting Started'`. Ctrl+Shift+1 turned out to already pass; pending doc was stale on that point.
+
+**Verification:**
+- `npx playwright test` (full e2e suite) — 300/300 passed.
+- `npx vitest run src/lib/__tests__/tauri-mock.test.ts` — 211 tests pass.
+
+**Files touched (this session):**
+- `src/lib/tauri-mock/seed.ts` — added 4 entries to the existing space-property loop.
+- `e2e/attachments.spec.ts` — updated post-delete assertion to match actual SortableBlock unmount behaviour.
+- `e2e/graph-view.spec.ts` — replaced `.first()` with an explicit `'Getting Started'` filter.
+- `pending/e2e-test-bitrot-2026-05-13.md` — deleted (all listed items closed).
+
+**Process notes:** the pending plan estimated 5 items each at S (~1-2h investigation + fix). Actual closure was much faster: 4 of the 5 collapsed to one mock-seed edit, the attachments and graph-view fixes were surgical test updates, and the Ctrl+Shift+1 item was a phantom. Worth flagging as a calibration data point — when "investigation" items share a single seed/mock root cause, the actual cost is closer to the cost of the investigation than to the sum of per-item budgets.
+
+**Commit plan:** single commit covering seed.ts fix + 2 spec updates + plan-file deletion + this Session 708 entry.
+
+---
 ## Session 707 — sql-audit Batch 4: H7 FK ON DELETE CASCADE migration sweep — SQL AUDIT CLOSED (2026-05-13)
 
 | Metadata | Value |
