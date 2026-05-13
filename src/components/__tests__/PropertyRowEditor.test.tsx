@@ -892,15 +892,11 @@ describe('PropertyRowEditor ref picker', () => {
   it('loads pages when picker is opened', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks')
-        return {
-          items: [
-            { id: 'P1', content: 'Page One', block_type: 'page' },
-            { id: 'P2', content: 'Page Two', block_type: 'page' },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space')
+        return [
+          { id: 'P1', content: 'Page One' },
+          { id: 'P2', content: 'Page Two' },
+        ]
       return null
     })
 
@@ -924,15 +920,11 @@ describe('PropertyRowEditor ref picker', () => {
   it('filters pages by search text', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks')
-        return {
-          items: [
-            { id: 'P1', content: 'Alpha Page', block_type: 'page' },
-            { id: 'P2', content: 'Beta Page', block_type: 'page' },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space')
+        return [
+          { id: 'P1', content: 'Alpha Page' },
+          { id: 'P2', content: 'Beta Page' },
+        ]
       return null
     })
 
@@ -964,15 +956,11 @@ describe('PropertyRowEditor ref picker', () => {
   it('ref picker matches Turkish İstanbul when query is lowercase istanbul', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks')
-        return {
-          items: [
-            { id: 'P1', content: 'İstanbul trip', block_type: 'page' },
-            { id: 'P2', content: 'Ankara plans', block_type: 'page' },
-          ],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space')
+        return [
+          { id: 'P1', content: 'İstanbul trip' },
+          { id: 'P2', content: 'Ankara plans' },
+        ]
       return null
     })
 
@@ -1004,12 +992,7 @@ describe('PropertyRowEditor ref picker', () => {
     const user = userEvent.setup()
     const onRefSaved = vi.fn()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks')
-        return {
-          items: [{ id: 'P1', content: 'Target Page', block_type: 'page' }],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Target Page' }]
       if (cmd === 'set_property') return undefined
       return null
     })
@@ -1052,12 +1035,7 @@ describe('PropertyRowEditor ref picker', () => {
   it('shows "No pages found" when search has no matches', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks')
-        return {
-          items: [{ id: 'P1', content: 'Only Page', block_type: 'page' }],
-          next_cursor: null,
-          has_more: false,
-        }
+      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Only Page' }]
       return null
     })
 
@@ -1131,12 +1109,7 @@ describe('PropertyRowEditor ref picker', () => {
     it('renders the EmptyState primitive when no pages match (with description)', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_blocks')
-          return {
-            items: [{ id: 'P1', content: 'Only Page', block_type: 'page' }],
-            next_cursor: null,
-            has_more: false,
-          }
+        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Only Page' }]
         return null
       })
 
@@ -1166,12 +1139,7 @@ describe('PropertyRowEditor ref picker', () => {
     it('does not show "Create new page" without onCreateNewPage callback', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_blocks')
-          return {
-            items: [{ id: 'P1', content: 'Only Page', block_type: 'page' }],
-            next_cursor: null,
-            has_more: false,
-          }
+        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Only Page' }]
         return null
       })
 
@@ -1198,12 +1166,7 @@ describe('PropertyRowEditor ref picker', () => {
       const user = userEvent.setup()
       const onCreateNewPage = vi.fn()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_blocks')
-          return {
-            items: [{ id: 'P1', content: 'Existing', block_type: 'page' }],
-            next_cursor: null,
-            has_more: false,
-          }
+        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Existing' }]
         return null
       })
 
@@ -1232,7 +1195,7 @@ describe('PropertyRowEditor ref picker', () => {
       const user = userEvent.setup()
       const onCreateNewPage = vi.fn()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+        if (cmd === 'list_all_pages_in_space') return []
         return null
       })
 
@@ -1265,12 +1228,7 @@ describe('PropertyRowEditor ref picker', () => {
       // assignment from the async closure (where flow analysis can't track it).
       let resolveSave: () => void = () => {}
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_blocks')
-          return {
-            items: [{ id: 'P1', content: 'Target Page', block_type: 'page' }],
-            next_cursor: null,
-            has_more: false,
-          }
+        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Target Page' }]
         if (cmd === 'set_property') {
           return new Promise<void>((res) => {
             resolveSave = () => res()
@@ -1316,15 +1274,11 @@ describe('PropertyRowEditor ref picker', () => {
       const user = userEvent.setup()
       let resolveSave: () => void = () => {}
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_blocks')
-          return {
-            items: [
-              { id: 'P1', content: 'Page One', block_type: 'page' },
-              { id: 'P2', content: 'Page Two', block_type: 'page' },
-            ],
-            next_cursor: null,
-            has_more: false,
-          }
+        if (cmd === 'list_all_pages_in_space')
+          return [
+            { id: 'P1', content: 'Page One' },
+            { id: 'P2', content: 'Page Two' },
+          ]
         if (cmd === 'set_property') {
           return new Promise<void>((res) => {
             resolveSave = () => res()
@@ -1370,12 +1324,7 @@ describe('PropertyRowEditor ref picker', () => {
       // assignment from the async closure (where flow analysis can't track it).
       let rejectSave: (err: Error) => void = () => {}
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_blocks')
-          return {
-            items: [{ id: 'P1', content: 'Target Page', block_type: 'page' }],
-            next_cursor: null,
-            has_more: false,
-          }
+        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Target Page' }]
         if (cmd === 'set_property') {
           return new Promise<void>((_, rej) => {
             rejectSave = (err) => rej(err)

@@ -36,7 +36,7 @@ Frontend "I want all" call sites that ignore those ceilings:
 | Severity | File:line | Limit asked | Pattern | Hazard |
 | ---------- | ----------- | ------------- | --------- | -------- |
 | HIGH | `src/stores/page-blocks.ts:125` | 500 | recursive subtree, no per-parent cursor | page editor truncates any parent with >100 children |
-| HIGH | `src/components/PropertyRowEditor.tsx:254` | 500 | one-shot list, JS `.filter()` | ref picker silently misses pages past 100 |
+| ~~HIGH~~ DONE | ~~`src/components/PropertyRowEditor.tsx:254`~~ | ~~500~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp); the existing client-side filter still works | — |
 | ~~HIGH~~ DONE | ~~`src/components/GraphView.helpers.ts:55, 62, 76`~~ | ~~5000~~ | now routes through `list_all_pages_in_space(spaceId, tagIds)` IPC (no pagination, no clamp) | — |
 | ~~HIGH~~ DONE | ~~`src/lib/export-graph.ts:19`~~ | ~~1000~~ | now routes through `list_all_pages_in_space` IPC (no pagination, no clamp) | — |
 | ~~HIGH~~ DONE | ~~`src/components/GraphView.helpers.ts:146`~~ | ~~1000~~ | now routes through `list_template_page_ids_in_space` IPC (no pagination, no clamp) | — |
