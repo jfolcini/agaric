@@ -188,7 +188,12 @@ test.describe('Template picker via slash command', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'template')
 
-    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
+    // Match the force-click pattern at line 158: under parallel load
+    // the Radix popover can detach + remount the suggestion item between
+    // visibility check and click, repeatedly retrying until timeout.
+    await list
+      .locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' })
+      .click({ force: true })
 
     const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
