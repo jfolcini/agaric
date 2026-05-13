@@ -6,7 +6,7 @@
  * - resolveTagName / resolveTagStatus (cache hit & fallback)
  * - All four resolve callbacks re-create when store version changes
  * - searchTags delegates to listTagsByPrefix and maps results
- * - searchPages short-query path (cache + fallback to listBlocks)
+ * - searchPages short-query path (cache + fallback to listAllPagesInSpace)
  * - searchPages long-query path (FTS + cache supplementation)
  * - searchPages "Create new" option logic
  * - onCreatePage creates block, updates store, and updates pagesListRef
@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../lib/tauri', () => ({
   createBlock: vi.fn(),
   createPageInSpace: vi.fn(),
-  listBlocks: vi.fn(),
+  listAllPagesInSpace: vi.fn(),
   listPageAliasesByPrefix: vi.fn(),
   listTagsByPrefix: vi.fn(),
   searchBlocks: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock('../../lib/tauri', () => ({
 import {
   createBlock,
   createPageInSpace,
-  listBlocks,
+  listAllPagesInSpace,
   listPageAliasesByPrefix,
   listTagsByPrefix,
   searchBlocks,
@@ -38,7 +38,7 @@ import { useBlockResolve } from '../useBlockResolve'
 
 const mockedCreateBlock = vi.mocked(createBlock)
 const mockedCreatePageInSpace = vi.mocked(createPageInSpace)
-const mockedListBlocks = vi.mocked(listBlocks)
+const mockedListAllPagesInSpace = vi.mocked(listAllPagesInSpace)
 const mockedListPageAliasesByPrefix = vi.mocked(listPageAliasesByPrefix)
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
@@ -503,8 +503,8 @@ describe('searchPages — short query (<=2 chars)', () => {
       items = await result.current.searchPages('my')
     })
 
-    // Should NOT call listBlocks since cache is populated
-    expect(mockedListBlocks).not.toHaveBeenCalled()
+    // Should NOT call listAllPagesInSpace since cache is populated
+    expect(mockedListAllPagesInSpace).not.toHaveBeenCalled()
     expect(items).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'P1', label: 'My Page' })]),
     )
@@ -515,39 +515,25 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(ids).not.toContain('P3')
   })
 
-  it('falls back to listBlocks when pagesListRef is empty', async () => {
-    mockedListBlocks.mockResolvedValueOnce({
-      items: [
-        {
-          id: 'P10',
-          block_type: 'page',
-          content: 'Alpha',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: null,
-        },
-        {
-          id: 'P11',
-          block_type: 'page',
-          content: 'Beta',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: null,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
+  it('falls back to listAllPagesInSpace when pagesListRef is empty', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      {
+        id: 'P10',
+        content: 'Alpha',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+      {
+        id: 'P11',
+        content: 'Beta',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -556,11 +542,7 @@ describe('searchPages — short query (<=2 chars)', () => {
       items = await result.current.searchPages('al')
     })
 
-    expect(mockedListBlocks).toHaveBeenCalledWith({
-      blockType: 'page',
-      limit: 500,
-      spaceId: 'SPACE_TEST',
-    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledWith('SPACE_TEST')
     // Should match "Alpha" (contains "al")
     const matchIds = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(matchIds).toContain('P10')
@@ -568,26 +550,17 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(matchIds).not.toContain('P11')
   })
 
-  it('populates pagesListRef cache after listBlocks fallback', async () => {
-    mockedListBlocks.mockResolvedValueOnce({
-      items: [
-        {
-          id: 'P20',
-          block_type: 'page',
-          content: 'Cached Page',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: null,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
+  it('populates pagesListRef cache after listAllPagesInSpace fallback', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      {
+        id: 'P20',
+        content: 'Cached Page',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -599,25 +572,16 @@ describe('searchPages — short query (<=2 chars)', () => {
   })
 
   it('handles null content as "Untitled"', async () => {
-    mockedListBlocks.mockResolvedValueOnce({
-      items: [
-        {
-          id: 'P30',
-          block_type: 'page',
-          content: null,
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: null,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      {
+        id: 'P30',
+        content: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1357,11 +1321,11 @@ describe('error handling', () => {
     expect(items).toEqual([])
   })
 
-  it('searchPages returns [] when listBlocks rejects (short query, empty cache)', async () => {
-    mockedListBlocks.mockRejectedValue(new Error('DB connection lost'))
+  it('searchPages returns [] when listAllPagesInSpace rejects (short query, empty cache)', async () => {
+    mockedListAllPagesInSpace.mockRejectedValue(new Error('DB connection lost'))
 
     const { result } = renderHook(() => useBlockResolve())
-    // pagesListRef is empty by default, so it will fall back to listBlocks
+    // pagesListRef is empty by default, so it will fall back to listAllPagesInSpace
 
     let items: unknown
     await act(async () => {

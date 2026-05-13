@@ -264,8 +264,8 @@ beforeEach(() => {
   // populated load override this with their own mockImplementation.
   // limit-clamp-followup — `list_all_pages_in_space` returns a flat
   // array (`PageHeading[]`), not the paginated `emptyPage` shape; the
-  // date-mode lookup in `handleDateMode` (and downstream picker-cache
-  // fallback) would call `.find`/`.map` on an object otherwise.
+  // picker-cache fallback in `useBlockResolve` would call `.map` on
+  // an object otherwise.
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
     if (cmd === 'list_all_pages_in_space') return []
@@ -498,6 +498,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages shows Untitled for pages with null content', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'load_page_subtree') return []
+      if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
 
@@ -507,25 +508,18 @@ describe('BlockTree picker wiring', () => {
       expect(capturedSearchPages).toBeDefined()
     })
 
-    const pagesResp = {
-      items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: null,
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    // limit-clamp-followup — empty query hits the cache path, now
+    // backed by `list_all_pages_in_space` (flat `PageHeading[]`).
+    mockedInvoke.mockResolvedValueOnce([
+      {
+        id: 'P1',
+        content: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
 
     // Empty query matches everything (including null content treated as '')
     const results = await capturedSearchPages?.('')
@@ -633,6 +627,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages does NOT append create-new for empty query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'load_page_subtree') return []
+      if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
 
@@ -642,25 +637,18 @@ describe('BlockTree picker wiring', () => {
       expect(capturedSearchPages).toBeDefined()
     })
 
-    const pagesResp = {
-      items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: 'Some page',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    // limit-clamp-followup — empty query hits the cache path, now
+    // backed by `list_all_pages_in_space` (flat `PageHeading[]`).
+    mockedInvoke.mockResolvedValueOnce([
+      {
+        id: 'P1',
+        content: 'Some page',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
 
     const results = await capturedSearchPages?.('')
 
@@ -670,6 +658,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages does NOT append create-new for whitespace-only query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'load_page_subtree') return []
+      if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
 
@@ -679,7 +668,10 @@ describe('BlockTree picker wiring', () => {
       expect(capturedSearchPages).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    // limit-clamp-followup — whitespace-only query also lands in the
+    // cache path; mock `list_all_pages_in_space` returns an empty
+    // flat array.
+    mockedInvoke.mockResolvedValueOnce([])
 
     const results = await capturedSearchPages?.('   ')
 
@@ -2163,6 +2155,7 @@ describe('BlockTree searchPages caching', () => {
   it('searchPages short-query fallback caches results for subsequent calls', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'load_page_subtree') return []
+      if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
 
@@ -2172,28 +2165,22 @@ describe('BlockTree searchPages caching', () => {
       expect(capturedSearchPages).toBeDefined()
     })
 
-    // Short query (≤2 chars) uses cache path with listBlocks fallback
-    const pagesResp = {
-      items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: 'Alpha Page',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    }
+    // limit-clamp-followup — short query (≤2 chars) uses the cache
+    // path that now hydrates from `list_all_pages_in_space` (flat
+    // `PageHeading[]`), not the old paginated `list_blocks` shape.
+    const pagesResp = [
+      {
+        id: 'P1',
+        content: 'Alpha Page',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ]
     // Route by command name to avoid resolve_page_by_alias consuming the mock
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return pagesResp
+      if (cmd === 'list_all_pages_in_space') return pagesResp
       if (cmd === 'resolve_page_by_alias') return null
       return emptyPage
     })
@@ -2205,17 +2192,18 @@ describe('BlockTree searchPages caching', () => {
       expect.objectContaining({ id: '__create__', label: 'al', isCreate: true }),
     ])
 
-    // Second call — should NOT trigger another list_blocks call (cached in pagesListRef)
-    // But resolve_page_by_alias is still called (not cached)
-    const listBlocksCallsBefore = mockedInvoke.mock.calls.filter(
-      (c) => c[0] === 'list_blocks',
+    // Second call — should NOT trigger another list_all_pages_in_space
+    // call (cached in pagesListRef).  resolve_page_by_alias is still
+    // called (not cached).
+    const listCallsBefore = mockedInvoke.mock.calls.filter(
+      (c) => c[0] === 'list_all_pages_in_space',
     ).length
     const result2 = await capturedSearchPages?.('al')
-    const listBlocksCallsAfter = mockedInvoke.mock.calls.filter(
-      (c) => c[0] === 'list_blocks',
+    const listCallsAfter = mockedInvoke.mock.calls.filter(
+      (c) => c[0] === 'list_all_pages_in_space',
     ).length
 
-    expect(listBlocksCallsAfter).toBe(listBlocksCallsBefore)
+    expect(listCallsAfter).toBe(listCallsBefore)
     expect(result2).toEqual([
       expect.objectContaining({ id: 'P1', label: 'Alpha Page' }),
       expect.objectContaining({ id: '__create__', label: 'al', isCreate: true }),

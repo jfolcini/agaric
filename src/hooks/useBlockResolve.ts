@@ -22,7 +22,7 @@ import { logger } from '../lib/logger'
 import {
   createBlock,
   createPageInSpace,
-  listBlocks,
+  listAllPagesInSpace,
   listPageAliasesByPrefix,
   listTagsByPrefix,
   searchBlocks,
@@ -81,23 +81,28 @@ function makePagePickerItem(id: string, title: string): PickerItem {
 
 /**
  * Short-query strategy: fuzzy-match against the preloaded pages cache.
- * Lazily falls back to `listBlocks` when the cache is empty, populating
- * `pagesListRef` as a side effect for subsequent calls.
+ * Lazily falls back to `listAllPagesInSpace` when the cache is empty,
+ * populating `pagesListRef` as a side effect for subsequent calls.
  *
- * FEAT-3 Phase 2 — the lazy `listBlocks` fallback is scoped to the
- * current space via `spaceId`. Cross-space `[[ULID]]` targets that are
- * already in the document continue to resolve via the shared resolve
- * cache, they just don't appear as new suggestions.
+ * FEAT-3 Phase 2 — the lazy fallback is scoped to the current space via
+ * `spaceId`. Cross-space `[[ULID]]` targets that are already in the
+ * document continue to resolve via the shared resolve cache, they just
+ * don't appear as new suggestions.
  */
 async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
   let source = pagesListRef.current
   if (source.length === 0) {
-    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
-    // fallback is intentional pre-bootstrap behaviour: empty string
-    // forces a no-match SQL filter rather than a runtime null deref.
+    // limit-clamp-followup — replaced the silently-clamped
+    // `listBlocks({ limit: 500 })` call with `listAllPagesInSpace`, the
+    // no-pagination IPC that returns every page in the space.  The
+    // `?? ''` fallback is preserved pre-bootstrap: the backend treats
+    // an empty `space_id` as a no-match filter (the `block_properties`
+    // `value_ref = ?` clause never matches the empty string since
+    // space IDs are ULIDs), so we get an empty list instead of a
+    // runtime null deref.
     const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
-    const resp = await listBlocks({ blockType: 'page', limit: 500, spaceId })
-    source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
+    const pages = await listAllPagesInSpace(spaceId)
+    source = pages.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
     pagesListRef.current = source
   }
   const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
