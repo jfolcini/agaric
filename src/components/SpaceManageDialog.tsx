@@ -59,7 +59,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
-import { createSpace, getBatchProperties, listBlocks } from '@/lib/tauri'
+import { createSpace, getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { ACCENT_SWATCHES, type AccentToken } from './SpaceManageDialog/SpaceAccentPicker'
@@ -280,7 +280,7 @@ export function SpaceManageDialog({
             const result = await listBlocks({
               blockType: 'page',
               spaceId: id,
-              limit: 1,
+              limit: listBlocksLimit(1),
             })
             if (!active) return
             // Spaces are themselves page blocks. The current

@@ -35,7 +35,7 @@
 
 import { create } from 'zustand'
 import { logger } from '../lib/logger'
-import { listBlocks, listTagsByPrefix } from '../lib/tauri'
+import { listBlocks, listBlocksLimit, listTagsByPrefix } from '../lib/tauri'
 import { useSpaceStore } from './space'
 
 const MAX_CACHE_SIZE = 10_000
@@ -157,7 +157,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         while (hasMore) {
           const pagesResp = await listBlocks({
             blockType: 'page',
-            limit: 1000,
+            limit: listBlocksLimit(100),
             cursor,
             spaceId,
           })

@@ -5,6 +5,7 @@ import {
   firstChildForBlocks,
   getProperty,
   loadPageSubtree,
+  paginationLimit,
   queryByProperty,
 } from './tauri'
 
@@ -23,7 +24,7 @@ export async function loadTemplatePages(spaceId: string | null): Promise<BlockRo
   const resp = await queryByProperty({
     key: 'template',
     valueText: 'true',
-    limit: 100,
+    limit: paginationLimit(100),
     spaceId,
     blockType: 'page',
   })
@@ -48,7 +49,7 @@ export async function loadJournalTemplate(spaceId: string | null): Promise<{
   const resp = await queryByProperty({
     key: 'journal-template',
     valueText: 'true',
-    limit: 10,
+    limit: paginationLimit(10),
     spaceId,
     blockType: 'page',
   })

@@ -14,7 +14,15 @@ import { toast } from 'sonner'
 import { formatDate, getTodayString } from '@/lib/date-utils'
 import { logger } from '../lib/logger'
 import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
-import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
+import {
+  batchResolve,
+  listBlocks,
+  listBlocksLimit,
+  listProjectedAgenda,
+  listProjectedAgendaLimit,
+  paginationLimit,
+  queryByProperty,
+} from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { useBlockPropertyEvents } from './useBlockPropertyEvents'
 
@@ -113,7 +121,7 @@ function listBlocksForAgenda(
     agendaDate: date,
     ...(effectiveSource != null && { agendaSource: effectiveSource }),
     ...(cursor != null && { cursor }),
-    limit,
+    limit: listBlocksLimit(limit),
     spaceId,
   })
 }
@@ -205,9 +213,19 @@ export function useDuePanelData({
 
     async function fetchOverdue() {
       try {
+        // limit-clamp-followup — push the date filter into SQL via
+        // `valueDateRange`.  The half-open `['0001-01-01', date)` window
+        // returns only blocks whose `due_date` precedes `date`; the
+        // todo-state / content filters remain client-side because
+        // `query_by_property` filters on the property column only.
+        // The 200-row cap matches `PageRequest::new`'s `MAX_PAGE_SIZE`
+        // (the silent clamp the previous `limit: 500` was hitting);
+        // workspaces with more than 200 distinct overdue items would
+        // need cursor pagination, which the Due panel doesn't surface.
         const resp = await queryByProperty({
           key: 'due_date',
-          limit: 500,
+          valueDateRange: ['0001-01-01', date],
+          limit: paginationLimit(200),
           spaceId: currentSpaceId,
         })
         if (stale) return
@@ -256,13 +274,6 @@ export function useDuePanelData({
 
     async function fetchUpcoming() {
       try {
-        const resp = await queryByProperty({
-          key: 'due_date',
-          limit: 500,
-          spaceId: currentSpaceId,
-        })
-        if (stale) return
-
         // Filter: due_date is between tomorrow and today + warningDays
         const tomorrow = new Date()
         tomorrow.setDate(tomorrow.getDate() + 1)
@@ -271,6 +282,26 @@ export function useDuePanelData({
         const endDate = new Date()
         endDate.setDate(endDate.getDate() + warningDays)
         const endStr = formatDate(endDate)
+
+        // limit-clamp-followup — push the date filter into SQL via
+        // `valueDateRange`.  `valueDateRange` is half-open `[start,
+        // endExclusive)`, so we advance `endStr` by one day to keep
+        // the inclusive last date in the result set (mirrors the
+        // pattern in `agenda-filters.queryPropertyDateDimension`).
+        // Limit reduced to 200 (the actual cap of `query_by_property`
+        // via `PageRequest::new`); workspaces with more than 200
+        // upcoming items in the warning window would need cursor
+        // pagination, which the Due panel doesn't surface.
+        const endExclusiveDate = new Date(`${endStr}T00:00:00`)
+        endExclusiveDate.setDate(endExclusiveDate.getDate() + 1)
+        const endExclusive = formatDate(endExclusiveDate)
+        const resp = await queryByProperty({
+          key: 'due_date',
+          valueDateRange: [tomorrowStr, endExclusive],
+          limit: paginationLimit(200),
+          spaceId: currentSpaceId,
+        })
+        if (stale) return
 
         const upcoming = resp.items.filter(
           (b) =>
@@ -442,7 +473,7 @@ export function useDuePanelData({
     listProjectedAgenda({
       startDate: date,
       endDate: date,
-      limit: 20,
+      limit: listProjectedAgendaLimit(20),
       spaceId: currentSpaceId,
     })
       .then((response) => {

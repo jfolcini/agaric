@@ -31,6 +31,9 @@ vi.mock('../../lib/tauri', () => ({
   getBlock: vi.fn(),
   setDueDate: vi.fn(),
   setScheduledDate: vi.fn(),
+  paginationLimit: (n: number) => n,
+  listProjectedAgendaLimit: (n: number) => n,
+  listBlocksLimit: (n: number) => n,
 }))
 
 vi.mock('../RichContentRenderer', () => ({

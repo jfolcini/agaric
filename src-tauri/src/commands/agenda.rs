@@ -188,9 +188,21 @@ pub async fn list_projected_agenda_inner(
         None => None,
     };
 
-    // Per-page limit clamped to [1, 500].
-    let limit_i64 = limit.unwrap_or(200).clamp(1, 500);
-    // safe: clamp guarantees [1, 500]
+    // Per-page limit must be in `[1, 500]` (limit-clamp-followup Phase 1:
+    // silent clamp converted to a loud `AppError::Validation` so a caller
+    // asking for >500 fails synchronously instead of silently truncating
+    // to 500).  `None` falls through to the historical default of 200.
+    let limit_i64 = match limit {
+        Some(l) if (1..=500).contains(&l) => l,
+        Some(l) => {
+            return Err(AppError::Validation(format!(
+                "list_projected_agenda limit must be in [1, 500]; got {l}. \
+                 For larger result sets, use cursor pagination."
+            )));
+        }
+        None => 200,
+    };
+    // safe: validated above as [1, 500]
     let cap = usize::try_from(limit_i64).unwrap_or(200);
 
     // Parse date range boundaries

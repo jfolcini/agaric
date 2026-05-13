@@ -22,7 +22,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
-import { createPageInSpace, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
+import {
+  createPageInSpace,
+  deleteProperty,
+  paginationLimit,
+  queryByProperty,
+  setProperty,
+} from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
@@ -56,7 +62,7 @@ export function TemplatesView(): React.ReactElement {
       const journalResp = await queryByProperty({
         key: 'journal-template',
         valueText: 'true',
-        limit: 10,
+        limit: paginationLimit(10),
         spaceId: currentSpaceId,
         blockType: 'page',
       })

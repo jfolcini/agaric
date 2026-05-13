@@ -7,6 +7,67 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 703 — limit-clamp-followup CLOSED: useDuePanelData + Phase 1 strict clamps + Phase 3 typed boundary (2026-05-13)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-13 |
+| **Subagents** | 1 Plan (Phase 1 fallout audit) + 1 build (Phase 3 SafeLimit fallout wrap) + orchestrator-direct on the rest |
+| **Items closed** | the last MEDIUM row (`useDuePanelData.ts`) + Phase 1 strict clamps (5 sites) + Phase 3 typed boundary (`SafeLimit` brand at IPC wrapper layer).  `pending/limit-clamp-followup-2026-05-09.md` hazard table is now empty; both Phase 1 and Phase 3 sections marked DONE |
+| **Items modified** | — |
+| **Tests added** | rewrote 4 Rust clamp tests (`f14_page_size_*`, `page_request_clamps_limit_to_valid_range`) from clamp-asserting to `AppError::Validation`-asserting |
+| **Files touched** | ~30 (5 backend clamps + 2 new FE modules + 17 wrapper signatures + ~10 caller sites + bulk literal wraps in test + docs) |
+
+**Summary:** the BUG-48 anti-pattern is now closed at every layer.  Phase 1 converts the five silent clamps to `AppError::Validation`, so a caller asking `limit > cap` gets a synchronous error at the IPC boundary rather than mysterious truncated data months later.  Phase 3 adds a `SafeLimit` branded `number` at the FE wrapper layer, so the same caller can't even compile if they pass a naked numeric literal — they must route through `safeLimit(n, max)` (or one of `listBlocksLimit`, `paginationLimit`, `listProjectedAgendaLimit`), which runs the bounds check at the call site.  Named cap constants (`PAGINATION_LIMIT`, `AGENDA_QUERY_LIMIT`, `AGENDA_LIST_BLOCKS_LIMIT`) are themselves typed as `SafeLimit` so call sites that already use them required no edits.
+
+**Departure from the original doc sketch:** the followup doc proposed `SafeLimit<MAX>` (per-IPC cap encoded in the brand).  We shipped a single unparameterised `SafeLimit` instead — the parameterised version made `SafeLimit<200>` incompatible with a `SafeLimit<100>` slot, which broke the share-one-constant-across-IPCs pattern (e.g. `PAGINATION_LIMIT = 50` for both cap-100 `listBlocks` and cap-200 `queryByProperty`).  The single-brand shape leans on Phase 1's backend `AppError::Validation` for the numeric-cap enforcement; the type system only enforces "you went through `safeLimit()`".  This is exactly the kill-criterion case the doc anticipated ("brand juggling at every call site → prefer a runtime audit rule").  Doc updated to record the design choice.
+
+**useDuePanelData fix:** doc previously mis-identified the route as `list_agenda` cap 500; the actual route was `queryByProperty` → `PageRequest::new` cap 200 (silently clamped).  Switched to `valueDateRange`-pushdown (half-open `[start, endExclusive)`) for both the overdue and upcoming branches, reduced `limit` to 200 (the actual cap), and kept the client-side date check as defense-in-depth (mocked tests rely on it).
+
+**REVIEW-LATER impact:**
+- Hazard table: 0 open rows (was 1).
+- Phase 1, Phase 2, Phase 3 all closed.  `pending/limit-clamp-followup-2026-05-09.md` retired in this session; the canonical reference is now `ARCHITECTURE.md §5 — Pagination limits` + `AGENTS.md` invariant #10.
+
+**Files touched (this session):**
+- `src/hooks/useDuePanelData.ts` — `queryByProperty` switched to `valueDateRange` pushdown, `limit` 500 → 200.
+- `src-tauri/src/commands/blocks/queries.rs` — strict clamp on `list_blocks_inner` (cap 100).
+- `src-tauri/src/pagination/mod.rs` — strict clamp on `PageRequest::new` (cap 200, default 50).
+- `src-tauri/src/commands/agenda.rs` — strict clamp on `list_projected_agenda_inner` (cap 500, default 200).
+- `src-tauri/src/commands/pages.rs` — strict clamps on `list_pages_inner` + `get_page_inner` (cap `MCP_PAGE_LIMIT_CAP`).
+- `src-tauri/src/tag_query/query.rs` — strict clamp on `list_tags_by_prefix` (cap 200, default 200).
+- `src-tauri/src/commands/tests/edge_case_tests.rs` — rewrote 3 F14 tests from clamp-asserting to Validation-asserting.
+- `src-tauri/src/pagination/tests.rs` — rewrote `page_request_clamps_limit_to_valid_range` similarly.
+- `src/lib/safe-limit.ts` — new module: `SafeLimit` brand + `safeLimit` + three per-IPC helpers.
+- `src/lib/tauri.ts` — 17 wrapper signatures changed from `limit?: number` to `limit?: SafeLimit`.
+- `src/lib/constants.ts` — `PAGINATION_LIMIT` typed as `SafeLimit`.
+- `src/lib/agenda-filters.ts` — `AGENDA_QUERY_LIMIT` and `AGENDA_LIST_BLOCKS_LIMIT` typed as `SafeLimit`.
+- `src/stores/resolve.ts` — `listBlocks` cursor-paginated loop, `limit` 1000 → 100.
+- ~10 FE call sites wrapped with `paginationLimit(n)` / `listBlocksLimit(n)` / `listProjectedAgendaLimit(n)`.
+- `src/lib/__tests__/tauri.test.ts` — 15 test literals wrapped with the helpers (mechanical pass).
+- `pending/limit-clamp-followup-2026-05-09.md` — **deleted** (canonical reference moved into `ARCHITECTURE.md` + `AGENTS.md`).
+- `ARCHITECTURE.md` — new "Pagination limits — typed boundary + strict backend validation" subsection under §5 documenting both the `AppError::Validation` backend gate, the `SafeLimit` brand, the no-clamp dedicated IPCs, and the design departure from the originally-sketched parameterised brand.
+- `AGENTS.md` — new invariant #10 ("Pagination `limit` is loud at both ends") + anti-pattern entry ("Numeric `limit:` literals in IPC calls").
+- `SESSION-LOG.md` — this entry.
+
+**Verification:**
+- `npx tsc -p tsconfig.app.json --noEmit` — 0 errors after the Phase 3 fallout sweep.
+- `npx vitest run` — 9592 tests pass across 396 files.
+- `cd src-tauri && cargo nextest run` — 3634 tests pass, 4 skipped.
+- `cd src-tauri && cargo sqlx prepare -- --tests` — 0 new query hashes (the strict-clamp conversion did not add/change SQL).
+- `prek run --all-files` — pending (orchestrator step).
+
+**Process notes:**
+- The Plan agent's read-only audit produced a precise BROKEN/AT-EDGE/PASS map that turned Phase 1 into a mechanical sweep instead of a guessing game.  Worth repeating for any future "find every call site that violates this contract" pass.
+- The first cut of `SafeLimit<MAX>` (parameterised) was actively unhelpful — it surfaced inter-IPC incompatibility errors that didn't reflect real safety problems.  The single-brand pivot took ~10 minutes and removed ~25 spurious tsc errors.  Lesson: lean on the runtime cap (Phase 1) for numeric enforcement and use the type system only for the "must go through the check" boundary.
+- The doc's prediction that "If `safeLimit` (Phase 3) ends up requiring brand juggling at every call site, prefer a runtime audit/lint rule" was almost right — but the single-brand shape eliminates *most* of the brand juggling by letting one constant satisfy every wrapper, so the typed approach is sustainable after all.
+
+**Lessons learned (for future sessions):**
+- Branded numeric types in TS: prefer the simplest unparameterised brand and let runtime checks carry the cap-value enforcement.  Parameterised brands (`Brand<MAX>`) only pay off when the per-parameter values are pairwise incompatible by design — here they aren't.
+- When converting silent clamps to strict, run a Plan-agent audit first so the test-failure list is bounded; otherwise the first commit churns on tests that were quietly relying on clamp semantics.
+
+**Commit plan:** single bundled commit per user direction (Session 702's same shape).  Covers useDuePanelData + Phase 1 + Phase 3 in one logical change.
+
+---
 ## Session 702 — limit-clamp-followup: Phase 2c/2d/2e remaining MEDIUM + LOW rows (2026-05-13)
 
 | Metadata | Value |

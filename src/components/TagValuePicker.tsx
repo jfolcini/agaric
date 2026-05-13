@@ -15,7 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
-import { listTagsByPrefix } from '../lib/tauri'
+import { listTagsByPrefix, paginationLimit } from '../lib/tauri'
 
 interface TagResult {
   tag_id: string
@@ -40,7 +40,7 @@ export function TagValuePicker({
 
   const search = useCallback(async (prefix: string) => {
     try {
-      const tags = await listTagsByPrefix({ prefix, limit: 20 })
+      const tags = await listTagsByPrefix({ prefix, limit: paginationLimit(20) })
       setResults(
         tags.map((tag) => ({
           tag_id: tag.tag_id,

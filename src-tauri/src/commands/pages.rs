@@ -791,8 +791,17 @@ pub async fn list_pages_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let capped = limit.map(|l| l.clamp(1, MCP_PAGE_LIMIT_CAP));
-    let page = PageRequest::new(cursor, capped)?;
+    // limit-clamp-followup Phase 1: reject limits outside
+    // `[1, MCP_PAGE_LIMIT_CAP]` loudly (was silently clamped).
+    if let Some(l) = limit {
+        if !(1..=MCP_PAGE_LIMIT_CAP).contains(&l) {
+            return Err(AppError::Validation(format!(
+                "list_pages limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
+                 For larger result sets, use cursor pagination."
+            )));
+        }
+    }
+    let page = PageRequest::new(cursor, limit)?;
     // FEAT-3 Phase 2: `list_pages` is the MCP (agent) page enumeration
     // and stays unscoped — agents see every space. Frontend-facing page
     // lookups go through `list_blocks_inner` which threads `space_id`.
@@ -890,8 +899,17 @@ pub async fn get_page_inner(
         )));
     }
 
-    let capped = limit.map(|l| l.clamp(1, MCP_PAGE_LIMIT_CAP));
-    let page_req = PageRequest::new(cursor, capped)?;
+    // limit-clamp-followup Phase 1: reject limits outside
+    // `[1, MCP_PAGE_LIMIT_CAP]` loudly (was silently clamped).
+    if let Some(l) = limit {
+        if !(1..=MCP_PAGE_LIMIT_CAP).contains(&l) {
+            return Err(AppError::Validation(format!(
+                "get_page limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
+                 For larger result sets, use cursor pagination."
+            )));
+        }
+    }
+    let page_req = PageRequest::new(cursor, limit)?;
     let fetch_limit = page_req.limit + 1;
 
     // Keyset: `(position, id)`. `NULL_POSITION_SENTINEL` is used as the

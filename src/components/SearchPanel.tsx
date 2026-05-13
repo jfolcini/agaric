@@ -48,6 +48,7 @@ import {
   getBlock,
   listAllPagesInSpace,
   listTagsByPrefix,
+  paginationLimit,
   searchBlocks,
 } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
@@ -177,7 +178,7 @@ export function SearchPanel(): React.ReactElement {
       }
       const res = await searchBlocks({
         query: trimmed,
-        limit: 20,
+        limit: paginationLimit(20),
         spaceId,
       })
       return res.items.filter((b) => b.block_type === 'page')
@@ -187,7 +188,7 @@ export function SearchPanel(): React.ReactElement {
   // PEND-30 D-3 — tag picker: server-side prefix matching, no extra deps.
   const tagPopover = usePopoverEntity<TagCacheRow>({
     logLabel: 'tag',
-    searchFn: (q) => listTagsByPrefix({ prefix: q, limit: 20 }),
+    searchFn: (q) => listTagsByPrefix({ prefix: q, limit: paginationLimit(20) }),
   })
 
   // Load recent pages from localStorage on mount

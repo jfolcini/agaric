@@ -22,6 +22,7 @@ vi.mock('../../lib/tauri', () => ({
   listPageAliasesByPrefix: vi.fn(),
   listTagsByPrefix: vi.fn(),
   searchBlocks: vi.fn(),
+  paginationLimit: (n: number) => n,
 }))
 
 import {

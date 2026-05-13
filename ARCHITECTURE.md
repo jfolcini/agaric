@@ -499,6 +499,46 @@ All list queries use cursor-based (keyset) pagination. No offset pagination anyw
 all and filter in Rust." Enforced from Phase 1. One intentional exception: `undo_page_op_inner`
 uses `LIMIT 1 OFFSET N` for undo-depth navigation (not a list query).
 
+### Pagination limits — typed boundary + strict backend validation
+
+Two coordinated boundaries enforce the BUG-48 contract (`limit` values may not silently truncate):
+
+- **Backend (Rust):** every `limit: Option<i64>` parameter accepted at an IPC boundary is
+  validated against the wrapper's cap and surfaces `AppError::Validation` when out of range.
+  Five clamps:
+  - `list_blocks_inner` → `[1, 100]`
+  - `pagination::PageRequest::new` → `[1, 200]` (covers `query_by_property`, `list_unfinished_tasks`,
+    `list_undated_tasks`, `list_tags_by_prefix`, `list_backlinks`, search, history, …)
+  - `list_projected_agenda_inner` → `[1, 500]`
+  - `list_pages_inner` / `get_page_inner` (MCP-only) → `[1, MCP_PAGE_LIMIT_CAP=100]`
+  No silent `clamp(1, cap)` remains anywhere on a `limit` parameter.
+
+- **Frontend (TypeScript):** `src/lib/safe-limit.ts` exports a `SafeLimit` brand
+  (`number & { readonly [SAFE_LIMIT]: true }`) plus a single bounds-checked constructor
+  `safeLimit(n, max)` and three per-IPC shorthands: `listBlocksLimit`, `paginationLimit`,
+  `listProjectedAgendaLimit`. Every pagination-aware wrapper in `src/lib/tauri.ts` accepts
+  `limit?: SafeLimit | undefined`, so a naked numeric literal does not compile. Three named
+  cap constants (`PAGINATION_LIMIT` in `src/lib/constants.ts`, `AGENDA_QUERY_LIMIT` and
+  `AGENDA_LIST_BLOCKS_LIMIT` in `src/lib/agenda-filters.ts`) are themselves typed as `SafeLimit`
+  so call sites that use a shared constant compose without an explicit `safeLimit(...)` wrap.
+
+  The brand is intentionally **unparameterised** (single `SafeLimit`, not
+  `SafeLimit<MAX>`): a parameterised brand made each per-IPC cap pairwise incompatible and
+  broke the share-one-constant-across-IPCs pattern without runtime benefit (the actual
+  numeric cap is enforced by the backend `Validation` above). The type system enforces "you
+  went through `safeLimit()`"; the backend enforces the numeric cap.
+
+- **"All of X" callers** must NOT use the limit-bearing IPCs at all. Five no-clamp,
+  no-pagination dedicated IPCs exist for that need:
+  `list_all_pages_in_space`, `list_all_tags_in_space`, `count_trash`, `load_page_subtree`,
+  `list_template_page_ids_in_space`. Each returns a bounded result set whose upper bound is
+  intrinsic to the space (page count, tag count, descendant count) — no `limit` argument is
+  exposed.
+
+History: this section was added after the limit-clamp followup (sessions 700–703) closed the
+BUG-48 anti-pattern at every layer. See those SESSION-LOG entries for the per-row migration
+path.
+
 ---
 
 ## 6. Content Format & Serializer

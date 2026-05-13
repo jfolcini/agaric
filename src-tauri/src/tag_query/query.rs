@@ -133,13 +133,28 @@ pub async fn eval_tag_query(
 const MAX_TAGS_PREFIX: i64 = 200;
 
 /// List all tags whose name starts with `prefix`, ordered by name.
+///
+/// `limit` must be in `[1, MAX_TAGS_PREFIX]` when supplied; a value
+/// outside that range surfaces as `AppError::Validation`
+/// (limit-clamp-followup Phase 1).  `None` falls through to
+/// `MAX_TAGS_PREFIX` as the default cap.
 pub async fn list_tags_by_prefix(
     pool: &SqlitePool,
     prefix: &str,
     limit: Option<i64>,
 ) -> Result<Vec<TagCacheRow>, AppError> {
     let like_pattern = format!("{}%", escape_like(prefix));
-    let effective_limit = limit.unwrap_or(MAX_TAGS_PREFIX);
+    let effective_limit = match limit {
+        Some(l) if (1..=MAX_TAGS_PREFIX).contains(&l) => l,
+        Some(l) => {
+            return Err(AppError::Validation(format!(
+                "list_tags_by_prefix limit must be in [1, {MAX_TAGS_PREFIX}]; got {l}. \
+                 Tag listings are typeahead-style — clamp your input to a sensible \
+                 upper bound."
+            )));
+        }
+        None => MAX_TAGS_PREFIX,
+    };
     let rows = sqlx::query_as!(
         TagCacheRow,
         r#"SELECT tag_id, name, usage_count, updated_at

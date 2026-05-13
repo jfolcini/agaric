@@ -20,7 +20,7 @@ import type { NavigateToPageFn } from '../../lib/block-events'
 import { logger } from '../../lib/logger'
 import { priorityColor } from '../../lib/priority-color'
 import type { BlockRow } from '../../lib/tauri'
-import { batchResolve, listUnfinishedTasks } from '../../lib/tauri'
+import { batchResolve, listUnfinishedTasks, paginationLimit } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
 import { BlockListItem } from '../BlockListItem'
 import { LoadingSkeleton } from '../LoadingSkeleton'
@@ -215,7 +215,7 @@ export function UnfinishedTasks({
         const resp = await listUnfinishedTasks({
           beforeDate: todayStr,
           todoStates: ['TODO', 'DOING'],
-          limit: 200,
+          limit: paginationLimit(200),
           spaceId: currentSpaceId,
         })
 

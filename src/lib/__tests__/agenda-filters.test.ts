@@ -33,8 +33,8 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('AGENDA_QUERY_LIMIT', () => {
-  it('is 500 (FE-H-2: shared agenda IPC pagination limit)', () => {
-    expect(AGENDA_QUERY_LIMIT).toBe(500)
+  it('is 200 (limit-clamp-followup Phase 1: pinned to PageRequest::new cap)', () => {
+    expect(AGENDA_QUERY_LIMIT).toBe(200)
   })
 })
 
@@ -283,7 +283,7 @@ describe('executeAgendaFilters', () => {
         valueDate: null,
         operator: null,
         cursor: null,
-        limit: 500,
+        limit: 200,
         scope: { kind: 'active', space_id: '' },
         extraFilters: {
           excludeParentId: null,
@@ -343,7 +343,7 @@ describe('executeAgendaFilters', () => {
         valueDate: null,
         operator: null,
         cursor: null,
-        limit: 500,
+        limit: 200,
         scope: { kind: 'active', space_id: '' },
         extraFilters: {
           excludeParentId: null,
@@ -683,7 +683,7 @@ describe('executeAgendaFilters', () => {
         valueDate: null,
         operator: null,
         cursor: null,
-        limit: 500,
+        limit: 200,
         scope: { kind: 'active', space_id: '' },
         extraFilters: {
           excludeParentId: null,
@@ -793,7 +793,7 @@ describe('executeAgendaFilters', () => {
         valueDate: null,
         operator: null,
         cursor: null,
-        limit: 500,
+        limit: 200,
         scope: { kind: 'active', space_id: '' },
         extraFilters: {
           excludeParentId: null,
