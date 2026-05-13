@@ -25,6 +25,7 @@ import {
   listAllPagesInSpace,
   listPageAliasesByPrefix,
   listTagsByPrefix,
+  paginationLimit,
   searchBlocks,
 } from '../lib/tauri'
 import { keyFor, useResolveStore } from '../stores/resolve'
@@ -121,7 +122,7 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   // fallback is intentional pre-bootstrap behaviour (see
   // `searchPagesViaCache` for the rationale).
   const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
-  const resp = await searchBlocks({ query: q, limit: 20, spaceId })
+  const resp = await searchBlocks({ query: q, limit: paginationLimit(20), spaceId })
   const matches = resp.items
     .filter((b) => b.block_type === 'page')
     .map((b) => makePagePickerItem(b.id, b.content ?? 'Untitled'))
@@ -379,7 +380,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // fallback is intentional pre-bootstrap behaviour: empty string
       // forces a no-match SQL filter rather than a runtime null deref.
       const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
-      const resp = await searchBlocks({ query: q, limit: 20, spaceId })
+      const resp = await searchBlocks({ query: q, limit: paginationLimit(20), spaceId })
       const results: PickerItem[] = resp.items
         .filter((b) => b.deleted_at === null)
         .map((b) => {

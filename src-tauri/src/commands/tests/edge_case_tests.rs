@@ -174,14 +174,17 @@ async fn f13_case_sensitive_block_type_returns_validation_error() {
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn f14_page_size_zero_clamped_to_one() {
+async fn f14_page_size_zero_rejected_with_validation_error() {
+    // limit-clamp-followup Phase 1: silent clamp of `limit=0` to `1`
+    // was replaced with a loud `AppError::Validation`.  The original
+    // F14 contract (clamp to safe range) is preserved as a refusal
+    // boundary rather than a transparent fixup.
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "PS_BLK1", "content", "a", None, Some(1)).await;
-    insert_block(&pool, "PS_BLK2", "content", "b", None, Some(2)).await;
 
     assign_all_to_test_space(&pool).await;
-    let resp = list_blocks_inner(
+    let err = list_blocks_inner(
         &pool,
         None,
         None,
@@ -193,28 +196,26 @@ async fn f14_page_size_zero_clamped_to_one() {
         None,
         None,
         Some(0),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(),
     )
     .await
-    .unwrap();
+    .expect_err("page_size=0 must surface AppError::Validation");
 
-    assert_eq!(
-        resp.items.len(),
-        1,
-        "page_size=0 should be clamped to 1, returning exactly 1 item"
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("Validation") && msg.contains("[1, 100]"),
+        "expected Validation error with `[1, 100]` bound, got: {msg}",
     );
-    assert!(resp.has_more, "should indicate more items available");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn f14_page_size_negative_clamped_to_one() {
+async fn f14_page_size_negative_rejected_with_validation_error() {
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "PS_N1", "content", "a", None, Some(1)).await;
-    insert_block(&pool, "PS_N2", "content", "b", None, Some(2)).await;
 
     assign_all_to_test_space(&pool).await;
-    let resp = list_blocks_inner(
+    let err = list_blocks_inner(
         &pool,
         None,
         None,
@@ -226,29 +227,26 @@ async fn f14_page_size_negative_clamped_to_one() {
         None,
         None,
         Some(-1),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(),
     )
     .await
-    .unwrap();
+    .expect_err("page_size=-1 must surface AppError::Validation");
 
-    assert_eq!(
-        resp.items.len(),
-        1,
-        "page_size=-1 should be clamped to 1, returning exactly 1 item"
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("Validation") && msg.contains("[1, 100]"),
+        "expected Validation error with `[1, 100]` bound, got: {msg}",
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn f14_page_size_1000_clamped_to_100() {
+async fn f14_page_size_1000_rejected_with_validation_error() {
     let (pool, _dir) = test_pool().await;
 
-    // Insert 3 blocks -- enough to verify clamping but not 100+
     insert_block(&pool, "PS_L1", "content", "a", None, Some(1)).await;
-    insert_block(&pool, "PS_L2", "content", "b", None, Some(2)).await;
-    insert_block(&pool, "PS_L3", "content", "c", None, Some(3)).await;
 
     assign_all_to_test_space(&pool).await;
-    let resp = list_blocks_inner(
+    let err = list_blocks_inner(
         &pool,
         None,
         None,
@@ -260,18 +258,16 @@ async fn f14_page_size_1000_clamped_to_100() {
         None,
         None,
         Some(1000),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(),
     )
     .await
-    .unwrap();
+    .expect_err("page_size=1000 must surface AppError::Validation");
 
-    // With only 3 items and clamped limit=100, all 3 should be returned
-    assert_eq!(
-        resp.items.len(),
-        3,
-        "clamped page_size should still return all items"
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("Validation") && msg.contains("[1, 100]"),
+        "expected Validation error with `[1, 100]` bound, got: {msg}",
     );
-    assert!(!resp.has_more, "no more items should remain");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

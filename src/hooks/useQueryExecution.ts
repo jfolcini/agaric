@@ -7,6 +7,8 @@ import {
   batchResolve,
   filteredBlocksQuery,
   listBlocks,
+  listBlocksLimit,
+  paginationLimit,
   queryByProperty,
   queryByTags,
 } from '@/lib/tauri'
@@ -60,7 +62,7 @@ export async function fetchTagQuery(
     prefixes: tagExpr ? [tagExpr] : [],
     mode: 'or',
     cursor: pageCursor,
-    limit: PAGE_SIZE,
+    limit: paginationLimit(PAGE_SIZE),
     spaceId: spaceId ?? null,
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
@@ -80,7 +82,7 @@ export async function fetchPropertyQuery(
     ...(params['value'] != null && { valueText: params['value'] }),
     ...(params['date'] != null && { valueDate: params['date'] }),
     cursor: pageCursor,
-    limit: PAGE_SIZE,
+    limit: paginationLimit(PAGE_SIZE),
     spaceId: spaceId ?? null,
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
@@ -101,7 +103,7 @@ export async function fetchBacklinksQuery(
   const resp = await listBlocks({
     parentId: params['target'],
     cursor: pageCursor,
-    limit: PAGE_SIZE,
+    limit: listBlocksLimit(PAGE_SIZE),
     spaceId: spaceId ?? '',
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
@@ -153,7 +155,7 @@ export async function fetchFilteredQuery(
     }),
     spaceId: spaceId ?? null,
     cursor: pageCursor,
-    limit: PAGE_SIZE,
+    limit: paginationLimit(PAGE_SIZE),
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }

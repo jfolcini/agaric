@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger'
 import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
 import { executeAgendaFilters } from '../../lib/agenda-filters'
 import type { BlockRow } from '../../lib/tauri'
-import { batchResolve, queryByProperty } from '../../lib/tauri'
+import { batchResolve, paginationLimit, queryByProperty } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
 import type { AgendaFilter } from '../AgendaFilterBuilder'
 import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
@@ -94,7 +94,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       const resp = await queryByProperty({
         key: 'todo_state',
         cursor: agendaCursor,
-        limit: 200,
+        limit: paginationLimit(200),
         spaceId: currentSpaceId,
       })
       setFilteredBlocks((prev) => [...prev, ...resp.items])

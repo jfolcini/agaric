@@ -44,3 +44,7 @@ worktrees/
 UNDO-REDO-PLAN.md
 agaric-release.apk
 agaric-release.apk.idsig
+
+# Claude Code runtime state (per-machine; settings.json + hooks/ are tracked)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json

@@ -70,10 +70,20 @@ pub async fn list_blocks_inner(
         ));
     }
 
-    // F06: Clamp page_size to [1, 100] to prevent oversized result sets
-    // or nonsensical zero/negative limits.
-    let clamped_limit = limit.map(|l| l.clamp(1, 100));
-    let page = pagination::PageRequest::new(cursor, clamped_limit)?;
+    // F06 / limit-clamp-followup Phase 1: reject limits outside `[1, 100]`
+    // loudly.  Silent clamp was the BUG-48 root: callers asking for >100
+    // got truncated to 100 with no signal.  Strict validation surfaces
+    // the contract violation at the IPC boundary so a future BUG-48 fails
+    // synchronously rather than as mysterious data loss months later.
+    if let Some(l) = limit {
+        if !(1..=100).contains(&l) {
+            return Err(AppError::Validation(format!(
+                "list_blocks limit must be in [1, 100]; got {l}. \
+                 For larger result sets, use cursor pagination."
+            )));
+        }
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
 
     // FEAT-3 Phase 4: `space_id` is required, so every dispatch path
     // forwards `Some(&space_id)` to its pagination helper. The helpers

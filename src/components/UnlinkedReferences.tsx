@@ -22,7 +22,13 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '../hooks/usePropertyKeysCache'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
-import { editBlock, getPageAliases, listTagsByPrefix, listUnlinkedReferences } from '../lib/tauri'
+import {
+  editBlock,
+  getPageAliases,
+  listTagsByPrefix,
+  listUnlinkedReferences,
+  paginationLimit,
+} from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
@@ -82,7 +88,7 @@ export function UnlinkedReferences({
           filters: filters.length > 0 ? filters : null,
           sort,
           cursor: cursor ?? null,
-          limit: 20,
+          limit: paginationLimit(20),
           spaceId: currentSpaceId,
         })
         // TEST-4a: some callers (notably App-level smoke tests that resolve

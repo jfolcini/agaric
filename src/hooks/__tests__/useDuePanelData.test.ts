@@ -24,6 +24,9 @@ vi.mock('../../lib/tauri', () => ({
   batchResolve: vi.fn(),
   listProjectedAgenda: vi.fn(),
   queryByProperty: vi.fn(),
+  paginationLimit: (n: number) => n,
+  listProjectedAgendaLimit: (n: number) => n,
+  listBlocksLimit: (n: number) => n,
 }))
 
 let mockInvalidationKey = 0

@@ -286,15 +286,22 @@ fn page_request_defaults_to_limit_50() {
 }
 
 #[test]
-fn page_request_clamps_limit_to_valid_range() {
-    let high = PageRequest::new(None, Some(999)).unwrap();
-    assert_eq!(high.limit, 200, "limit above 200 must be clamped");
+fn page_request_rejects_limits_outside_valid_range() {
+    // limit-clamp-followup Phase 1: out-of-range limits surface as
+    // `AppError::Validation` rather than silently clamping.
+    let high = PageRequest::new(None, Some(999));
+    assert!(high.is_err(), "limit above MAX_PAGE_SIZE must be rejected");
+    let high_msg = format!("{:?}", high.unwrap_err());
+    assert!(
+        high_msg.contains("Validation") && high_msg.contains("[1, 200]"),
+        "expected `[1, 200]` Validation error, got: {high_msg}",
+    );
 
-    let low = PageRequest::new(None, Some(-5)).unwrap();
-    assert_eq!(low.limit, 1, "negative limit must be clamped to 1");
+    let low = PageRequest::new(None, Some(-5));
+    assert!(low.is_err(), "negative limit must be rejected");
 
-    let zero = PageRequest::new(None, Some(0)).unwrap();
-    assert_eq!(zero.limit, 1, "zero limit must be clamped to 1");
+    let zero = PageRequest::new(None, Some(0));
+    assert!(zero.is_err(), "zero limit must be rejected");
 }
 
 #[test]

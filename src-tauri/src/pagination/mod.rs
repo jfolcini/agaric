@@ -498,9 +498,24 @@ impl Cursor {
 }
 
 impl PageRequest {
-    /// Build a page request, clamping `limit` to \[1, [`MAX_PAGE_SIZE`]\] (default [`DEFAULT_PAGE_SIZE`]).
+    /// Build a page request.
+    ///
+    /// `limit` must be in `[1, MAX_PAGE_SIZE]` when supplied; a value
+    /// outside that range surfaces as `AppError::Validation` (limit-
+    /// clamp-followup Phase 1 — see the followup doc for the rationale
+    /// against the previous `clamp(1, MAX_PAGE_SIZE)` silent truncation).
+    /// `None` falls through to [`DEFAULT_PAGE_SIZE`].
     pub fn new(after: Option<String>, limit: Option<i64>) -> Result<Self, AppError> {
-        let limit = limit.unwrap_or(DEFAULT_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
+        let limit = match limit {
+            Some(l) if (1..=MAX_PAGE_SIZE).contains(&l) => l,
+            Some(l) => {
+                return Err(AppError::Validation(format!(
+                    "pagination limit must be in [1, {MAX_PAGE_SIZE}]; got {l}. \
+                     For larger result sets, use cursor pagination."
+                )));
+            }
+            None => DEFAULT_PAGE_SIZE,
+        };
         let after = match after {
             Some(s) => Some(Cursor::decode(&s)?),
             None => None,

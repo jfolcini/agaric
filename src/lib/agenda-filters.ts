@@ -9,21 +9,36 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import type { AgendaFilter } from '../components/AgendaFilterBuilder'
 import type { PageResponse } from './bindings'
 import { formatDate, getDateRangeForFilter } from './date-utils'
+import { listBlocksLimit, paginationLimit, type SafeLimit } from './safe-limit'
 import type { BlockRow } from './tauri'
 import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
 
 /**
- * Pagination limit for agenda-driven IPC queries. The `listBlocks` /
- * `queryByProperty` / `listUndatedTasks` calls driven from this module
- * use this value so changes propagate consistently.
+ * Per-page limit for agenda-driven `queryByProperty` / `listUndatedTasks`
+ * IPCs.  Pinned to `PageRequest::new`'s `MAX_PAGE_SIZE = 200` — the
+ * backend cap that limit-clamp-followup's Phase 1 turns into a loud
+ * `AppError::Validation`.  Single-shot call sites here that consume the
+ * full page must accept a residual truncation risk for workspaces with
+ * more than 200 matching items in a single dimension (filtered by date
+ * key); the `paginateAll`-wrapped sites walk to exhaustion and so are
+ * unaffected.
  *
  * Note: the `listTagsByPrefix` call inside `executeAgendaFilters` uses
- * `limit: PAGINATION_LIMIT` deliberately (it's a typeahead-style tag lookup, not an
- * agenda paginator) and is not affected by this constant.
+ * `limit: PAGINATION_LIMIT` deliberately (it's a typeahead-style tag
+ * lookup, not an agenda paginator) and is not affected by this constant.
  *
- * Added for FE-H-2.
+ * Added for FE-H-2; reduced from 500 → 200 in limit-clamp-followup
+ * Phase 1; typed as `SafeLimit<PaginationMax>` in Phase 3 so the
+ * brand flows through to wrapper signatures.
  */
-export const AGENDA_QUERY_LIMIT = 500
+export const AGENDA_QUERY_LIMIT: SafeLimit = paginationLimit(200)
+
+/**
+ * Per-page limit for agenda-driven `listBlocks` IPCs (the agenda-date,
+ * agenda-date-range, and tag-id dispatch branches).  Pinned to
+ * `list_blocks_inner`'s clamp of 100 (the BUG-48 root cap).
+ */
+export const AGENDA_LIST_BLOCKS_LIMIT: SafeLimit = listBlocksLimit(100)
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,13 +214,13 @@ async function queryPresetRangeForColumn(
       ? await listBlocks({
           agendaDate: range.start,
           agendaSource,
-          limit: AGENDA_QUERY_LIMIT,
+          limit: AGENDA_LIST_BLOCKS_LIMIT,
           spaceId,
         })
       : await listBlocks({
           agendaDateRange: range,
           agendaSource,
-          limit: AGENDA_QUERY_LIMIT,
+          limit: AGENDA_LIST_BLOCKS_LIMIT,
           spaceId,
         })
   for (const b of resp.items) {
@@ -292,7 +307,7 @@ async function queryTag(values: string[], spaceId: string): Promise<Map<string, 
     const candidates = await listTagsByPrefix({ prefix: value, limit: PAGINATION_LIMIT })
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (!match) continue
-    const resp = await listBlocks({ tagId: match.tag_id, limit: AGENDA_QUERY_LIMIT, spaceId })
+    const resp = await listBlocks({ tagId: match.tag_id, limit: AGENDA_LIST_BLOCKS_LIMIT, spaceId })
     for (const b of resp.items) {
       result.set(b.id, b)
     }

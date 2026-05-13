@@ -32,6 +32,7 @@ vi.mock('../../lib/tauri', () => ({
   // aliases so the legacy title-only test paths stay unaffected;
   // PEND-36-specific cases override per-test.
   getPageAliases: vi.fn(),
+  paginationLimit: (n: number) => n,
 }))
 
 vi.mock('../../lib/logger', () => ({

@@ -63,11 +63,13 @@ import {
   listAttachments,
   listBacklinksGrouped,
   listBlocks,
+  listBlocksLimit,
   listDrafts,
   listPageHistory,
   listPageLinks,
   listPeerRefs,
   listProjectedAgenda,
+  listProjectedAgendaLimit,
   listPropertyDefs,
   listPropertyKeys,
   listSpaces,
@@ -77,6 +79,7 @@ import {
   listUnlinkedReferences,
   logFrontend,
   moveBlock,
+  paginationLimit,
   purgeAllDeleted,
   purgeBlock,
   purgeBlocksByIds,
@@ -385,7 +388,7 @@ describe('listBlocks', () => {
       showDeleted: true,
       agendaDate: '2025-01-15',
       cursor: 'cursor123',
-      limit: 25,
+      limit: listBlocksLimit(25),
       spaceId: 'TEST_SPACE_01',
     })
 
@@ -443,7 +446,7 @@ describe('listUndatedTasks', () => {
 
   it('invokes list_undated_tasks with correct args', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
-    const result = await listUndatedTasks({ cursor: 'abc', limit: 10 })
+    const result = await listUndatedTasks({ cursor: 'abc', limit: paginationLimit(10) })
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_undated_tasks', {
       cursor: 'abc',
@@ -622,7 +625,7 @@ describe('searchBlocks', () => {
     const result = await searchBlocks({
       query: 'found',
       cursor: 'cursor123',
-      limit: 25,
+      limit: paginationLimit(25),
       spaceId: 'TEST_SPACE_01',
     })
 
@@ -699,7 +702,7 @@ describe('queryByTags', () => {
       prefixes: [],
       mode: 'or',
       cursor: 'cursor123',
-      limit: 25,
+      limit: paginationLimit(25),
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', {
@@ -801,7 +804,7 @@ describe('filteredBlocksQuery', () => {
       blockType: 'page',
       spaceId: 'SPACE_42',
       cursor: 'CURSOR123',
-      limit: 25,
+      limit: paginationLimit(25),
     })
 
     const [, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
@@ -942,7 +945,11 @@ describe('getBacklinks', () => {
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
-    const result = await getBacklinks({ blockId: 'TARGET', cursor: 'cur1', limit: 10 })
+    const result = await getBacklinks({
+      blockId: 'TARGET',
+      cursor: 'cur1',
+      limit: paginationLimit(10),
+    })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('get_backlinks', {
@@ -990,7 +997,11 @@ describe('getBlockHistory', () => {
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
-    const result = await getBlockHistory({ blockId: 'BLK001', cursor: 'cur1', limit: 5 })
+    const result = await getBlockHistory({
+      blockId: 'BLK001',
+      cursor: 'cur1',
+      limit: paginationLimit(5),
+    })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
@@ -1238,7 +1249,7 @@ describe('listPageHistory', () => {
       pageId: 'PAGE1',
       opTypeFilter: 'edit_block',
       cursor: 'cur1',
-      limit: 20,
+      limit: paginationLimit(20),
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
@@ -1322,7 +1333,7 @@ describe('queryByProperty', () => {
       key: 'status',
       valueText: 'done',
       cursor: 'cur1',
-      limit: 10,
+      limit: paginationLimit(10),
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
@@ -2116,7 +2127,13 @@ describe('listBacklinksGrouped', () => {
     const sort = { type: 'Created' as const, dir: 'Desc' as const }
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
 
-    await listBacklinksGrouped({ blockId: 'PAGE1', filters, sort, cursor: 'cur1', limit: 10 })
+    await listBacklinksGrouped({
+      blockId: 'PAGE1',
+      filters,
+      sort,
+      cursor: 'cur1',
+      limit: paginationLimit(10),
+    })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
       blockId: 'PAGE1',
@@ -2170,7 +2187,7 @@ describe('listUnlinkedReferences', () => {
   it('passes cursor and limit when provided', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
 
-    await listUnlinkedReferences({ pageId: 'PAGE1', cursor: 'cur1', limit: 20 })
+    await listUnlinkedReferences({ pageId: 'PAGE1', cursor: 'cur1', limit: paginationLimit(20) })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_unlinked_references', {
       pageId: 'PAGE1',
@@ -2270,7 +2287,7 @@ describe('listPropertyDefs', () => {
     const expected = { items: [], next_cursor: 'next-page-cursor', has_more: true }
     mockedInvoke.mockResolvedValueOnce(expected)
 
-    const result = await listPropertyDefs({ cursor: 'opaque-cursor', limit: 10 })
+    const result = await listPropertyDefs({ cursor: 'opaque-cursor', limit: paginationLimit(10) })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
       cursor: 'opaque-cursor',
@@ -2671,7 +2688,7 @@ describe('listProjectedAgenda', () => {
     const result = await listProjectedAgenda({
       startDate: '2025-01-15',
       endDate: '2025-02-15',
-      limit: 50,
+      limit: listProjectedAgendaLimit(50),
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
@@ -2706,7 +2723,7 @@ describe('listProjectedAgenda', () => {
       startDate: '2025-01-15',
       endDate: '2025-02-15',
       cursor: 'OPAQUE_CURSOR',
-      limit: 25,
+      limit: listProjectedAgendaLimit(25),
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_projected_agenda', {

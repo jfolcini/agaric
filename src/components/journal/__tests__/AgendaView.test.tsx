@@ -29,6 +29,7 @@ vi.mock('../../../lib/agenda-filters', () => ({
 vi.mock('../../../lib/tauri', () => ({
   batchResolve: vi.fn(),
   queryByProperty: vi.fn(),
+  paginationLimit: (n: number) => n,
 }))
 
 // ── Mock logger ─────────────────────────────────────────────────────

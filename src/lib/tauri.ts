@@ -1,6 +1,7 @@
 import { Channel } from '@tauri-apps/api/core'
 import { commands } from './bindings'
 import { logger } from './logger'
+import type { SafeLimit } from './safe-limit'
 
 export type {
   BacklinkFilter,
@@ -33,6 +34,16 @@ export type {
   TagCacheRow,
   TagResponse,
 } from './bindings'
+export type { SafeLimit } from './safe-limit'
+export {
+  LIST_BLOCKS_MAX,
+  LIST_PROJECTED_AGENDA_MAX,
+  listBlocksLimit,
+  listProjectedAgendaLimit,
+  PAGINATION_MAX,
+  paginationLimit,
+  safeLimit,
+} from './safe-limit'
 
 import type {
   BacklinkFilter,
@@ -323,7 +334,7 @@ export async function listBlocks(params: {
   agendaDateRange?: DateRange | undefined
   agendaSource?: string | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId: string
 }): Promise<PageResponse<BlockRow>> {
   const hasAgenda =
@@ -395,7 +406,7 @@ export async function listJournalPagesInRange(params: {
  */
 export async function listUndatedTasks(params?: {
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
@@ -421,7 +432,7 @@ export async function listProjectedAgenda(opts: {
   startDate: string
   endDate: string
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
 }): Promise<PageResponse<ProjectedAgendaEntry>> {
   return unwrap(
@@ -502,7 +513,7 @@ export async function removeTag(blockId: string, tagId: string): Promise<TagResp
 export async function getBacklinks(params: {
   blockId: string
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
@@ -524,7 +535,7 @@ export async function getBlockHistory(params: {
   blockId: string
   opTypeFilter?: string | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
 }): Promise<PageResponse<HistoryEntry>> {
   return unwrap(
     await commands.getBlockHistory(
@@ -550,7 +561,7 @@ export async function searchBlocks(params: {
   parentId?: string | undefined
   tagIds?: string[] | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId: string
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
@@ -587,7 +598,7 @@ export async function queryByTags(params: {
   mode: string // 'and' | 'or'
   includeInherited?: boolean | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
   blockType?: string | undefined
 }): Promise<PageResponse<BlockRow>> {
@@ -608,7 +619,7 @@ export async function queryByTags(params: {
 /** List tags whose name starts with the given prefix (autocomplete). */
 export async function listTagsByPrefix(params: {
   prefix: string
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
 }): Promise<TagCacheRow[]> {
   return unwrap(await commands.listTagsByPrefix(params.prefix, params.limit ?? null))
 }
@@ -808,7 +819,7 @@ export async function listPageHistory(params: {
   opTypeFilter?: string | undefined
   spaceId?: string | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
 }): Promise<PageResponse<HistoryEntry>> {
   return unwrap(
     await commands.listPageHistory(
@@ -887,7 +898,7 @@ export async function listUnfinishedTasks(params: {
   beforeDate: string
   todoStates: string[]
   cursor?: string
-  limit?: number
+  limit?: SafeLimit
   spaceId?: string | null
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
@@ -930,7 +941,7 @@ export async function queryByProperty(params: {
   valueDate?: string | undefined
   operator?: string | undefined // 'eq', 'neq', 'lt', 'gt', 'lte', 'gte'
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
   excludeParentId?: string | undefined
   contentNonEmpty?: boolean | undefined
@@ -1024,7 +1035,7 @@ export async function filteredBlocksQuery(params: {
   blockType?: string | undefined
   spaceId?: string | null | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
 }): Promise<PageResponse<BlockRow>> {
   // Marshal property filters into the camelCase Rust struct shape on
   // the IPC boundary. `valueTextIn` defaults to `[]` (matches the
@@ -1170,7 +1181,7 @@ export async function queryBacklinksFiltered(params: {
   filters?: BacklinkFilter[] | undefined
   sort?: BacklinkSort | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
 }): Promise<BacklinkQueryResponse> {
   return unwrap(
@@ -1196,7 +1207,7 @@ export async function listBacklinksGrouped(params: {
   filters?: BacklinkFilter[] | undefined
   sort?: BacklinkSort | undefined
   cursor?: string | undefined
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
 }): Promise<GroupedBacklinkResponse> {
   return unwrap(
@@ -1222,7 +1233,7 @@ export async function listUnlinkedReferences(params: {
   filters?: BacklinkFilter[] | null | undefined
   sort?: BacklinkSort | null | undefined
   cursor?: string | null | undefined
-  limit?: number | null | undefined
+  limit?: SafeLimit | null | undefined
   spaceId?: string | null | undefined
 }): Promise<GroupedBacklinkResponse> {
   return unwrap(
@@ -1283,7 +1294,7 @@ export async function getPropertyDef(key: string): Promise<PropertyDefinition | 
  */
 export async function listPropertyDefs(opts?: {
   cursor?: string | null | undefined
-  limit?: number | null | undefined
+  limit?: SafeLimit | null | undefined
 }): Promise<PageResponse<PropertyDefinition>> {
   return unwrap(await commands.listPropertyDefs(opts?.cursor ?? null, opts?.limit ?? null))
 }
@@ -1453,7 +1464,7 @@ export async function resolvePageByAlias(params: {
  */
 export async function listPageAliasesByPrefix(params: {
   prefix: string
-  limit?: number | undefined
+  limit?: SafeLimit | undefined
   spaceId?: string | null | undefined
 }): Promise<Array<[string, string, string | null]>> {
   return unwrap(
