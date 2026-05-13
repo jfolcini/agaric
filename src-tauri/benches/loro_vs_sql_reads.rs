@@ -107,6 +107,20 @@ const LIST_CHILDREN_COUNT: usize = 1_000;
 /// Shape (C): property reads.
 const READ_PROPERTY_COUNT: usize = 1_000;
 
+// `Duration / u32` is the only built-in scalar-division shape, so we
+// keep a `u32` twin of each loop-count constant for per-iteration
+// averaging.  Values are tiny compile-time constants; declaring the
+// `u32` form once avoids `usize as u32` at every use site (which
+// clippy flags as `cast_possible_truncation`).  A const_assert keeps
+// the two views in sync — if a `usize` count ever exceeds u32::MAX
+// (impossible here, but cheap to enforce) the build breaks.
+const READ_BLOCK_COUNT_U32: u32 = 10_000;
+const LIST_CHILDREN_COUNT_U32: u32 = 1_000;
+const READ_PROPERTY_COUNT_U32: u32 = 1_000;
+const _: () = assert!(READ_BLOCK_COUNT_U32 as usize == READ_BLOCK_COUNT);
+const _: () = assert!(LIST_CHILDREN_COUNT_U32 as usize == LIST_CHILDREN_COUNT);
+const _: () = assert!(READ_PROPERTY_COUNT_U32 as usize == READ_PROPERTY_COUNT);
+
 /// Property keys.  Non-reserved on purpose so they live in
 /// `block_properties` (reserved keys — `priority`, `todo_state`,
 /// `due_date`, `scheduled_date` — would route to columns on `blocks`
@@ -157,7 +171,7 @@ impl XorShift64 {
         if n == 0 {
             return 0;
         }
-        (self.next_u64() % (n as u64)) as usize
+        usize::try_from(self.next_u64() % (n as u64)).unwrap_or(usize::MAX)
     }
 }
 
@@ -254,7 +268,7 @@ async fn bootstrap(pool: &SqlitePool) -> (Vec<String>, Vec<String>) {
             prop_count += 1;
         }
         attempts += 1;
-        if attempts % 1_000 == 0 {
+        if attempts.is_multiple_of(1_000) {
             // Commit periodically so the WAL stays bounded.
             tx.commit().await.unwrap();
             tx = pool.begin().await.unwrap();
@@ -273,6 +287,10 @@ async fn bootstrap(pool: &SqlitePool) -> (Vec<String>, Vec<String>) {
 // Shape A — single-row WHERE id = ? × 10K
 // ---------------------------------------------------------------------------
 
+/// Row shape returned by Shape (A)'s `blocks` point lookup — mirrors the
+/// column set production code's `BlockRow` materialises.
+type BlockReadRow = (String, String, Option<String>, Option<String>, Option<i64>);
+
 async fn shape_a(pool: &SqlitePool, block_ids: &[String]) -> std::time::Duration {
     let mut sample_rng = XorShift64::new(SEED ^ 0xA77E_AD7E_AD7E_AD7E);
     let targets: Vec<&str> = (0..READ_BLOCK_COUNT)
@@ -289,21 +307,20 @@ async fn shape_a(pool: &SqlitePool, block_ids: &[String]) -> std::time::Duration
         // set BlockRow uses, via `query_as`.  This matches the work
         // the spike's `read_block` does on the Loro side (decode +
         // clone the block's content + parent_id + position fields).
-        let row: Option<(String, String, Option<String>, Option<String>, Option<i64>)> =
-            sqlx::query_as(
-                "SELECT id, block_type, content, parent_id, position \
+        let row: Option<BlockReadRow> = sqlx::query_as(
+            "SELECT id, block_type, content, parent_id, position \
                  FROM blocks WHERE id = ?",
-            )
-            .bind(*id)
-            .fetch_optional(pool)
-            .await
-            .unwrap();
+        )
+        .bind(*id)
+        .fetch_optional(pool)
+        .await
+        .unwrap();
         if row.is_some() {
             hits += 1;
         }
     }
     let elapsed = start.elapsed();
-    let per = elapsed / READ_BLOCK_COUNT as u32;
+    let per = elapsed / READ_BLOCK_COUNT_U32;
     println!("---- shape (A): SELECT … WHERE id = ? × {READ_BLOCK_COUNT} ----");
     println!(
         "  total elapsed = {:.3}s   ({:>7.2} µs/read)",
@@ -335,7 +352,7 @@ async fn shape_b1(pool: &SqlitePool, page_roots: &[String]) -> std::time::Durati
         total_rows += resp.items.len();
     }
     let elapsed = start.elapsed();
-    let per = elapsed / LIST_CHILDREN_COUNT as u32;
+    let per = elapsed / LIST_CHILDREN_COUNT_U32;
     println!(
         "---- shape (B1): list_children first-page (limit={MAX_PAGE}) × {LIST_CHILDREN_COUNT} ----"
     );
@@ -378,7 +395,7 @@ async fn shape_b2(pool: &SqlitePool, page_roots: &[String]) -> std::time::Durati
         }
     }
     let elapsed = start.elapsed();
-    let per = elapsed / LIST_CHILDREN_COUNT as u32;
+    let per = elapsed / LIST_CHILDREN_COUNT_U32;
     println!("---- shape (B2): list_children drain-all (paginated) × {LIST_CHILDREN_COUNT} ----");
     println!(
         "  total elapsed = {:.3}s   ({:>7.3} ms/walk = {:>7.2} µs/walk)",
@@ -397,6 +414,11 @@ async fn shape_b2(pool: &SqlitePool, page_roots: &[String]) -> std::time::Durati
 // Shape C — single-row block_properties point lookup × 1K
 // ---------------------------------------------------------------------------
 
+/// Row shape returned by Shape (C)'s `block_properties` point lookup —
+/// the four `value_*` columns are all nullable since each row stores
+/// exactly one variant.
+type PropertyReadRow = (Option<String>, Option<f64>, Option<String>, Option<String>);
+
 async fn shape_c(pool: &SqlitePool, block_ids: &[String]) -> std::time::Duration {
     let mut sample_rng = XorShift64::new(SEED ^ 0xC0FF_EE00_C0FF_EE00);
     let targets: Vec<(String, &'static str)> = (0..READ_PROPERTY_COUNT)
@@ -412,16 +434,15 @@ async fn shape_c(pool: &SqlitePool, block_ids: &[String]) -> std::time::Duration
     let mut misses = 0usize;
     for (block_id, key) in &targets {
         // Single-row lookup on the (block_id, key) primary key.
-        let row: Option<(Option<String>, Option<f64>, Option<String>, Option<String>)> =
-            sqlx::query_as(
-                "SELECT value_text, value_num, value_date, value_ref \
+        let row: Option<PropertyReadRow> = sqlx::query_as(
+            "SELECT value_text, value_num, value_date, value_ref \
              FROM block_properties WHERE block_id = ? AND key = ?",
-            )
-            .bind(block_id)
-            .bind(*key)
-            .fetch_optional(pool)
-            .await
-            .unwrap();
+        )
+        .bind(block_id)
+        .bind(*key)
+        .fetch_optional(pool)
+        .await
+        .unwrap();
         if row.is_some() {
             hits += 1;
         } else {
@@ -429,7 +450,7 @@ async fn shape_c(pool: &SqlitePool, block_ids: &[String]) -> std::time::Duration
         }
     }
     let elapsed = start.elapsed();
-    let per = elapsed / READ_PROPERTY_COUNT as u32;
+    let per = elapsed / READ_PROPERTY_COUNT_U32;
     println!("---- shape (C): SELECT … FROM block_properties WHERE block_id = ? AND key = ? × {READ_PROPERTY_COUNT} ----");
     println!(
         "  total elapsed = {:.3}s   ({:>7.2} µs/read)",
@@ -488,25 +509,25 @@ fn main() {
         "| (A) SELECT WHERE id = ?                 | {:>7} | {:>7.3}s    | {:>7.2} µs   |",
         READ_BLOCK_COUNT,
         a.as_secs_f64(),
-        (a / READ_BLOCK_COUNT as u32).as_secs_f64() * 1_000_000.0,
+        (a / READ_BLOCK_COUNT_U32).as_secs_f64() * 1_000_000.0,
     );
     println!(
         "| (B1) list_children first-page (lim 200) | {:>7} | {:>7.3}s    | {:>7.2} µs   |",
         LIST_CHILDREN_COUNT,
         b1.as_secs_f64(),
-        (b1 / LIST_CHILDREN_COUNT as u32).as_secs_f64() * 1_000_000.0,
+        (b1 / LIST_CHILDREN_COUNT_U32).as_secs_f64() * 1_000_000.0,
     );
     println!(
         "| (B2) list_children drain-all            | {:>7} | {:>7.3}s    | {:>7.3} ms   |",
         LIST_CHILDREN_COUNT,
         b2.as_secs_f64(),
-        (b2 / LIST_CHILDREN_COUNT as u32).as_secs_f64() * 1_000.0,
+        (b2 / LIST_CHILDREN_COUNT_U32).as_secs_f64() * 1_000.0,
     );
     println!(
         "| (C) block_properties WHERE id, key      | {:>7} | {:>7.3}s    | {:>7.2} µs   |",
         READ_PROPERTY_COUNT,
         c.as_secs_f64(),
-        (c / READ_PROPERTY_COUNT as u32).as_secs_f64() * 1_000_000.0,
+        (c / READ_PROPERTY_COUNT_U32).as_secs_f64() * 1_000_000.0,
     );
     println!();
 
@@ -525,10 +546,10 @@ fn main() {
     println!();
 
     // ---- Ratio summary ------------------------------------------------
-    let a_per_us = (a / READ_BLOCK_COUNT as u32).as_secs_f64() * 1_000_000.0;
-    let b1_per_us = (b1 / LIST_CHILDREN_COUNT as u32).as_secs_f64() * 1_000_000.0;
-    let b2_per_ms = (b2 / LIST_CHILDREN_COUNT as u32).as_secs_f64() * 1_000.0;
-    let c_per_us = (c / READ_PROPERTY_COUNT as u32).as_secs_f64() * 1_000_000.0;
+    let a_per_us = (a / READ_BLOCK_COUNT_U32).as_secs_f64() * 1_000_000.0;
+    let b1_per_us = (b1 / LIST_CHILDREN_COUNT_U32).as_secs_f64() * 1_000_000.0;
+    let b2_per_ms = (b2 / LIST_CHILDREN_COUNT_U32).as_secs_f64() * 1_000.0;
+    let c_per_us = (c / READ_PROPERTY_COUNT_U32).as_secs_f64() * 1_000_000.0;
 
     let loro_a_us = 2.29;
     let loro_b_ms = 24.83;

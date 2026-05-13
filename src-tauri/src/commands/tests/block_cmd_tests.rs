@@ -4585,8 +4585,7 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
 
     let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id.clone(), r2.id.clone()])
         .await
@@ -4599,8 +4598,7 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
 
     let delete_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log \
@@ -4689,8 +4687,7 @@ async fn delete_blocks_by_ids_only_ghosts_returns_zero() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
 
     let affected =
         delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["GHOST1".into(), "GHOST2".into()])
@@ -4704,8 +4701,7 @@ async fn delete_blocks_by_ids_only_ghosts_returns_zero() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
     assert_eq!(
         pre_max, post_max,
         "no op_log rows must be appended when every input id is missing"
@@ -4889,8 +4885,7 @@ async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
 
     let n: usize = 5;
     let specs: Vec<crate::commands::CreateBlockSpec> = (0..n)
@@ -4931,11 +4926,10 @@ async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
     assert_eq!(
         post_max - pre_max,
-        n as i64,
+        i64::try_from(n).expect("count fits in i64"),
         "exactly N seq slots consumed under one IMMEDIATE tx; \
          pre={pre_max} post={post_max}"
     );
@@ -4950,7 +4944,8 @@ async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
     .await
     .unwrap();
     assert_eq!(
-        create_count, n as i64,
+        create_count,
+        i64::try_from(n).expect("count fits in i64"),
         "exactly N create_block op_log rows under this batch"
     );
 }

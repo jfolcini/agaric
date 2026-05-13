@@ -5195,8 +5195,7 @@ async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
 
     let updated = set_todo_state_batch_inner(&pool, DEV, &mat, ids.clone(), Some("DONE".into()))
         .await
@@ -5209,8 +5208,7 @@ async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
     assert_eq!(
         post_max - pre_max,
         5,
@@ -5354,8 +5352,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
 
     let result = set_todo_state_batch_inner(
         &pool,
@@ -5377,8 +5374,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
     )
     .fetch_one(&pool)
     .await
-    .unwrap()
-    .into();
+    .unwrap();
     assert_eq!(
         pre_max, post_max,
         "validation failure must roll back the whole tx — no op_log rows added"
