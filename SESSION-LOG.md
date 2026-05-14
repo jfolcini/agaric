@@ -7,6 +7,29 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 724 — Structural decomposition + FeatureErrorBoundary in-view wraps (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 3 build (general-purpose) in parallel |
+| **Items closed** | Maintain Phase 3 + UX Tier 3 structural items: sidebar.tsx decomposed (1078 → 865 LOC, 4 hooks extracted); RichContentRenderer.tsx decomposed (659 → 53 LOC, 13 mark-renderer modules extracted); FeatureErrorBoundary in-view wraps applied to 5 sections (LinkedReferences, UnlinkedReferences, GraphFilterBar, PagePropertyTable, CompactionCard). |
+| **Items modified** | design-system-maintainability + design-system-ux-review status notes updated. |
+| **Tests added** | +30 sidebar hook tests (4 new test files for the extracted hooks); RichContentRenderer existing 76 tests still cover the per-mark modules via public dispatcher; FeatureErrorBoundary primitive tests cover the boundary itself. |
+| **Files touched** | 11 modified + 18 new (4 sidebar hooks + 4 test files + 13 RichContentRenderer mark modules + 1 RichContentRenderer/context.ts) |
+
+**Summary:** three parallel subagents closed the structural-decomposition batch. **sidebar.tsx (1078 → 865 LOC):** four hooks extracted into `src/components/ui/sidebar/`: `use-sidebar-state` (open/openMobile/isMobile/sidebarWidth/isResizing/toggleSidebar with cookie + localStorage persistence), `use-sidebar-keyboard` (Cmd/Ctrl+B with input/textarea/contenteditable bail-out so TipTap's Ctrl+B Bold still wins), `use-sidebar-edge-swipe` (left-edge touch gesture, desktop-disabled, vertical-cancel, multi-touch ignore), `use-sidebar-rail-drag` (pointer-drag resize with 2-px hysteresis, opens-from-collapsed, collapses-below-icon-width, double-click reset). Public API surface unchanged. **RichContentRenderer.tsx (659 → 53 LOC):** dispatcher now imports 13 per-mark renderer modules from `src/components/RichContentRenderer/marks/` (text, tagRef, blockLink, blockRef, hardBreak, inline, heading, code, mermaid, blockquote, orderedList, horizontalRule, block) plus a shared `context.ts` housing `RenderContext`, `HEADING_CLASSES`, and `CALLOUT_CONFIG`. Public API (`renderRichContent`, `CALLOUT_CONFIG`) unchanged; existing 76 tests pass without modification. **FeatureErrorBoundary in-view wraps:** 5 heavy sections gain their own boundary so a section crash no longer blanks the host page — LinkedReferences + UnlinkedReferences (each isolated; one's crash doesn't take out the other) in PageEditor, GraphFilterBar in GraphView, PagePropertyTable in PageHeader, CompactionCard in HistoryView (lives there, not in StatusPanel as the task brief had noted). i18n keys added: `linkedReferences.errorBoundary`, `unlinkedReferences.errorBoundary`, `graph.filterBar.errorBoundary`, `pageProperty.tableErrorBoundary`, `compactionCard.errorBoundary`.
+
+**Process notes:** parallel subagents worked cleanly this round — no stash skirmishes. Each subagent owned a non-overlapping set of files (sidebar.tsx + sidebar/ subfolder vs RichContentRenderer.tsx + RichContentRenderer/ subfolder vs the 5 wrap-site files). Two transient editor reverts during the RichContentRenderer decomp were caught by the subagent and re-applied.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9763 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit covering 3-stream batch + Session 724 entry.
+
+---
 ## Session 723 — Tier A cleanup: metadata reshape + lowlight investigation + text-[10px] + agenda-sort re-eval (2026-05-14)
 
 | Metadata | Value |

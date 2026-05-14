@@ -23,6 +23,7 @@ import { AddBlockButton } from './AddBlockButton'
 import { BlockTree } from './BlockTree'
 import { DonePanel } from './DonePanel'
 import { DuePanel } from './DuePanel'
+import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { LinkedReferences } from './LinkedReferences'
 import { LinkPreviewTooltip } from './LinkPreviewTooltip'
 import { PageHeader } from './PageHeader'
@@ -178,11 +179,19 @@ function PageEditorInner({
         </>
       )}
 
-      {/* Linked references — always visible at page bottom */}
-      <LinkedReferences pageId={pageId} onNavigateToPage={onNavigateToPage} />
+      {/* Linked references — always visible at page bottom.
+          Wrapped in its own FeatureErrorBoundary so a malformed-ref crash
+          in the backlink parser doesn't blank the host page (UX Tier 3). */}
+      <FeatureErrorBoundary name="LinkedReferences">
+        <LinkedReferences pageId={pageId} onNavigateToPage={onNavigateToPage} />
+      </FeatureErrorBoundary>
 
-      {/* Unlinked references — collapsed by default, below linked references */}
-      <UnlinkedReferences pageId={pageId} pageTitle={title} onNavigateToPage={onNavigateToPage} />
+      {/* Unlinked references — collapsed by default, below linked references.
+          Isolated from LinkedReferences so a crash in one doesn't take out
+          the other. */}
+      <FeatureErrorBoundary name="UnlinkedReferences">
+        <UnlinkedReferences pageId={pageId} pageTitle={title} onNavigateToPage={onNavigateToPage} />
+      </FeatureErrorBoundary>
 
       {/* Page metadata bar — word count, block count, created date */}
       <PageMetadataBar blocks={blocks} pageId={pageId} />

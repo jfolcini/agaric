@@ -367,9 +367,9 @@ keeps the gain durable.
 
 | File | Lines | Likely seams |
 | --- | --- | --- |
-| `src/components/ui/sidebar.tsx` | 1078 | shadcn-canonical; leave alone unless a real change drives it |
+| ~~`src/components/ui/sidebar.tsx`~~ | ~~1078~~ → 865 | **closed Session 717** — extracted `useSidebarState` (open / openMobile / sidebarWidth / isResizing + cookie + localStorage persistence), `useSidebarKeyboard` (Cmd+B / Ctrl+B with input/textarea/contenteditable bail-out), `useSidebarEdgeSwipe` (left-edge touch-drawer open), and `useSidebarRailDrag` (pointer-drag resize + FE-H-15 unmount cleanup) into `src/components/ui/sidebar/*.ts`. Public API (22 sub-components + `useSidebar` context) unchanged. Hooks each ship with a sibling test file. |
 | `src/components/BlockTree.tsx` | 790 | recursion + DnD overlay logic could split |
-| `src/components/RichContentRenderer.tsx` | 659 | per-mark renderers extractable |
+| ~~`src/components/RichContentRenderer.tsx`~~ | ~~659~~ → 53 | **closed Session 716** — per-mark renderers extracted to `src/components/RichContentRenderer/marks/*.tsx` (block, blockLink, blockquote, blockRef, code, hardBreak, heading, horizontalRule, inline, mermaid, orderedList, tagRef, text). `CALLOUT_CONFIG` + `RenderContext` moved to `context.ts`. Main file is now a 53-line parse-and-dispatch entry; public exports (`renderRichContent`, `CALLOUT_CONFIG`) unchanged. |
 | `src/components/HistoryListItem.tsx` | 645 | per-op renderers (create/edit/move/tag) extractable |
 | `src/components/GoogleCalendarSettingsTab.tsx` | 637 | extract OAuth state + sync-status + form into siblings |
 | `src/components/BugReportDialog.tsx` | 627 | form sections + diagnostics collection |
@@ -381,9 +381,15 @@ keeps the gain durable.
 `PropertyRowEditor.tsx` (573 lines) gets the FormField extraction from
 2d as a natural seam — schedule it after 2d lands.
 
-**Note:** size alone is a weak signal. `sidebar.tsx` is shadcn's
-canonical file and refactoring it forks the upstream. Filter the list
-by "are we actively editing it?" before scheduling.
+**Note:** size alone is a weak signal. ~~`sidebar.tsx` is shadcn's
+canonical file and refactoring it forks the upstream.~~ Filter the list
+by "are we actively editing it?" before scheduling. (Session 717 reversed
+the sidebar carve-out call — the four hooks decompose cleanly without
+touching the 22 sub-component render bodies, so the "upstream fork"
+concern was overstated; the hooks live in a sibling `sidebar/` folder
+and the host file imports them by path. Re-pulling shadcn upstream would
+only touch the sub-components and `Sidebar` itself, leaving the hooks
+intact.)
 
 ### Phase 3 cost / impact / risk
 

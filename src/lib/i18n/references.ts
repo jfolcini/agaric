@@ -218,4 +218,7 @@ export const references: Record<string, string> = {
   'search.resultsListLabel': 'Search results',
   'linkedRefs.listLabel': 'Reference blocks',
   'tagList.newTagPlaceholder': 'New tag name...',
+  'linkedReferences.errorBoundary': 'Failed to load backlinks for this page.',
+  'unlinkedReferences.errorBoundary': 'Failed to load unlinked mentions.',
+  'graph.filterBar.errorBoundary': 'Filter bar failed to render.',
 }

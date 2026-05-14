@@ -38,6 +38,7 @@ import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { useUndoStore } from '../stores/undo'
+import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { PageAliasSection } from './PageAliasSection'
 import { PageHeaderMenu } from './PageHeaderMenu'
 import { PageOutline } from './PageOutline'
@@ -572,7 +573,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             />
           )}
 
-          <PagePropertyTable pageId={pageId} forceExpanded={forcePropertyExpanded} />
+          {/* Wrapped in FeatureErrorBoundary so a custom property editor
+              throwing on a malformed value doesn't blank the page header
+              (UX Tier 3). */}
+          <FeatureErrorBoundary name="PagePropertyTable">
+            <PagePropertyTable pageId={pageId} forceExpanded={forcePropertyExpanded} />
+          </FeatureErrorBoundary>
         </div>
       </ViewHeader>
 

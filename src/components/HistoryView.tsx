@@ -28,6 +28,7 @@ import { listPageHistory } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { CompactionCard } from './CompactionCard'
 import { EmptyState } from './EmptyState'
+import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { HistoryFilterBar } from './HistoryFilterBar'
 import { HistoryListView } from './HistoryListView'
 import { HistoryRestoreDialog } from './HistoryRestoreDialog'
@@ -170,8 +171,12 @@ export function HistoryView(): React.ReactElement {
 
   return (
     <div className="history-view space-y-4">
-      {/* Op log compaction card */}
-      <CompactionCard />
+      {/* Op log compaction card.
+          Wrapped in FeatureErrorBoundary so a status-fetch / compaction crash
+          here doesn't take out the rest of HistoryView (UX Tier 3). */}
+      <FeatureErrorBoundary name="CompactionCard">
+        <CompactionCard />
+      </FeatureErrorBoundary>
 
       <ViewHeader>
         <div className="history-view-header space-y-2">
