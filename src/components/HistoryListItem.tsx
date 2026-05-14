@@ -423,6 +423,17 @@ export interface BlockHistoryItemProps {
   onExpandToggle: (entry: HistoryEntry, opening: boolean) => void
   /** Direct restore action — toast-with-Undo is the safety net (no ConfirmDialog). */
   onRestore: (entry: HistoryEntry) => void
+  /**
+   * MAINT-219: parent-owned ref attached to the expanded row's `Restore`
+   * button so `HistoryPanel` can move DOM focus to it whenever
+   * `expandedSeq` changes via keyboard navigation. Only attached when
+   * `isExpanded` is true — collapsed rows never own this ref. The "focus
+   * follows state" invariant keeps `↓`/`↑`/`Enter` deterministic: the
+   * focused element is always the actionable row, so the row-level
+   * `handleRowKeyDown` and panel-level `handlePanelKeyDown` no longer
+   * disagree about which row `Enter` should restore.
+   */
+  restoreButtonRef?: React.RefObject<HTMLButtonElement | null>
 }
 
 export function BlockHistoryItem({
@@ -434,6 +445,7 @@ export function BlockHistoryItem({
   diffSpans,
   onExpandToggle,
   onRestore,
+  restoreButtonRef,
 }: BlockHistoryItemProps): React.ReactElement {
   const { t } = useTranslation()
   const rawContent = getPayloadRawContent(entry)
@@ -613,6 +625,11 @@ export function BlockHistoryItem({
             data-testid={`block-history-restore-${index}`}
             className="self-start"
             onClick={() => onRestore(entry)}
+            // MAINT-219: only the currently-expanded row attaches this
+            // ref (the prop itself is only forwarded by the parent for
+            // the expanded slot). Skipping the conditional check would
+            // be safe but redundant.
+            ref={restoreButtonRef}
           >
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
             {t('history.restoreThisVersion', {

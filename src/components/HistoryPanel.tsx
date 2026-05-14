@@ -57,6 +57,23 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     (entry) => entry.seq,
   )
   const listRef = useRef<HTMLUListElement | null>(null)
+  // MAINT-219: ref attached to the currently-expanded row's primary
+  // `Restore` button. Owning the ref at the panel level (rather than
+  // querySelector-ing the DOM) keeps focus management aligned with React
+  // state — the markup can move without silently breaking the lookup.
+  // The ref is only forwarded to the row whose `seq === expandedSeq`, so
+  // at most one button claims it at any time.
+  const restoreButtonRef = useRef<HTMLButtonElement | null>(null)
+  // MAINT-219: latched true by `handlePanelKeyDown` whenever an arrow
+  // key changes `expandedSeq`; consumed by the focus-on-expand effect
+  // below and reset. Using a ref (not state) so toggling it doesn't
+  // trigger a re-render. The latch covers the unmount-blur race where
+  // collapsing the previously-expanded row drops `document.activeElement`
+  // back to `<body>` before the new row's button mounts — without it,
+  // the effect's "is focus still in the list?" guard would short-circuit
+  // and leave focus stranded on body, so the NEXT arrow keypress goes
+  // nowhere (no row receives it) and the user is silently stuck.
+  const pendingKeyboardFocusRef = useRef(false)
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -198,14 +215,23 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         e.preventDefault()
         const next = currentIdx < 0 ? 0 : Math.min(restorableEntries.length - 1, currentIdx + 1)
         const target = restorableEntries[next]
-        if (target) setExpandedSeq(target.seq)
+        if (target) {
+          // MAINT-219: latch keyboard-nav intent BEFORE the state
+          // update so the post-render focus effect knows this
+          // expansion came from arrow keys (not a mouse click).
+          pendingKeyboardFocusRef.current = true
+          setExpandedSeq(target.seq)
+        }
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         const prev = currentIdx <= 0 ? 0 : currentIdx - 1
         const target = restorableEntries[prev]
-        if (target) setExpandedSeq(target.seq)
+        if (target) {
+          pendingKeyboardFocusRef.current = true
+          setExpandedSeq(target.seq)
+        }
         return
       }
       if (e.key === 'Enter' && currentIdx >= 0) {
@@ -233,6 +259,41 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     if (el && typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'nearest' })
     }
+  }, [expandedSeq])
+
+  // MAINT-219 — keep DOM focus in sync with `expandedSeq`. Without this,
+  // `↓`/`↑` move expansion state but focus stays on the originally-
+  // focused row, so a subsequent `Enter` double-fires: the focused row's
+  // `handleRowKeyDown` toggles ITS expansion AND `handlePanelKeyDown`
+  // restores the (different) expanded row. Moving focus to the expanded
+  // row's `Restore` button makes the row-level keydown handler operate
+  // on the same entry the panel-level handler does, and matches the
+  // standard tree/list focus-follows-state idiom.
+  //
+  // Two activation paths:
+  //  1. `pendingKeyboardFocusRef` was latched by `handlePanelKeyDown` —
+  //     unconditional focus shift (consumes the latch). Covers the
+  //     unmount-blur race where the previously-expanded button is gone
+  //     by the time this effect runs and `document.activeElement` has
+  //     fallen back to `<body>`.
+  //  2. Focus is already inside the list (e.g. user pressed `↓` while
+  //     the `<ul>` itself had focus and there was no previous expanded
+  //     button to unmount). Same outcome, but the latch path isn't
+  //     strictly necessary here.
+  //
+  // Skipped when `expandedSeq` is null (the row collapsed; leave focus
+  // wherever the user put it) or when neither activation path applies
+  // (the expansion came from a mouse click outside the list — don't
+  // yank focus into the panel).
+  useEffect(() => {
+    if (expandedSeq == null) return
+    if (!listRef.current) return
+    const fromKeyboard = pendingKeyboardFocusRef.current
+    pendingKeyboardFocusRef.current = false
+    const focusInList = listRef.current.contains(document.activeElement)
+    if (!fromKeyboard && !focusInList) return
+    const btn = restoreButtonRef.current
+    if (btn) btn.focus()
   }, [expandedSeq])
 
   const handleExpandToggle = useCallback(
@@ -278,19 +339,31 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
             onKeyDown={handlePanelKeyDown}
             data-testid="history-panel-list"
           >
-            {items.map((entry, i) => (
-              <BlockHistoryItem
-                key={entry.seq}
-                blockId={blockId}
-                entry={entry}
-                index={i}
-                isExpanded={expandedSeq === entry.seq}
-                isLoadingDiff={loadingDiffs.has(entry.seq)}
-                diffSpans={diffCache.get(entry.seq)}
-                onExpandToggle={handleExpandToggle}
-                onRestore={handleRestore}
-              />
-            ))}
+            {items.map((entry, i) => {
+              const isExpanded = expandedSeq === entry.seq
+              return (
+                <BlockHistoryItem
+                  key={entry.seq}
+                  blockId={blockId}
+                  entry={entry}
+                  index={i}
+                  isExpanded={isExpanded}
+                  isLoadingDiff={loadingDiffs.has(entry.seq)}
+                  diffSpans={diffCache.get(entry.seq)}
+                  onExpandToggle={handleExpandToggle}
+                  onRestore={handleRestore}
+                  // MAINT-219: only the expanded row gets the ref so the
+                  // focus-on-change effect targets a single, current
+                  // button. The ref is reassigned across renders when
+                  // the expansion moves — React detaches the old node
+                  // and attaches the new one in the same commit.
+                  // Conditional spread (vs `restoreButtonRef={isExpanded ? ref
+                  // : undefined}`) keeps the optional prop omitted on
+                  // collapsed rows, satisfying `exactOptionalPropertyTypes`.
+                  {...(isExpanded ? { restoreButtonRef } : {})}
+                />
+              )
+            })}
           </ul>
         )}
       </ListViewState>

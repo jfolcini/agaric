@@ -241,3 +241,134 @@ async fn undo_property_change_restores_prior_value() {
         "undo must restore property value to 'low'"
     );
 }
+
+/// MAINT-214 (b): `apply_reverse_in_tx` for `OpPayload::MoveBlock`
+/// must refresh the denormalised `page_id` column synchronously,
+/// mirroring the M6 fix in `move_block_inner`
+/// (`commands/blocks/move_ops.rs:174-231`). Pre-fix, undoing a
+/// cross-page move relied on the async `RebuildPageIds` materializer
+/// task to update page_id, leaving an observable staleness window
+/// after the undo tx committed.
+///
+/// Scenario:
+///
+/// 1. Build a tree under `page_a`: `page_a → leaf`.
+/// 2. Move `leaf` under `page_b` (sync M6 already refreshes
+///    `leaf.page_id = page_b`).
+/// 3. Shut the materialiser down so async catch-up can't mask the
+///    sync-update behaviour we are testing.
+/// 4. Undo the move via `undo_page_op_inner`. The reverse payload is
+///    a `MoveBlock` putting the leaf back under `page_a`. With the
+///    MAINT-214 (b) fix, `apply_reverse_in_tx` synchronously rewrites
+///    `leaf.page_id = page_a`. Without the fix the column stays at
+///    `page_b` (async catch-up is blocked).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_move_block_synchronously_refreshes_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Move Undo Page A".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let page_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Move Undo Page B".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let leaf = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "leaf".into(),
+        Some(page_a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        leaf.page_id.as_deref(),
+        Some(page_a.id.as_str()),
+        "sanity: leaf starts under page_a"
+    );
+
+    // Move leaf to page_b. move_block_inner's sync M6 rewrites
+    // leaf.page_id = page_b.
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        leaf.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let leaf_page_after_move: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&leaf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        leaf_page_after_move.as_deref(),
+        Some(page_b.id.as_str()),
+        "sanity: leaf.page_id is page_b after the move"
+    );
+
+    // Shut the materialiser down so async RebuildPageIds cannot
+    // catch up — only the sync MAINT-214 (b) fix can produce the
+    // expected post-state.
+    mat.shutdown();
+
+    // Undo on page_b (where the move op was journalled — move_block
+    // ops attach to the new parent's page).
+    let undo_result = undo_page_op_inner(&pool, DEV, &mat, page_b.id.clone(), 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        undo_result.reversed_op_type, "move_block",
+        "undo target must be the move_block op"
+    );
+
+    let leaf_page_after_undo: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&leaf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        leaf_page_after_undo.as_deref(),
+        Some(page_a.id.as_str()),
+        "MAINT-214 (b): apply_reverse_in_tx for MoveBlock must \
+         synchronously refresh page_id back to page_a — async \
+         RebuildPageIds is blocked by the materialiser shutdown"
+    );
+
+    // Sanity: leaf is now parented to page_a again.
+    let leaf_row = get_block_inner(&pool, leaf.id.clone()).await.unwrap();
+    assert_eq!(
+        leaf_row.parent_id.as_deref(),
+        Some(page_a.id.as_str()),
+        "sanity: undo restored parent_id to page_a"
+    );
+}

@@ -40,8 +40,11 @@
 //! When you add a column to `BlockRow`:
 //! 1. Update [`BLOCK_ROW_CANONICAL_SELECT`] below.
 //! 2. Update [`BLOCK_ROW_RUNTIME_SELECT`] below.
-//! 3. Update [`BLOCK_ROW_CANONICAL_FIELDS`] below.
-//! 4. Run `cargo nextest run -E 'test(block_row_canonical)'` — the
+//! 3. Update [`BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS`] below (same column
+//!    list as [`BLOCK_ROW_RUNTIME_SELECT`] but with every column prefixed
+//!    by the `b.` alias used at the `pagination/properties.rs` sites).
+//! 4. Update [`BLOCK_ROW_CANONICAL_FIELDS`] below.
+//! 5. Run `cargo nextest run -E 'test(block_row_canonical)'` — the
 //!    parity tests will print every drifted site so you can update
 //!    each one.
 
@@ -79,6 +82,32 @@ pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str =
     "id, block_type, content, parent_id, position, deleted_at, \
      todo_state, \
      priority, due_date, scheduled_date, page_id";
+
+/// Canonical SELECT column list for the **runtime** sqlx form with the
+/// `b.` table-alias prefix applied to every column. Same column list (in
+/// the same order) as [`BLOCK_ROW_RUNTIME_SELECT`].
+///
+/// Used by the 2 runtime `sqlx::query_as::<_, BlockRow>(…)` sites in
+/// [`crate::pagination::properties`] that JOIN `blocks b` with
+/// `block_properties bp` (non-reserved key path) or alias `blocks b`
+/// to support the reserved-key column-routing `b.{col}` interpolation
+/// in the WHERE clause. The simple unprefixed const cannot be reused at
+/// those sites because every column in the SELECT clause needs the `b.`
+/// qualifier and the WHERE clause interpolates the alias on other
+/// columns — keeping the SELECT prefix uniform with WHERE references
+/// keeps the SQL readable.
+///
+/// Parity with [`BLOCK_ROW_RUNTIME_SELECT`] is enforced by
+/// `runtime_select_with_b_alias_strips_to_runtime_select` (Test D):
+/// stripping `b.` from every column must yield exactly the unprefixed
+/// const.
+///
+/// MAINT-229 (MAINT-223 follow-up) extracted this const from the 2
+/// `pagination/properties.rs` callsites that MAINT-223 deferred.
+pub(crate) const BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS: &str =
+    "b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, \
+     b.todo_state, \
+     b.priority, b.due_date, b.scheduled_date, b.page_id";
 
 /// Canonical field list for `BlockRow` in struct-declaration order.
 /// Used by the parity test to assert the SELECT clause matches the
@@ -440,6 +469,32 @@ mod tests {
              file list above is missing a file. Audit `grep -rn \
              'query_as::<_, \\(Block\\|Active\\)Row>' src-tauri/src/` \
              and reconcile.",
+        );
+    }
+
+    /// Test D — assert [`BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS`] is a
+    /// pure `b.`-prefixed re-write of [`BLOCK_ROW_RUNTIME_SELECT`].
+    ///
+    /// MAINT-229 split the runtime-select const into an unprefixed form
+    /// (used at 3 sites covered by Test C) and a `b.`-aliased form (used
+    /// at the 2 `pagination/properties.rs` sites). Stripping the `b.`
+    /// alias from every column of the aliased const — using the same
+    /// `strip_blocks_alias` helper Test B uses to normalize JOIN-style
+    /// macro sites — must yield exactly the unprefixed const after
+    /// whitespace normalization. If the two consts ever drift in column
+    /// set, order, or count, this test fails.
+    #[test]
+    fn runtime_select_with_b_alias_strips_to_runtime_select() {
+        let stripped =
+            normalize_whitespace(&strip_blocks_alias(BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS));
+        let canonical = normalize_whitespace(BLOCK_ROW_RUNTIME_SELECT);
+        assert_eq!(
+            stripped, canonical,
+            "BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS has drifted from \
+             BLOCK_ROW_RUNTIME_SELECT. Stripping every `b.` alias prefix \
+             from the aliased const must reproduce the unprefixed const \
+             verbatim (modulo whitespace). Update both consts together \
+             so the column set, order, and count stay in lockstep."
         );
     }
 }
