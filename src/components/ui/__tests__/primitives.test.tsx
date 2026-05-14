@@ -250,6 +250,25 @@ describe('CardButton', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // asChild polymorphism (Radix Slot): consumers can render the card
+  // chrome as an `<a>` / `<Link>` for navigable cards.
+  it('renders as <a> when asChild is true with an anchor child', () => {
+    render(
+      <CardButton asChild className="my-card">
+        <a href="/page/abc">Go to page</a>
+      </CardButton>,
+    )
+    const link = screen.getByRole('link', { name: 'Go to page' })
+    expect(link.tagName).toBe('A')
+    expect(link).toHaveAttribute('href', '/page/abc')
+    expect(link).toHaveAttribute('data-slot', 'card-button')
+    // Base + caller classes are merged onto the anchor.
+    expect(link.className).toContain('bg-card')
+    expect(link.className).toContain('my-card')
+    // `type="button"` must NOT leak onto the anchor (invalid HTML).
+    expect(link).not.toHaveAttribute('type')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -407,6 +426,25 @@ describe('ListItem', () => {
     const li = q(container, 'li')
     expect(li.className).toContain('focus-ring-visible')
   })
+
+  // asChild polymorphism (Radix Slot): consumers can render the chrome
+  // as an `<a>` for navigable lists while preserving merged className.
+  it('renders as <a> when asChild is true with an anchor child', () => {
+    render(
+      <ul>
+        <ListItem asChild className="my-list-class">
+          <a href="/tag/abc">Tag link</a>
+        </ListItem>
+      </ul>,
+    )
+    const link = screen.getByRole('link', { name: 'Tag link' })
+    expect(link.tagName).toBe('A')
+    expect(link).toHaveAttribute('href', '/tag/abc')
+    expect(link).toHaveAttribute('data-slot', 'list-item')
+    expect(link.className).toContain('group')
+    expect(link.className).toContain('hover:bg-accent/50')
+    expect(link.className).toContain('my-list-class')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -503,6 +541,24 @@ describe('RecentPageChip', () => {
     const { container } = render(<RecentPageChip>Accessible chip</RecentPageChip>)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // asChild polymorphism (Radix Slot): chips should be renderable as
+  // anchors so recent-page entries can be true navigable links.
+  it('renders as <a> when asChild is true with an anchor child', () => {
+    render(
+      <RecentPageChip asChild className="my-chip">
+        <a href="/page/recent">Recent page</a>
+      </RecentPageChip>,
+    )
+    const link = screen.getByRole('link', { name: 'Recent page' })
+    expect(link.tagName).toBe('A')
+    expect(link).toHaveAttribute('href', '/page/recent')
+    expect(link).toHaveAttribute('data-slot', 'recent-page-chip')
+    expect(link.className).toContain('bg-secondary/40')
+    expect(link.className).toContain('my-chip')
+    // `type="button"` must NOT leak onto the anchor (invalid HTML).
+    expect(link).not.toHaveAttribute('type')
   })
 })
 

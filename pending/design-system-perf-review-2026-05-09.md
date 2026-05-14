@@ -1,7 +1,14 @@
 # Agaric Design System — Performance Review
 
 > **Status:** Tier 2 + Tier 3 small wins shipped, plus Tier 1.4 (partial)
-> and Tier 1.5 closed. Closed: items **5** (`SortableBlockWrapper` wrapped
+> and Tier 1.1, 1.2, 1.5 closed. Closed: items **1** (`useResolveStore`
+> double-subscribe removed from `useBlockResolve` + `useRichContentCallbacks`
+> — sole subscription is `cache`; immutable-Map identity drives re-renders);
+> **2** (`page-blocks.ts` single-block-edit hot paths derive `blocksById`
+> from the previous Map via `cloneBlocksByIdWith` / `cloneBlocksByIdWithout`
+> instead of full-scan rebuilding from `blocks`; bulk paths — `load`,
+> external `setState` — still rebuild as before);
+> **5** (`SortableBlockWrapper` wrapped
 > with `React.memo`; `useRovingEditor` and `useViewportObserver` return
 > values now memoized so handle/observer identity is stable across parent
 > re-renders); **9** (DonePanel `useMemo` wrappers); **10** (React.memo on
@@ -20,8 +27,16 @@
 > so `BlockListItem.memo` will still not fully hit until the prop
 > surface is primitivized (BlockListItem renders its own metadata from
 > typed primitive props) — tracked as a follow-up.
-> **Still open:** Tier 1 items 1, 2, 3; the `metadata` half of item 4;
-> Tier 2 remaining items (6, 7, 8, 11, 12); Tier 3 item (19).
+> **Still open:** Tier 1 item 3; the `metadata` half of item 4;
+> Tier 2 remaining items (6, 7, 11, 12); Tier 3 item (19).
+>
+> **Tier 2.8 closed** (`useGraphSimulation` split into setup + patch
+> effects; the SVG `g` group, zoom behavior, and ResizeObserver now
+> survive filter changes; node DOM is patched in place via d3's
+> data-join keyed by id so existing nodes keep their x/y on filter
+> toggle). Worker/main-thread simulation is still rebuilt on data
+> change because the worker protocol has no "update data" message —
+> follow-up tier could extend the protocol to avoid the re-spawn.
 
 **Date:** 2026-05-09
 **Method.** Round 1: five parallel subagents reviewed (a) UI primitives in `src/components/ui/`, (b) heavy-render hotspots, (c) bundle and code-splitting, (d) zustand store fan-out, (e) perf claims in the markdown docs. Round 2: two independent verifiers fact-checked every claim against actual code (file/line/grep/`du`). Six round-1 claims were debunked or softened on verification and are excluded from this list. Findings below are confirmed against the current tree.
@@ -32,20 +47,20 @@ The system is **strong on a few intentional architectural decisions** (single ro
 
 ## Tier 1 — Highest leverage
 
-**1. `useResolveStore` consumers double-subscribe to `version` + `cache`.**
-`src/hooks/useBlockResolve.ts:230-231` and `src/hooks/useRichContentCallbacks.ts:26-27, 87-88` each call the store twice on consecutive lines:
+**1. ~~`useResolveStore` consumers double-subscribe to `version` + `cache`.~~** *(closed)*
+~~`src/hooks/useBlockResolve.ts:230-231` and `src/hooks/useRichContentCallbacks.ts:26-27, 87-88` each call the store twice on consecutive lines:~~
 
 ```ts
 const version = useResolveStore((s) => s.version)
 const cache = useResolveStore((s) => s.cache)
 ```
 
-Every cache write fires both subscriptions, and `src/stores/resolve.ts:220, 241, 270` allocates a brand-new `Map` of up to 10K entries per write. Per-keystroke `batchSet` flows from search/picker re-render every chip-rendering surface twice.
-**Fix:** drop `version` (the new Map identity is already a re-render trigger), or read `cache` outside React via `getState()` and subscribe once on a narrower derivation.
+~~Every cache write fires both subscriptions, and `src/stores/resolve.ts:220, 241, 270` allocates a brand-new `Map` of up to 10K entries per write. Per-keystroke `batchSet` flows from search/picker re-render every chip-rendering surface twice.~~
+**Resolved:** the `version` subscription was dropped from `useBlockResolve`, `useRichContentCallbacks`, and `useTagClickHandler`. Each cache mutation in `src/stores/resolve.ts` already allocates a fresh `Map`, so zustand's `Object.is` shallow compare on the `cache` slice fires re-renders on every write. `version` is still bumped in the store (kept as a public field — the test suite still asserts on `useResolveStore.getState().version` as a write counter) but no React subscriber listens for it. `cacheRef` continues to be the read path inside the stable `useCallback`s; no `useMemo`/`useCallback` deps needed rekeying — `version` was only ever a render-trigger, never appeared in any dep array.
 
-**2. `page-blocks.ts` rebuilds `blocksById` on every mutation.**
-`src/stores/page-blocks.ts:187` defines `buildBlocksById`; called at lines 258, 320, 335, 347, 363, 451, 489, 532, 588, 646, 663. For a 2000-block page, every keystroke that flushes via `edit()` (`page-blocks.ts:333-336`) maps the full `blocks` array and constructs a fresh 2000-entry Map. Combined with `EditableBlock.tsx:117-120` and `BlockPropertyDrawer.tsx:67-70` selectors keyed on `blocksById`, the new Map identity fans out to every mounted EditableBlock per edit. Even the recently-added `appendBlock` (`page-blocks.ts:656-664`) pays this cost.
-**Fix:** mutate Map in place on the single-block-edit hot path, or split state into `blocks: Block[]` + `byId: Map` updated immutably only at the touched key.
+**2. ~~`page-blocks.ts` rebuilds `blocksById` on every mutation.~~** *(closed)*
+~~`src/stores/page-blocks.ts:187` defines `buildBlocksById`; called at lines 258, 320, 335, 347, 363, 451, 489, 532, 588, 646, 663. For a 2000-block page, every keystroke that flushes via `edit()` (`page-blocks.ts:333-336`) maps the full `blocks` array and constructs a fresh 2000-entry Map. Combined with `EditableBlock.tsx:117-120` and `BlockPropertyDrawer.tsx:67-70` selectors keyed on `blocksById`, the new Map identity fans out to every mounted EditableBlock per edit. Even the recently-added `appendBlock` (`page-blocks.ts:656-664`) pays this cost.~~
+**Resolved:** introduced `cloneBlocksByIdWith(prev, touched[])` and `cloneBlocksByIdWithout(prev, removedIds)` helpers in `src/stores/page-blocks.ts`. The new Map is now derived from the previous one via `new Map(prev)` (which iterates the existing Map's internal slots — no `FlatBlock.id` property access) plus an `O(k)` set/delete for the touched keys, replacing the per-mutation full-scan rebuild on the single-block-edit hot path. Migrated `edit` (success + rollback), `createBelow`, `remove`, `splitBlock` rollback, `reorder`, `indent`, `dedent`, `moveUp`, `moveDown`, and `appendBlock` to the immutable touched-key path. `load` and the external `setState` augment (`augmentBlocksUpdate`) keep the full-scan `buildBlocksById` — those are legitimate bulk paths. Invariant guarded by `'edit() does not full-scan rebuild blocksById from the blocks array'` in `src/stores/__tests__/page-blocks.test.ts` (counts `.id` accessor reads across a 50-block `edit()` and asserts `≤ N + 5` instead of the regression's `~2N`).
 
 **3. `editor` chunk (480 KB) and `LinkPreviewTooltip` chunk (304 KB) are eagerly preloaded.**
 `dist/index.html` emits 93 `modulepreload` tags including `editor-q3nmlp2u.js` (480K), `LinkPreviewTooltip-DQWPFXIe.js` (304K), `highlight-bqqDqH2C.js` (148K), `dnd-_ieDZQYq.js` (56K), `datepicker-DrlFMZhF.js` (76K), `export-graph-DgPJkOA3.js` (96K). Even though `JournalPage` is the only eager view, `BlockTree` → `use-roving-editor.ts` pulls all 28 TipTap extensions into the critical path. The `vite.config.ts:35-36` comment already acknowledges this. (`d3-CHvRSp5e.js` is *not* preloaded — it ships only when `GraphView` mounts.)
@@ -77,9 +92,9 @@ Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions w
 `src/components/journal/WeeklyView.tsx:42` maps `entries` to `DaySection`; `DaySection` was wrapped with `React.memo` in Session 710, but each instance still mounts a full `BlockTree` (`:162`) carrying its own `SortableContext`, viewport observer, batch-attachments provider, slash-commands hook, and roving editor. Concurrent fan-out scales with the entry count.
 **Fix:** memoize `DaySection`; consider a single shared `SortableContext` across days, and lazy-mount day BlockTrees on viewport entry.
 
-**8. GraphView simulation rebuilt on filter change.**
-`src/hooks/useGraphSimulation.ts:108` deps array is `[svgRef, nodes, workerFailed, attachZoom, renderElements, runWorker, runMainThread]`. Filter toggles change `nodes`/`renderElements` identity, causing the entire d3 simulation and SVG selection trees to be torn down and rebuilt rather than patched.
-**Fix:** keep the simulation alive across filter changes; patch nodes/links via `selection.data(...).join(...)`.
+**8. ~~GraphView simulation rebuilt on filter change.~~** *(closed)*
+~~`src/hooks/useGraphSimulation.ts:108` deps array is `[svgRef, nodes, workerFailed, attachZoom, renderElements, runWorker, runMainThread]`. Filter toggles change `nodes`/`renderElements` identity, causing the entire d3 simulation and SVG selection trees to be torn down and rebuilt rather than patched.~~
+**Resolved:** `useGraphSimulation` now runs two effects. The **setup effect** is keyed on `[svgRef, workerFailed, attachZoom, runWorker, runMainThread, setupKey]` (no `nodes`/`edges`/`renderElements` — all consumed via refs) and handles the SVG group creation, zoom attach, ResizeObserver, and initial simulation run; its cleanup only fires on unmount or worker-fallback flip. The **patch effect** is keyed on `[nodes, edges, svgRef]` and is what runs on filter toggles: it uses d3's `selection.data(...).join(...)` keyed by node id on the persistent `g` group (existing nodes keep their DOM and x/y/vx/vy across the toggle), re-binds the click/keyboard/hover/focus listeners on the merged selection, and reruns the simulation against the patched ctx. Result: zoom transform survives filter changes, the ResizeObserver stays attached, and visible nodes don't snap back to the centre. The worker IS still re-spawned on data change because the worker protocol has no "update data" message (`src/workers/graph-worker-types.ts` only exports `start`/`stop`/`drag`) — extending the protocol so the worker can patch its own simulation in place is a follow-up. Regression tests in `src/hooks/__tests__/useGraphSimulation.test.ts` pin (a) ResizeObserver constructor fires once per mount and (b) `zoom()` is not re-called on filter rerenders.
 
 **9. `DonePanel` recomputes derived data each render.**
 `src/components/DonePanel.tsx:165` (`grouped = groupBlocksByPage(...)`) and `:168` (`flatItems = grouped.flatMap(...)`) are bare expressions. `groupBlocksByPage` runs every render. Asymmetric with `DuePanel`, which memoizes the equivalents at lines 130/161.
@@ -160,8 +175,8 @@ HistoryListItem and `journal/DaySection` were wrapped with `React.memo` in Sessi
 ## Suggested ordering (largest verified ROI first)
 
 1. Lazy-load `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog` (#12) — biggest critical-path bytes per LOC changed.
-2. Fix `useResolveStore` double-subscription (#1) — hits every chip-rendering surface.
-3. In-place mutation for `blocksById` on single-block edits (#2) — reduces fan-out per keystroke.
+2. ~~Fix `useResolveStore` double-subscription (#1) — hits every chip-rendering surface.~~ *(closed)*
+3. ~~In-place mutation for `blocksById` on single-block edits (#2) — reduces fan-out per keystroke.~~ *(closed; immutable touched-key path via `cloneBlocksByIdWith` / `cloneBlocksByIdWithout`.)*
 4. ~~Memoize `SortableBlockWrapper` and stabilize its props (#5).~~ *(closed)*
 5. ~~Replace inline handlers in DuePanel/DonePanel/AgendaResults rows~~ (closed; row handlers now sourced from `useBlockNavigation.getRowHandlers`). Remaining half of #4: primitivize `BlockListItem`'s `metadata` prop surface so `metadata={<>…</>}` JSX is no longer required at each call site.
 6. Run `ANALYZE=1 npm run build` to attribute the unnamed 472K/212K chunks; then decide on TipTap split (#3).

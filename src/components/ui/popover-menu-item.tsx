@@ -1,4 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
+import { Slot } from 'radix-ui'
 import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
@@ -27,6 +28,7 @@ interface PopoverMenuItemProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'>,
     VariantProps<typeof popoverMenuItemVariants> {
   ref?: React.Ref<HTMLButtonElement>
+  asChild?: boolean
 }
 
 const PopoverMenuItem = ({
@@ -34,20 +36,27 @@ const PopoverMenuItem = ({
   active,
   className,
   disabled,
+  asChild = false,
   children,
   ...props
 }: PopoverMenuItemProps) => {
+  const Comp = asChild ? Slot.Root : 'button'
+  // `type="button"` and the native `disabled` attribute are only valid on
+  // the native button; when rendering via Slot the caller's element
+  // (e.g. `<a>`) owns its own semantics. Keep the visual `disabled`
+  // styling via the CVA variant either way.
+  const buttonOnlyProps = asChild ? {} : { type: 'button' as const, disabled: disabled === true }
+
   return (
-    <button
+    <Comp
       ref={ref}
-      type="button"
       data-slot="popover-menu-item"
       className={cn(popoverMenuItemVariants({ active, disabled }), className)}
-      disabled={disabled === true}
+      {...buttonOnlyProps}
       {...props}
     >
       {children}
-    </button>
+    </Comp>
   )
 }
 PopoverMenuItem.displayName = 'PopoverMenuItem'

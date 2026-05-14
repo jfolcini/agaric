@@ -5,11 +5,16 @@
 > files + 6 test files), 1c (tests for `recent-page-chip` and `toggle-group`),
 > and 1e (TagList `pickReadableForeground` helper + `--shadow-accent-stroke`
 > token replacing the two `drop-shadow-[…]` arbitrary classes) all shipped.
+> Phase 2 partial: **2a** (cn() merge order unified across Button / Label /
+> Spinner to the Badge form `cn(variants(...), className)`) and **2b**
+> (`asChild` polymorphism added to `card-button`, `list-item`,
+> `alert-list-item`, `recent-page-chip`, `popover-menu-item`) shipped.
 > **Still open:** 1d (text-[10px] decision needs a design pass), Phase 2
-> API consolidation, Phase 3 structural moves. Tiers remain independent —
-> Tier 1 is mechanical cleanup, Tier 2 is API consolidation that pays back
-> over time, Tier 3 is the bigger structural moves that need more thought
-> before scheduling.
+> items 2c (badge-family consolidation) and 2d (extract MetricCard /
+> SectionGroupHeader / FormField clusters), Phase 3 structural moves.
+> Tiers remain independent — Tier 1 is mechanical cleanup, Tier 2 is API
+> consolidation that pays back over time, Tier 3 is the bigger structural
+> moves that need more thought before scheduling.
 
 ## Why this exists
 
@@ -147,43 +152,63 @@ These are the only real drift items the verified count surfaced:
 **Goal:** remove cognitive tax in the primitive layer so feature
 authors don't have to learn three near-identical APIs.
 
-### 2a. Unify `cn()` merge order between Button and Badge
+### 2a. Unify `cn()` merge order between Button and Badge — **closed**
 
-`button.tsx:59` calls `cn(buttonVariants({ variant, size, className }))`
-— passing `className` *into* the CVA invocation.
+`button.tsx:59` (now `:61`) used to call `cn(buttonVariants({ variant,
+size, className }))` — passing `className` *into* the CVA invocation.
 `badge.tsx:42` calls `cn(badgeVariants({ variant }), className)` —
 passing it *alongside*.
 
 Both end up funnelled through `twMerge` so the user-facing override
-behavior is the same. The cost is contributor cognitive load: every new
-primitive copies one of the two patterns, and reviewers have to spot
-which.
+behavior is the same. The cost was contributor cognitive load: every
+new primitive copied one of the two patterns, and reviewers had to
+spot which.
 
-**Change:** standardise on `cn(variants(...), className)` (the Badge
-form — clearer that caller `className` overrides). Update the Button
-recipe and any other primitive that follows the Button pattern.
+**Done:** standardised on `cn(variants(...), className)` (the Badge
+form — clearer that caller `className` overrides). Migrated sites
+(grep of `cn(\w+Variants({...className}))` across `src/components/ui/`):
 
-### 2b. Add `asChild` polymorphism to composite primitives
+- `src/components/ui/button.tsx:61` — `cn(buttonVariants({ variant, size }), className)`
+- `src/components/ui/label.tsx:38` — `cn(labelVariants({ size, muted }), className)`
+- `src/components/ui/spinner.tsx:37` — `cn(spinnerVariants({ size }), className)`
 
-The following primitives are hard-coded to a single DOM element and
-cannot be composed via Radix `Slot`:
+No other in-tree primitive used the Button form. `badge.tsx`, `priority-badge.tsx`,
+`popover-menu-item.tsx`, `alert-list-item.tsx`, `sidebar.tsx` already
+used the `cn(variants(...), className)` form.
 
-| Primitive | Today | Why `asChild` matters |
+### 2b. Add `asChild` polymorphism to composite primitives — **closed**
+
+The following primitives were hard-coded to a single DOM element and
+could not be composed via Radix `Slot`:
+
+| Primitive | Default tag | `asChild` shipped |
 | --- | --- | --- |
-| `card-button.tsx` | `<button>` | "Render as `<a>` / `<Link>`" requires duplication |
-| `list-item.tsx` | `<li>` | Can't render as `<a>` for navigable lists |
-| `alert-list-item.tsx` | `<li>` | Same |
-| `recent-page-chip.tsx` | `<button>` | Recent-page links should be navigable |
-| `popover-menu-item.tsx` | `<button>` | Same problem in menus |
+| `card-button.tsx` | `<button>` | yes — `Slot.Root` swap; `type="button"` only emitted on the native path so it does not leak onto `<a>` children |
+| `list-item.tsx` | `<li>` | yes |
+| `alert-list-item.tsx` | `<li>` | yes (preserves `variant` CVA) |
+| `recent-page-chip.tsx` | `<button>` | yes — `type` only emitted on the native path |
+| `popover-menu-item.tsx` | `<button>` | yes — `type` and the native `disabled` attribute only emitted on the native path; the CVA `disabled` styling class still applies in both modes |
 
-**Change:** each gets the same Slot treatment Button/Badge use:
+**Done:** each got the same Slot treatment Button/Badge use:
 
 ```tsx
 const Comp = asChild ? Slot.Root : 'button' /* or 'li' */
 ```
 
-Add tests that pass `asChild` + `<a href="…">` and assert the rendered
-element is `<a>` with the merged className.
+Added unit tests on each primitive's existing test file that pass
+`asChild` + `<a href="…">` and assert the rendered element is `<a>`
+with the merged className, the primitive's `data-slot`, and (for the
+button-rooted three) that `type="button"` does not leak onto the
+anchor:
+
+- `src/components/ui/__tests__/primitives.test.tsx` — CardButton,
+  ListItem, RecentPageChip asChild tests
+- `src/components/ui/__tests__/alert-list-item.test.tsx` — AlertListItem
+- `src/components/ui/__tests__/popover-menu-item.test.tsx` — PopoverMenuItem
+
+Existing tests of these primitives that assert the root element is
+`<button>` / `<li>` keep passing because `asChild` defaults to `false`
+(opt-in). No consumer call sites were touched.
 
 ### 2c. Consolidate the badge-family API
 

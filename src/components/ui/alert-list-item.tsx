@@ -1,4 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
+import { Slot } from 'radix-ui'
 import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
@@ -20,11 +21,19 @@ interface AlertListItemProps
   extends VariantProps<typeof alertListItemVariants>,
     Omit<React.ComponentProps<'li'>, 'className'> {
   className?: string
+  asChild?: boolean
 }
 
-const AlertListItem = ({ ref, variant, className, ...props }: AlertListItemProps) => {
+const AlertListItem = ({
+  ref,
+  variant,
+  className,
+  asChild = false,
+  ...props
+}: AlertListItemProps) => {
+  const Comp = asChild ? Slot.Root : 'li'
   return (
-    <li
+    <Comp
       ref={ref}
       data-slot="alert-list-item"
       className={cn(alertListItemVariants({ variant }), className)}

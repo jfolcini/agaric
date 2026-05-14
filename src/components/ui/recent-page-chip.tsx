@@ -15,12 +15,17 @@
  * Class composition mirrors the CVA pattern used by Badge / Button (single
  * base class string composed via `cn()`); this chip has only one variant
  * so we skip the `cva()` factory and pin the classes inline.
+ *
+ * Supports `asChild` polymorphism (Radix `Slot`) so callers can render the
+ * chip chrome as an `<a>` / `<Link>` for navigable recent-page entries
+ * while keeping the default `<button type="button">` semantics.
  */
 
+import { Slot } from 'radix-ui'
 import type React from 'react'
 import { cn } from '@/lib/utils'
 
-export type RecentPageChipProps = React.ComponentProps<'button'>
+export type RecentPageChipProps = React.ComponentProps<'button'> & { asChild?: boolean }
 
 const chipClass = cn(
   // base
@@ -47,14 +52,20 @@ export function RecentPageChip({
   ref,
   className,
   type = 'button',
+  asChild = false,
   ...props
 }: RecentPageChipProps): React.ReactElement {
+  const Comp = asChild ? Slot.Root : 'button'
+  // `type="button"` is only valid on the native button; when rendering
+  // via Slot the caller's element (e.g. `<a>`) owns its own semantics.
+  const buttonOnlyProps = asChild ? {} : { type }
+
   return (
-    <button
+    <Comp
       ref={ref}
-      type={type}
       data-slot="recent-page-chip"
       className={cn(chipClass, className)}
+      {...buttonOnlyProps}
       {...props}
     />
   )

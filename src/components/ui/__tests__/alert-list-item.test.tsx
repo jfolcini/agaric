@@ -161,4 +161,23 @@ describe('AlertListItem', () => {
     )
     expect(ref.current).toBeInstanceOf(HTMLLIElement)
   })
+
+  // asChild polymorphism (Radix Slot): consumers can render the alert
+  // chrome as an `<a>` for navigable alerts while preserving the merged
+  // variant + caller className.
+  it('renders as <a> when asChild is true with an anchor child', () => {
+    render(
+      <ul>
+        <AlertListItem asChild className="extra" data-testid="item">
+          <a href="/conflict/abc">View conflict</a>
+        </AlertListItem>
+      </ul>,
+    )
+    const link = screen.getByTestId('item')
+    expect(link.tagName).toBe('A')
+    expect(link).toHaveAttribute('href', '/conflict/abc')
+    expect(link).toHaveAttribute('data-slot', 'alert-list-item')
+    expect(link.className).toContain('border-destructive/20')
+    expect(link.className).toContain('extra')
+  })
 })

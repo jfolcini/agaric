@@ -4,15 +4,23 @@
  * Standardizes the `group flex items-center gap-3 rounded-lg …
  * hover:bg-accent/50` pattern used across TagList, PropertiesView,
  * and PageBrowser.
+ *
+ * Supports `asChild` polymorphism (Radix `Slot`) so consumers can render
+ * the chrome as an `<a>` for navigable lists while keeping the default
+ * `<li>` semantics.
  */
 
+import { Slot } from 'radix-ui'
 import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-const ListItem = ({ ref, className, ...props }: React.ComponentProps<'li'>) => {
+type ListItemProps = React.ComponentProps<'li'> & { asChild?: boolean }
+
+const ListItem = ({ ref, className, asChild = false, ...props }: ListItemProps) => {
+  const Comp = asChild ? Slot.Root : 'li'
   return (
-    <li
+    <Comp
       ref={ref}
       data-slot="list-item"
       className={cn(

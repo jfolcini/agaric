@@ -7,6 +7,34 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 719 — Perf Tier 1.1/1.2/2.8 + Maintain 2a/2b (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 4 build (general-purpose) in parallel |
+| **Items closed** | design-system-perf-review Tier 1 items 1 + 2 + Tier 2 item 8; design-system-maintainability Phase 2 items 2a + 2b. |
+| **Items modified** | design-system-perf-review status note updated; design-system-maintainability status note updated. |
+| **Tests added** | +1 page-blocks single-block-edit invariant; +2 useGraphSimulation (ResizeObserver + zoom not re-created on filter); +6 asChild + `<a href>` regression tests across 5 primitives. |
+| **Files touched** | 17 (5 production hooks/stores + 6 ui/ primitives + 5 unit tests + 2 plan-file status notes) |
+
+**Summary:** four parallel subagents closed three perf items + two maintainability items. **Perf 1.1** — `useResolveStore`'s redundant `version` subscription removed from `useBlockResolve` + `useRichContentCallbacks`; the immutable Map identity on `cache` already triggers re-renders. **Perf 1.2** — new `cloneBlocksByIdWith` / `cloneBlocksByIdWithout` helpers in `src/stores/page-blocks.ts` clone the existing `blocksById` Map + touch only changed entries; 11 single-block-edit hot paths (create / edit / remove / split / reorder / indent / dedent / moveUp / moveDown / appendBlock / edit-rollback) migrated; `load` + `augmentBlocksUpdate` legitimately remain on `buildBlocksById`. Regression test counts `.id` reads — old path was ~2N, new path is N (one walk via `state.blocks.map`). **Perf 2.8** — `useGraphSimulation` split into a stable **setup** effect (deps: refs + workerFailed + setupKey) and a **patch** effect (deps: nodes + edges). Patch effect uses d3 keyed data-join (`selectAll('g.node').data(simNodes, d => d.id).join(enter, update, exit)`) so existing DOM survives filter toggles; previous simulation node x/y/vx/vy carried forward by id. ResizeObserver + zoom no longer torn down between filter changes. Worker re-spawn cost noted as out-of-scope follow-up (would need an "update data" message in the worker protocol). **Maintain 2a** — `cn(variants({...className}))` → `cn(variants(...), className)` standardized across button + label + spinner (the only Button-pattern sites left). **Maintain 2b** — `asChild?` polymorphism added to card-button + list-item + alert-list-item + recent-page-chip + popover-menu-item, mirroring Button/Badge's Slot pattern. Native-button-only props (`type="button"`, `disabled` attribute) gated to the non-asChild path so a child `<a>` doesn't receive invalid HTML.
+
+**Process notes:** the Maintain subagent's vitest run picked up the other in-flight subagents' file modifications and treated them as "test-induced", stashing them. Manually reconciled — the running subagents (perf 1.2, perf 2.8) had to re-apply some work from those stashes. Worth flagging: when subagents run vitest as part of their verification, they observe sibling subagents' modifications and may attempt to "clean up" cross-subagent state. For now: drop those stashes after the batch completes (done here).
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9680 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- Production: `src/hooks/useBlockResolve.ts`, `src/hooks/useRichContentCallbacks.ts`, `src/stores/page-blocks.ts`, `src/hooks/useGraphSimulation.ts`, `src/components/ui/button.tsx`, `label.tsx`, `spinner.tsx`, `card-button.tsx`, `list-item.tsx`, `alert-list-item.tsx`, `recent-page-chip.tsx`, `popover-menu-item.tsx`.
+- Tests: `src/stores/__tests__/page-blocks.test.ts`, `src/hooks/__tests__/useGraphSimulation.test.ts`, `src/components/ui/__tests__/alert-list-item.test.tsx`, `popover-menu-item.test.tsx`, `primitives.test.tsx`.
+- Docs: `pending/design-system-perf-review-2026-05-09.md`, `pending/design-system-maintainability-2026-05-09.md`.
+
+**Commit plan:** single commit covering 4-stream batch + Session 719 entry.
+
+---
 ## Session 718 — PageBrowser pagination UX + Tier 1 perf + UX-T1.6 (2026-05-14)
 
 | Metadata | Value |

@@ -34,7 +34,7 @@ const Spinner = ({ ref, size, className, ...props }: SpinnerProps) => {
     <Loader2
       ref={ref}
       data-slot="spinner"
-      className={cn(spinnerVariants({ size, className }))}
+      className={cn(spinnerVariants({ size }), className)}
       {...props}
     />
   )

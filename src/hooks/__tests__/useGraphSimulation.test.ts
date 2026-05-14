@@ -439,6 +439,72 @@ describe('useGraphSimulation', () => {
     expect(observer.disconnected).toBe(true)
   })
 
+  // PERF-Tier2-8: filter toggles change the `nodes`/`edges` array identity.
+  // Pre-fix the entire effect ran cleanup+setup again on every change,
+  // which tore down the ResizeObserver, the worker, and the zoom layer.
+  // Post-fix the setup-only side-effects (ResizeObserver construction,
+  // zoom keydown listener attach) fire ONCE per mount; the patch effect
+  // handles the data delta in place. The fixture below mirrors
+  // production where `navigateToPage` is a stable zustand selector —
+  // re-creating that arrow per render would defeat the split by
+  // flipping `renderElements`'s useCallback identity.
+  describe('keeps simulation infrastructure alive across filter changes (PERF-Tier2-8)', () => {
+    const stableNavigate = (): void => {}
+
+    it('does not construct a new ResizeObserver when `nodes` identity changes', () => {
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      expect(MockResizeObserver.instances).toHaveLength(1)
+
+      // Simulate a filter toggle: new array identity, same payload.
+      rerender(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      // Still exactly one ResizeObserver — setup didn't re-run.
+      expect(MockResizeObserver.instances).toHaveLength(1)
+      // ...and the original observer is still attached.
+      const observer = MockResizeObserver.instances[0] as InstanceType<typeof MockResizeObserver>
+      expect(observer.disconnected).toBe(false)
+    })
+
+    it('does not re-attach the d3 zoom behavior when `nodes` identity changes', () => {
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      // Setup attached zoom exactly once.
+      const zoomCallsAfterMount = vi.mocked(zoom).mock.calls.length
+      expect(zoomCallsAfterMount).toBeGreaterThanOrEqual(1)
+
+      rerender(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      // No new zoom() call — the patch effect re-uses the existing
+      // zoom behavior attached to the persistent `g`.
+      expect(vi.mocked(zoom).mock.calls.length).toBe(zoomCallsAfterMount)
+    })
+  })
+
   // UX-270: the keyboard-navigation pattern (tabindex=0 + role=button +
   // Enter/Space activation) is now documented in `attachNodeClickAndKeyboard`.
   // These regression tests pin the contract:
