@@ -74,9 +74,48 @@ The verified state of the system is **strong on tokens and primitives, weaker on
 `src/hooks/useAutoScrollOnDrag.ts:42-69` — RAF-driven scroll loop with no `matchMedia` check. AGENTS.md/UX.md explicitly require JS-driven animations to honor reduced motion (other hooks like `useGraphSimulation`, `useScrollToFocus` do).
 **Fix:** check `window.matchMedia('(prefers-reduced-motion: reduce)')` once on effect entry; skip the RAF loop or jump in one frame.
 
-**4. Six badge-shaped primitives with fuzzy boundaries.**
+**4. Six badge-shaped primitives with fuzzy boundaries.** *(closed —
+`Badge` now carries the `tone`/`size`/`shape` axes; `StatusBadge` +
+`PriorityBadge` deleted; `alert-list-item` renamed; see resolution
+below)*
 `badge.tsx`, `status-badge.tsx`, `priority-badge.tsx`, `filter-pill.tsx`, `recent-page-chip.tsx`, `alert-list-item.tsx`. Only `Badge` is in the AGENTS.md inventory; `StatusBadge` uses `rounded` instead of `rounded-full` and lacks `data-slot`. The family fragments without clear ownership.
 **Fix:** promote `Badge` to a base with `tone`/`size`/`interactive` variants; collapse `StatusBadge` and `PriorityBadge` into it. Keep `FilterPill` and `RecentPageChip` (they're buttons-shaped-as-badges, different a11y contract). Rename `alert-list-item.tsx` → `alert-list-row.tsx` to break the badge-naming collision.
+
+**Resolution.** `src/components/ui/badge.tsx` rewritten with three
+orthogonal axes — `tone` (`default | secondary | destructive |
+outline | ghost | link | priority | status`), `size` (`xs | sm |
+compact | default | lg`), `shape` (`pill | rounded`) — plus
+`statusState` / `priorityLevel` props that feed colour into the
+`status` and `priority` tones. The `priority` tone delegates to the
+existing `priorityColor()` utility (UX-201b index-based) instead of
+duplicating the level→token map. The legacy `variant` prop is kept
+as a 1:1 alias for `tone` so unrelated callers do not need to be
+touched. `compact` size matches the legacy `StatusBadge` chrome
+(`px-1 py-0.5`, no fixed height); `sm` matches the legacy
+`PriorityBadge` md cell (`h-4 min-w-4 px-1`); `lg` matches the
+legacy `PriorityBadge` lg cell (header chip).
+
++ `src/components/ui/status-badge.tsx` — **deleted** (5 states
+  collapsed into `tone="status"` + `statusState`).
++ `src/components/ui/priority-badge.tsx` — **deleted** (3 sizes +
+  `P{n}` label moved to caller; `tone="priority"` + `priorityLevel`
+  drives the colour through `priorityColor()`).
++ `src/components/ui/alert-list-item.tsx` → **renamed**
+  `alert-list-row.tsx`. Exported `AlertListRow`; `data-slot` updated
+  to `alert-list-row`. Renamed to break the badge-naming collision
+  (it is a list `<li>` row, not a badge-shaped item).
++ Four consumer files migrated: `AlertSection`, `BlockListItem`,
+  `DuePanel`, `QueryResultList`. `FilterPill` and `RecentPageChip`
+  left in place — different a11y contracts (button-shaped
+  primitives), out of scope.
+
+**Verification.** Full `npx vitest run` clean (9 746 tests, two
+removed primitive tests had 33 cases between them, all behaviour
+recovered by the extended Badge suite — 21 cases including 5 new
+`tone="status"`, 5 `tone="priority"`, and 4 size/shape cases). `npx
+tsc -b --noEmit` clean. `npx --no biome check src/components/...`
+on every touched file clean. ARCHITECTURE.md inventory dropped from
+41 → 39; AGENTS.md mandatory-patterns row notes the new axes.
 
 **5. Page-header chrome is non-existent — every top-level view rolls its own.** *(closed —
 `FeaturePageHeader` shipped + six unwrapped views migrated; see

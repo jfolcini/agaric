@@ -212,7 +212,7 @@ Existing tests of these primitives that assert the root element is
 `<button>` / `<li>` keep passing because `asChild` defaults to `false`
 (opt-in). No consumer call sites were touched.
 
-### 2c. Consolidate the badge-family API
+### 2c. Consolidate the badge-family API — **closed**
 
 Today the badge family is fragmented:
 
@@ -237,6 +237,40 @@ compatibility shims would cost more than they save.
 **Sequencing:** do this **after** 2b. `asChild` lets the unified Badge
 render as the right element type for each call site without the
 per-primitive composition workarounds we have today.
+
+**Done.** `Badge` now exposes three orthogonal axes — `tone`
+(`default | secondary | destructive | outline | ghost | link |
+priority | status`), `size` (`xs | sm | compact | default | lg`),
+`shape` (`pill | rounded`) — plus `statusState` / `priorityLevel`
+props that drive the colour for the `status` and `priority` tones.
+The `priority` tone delegates to the existing `priorityColor()`
+utility (UX-201b, index-based) instead of duplicating the
+level→token map. The legacy `variant` prop is preserved as a 1:1
+alias for `tone` so unrelated callers do not need to be touched.
+`compact` size matches the legacy `StatusBadge` chrome (`px-1
+py-0.5`, no fixed height); `sm` matches the legacy `PriorityBadge`
+md cell (`h-4 min-w-4 px-1`); `lg` matches the legacy
+`PriorityBadge` lg cell (header chip).
+
+- `src/components/ui/status-badge.tsx` — **deleted**.
+- `src/components/ui/priority-badge.tsx` — **deleted**.
+- `src/components/ui/alert-list-item.tsx` → **renamed**
+  `alert-list-row.tsx`, export `AlertListRow`, `data-slot`
+  updated to `alert-list-row` (UX item 4 — break the
+  badge-naming collision).
+- 4 production consumers migrated (`AlertSection`,
+  `BlockListItem`, `DuePanel`, `QueryResultList`); the
+  `FilterPill` / `RecentPageChip` button-shaped primitives are
+  deliberately out of scope (different a11y contract).
+
+Tests: full `npx vitest run` clean (9 746 passing). The 33 cases
+in the deleted `status-badge.test.tsx` / `priority-badge.test.tsx`
+were collapsed into 21 cases in the extended `badge.test.tsx` (5
+new `tone="status"`, 5 `tone="priority"`, 4 size/shape; the
+legacy `variant`-prop alias has its own test). `npx tsc -b
+--noEmit` clean; `npx --no biome check` clean on every touched
+file. ARCHITECTURE.md inventory dropped from 41 → 39; AGENTS.md
+mandatory-patterns row notes the new axes.
 
 ### 2d. Extract three duplication clusters — **closed**
 

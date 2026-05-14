@@ -1,5 +1,6 @@
 /**
- * Tests for the AlertListItem component.
+ * Tests for the AlertListRow component (renamed from AlertListItem
+ * to break the badge-naming collision; UX item 4 / Maintain 2c).
  *
  * Validates:
  *  - Each variant renders with correct class names
@@ -14,13 +15,13 @@ import { render, screen } from '@testing-library/react'
 import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
-import { AlertListItem } from '../alert-list-item'
+import { AlertListRow } from '../alert-list-row'
 
-describe('AlertListItem', () => {
+describe('AlertListRow', () => {
   it('renders children', () => {
     render(
       <ul>
-        <AlertListItem>Item content</AlertListItem>
+        <AlertListRow>Item content</AlertListRow>
       </ul>,
     )
     expect(screen.getByText('Item content')).toBeInTheDocument()
@@ -29,7 +30,7 @@ describe('AlertListItem', () => {
   it('renders as an li element', () => {
     render(
       <ul>
-        <AlertListItem>Item</AlertListItem>
+        <AlertListRow>Item</AlertListRow>
       </ul>,
     )
     expect(screen.getByText('Item').closest('li')).toBeTruthy()
@@ -38,9 +39,9 @@ describe('AlertListItem', () => {
   it('applies destructive variant classes', () => {
     render(
       <ul>
-        <AlertListItem variant="destructive" data-testid="item">
+        <AlertListRow variant="destructive" data-testid="item">
           Content
-        </AlertListItem>
+        </AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -52,9 +53,9 @@ describe('AlertListItem', () => {
   it('applies pending variant classes', () => {
     render(
       <ul>
-        <AlertListItem variant="pending" data-testid="item">
+        <AlertListRow variant="pending" data-testid="item">
           Content
-        </AlertListItem>
+        </AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -66,7 +67,7 @@ describe('AlertListItem', () => {
   it('uses destructive variant as default', () => {
     render(
       <ul>
-        <AlertListItem data-testid="item">Content</AlertListItem>
+        <AlertListRow data-testid="item">Content</AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -76,7 +77,7 @@ describe('AlertListItem', () => {
   it('applies base classes to all variants', () => {
     render(
       <ul>
-        <AlertListItem data-testid="item">Content</AlertListItem>
+        <AlertListRow data-testid="item">Content</AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -91,9 +92,9 @@ describe('AlertListItem', () => {
   it('merges custom className', () => {
     render(
       <ul>
-        <AlertListItem className="extra" data-testid="item">
+        <AlertListRow className="extra" data-testid="item">
           Content
-        </AlertListItem>
+        </AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -103,9 +104,9 @@ describe('AlertListItem', () => {
   it('forwards HTML attributes', () => {
     render(
       <ul>
-        <AlertListItem tabIndex={0} data-testid="item">
+        <AlertListRow tabIndex={0} data-testid="item">
           Content
-        </AlertListItem>
+        </AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -115,7 +116,7 @@ describe('AlertListItem', () => {
   it('a11y: no violations with destructive variant', async () => {
     const { container } = render(
       <ul>
-        <AlertListItem variant="destructive">Alert item</AlertListItem>
+        <AlertListRow variant="destructive">Alert item</AlertListRow>
       </ul>,
     )
     const results = await axe(container)
@@ -125,7 +126,7 @@ describe('AlertListItem', () => {
   it('a11y: no violations with pending variant', async () => {
     const { container } = render(
       <ul>
-        <AlertListItem variant="pending">Pending item</AlertListItem>
+        <AlertListRow variant="pending">Pending item</AlertListRow>
       </ul>,
     )
     const results = await axe(container)
@@ -135,7 +136,7 @@ describe('AlertListItem', () => {
   it('includes coarse pointer touch-target class', () => {
     render(
       <ul>
-        <AlertListItem data-testid="item">Touch item</AlertListItem>
+        <AlertListRow data-testid="item">Touch item</AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -145,7 +146,7 @@ describe('AlertListItem', () => {
   it('includes focus-visible ring classes', () => {
     render(
       <ul>
-        <AlertListItem data-testid="item">Focus item</AlertListItem>
+        <AlertListRow data-testid="item">Focus item</AlertListRow>
       </ul>,
     )
     const el = screen.getByTestId('item')
@@ -156,7 +157,7 @@ describe('AlertListItem', () => {
     const ref = React.createRef<HTMLLIElement>()
     render(
       <ul>
-        <AlertListItem ref={ref}>Item</AlertListItem>
+        <AlertListRow ref={ref}>Item</AlertListRow>
       </ul>,
     )
     expect(ref.current).toBeInstanceOf(HTMLLIElement)
@@ -168,15 +169,15 @@ describe('AlertListItem', () => {
   it('renders as <a> when asChild is true with an anchor child', () => {
     render(
       <ul>
-        <AlertListItem asChild className="extra" data-testid="item">
+        <AlertListRow asChild className="extra" data-testid="item">
           <a href="/conflict/abc">View conflict</a>
-        </AlertListItem>
+        </AlertListRow>
       </ul>,
     )
     const link = screen.getByTestId('item')
     expect(link.tagName).toBe('A')
     expect(link).toHaveAttribute('href', '/conflict/abc')
-    expect(link).toHaveAttribute('data-slot', 'alert-list-item')
+    expect(link).toHaveAttribute('data-slot', 'alert-list-row')
     expect(link.className).toContain('border-destructive/20')
     expect(link.className).toContain('extra')
   })

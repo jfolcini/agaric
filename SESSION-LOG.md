@@ -7,6 +7,29 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 725 — Badge consolidation (UX 1.4 / Maintain 2c) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 1 build (general-purpose) solo |
+| **Items closed** | UX Tier 1 item 4 + Maintain Phase 2.2c (badge consolidation) — StatusBadge + PriorityBadge collapsed into Badge with `tone + size + shape` axes; alert-list-item renamed to alert-list-row. |
+| **Items modified** | design-system-ux-review + design-system-maintainability status notes updated; ARCHITECTURE.md shadcn/ui count 41 → 39; AGENTS.md mandatory-patterns CVA description updated. |
+| **Tests added** | Badge test suite expanded 21 cases. |
+| **Files touched** | 12 (Badge rewrite + 4 consumers + 1 rename + 4 deletions + AGENTS.md + ARCHITECTURE.md + 2 plan files) |
+
+**Summary:** badge consolidation shipped serially this time (last attempt in a parallel batch broke 60+ files). New Badge has three orthogonal CVA axes: `tone` (default/secondary/destructive/outline/ghost/link/priority/status) + `size` (xs/sm/compact/default/lg) + `shape` (pill/rounded). The `priority` tone delegates to `priorityColor()` (no duplication); `statusState` and `priorityLevel` props drive the colors for the status/priority tones. Legacy `variant` prop kept as a 1:1 alias for `tone` so unrelated callers (FilterPill, TagList, ResultCard, GraphFilterBar, etc.) aren't touched — they continue to work and get a deprecation `★` marker pointing at the new `tone`. Inventory check revealed only 4 production consumers (AlertSection, BlockListItem, DuePanel, QueryResultList) — far below the task spec's 15-25 estimate; both StatusBadge and PriorityBadge were already concentrated. Migrated serially with vitest runs between each: QueryResultList (121 pass) → AlertSection (16 pass) → DuePanel (50 pass) → BlockListItem (42 pass). Then deleted `status-badge.tsx`, `priority-badge.tsx`, and their tests. Renamed `alert-list-item.tsx` → `alert-list-row.tsx` via `git mv` (history preserved); symbol rename `AlertListItem` → `AlertListRow`, `data-slot="alert-list-item"` → `alert-list-row`. ARCHITECTURE.md shadcn/ui count 41 → 39 (drop 2, rename 1). AGENTS.md CVA description updated. **`variant` alias** stays on Badge with `@deprecated` JSDoc — visible as `★` markers in IDE diagnostics across 15 consumer files; not breaking but a signal to migrate when next touched.
+
+**Process notes:** the serial approach worked. Each consumer migration was a self-contained checkpoint with its own vitest run; if any failed, the subagent stopped and reported instead of cascading damage. Final full-suite verification: 9746 / 0 fail.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9746 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit covering Badge batch + Session 725 entry.
+
+---
 ## Session 724 — Structural decomposition + FeatureErrorBoundary in-view wraps (2026-05-14)
 
 | Metadata | Value |

@@ -4,7 +4,14 @@ import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-const alertListItemVariants = cva(
+/**
+ * AlertListRow — a clickable row inside an alert section list
+ * (overdue / upcoming). Renamed from `AlertListItem` to break the
+ * badge-naming collision flagged by UX item 4. The shape is a list
+ * `<li>` row, not a badge-shaped item, so "row" is the accurate noun.
+ */
+
+const alertListRowVariants = cva(
   'flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm cursor-pointer transition-colors [@media(pointer:coarse)]:min-h-11 focus-ring-visible',
   {
     variants: {
@@ -17,30 +24,30 @@ const alertListItemVariants = cva(
   },
 )
 
-interface AlertListItemProps
-  extends VariantProps<typeof alertListItemVariants>,
+interface AlertListRowProps
+  extends VariantProps<typeof alertListRowVariants>,
     Omit<React.ComponentProps<'li'>, 'className'> {
   className?: string
   asChild?: boolean
 }
 
-const AlertListItem = ({
+const AlertListRow = ({
   ref,
   variant,
   className,
   asChild = false,
   ...props
-}: AlertListItemProps) => {
+}: AlertListRowProps) => {
   const Comp = asChild ? Slot.Root : 'li'
   return (
     <Comp
       ref={ref}
-      data-slot="alert-list-item"
-      className={cn(alertListItemVariants({ variant }), className)}
+      data-slot="alert-list-row"
+      className={cn(alertListRowVariants({ variant }), className)}
       {...props}
     />
   )
 }
-AlertListItem.displayName = 'AlertListItem'
+AlertListRow.displayName = 'AlertListRow'
 
-export { AlertListItem, alertListItemVariants }
+export { AlertListRow, alertListRowVariants }

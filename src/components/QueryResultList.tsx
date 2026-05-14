@@ -5,7 +5,7 @@ import { handleBlockNavigation, resolveBlockDisplay } from '../lib/query-result-
 import type { BlockRow } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { PageLink } from './PageLink'
-import { StatusBadge } from './ui/status-badge'
+import { Badge } from './ui/badge'
 
 export interface QueryResultListProps {
   /** The block results to render as a list. */
@@ -81,8 +81,11 @@ export function QueryResultList({
               )}
             >
               {block.todo_state && (
-                <StatusBadge
-                  state={
+                <Badge
+                  tone="status"
+                  shape="rounded"
+                  size="compact"
+                  statusState={
                     block.todo_state === 'DONE'
                       ? 'DONE'
                       : block.todo_state === 'DOING'
@@ -91,7 +94,7 @@ export function QueryResultList({
                   }
                 >
                   {block.todo_state}
-                </StatusBadge>
+                </Badge>
               )}
               <span className="flex-1 truncate">{title}</span>
               {pageTitle && block.parent_id && (

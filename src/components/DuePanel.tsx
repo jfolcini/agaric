@@ -33,7 +33,6 @@ import { OverdueSection } from './OverdueSection'
 import { renderRichContent } from './RichContentRenderer'
 import { UpcomingSection } from './UpcomingSection'
 import { Badge } from './ui/badge'
-import { PriorityBadge } from './ui/priority-badge'
 import { SectionGroupHeader } from './ui/section-group-header'
 
 export interface DuePanelProps {
@@ -501,7 +500,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                                 : t('duePanel.emptyContent')}
                             </span>
                             {entry.block.priority && (
-                              <PriorityBadge priority={entry.block.priority} />
+                              <Badge
+                                tone="priority"
+                                shape="rounded"
+                                size="sm"
+                                priorityLevel={entry.block.priority}
+                              >
+                                P{entry.block.priority}
+                              </Badge>
                             )}
                           </li>
                         )
