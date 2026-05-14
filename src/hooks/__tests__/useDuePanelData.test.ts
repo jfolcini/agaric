@@ -50,6 +50,7 @@ const emptyResponse = {
   items: [],
   next_cursor: null,
   has_more: false,
+  total_count: null,
 }
 
 beforeEach(() => {
@@ -59,7 +60,12 @@ beforeEach(() => {
   mockInvalidationKey = 0
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
-  mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+  mockedListProjectedAgenda.mockResolvedValue({
+    items: [],
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+  })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   // TEST-31: Freeze Date only (not setTimeout/setInterval — waitFor and
   // renderHook rely on real timers). Prevents midnight-boundary flakes
@@ -79,6 +85,7 @@ describe('useDuePanelData', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
@@ -104,7 +111,7 @@ describe('useDuePanelData', () => {
     expect(result.current.loading).toBe(true)
 
     await act(async () => {
-      resolveBlocks({ items: [], next_cursor: null, has_more: false })
+      resolveBlocks({ items: [], next_cursor: null, has_more: false, total_count: null })
     })
 
     await waitFor(() => {
@@ -117,6 +124,7 @@ describe('useDuePanelData', () => {
       items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Resolved Title', block_type: 'page', deleted: false },
@@ -200,6 +208,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
@@ -232,6 +241,7 @@ describe('useDuePanelData', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
@@ -244,6 +254,7 @@ describe('useDuePanelData', () => {
       items: [makeBlock({ id: 'B2' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await act(async () => {
@@ -273,6 +284,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() =>
@@ -311,6 +323,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
@@ -328,6 +341,7 @@ describe('useDuePanelData', () => {
       items: [makeBlock({ id: 'B1', todo_state: 'TODO' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result, rerender } = renderHook(() =>
@@ -344,6 +358,7 @@ describe('useDuePanelData', () => {
       items: [makeBlock({ id: 'B1', todo_state: 'DONE' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     // Simulate property change event by bumping invalidationKey
@@ -366,6 +381,7 @@ describe('useDuePanelData', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result, rerender } = renderHook(
@@ -405,6 +421,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Parent Page', block_type: 'page', deleted: false },
@@ -460,6 +477,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'POVER', title: 'Overdue Parent', block_type: 'page', deleted: false },
@@ -503,6 +521,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PUPCOMING', title: 'Upcoming Parent', block_type: 'page', deleted: false },
@@ -540,6 +559,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PPROJ', title: 'Projected Parent', block_type: 'page', deleted: false },
@@ -611,6 +631,7 @@ describe('useDuePanelData', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     // Hold batchResolve pending so we can unmount before the inner

@@ -37,6 +37,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMcpActivityFeed } from '@/hooks/useMcpActivityFeed'
@@ -259,64 +260,67 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   }
 
   return (
-    <div className="agent-access-tab space-y-6 max-w-xl">
-      <div>
-        <h2 className="text-base font-medium">{t('agentAccess.title')}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t('agentAccess.description')}</p>
-      </div>
+    <div className="agent-access-tab space-y-4 max-w-xl">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">{t('agentAccess.title')}</CardTitle>
+          <CardDescription>{t('agentAccess.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {error !== null && (
+            <p className="text-sm text-destructive" role="status">
+              {error}
+            </p>
+          )}
 
-      {error !== null && (
-        <p className="text-sm text-destructive" role="status">
-          {error}
-        </p>
-      )}
+          {/* Read-only access section (toggle + socket path + activity + kill switch) */}
+          <McpStatusSection
+            variant="ro"
+            status={status}
+            onToggle={(next) => void handleToggleRo(next)}
+            onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.socketPathCopied')}
+            onDisconnect={() => void handleDisconnectAll()}
+          >
+            {/* Copy-config buttons */}
+            <div className="space-y-2">
+              <Label muted={false}>{t('agentAccess.configLabel')}</Label>
+              <p className="text-xs text-muted-foreground">{t('agentAccess.configDescription')}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void copyToClipboard(claudeConfigJson, 'agentAccess.claudeConfigCopied')
+                  }
+                >
+                  {t('agentAccess.copyClaudeConfigButton')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void copyToClipboard(genericConfigJson, 'agentAccess.genericConfigCopied')
+                  }
+                >
+                  {t('agentAccess.copyGenericConfigButton')}
+                </Button>
+              </div>
+            </div>
 
-      {/* Read-only access section (toggle + socket path + activity + kill switch) */}
-      <McpStatusSection
-        variant="ro"
-        status={status}
-        onToggle={(next) => void handleToggleRo(next)}
-        onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.socketPathCopied')}
-        onDisconnect={() => void handleDisconnectAll()}
-      >
-        {/* Copy-config buttons */}
-        <div className="space-y-2">
-          <Label muted={false}>{t('agentAccess.configLabel')}</Label>
-          <p className="text-xs text-muted-foreground">{t('agentAccess.configDescription')}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                void copyToClipboard(claudeConfigJson, 'agentAccess.claudeConfigCopied')
-              }
-            >
-              {t('agentAccess.copyClaudeConfigButton')}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                void copyToClipboard(genericConfigJson, 'agentAccess.genericConfigCopied')
-              }
-            >
-              {t('agentAccess.copyGenericConfigButton')}
-            </Button>
-          </div>
-        </div>
+            {/* Activity feed */}
+            <ActivityFeed entries={entries} />
+          </McpStatusSection>
 
-        {/* Activity feed */}
-        <ActivityFeed entries={entries} />
-      </McpStatusSection>
-
-      {/* Read-write access section (toggle + socket path + kill switch) */}
-      <McpStatusSection
-        variant="rw"
-        status={rwStatus}
-        onToggle={(next) => void handleToggleRw(next)}
-        onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.rwSocketPathCopied')}
-        onDisconnect={() => void handleDisconnectAllRw()}
-      />
+          {/* Read-write access section (toggle + socket path + kill switch) */}
+          <McpStatusSection
+            variant="rw"
+            status={rwStatus}
+            onToggle={(next) => void handleToggleRw(next)}
+            onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.rwSocketPathCopied')}
+            onDisconnect={() => void handleDisconnectAllRw()}
+          />
+        </CardContent>
+      </Card>
     </div>
   )
 }

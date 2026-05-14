@@ -263,11 +263,13 @@ describe('TrashView', () => {
       items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
@@ -1263,6 +1265,7 @@ describe('TrashView', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_all_deleted') return { affected_count: 5 }
@@ -1292,6 +1295,7 @@ describe('TrashView', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_all_deleted') return { affected_count: 5 }
@@ -1317,6 +1321,7 @@ describe('TrashView', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_all_deleted') throw new Error('DB error')
@@ -1360,6 +1365,7 @@ describe('TrashView', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_all_deleted') return { affected_count: 3 }
@@ -1390,6 +1396,7 @@ describe('TrashView', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_all_deleted') return { affected_count: 3 }
@@ -1416,6 +1423,7 @@ describe('TrashView', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_all_deleted') throw new Error('DB error')
@@ -1504,6 +1512,7 @@ describe('TrashView', () => {
           items: [blockWithKids, lonelyBlock],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return { R1: 3 }
@@ -1664,6 +1673,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_all_deleted') return { affected_count: 5 }
@@ -1690,6 +1700,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_all_deleted') throw new Error('DB error')

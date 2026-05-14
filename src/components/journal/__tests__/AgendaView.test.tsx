@@ -155,6 +155,7 @@ beforeEach(() => {
     items: [],
     next_cursor: null,
     has_more: false,
+    total_count: null,
   })
   mockedLoadMoreAgendaFilters.mockResolvedValue({
     blocks: [],
@@ -545,6 +546,7 @@ describe('AgendaView', () => {
       items: [makeBlock({ id: 'B2' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     loadMoreRef.current?.()

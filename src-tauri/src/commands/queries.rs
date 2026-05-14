@@ -142,6 +142,7 @@ pub async fn search_blocks_inner(
             items: vec![],
             next_cursor: None,
             has_more: false,
+            total_count: None,
         });
     }
     let page = pagination::PageRequest::new(cursor, limit)?;

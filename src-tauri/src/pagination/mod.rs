@@ -314,12 +314,30 @@ pub struct PageRequest {
 
 /// Paginated response.
 ///
-/// `total_count` is intentionally omitted — see module docs.
+/// `total_count` is `Option<i64>` because cursor pagination does not in
+/// general require a count and most pagination helpers leave it `None`
+/// (the FE detects the end of results via `has_more = false`). A small
+/// number of list surfaces compute it via a dedicated `COUNT(*)` query
+/// and surface "X of Y" progress to the user — `list_blocks_inner`
+/// (when filtering on `block_type`) is the first such site (PageBrowser
+/// pagination UX, 2026-05-14). Helpers that do not compute the count
+/// flow through [`build_page_response`] which initialises the field to
+/// `None`; sites that compute it use
+/// [`build_page_response_with_total`].
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PageResponse<T: specta::Type> {
     pub items: Vec<T>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
+    /// Total number of matching rows in the underlying table, ignoring
+    /// the page cursor/limit. `None` when the helper does not compute
+    /// it (the default). Populated by surfaces that drive an "X of Y"
+    /// progress indicator.
+    ///
+    /// Always serialised (no `skip_serializing_if`) so the wire format
+    /// matches the TS type `number | null` exactly — consumers read
+    /// `total_count` directly without having to check for an absent key.
+    pub total_count: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -533,6 +551,13 @@ impl PageRequest {
 /// The extra row is used solely to detect `has_more`; it is trimmed before
 /// returning.  `cursor_from_last` constructs the cursor from the last item on
 /// the page.
+///
+/// `total_count` is initialised to `None`. Callers that compute a
+/// separate `SELECT COUNT(*)` for an "X of Y" progress indicator
+/// (currently `commands::blocks::queries::list_blocks_inner` for the
+/// PageBrowser path) should overwrite `total_count` on the returned
+/// response — adding a parallel constructor is not worth the API
+/// surface when only one site needs it today.
 pub(super) fn build_page_response<T: specta::Type>(
     mut rows: Vec<T>,
     limit: i64,
@@ -554,5 +579,6 @@ pub(super) fn build_page_response<T: specta::Type>(
         items: rows,
         next_cursor,
         has_more,
+        total_count: None,
     })
 }

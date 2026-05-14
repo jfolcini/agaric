@@ -1,5 +1,6 @@
 ---
 source: src/mcp/tools_ro/tests.rs
+assertion_line: 1853
 expression: result
 ---
 has_more: false
@@ -9,3 +10,4 @@ items:
     updated_at: "[TIMESTAMP]"
     usage_count: 0
 next_cursor: "[CURSOR]"
+total_count: ~

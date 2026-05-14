@@ -108,7 +108,8 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
       return { ...d, key: a?.['key'] as string, options: a?.['options'] as string }
     }
     // PageHeader also calls these in integration
-    if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+    if (cmd === 'list_blocks')
+      return { items: [], next_cursor: null, has_more: false, total_count: null }
     if (cmd === 'list_tags_for_block') return []
     return null
   })
@@ -560,7 +561,8 @@ describe('PagePropertyTable add property flow', () => {
         return newDef
       }
       if (cmd === 'set_property') return undefined
-      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_blocks')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'list_tags_for_block') return []
       return null
     })
@@ -618,7 +620,8 @@ describe('PagePropertyTable add property flow', () => {
       if (cmd === 'get_properties') return [...props]
       if (cmd === 'list_property_defs')
         return { items: [...defs], next_cursor: null, has_more: false }
-      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_blocks')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'list_tags_for_block') return []
       return null
     })
@@ -841,7 +844,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'create_property_def') throw new Error('Duplicate key "status"')
       return null
     })
@@ -873,7 +877,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'create_property_def') {
         const err: Record<string, unknown> = new Error() as unknown as Record<string, unknown>
         err['message'] = undefined
@@ -910,7 +915,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const a = args as Record<string, unknown> | undefined
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'create_property_def')
         return makeDef((a?.['key'] as string) ?? 'myprop', (a?.['valueType'] as string) ?? 'text')
       if (cmd === 'set_property') throw new Error('set failed after create')
@@ -1235,9 +1241,11 @@ describe('PagePropertyTable edit select options', () => {
           items: [makeDef('stage', 'select', '["TODO","DOING"]')],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       if (cmd === 'update_property_def_options') throw new Error('backend error')
-      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_blocks')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'list_tags_for_block') return []
       return null
     })

@@ -34,7 +34,7 @@ import { PageHeader } from '../PageHeader'
 import { TooltipProvider } from '../ui/tooltip'
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 let pageStore: StoreApi<PageBlockState>
 
 // Mock lucide-react
@@ -122,7 +122,8 @@ beforeEach(() => {
     if (cmd === 'list_blocks') return emptyPage
     if (cmd === 'list_tags_for_block') return []
     if (cmd === 'get_properties') return []
-    if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+    if (cmd === 'list_property_defs')
+      return { items: [], next_cursor: null, has_more: false, total_count: null }
     if (cmd === 'get_page_aliases') return []
     return null
   })
@@ -154,6 +155,7 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
     }
     if (cmd === 'list_tags_for_block') return appliedIds
@@ -177,7 +179,8 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
         position: null,
       }
     if (cmd === 'get_properties') return []
-    if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+    if (cmd === 'list_property_defs')
+      return { items: [], next_cursor: null, has_more: false, total_count: null }
     if (cmd === 'get_page_aliases') return aliases
     if (cmd === 'set_page_aliases') return args?.aliases ?? []
     return null
@@ -412,11 +415,13 @@ describe('PageHeader tag management', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       return null
     })
@@ -892,7 +897,8 @@ describe('PageHeader page-level undo/redo buttons', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'undo_page_op')
         return {
@@ -1020,7 +1026,8 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       return null
     })
@@ -1046,7 +1053,8 @@ describe('PageHeader kebab menu (#639)', () => {
             value_ref: null,
           },
         ]
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       return null
     })
@@ -1063,7 +1071,8 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       return null
     })
@@ -1089,7 +1098,8 @@ describe('PageHeader kebab menu (#639)', () => {
             value_ref: null,
           },
         ]
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       return null
     })
@@ -1106,7 +1116,8 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'set_property') return null
       return null
@@ -1261,7 +1272,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'undo_page_op') throw new Error('backend undo failed')
       return null
@@ -1303,7 +1315,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'redo_page_op') throw new Error('backend redo failed')
       return null
@@ -1332,7 +1345,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'set_property') throw new Error('backend error')
       return null
@@ -1363,7 +1377,8 @@ describe('PageHeader error paths', () => {
             value_ref: null,
           },
         ]
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'delete_property') throw new Error('backend error')
       return null
@@ -1385,7 +1400,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'set_property') throw new Error('backend error')
       return null
@@ -1407,7 +1423,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'export_page_markdown') throw new Error('backend error')
       return null
@@ -1431,7 +1448,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'delete_block') throw new Error('backend error')
       return null
@@ -1458,7 +1476,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') throw new Error('backend error')
       return null
     })
@@ -1488,7 +1507,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return ['existing-alias']
       return null
     })
@@ -1523,7 +1543,8 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return ['alias-a', 'alias-b']
       return null
     })
@@ -1545,7 +1566,8 @@ describe('PageHeader export keyboard shortcut (UX-158)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'export_page_markdown') return '# My Page\n\nSome content'
       return null
@@ -1742,7 +1764,8 @@ describe('PageHeader Move to space (FEAT-3 Phase 2)', () => {
         }
         return props
       }
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'set_property') {
         const record = args as Record<string, unknown> | undefined
@@ -1836,7 +1859,8 @@ describe('PageHeader Move to space (FEAT-3 Phase 2)', () => {
             value_ref: 'SPACE_PERSONAL',
           },
         ]
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'set_property') throw new Error('write failed')
       return null
@@ -1898,7 +1922,8 @@ describe('PageHeader screen reader announcements (UX-282)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'edit_block') throw new Error('backend error')
       return null
@@ -1939,7 +1964,8 @@ describe('PageHeader screen reader announcements (UX-282)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'delete_block') throw new Error('backend error')
       return null
@@ -1964,7 +1990,8 @@ describe('PageHeader screen reader announcements (UX-282)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'export_page_markdown') return '# Test\n'
       return null
@@ -1986,7 +2013,8 @@ describe('PageHeader screen reader announcements (UX-282)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
       if (cmd === 'export_page_markdown') throw new Error('backend error')
       return null

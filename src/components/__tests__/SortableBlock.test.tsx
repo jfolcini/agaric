@@ -180,7 +180,9 @@ const mockSetProperty = vi.fn().mockResolvedValue({})
 // vocabulary. The previous `pageOf([def])` / `pageOf([])` envelope helper
 // was retired with the migration.
 const mockGetPropertyDef = vi.fn().mockResolvedValue(null)
-const mockListBlocks = vi.fn().mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+const mockListBlocks = vi
+  .fn()
+  .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null })
 vi.mock('../../lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
   getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
@@ -3588,6 +3590,7 @@ describe('SortableBlock ref property picker', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(
@@ -3640,6 +3643,7 @@ describe('SortableBlock ref property picker', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(
@@ -3691,6 +3695,7 @@ describe('SortableBlock ref property picker', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(
@@ -3739,6 +3744,7 @@ describe('SortableBlock ref property picker', () => {
       items: [{ id: 'PAGE_1', content: 'Some Page', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(
@@ -3782,6 +3788,7 @@ describe('SortableBlock ref property picker', () => {
       items: [{ id: 'PAGE_1', content: 'Only Page', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(

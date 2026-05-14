@@ -40,6 +40,7 @@ describe('PEND-17 Part B compareDiff regression', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === 'get_block_history') return Promise.resolve(page)
@@ -73,6 +74,7 @@ describe('PEND-17 Part B compareDiff regression', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === 'get_block_history') return Promise.resolve(page)

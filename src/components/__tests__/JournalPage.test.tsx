@@ -285,6 +285,7 @@ function templateListBlocksResponse(args: unknown): unknown {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
   }
   return emptyPage
@@ -333,6 +334,7 @@ function templateQueryByPropertyResponse(args: unknown): unknown {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
   }
   return emptyPage
@@ -853,6 +855,7 @@ describe('JournalPage', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -904,6 +907,7 @@ describe('JournalPage', () => {
           items: [],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         })
 
       const sections = screen.getAllByRole('region', { name: /^Journal for / })
@@ -963,9 +967,9 @@ describe('JournalPage', () => {
           }
         }
         if (cmd === 'list_blocks') {
-          return { items: [], next_cursor: null, has_more: false }
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
         }
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       })
 
       const sections = screen.getAllByRole('region', { name: /^Journal for / })
@@ -1634,6 +1638,7 @@ describe('JournalPage', () => {
               ],
               next_cursor: null,
               has_more: false,
+              total_count: null,
             }
           }
           return emptyPage
@@ -1785,6 +1790,7 @@ describe('JournalPage', () => {
               ],
               next_cursor: null,
               has_more: false,
+              total_count: null,
             }
           }
           return emptyPage
@@ -1911,6 +1917,7 @@ describe('JournalPage', () => {
               ],
               next_cursor: null,
               has_more: false,
+              total_count: null,
             }
           }
           return emptyPage
@@ -1990,6 +1997,7 @@ describe('JournalPage', () => {
               ],
               next_cursor: null,
               has_more: false,
+              total_count: null,
             }
           }
           return emptyPage
@@ -2246,6 +2254,7 @@ describe('JournalPage', () => {
             items: pageRows,
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         if (cmd === 'count_agenda_batch_by_source') {

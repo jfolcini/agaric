@@ -1,5 +1,6 @@
 ---
 source: src/mcp/tools_ro/tests.rs
+assertion_line: 1867
 expression: result
 ---
 has_more: false
@@ -81,3 +82,4 @@ items:
     options: ~
     value_type: text
 next_cursor: "[CURSOR]"
+total_count: ~

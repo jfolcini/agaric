@@ -38,6 +38,7 @@ pub async fn eval_tag_query(
             items: vec![],
             next_cursor: None,
             has_more: false,
+            total_count: None,
         });
     }
     let mut sorted_ids: Vec<&str> = block_ids.iter().map(String::as_str).collect();
@@ -63,6 +64,7 @@ pub async fn eval_tag_query(
             items: vec![],
             next_cursor: None,
             has_more: false,
+            total_count: None,
         });
     }
     let placeholders = actual_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
@@ -127,6 +129,7 @@ pub async fn eval_tag_query(
         items,
         next_cursor,
         has_more,
+        total_count: None,
     })
 }
 

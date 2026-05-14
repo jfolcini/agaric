@@ -425,6 +425,7 @@ describe('BlockTree picker wiring', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(searchResp)
 
@@ -483,6 +484,7 @@ describe('BlockTree picker wiring', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pagesResp)
 
@@ -576,6 +578,7 @@ describe('BlockTree picker wiring', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pagesResp)
 
@@ -616,6 +619,7 @@ describe('BlockTree picker wiring', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pagesResp)
 
@@ -1788,6 +1792,7 @@ describe('BlockTree slash command wiring', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       .mockResolvedValueOnce({
         items: [
@@ -1806,6 +1811,7 @@ describe('BlockTree slash command wiring', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
     await act(async () => {
@@ -1852,6 +1858,7 @@ describe('BlockTree slash command wiring', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       .mockResolvedValueOnce({
         items: [
@@ -1870,6 +1877,7 @@ describe('BlockTree slash command wiring', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
     await act(async () => {
@@ -5852,7 +5860,7 @@ describe('BlockTree batch toolbar (#657)', () => {
           resolveInvoke = resolve
         })
       }
-      return { items: [], next_cursor: null, has_more: false }
+      return { items: [], next_cursor: null, has_more: false, total_count: null }
     })
 
     // Start a batch TODO operation

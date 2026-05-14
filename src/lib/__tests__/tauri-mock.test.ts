@@ -2037,7 +2037,7 @@ describe('get_block_history', () => {
       string,
       unknown
     >
-    expect(result).toEqual({ items: [], next_cursor: null, has_more: false })
+    expect(result).toEqual({ items: [], next_cursor: null, has_more: false, total_count: null })
   })
 
   it('returns same shape for any block ID', () => {
@@ -2291,7 +2291,7 @@ describe('list_projected_agenda', () => {
       startDate: '2026-01-01',
       endDate: '2026-12-31',
     })
-    expect(result).toEqual({ items: [], next_cursor: null, has_more: false })
+    expect(result).toEqual({ items: [], next_cursor: null, has_more: false, total_count: null })
   })
 })
 

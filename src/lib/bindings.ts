@@ -1208,12 +1208,32 @@ export type PageLink = {
 /**
  *  Paginated response.
  *
- *  `total_count` is intentionally omitted — see module docs.
+ *  `total_count` is `Option<i64>` because cursor pagination does not in
+ *  general require a count and most pagination helpers leave it `None`
+ *  (the FE detects the end of results via `has_more = false`). A small
+ *  number of list surfaces compute it via a dedicated `COUNT(*)` query
+ *  and surface "X of Y" progress to the user — `list_blocks_inner`
+ *  (when filtering on `block_type`) is the first such site (PageBrowser
+ *  pagination UX, 2026-05-14). Helpers that do not compute the count
+ *  flow through [`build_page_response`] which initialises the field to
+ *  `None`; sites that compute it use
+ *  [`build_page_response_with_total`].
  */
 export type PageResponse<T> = {
 	items: T[],
 	next_cursor: string | null,
 	has_more: boolean,
+	/**
+	 *  Total number of matching rows in the underlying table, ignoring
+	 *  the page cursor/limit. `None` when the helper does not compute
+	 *  it (the default). Populated by surfaces that drive an "X of Y"
+	 *  progress indicator.
+	 *
+	 *  Always serialised (no `skip_serializing_if`) so the wire format
+	 *  matches the TS type `number | null` exactly — consumers read
+	 *  `total_count` directly without having to check for an absent key.
+	 */
+	total_count: number | null,
 };
 
 /**

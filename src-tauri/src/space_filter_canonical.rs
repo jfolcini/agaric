@@ -246,7 +246,12 @@ mod tests {
         // filtered-ids SQL in `backlink/query.rs`, COUNT +
         // filtered-ids SQL in `backlink/grouped.rs`) while removing
         // the two pre-H1 base-set fetches.
-        const EXPECTED_HITS: usize = 23;
+        // PageBrowser pagination UX (2026-05-14) bumped from 23 to 24:
+        // the new `count_blocks_by_type` helper in
+        // `commands/blocks/queries.rs` adds a canonical-shape
+        // space-filter for the `total_count` COUNT query that drives
+        // the PageBrowser "X of Y" progress chip.
+        const EXPECTED_HITS: usize = 24;
         assert_eq!(
             total_hits, EXPECTED_HITS,
             "expected {EXPECTED_HITS} canonical-shape space-filter \

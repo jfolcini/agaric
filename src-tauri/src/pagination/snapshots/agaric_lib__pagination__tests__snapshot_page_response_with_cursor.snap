@@ -1,5 +1,6 @@
 ---
 source: src/pagination/tests.rs
+assertion_line: 2203
 expression: resp
 ---
 items:
@@ -27,3 +28,4 @@ items:
     page_id: ~
 next_cursor: "[CURSOR]"
 has_more: true
+total_count: ~

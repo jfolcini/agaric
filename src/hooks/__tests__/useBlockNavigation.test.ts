@@ -11,6 +11,8 @@
  *  7. handleBlockKeyDown triggers click on Space key
  *  8. handleBlockKeyDown ignores other keys (Tab, Escape, 'a')
  *  9. handleBlockKeyDown calls preventDefault on Enter/Space
+ * 10. getRowHandlers returns stable identities across renders for the same id
+ *     and a fresh entry per distinct block id (Tier 1.4 memo-defeat fix).
  */
 
 import { renderHook } from '@testing-library/react'
@@ -217,5 +219,88 @@ describe('useBlockNavigation', () => {
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()
+  })
+
+  // 10. getRowHandlers — Tier 1.4 perf-review memo-defeat fix
+  describe('getRowHandlers (Tier 1.4 stable per-block handlers)', () => {
+    it('returns the same handler bundle across renders for the same block id', () => {
+      const onNavigateToPage = vi.fn()
+      const pageTitles = new Map([['PAGE_1', 'My Page']])
+
+      const { result, rerender } = renderHook(() =>
+        useBlockNavigation({ onNavigateToPage, pageTitles }),
+      )
+
+      const block = makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' })
+      const first = result.current.getRowHandlers(block)
+      rerender()
+      const second = result.current.getRowHandlers(block)
+
+      expect(second).toBe(first)
+      expect(second.onClick).toBe(first.onClick)
+      expect(second.onKeyDown).toBe(first.onKeyDown)
+    })
+
+    it('returns distinct handler bundles for distinct block ids', () => {
+      const onNavigateToPage = vi.fn()
+      const pageTitles = new Map([['PAGE_1', 'My Page']])
+
+      const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
+
+      const blockA = makeBlock({ id: 'A', parent_id: 'PAGE_1', page_id: 'PAGE_1' })
+      const blockB = makeBlock({ id: 'B', parent_id: 'PAGE_1', page_id: 'PAGE_1' })
+
+      const a = result.current.getRowHandlers(blockA)
+      const b = result.current.getRowHandlers(blockB)
+
+      expect(a).not.toBe(b)
+      expect(a.onClick).not.toBe(b.onClick)
+    })
+
+    it('row onClick navigates to the block s parent page', () => {
+      const onNavigateToPage = vi.fn()
+      const pageTitles = new Map([['PAGE_1', 'My Page']])
+
+      const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
+
+      const block = makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' })
+      result.current.getRowHandlers(block).onClick()
+
+      expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'BLOCK_1')
+    })
+
+    it('row onKeyDown delegates Enter to navigation', () => {
+      const onNavigateToPage = vi.fn()
+      const pageTitles = new Map([['PAGE_1', 'My Page']])
+
+      const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
+
+      const block = makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' })
+      const event = makeKeyboardEvent('Enter')
+      result.current.getRowHandlers(block).onKeyDown(event as unknown as React.KeyboardEvent)
+
+      expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'BLOCK_1')
+      expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    })
+
+    it('invalidates the cache when onNavigateToPage identity changes', () => {
+      const pageTitles = new Map([['PAGE_1', 'My Page']])
+
+      let onNavigateToPage = vi.fn()
+      const { result, rerender } = renderHook(
+        ({ cb }: { cb: typeof onNavigateToPage }) =>
+          useBlockNavigation({ onNavigateToPage: cb, pageTitles }),
+        { initialProps: { cb: onNavigateToPage } },
+      )
+
+      const block = makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' })
+      const first = result.current.getRowHandlers(block)
+
+      onNavigateToPage = vi.fn()
+      rerender({ cb: onNavigateToPage })
+
+      const second = result.current.getRowHandlers(block)
+      expect(second).not.toBe(first)
+    })
   })
 })

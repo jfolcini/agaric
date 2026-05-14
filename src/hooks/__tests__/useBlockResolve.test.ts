@@ -688,6 +688,7 @@ describe('searchPages — long query (>2 chars)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -729,6 +730,7 @@ describe('searchPages — long query (>2 chars)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -777,6 +779,7 @@ describe('searchPages — long query (>2 chars)', () => {
       items: ftsPages,
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -817,6 +820,7 @@ describe('searchPages — long query (>2 chars)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -851,6 +855,7 @@ describe('searchPages — long query (>2 chars)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -974,6 +979,7 @@ describe('searchPages — "Create new" option', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1010,6 +1016,7 @@ describe('searchPages — "Create new" option', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1043,6 +1050,7 @@ describe('searchPages — "Create new" option', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1080,6 +1088,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1118,6 +1127,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1141,6 +1151,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1193,6 +1204,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1383,6 +1395,7 @@ describe('searchPages — alias prefix matching (PEND-34)', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     // Backend returned two prefix-aliased rows for query "w" — both
     // should surface, in the order the backend chose (shortest-first).
@@ -1441,6 +1454,7 @@ describe('searchPages — alias prefix matching (PEND-34)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     // Alias prefix lookup also returns the same page
@@ -1471,6 +1485,7 @@ describe('searchPages — alias prefix matching (PEND-34)', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     // Alias lookup throws
@@ -1493,6 +1508,7 @@ describe('searchPages — alias prefix matching (PEND-34)', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     mockedListPageAliasesByPrefix.mockResolvedValueOnce([['ALIAS_PAGE_3', 'mystery', null]])
@@ -1572,6 +1588,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedListPageAliasesByPrefix.mockResolvedValueOnce([['ALIAS_ONLY', 'meeting', 'Aliased Page']])
 
@@ -1641,6 +1658,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedListPageAliasesByPrefix.mockResolvedValueOnce([])
 
@@ -1704,6 +1722,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       })),
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1749,6 +1768,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedListPageAliasesByPrefix.mockResolvedValueOnce([
       ['ALIAS_FIRST', 'content', 'Canonical Page'],
@@ -1862,6 +1882,7 @@ describe('searchPages — icons and breadcrumbs (UX-65)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1898,6 +1919,7 @@ describe('searchBlockRefs — icons (UX-65)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1933,6 +1955,7 @@ describe('searchBlockRefs — icons (UX-65)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())

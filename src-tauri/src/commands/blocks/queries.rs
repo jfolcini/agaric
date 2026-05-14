@@ -117,10 +117,55 @@ pub async fn list_blocks_inner(
     } else if let Some(ref t) = tag_id {
         pagination::list_by_tag(pool, t, &page, space_id_opt).await
     } else if let Some(ref bt) = block_type {
-        pagination::list_by_type(pool, bt, &page, space_id_opt).await
+        // PageBrowser pagination UX (2026-05-14) — when the caller is
+        // filtering by `block_type` (the PageBrowser path with
+        // `block_type = 'page'`), compute `total_count` alongside the
+        // limited fetch so the FE can drive an "X of Y" progress
+        // chip. The COUNT query reuses the same predicate set as
+        // `pagination::list_by_type` (block_type = ? AND deleted_at IS
+        // NULL + space filter) and is covered by
+        // `idx_blocks_type(block_type, deleted_at)`.
+        let mut resp = pagination::list_by_type(pool, bt, &page, space_id_opt).await?;
+        let total = count_blocks_by_type(pool, bt, space_id_opt).await?;
+        resp.total_count = Some(total);
+        Ok(resp)
     } else {
         pagination::list_children(pool, parent_id.as_deref(), &page, space_id_opt).await
     }
+}
+
+/// Count active blocks matching `block_type`, scoped to a single space.
+///
+/// Mirrors the predicate set used by [`pagination::list_by_type`]
+/// (`block_type = ?` + `deleted_at IS NULL` + the canonical
+/// space filter). Used by `list_blocks_inner` to drive the
+/// PageBrowser "X of Y" progress indicator without paginating
+/// through the entire result set.
+///
+/// Index: `idx_blocks_type(block_type, deleted_at)` — same covering
+/// index that the LIMIT/OFFSET row fetch uses.
+///
+/// # Errors
+///
+/// - [`AppError::Database`] — propagated from sqlx.
+async fn count_blocks_by_type(
+    pool: &SqlitePool,
+    block_type: &str,
+    space_id: Option<&str>,
+) -> Result<i64, AppError> {
+    let count: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) FROM blocks b
+           WHERE block_type = ?1 AND deleted_at IS NULL
+             AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                 SELECT bp.block_id FROM block_properties bp
+                 WHERE bp.key = 'space' AND bp.value_ref = ?2
+             ))"#,
+        block_type,
+        space_id,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
 }
 
 /// Fetch a single block by ID, **including soft-deleted blocks**.

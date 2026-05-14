@@ -14,7 +14,7 @@
  * from context.
  */
 
-import type React from 'react'
+import React from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { ViewportObserver } from '../hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '../lib/tree-utils'
@@ -50,7 +50,7 @@ export interface SortableBlockWrapperProps {
   properties: Array<{ key: string; value: string }> | undefined
 }
 
-export function SortableBlockWrapper({
+function SortableBlockWrapperInner({
   block,
   focusedBlockId,
   isSelected,
@@ -130,3 +130,22 @@ export function SortableBlockWrapper({
     </li>
   )
 }
+
+/**
+ * Memoized to short-circuit per-row re-renders when the parent
+ * (`BlockListRenderer` → `BlockTree`) re-renders for reasons unrelated
+ * to this specific row. The downstream `SortableBlock` is also
+ * `React.memo`-wrapped — but that memo is only effective if this
+ * wrapper's props (notably `viewport` and `rovingEditor`, both
+ * hook-return objects) have stable identity across renders.
+ *
+ * Stability of those two props is enforced at their source:
+ *  - `useRovingEditor` memoizes its returned handle (deps: `editor`),
+ *    so identity only changes when the TipTap editor instance changes.
+ *  - `useViewportObserver` memoizes its return so identity is tied to
+ *    `offscreenIds` (the only state the consumers observe transitively).
+ *
+ * (design-system-perf-review-2026-05-09.md item 5.)
+ */
+export const SortableBlockWrapper = React.memo(SortableBlockWrapperInner)
+SortableBlockWrapper.displayName = 'SortableBlockWrapper'

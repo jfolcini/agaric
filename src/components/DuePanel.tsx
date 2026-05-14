@@ -88,7 +88,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     setCollapsed((prev) => !prev)
   }, [])
 
-  const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
+  const { handleBlockClick, getRowHandlers } = useBlockNavigation({
     onNavigateToPage,
     pageTitles,
     untitledLabel: t('block.untitled'),
@@ -291,6 +291,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                     >
                       {group.items.map((block) => {
                         const currentFlatIndex = flatIndex++
+                        // Tier 1.4 (perf-review 2026-05-09): stable per-block
+                        // handlers from `getRowHandlers` so `BlockListItem.memo`
+                        // is not defeated by fresh inline-arrow identities. The
+                        // inline `metadata` JSX still allocates a new element
+                        // per render — primitivizing `BlockListItem`'s prop
+                        // shape is a separate follow-up.
+                        const rowHandlers = getRowHandlers(block)
                         return (
                           <BlockListItem
                             key={block.id}
@@ -317,8 +324,8 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             contentClassName="due-panel-item-text"
                             breadcrumbClassName="due-panel-breadcrumb"
                             testId="due-panel-item"
-                            onClick={() => handleBlockClick(block)}
-                            onKeyDown={(e) => handleBlockKeyDown(e, block)}
+                            onClick={rowHandlers.onClick}
+                            onKeyDown={rowHandlers.onKeyDown}
                             isFocused={focusedIndex === currentFlatIndex}
                           />
                         )

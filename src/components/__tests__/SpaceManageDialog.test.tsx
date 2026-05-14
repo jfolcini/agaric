@@ -47,7 +47,7 @@ const WORK: SpaceRow = { id: 'SPACE_WORK_ZZZZZZ', name: 'Work', accent_color: nu
 
 const ONBOARDING_KEY = t('space.onboardingSeenKey')
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 const nonEmptyPage = {
   items: [
     {
@@ -66,6 +66,7 @@ const nonEmptyPage = {
   ],
   next_cursor: null,
   has_more: false,
+  total_count: null,
 }
 
 /**

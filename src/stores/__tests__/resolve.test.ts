@@ -174,7 +174,8 @@ describe('preload', () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const fetchErr = new Error('list_tags boom')
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_blocks')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'list_tags_by_prefix') throw fetchErr
       return null
     })
@@ -194,7 +195,8 @@ describe('preload', () => {
 
   it('bumps version', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_blocks')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'list_tags_by_prefix') return []
       return null
     })

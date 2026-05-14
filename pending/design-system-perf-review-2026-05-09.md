@@ -1,17 +1,27 @@
 # Agaric Design System — Performance Review
 
-> **Status:** Tier 2 + Tier 3 small wins shipped. Closed: items **9**
-> (DonePanel `useMemo` wrappers); **10** (React.memo on HistoryListItem,
-> DaySection, AppSidebar — ConflictListItem was already deleted by
-> PEND-09 Phase 5 so the plan is stale on that name); **13**
+> **Status:** Tier 2 + Tier 3 small wins shipped, plus Tier 1.4 (partial)
+> and Tier 1.5 closed. Closed: items **5** (`SortableBlockWrapper` wrapped
+> with `React.memo`; `useRovingEditor` and `useViewportObserver` return
+> values now memoized so handle/observer identity is stable across parent
+> re-renders); **9** (DonePanel `useMemo` wrappers); **10** (React.memo on
+> HistoryListItem, DaySection, AppSidebar — ConflictListItem was already
+> deleted by PEND-09 Phase 5 so the plan is stale on that name); **13**
 > (`createSpaceSubscriber` migrated to `subscribeWithSelector` on
 > `useSpaceStore`); **14** (`BlockTree` DnD measuring switched to
 > `WhileDragging`); **15** (calendar.tsx classNames + buttonVariants
 > hoist); **16** (overlay base-string hoist on dialog, sheet, popover,
-> select); **17** (Sidebar `useMemo` deps complete); **18**
-> (Breadcrumb inline onClick replaced by event delegation).
-> **Still open:** every Tier 1 item (1-5); Tier 2 remaining items
-> (6, 7, 8, 11, 12); Tier 3 item (19).
+> select); **17** (Sidebar `useMemo` deps complete); **18** (Breadcrumb
+> inline onClick replaced by event delegation).
+> **Partial:** **4** — inline `onClick`/`onKeyDown` arrows on
+> `BlockListItem` rows replaced via a memoed per-block handler factory
+> in `useBlockNavigation` (`getRowHandlers`) across AgendaResults,
+> DuePanel, and DonePanel. The inline JSX `metadata` prop is unchanged,
+> so `BlockListItem.memo` will still not fully hit until the prop
+> surface is primitivized (BlockListItem renders its own metadata from
+> typed primitive props) — tracked as a follow-up.
+> **Still open:** Tier 1 items 1, 2, 3; the `metadata` half of item 4;
+> Tier 2 remaining items (6, 7, 8, 11, 12); Tier 3 item (19).
 
 **Date:** 2026-05-09
 **Method.** Round 1: five parallel subagents reviewed (a) UI primitives in `src/components/ui/`, (b) heavy-render hotspots, (c) bundle and code-splitting, (d) zustand store fan-out, (e) perf claims in the markdown docs. Round 2: two independent verifiers fact-checked every claim against actual code (file/line/grep/`du`). Six round-1 claims were debunked or softened on verification and are excluded from this list. Findings below are confirmed against the current tree.
@@ -46,13 +56,14 @@ Every cache write fires both subscriptions, and `src/stores/resolve.ts:220, 241,
 - Investigate `LinkPreviewTooltip` (304K) with `ANALYZE=1 npm run build`; sub-deps are unattributed in the present build.
 - Curate `lowlight` languages — currently uses the `common` preset = 37 languages (`src/components/RichContentRenderer.tsx:33`, `src/editor/use-roving-editor.ts:89`). Estimated savings ~70-100 KB.
 
-**4. `BlockListItem.memo` is defeated by inline JSX and inline handlers in every panel.**
-Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions confirmed at `src/components/AgendaResults.tsx:280, 313, 314`; `src/components/DuePanel.tsx:301, 320, 321`; `src/components/DonePanel.tsx:254, 268, 269`. New element + new function identities every parent render — the memo never hits.
-**Fix:** lift handlers to `useCallback` keyed by `block.id` (or a memoed handler factory), and factor `metadata` into a memoed sub-component receiving primitives.
+**4. `BlockListItem.memo` is defeated by inline JSX and inline handlers in every panel.** *(partial — handlers fixed; metadata still inline.)*
+Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions were confirmed at `src/components/AgendaResults.tsx:280, 313, 314`; `src/components/DuePanel.tsx:301, 320, 321`; `src/components/DonePanel.tsx:254, 268, 269`. New element + new function identities every parent render — the memo never hits.
+**What shipped (handlers half).** `useBlockNavigation` now exposes `getRowHandlers(block)` — a memoed factory backed by an internal `Map<blockId, { onClick, onKeyDown }>`. Each row pulls a stable pair instead of allocating `() => handleBlockClick(block)` / `(e) => handleBlockKeyDown(e, block)` per render. The cache invalidates whenever the underlying click/keydown identities change (driven by `onNavigateToPage` / `pageTitles` / `untitledLabel`). AgendaResults, DuePanel, and DonePanel row maps consume the factory; verified by `src/hooks/__tests__/useBlockNavigation.test.ts` (identity stability across renders, distinct ids → distinct bundles, cache invalidation on dep change).
+**Still open (metadata half).** `metadata={<>…</>}` JSX expressions in all three panels still allocate a fresh React element per render, so `BlockListItem.memo`'s shallow compare still bails on the `metadata` prop. Fully closing this requires changing `BlockListItem`'s prop surface from a `metadata?: ReactNode` slot to typed primitive fields (e.g. `metadataIcon?: 'check' | 'todo' | …`, `priority?: '1' | '2' | '3' | null`, `dueDate?: string | null`, `dependencyBlockId?: string`) and letting `BlockListItem` render those primitives itself. Memoing a `<RowMetadata />` sub-component is insufficient — the JSX expression still produces a new element each parent render. Track as a follow-up Tier 1 task; cost is moderate (touches the BlockListItem prop API and all three callers).
 
-**5. `SortableBlockWrapper` is not memoized.**
-`src/components/SortableBlockWrapper.tsx:53` is a plain `export function`. Every BlockTree re-render fans out to every wrapper, defeating downstream `SortableBlock`'s own `React.memo` because `rovingEditor` (a handle whose identity changes per render — `EditableBlock.tsx:128`) and `viewport` (recreated on observer state changes) flow through.
-**Fix:** wrap with `React.memo` and stabilize `rovingEditor` (likely a `useRef`-backed wrapper) and the `viewport` prop.
+**5. ~~`SortableBlockWrapper` is not memoized.~~** *(closed)*
+~~`src/components/SortableBlockWrapper.tsx:53` is a plain `export function`. Every BlockTree re-render fans out to every wrapper, defeating downstream `SortableBlock`'s own `React.memo` because `rovingEditor` (a handle whose identity changes per render — `EditableBlock.tsx:128`) and `viewport` (recreated on observer state changes) flow through.~~
+**Resolved:** `SortableBlockWrapper` now uses the `Inner` + `React.memo` pattern (`src/components/SortableBlockWrapper.tsx`). Both unstable props were stabilized at the source rather than via a custom memo comparator — `useRovingEditor` and `useViewportObserver` each wrap their returned handle in `useMemo`, so identity only changes when the underlying values (`editor` for the roving editor; `offscreenIds` for the observer) actually change. The parent-side fix also helps every other consumer of those two hooks (`EditableBlock`, `BlockListRenderer`, etc.).
 
 ---
 
@@ -151,8 +162,8 @@ HistoryListItem and `journal/DaySection` were wrapped with `React.memo` in Sessi
 1. Lazy-load `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog` (#12) — biggest critical-path bytes per LOC changed.
 2. Fix `useResolveStore` double-subscription (#1) — hits every chip-rendering surface.
 3. In-place mutation for `blocksById` on single-block edits (#2) — reduces fan-out per keystroke.
-4. Memoize `SortableBlockWrapper` and stabilize its props (#5).
-5. Replace inline `metadata`/handlers in DuePanel/DonePanel/AgendaResults rows (#4).
+4. ~~Memoize `SortableBlockWrapper` and stabilize its props (#5).~~ *(closed)*
+5. ~~Replace inline handlers in DuePanel/DonePanel/AgendaResults rows~~ (closed; row handlers now sourced from `useBlockNavigation.getRowHandlers`). Remaining half of #4: primitivize `BlockListItem`'s `metadata` prop surface so `metadata={<>…</>}` JSX is no longer required at each call site.
 6. Run `ANALYZE=1 npm run build` to attribute the unnamed 472K/212K chunks; then decide on TipTap split (#3).
 7. Add `@tanstack/react-virtual` to AgendaResults and HistoryListView (#6).
 8. ~~Memoize DonePanel `grouped`/`flatItems`, HistoryListItem, DaySection~~ (closed Session 710); AppSidebar still open (#10). ConflictListItem deleted by PEND-09 Phase 5.

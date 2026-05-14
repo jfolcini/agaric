@@ -83,6 +83,7 @@ describe('useItemCount', () => {
       items: [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     const { result } = renderHook(() => useItemCount(queryFn, 30_000))
 
@@ -98,6 +99,7 @@ describe('useItemCount', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     const { result } = renderHook(() => useItemCount(queryFn, 30_000))
 

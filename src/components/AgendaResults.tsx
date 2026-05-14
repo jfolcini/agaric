@@ -148,12 +148,11 @@ export function AgendaResults({
 }: AgendaResultsProps): React.ReactElement {
   const { t } = useTranslation()
 
-  const { handleBlockClick: handleItemClick, handleBlockKeyDown: handleItemKeyDown } =
-    useBlockNavigation({
-      onNavigateToPage,
-      pageTitles,
-      untitledLabel: t('agenda.untitled'),
-    })
+  const { handleBlockClick: handleItemClick, getRowHandlers } = useBlockNavigation({
+    onNavigateToPage,
+    pageTitles,
+    untitledLabel: t('agenda.untitled'),
+  })
 
   // PEND-35 Tier 2.4a: properties for every visible agenda row are
   // fetched in a single `getBatchProperties` IPC mounted via
@@ -273,6 +272,13 @@ export function AgendaResults({
 
   /** Render a single agenda item (shared between flat and grouped modes). */
   function renderItem(block: BlockRow, currentFlatIndex: number) {
+    // Tier 1.4 (perf-review 2026-05-09): stable per-block handlers from the
+    // `useBlockNavigation` factory so `BlockListItem.memo` is not defeated by
+    // fresh inline-arrow identities every render. NOTE: the inline `metadata`
+    // fragment below still allocates a new React element per render, so the
+    // memo will not fully hit until `BlockListItem`'s prop surface is
+    // primitivized (left for a follow-up — bigger prop-shape refactor).
+    const rowHandlers = getRowHandlers(block)
     return (
       <BlockListItem
         key={block.id}
@@ -310,8 +316,8 @@ export function AgendaResults({
         contentClassName="agenda-results-text"
         breadcrumbClassName="agenda-results-breadcrumb"
         testId="agenda-results-item"
-        onClick={() => handleItemClick(block)}
-        onKeyDown={(e) => handleItemKeyDown(e, block)}
+        onClick={rowHandlers.onClick}
+        onKeyDown={rowHandlers.onKeyDown}
         isFocused={focusedIndex === currentFlatIndex}
       />
     )

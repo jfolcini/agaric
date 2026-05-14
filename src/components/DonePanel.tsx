@@ -154,7 +154,7 @@ export function DonePanel({
     setCollapsed((prev) => !prev)
   }, [])
 
-  const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
+  const { handleBlockClick, getRowHandlers } = useBlockNavigation({
     onNavigateToPage,
     pageTitles,
     untitledLabel: t('donePanel.untitled'),
@@ -257,6 +257,14 @@ export function DonePanel({
                       >
                         {group.items.map((block) => {
                           const currentFlatIndex = flatIndex++
+                          // Tier 1.4 (perf-review 2026-05-09): stable per-block
+                          // handlers from `getRowHandlers` so
+                          // `BlockListItem.memo` is not defeated by fresh
+                          // inline-arrow identities. The inline `metadata` JSX
+                          // still allocates a new element per render —
+                          // primitivizing `BlockListItem`'s prop shape is a
+                          // separate follow-up.
+                          const rowHandlers = getRowHandlers(block)
                           return (
                             <BlockListItem
                               key={block.id}
@@ -275,8 +283,8 @@ export function DonePanel({
                               className="done-panel-item hover:bg-muted/50 active:bg-muted/70"
                               contentClassName="done-panel-item-text"
                               breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
-                              onClick={() => handleBlockClick(block)}
-                              onKeyDown={(e) => handleBlockKeyDown(e, block)}
+                              onClick={rowHandlers.onClick}
+                              onKeyDown={rowHandlers.onKeyDown}
                               isFocused={focusedIndex === currentFlatIndex}
                             />
                           )
