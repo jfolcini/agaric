@@ -7,6 +7,26 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 733 — Close MAINT-207 bundle (SearchInput onClear + SearchPanel doc) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | MAINT-207 (all of (a) ‑ (e); the row is fully removed from REVIEW-LATER). |
+| **Items modified** | REVIEW-LATER summary count 17 → 16, detail count 24 → 23. |
+| **Tests added** | +1 vitest (`MAINT-207 (e): fires onClear once on clear-button click`). |
+| **Files touched** | 4 (search-input.tsx, search-input.test.tsx, REVIEW-LATER, SESSION-LOG). |
+
+**Summary:** closed the two follow-ups remaining on the MAINT-207 hygiene bundle. (a), (b), (c) shipped 2026-05-06; (d) was effectively resolved by PEND-30 D-3 (session 694) — current SearchPanel useState count is 11 (down from the plan's 22 estimate), with `searchFilterReducer`, `usePopoverEntity`, and `useAliasResolution` already absorbing the popover / filter / alias state machines. The remaining 8 useStates (query, debouncedQuery, searched, cleared, typing, loadingResultId, pageTitles, recentPages) represent cleanly-separated concerns; further reduction would be cosmetic. (e) shipped this session: SearchInput now exposes an optional `onClear?: () => void` prop. When the clear button fires, the component now dispatches a real native `input` event via the React-aware value setter (the `onChange` pipeline picks it up normally) AND calls `onClear?.()` for callers that want an explicit signal. The previous synthetic `onChange({ target, currentTarget } as unknown as ChangeEvent)` fallback is gone — any consumer that read `e.bubbles` or called `e.preventDefault()` would have hit `undefined` / a no-op; the native dispatch covers every legitimate `onChange` reader. Existing callers (10+ across SearchPanel / TagFilterPanel / TrashView / BacklinkFilterBuilder / PageBrowser / etc.) are untouched.
+
+**Verification:**
+- `npx vitest run src/components/ui/__tests__/search-input.test.tsx` — 11 pass (10 existing + 1 new).
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit closing the MAINT-207 entry.
+
+---
 ## Session 732 — Picker helper + GCal reauth banner (MAINT-203 + MAINT-216) (2026-05-14)
 
 | Metadata | Value |
