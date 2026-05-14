@@ -14,7 +14,7 @@
 | tauri-2.11-migration-2026-05-13 | Dependabot bump 2.10.3 → 2.11.1 — `tauri-specta::collect_commands!` symbol scheme broke between 2.10 and 2.11. | S–M | **blocked** on upstream `tauri-specta` RC matching tauri 2.11 macro layout |
 | search-dialog-replace-view-2026-05-14 | Replace the full-takeover Search view with a Cmd+K-style dialog (drops view-replace context loss + ~700 lines of UI) | M-L (2-3 days) | **DRAFT — needs more discussion**; 8 open questions flagged inline |
 | design-system-maintainability-2026-05-09 | Open: Phase 3a (toast centralisation — codemod ~100 sonner call sites behind a `notify` wrapper + prek guard) + Phase 3b LOC triage for 6 feature files (HistoryListItem, GoogleCalendarSettingsTab, BugReportDialog, FormattingToolbar, PageHeader, SearchPanel). | M | partial-shipped, plan stays for follow-up |
-| design-system-perf-review-2026-05-09 | Open: Tier 1.3 (lazy-load the TipTap stack from JournalPage's static path); Tier 2.6 follow-up (windowing for BlockListRenderer + BlockTree); Tier 2.12 (lazy-mount BugReportDialog / QuickCaptureDialog / NoPeersDialog); three doc-drift cleanups. | M-L | partial-shipped, plan stays for follow-up |
+| design-system-perf-review-2026-05-09 | Open: Tier 1.3 (lazy-load the TipTap stack from JournalPage's static path); Tier 2.6 follow-up (windowing for BlockListRenderer + BlockTree); one doc-drift item (AGENTS.md import-boundary automation). | M-L | partial-shipped, plan stays for follow-up |
 
 ## Recommended order
 

@@ -7,6 +7,49 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 729 — Doc-drift fixes + Tier 2.12 prune (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | Two perf-review doc-drift items (ARCHITECTURE.md shadcn/ui inventory count + REVIEW-LATER ID drift); perf-review Tier 2.12 (already-shipped, just pruned from the plan). |
+| **Items modified** | design-system-perf-review status + open-list + README index. |
+| **Tests added** | 0 (doc-only). |
+| **Files touched** | 3 (ARCHITECTURE.md, pending/design-system-perf-review-2026-05-09.md, pending/README.md). |
+
+**Summary:** verification pass discovered Tier 2.12 (lazy-mount `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog`) was already shipped — `App.tsx:65-73` already exposes `React.lazy` wrappers with the matching PERF tier-2 #12 inline comment. Pruned the item from the plan. Two ARCHITECTURE.md doc-drift items fixed in the same pass: the component inventory now reads `40 shadcn/ui` (was `41` in the heading + `39` in the named list — actual is 40 .tsx files in `src/components/ui/`, with `feature-page-header` newly added to the list); the agenda/graph mitigation citation at line 2393 was updated from the obsolete `P-15/P-16` to the current `PERF-19/PERF-20`. The third doc-drift item (AGENTS.md import-boundary automation) is left open in the plan — it's the only non-trivial cleanup of the three.
+
+**Verification:**
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit covering doc-drift edits + Session 729 entry.
+
+---
+## Session 728 — Strip closed items from design-system plans (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | design-system-ux-review-2026-05-09.md (every Tier 1-3 item closed across sessions 716-727 — plan file deleted). |
+| **Items modified** | design-system-maintainability-2026-05-09.md + design-system-perf-review-2026-05-09.md (rewritten to leave only the genuinely-open items); pending/README.md (UX-review row removed, maintainability + perf-review rows tightened). |
+| **Tests added** | 0 (doc-only). |
+| **Files touched** | 4 (1 deletion, 3 edits). |
+
+**Summary:** per the user request "delete any references to already done tasks in plans in pending folder, I want a clear view in the files of what is missing." Net diff: −1002 / +80 lines. Closed-item history now lives only in `SESSION-LOG.md` (sessions 709-727) and git log; plan files describe what remains, not what shipped.
+
+**Open after cleanup:**
+
+- maintainability: Phase 3a (toast centralisation codemod) + Phase 3b LOC triage for 6 feature files.
+- perf-review: Tier 1.3 (TipTap lazy-load), Tier 2.6 follow-up (BlockListRenderer + BlockTree windowing), Tier 2.12 (lazy-mount 3 dialogs — later closed in 729), 3 doc-drift items.
+
+**Verification:**
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit `a8739200` ("docs(pending): strip closed items from design-system plans (session 728)").
+
+---
 ## Session 727 — BlockTree.tsx decomp (final structural item) (2026-05-14)
 
 | Metadata | Value |
