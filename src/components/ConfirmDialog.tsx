@@ -1,27 +1,50 @@
 /**
- * ConfirmDialog — shared confirmation dialog wrapper around AlertDialog primitives.
+ * ConfirmDialog — unified confirmation dialog wrapper around AlertDialog primitives.
  *
- * Replaces the repeated AlertDialog > Content > Header > Title + Description > Footer > Cancel + Action
- * pattern used across 8+ components.
+ * Merged in PEND UX-review-2026-05-09 item 11: previously two
+ * non-overlapping cousins (`ConfirmDialog` + `ConfirmDestructiveAction`)
+ * lived side-by-side, and one screen (`GoogleCalendarSettingsTab`)
+ * escaped both with raw `AlertDialog` primitives + a dual-`AlertDialogAction`
+ * footer. This file is now the single API:
  *
- * UX-259: when actionVariant === 'destructive', initial focus lands on the Cancel
- * button (not the Action button) so that a reflex Enter keypress dismisses the
- * dialog instead of confirming the destructive action. Non-destructive callers
- * retain action-button focus (existing behavior).
+ *  - i18n-first: pass `titleKey` / `descriptionKey` / `confirmKey` /
+ *    optional `cancelKey` (and optional `values` for interpolation).
+ *  - Legacy fallback: pre-resolved `title` / `description` / `actionLabel`
+ *    / `cancelLabel` still work (explicit string overrides the key when
+ *    both are set).
+ *  - Async-aware: `onConfirm` (or legacy `onAction`) may return
+ *    `Promise<void>`. The dialog disables both buttons + shows a spinner
+ *    on the confirm button while pending, closes via `onOpenChange(false)`
+ *    on resolve, and stays open on rejection so the caller's toast / log
+ *    path runs without a closed-then-reopen flicker. The wrapper swallows
+ *    the rejection internally to avoid an unhandled-rejection log; the
+ *    caller is responsible for surfacing the error (toast.error / inline
+ *    banner).
+ *  - Multi-action escape hatch: `secondaryAction` injects a third button
+ *    between Cancel and Confirm — used by the Google Calendar disconnect
+ *    flow (Delete-Calendar vs Keep-Calendar vs Cancel).
  *
- * The 500 ms "arming" grace period that was originally proposed for destructive
- * dialogs was intentionally NOT implemented — the focus-flip alone closes
- * UX-259 (reflex Enter no longer fires destructive actions because focus starts
- * on Cancel), and the additional aria-disabled gate created brittle interaction
- * timing for every existing destructive-dialog test in the suite.
+ * UX-259: when `variant === 'destructive'`, initial focus lands on the
+ * Cancel button (not the Action button) so that a reflex Enter keypress
+ * dismisses the dialog instead of confirming the destructive action.
+ * Non-destructive callers retain action-button focus.
  *
- * PEND-23 H3: on phones < 768 px (`useIsMobile() === true`) the dialog renders
- * as a bottom Sheet so action buttons sit within thumb reach. Both paths share
- * the same controlled `open` / `onOpenChange` API and the same a11y semantics
- * (Radix Dialog + AlertDialog both trap focus and dismiss on Escape).
+ * The 500 ms "arming" grace period that was originally proposed for
+ * destructive dialogs was intentionally NOT implemented — the focus-flip
+ * alone closes UX-259 (reflex Enter no longer fires destructive actions
+ * because focus starts on Cancel), and the additional aria-disabled gate
+ * created brittle interaction timing for every existing destructive-
+ * dialog test in the suite.
+ *
+ * PEND-23 H3: on phones < 768 px (`useIsMobile() === true`) the dialog
+ * renders as a bottom Sheet so action buttons sit within thumb reach.
+ * Both paths share the same controlled `open` / `onOpenChange` API and
+ * the same a11y semantics (Radix Dialog + AlertDialog both trap focus
+ * and dismiss on Escape).
  */
 
 import type React from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertDialogAction, AlertDialogBody, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -29,16 +52,83 @@ import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { cn } from '@/lib/utils'
 
-interface ConfirmDialogProps {
+type ConfirmHandler = () => Promise<void> | void
+
+export interface ConfirmDialogSecondaryAction {
+  /** i18n key for the secondary button label (resolved via `t()`). */
+  labelKey?: string
+  /** Pre-resolved label — overrides `labelKey` when both are set. */
+  label?: string
+  /** Click handler (sync or async). Promise rejections keep the dialog open. */
+  onConfirm: ConfirmHandler
+  /** Button visual variant; defaults to `'default'` (neutral). */
+  variant?: 'default' | 'destructive' | 'outline'
+  /** Optional data-testid for the secondary button. */
+  testId?: string | undefined
+}
+
+export interface ConfirmDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  title: string
-  description: React.ReactNode
-  cancelLabel?: string
+
+  // ─── i18n-first API (preferred) ────────────────────────────────────────
+  /** i18n key for the dialog title. */
+  titleKey?: string
+  /** i18n key for the dialog body / description. */
+  descriptionKey?: string
+  /** i18n key for the confirm button label. Defaults to `'dialog.confirm'`. */
+  confirmKey?: string
+  /** i18n key for the cancel button label. Defaults to `'dialog.cancel'`. */
+  cancelKey?: string
+  /** Values for i18n interpolation (passed to `t()`). */
+  values?: Record<string, string | number>
+
+  // ─── Pre-resolved strings (legacy fallback) ────────────────────────────
+  /** Pre-resolved title — overrides `titleKey` when both are set. */
+  title?: string
+  /** Pre-resolved description — overrides `descriptionKey` when both are set. */
+  description?: React.ReactNode
+  /** Pre-resolved confirm label — overrides `confirmKey` when both are set. */
   actionLabel?: string
+  /** Pre-resolved cancel label — overrides `cancelKey` when both are set. */
+  cancelLabel?: string
+
+  // ─── Visual + behavior ────────────────────────────────────────────────
+  /** Styles the confirm button. `'destructive'` also flips initial focus to Cancel (UX-259). */
+  variant?: 'default' | 'destructive'
+  /**
+   * @deprecated Use `variant` instead. Kept for backwards compatibility
+   * with the pre-merge ConfirmDialog API; when both are set, `variant`
+   * wins.
+   */
   actionVariant?: 'default' | 'destructive'
-  onAction: () => void
+
+  /**
+   * Async-aware confirm handler. Promise rejections keep the dialog open;
+   * resolves close it via `onOpenChange(false)`. Sync (void) handlers
+   * close the dialog immediately after invocation.
+   */
+  onConfirm?: ConfirmHandler
+  /**
+   * @deprecated Use `onConfirm` instead. Kept for backwards compatibility.
+   * When both are set, `onConfirm` wins.
+   */
+  onAction?: ConfirmHandler
+
+  /** Optional explicit cancel hook fired before the dialog closes. */
+  onCancel?: () => void
+
+  /**
+   * Externally controlled loading state. When `true`, both buttons are
+   * disabled and the confirm button shows a spinner. Kept for callers
+   * that drive the spinner from outside the dialog (e.g. parent state).
+   * Internal pending state from an async `onConfirm` ORs with this flag.
+   */
   loading?: boolean
+
+  /** Optional third button rendered between Cancel and Confirm. */
+  secondaryAction?: ConfirmDialogSecondaryAction
+
   children?: React.ReactNode
   className?: string | undefined
   /** Optional data-testid for the AlertDialogContent / SheetContent root. */
@@ -49,16 +139,26 @@ interface ConfirmDialogProps {
   actionTestId?: string | undefined
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complexity 27 vs max 25. The merge unifies two APIs (i18n keys + pre-resolved strings) + sync/async onConfirm + mobile Sheet + optional secondaryAction; splitting would scatter the dual-path logic.
 export function ConfirmDialog({
   open,
   onOpenChange,
+  titleKey,
+  descriptionKey,
+  confirmKey,
+  cancelKey,
+  values,
   title,
   description,
-  cancelLabel,
   actionLabel,
-  actionVariant = 'default',
+  cancelLabel,
+  variant,
+  actionVariant,
+  onConfirm,
   onAction,
+  onCancel,
   loading = false,
+  secondaryAction,
   children,
   className,
   contentTestId,
@@ -66,35 +166,110 @@ export function ConfirmDialog({
   actionTestId,
 }: ConfirmDialogProps): React.ReactElement {
   const { t } = useTranslation()
-  const resolvedCancelLabel = cancelLabel ?? t('dialog.cancel')
-  const resolvedActionLabel = actionLabel ?? t('dialog.confirm')
-  const isDestructive = actionVariant === 'destructive'
+  const [pending, setPending] = useState(false)
+
+  // exactOptionalPropertyTypes: i18next's t() overload set rejects an
+  // explicit `undefined` for the second arg, so we only pass `values`
+  // when the caller actually provided it.
+  const tk = useCallback((key: string): string => (values ? t(key, values) : t(key)), [t, values])
+
+  // ─── Resolve labels (explicit string > i18n key > default) ────────────
+  const resolvedTitle = title ?? (titleKey ? tk(titleKey) : '')
+  const resolvedDescription = description ?? (descriptionKey ? tk(descriptionKey) : '')
+  const resolvedCancelLabel = cancelLabel ?? (cancelKey ? t(cancelKey) : t('dialog.cancel'))
+  const resolvedActionLabel = actionLabel ?? (confirmKey ? t(confirmKey) : t('dialog.confirm'))
+
+  // ─── Resolve variant + handler (new prop wins over legacy alias) ──────
+  const effectiveVariant = variant ?? actionVariant ?? 'default'
+  const isDestructive = effectiveVariant === 'destructive'
+  const effectiveOnConfirm: ConfirmHandler = onConfirm ?? onAction ?? (() => {})
+
+  const isPending = pending || loading
+
+  // Runs the confirm handler. If it returns a Promise we await it, show
+  // the spinner, and only close on resolve (rejections keep the dialog
+  // open so the caller's toast path runs). Sync handlers close
+  // immediately to preserve the original ConfirmDialog behaviour.
+  const runConfirm = useCallback(
+    async (handler: ConfirmHandler) => {
+      if (pending) return
+      let result: Promise<void> | void
+      try {
+        result = handler()
+      } catch {
+        // Sync throw — treat like a rejected promise: stay open, swallow
+        // the error (caller surfaces it via toast / inline banner).
+        return
+      }
+      if (result instanceof Promise) {
+        setPending(true)
+        try {
+          await result
+          onOpenChange(false)
+        } catch {
+          // Stay open on rejection; caller surfaces the error.
+        } finally {
+          setPending(false)
+        }
+        return
+      }
+      // Sync handler — caller may have already toggled `open` via
+      // onOpenChange (e.g. legacy ConfirmDialog callers always close
+      // externally). Closing here too is idempotent.
+      onOpenChange(false)
+    },
+    [onOpenChange, pending],
+  )
+
+  const handleCancel = useCallback(() => {
+    if (isPending) return
+    onCancel?.()
+    onOpenChange(false)
+  }, [isPending, onCancel, onOpenChange])
+
+  const handleConfirmClick = useCallback(
+    async (event?: React.MouseEvent<HTMLButtonElement>) => {
+      // Radix `AlertDialogAction` auto-closes the dialog on click. We
+      // need to keep it open while an async `onConfirm` is in flight so
+      // we can honor the "stay open on rejection" contract — preventDefault
+      // on the synthetic event is the documented Radix opt-out. We always
+      // call it (sync or async) and let `runConfirm` close via
+      // `onOpenChange(false)` so behavior is uniform.
+      event?.preventDefault()
+      await runConfirm(effectiveOnConfirm)
+    },
+    [effectiveOnConfirm, runConfirm],
+  )
+
+  const handleSecondaryClick = useCallback(
+    async (event?: React.MouseEvent<HTMLButtonElement>) => {
+      if (!secondaryAction) return
+      event?.preventDefault()
+      await runConfirm(secondaryAction.onConfirm)
+    },
+    [secondaryAction, runConfirm],
+  )
 
   const parts = useDialogOrSheet()
   const { Root, Content, Header, Title, Footer } = parts
 
-  // Sheet has no AlertDialogAction/AlertDialogCancel equivalents that auto-close
-  // the overlay on click — replicate that behaviour by closing via onOpenChange.
-  const handleMobileAction = () => {
-    onAction()
-    onOpenChange(false)
-  }
-  const handleMobileCancel = () => {
-    onOpenChange(false)
-  }
-
   // Sheet's Content takes a `side` prop; AlertDialogContent does not.
   const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+
+  const secondaryLabel = secondaryAction
+    ? (secondaryAction.label ?? (secondaryAction.labelKey ? t(secondaryAction.labelKey) : ''))
+    : ''
+  const secondaryVariant = secondaryAction?.variant ?? 'default'
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
       <Content className={className} data-testid={contentTestId} {...contentSideProps}>
         <Header>
-          <Title>{title}</Title>
+          <Title>{resolvedTitle}</Title>
           {/* Description renders inline as a sibling so we keep markup parity
               between AlertDialogDescription (semantic alert text) and Sheet,
               where Radix Dialog's Description serves the same a11y role. */}
-          <parts.Description>{description}</parts.Description>
+          <parts.Description>{resolvedDescription}</parts.Description>
         </Header>
         {/*
           PEND dialog-responsiveness-primitive-2026-05-13: when the caller
@@ -112,45 +287,66 @@ export function ConfirmDialog({
             <>
               <Button
                 variant="outline"
-                disabled={loading}
-                onClick={handleMobileCancel}
+                disabled={isPending}
+                onClick={handleCancel}
                 // UX-259: destructive dialogs auto-focus Cancel.
                 autoFocus={isDestructive}
                 data-testid={cancelTestId}
               >
                 {resolvedCancelLabel}
               </Button>
+              {secondaryAction && (
+                <Button
+                  variant={secondaryVariant}
+                  disabled={isPending}
+                  onClick={handleSecondaryClick}
+                  data-testid={secondaryAction.testId}
+                >
+                  {secondaryLabel}
+                </Button>
+              )}
               <Button
                 variant={isDestructive ? 'destructive' : 'default'}
-                disabled={loading}
-                onClick={handleMobileAction}
+                disabled={isPending}
+                onClick={handleConfirmClick}
                 // UX-259: only auto-focus Action for non-destructive variants.
                 autoFocus={!isDestructive}
                 data-testid={actionTestId}
               >
-                {loading && <Spinner />}
+                {isPending && <Spinner />}
                 {resolvedActionLabel}
               </Button>
             </>
           ) : (
             <>
               <AlertDialogCancel
-                disabled={loading}
+                disabled={isPending}
+                onClick={onCancel}
                 // UX-259: destructive dialogs auto-focus Cancel so reflex Enter dismisses.
                 autoFocus={isDestructive}
                 data-testid={cancelTestId}
               >
                 {resolvedCancelLabel}
               </AlertDialogCancel>
+              {secondaryAction && (
+                <AlertDialogAction
+                  className={cn(buttonVariants({ variant: secondaryVariant }))}
+                  onClick={handleSecondaryClick}
+                  disabled={isPending}
+                  data-testid={secondaryAction.testId}
+                >
+                  {secondaryLabel}
+                </AlertDialogAction>
+              )}
               <AlertDialogAction
                 className={cn(isDestructive && buttonVariants({ variant: 'destructive' }))}
-                onClick={onAction}
-                disabled={loading}
+                onClick={handleConfirmClick}
+                disabled={isPending}
                 // UX-259: only auto-focus Action for non-destructive variants.
                 autoFocus={!isDestructive}
                 data-testid={actionTestId}
               >
-                {loading && <Spinner />}
+                {isPending && <Spinner />}
                 {resolvedActionLabel}
               </AlertDialogAction>
             </>

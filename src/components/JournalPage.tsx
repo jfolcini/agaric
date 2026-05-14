@@ -18,6 +18,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendarPageDates } from '../hooks/useCalendarPageDates'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
@@ -135,34 +136,47 @@ export function JournalPage({
 
   // ── Main render ─────────────────────────────────────────────────────
 
+  // PEND-UX item 5 — the configure-journal-template action moves from a
+  // free-floating right-aligned button row into the shared
+  // `FeaturePageHeader` `actions` slot. The same agenda-mode visibility
+  // guard is preserved (UX-371: templates don't apply in agenda mode).
+  const showConfigureTemplateAction = !loading && mode !== 'agenda'
+
   return (
     <div ref={journalRef} tabIndex={-1} className="space-y-4 focus-ring-visible">
+      {/* PEND-UX item 5 — `<h1>` landmark for the Journal view. The App-
+          shell header renders `<JournalControls />` instead of a label
+          for journal mode, so this title is purely additive (no visual
+          duplication). The configure-template button is surfaced as a
+          right-aligned action when available. */}
+      <FeaturePageHeader
+        title={t('sidebar.journal')}
+        className="journal-page-header"
+        {...(showConfigureTemplateAction && {
+          actions: (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('space.configureJournalTemplate')}
+                    onClick={() => setManageOpen(true)}
+                    data-testid="journal-configure-template-trigger"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ),
+        })}
+      />
+
       {/* Loading indicator on initial fetch */}
       {loading && (
         <LoadingSkeleton count={3} height="h-10" loading data-testid="loading-skeleton" />
-      )}
-
-      {/* UX-371 — small inline entry to the per-space journal template editor.
-          Hidden in agenda mode where journal templates do not apply. */}
-      {!loading && mode !== 'agenda' && (
-        <div className="flex justify-end">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('space.configureJournalTemplate')}
-                  onClick={() => setManageOpen(true)}
-                  data-testid="journal-configure-template-trigger"
-                >
-                  <Settings2 className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
       )}
 
       {/* View content */}

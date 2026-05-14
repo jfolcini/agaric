@@ -59,6 +59,11 @@ vi.mock('lucide-react', () => ({
   Lightbulb: () => <svg data-testid="lightbulb-icon" />,
   Link: () => <svg data-testid="link-icon" />,
   List: (props: Record<string, unknown>) => <svg data-testid="list-icon" {...props} />,
+  // Loader2 is consumed by the shared `Spinner` primitive, which the merged
+  // ConfirmDialog renders while an async `onAction` is in-flight (the
+  // delete-page flow returns a Promise so the spinner appears between
+  // click and IPC resolution).
+  Loader2: (props: Record<string, unknown>) => <svg data-testid="loader2-icon" {...props} />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Pencil: (props: Record<string, unknown>) => <svg data-testid="pencil-icon" {...props} />,

@@ -47,18 +47,8 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -68,7 +58,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import type { GcalStatus } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
-import { cn } from '@/lib/utils'
+import { ConfirmDialog } from './ConfirmDialog'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
 const STATUS_POLL_INTERVAL_MS = 60_000
@@ -574,34 +564,29 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         </CardContent>
       </Card>
 
-      {/* Disconnect dialog — two destructive-ish choices + cancel */}
-      <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
-        <AlertDialogContent data-testid="gcal-disconnect-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('gcal.disconnect.title')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('gcal.disconnect.description')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="gcal-disconnect-cancel">
-              {t('gcal.disconnect.cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className={cn(buttonVariants({ variant: 'outline' }))}
-              onClick={() => void handleDisconnect(false)}
-              data-testid="gcal-disconnect-keep"
-            >
-              {t('gcal.disconnect.keepCalendar')}
-            </AlertDialogAction>
-            <AlertDialogAction
-              className={cn(buttonVariants({ variant: 'destructive' }))}
-              onClick={() => void handleDisconnect(true)}
-              data-testid="gcal-disconnect-delete"
-            >
-              {t('gcal.disconnect.deleteCalendar')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Disconnect dialog — Cancel + Keep Calendar (outline) + Delete
+          Calendar (destructive). Migrated to the unified ConfirmDialog
+          (UX-review-2026-05-09 item 11) using its `secondaryAction`
+          escape hatch for the dual-action footer. */}
+      <ConfirmDialog
+        open={disconnectOpen}
+        onOpenChange={setDisconnectOpen}
+        titleKey="gcal.disconnect.title"
+        descriptionKey="gcal.disconnect.description"
+        cancelKey="gcal.disconnect.cancel"
+        confirmKey="gcal.disconnect.deleteCalendar"
+        variant="destructive"
+        onConfirm={() => handleDisconnect(true)}
+        secondaryAction={{
+          labelKey: 'gcal.disconnect.keepCalendar',
+          variant: 'outline',
+          onConfirm: () => handleDisconnect(false),
+          testId: 'gcal-disconnect-keep',
+        }}
+        contentTestId="gcal-disconnect-dialog"
+        cancelTestId="gcal-disconnect-cancel"
+        actionTestId="gcal-disconnect-delete"
+      />
     </div>
   )
 }

@@ -16,7 +16,19 @@
 > `<EmptyState compact>` in DonePanel + LinkedReferences +
 > UnlinkedReferences), item 10 (LoadingSkeleton accepts `loading` prop
 > with `role="status" aria-busy`; StatusPanel + PageBrowser + TagList +
-> JournalPage migrated).
+> JournalPage migrated), item 11 (`ConfirmDialog` +
+> `ConfirmDestructiveAction` merged into a single i18n-key /
+> async-aware `ConfirmDialog` with a `secondaryAction` escape hatch
+> for the GoogleCalendar disconnect dual-action; PairingDialog +
+> GoogleCalendarSettingsTab migrated; `ConfirmDestructiveAction.tsx`
+>
+> + its test file deleted), item 5 (`FeaturePageHeader` primitive
+> with `{title, breadcrumb?, actions?, kebab?}` shipped in
+> `ui/feature-page-header.tsx`; the six previously-unwrapped views
+> — JournalPage, TrashView, SettingsView, StatusPanel, GraphView,
+> TemplatesView — now render the shared `<h1>` landmark + slot
+> chrome; `ViewHeader` portal mechanic kept separate by design,
+> see resolution note under item 5).
 > **Tier 2 (doc drift) closed:** D1 (`task-todo` token), D3 (ProseMirror
 > padding), D5 (sync indicator tokens), D6 (single-RAF clarified), D8
 > (ListViewState pattern label), D9 (priority badge touch table), D10
@@ -38,7 +50,7 @@
 > block extended to cover `--ring`, every `--alert-*`, `--op-*`,
 > `--date-*`, `--conflict-*`, `--task-*`, `--block-ref`, `--highlight`,
 > and `--sync-*` family (both light and dark themes).
-> **Still open:** Tier 1 items 4, 5, 8, 11 + every Tier 2 entry +
+> **Still open:** Tier 1 items 4, 8 + every Tier 2 entry +
 > component-decomposition backlog + FeatureErrorBoundary in-view
 > sections + list rendering primitive zoo.
 
@@ -67,9 +79,75 @@ The verified state of the system is **strong on tokens and primitives, weaker on
 `badge.tsx`, `status-badge.tsx`, `priority-badge.tsx`, `filter-pill.tsx`, `recent-page-chip.tsx`, `alert-list-item.tsx`. Only `Badge` is in the AGENTS.md inventory; `StatusBadge` uses `rounded` instead of `rounded-full` and lacks `data-slot`. The family fragments without clear ownership.
 **Fix:** promote `Badge` to a base with `tone`/`size`/`interactive` variants; collapse `StatusBadge` and `PriorityBadge` into it. Keep `FilterPill` and `RecentPageChip` (they're buttons-shaped-as-badges, different a11y contract). Rename `alert-list-item.tsx` → `alert-list-row.tsx` to break the badge-naming collision.
 
-**5. Page-header chrome is non-existent — every top-level view rolls its own.**
+**5. Page-header chrome is non-existent — every top-level view rolls its own.** *(closed —
+`FeaturePageHeader` shipped + six unwrapped views migrated; see
+resolution below)*
 `ViewHeader` is used by 5 views (`PageBrowser`, `HistoryView`, `SearchPanel`, `journal/AgendaView`, `PageHeader`). Six others ignore it: `JournalPage`, `TrashView`, `SettingsView`, `StatusPanel`, `GraphView`, `TemplatesView`. No shared title/breadcrumb/actions abstraction. (ConflictList was deleted by PEND-09 Phase 5.)
 **Fix:** introduce a `FeaturePageHeader` primitive `{title, breadcrumb?, actions?, kebab?}` and wrap every top-level view; codify in AGENTS.md.
+
+**Resolution.** Investigation found `ViewHeader` is not a styled header
+at all — it is a `createPortal` wrapper that lifts content above the
+shared `<ScrollArea>` (so filter bars / batch toolbars stay visible
+during scroll). The audit's premise that the five wrapped views shared
+title/actions chrome was off: `ViewHeader`'s children are freeform and
+none of the five views currently render a `<h1>` or a title-bearing
+element. Renaming or extending `ViewHeader` would have either lost the
+portal behaviour or forced every consumer to thread title/actions
+through the outlet layer. Picked **option (b)** from the migration
+plan: introduce `FeaturePageHeader` as a new sibling primitive,
+orthogonal to the portal mechanic, with the audit's exact slot
+contract.
+
++ `src/components/ui/feature-page-header.tsx` — new primitive. Renders
+  a `<header data-slot="feature-page-header">` containing an optional
+  `breadcrumb` slot, an `<h1 data-slot="feature-page-header-title">`,
+  an optional right-aligned `actions` slot, and an optional `kebab`
+  slot. 14 tests in `ui/__tests__/primitives.test.tsx` cover render,
+  every slot (present + absent), ref forwarding, className merging,
+  and `axe()`.
++ **JournalPage** — adds `<h1>Journal</h1>`; the existing
+  configure-journal-template button (UX-371) moves into the
+  `actions` slot, preserving its agenda-mode visibility guard.
++ **TrashView** — adds `<h1>Trash</h1>`; the existing Restore-All /
+  Empty-Trash button row migrates into `actions` (still gated on
+  `blocks.length > 0` so the buttons disappear on an empty bin).
++ **SettingsView** — adds `<h1>Settings</h1>`; the existing UX-381
+  breadcrumb `<nav>` (preserved verbatim so the SettingsView tests'
+  `getByRole('navigation', { name: t('sidebar.settings') })`
+  resolves unchanged) moves into the `breadcrumb` slot.
++ **StatusPanel** — adds a top-level `<h1>Status</h1>` above the two
+  pre-existing materializer / sync `Card`s (their CardTitle remain
+  as sub-section headings beneath).
++ **GraphView** — adds `<h1>Graph</h1>`. Required wrapping the four
+  render states (loading / error / empty / populated) in a single
+  flex column so the header stays present across every state, not
+  just the populated graph. The absolute-positioned filter bar and
+  zoom controls retain their existing positions.
++ **TemplatesView** — adds `<h1>Templates</h1>` above the existing
+  create-template form. The form stays a standalone block (it spans
+  the row at `sm+` breakpoints and would not fit comfortably inside
+  the right-aligned `actions` slot).
+
+**`ViewHeader` left in place.** It remains the portal mechanism
+consumed by PageBrowser / HistoryView / SearchPanel / AgendaView /
+PageHeader for the shared `<ViewHeaderOutletSlot>` (filter bars,
+batch toolbars, search forms) — orthogonal to the visual chrome
+contract that `FeaturePageHeader` now owns. Views that need both
+(in-view title + portaled filter bar) can compose them; the
+existing five already deliver portaled content without a title,
+which the App-shell `headerLabel` covers.
+
+**Verification.** 483 tests pass across the six migrated views and
+the primitives test file (`TrashView` 83, `SettingsView` 54,
+`StatusPanel` 35, `TemplatesView` 26, `GraphView` 49, `JournalPage`
+133, primitives 103); `npx tsc -b --noEmit` clean. The three
+PageHeader UX-282 failures observed in `npx vitest run` are
+pre-existing on this branch (lucide-react mock missing `Loader2`
+after the local `ConfirmDialog`/`Spinner` refactor) — unrelated to
+this migration.
+
+**AGENTS.md.** `FeaturePageHeader` appended to the UI-primitives
+example list in the component-hierarchy table.
 
 **6. Settings tabs each invent their own heading style.**
 `AgentAccessSettingsTab.tsx:264` and `GoogleCalendarSettingsTab.tsx:404` use `<h2 text-base font-medium>`; `KeyboardSettingsTab.tsx:139` uses `<h3 text-lg font-semibold>`; `DataSettingsTab.tsx:166-296` uses `Card`/`CardHeader`/`CardTitle`; `settings/HelpTab.tsx:23` uses `<h3 text-sm font-medium>`. Five tabs, four styles, two heading levels.
@@ -86,7 +164,7 @@ intentionally left in place because they don't carry a removable-chip
 contract — collapsing them onto `FilterPill` would have been a
 misfit, not a consolidation:
 
-- **`SearchPanel` chip bar** — migrated. The two ad-hoc
++ **`SearchPanel` chip bar** — migrated. The two ad-hoc
   `<Badge variant="secondary">` + X-button chips (page filter, tag
   filters) are now `FilterPill` instances; `Badge` and the `X` import
   were dropped from the file. Behaviour identical (label text, aria
@@ -95,7 +173,7 @@ misfit, not a consolidation:
   73-test SearchPanel suite passes without touching assertions because
   `FilterPill` renders the label as plain Badge text and exposes the
   remove button via the same `aria-label` the tests already match on.
-- **`AgendaFilterBuilder` chip** — visual chrome migrated, edit
++ **`AgendaFilterBuilder` chip** — visual chrome migrated, edit
   affordance preserved. The chip carries a *two-action* contract
   (click body → edit popover; click X → remove) that `FilterPill`
   can't express because the primitive's body isn't interactive and
@@ -106,7 +184,7 @@ misfit, not a consolidation:
   itself uses, so the visual chrome (background, padding, X target
   sizing, coarse-pointer 44 px hit area, `active:scale-95`) is now
   identical. The 51-test `AgendaFilterBuilder` suite passes unchanged.
-- **`HistoryFilterBar`** — intentionally skipped. The "active filter"
++ **`HistoryFilterBar`** — intentionally skipped. The "active filter"
   here *is* a `<Select>` dropdown value, not a removable chip;
   Session 712's compact migration deliberately collapsed the
   filter list into the Select trigger + an inline `✕` icon-button
@@ -115,7 +193,7 @@ misfit, not a consolidation:
   Select with a button-that-opens-a-popover-then-renders-a-chip is
   a regression to the pre-Session-712 multi-row layout. No chip
   contract to align here — the current dropdown IS the filter UI.
-- **`DuePanelFilters`** — intentionally skipped. The four buttons
++ **`DuePanelFilters`** — intentionally skipped. The four buttons
   (All / Due / Scheduled / Properties) are a mutually-exclusive
   *segmented toggle group* (`aria-pressed`, not `onRemove`); users
   switch between them, they don't add/remove them. `FilterPill`
@@ -147,9 +225,26 @@ Radix `Popover` + `Button` primitives. No new component created.
 6 / 9 list views set `aria-busy` only; 3 / 9 also set `role="status"`. `StatusPanel.tsx:179-186` skips both AND uses 4 raw `<Skeleton>` divs instead of the shared `LoadingSkeleton`.
 **Fix:** push the wrapper into `LoadingSkeleton` itself — accept `loading?: boolean` and emit `<div aria-busy role="status">…</div>`. Migrate `StatusPanel` and the three other inconsistent sites.
 
-**11. `ConfirmDialog` and `ConfirmDestructiveAction` are non-overlapping cousins.**
-`ConfirmDialog.tsx` takes pre-resolved strings, supports a mobile Sheet, sync `onAction`, optional `actionVariant`. `ConfirmDestructiveAction.tsx` takes i18n keys, is always-destructive, async-aware, no Sheet. Neither is a superset; `GoogleCalendarSettingsTab.tsx:563-589` already escapes both with raw `AlertDialog` primitives (and an unsupported dual-`AlertDialogAction` footer).
-**Fix:** merge into one `ConfirmDialog` API: `{titleKey, descriptionKey, confirmKey, variant, onConfirm: () => Promise<void>}` with Sheet-on-mobile rendering. Add a multi-action variant to absorb the GoogleCal case.
+**11. `ConfirmDialog` and `ConfirmDestructiveAction` are non-overlapping cousins.** *(closed —
+2026-05-14)*
+The two cousins were merged into a single `ConfirmDialog` API that accepts
+either i18n keys (`titleKey` / `descriptionKey` / `confirmKey` / `cancelKey`
+
++ optional `values`) or pre-resolved strings (`title` / `description` /
+`actionLabel` / `cancelLabel`), with explicit-string overrides taking
+precedence. `onConfirm` is async-aware — Promise rejections keep the
+dialog open + swallow the error so the caller's toast path runs without
+a closed-then-reopen flicker; sync handlers close immediately as before.
+`variant` ('default' | 'destructive') styles the confirm button and (when
+destructive) flips initial focus to Cancel for UX-259 reflex-Enter safety;
+the legacy `actionVariant` and `onAction` aliases remain for backwards
+compat. A new `secondaryAction` prop renders a third button between
+Cancel and Confirm — the Google Calendar disconnect dialog
+(`GoogleCalendarSettingsTab.tsx`) migrated to this shape (Cancel + Keep
+Calendar [outline] + Delete Calendar [destructive]). `PairingDialog`'s
+close-guard migrated from `ConfirmDestructiveAction` to the unified
+`ConfirmDialog` with `variant="destructive"` + i18n keys.
+`ConfirmDestructiveAction.tsx` + its test file deleted.
 
 ---
 
@@ -176,29 +271,29 @@ These cost almost nothing to fix and reduce future agent confusion.
 
 ## Tier 3 — Smaller hygiene items
 
-- **Toggle group ad-hoc focus ring.** `ui/toggle-group.tsx:53` uses `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`; standard `focus-ring-visible` utility exists at `index.css:1228`. Replace.
-- **Legacy `outline-none` (Tailwind v3 spelling).** `select.tsx:163`, `popover.tsx:36`. Should be `outline-hidden` (used everywhere else).
-- **Sheet animation duration drift.** `sheet.tsx:67` uses `duration-slow`/`duration-slower`; `dialog.tsx:60` and `alert-dialog.tsx:55` use `duration-moderate`. Sheet feels visibly draggier than Dialog.
-- **`data-slot` missing on 7 / 37 primitives** (`alert-list-item`, `chevron-toggle`, `close-button`, `filter-pill`, `menu-popover-content`, `status-badge`, `status-icon`). One-line additions.
-- **`SHARED_INPUT_CLASSES` not reused** by `SelectTrigger` (`select.tsx:36`) or `search-input` clear button (`search-input.tsx:95`) — quiet drift risk.
-- **Three inconsistent `ring-offset` values** (`HistoryListItem:271` `ring-offset-1`, `TagList:277` and `SpaceManageDialog:174-177` `ring-offset-2`). The canonical `focus-ring-visible` uses none. `--color-ring-offset` isn't a defined token, so dark mode gets a white halo.
-- **Hardcoded `#fff` and 8 raw hex tag presets in TagList/tag-colors.** `TagList.tsx:234` forces white text on user-picked tag colors; light tag colors fail contrast.
-- **Dead tokens in `index.css:260-266`.** `--leading-relaxed`, `--tracking-tight/normal/wide` defined, never referenced, not bridged in `@theme inline`. New code uses `tracking-wider` (which has no token at all). Either bridge them or delete them.
-- **`prefers-contrast: more` block (`index.css:1119-1203`) skips many token families** — `--ring`, `--alert-*`, `--op-*`, `--date-*`, `--conflict-*`, `--task-*`, `--block-ref`, `--highlight`, `--sync-*`. Extend the high-contrast overrides to cover them.
-- **Hardcoded English fallbacks** `(empty)` in `ResultCard.tsx:74` and `BlockListItem.tsx:34,69`; `defaultValue: 'Projected'` in `DuePanel.tsx:336`; `defaultValue: 'P${v}'` in `GraphFilterBar.tsx:300,302`. Add the missing i18n keys, drop the fallbacks.
-- ~~**Three thin renaming wrappers** around `useListMultiSelect`~~ — closed. `useConflictSelection.ts` was already gone (PEND-09 Phase 5 deleted the entire conflict feature); `useTrashMultiSelect.ts` deleted Session 712 (TrashView now calls `useListMultiSelect` directly). `useHistorySelection.ts` kept as it has real logic.
-- **Component decomposition backlog.** ~13 files exceed AGENTS.md's 500-LOC threshold; worst: `BlockTree.tsx` (790), `RichContentRenderer.tsx` (659). `sidebar.tsx` (1078, 22 sub-components) is fat-but-cohesive — splitting `useSidebarState` and edge-swipe/keyboard handlers out is the cheapest win. (ConflictList.tsx no longer applicable — deleted by PEND-09 Phase 5.)
-- **`FeatureErrorBoundary` only wraps top-level views** (`ViewDispatcher.tsx`, `AppSidebar.tsx`). Heavy in-view sections — `CompactionCard`, `LinkedReferences`, `UnlinkedReferences`, `PagePropertyTable`, `GraphFilterBar` — would benefit from their own boundary so a section crash doesn't blank the page.
-- **List rendering primitive zoo.** 7 distinct row primitives across list views; `TemplatesView.tsx:186-239` and `DuePanel.tsx:343-389` (projected entries) write raw `<li>` and bypass the design system entirely.
++ **Toggle group ad-hoc focus ring.** `ui/toggle-group.tsx:53` uses `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`; standard `focus-ring-visible` utility exists at `index.css:1228`. Replace.
++ **Legacy `outline-none` (Tailwind v3 spelling).** `select.tsx:163`, `popover.tsx:36`. Should be `outline-hidden` (used everywhere else).
++ **Sheet animation duration drift.** `sheet.tsx:67` uses `duration-slow`/`duration-slower`; `dialog.tsx:60` and `alert-dialog.tsx:55` use `duration-moderate`. Sheet feels visibly draggier than Dialog.
++ **`data-slot` missing on 7 / 37 primitives** (`alert-list-item`, `chevron-toggle`, `close-button`, `filter-pill`, `menu-popover-content`, `status-badge`, `status-icon`). One-line additions.
++ **`SHARED_INPUT_CLASSES` not reused** by `SelectTrigger` (`select.tsx:36`) or `search-input` clear button (`search-input.tsx:95`) — quiet drift risk.
++ **Three inconsistent `ring-offset` values** (`HistoryListItem:271` `ring-offset-1`, `TagList:277` and `SpaceManageDialog:174-177` `ring-offset-2`). The canonical `focus-ring-visible` uses none. `--color-ring-offset` isn't a defined token, so dark mode gets a white halo.
++ **Hardcoded `#fff` and 8 raw hex tag presets in TagList/tag-colors.** `TagList.tsx:234` forces white text on user-picked tag colors; light tag colors fail contrast.
++ **Dead tokens in `index.css:260-266`.** `--leading-relaxed`, `--tracking-tight/normal/wide` defined, never referenced, not bridged in `@theme inline`. New code uses `tracking-wider` (which has no token at all). Either bridge them or delete them.
++ **`prefers-contrast: more` block (`index.css:1119-1203`) skips many token families** — `--ring`, `--alert-*`, `--op-*`, `--date-*`, `--conflict-*`, `--task-*`, `--block-ref`, `--highlight`, `--sync-*`. Extend the high-contrast overrides to cover them.
++ **Hardcoded English fallbacks** `(empty)` in `ResultCard.tsx:74` and `BlockListItem.tsx:34,69`; `defaultValue: 'Projected'` in `DuePanel.tsx:336`; `defaultValue: 'P${v}'` in `GraphFilterBar.tsx:300,302`. Add the missing i18n keys, drop the fallbacks.
++ ~~**Three thin renaming wrappers** around `useListMultiSelect`~~ — closed. `useConflictSelection.ts` was already gone (PEND-09 Phase 5 deleted the entire conflict feature); `useTrashMultiSelect.ts` deleted Session 712 (TrashView now calls `useListMultiSelect` directly). `useHistorySelection.ts` kept as it has real logic.
++ **Component decomposition backlog.** ~13 files exceed AGENTS.md's 500-LOC threshold; worst: `BlockTree.tsx` (790), `RichContentRenderer.tsx` (659). `sidebar.tsx` (1078, 22 sub-components) is fat-but-cohesive — splitting `useSidebarState` and edge-swipe/keyboard handlers out is the cheapest win. (ConflictList.tsx no longer applicable — deleted by PEND-09 Phase 5.)
++ **`FeatureErrorBoundary` only wraps top-level views** (`ViewDispatcher.tsx`, `AppSidebar.tsx`). Heavy in-view sections — `CompactionCard`, `LinkedReferences`, `UnlinkedReferences`, `PagePropertyTable`, `GraphFilterBar` — would benefit from their own boundary so a section crash doesn't blank the page.
++ **List rendering primitive zoo.** 7 distinct row primitives across list views; `TemplatesView.tsx:186-239` and `DuePanel.tsx:343-389` (projected entries) write raw `<li>` and bypass the design system entirely.
 
 ---
 
 ## Verified-clean (positive findings — keep doing this)
 
-- **`forwardRef`-free `ui/`.** Zero `forwardRef` in `src/components/ui/` — full React 19 ref-as-prop adoption.
-- **`Loader2` consolidation.** Only one `Loader2.*animate-spin` hit in the entire repo, in a test comment. `Spinner` is the only path.
-- **`overflow-*` discipline.** 26 grep hits in `src/components`; only two production sites (`dialog.tsx:60`, `alert-dialog.tsx:55`), both intentional dialog-body scroll.
-- **Token system is broad and themed.** Five fully themed palettes (light, dark, solarized-light, solarized-dark, dracula, one-dark-pro). No raw color literals leaking outside theme blocks except two decorative `drop-shadow` calls in space accent pickers.
++ **`forwardRef`-free `ui/`.** Zero `forwardRef` in `src/components/ui/` — full React 19 ref-as-prop adoption.
++ **`Loader2` consolidation.** Only one `Loader2.*animate-spin` hit in the entire repo, in a test comment. `Spinner` is the only path.
++ **`overflow-*` discipline.** 26 grep hits in `src/components`; only two production sites (`dialog.tsx:60`, `alert-dialog.tsx:55`), both intentional dialog-body scroll.
++ **Token system is broad and themed.** Five fully themed palettes (light, dark, solarized-light, solarized-dark, dracula, one-dark-pro). No raw color literals leaking outside theme blocks except two decorative `drop-shadow` calls in space accent pickers.
 
 ---
 
