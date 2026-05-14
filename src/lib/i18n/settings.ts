@@ -213,6 +213,10 @@ export const settings: Record<string, string> = {
   'gcal.resyncStarted': 'Full resync started',
   'gcal.resyncFailed': 'Failed to start full resync',
   'gcal.reauthRequired': 'Google sign-in expired. Reconnect to resume pushing.',
+  'gcal.reauth.title': 'Google Calendar disconnected',
+  'gcal.reauth.body': 'Reconnect {{email}} to resume calendar sync.',
+  'gcal.reauth.bodyNoEmail': 'Reconnect your Google Calendar account to resume sync.',
+  'gcal.reauth.reconnect': 'Reconnect',
   'gcal.pushDisabled': 'Google Calendar push has been disabled.',
   'gcal.keyringUnavailable':
     'Cannot access the OS keychain. Google Calendar push is disabled on this device.',

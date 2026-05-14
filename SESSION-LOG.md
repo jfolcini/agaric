@@ -7,6 +7,33 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 732 — Picker helper + GCal reauth banner (MAINT-203 + MAINT-216) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 2 build (general-purpose, parallel) |
+| **Items closed** | MAINT-203 (picker stale-`insertPos` race-guard helper extraction); MAINT-216 (gcal:reauth_required frontend listener). |
+| **Items modified** | REVIEW-LATER summary count 19 → 17 + detail entry count 25 → 24. |
+| **Tests added** | +11 picker helper unit cases (`picker-plugin.test.ts`) + 7 GcalReauthBanner cases (6 happy + 1 orchestrator-added error path). |
+| **Files touched** | 9 (4 picker extensions + 1 new picker-plugin helper + 1 new banner + 1 banner test + i18n keys + App.tsx mount + REVIEW-LATER + SESSION-LOG). |
+
+**Summary:** two independent frontend items from REVIEW-LATER closed in parallel.
+
+**MAINT-203 (picker helper extraction).** All three picker extensions (`at-tag-picker`, `block-link-picker`, `block-ref-picker`) share the FE-M-15 stale-`insertPos` race guard. Before: inlined in `at-tag-picker`, extracted as per-extension helpers in the other two — three copies of the same `isStale()` check + `insertPlainAtCursor` fallback. After: single `resolveAndInsertPickerToken({ editor, text, insertPos, items, matchItem, tokenFor, onCreate?, loggerComponent, errorMessage })` helper in `src/editor/extensions/picker-plugin.ts` (the natural home — pickers already import from this module). Per-extension nuances kept at call sites: exact-match predicate (block-link's alias path is special), token shape, `onCreate` presence (at-tag + block-link have a "create new" branch; block-ref doesn't), error message wording. Helper additionally added `editor.view?.isDestroyed` early-return after each await (was only in block-ref; safely applied to all three). Net delta: -70 LOC across the four extension files plus 11 focused helper tests pinning happy / onCreate / stale-`insertPos` / error / editor-destroyed branches.
+
+**MAINT-216 (GCal reauth banner).** Backend has emitted `gcal:reauth_required` (with `ReauthRequiredPayload { account_email: string | null }`) since PEND-24 H3 — frontend never listened, so users hit the silent-pause-and-no-explanation state. New `GcalReauthBanner` component mounted in `App.tsx` between `SpaceTopStripe` and `SidebarProvider` (most discoverable global position, visible on every view, returns `null` when inactive). Banner: compact `role="alert"` strip with `AlertCircle`, headline, body (interpolates `account_email` or falls back to a generic message), and a `Reconnect` CTA that invokes `begin_gcal_oauth` (same entry point as Settings → GCal). 4 new i18n keys added to `src/lib/i18n/settings.ts` (alongside existing `gcal.*`). Lifecycle: banner activates on `gcal:reauth_required`, clears on successful `begin_gcal_oauth` resolution (no `gcal:reconnected` event exists; user-action-as-resolution is the cleanest signal). On reject: banner stays + `toast.error(t('gcal.connectFailed'))`; button is re-enabled for retry. Listener cleanup mirrors `GoogleCalendarSettingsTab`'s cancellation-race pattern. Orchestrator added a 7th test (error-path AGENTS.md #198 requirement) — banner stays present and button re-enabled when `begin_gcal_oauth` rejects.
+
+**Verification:**
+- `npx vitest run` — 9758 tests pass.
+- `cargo nextest run` — 3649 tests pass (no backend changes; just sanity).
+- `prek run --all-files` — all 46 hooks pass after one biome auto-format pass on the picker test file.
+
+**Process notes:** subagent A pre-emptively removed MAINT-203 from REVIEW-LATER (table + detail section); orchestrator handled MAINT-216 cleanup separately. Subagent B left an `IPC error-path coverage` violation because the AGENTS.md #198 prek hook requires a mock-reject test in every component that calls `invoke`; orchestrator added it. Picker-plugin test file had a leftover unused `_PickerItem` import flagged by biome; orchestrator deleted it before the format pass.
+
+**Commit plan:** single commit covering both closures + Session 732 entry.
+
+---
 ## Session 731 — startup-latency-backend Phases 1 + 2 (2026-05-14)
 
 | Metadata | Value |

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
+import { GcalReauthBanner } from './components/GcalReauthBanner'
 import { GlobalDateControls, JournalControls } from './components/JournalPage'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
 import { SpaceTopStripe } from './components/SpaceTopStripe'
@@ -397,6 +398,16 @@ function App() {
        * is announced by the SpaceSwitcher / OS title.
        */}
       <SpaceTopStripe />
+      {/*
+       * MAINT-216: top-of-app reauth banner. Subscribes once to the
+       * `gcal:reauth_required` Tauri event emitted by the PEND-24 H3
+       * backend when Google revokes the GCal refresh token. Renders
+       * `null` until an event fires so it has zero footprint on the
+       * happy path; mounting at shell level (above the sidebar) makes
+       * it visible from every view, since the connector pauses
+       * silently and the user has no other signal that sync is gone.
+       */}
+      <GcalReauthBanner />
       <SidebarProvider>
         <AppSidebar
           currentView={currentView}

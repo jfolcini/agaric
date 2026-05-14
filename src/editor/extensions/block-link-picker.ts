@@ -9,11 +9,11 @@
  * Both resolve to ULID, never writing [[title]] to storage.
  */
 
-import { type Editor, Extension, InputRule } from '@tiptap/core'
+import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
-import { createPickerPlugin } from './picker-plugin'
+import { createPickerPlugin, resolveAndInsertPickerToken } from './picker-plugin'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -33,102 +33,24 @@ declare module '@tiptap/core' {
 }
 
 /**
- * Shared async resolve-and-insert path for the BlockLinkPicker entry points.
+ * Exact-match predicate for the BlockLink resolve paths.
  *
- * Both the input rule (typing `[[text]]`) and the command
- * (`resolveBlockLinkFromSelection`) share the same resolution shape:
- *   1. async items lookup
- *   2. exact-match check (case-insensitive label OR alias match)
- *   3. on match → insert `block_link` node at `insertPos`
- *   4. on no match + `onCreate` → create new page, insert link
- *   5. on no match + no `onCreate` → re-insert plain `text`
- *   6. on error → log + re-insert plain `text`
- *
- * Branch coverage for this helper is provided by the existing input-rule and
- * command tests in `__tests__/block-link-picker.test.ts` — both paths exercise
- * every branch (exact match, onCreate, plain-text fallback, error fallback).
+ * Look for an exact match: case-insensitive label OR exact alias text.
+ * With prefix-alias matching now in `searchPages` (PEND-34), multiple items
+ * can carry `isAlias: true` for prefixes that aren't `text` exactly — only
+ * the alias whose `aliasText === text` should auto-resolve from the input
+ * rule / selection-resolve path. Using `aliasText` instead of the dropped
+ * `|| item.isAlias` short-circuit preserves the original "[[my-alias]]
+ * resolves to its target page" intent without auto-resolving prefix-only
+ * matches like "[[my]]".
  */
-async function resolveAndInsertBlockLink(
-  editor: Editor,
-  text: string,
-  insertPos: number,
-  options: BlockLinkPickerOptions,
-  errorMessage: string,
-): Promise<void> {
-  // FE-M-15: insertContentAt clamps silently when insertPos is past the
-  // doc's end (e.g. user cleared/shrank the doc while the async resolve
-  // was in flight), so the existing try/catch never fires on that path.
-  // Validate before each insertContentAt(insertPos, ...) call; on a stale
-  // offset, fall back to plain text at the current cursor.
-  const isStale = () => insertPos > editor.state.doc.content.size
-  const insertPlainAtCursor = () => {
-    editor.chain().focus().insertContent(text).run()
-  }
-
-  try {
-    const items = await options.items(text)
-    // Look for an exact match: case-insensitive label OR exact alias
-    // text. With prefix-alias matching now in `searchPages` (PEND-34),
-    // multiple items can carry `isAlias: true` for prefixes that aren't
-    // `text` exactly — only the alias whose `aliasText === text` should
-    // auto-resolve from the input rule / selection-resolve path. Using
-    // `aliasText` instead of the dropped `|| item.isAlias` short-circuit
-    // preserves the original "[[my-alias]] resolves to its target page"
-    // intent without auto-resolving prefix-only matches like "[[my]]".
-    const lower = text.toLowerCase()
-    const exactMatch = items.find(
-      (item) =>
-        !item.isCreate &&
-        (item.label.toLowerCase() === lower || item.aliasText?.toLowerCase() === lower),
-    )
-    if (exactMatch) {
-      if (isStale()) {
-        logger.warn(
-          'BlockLinkPicker',
-          'insertPos stale after items resolved; falling back to plain text at cursor',
-          { text, insertPos, docSize: editor.state.doc.content.size },
-        )
-        insertPlainAtCursor()
-        return
-      }
-      editor
-        .chain()
-        .focus()
-        .insertContentAt(insertPos, { type: 'block_link', attrs: { id: exactMatch.id } })
-        .run()
-    } else if (options.onCreate) {
-      const newId = await options.onCreate(text)
-      if (isStale()) {
-        logger.warn(
-          'BlockLinkPicker',
-          'insertPos stale after onCreate resolved; falling back to plain text at cursor',
-          { text, insertPos, docSize: editor.state.doc.content.size },
-        )
-        insertPlainAtCursor()
-        return
-      }
-      editor
-        .chain()
-        .focus()
-        .insertContentAt(insertPos, { type: 'block_link', attrs: { id: newId } })
-        .run()
-    } else {
-      // No match and no onCreate — re-insert as plain text
-      if (isStale()) {
-        insertPlainAtCursor()
-        return
-      }
-      editor.chain().focus().insertContentAt(insertPos, text).run()
-    }
-  } catch (err) {
-    logger.warn('BlockLinkPicker', errorMessage, { text }, err)
-    // On error, re-insert as plain text so the user doesn't lose content
-    if (isStale()) {
-      insertPlainAtCursor()
-      return
-    }
-    editor.chain().focus().insertContentAt(insertPos, text).run()
-  }
+function matchBlockLinkItem(items: PickerItem[], text: string): PickerItem | undefined {
+  const lower = text.toLowerCase()
+  return items.find(
+    (item) =>
+      !item.isCreate &&
+      (item.label.toLowerCase() === lower || item.aliasText?.toLowerCase() === lower),
+  )
 }
 
 export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
@@ -157,13 +79,18 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const insertPos = from
           editor.chain().focus().deleteRange({ from, to }).run()
 
-          void resolveAndInsertBlockLink(
+          // MAINT-203: shared FE-M-15 race-guard.
+          void resolveAndInsertPickerToken({
             editor,
-            selectedText,
+            text: selectedText,
             insertPos,
-            extensionOptions,
-            'resolveBlockLinkFromSelection failed, falling back to plain text',
-          )
+            items: extensionOptions.items,
+            matchItem: matchBlockLinkItem,
+            tokenFor: (id) => ({ type: 'block_link', attrs: { id } }),
+            onCreate: extensionOptions.onCreate,
+            loggerComponent: 'BlockLinkPicker',
+            errorMessage: 'resolveBlockLinkFromSelection failed, falling back to plain text',
+          })
           return true
         },
     }
@@ -187,15 +114,20 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           // Delete the [[text]] range immediately so the raw text doesn't linger
           state.tr.delete(range.from, range.to)
 
-          // Async resolve via the shared helper — inserts at the captured
-          // position to avoid a race with subsequent user edits.
-          void resolveAndInsertBlockLink(
+          // MAINT-203: shared FE-M-15 race-guard. Token shape `block_link`;
+          // exact-match recognises `aliasText === text` so `[[my-alias]]`
+          // resolves to its target page (PEND-34).
+          void resolveAndInsertPickerToken({
             editor,
-            innerText,
+            text: innerText,
             insertPos,
-            extensionOptions,
-            'Failed to resolve block link via input rule, falling back to plain text',
-          )
+            items: extensionOptions.items,
+            matchItem: matchBlockLinkItem,
+            tokenFor: (id) => ({ type: 'block_link', attrs: { id } }),
+            onCreate: extensionOptions.onCreate,
+            loggerComponent: 'BlockLinkPicker',
+            errorMessage: 'Failed to resolve block link via input rule, falling back to plain text',
+          })
         },
       }),
     ]
