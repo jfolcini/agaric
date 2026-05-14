@@ -67,3 +67,124 @@ export function createPickerPlugin(cfg: PickerPluginConfig) {
       cfg.render ?? (() => createSuggestionRenderer(cfg.displayName, cfg.pluginKey, cfg.char)),
   })
 }
+
+// ── MAINT-203 ──────────────────────────────────────────────────────────────
+//
+// Shared async resolve-and-insert path for the 3 token-inserting pickers
+// (AtTagPicker `#TAG`, BlockLinkPicker `[[ULID]]`, BlockRefPicker `((ULID))`).
+//
+// All three implement the same FE-M-15 race-condition guard:
+//   - capture `insertPos` *before* the async resolve fires
+//   - on resolve, check `insertPos <= editor.state.doc.content.size` —
+//     `insertContentAt` clamps silently when the offset is past doc end,
+//     so a stale offset would *not* surface via the existing try/catch
+//   - on stale offset, fall back to plain-text insertion at the *current*
+//     cursor (`insertContent`) instead of the captured `insertPos`
+//
+// The helper accepts:
+//   - `matchItem(items, text)` — per-picker exact-match predicate
+//     (block-link recognises `aliasText === text` in addition to label
+//     matching; at-tag and block-ref only check label).
+//   - `tokenFor(id)` — builds the TipTap content node descriptor for the
+//     token (`{ type: 'tag_ref'|'block_link'|'block_ref', attrs: { id } }`).
+//   - `onCreate?(text)` — optional "no match, create new" branch
+//     (at-tag and block-link have it; block-ref does not).
+//
+// Branch coverage:
+//   - happy path (exact match → token inserted),
+//   - onCreate path (no match, onCreate resolves → token inserted),
+//   - plain-text fallback (no match, no onCreate),
+//   - error fallback (`items` throws),
+//   - stale `insertPos` fallback (each insertContentAt branch),
+//   - editor destroyed mid-resolve (defensive early return).
+// Covered by the existing per-picker `__tests__/*-picker.test.ts` suites
+// + the focused `__tests__/picker-plugin.test.ts` cases.
+export interface ResolveAndInsertPickerTokenOptions {
+  /** Live editor reference. */
+  editor: Editor
+  /** The text the user typed inside the trigger (e.g. `myTag`, `My Page`). */
+  text: string
+  /** Captured insertion offset (the original `range.from`). */
+  insertPos: number
+  /** Async items lookup. */
+  items: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** Per-picker exact-match predicate. Returns the matched item, or `undefined`. */
+  matchItem: (items: PickerItem[], text: string) => PickerItem | undefined
+  /** Builds the TipTap content descriptor for the resolved id. */
+  tokenFor: (id: string) => Record<string, unknown>
+  /** Optional "no match, create new" branch — returns the new resolved id. */
+  onCreate?: ((text: string) => Promise<string>) | undefined
+  /** Component name passed to `logger.warn` (e.g. `'BlockLinkPicker'`). */
+  loggerComponent: string
+  /** Error message used when the `items` callback throws. */
+  errorMessage: string
+}
+
+export async function resolveAndInsertPickerToken({
+  editor,
+  text,
+  insertPos,
+  items,
+  matchItem,
+  tokenFor,
+  onCreate,
+  loggerComponent,
+  errorMessage,
+}: ResolveAndInsertPickerTokenOptions): Promise<void> {
+  // FE-M-15: insertContentAt clamps silently when insertPos is past the
+  // doc's end (e.g. user cleared/shrank the doc while the async resolve
+  // was in flight), so the existing try/catch never fires on that path.
+  // Validate before each insertContentAt(insertPos, ...) call; on a stale
+  // offset, fall back to plain text at the current cursor.
+  const isStale = () => insertPos > editor.state.doc.content.size
+  const insertPlainAtCursor = () => {
+    editor.chain().focus().insertContent(text).run()
+  }
+
+  try {
+    const resolved = await items(text)
+    if (editor.view?.isDestroyed) return
+    const exactMatch = matchItem(resolved, text)
+    if (exactMatch) {
+      if (isStale()) {
+        logger.warn(
+          loggerComponent,
+          'insertPos stale after items resolved; falling back to plain text at cursor',
+          { text, insertPos, docSize: editor.state.doc.content.size },
+        )
+        insertPlainAtCursor()
+        return
+      }
+      editor.chain().focus().insertContentAt(insertPos, tokenFor(exactMatch.id)).run()
+    } else if (onCreate) {
+      const newId = await onCreate(text)
+      if (editor.view?.isDestroyed) return
+      if (isStale()) {
+        logger.warn(
+          loggerComponent,
+          'insertPos stale after onCreate resolved; falling back to plain text at cursor',
+          { text, insertPos, docSize: editor.state.doc.content.size },
+        )
+        insertPlainAtCursor()
+        return
+      }
+      editor.chain().focus().insertContentAt(insertPos, tokenFor(newId)).run()
+    } else {
+      // No match and no onCreate — re-insert as plain text
+      if (isStale()) {
+        insertPlainAtCursor()
+        return
+      }
+      editor.chain().focus().insertContentAt(insertPos, text).run()
+    }
+  } catch (err) {
+    logger.warn(loggerComponent, errorMessage, { text }, err)
+    if (editor.view?.isDestroyed) return
+    // On error, re-insert as plain text so the user doesn't lose content
+    if (isStale()) {
+      insertPlainAtCursor()
+      return
+    }
+    editor.chain().focus().insertContentAt(insertPos, text).run()
+  }
+}
