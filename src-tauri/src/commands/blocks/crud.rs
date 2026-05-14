@@ -1238,10 +1238,17 @@ pub async fn purge_block_inner(
     // block_properties: owned by descendants (MAINT-147 (a): uniform site)
     purge_descendants_table!(tx, &block_id, "block_properties");
 
-    // block_properties: value_ref pointing into the subtree (NULLify) — variant
+    // block_properties: value_ref pointing into the subtree — DELETE the
+    // property row rather than NULLing the ref. Under the exactly-one-value
+    // CHECK introduced by migration 0062 a `value_ref`-typed property has
+    // no other typed value to fall back on, so a SET-NULL would produce an
+    // invariant-violating all-NULL row; the migration aligned the FK on
+    // `value_ref` to `ON DELETE CASCADE` and this application-level cascade
+    // matches that direction. See migration 0062's header for the full
+    // rationale.
     sqlx::query(concat!(
         crate::descendants_cte_purge!(),
-        "UPDATE block_properties SET value_ref = NULL \
+        "DELETE FROM block_properties \
          WHERE value_ref IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
@@ -1599,9 +1606,12 @@ pub async fn purge_all_deleted_inner(
     .execute(&mut **tx)
     .await?;
 
-    // block_properties: value_ref pointing to deleted blocks
+    // block_properties: value_ref pointing to deleted blocks. DELETE the
+    // property row (post-migration-0062 the FK is CASCADE and the
+    // exactly-one-value CHECK makes the value_ref-only row meaningless
+    // once the ref disappears; see migration 0062 header).
     sqlx::query!(
-        "UPDATE block_properties SET value_ref = NULL \
+        "DELETE FROM block_properties \
          WHERE value_ref IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
     .execute(&mut **tx)
@@ -2048,9 +2058,10 @@ pub async fn purge_blocks_by_ids_inner(
     .execute(&mut **tx)
     .await?;
 
-    // block_properties: value_ref pointing into the subtree (NULLify)
+    // block_properties: value_ref pointing into the subtree — DELETE the
+    // row (post-migration-0062, see header rationale).
     sqlx::query(&format!(
-        "{cte}UPDATE block_properties SET value_ref = NULL \
+        "{cte}DELETE FROM block_properties \
          WHERE value_ref IN (SELECT id FROM descendants)"
     ))
     .bind(&ids_json)

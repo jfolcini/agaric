@@ -1660,12 +1660,17 @@ async fn projected_cache_excludes_done_blocks() {
         .await
         .unwrap();
 
-    // Set a repeat rule so projected cache has something to compute
-    set_property(&pool, "BLK_DONE3", "repeat", None).await;
-    sqlx::query("UPDATE block_properties SET value_text = 'daily' WHERE block_id = 'BLK_DONE3' AND key = 'repeat'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Set a repeat rule so projected cache has something to compute.
+    // Use a single INSERT with value_text populated; the prior two-step
+    // (INSERT with all-NULL values, then UPDATE) violated migration
+    // 0062's exactly_one_value CHECK on the intermediate row.
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', 'daily')",
+    )
+    .bind("BLK_DONE3")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     rebuild_projected_agenda_cache(&pool).await.unwrap();
 

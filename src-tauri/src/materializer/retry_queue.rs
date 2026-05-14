@@ -1330,4 +1330,76 @@ mod tests {
             "PK must be (block_id, task_kind); sql={sql}"
         );
     }
+
+    /// SQL-review M-4 (migration 0063): the single-column
+    /// `idx_materializer_retry_queue_next` from migrations 0028 / 0044
+    /// is replaced by the covering index
+    /// `idx_materializer_retry_queue_due (next_attempt_at, block_id,
+    /// task_kind)`. The sweeper SELECT in `fetch_due` projects
+    /// `block_id, task_kind` while filtering and ordering on
+    /// `next_attempt_at`, so a leading-prefix + trailing-projection
+    /// index lets SQLite satisfy the query from the index alone (no
+    /// back-row lookup). This regression guards three invariants:
+    ///   1. the old index is gone,
+    ///   2. the new index exists,
+    ///   3. `EXPLAIN QUERY PLAN` for the sweeper SELECT actually uses
+    ///      the new index (so a future planner / schema change that
+    ///      silently falls back to a full scan surfaces here).
+    #[tokio::test]
+    async fn materializer_retry_queue_covering_index_exists() {
+        let (pool, _dir) = test_pool().await;
+
+        let legacy = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_materializer_retry_queue_next'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            legacy, 0,
+            "migration 0063 must drop the single-column \
+             idx_materializer_retry_queue_next (non-covering)"
+        );
+
+        let covering = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_materializer_retry_queue_due'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            covering, 1,
+            "migration 0063 must create the covering \
+             idx_materializer_retry_queue_due (next_attempt_at, block_id, task_kind)"
+        );
+
+        // EXPLAIN QUERY PLAN must reference the new index for the
+        // sweeper SELECT shape. The bind values are placeholders — the
+        // planner only inspects the SQL shape, not the bound data.
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let limit: i64 = 64;
+        let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN \
+             SELECT block_id, task_kind FROM materializer_retry_queue \
+             WHERE next_attempt_at <= ? \
+             ORDER BY next_attempt_at ASC LIMIT ?",
+        )
+        .bind(&now)
+        .bind(limit)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let plan_text = plan_rows
+            .iter()
+            .map(|(_, _, _, detail)| detail.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan_text.contains("idx_materializer_retry_queue_due"),
+            "sweeper SELECT must use the covering index \
+             idx_materializer_retry_queue_due; got plan:\n{plan_text}"
+        );
+    }
 }

@@ -1127,8 +1127,14 @@ async fn purge_block_sql_cascade(
     )
     .execute(&mut *conn)
     .await?;
+    // block_properties: value_ref pointing into the subtree — DELETE the
+    // property row rather than NULLing the ref. Under migration 0062's
+    // exactly_one_value CHECK a `value_ref`-typed property has no other
+    // typed value to fall back on, so a SET-NULL produces an invariant-
+    // violating all-NULL row. Mirrors the equivalent crud.rs change
+    // (see crud.rs:~1249 / 1613 / 2063 and migration 0062's header).
     sqlx::query(
-        "UPDATE block_properties SET value_ref = NULL \
+        "DELETE FROM block_properties \
          WHERE value_ref IN (SELECT id FROM _purge_descendants)",
     )
     .execute(&mut *conn)

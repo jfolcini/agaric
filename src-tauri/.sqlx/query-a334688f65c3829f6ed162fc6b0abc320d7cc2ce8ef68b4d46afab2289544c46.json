@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_materializer_retry_queue_due'",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a334688f65c3829f6ed162fc6b0abc320d7cc2ce8ef68b4d46afab2289544c46"
+}

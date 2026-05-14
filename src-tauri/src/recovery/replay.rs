@@ -58,13 +58,70 @@ pub struct ReplayReport {
 ///
 /// Migration `0040` seeds the row at boot, so this lookup always
 /// returns a value (defaulting to 0 on a fresh install).
+///
+/// # SQL-review H-4 — boot-time sanity check
+///
+/// The cursor advance path (`materializer/handlers.rs::advance_apply_cursor`)
+/// is gated by `MAX(materialized_through_seq, ?)` and only ever bumps the
+/// cursor up to `op_log.seq` values that exist. Therefore the invariant
+/// `cursor <= MAX(op_log.seq)` holds for every successful apply. If at
+/// boot we observe `cursor > MAX(op_log.seq)`, the cursor is in an
+/// impossible state — most likely a hand-edit, a partial restore, or a
+/// rolled-back op_log without a matching rolled-back cursor. Left alone,
+/// the next `replay_unmaterialized_ops` walk would silently do nothing
+/// and any unmaterialized ops would never be applied. Worse, an
+/// adversarially corrupted *under*-shoot value (e.g. 0) would trigger a
+/// full op_log replay at boot — not data loss, but a multi-second
+/// boot-stall.
+///
+/// This function therefore performs one cheap impossible-state check on
+/// the read path: if `cursor > MAX(op_log.seq)` we reset the cursor to
+/// `MAX(op_log.seq)` (or 0 if the log is empty), log a warning, and
+/// return the corrected value. We deliberately do NOT try to detect
+/// under-shoot corruption: there is no surviving "expected cursor"
+/// signal to compare against (the cursor row has no timestamp-of-last-op
+/// field), and `MAX(materialized_through_seq, ?)` per-op idempotency
+/// already prevents an under-shoot from causing incorrect state — only
+/// the wasted boot time.
 async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
     let row = sqlx::query!(
         r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
     )
     .fetch_one(pool)
     .await?;
-    Ok(row.seq)
+    let cursor = row.seq;
+
+    // SQL-review H-4: sanity-check against MAX(op_log.seq). The op_log
+    // is append-only per AGENTS.md invariant #1, so MAX(seq) is the
+    // strict upper bound for any legitimate cursor value.
+    let max_seq: Option<i64> =
+        sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log"#,)
+            .fetch_one(pool)
+            .await?;
+    let max_seq = max_seq.unwrap_or(0);
+
+    if cursor > max_seq {
+        tracing::warn!(
+            cursor,
+            max_seq,
+            "replay: materializer_apply_cursor exceeds MAX(op_log.seq) — \
+             impossible-state corruption; resetting cursor to MAX(op_log.seq)"
+        );
+        let updated_at = crate::now_rfc3339();
+        sqlx::query!(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = ?, \
+                 updated_at = ? \
+             WHERE id = 1",
+            max_seq,
+            updated_at,
+        )
+        .execute(pool)
+        .await?;
+        return Ok(max_seq);
+    }
+
+    Ok(cursor)
 }
 
 /// Walk `op_log WHERE seq > cursor` and enqueue each row as an
@@ -166,4 +223,83 @@ pub async fn replay_unmaterialized_ops(
     );
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use tempfile::TempDir;
+
+    /// Create a temp-file-backed SQLite pool with migrations applied.
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// SQL-review H-4: when the cursor row stores a `materialized_through_seq`
+    /// value greater than `MAX(op_log.seq)` (which the apply path
+    /// guarantees can never happen by `MAX(materialized_through_seq, ?)`
+    /// semantics, but could arise from a hand-edit / partial restore /
+    /// rolled-back op_log), `read_apply_cursor` must detect the
+    /// impossible state, log a warning, and reset the cursor down to
+    /// `MAX(op_log.seq)` so the next replay walk does not silently miss
+    /// unmaterialized ops.
+    #[tokio::test]
+    async fn apply_cursor_sanity_resets_when_cursor_exceeds_max_seq() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert 3 op_log rows (seqs 1..=3) directly. We bypass
+        // `append_local_op` because this test is about cursor sanity, not
+        // op-log construction — raw INSERTs with valid column values are
+        // simpler and don't drag in OpPayload fixtures.
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Corrupt the cursor: set it well past MAX(op_log.seq) = 3.
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = ?, \
+                 updated_at = '2026-01-01T00:00:00.000Z' \
+             WHERE id = 1",
+        )
+        .bind(9999i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Call the function under test.
+        let returned = read_apply_cursor(&pool).await.unwrap();
+        assert_eq!(
+            returned, 3,
+            "read_apply_cursor should clamp an over-shoot cursor down to MAX(op_log.seq)"
+        );
+
+        // The DB row must have been rewritten — otherwise the next boot
+        // would observe the same corruption.
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 3,
+            "materializer_apply_cursor row must be reset to MAX(op_log.seq) on disk, \
+             not just in the return value"
+        );
+    }
 }

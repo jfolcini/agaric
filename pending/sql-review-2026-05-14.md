@@ -28,66 +28,7 @@
   sound (the relaunched op-log-core agent gave a clean bill of health on
   invariants).
 
-## §1 — Verified blocking issues (4)
-
-### B-1 — `block_properties` lacks the "exactly one value column non-null" CHECK
-
-**Where:** migration `0001_initial.sql:25-32`, schema preserved verbatim by
-migration `0061_fk_cascade_on_blocks_legacy_tables.sql:106-111`.
-
-**What's missing:** A row in `block_properties` is supposed to set exactly
-one of `(value_text, value_num, value_date, value_ref, value_bool)`. This
-invariant is enforced *only* in Rust by `validate_property_value()` in
-`commands/properties.rs`. SQLite enforces nothing. A future feature that
-writes outside the command path, a sync replay of a corrupted op, or a
-direct SQL touch in a migration backfill can silently violate it. There is
-no test that proves SQLite would reject such a row.
-
-**Verified:** Grepped all migrations — only `value_bool` has its own
-narrow `CHECK (value_bool IS NULL OR value_bool IN (0, 1))` (migration
-0042). The compound "exactly one non-null" CHECK is genuinely absent.
-
-**Fix:** Add a migration:
-
-```sql
-ALTER TABLE block_properties ADD CONSTRAINT exactly_one_value CHECK (
-  (value_text IS NOT NULL) + (value_num IS NOT NULL)
-  + (value_date IS NOT NULL) + (value_ref IS NOT NULL)
-  + (value_bool IS NOT NULL) = 1
-);
-```
-
-SQLite supports `CHECK` with `IS NOT NULL` arithmetic via boolean coercion.
-Use SQLite's table-rebuild pattern (`_new_block_properties` → swap →
-backfill) — same approach as migration 0061. **Cost S** (~half day
-including a backfill audit query that confirms zero existing rows
-violate the constraint).
-
-### B-2 — `dag.rs` queries still use `json_extract(payload, '$.block_id')` despite the indexed column from migration 0030
-
-**Where:** `src-tauri/src/dag.rs:663` (`get_block_edit_heads`) and
-`src-tauri/src/dag.rs:718` (`has_merge_for_heads`).
-
-**Verified:** Both queries read
-
-```sql
-WHERE op_type = 'edit_block' AND json_extract(payload, '$.block_id') = ?
-```
-
-Migration 0030 added the indexed `op_log.block_id` column for exactly this
-reason; migration 0048 retired the JSON-extract expression index. The
-op_log audit confirms every INSERT path now populates `block_id`. These
-two `dag.rs` queries are the surviving stragglers.
-
-**Impact at 100K:** `get_block_edit_heads` is called per-block during
-draft recovery (`recovery/draft_recovery.rs:170`) — at 100 surviving
-drafts × 10 ms full scan = **1 s of boot stall** that should be 10 ms.
-
-**Fix:** Two-line change at each site — swap `json_extract(payload,
-'$.block_id') = ?` → `block_id = ?`. The pinning test
-`op_log_block_id_indexes_post_migration_0048` at op_log.rs:1777-1800
-already protects the schema; add a parallel assertion that no production
-SQL still uses the JSON-extract pattern. **Cost S** (~1 hour).
+## §1 — Verified blocking issues (2)
 
 ### B-3 — Reverse-op replay is N+1 across the entire batch
 
@@ -136,7 +77,7 @@ footprint, narrower coverage).
 
 **Cost S-M** (column + backfill + write-site update + migration test).
 
-## §2 — High-impact perf issues (4)
+## §2 — High-impact perf issues (3)
 
 ### H-1 — Space-filter subquery is unindexed and inlined at 10+ pagination sites
 
@@ -209,20 +150,7 @@ COALESCE-defeats-index pattern from H-1, applied to the cache join.
 **Fix:** Resolves automatically once H-1's audit lands. **Cost: 0**
 (subsumed by H-1).
 
-### H-4 — Boot-time replay is incremental but unvalidated; cursor corruption → full 100K replay
-
-**Where:** `src-tauri/src/recovery/replay.rs:83-169` reads `WHERE seq >
-cursor`, but the cursor (single row in `materializer_apply_cursor`,
-migration 0040) has no validation. A bad UPDATE leaves `materialized_
-through_seq = 0` and boot replays the whole op_log in 200-op chunks.
-Not data loss — just a multi-second boot-stall DoS.
-
-**Fix:** At boot, sanity-check the cursor: `if cursor >
-SELECT MAX(seq) FROM op_log: reset; if cursor.updated_at < 30 days ago
-AND op_log has new ops since: warn`. **Cost S** (~2 hours + a regression
-test).
-
-## §3 — Medium-impact (8 — bullet form)
+## §3 — Medium-impact (7 — bullet form)
 
 - **M-1: Materializer apply tx uses `pool.begin()` (DEFERRED), not
   `BEGIN IMMEDIATE`** (`materializer/handlers.rs:53,168`). Atomicity is
@@ -243,12 +171,6 @@ test).
   coupling: a future caller of these primitives that forgets to dispatch
   leaves caches stale. Fix: wire `&Materializer` into the primitive
   signature so dispatch is enforced at the type system. **Cost S-M**.
-- **M-4: Retry-queue sweeper query has a non-covering single-column
-  index** (migration 0028 — `idx_materializer_retry_queue_next ON
-  (next_attempt_at)`). At 10K retry rows with 90% future-dated, the
-  sweeper SELECT does a non-covering scan. Add a partial-covering
-  index: `(next_attempt_at, block_id, task_kind) WHERE next_attempt_at
-  <= CURRENT_TIMESTAMP`. **Cost S**.
 - **M-5: `query_by_property` (`pagination/properties.rs:89-298`) is
   250 LOC of `format!()`-built SQL** that interpolates the column name
   `b.{col}`. The column is a whitelisted reserved key, so injection is
@@ -374,16 +296,16 @@ downgraded:
 
 ## §7 — Phased plan
 
-**Phase 1 — Quick correctness wins (S+S+S, ~2 days).**
-Land B-1 (block_properties CHECK), B-2 (dag.rs `block_id` swap), H-4
-(cursor sanity check). All small, no migrations to revert, full test
-coverage available.
+**Phase 1 — Quick correctness wins.** ✅ SHIPPED session 740. B-1 (block_properties
+CHECK + paired `value_ref` FK SET NULL → CASCADE flip in migration 0062),
+B-2 (dag.rs `block_id` swap, 2 sites), H-4 (cursor sanity check) all landed
+with regression tests. M-4 (retry-queue covering index, migration 0063) also
+absorbed into this batch.
 
-**Phase 2 — Index + dispatch hygiene (S+S+S+M, ~3-4 days).**
-M-1 (BEGIN IMMEDIATE on apply path), M-3 (soft_delete dispatch
-plumbing), M-4 (retry-queue covering index), B-4 (attachment_id index +
-column). Improves contention behaviour and closes the dispatch
-coupling.
+**Phase 2 — Index + dispatch hygiene (S+S+M, ~3 days).**
+M-1 (BEGIN IMMEDIATE on apply path), M-3 (soft_delete dispatch plumbing),
+B-4 (attachment_id index + column). Improves contention behaviour and
+closes the dispatch coupling.
 
 **Phase 3 — Reverse-op + write-loop batching (M+M, ~4 days).**
 B-3 (revert_ops batching) + the cross-cut "audit top-10 write loops for
@@ -401,10 +323,12 @@ Gated on Android profiling for M-8 cost/benefit.
 
 ## §8 — Cost / Impact / Risk
 
-- **Phase 1:** Cost **S** (~2 d). Impact: closes 3 verified correctness/
-  perf holes, zero migration risk. Risk: low — all changes are
-  additive or surgical.
-- **Phase 2:** Cost **S-M** (~3-4 d). Impact: removes contention
+- **Phase 1:** ✅ SHIPPED session 740 (B-1 + B-2 + H-4 + M-4). Closed 4 verified
+  correctness/perf holes (one of them — B-1 — required a paired FK semantic
+  flip on `block_properties.value_ref`, which fanned out to 4 production sites
+  that previously did app-level `SET value_ref = NULL`; they now `DELETE`
+  the property row instead, matching the new CASCADE direction).
+- **Phase 2:** Cost **S-M** (~3 d). Impact: removes contention
   storms during sync bursts; closes hidden dispatch coupling.
   Risk: medium — `BEGIN IMMEDIATE` conversion can surface upstream
   stalls that DEFERRED hid (a feature, not a bug, but PRs may need

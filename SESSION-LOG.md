@@ -7,6 +7,49 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 740 — SQL-review Phase 1 + M-4 (B-1 + B-2 + H-4 + M-4) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 4 build + 4 review (parallel, pipelined) |
+| **Items closed** | sql-review B-1, B-2, H-4, M-4 (all from `pending/sql-review-2026-05-14.md`) |
+| **Items modified** | — |
+| **Tests added** | +5 (backend): exactly_one CHECK enforcement, dag.rs json_extract static-source guard, cursor sanity reset, retry-queue covering-index schema + EXPLAIN-plan check |
+| **Files touched** | 9 source + 2 migrations + 4 sqlx cache entries (3 new, 1 deleted) |
+
+**Summary:** Shipped Phase 1 of the SQL audit plus the M-4 covering-index work in one parallel batch. B-1 added the long-missing `exactly_one_value` CHECK on `block_properties` via the table-rebuild idiom (migration 0062); the CHECK is incompatible with the previous `value_ref ON DELETE SET NULL` FK semantics, so the FK direction was paired-flipped to `CASCADE` and 4 production sites that previously did app-level `UPDATE … SET value_ref = NULL` (3 in `crud.rs`, 1 in `materializer/handlers.rs::purge_block_sql_cascade` — caught by the B-1 reviewer) were rewritten to `DELETE`. B-2 swapped 2 `json_extract(payload, '$.block_id')` lookups in `dag.rs` to read the indexed native `block_id` column and added a static-source regression guard. H-4 added a boot-time sanity check that resets the materializer apply cursor to `MAX(op_log.seq)` if a corrupted row has overshot it (with a `tracing::warn!`). M-4 replaced the non-covering `idx_materializer_retry_queue_next` with a covering `idx_materializer_retry_queue_due (next_attempt_at, block_id, task_kind)` (migration 0063); the implementer correctly dropped the original plan's partial filter after noting SQLite evaluates `CURRENT_TIMESTAMP` at index-creation time.
+
+**Phase-1 closure on `pending/sql-review-2026-05-14.md`:** B-1, B-2, H-4 detail sections removed; M-4 bullet removed from §3; §7 Phase 1 marked SHIPPED; §1 / §2 / §3 counts decremented; §8 Phase 1 entry rewritten to record the value_ref fan-out. The plan stays in `pending/` since Phases 2-5 + open questions remain.
+
+**REVIEW-LATER impact:** none (sql-review items are tracked in their own plan, not REVIEW-LATER.md).
+
+**Files touched (this session):**
+- `src-tauri/migrations/0062_block_properties_exactly_one_value_check.sql` (new, +123 LOC)
+- `src-tauri/migrations/0063_materializer_retry_queue_covering_index.sql` (new, +35 LOC)
+- `src-tauri/src/cache/cascade_tests.rs` (+ paired CASCADE assertion updates, comment fix)
+- `src-tauri/src/cache/tests.rs` (test fixture simplified to single value_text insert)
+- `src-tauri/src/commands/blocks/crud.rs` (3 sites: UPDATE → DELETE)
+- `src-tauri/src/dag.rs` (lines 663, 718: json_extract → native column)
+- `src-tauri/src/materializer/handlers.rs` (PURGE materializer site: UPDATE → DELETE, caught by reviewer)
+- `src-tauri/src/materializer/retry_queue.rs` (new covering-index existence test)
+- `src-tauri/src/op_log.rs` (B-1 CHECK enforcement test + B-2 static-source guard)
+- `src-tauri/src/recovery/replay.rs` (cursor sanity + tracing::warn + new tests module)
+- `src-tauri/.sqlx/` (4 cache entries: 3 added, 1 deleted)
+- `pending/sql-review-2026-05-14.md` (-86 lines: B-1/B-2/H-4/M-4 removed, Phase 1 closed)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3680 / 3680 pass, 4 skipped.
+- `prek run --all-files` — all hooks pass (cargo fmt auto-fixed 3 nits on first run, clean on re-run).
+
+**Process notes:** B-1's review caught a real blocker that the implementer missed — a 4th `UPDATE block_properties SET value_ref = NULL` site in the PURGE materializer (`handlers.rs:1130`) that would have aborted purges under the new CHECK. Reviewer fixed inline + re-verified. Confirms PROMPT.md's "no self-reviews" rule pays off.
+
+**Lessons learned (for future sessions):** When adding a CHECK constraint that interacts with FK cascade behaviour, audit ALL Rust-side app-level cascades that mirror the FK direction — not just the obvious 3 in `crud.rs`. Grep `block_properties.*SET .*= NULL` (or similar `value_ref` mutators) before committing.
+
+**Commit plan:** single commit; not pushed.
+
+---
+
 ## Session 739 — TEST-FE-2 closure: 4 hot-file `toHaveBeenCalled()` audits (2026-05-14)
 
 | Metadata | Value |

@@ -660,7 +660,7 @@ pub async fn get_block_edit_heads(
         r#"SELECT device_id as "device_id!: String", MAX(seq) AS "seq!: i64"
          FROM op_log
          WHERE op_type = 'edit_block'
-           AND json_extract(payload, '$.block_id') = ?
+           AND block_id = ?
          GROUP BY device_id
          ORDER BY device_id"#,
         block_id,
@@ -715,7 +715,7 @@ pub async fn has_merge_for_heads(
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log \
          WHERE op_type = 'edit_block' \
-           AND json_extract(payload, '$.block_id') = ? \
+           AND block_id = ? \
            AND parent_seqs IS NOT NULL \
            AND instr(parent_seqs, ?) > 0",
     )

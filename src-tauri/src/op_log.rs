@@ -1801,6 +1801,27 @@ mod tests {
         );
     }
 
+    /// SQL-review B-2: `dag.rs` must read the native indexed `block_id`
+    /// column, not the legacy `json_extract(payload, '$.block_id')`
+    /// expression. Migration 0030 added the native column (with the
+    /// covering `idx_op_log_block_id` index) and every INSERT path
+    /// populates it; migration 0048 dropped the legacy expression index,
+    /// so any surviving `json_extract` lookup would degrade to a full
+    /// `op_log` scan. This regression guard reads `src/dag.rs` from disk
+    /// and asserts the expression has not been re-introduced.
+    #[test]
+    fn dag_queries_no_longer_use_json_extract_block_id() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/dag.rs");
+        let contents =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+        assert!(
+            !contents.contains("json_extract(payload, '$.block_id')"),
+            "src/dag.rs must not contain `json_extract(payload, '$.block_id')` — \
+             use the native indexed `block_id` column instead (see migration 0030 \
+             and SQL-review B-2)."
+        );
+    }
+
     // =========================================================================
     // FEAT-4h slice 1 — `op_log.origin` column
     // =========================================================================
@@ -2380,5 +2401,94 @@ mod tests {
                 "L-13: get_ops_since must populate block_id sidecar at index {i}",
             );
         }
+    }
+
+    /// B-1 (sql-review-2026-05-14): migration 0062 adds a compound
+    /// `exactly_one_value` CHECK constraint on `block_properties`
+    /// enforcing that exactly one of `value_text`, `value_num`,
+    /// `value_date`, `value_ref`, `value_bool` is non-null per row.
+    /// Previously this invariant was only enforced in Rust by
+    /// `validate_property_value()`; the new CHECK pushes the last line
+    /// of defence into the storage layer.
+    ///
+    /// This test pins all three boundaries of the constraint:
+    ///   - two non-null value columns → CHECK violation
+    ///   - zero non-null value columns → CHECK violation
+    ///   - exactly one non-null value column → succeeds
+    #[tokio::test]
+    async fn block_properties_exactly_one_value_check_enforced() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert a parent block so the FK `block_id -> blocks(id)` on
+        // block_properties is satisfied for the rows below.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'parent', NULL, NULL)",
+        )
+        .bind("BLK_B1_PARENT")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // (a) TWO non-null value columns → CHECK violation.
+        let two_values_err = sqlx::query(
+            "INSERT INTO block_properties \
+                 (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+             VALUES (?, ?, ?, ?, NULL, NULL, NULL)",
+        )
+        .bind("BLK_B1_PARENT")
+        .bind("k_two")
+        .bind("x")
+        .bind(1.0_f64)
+        .execute(&pool)
+        .await
+        .expect_err("row with two non-null value columns must violate exactly_one_value CHECK");
+        let two_msg = format!("{two_values_err:?}");
+        assert!(
+            two_msg.contains("CHECK constraint failed"),
+            "expected CHECK constraint failure for two-non-null insert, got: {two_msg}"
+        );
+
+        // (b) ZERO non-null value columns → CHECK violation.
+        let zero_values_err = sqlx::query(
+            "INSERT INTO block_properties \
+                 (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+             VALUES (?, ?, NULL, NULL, NULL, NULL, NULL)",
+        )
+        .bind("BLK_B1_PARENT")
+        .bind("k_zero")
+        .execute(&pool)
+        .await
+        .expect_err("row with zero non-null value columns must violate exactly_one_value CHECK");
+        let zero_msg = format!("{zero_values_err:?}");
+        assert!(
+            zero_msg.contains("CHECK constraint failed"),
+            "expected CHECK constraint failure for zero-non-null insert, got: {zero_msg}"
+        );
+
+        // (c) EXACTLY ONE non-null value column → succeeds.
+        sqlx::query(
+            "INSERT INTO block_properties \
+                 (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+             VALUES (?, ?, ?, NULL, NULL, NULL, NULL)",
+        )
+        .bind("BLK_B1_PARENT")
+        .bind("k_one")
+        .bind("only")
+        .execute(&pool)
+        .await
+        .expect("row with exactly one non-null value column must satisfy the CHECK");
+
+        // Sanity: confirm only the valid row landed.
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+                .bind("BLK_B1_PARENT")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            count, 1,
+            "exactly one row should have been inserted (the two CHECK-violating rows must not persist)"
+        );
     }
 }

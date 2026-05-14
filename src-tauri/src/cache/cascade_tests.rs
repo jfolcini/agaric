@@ -130,8 +130,16 @@ async fn cascade_block_properties_block_id_on_hard_delete() {
     );
 }
 
+/// Migration 0062 (sql-review-2026-05-14, B-1) flipped the `value_ref`
+/// FK from `ON DELETE SET NULL` to `ON DELETE CASCADE` to keep the new
+/// exactly-one-value CHECK satisfiable when the referenced block is
+/// hard-deleted.  A row that only carried `value_ref` has no other
+/// typed value to fall back on, so cascade-deleting the row (vs.
+/// nulling out the only value column and producing an all-NULL,
+/// CHECK-violating row) is the only schema-consistent choice.  This
+/// supersedes the prior `SET NULL` behaviour pinned by 0061.
 #[tokio::test]
-async fn set_null_block_properties_value_ref_on_hard_delete() {
+async fn cascade_block_properties_value_ref_on_hard_delete() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "BLK04", "content", "with ref").await;
     insert_block(&pool, "REF04", "page", "target page").await;
@@ -147,17 +155,18 @@ async fn set_null_block_properties_value_ref_on_hard_delete() {
 
     hard_delete_block(&pool, "REF04").await;
 
-    // Property row must SURVIVE (it belongs to BLK04, not REF04).
-    let row = sqlx::query!(
-        "SELECT value_ref FROM block_properties WHERE block_id = 'BLK04' AND key = 'space'"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(
-        row.value_ref.is_none(),
-        "block_properties.value_ref must be NULL'd when the referenced block is hard-deleted, \
-         not cascade-deleted (would clobber unrelated owning blocks)",
+    // Property row must be GONE — the row's only typed value pointed at
+    // REF04, so hard-deleting REF04 cascades through `value_ref`.
+    assert_eq!(
+        count_where(
+            &pool,
+            "block_properties",
+            "block_id = 'BLK04' AND key = 'space'",
+        )
+        .await,
+        0,
+        "block_properties row must cascade-delete when its sole typed value (value_ref) \
+         is hard-deleted (migration 0062 alignment for exactly_one_value CHECK)",
     );
 }
 
@@ -441,7 +450,9 @@ async fn hard_delete_block_cascades_to_all_child_tables() {
     .unwrap();
 
     // block_properties: one ON the owner (cascade), one REFERENCING the
-    // owner from another block (SET NULL).
+    // owner from another block (also CASCADE post migration 0062 — the
+    // exactly_one_value CHECK makes a SET-NULL on the sole value column
+    // produce an invariant-violating all-NULL row).
     sqlx::query!(
         "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
         "OWNERX",
@@ -540,16 +551,19 @@ async fn hard_delete_block_cascades_to_all_child_tables() {
         0,
         "block_properties (owned) must cascade",
     );
-    // value_ref pointing at the deleted block must be NULL'd, not cascade-deleted.
-    let other_ref = sqlx::query!(
-        "SELECT value_ref FROM block_properties WHERE block_id = 'OTHERX' AND key = 'space'"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(
-        other_ref.value_ref.is_none(),
-        "block_properties.value_ref must be SET NULL on the other block, not cascade-delete the property",
+    // Property row pointing at the deleted block via value_ref must be
+    // cascade-deleted (migration 0062 alignment with the new
+    // exactly_one_value CHECK; previously the FK was SET NULL).
+    assert_eq!(
+        count_where(
+            &pool,
+            "block_properties",
+            "block_id = 'OTHERX' AND key = 'space'",
+        )
+        .await,
+        0,
+        "block_properties row whose only typed value was value_ref pointing at the \
+         deleted block must cascade-delete (post migration 0062)",
     );
     assert_eq!(
         count_where(
