@@ -1,17 +1,19 @@
 /**
  * Tests for BootGate component.
  *
- * Validates:
- *  - Calls boot() on mount
- *  - Shows loading spinner in booting state
- *  - Shows recovering spinner
- *  - Shows error state with message and retry button
- *  - Retry button triggers boot again
- *  - Renders children when ready
- *  - a11y compliance (ready & error states)
+ * startup-latency-backend Phase 2: the boot store's `invoke('list_blocks')`
+ * handshake was removed; `boot()` now transitions `booting → ready`
+ * synchronously. The `error` state surface is preserved (it can be
+ * driven externally via `useBootStore.setState({ state: 'error', ... })`)
+ * but no production path produces it today. Tests below split into:
+ *  - happy path (mount → ready render)
+ *  - externally-driven error render (Failed-to-start UI + a11y + retry +
+ *    diagnostics)
+ *
+ * The old invoke-rejection error-path block was dropped because there is
+ * no longer any async work inside `boot()` that could reject.
  */
 
-import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -33,11 +35,6 @@ vi.mock('lucide-react', () => ({
 import { useBootStore } from '../../stores/boot'
 import { BootGate } from '../BootGate'
 
-const mockedInvoke = vi.mocked(invoke)
-
-/** Reference to the real boot function from the store (before any test overrides it). */
-const realBoot = useBootStore.getState().boot
-
 /** No-op boot function to prevent the useEffect from transitioning state. */
 const noopBoot = vi.fn(async () => {})
 
@@ -47,25 +44,17 @@ beforeEach(() => {
 })
 
 describe('BootGate', () => {
-  it('calls boot() on mount', async () => {
-    // Let boot succeed so the effect completes cleanly.
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
+  it('calls boot() on mount and transitions to ready', async () => {
     render(
       <BootGate>
         <p>App content</p>
       </BootGate>,
     )
 
-    // boot() calls invoke('list_blocks', { spaceId: '' }) — the
-    // pre-bootstrap convention documented in `src/lib/tauri.ts::listBlocks`.
+    // Phase-2 invariant: boot() is synchronous (no IPC). On mount the
+    // effect fires, state goes booting → ready, children render.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', { spaceId: '' })
+      expect(screen.getByText('App content')).toBeInTheDocument()
     })
   })
 
@@ -80,21 +69,6 @@ describe('BootGate', () => {
     )
 
     expect(screen.getByText(/Starting Agaric/)).toBeInTheDocument()
-    expect(screen.getByTestId('loader-icon')).toBeInTheDocument()
-    expect(screen.queryByText('App content')).not.toBeInTheDocument()
-  })
-
-  it('shows recovering state when state is recovering', () => {
-    // Replace boot with a no-op so state stays 'recovering'.
-    useBootStore.setState({ state: 'recovering', error: null, boot: noopBoot })
-
-    render(
-      <BootGate>
-        <p>App content</p>
-      </BootGate>,
-    )
-
-    expect(screen.getByText(/Recovering/)).toBeInTheDocument()
     expect(screen.getByTestId('loader-icon')).toBeInTheDocument()
     expect(screen.queryByText('App content')).not.toBeInTheDocument()
   })
@@ -312,118 +286,5 @@ describe('BootGate', () => {
     })
 
     resolveBootFn?.()
-  })
-
-  describe('error paths (invoke rejection)', () => {
-    beforeEach(() => {
-      // Restore the real boot function (other tests may have replaced it with noopBoot).
-      useBootStore.setState({ state: 'booting', error: null, boot: realBoot })
-    })
-
-    it('renders error state when list_blocks rejects with an Error', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('DB connection failed'))
-
-      render(
-        <BootGate>
-          <p>App content</p>
-        </BootGate>,
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText('Failed to start')).toBeInTheDocument()
-      })
-      expect(screen.getByText('DB connection failed')).toBeInTheDocument()
-      expect(screen.getByRole('alert')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument()
-      expect(screen.queryByText('App content')).not.toBeInTheDocument()
-    })
-
-    it('renders error state when list_blocks rejects with a non-Error value', async () => {
-      mockedInvoke.mockRejectedValueOnce('plain string error')
-
-      render(
-        <BootGate>
-          <p>App content</p>
-        </BootGate>,
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText('Failed to start')).toBeInTheDocument()
-      })
-      expect(screen.getByText('plain string error')).toBeInTheDocument()
-      expect(screen.queryByText('App content')).not.toBeInTheDocument()
-    })
-
-    it('displays updated error message when retry also fails', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockRejectedValueOnce(new Error('First failure'))
-
-      render(
-        <BootGate>
-          <p>App content</p>
-        </BootGate>,
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText('First failure')).toBeInTheDocument()
-      })
-
-      mockedInvoke.mockRejectedValueOnce(new Error('Second failure'))
-      await user.click(screen.getByRole('button', { name: /Retry/i }))
-
-      await waitFor(() => {
-        expect(screen.getByText('Second failure')).toBeInTheDocument()
-      })
-      expect(screen.queryByText('First failure')).not.toBeInTheDocument()
-      expect(screen.queryByText('App content')).not.toBeInTheDocument()
-      expect(mockedInvoke).toHaveBeenCalledTimes(2)
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', { spaceId: '' })
-    })
-
-    it('transitions to ready when retry succeeds after initial failure', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockRejectedValueOnce(new Error('Boot failed'))
-
-      render(
-        <BootGate>
-          <p>App content</p>
-        </BootGate>,
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText('Boot failed')).toBeInTheDocument()
-      })
-
-      mockedInvoke.mockResolvedValueOnce({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
-      await user.click(screen.getByRole('button', { name: /Retry/i }))
-
-      await waitFor(() => {
-        expect(screen.getByText('App content')).toBeInTheDocument()
-      })
-      expect(screen.queryByText('Failed to start')).not.toBeInTheDocument()
-      expect(screen.queryByText('Boot failed')).not.toBeInTheDocument()
-    })
-
-    it('has no a11y violations when invoke rejection produces error state', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Backend unavailable'))
-
-      const { container } = render(
-        <BootGate>
-          <p>App content</p>
-        </BootGate>,
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText('Failed to start')).toBeInTheDocument()
-      })
-
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
   })
 })

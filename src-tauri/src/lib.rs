@@ -748,83 +748,6 @@ pub fn run() {
                 );
             }
 
-            // UX-165: Clean up stale link metadata entries (> 30 days old, non-auth).
-            match tauri::async_runtime::block_on(
-                crate::link_metadata::cleanup_stale(&pools.write, 30),
-            ) {
-                Ok(deleted) => {
-                    if deleted > 0 {
-                        tracing::info!(deleted, "cleaned up stale link metadata entries");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to clean up stale link metadata");
-                }
-            }
-
-            // M-3: Rebuild FTS index at boot if the table is empty (post-migration 0006).
-            let fts_count: i64 = log_or_zero(
-                tauri::async_runtime::block_on(
-                    sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
-                        .fetch_one(&pools.write),
-                ),
-                "fts_blocks_count",
-            );
-            if fts_count == 0 {
-                // Check if there are any blocks that should be indexed
-                let block_count: i64 = log_or_zero(
-                    tauri::async_runtime::block_on(
-                        sqlx::query_scalar(
-                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND content IS NOT NULL"
-                        )
-                        .fetch_one(&pools.write),
-                    ),
-                    "fts_indexable_block_count",
-                );
-                if block_count > 0 {
-                    tracing::info!(blocks = block_count, "FTS index empty — scheduling rebuild");
-                    if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildFtsIndex) {
-                        tracing::warn!(error = %e, "failed to enqueue FTS rebuild at boot");
-                    }
-                }
-            }
-
-            // UX-250: Rebuild `block_tag_refs` at boot if the table is empty
-            // but there is content to scan. Migration 0034 creates the table
-            // but intentionally does not run a SQL backfill (SQLite lacks the
-            // regex support we need). This handles both the first boot after
-            // the migration ships and any future wipe-plus-restart path that
-            // leaves content blocks in place with no ref rows.
-            let btr_count: i64 = log_or_zero(
-                tauri::async_runtime::block_on(
-                    sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs")
-                        .fetch_one(&pools.write),
-                ),
-                "block_tag_refs_count",
-            );
-            if btr_count == 0 {
-                let block_count: i64 = log_or_zero(
-                    tauri::async_runtime::block_on(
-                        sqlx::query_scalar(
-                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND content IS NOT NULL"
-                        )
-                        .fetch_one(&pools.write),
-                    ),
-                    "btr_indexable_block_count",
-                );
-                if block_count > 0 {
-                    tracing::info!(
-                        blocks = block_count,
-                        "block_tag_refs empty (migration 0034 backfill) — scheduling rebuild"
-                    );
-                    if let Err(e) = materializer
-                        .try_enqueue_background(MaterializeTask::RebuildBlockTagRefsCache)
-                    {
-                        tracing::warn!(error = %e, "failed to enqueue block_tag_refs rebuild at boot");
-                    }
-                }
-            }
-
             // P-16: Populate projected agenda cache at boot so the first query
             // hits the cache rather than falling back to on-the-fly computation.
             if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache) {
@@ -844,22 +767,120 @@ pub fn run() {
                 return Err(Box::new(e));
             }
 
-            // MAINT-1: one-shot migration that moves every pre-existing
-            // Personal page into Work for the maintainer's vault. Gated
-            // by both an idempotency marker on the seeded Personal space
-            // block AND a hardcoded ULID threshold so fresh installs of
-            // the published app are unaffected (their post-threshold
-            // ULIDs make the loop body a no-op). MUST run AFTER
-            // `bootstrap_spaces` so the seeded space blocks exist and
-            // pages already carry a `space` property to rebind. Failure
-            // is non-fatal — log and continue; the next boot will retry.
-            if let Err(e) = tauri::async_runtime::block_on(
-                spaces::migrate_personal_pages_to_work(&pools.write, &device_id),
-            ) {
-                tracing::warn!(
-                    error = %e,
-                    "failed to run personal_to_work_migration_v1 — will retry on next boot",
-                );
+            // startup-latency-backend Phase 1: move four best-effort boot
+            // items off the synchronous critical path. These don't gate
+            // any user IPC — link-metadata GC is purely cleanup, the
+            // FTS / `block_tag_refs` gating is a one-shot "schedule the
+            // rebuild if the table is empty" check (the rebuild itself
+            // is already a background materializer task), and the
+            // personal→work migration is a one-shot maintainer-only no-op
+            // for fresh installs. Releasing the foreground queue earlier
+            // means the first user action (a `list_blocks` for the
+            // journal) doesn't compete with these maintenance reads.
+            //
+            // `migrate_personal_pages_to_work` MUST run after
+            // `bootstrap_spaces` (its comment is explicit). The spawn
+            // below happens AFTER `bootstrap_spaces` returns successfully,
+            // so the ordering invariant is preserved.
+            {
+                let write_pool = pools.write.clone();
+                let device_id_owned = device_id.clone();
+                let materializer_handle = materializer.clone();
+                tauri::async_runtime::spawn(async move {
+                    // UX-165: Clean up stale link metadata entries (>30 days, non-auth).
+                    match crate::link_metadata::cleanup_stale(&write_pool, 30).await {
+                        Ok(deleted) => {
+                            if deleted > 0 {
+                                tracing::info!(deleted, "cleaned up stale link metadata entries");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "failed to clean up stale link metadata");
+                        }
+                    }
+
+                    // M-3: Rebuild FTS index if the table is empty (post-migration 0006).
+                    let fts_count: i64 = log_or_zero(
+                        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fts_blocks")
+                            .fetch_one(&write_pool)
+                            .await,
+                        "fts_blocks_count",
+                    );
+                    if fts_count == 0 {
+                        let block_count: i64 = log_or_zero(
+                            sqlx::query_scalar::<_, i64>(
+                                "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
+                                 AND content IS NOT NULL",
+                            )
+                            .fetch_one(&write_pool)
+                            .await,
+                            "fts_indexable_block_count",
+                        );
+                        if block_count > 0 {
+                            tracing::info!(
+                                blocks = block_count,
+                                "FTS index empty — scheduling rebuild"
+                            );
+                            if let Err(e) = materializer_handle
+                                .try_enqueue_background(MaterializeTask::RebuildFtsIndex)
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    "failed to enqueue FTS rebuild at boot",
+                                );
+                            }
+                        }
+                    }
+
+                    // UX-250: Rebuild `block_tag_refs` if the table is empty
+                    // but there is content to scan. Migration 0034 creates
+                    // the table but intentionally does not SQL-backfill
+                    // (SQLite lacks the regex support we need).
+                    let btr_count: i64 = log_or_zero(
+                        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
+                            .fetch_one(&write_pool)
+                            .await,
+                        "block_tag_refs_count",
+                    );
+                    if btr_count == 0 {
+                        let block_count: i64 = log_or_zero(
+                            sqlx::query_scalar::<_, i64>(
+                                "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
+                                 AND content IS NOT NULL",
+                            )
+                            .fetch_one(&write_pool)
+                            .await,
+                            "btr_indexable_block_count",
+                        );
+                        if block_count > 0 {
+                            tracing::info!(
+                                blocks = block_count,
+                                "block_tag_refs empty (migration 0034 backfill) — scheduling \
+                                 rebuild",
+                            );
+                            if let Err(e) = materializer_handle.try_enqueue_background(
+                                MaterializeTask::RebuildBlockTagRefsCache,
+                            ) {
+                                tracing::warn!(
+                                    error = %e,
+                                    "failed to enqueue block_tag_refs rebuild at boot",
+                                );
+                            }
+                        }
+                    }
+
+                    // MAINT-1: one-shot Personal→Work migration for the
+                    // maintainer's vault. Hardcoded-ULID-gated so fresh
+                    // installs are a no-op. Non-fatal; next boot retries.
+                    if let Err(e) =
+                        spaces::migrate_personal_pages_to_work(&write_pool, &device_id_owned).await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "failed to run personal_to_work_migration_v1 — will retry on next boot",
+                        );
+                    }
+                });
             }
 
             // FEAT-1: Rebuild page_id column at boot to ensure consistency.

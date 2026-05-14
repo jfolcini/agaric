@@ -352,14 +352,6 @@ describe('WelcomeModal', () => {
     expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
   })
 
-  it('does not show during boot recovering state', () => {
-    useBootStore.setState({ state: 'recovering', error: null, boot: noopBoot })
-
-    render(<WelcomeModal />)
-
-    expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
-  })
-
   it('does not show during boot error state', () => {
     useBootStore.setState({ state: 'error', error: 'Something broke', boot: noopBoot })
 

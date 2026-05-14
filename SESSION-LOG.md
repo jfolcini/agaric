@@ -7,6 +7,37 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 731 — startup-latency-backend Phases 1 + 2 (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | startup-latency-backend-2026-05-14 (plan file deleted; Phase 3 profile-and-decide is a separate, optional follow-up not gated on this commit). |
+| **Items modified** | pending/README.md (row removed). |
+| **Tests added** | 0 net (boot-store.test.ts rewritten ‑5 cases, +2; BootGate.test.tsx ‑6 invoke-rejection cases, +1 ready-render; WelcomeModal.test.tsx ‑1 recovering case; App.test.tsx ‑1 invoke-reject case, +1 external-error). |
+| **Files touched** | 7 (lib.rs, boot.ts, BootGate.tsx, common.ts, BootGate.test.tsx, boot-store.test.ts, App.test.tsx, WelcomeModal.test.tsx + README). |
+
+**Summary:** trimmed two artificial boot-time blockers.
+
+**Phase 1 (backend defer, `src-tauri/src/lib.rs`):** moved four best-effort items off the synchronous `setup()` critical path into a single `tauri::async_runtime::spawn` that fires after `bootstrap_spaces` (the spawn preserves the documented "must run after bootstrap_spaces" invariant on the personal→work migration). Deferred: `link_metadata::cleanup_stale`, FTS `COUNT(*)` + indexable-block gating, `block_tag_refs` `COUNT(*)` + indexable-block gating, `migrate_personal_pages_to_work`. The actual FTS / btr rebuilds were already background materializer tasks; only the gating reads (plus the GC + maintainer migration) ran on the critical path. The existing `log_or_zero` helper is now the sole caller surface for the count reads (it warns on error and returns 0). `bootstrap_spaces` itself + the projected-agenda enqueue + page_id rebuild enqueue stay on the critical path (already non-blocking; reordering them would require frontend coordination tied to "agenda panel first opened").
+
+**Phase 2 (frontend handshake removal, `src/stores/boot.ts` + `src/components/BootGate.tsx`):** the `invoke('list_blocks', { spaceId: '' })` artificial handshake is gone. Tauri guarantees backend readiness by the time any IPC can return — `setup()` errors panic the process before the webview mounts, so the handshake added no information in the happy path. `boot()` now transitions `booting → ready` synchronously (still returns `Promise<void>` for retry-button compatibility). The `recovering` BootState variant was removed; the `error` variant is preserved as an externally-triggerable surface for future fatal-IPC paths (no production code drives it today). Removed the `boot.recovering` i18n key.
+
+**Test updates:** rewrote `boot-store.test.ts` (5 invoke-driven cases → 2 cases pinning the synchronous transition + the externally-driven error→retry round-trip). Updated `BootGate.test.tsx` (dropped the "calls invoke('list_blocks')" assertion + the `recovering` state test + the 5 invoke-rejection error-path tests; added a `transitions to ready on mount` test). Updated `App.test.tsx` boot-error-path test to drive the error state via direct `setState` with a no-op `boot` so BootGate's mount effect doesn't immediately transition back to ready. Removed the `WelcomeModal` recovering-state test.
+
+**Verification:**
+- `prek run --all-files` — all 46 hooks pass.
+- `cargo nextest run` — 3649 tests pass.
+- `npx vitest run` — 9746 tests pass (PageBrowser cursor-pagination test that flaked in the wider run passed on focused re-run, unrelated to this change).
+
+**Process notes:** Phase 2 took two test-fix iterations — first iteration left the App test setting `state: 'error'` without overriding `boot`, so BootGate's mount effect transitioned state back to 'ready' before the assertion ran. Pattern is now: any error-state test that relies on BootGate rendering the error UI must seed `boot: noopBoot` alongside the error state.
+
+**Expected runtime impact (per the plan, not measured this session):** ~10-100 ms off cold boot (deferred backend items) + ~50-150 ms earlier perceived journal-shell paint (no IPC handshake before first render). The Phase 3 acceptance criterion (a real profiling note) is intentionally deferred — landing the change first lets it bake on the maintainer's vault before deciding whether tiptap lazy-load is the next residual bottleneck.
+
+**Commit plan:** single commit covering Phases 1 + 2 + the test rewrites + Session 731 entry. Phase 3 stays open as a discretionary future follow-up.
+
+---
 ## Session 730 — REVIEW-LATER quick-grab batch (MAINT-214, -219, -229) (2026-05-14)
 
 | Metadata | Value |

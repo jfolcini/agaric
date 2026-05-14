@@ -1467,16 +1467,18 @@ describe('App', () => {
   // ── Error paths ─────────────────────────────────────────────────────────
 
   describe('error paths', () => {
-    it('renders error screen when boot status check fails', async () => {
-      // Reset boot store to initial state so BootGate triggers boot()
-      useBootStore.setState({ state: 'booting', error: null })
-
-      // Make the list_blocks health-check reject
-      mockedInvoke.mockRejectedValue(new Error('Database corrupted'))
+    it('renders error screen when boot store is externally placed in error state', async () => {
+      // startup-latency Phase 2: boot() no longer does an `invoke` health
+      // check (Tauri guarantees backend readiness by the time IPC can
+      // return). The error surface is preserved for external triggers
+      // (e.g., a future fatal-IPC-outage path) — render it via direct
+      // setState plus a no-op `boot` so BootGate's mount-effect doesn't
+      // immediately transition back to 'ready'.
+      const noopBoot = async () => {}
+      useBootStore.setState({ state: 'error', error: 'Database corrupted', boot: noopBoot })
 
       render(<App />)
 
-      // BootGate should show the error screen
       await waitFor(() => {
         expect(screen.getByText(t('boot.failedToStart'))).toBeInTheDocument()
       })
