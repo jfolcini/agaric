@@ -8,7 +8,6 @@
 
 export const common: Record<string, string> = {
   'boot.starting': 'Starting Agaric\u2026',
-  'boot.recovering': 'Recovering\u2026',
   'boot.failedToStart': 'Failed to start',
   'boot.recoveredDrafts_one': 'Recovered {{count}} unsaved draft',
   'boot.recoveredDrafts_other': 'Recovered {{count}} unsaved drafts',

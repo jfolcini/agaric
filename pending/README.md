@@ -15,7 +15,6 @@
 | search-dialog-replace-view-2026-05-14 | Replace the full-takeover Search view with a Cmd+K-style dialog (drops view-replace context loss + ~700 lines of UI) | M-L (2-3 days) | **DRAFT — needs more discussion**; 8 open questions flagged inline |
 | design-system-maintainability-2026-05-09 | Open: Phase 3a (toast centralisation — codemod ~100 sonner call sites behind a `notify` wrapper + prek guard) + Phase 3b LOC triage for 6 feature files (HistoryListItem, GoogleCalendarSettingsTab, BugReportDialog, FormattingToolbar, PageHeader, SearchPanel). | M | partial-shipped, plan stays for follow-up |
 | design-system-perf-review-2026-05-09 | Open: Tier 1.3 (lazy-load the TipTap stack from JournalPage's static path); Tier 2.6 follow-up (windowing for BlockListRenderer + BlockTree); one doc-drift item (AGENTS.md import-boundary automation). | M-L | partial-shipped, plan stays for follow-up |
-| startup-latency-backend-2026-05-14 | Move 4 non-load-bearing backend boot items (link cleanup, FTS/btr COUNT gating, personal→work migration, agenda-cache enqueue) to a post-`run()` `tokio::spawn`, and drop the artificial `BootGate` `list_blocks` handshake so the journal shell paints earlier. | S (~half day) | ready |
 
 ## Recommended order
 

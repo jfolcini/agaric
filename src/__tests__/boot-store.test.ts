@@ -1,14 +1,10 @@
-import { invoke } from '@tauri-apps/api/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { useBootStore } from '../stores/boot'
-
-const mockedInvoke = vi.mocked(invoke)
 
 describe('useBootStore', () => {
   beforeEach(() => {
     // Reset the store state between tests
     useBootStore.setState({ state: 'booting', error: null })
-    vi.clearAllMocks()
   })
 
   it('starts in booting state', () => {
@@ -16,78 +12,25 @@ describe('useBootStore', () => {
     expect(state).toBe('booting')
   })
 
-  it('transitions to recovering then ready on successful boot', async () => {
-    // Track state transitions
-    const states: string[] = []
-    const unsub = useBootStore.subscribe((s) => states.push(s.state))
-
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+  it('boot() transitions synchronously to ready (startup-latency Phase 2)', async () => {
+    // Phase 2: the `invoke('list_blocks')` handshake was dropped. boot()
+    // now sets state to 'ready' on its first call without issuing any IPC.
     await useBootStore.getState().boot()
-    unsub()
 
-    expect(states).toContain('recovering')
     expect(useBootStore.getState().state).toBe('ready')
     expect(useBootStore.getState().error).toBeNull()
   })
 
-  it('transitions to recovering then error on failed boot', async () => {
-    const states: string[] = []
-    const unsub = useBootStore.subscribe((s) => states.push(s.state))
-
-    mockedInvoke.mockRejectedValueOnce(new Error('DB connection failed'))
-    await useBootStore.getState().boot()
-    unsub()
-
-    expect(states).toContain('recovering')
-    expect(useBootStore.getState().state).toBe('error')
-    expect(useBootStore.getState().error).toBe('DB connection failed')
-  })
-
-  it('can retry from error state', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
-    await useBootStore.getState().boot()
+  it('error state can be driven externally and retried via boot()', async () => {
+    // The `error` state is preserved as an externally-triggerable surface
+    // (e.g., a future fatal IPC outage that wants the full-screen recovery
+    // prompt). Verify the round-trip: external setState → 'error' →
+    // boot() → 'ready'.
+    useBootStore.setState({ state: 'error', error: 'externally-driven failure' })
     expect(useBootStore.getState().state).toBe('error')
 
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
     await useBootStore.getState().boot()
     expect(useBootStore.getState().state).toBe('ready')
-  })
-
-  it('recovering state is observable during boot', async () => {
-    // Use a deferred promise so we can observe state mid-boot
-    let resolveInvoke: ((v: unknown) => void) | undefined
-    const invokePromise = new Promise((resolve) => {
-      resolveInvoke = resolve
-    })
-    mockedInvoke.mockReturnValueOnce(invokePromise as Promise<unknown>)
-
-    const bootPromise = useBootStore.getState().boot()
-
-    // While invoke is pending, state should be 'recovering'
-    expect(useBootStore.getState().state).toBe('recovering')
-
-    resolveInvoke?.({ items: [], next_cursor: null, has_more: false, total_count: null })
-    await bootPromise
-
-    expect(useBootStore.getState().state).toBe('ready')
-  })
-
-  it('handles non-Error exceptions (String(e) fallback)', async () => {
-    mockedInvoke.mockRejectedValueOnce('plain string error')
-
-    await useBootStore.getState().boot()
-
-    expect(useBootStore.getState().state).toBe('error')
-    expect(useBootStore.getState().error).toBe('plain string error')
+    expect(useBootStore.getState().error).toBeNull()
   })
 })
