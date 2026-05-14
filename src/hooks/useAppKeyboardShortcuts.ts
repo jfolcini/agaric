@@ -35,7 +35,7 @@
 
 import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date-fns'
 import { useEffect } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { announce } from '../lib/announcer'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
@@ -233,7 +233,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
         const { currentSpaceId, isReady } = useSpaceStore.getState()
         if (!isReady || currentSpaceId == null) {
           logger.warn('App', 'createNewPage shortcut fired before space hydrated')
-          toast.error(t('space.notReady'))
+          notify.error(t('space.notReady'))
           return
         }
         createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
@@ -244,7 +244,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
           })
           .catch((err: unknown) => {
             logger.error('App', 'Failed to create page via shortcut', undefined, err)
-            toast.error(t('error.createPageFailed'))
+            notify.error(t('error.createPageFailed'))
           })
       }
     }
@@ -346,7 +346,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
         const activeTab = tabs[idx]
         const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
         if (!top) {
-          toast.error(t('tabs.openInNewTabEmpty'))
+          notify.error(t('tabs.openInNewTabEmpty'))
           return
         }
       }

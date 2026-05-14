@@ -11,8 +11,8 @@
  * 8-10 ops in rapid succession) feel like a single action.
  */
 
-import { toast } from 'sonner'
 import { create } from 'zustand'
+import { notify } from '@/lib/notify'
 import { t } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { OpRef, UndoResult } from '../lib/tauri'
@@ -281,7 +281,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         } catch (err) {
           logger.error('UndoStore', 'find_undo_group failed', { pageId }, err)
           // Group sizing failed — graceful fallback, just the single undo.
-          toast.warning(t('undo.batchUnavailable'))
+          notify.warning(t('undo.batchUnavailable'))
         }
 
         // Perform `groupSize` single undos. Each one increments

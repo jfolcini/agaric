@@ -2,7 +2,7 @@
  * AttachmentList -- displays attachments for a block.
  *
  * Renders each attachment with a MIME-type icon, filename, human-readable size,
- * relative timestamp, and a delete button with confirmation toast.
+ * relative timestamp, and a delete button with confirmation notify.
  * Compact layout with touch-friendly sizing.
  */
 
@@ -10,8 +10,8 @@ import { Paperclip, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import { formatSize } from '../lib/attachment-utils'
@@ -65,11 +65,11 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
         }
         handleDeleteAttachment(attachment.id)
         setPendingDeleteId(null)
-        toast.success(t('attachments.deleted', { name: attachment.filename }))
+        notify.success(t('attachments.deleted', { name: attachment.filename }))
       } else {
         // First click — show confirmation via toast
         setPendingDeleteId(attachment.id)
-        toast(t('attachments.confirmDelete', { name: attachment.filename }), {
+        notify(t('attachments.confirmDelete', { name: attachment.filename }), {
           description: t('attachments.clickAgain'),
           duration: TOAST_DELETE_CONFIRM_TIMEOUT_MS,
         })

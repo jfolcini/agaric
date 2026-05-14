@@ -462,7 +462,6 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             key={`projected-${entry.block.id}-${entry.source}`}
                             data-block-list-item
                             data-testid="projected-entry"
-                            // biome-ignore lint/a11y/noNoninteractiveTabindex: projected-entry needs to be a keyboard-nav target
                             tabIndex={0}
                             className={cn(
                               // Override ListItem's `gap-3 rounded-lg px-3 py-2 hover:bg-accent/50` chrome

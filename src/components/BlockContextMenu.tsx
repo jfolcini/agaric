@@ -29,7 +29,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { writeText } from '../lib/clipboard'
 import { logger } from '../lib/logger'
@@ -257,7 +257,7 @@ export function BlockContextMenu({
           onClose()
         } catch (err) {
           logger.error('BlockContextMenu', 'action failed', { blockId }, err)
-          toast.error(t('contextMenu.actionFailed'))
+          notify.error(t('contextMenu.actionFailed'))
         }
       })()
     },
@@ -385,7 +385,7 @@ export function BlockContextMenu({
         action: async () => {
           try {
             await writeText(linkUrl)
-            toast.success(t('contextMenu.urlCopied'))
+            notify.success(t('contextMenu.urlCopied'))
           } catch (err) {
             logger.error(
               'BlockContextMenu',
@@ -393,7 +393,7 @@ export function BlockContextMenu({
               { url: linkUrl },
               err,
             )
-            toast.error(t('contextMenu.copyUrlFailed'))
+            notify.error(t('contextMenu.copyUrlFailed'))
           }
           onClose()
         },

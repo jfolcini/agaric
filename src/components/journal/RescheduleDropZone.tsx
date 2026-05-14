@@ -32,8 +32,8 @@
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
+import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useBlockReschedule } from '../../hooks/useBlockReschedule'
@@ -79,7 +79,7 @@ export function RescheduleDropZone({
       if (!blockId) return
       try {
         await reschedule(blockId, dateStr)
-        toast.success(t('journal.rescheduled', { date: dateStr }))
+        notify.success(t('journal.rescheduled', { date: dateStr }))
         announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch (err) {
         reportIpcError('RescheduleDropZone', 'journal.rescheduleFailed', err, t, {

@@ -46,7 +46,6 @@
 import { Check, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -59,6 +58,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { createSpace, getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -115,7 +115,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
       await onCreated()
     } catch (err) {
       logger.error(LOG_MODULE, 'create space failed', { name: trimmed }, err)
-      toast.error(t('space.createSpaceFailed'))
+      notify.error(t('space.createSpaceFailed'))
     } finally {
       setSubmitting(false)
     }

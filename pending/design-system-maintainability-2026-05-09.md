@@ -1,35 +1,8 @@
 # Design-system maintainability — remaining open work
 
-> **Status:** Phases 1 + 2 fully shipped; Phase 3 partial. **Open below: 3a (toast centralization) + 3b LOC triage for 6 feature files.**
+> **Status:** Phases 1 + 2 + 3a fully shipped. **Open below: 3b LOC triage for 6 feature files (opportunistic).**
 >
-> History of closed items lives in `SESSION-LOG.md` sessions 709-727. Don't reintroduce them here.
-
----
-
-## Phase 3a — Centralise toast usage
-
-`grep -rl 'toast\.' src/components | wc -l` returns ~100 files.
-
-Every direct `toast.success(...)` / `toast.error(...)` call hard-codes the choice of library (sonner today), the message string (often hard-coded English bypassing `t()`), and the durations.
-
-**Change:** introduce `useNotifier()` (or a `notify` module) in `src/lib/`:
-
-```ts
-notify.success(t('key.success'))
-notify.error(error, { fallbackKey: 'key.error.unknown' })
-notify.info(t('key.info'))
-```
-
-Internally it calls sonner. The win is one chokepoint for: i18n fallback, dedup of identical errors, future provider swap, and consistent durations.
-
-**Sequencing:** **don't gradually migrate** 100 files; that's six months of half-done state. Either:
-
-- (a) ship the wrapper, codemod all ~100 callers in a single mechanical PR, then add a `prek` rule banning direct `from 'sonner'` imports outside the wrapper; or
-- (b) accept the status quo and just add a `prek` rule pinning the message strings to `t()` keys (cheaper, smaller win).
-
-Recommendation: (a). The codemod is straightforward and the prek guard keeps the gain durable.
-
-**Cost:** 1-2 days (codemod + guard). **Risk:** medium — codemod must preserve every existing call site's behaviour exactly. **Impact:** one chokepoint vs. 100, plus durable i18n enforcement.
+> History of closed items lives in `SESSION-LOG.md` sessions 709-734. Don't reintroduce them here.
 
 ---
 

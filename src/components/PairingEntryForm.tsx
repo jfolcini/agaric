@@ -11,13 +11,13 @@ import { Camera } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useId, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
+import { notify } from '@/lib/notify'
 
 // Lazy-load QrScanner to avoid bundling html5-qrcode on desktop
 const LazyQrScanner = lazy(() => import('./QrScanner').then((m) => ({ default: m.QrScanner })))
@@ -119,7 +119,7 @@ export function PairingEntryForm({
   // the user would be stuck looking at an in-scanner error.
   const handleCameraDenied = useCallback(() => {
     onEntryModeChange('manual')
-    toast.info(t('pairing.cameraDeniedFallback'))
+    notify.info(t('pairing.cameraDeniedFallback'))
   }, [onEntryModeChange, t])
 
   // UX-263: Cleanup — if the form unmounts while the user is mid-typing

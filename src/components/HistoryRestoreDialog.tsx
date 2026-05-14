@@ -11,8 +11,8 @@
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { notify } from '@/lib/notify'
 import { announce } from '../lib/announcer'
 import { formatTimestamp } from '../lib/format'
 import { reportIpcError } from '../lib/report-ipc-error'
@@ -46,10 +46,10 @@ export function HistoryRestoreDialog({
         targetDeviceId: restoreTarget.device_id,
         targetSeq: restoreTarget.seq,
       })
-      toast.success(t('history.restoreSuccess', { count: result.ops_reverted }))
+      notify.success(t('history.restoreSuccess', { count: result.ops_reverted }))
       announce(t('announce.restoreToHereSucceeded', { count: result.ops_reverted }))
       if (result.non_reversible_skipped > 0) {
-        toast.warning(t('history.restoreSkipped', { count: result.non_reversible_skipped }))
+        notify.warning(t('history.restoreSkipped', { count: result.non_reversible_skipped }))
       }
       await onSuccess()
     } catch (err) {

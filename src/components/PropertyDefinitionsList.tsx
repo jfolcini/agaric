@@ -9,7 +9,6 @@ import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
@@ -28,6 +27,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -106,7 +106,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setDefinitions((prev) => [...prev, def])
       setNewKey('')
       setNewType('text')
-      toast.success(t('propertiesView.created'))
+      notify.success(t('propertiesView.created'))
     } catch (error) {
       // FE-M-8: see loadDefinitions above — unified error reporting.
       reportIpcError('PropertyDefinitionsList', 'property.errorCreate', error, t)
@@ -120,7 +120,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         await deletePropertyDef(key)
         setDefinitions((prev) => prev.filter((d) => d.key !== key))
         setDeleteTarget(null)
-        toast.success(t('propertiesView.deleted'))
+        notify.success(t('propertiesView.deleted'))
       } catch (error) {
         // FE-M-8: see loadDefinitions above — unified error reporting.
         reportIpcError('PropertyDefinitionsList', 'property.errorDelete', error, t, { key })

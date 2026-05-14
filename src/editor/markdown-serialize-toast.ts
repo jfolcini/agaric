@@ -13,7 +13,7 @@
  * the call site now.
  */
 
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { t } from '../lib/i18n'
 import { logger } from '../lib/logger'
 
@@ -37,7 +37,7 @@ export function __resetSerializerToastsForTests(): void {
 /**
  * Default `onUnknownNode` callback for `serialize(doc, …)` in production.
  *
- * Logs every occurrence and surfaces a (rate-limited) user-facing toast.
+ * Logs every occurrence and surfaces a (rate-limited) user-facing notify.
  */
 export function notifyUnknownNodeTypeToast(type: string): void {
   logger.warn('serializer', `unknown node type: "${type}" — stripped`, { type })
@@ -47,7 +47,7 @@ export function notifyUnknownNodeTypeToast(type: string): void {
   // global `vi.mock('sonner')` in `src/test-setup.ts`. A direct import is
   // safe and matches the rest of the codebase.
   try {
-    toast.warning(t('editor.unknownNodeType', { type }))
+    notify.warning(t('editor.unknownNodeType', { type }))
   } catch (err) {
     // Defensive: if the toast layer is unavailable for any reason we still
     // want the serializer to succeed. The `logger.warn` already records the

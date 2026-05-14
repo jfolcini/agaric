@@ -10,7 +10,6 @@ import { Globe, Pencil, RefreshCw, Smartphone, Unplug } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Spinner } from '@/components/ui/spinner'
 import { formatLastSynced, truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import type { PeerRefRow } from '../lib/tauri'
 import { setPeerAddress } from '../lib/tauri'
 
@@ -64,7 +64,7 @@ export function PeerListItem({
     if (!addr) return
     setPeerAddress(peer.peer_id, addr)
       .then(() => {
-        toast.success(t('status.addressUpdated'))
+        notify.success(t('status.addressUpdated'))
         onAddressUpdated()
         setAddrOpen(false)
       })
@@ -72,7 +72,7 @@ export function PeerListItem({
         logger.warn('PeerListItem', 'set_peer_address failed', { peer_id: peer.peer_id }, err)
         // UX-12: include the expected format in the toast so the user
         // doesn't have to reopen the popover hint to recover.
-        toast.error(t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' }))
+        notify.error(t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' }))
       })
   }, [addrInput, peer.peer_id, t, onAddressUpdated])
 

@@ -7,9 +7,9 @@
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { notify } from '@/lib/notify'
 
 const DEADLINE_WARNING_MIN = 0
 const DEADLINE_WARNING_MAX = 90
@@ -44,7 +44,7 @@ export function DeadlineWarningSection(): React.ReactElement {
       const raw = Number.parseInt(e.target.value, 10)
       if (!Number.isFinite(raw)) return
       if (raw < DEADLINE_WARNING_MIN || raw > DEADLINE_WARNING_MAX) {
-        toast.info(
+        notify.info(
           t('settings.valueClamped', {
             min: DEADLINE_WARNING_MIN,
             max: DEADLINE_WARNING_MAX,

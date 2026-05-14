@@ -22,7 +22,7 @@ import { AlertCircle, CalendarDays, CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
@@ -98,7 +98,7 @@ function DueDateChipInner({
             dateType="due"
             currentDate={dueDate}
             onSuccess={() => {
-              // DateChipEditor already fires its own `toast.success` + `announce`
+              // DateChipEditor already fires its own `notify.success` + `announce`
               // on save, so UX-4's explicit-feedback requirement is satisfied
               // without a second redundant toast here. Just close + refresh.
               setOpen(false)
@@ -363,7 +363,7 @@ function BlockListItemInner({
       }
       try {
         await reschedule(blockId, dateStr)
-        toast.success(t('journal.rescheduled', { date: dateStr }))
+        notify.success(t('journal.rescheduled', { date: dateStr }))
         announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch (err) {
         reportIpcError('BlockListItem', 'journal.rescheduleFailed', err, t, {

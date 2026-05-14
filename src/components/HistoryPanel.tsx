@@ -19,10 +19,10 @@ import { Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '../lib/tauri'
@@ -95,7 +95,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         setHasMore(resp.has_more)
       } catch (err) {
         logger.error('HistoryPanel', 'Failed to load block history', { blockId }, err)
-        toast.error(t('history.loadFailed'))
+        notify.error(t('history.loadFailed'))
       }
       setLoading(false)
     },
@@ -129,10 +129,10 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     async (targetBlockId: string, previousContent: string) => {
       try {
         await editBlock(targetBlockId, previousContent)
-        toast.success(t('history.restoreUndone'))
+        notify.success(t('history.restoreUndone'))
       } catch (err) {
         logger.error('HistoryPanel', 'Failed to undo restore', { blockId: targetBlockId }, err)
-        toast.error(t('history.restoreUndoFailed'))
+        notify.error(t('history.restoreUndoFailed'))
       }
     },
     [t],
@@ -165,7 +165,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
 
         if (previousContent != null) {
           const captured = previousContent
-          toast.success(t('history.revertedSuccessfully'), {
+          notify.success(t('history.revertedSuccessfully'), {
             action: {
               label: t('action.undo'),
               onClick: () => {
@@ -174,7 +174,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
             },
           })
         } else {
-          toast.success(t('history.revertedSuccessfully'))
+          notify.success(t('history.revertedSuccessfully'))
         }
       } catch (err) {
         logger.error(
@@ -183,7 +183,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           { blockId, opId: entry.seq },
           err,
         )
-        toast.error(t('history.revertPanelFailed'))
+        notify.error(t('history.revertPanelFailed'))
       }
     },
     [blockId, t, handleUndoRestore],

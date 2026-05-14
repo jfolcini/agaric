@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
@@ -47,7 +47,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       })
       .catch((error) => {
         logger.error('useBlockTags', 'Failed to load all tags', undefined, error)
-        toast.error(i18n.t('tags.loadFailed'))
+        notify.error(i18n.t('tags.loadFailed'))
       })
   }, [currentSpaceId])
 
@@ -63,7 +63,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         })
         .catch((error) => {
           logger.error('useBlockTags', 'Failed to load tags for block', { blockId }, error)
-          toast.error(i18n.t('tags.loadFailed'))
+          notify.error(i18n.t('tags.loadFailed'))
           setLoading(false)
         })
     } else {
@@ -81,7 +81,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         setAppliedTagIds((prev) => new Set([...prev, tagId]))
       } catch (error) {
         logger.error('useBlockTags', 'Failed to add tag', { blockId, tagId }, error)
-        toast.error(i18n.t('tags.addFailed'))
+        notify.error(i18n.t('tags.addFailed'))
       }
     },
     [blockId, pageStore],
@@ -101,7 +101,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         })
       } catch (error) {
         logger.error('useBlockTags', 'Failed to remove tag', { blockId, tagId }, error)
-        toast.error(i18n.t('tags.deleteFailed'))
+        notify.error(i18n.t('tags.deleteFailed'))
       }
     },
     [blockId, pageStore],
@@ -124,7 +124,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         }
       } catch (error) {
         logger.error('useBlockTags', 'Failed to create tag', { blockId, name: trimmed }, error)
-        toast.error(i18n.t('tags.createFailed'))
+        notify.error(i18n.t('tags.createFailed'))
       }
     },
     [blockId, pageStore],

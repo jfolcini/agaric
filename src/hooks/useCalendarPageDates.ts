@@ -21,8 +21,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { listJournalPagesInRange } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 
@@ -132,7 +132,7 @@ export function useCalendarPageDates(
       .catch((err) => {
         if (cancelled || !mountedRef.current) return
         logger.warn('useCalendarPageDates', 'page-dates fetch failed', undefined, err)
-        toast.error(t('journal.loadCalendarFailed'))
+        notify.error(t('journal.loadCalendarFailed'))
       })
       .finally(() => {
         if (cancelled || !mountedRef.current) return

@@ -5,7 +5,7 @@
  * Triggered by the user-configured global hotkey (registered at app
  * startup via `registerGlobalShortcut`). On submit, dispatches
  * `quickCaptureBlock(content)` against today's journal page and closes
- * with a success toast — failure surfaces a `toast.error` plus a
+ * with a success toast — failure surfaces a `notify.error` plus a
  * `logger.error` capture.
  *
  * UX choices:
@@ -29,7 +29,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -42,6 +41,7 @@ import {
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { quickCaptureBlock } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -91,7 +91,7 @@ export function QuickCaptureDialog({
         throw new Error('No active space; cannot quick-capture')
       }
       await quickCaptureBlock(trimmed, spaceId)
-      toast.success(t('quickCapture.successToast'))
+      notify.success(t('quickCapture.successToast'))
       onOpenChange(false)
     } catch (err) {
       logger.error(
@@ -100,7 +100,7 @@ export function QuickCaptureDialog({
         { contentLength: trimmed.length },
         err,
       )
-      toast.error(t('quickCapture.failureToast'))
+      notify.error(t('quickCapture.failureToast'))
     } finally {
       setSubmitting(false)
     }

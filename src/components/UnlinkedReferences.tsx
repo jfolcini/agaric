@@ -10,11 +10,11 @@ import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useFocusedRowEffect } from '../hooks/useFocusedRowEffect'
@@ -124,7 +124,7 @@ export function UnlinkedReferences({
         setTruncated(resp.truncated)
       } catch (err) {
         logger.error('UnlinkedReferences', 'Failed to load unlinked references', { pageId }, err)
-        toast.error(t('unlinkedRefs.loadFailed'))
+        notify.error(t('unlinkedRefs.loadFailed'))
       } finally {
         setLoading(false)
       }
@@ -220,7 +220,7 @@ export function UnlinkedReferences({
           blockId,
           pageId,
         })
-        toast.error(t('unlinkedRefs.linkFailed'))
+        notify.error(t('unlinkedRefs.linkFailed'))
         return
       }
       try {
@@ -237,7 +237,7 @@ export function UnlinkedReferences({
         setTotalCount((prev) => prev - 1)
       } catch (err) {
         logger.error('UnlinkedReferences', 'Failed to link block to page', { blockId, pageId }, err)
-        toast.error(t('unlinkedRefs.linkFailed'))
+        notify.error(t('unlinkedRefs.linkFailed'))
       }
     },
     [pageId, pageTitle, aliases, t],

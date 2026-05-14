@@ -11,7 +11,6 @@
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { FormField } from '@/components/ui/form-field'
 import {
   Select,
@@ -22,6 +21,7 @@ import {
 } from '@/components/ui/select'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { useWeekStart } from '@/hooks/useWeekStart'
+import { notify } from '@/lib/notify'
 
 /**
  * Theme select uses 'system' as the user-facing alias for the internal 'auto'
@@ -111,10 +111,10 @@ export function AppearanceTab(): React.ReactElement {
     (value: string) => {
       if (value === '0') {
         setWeekStart(0)
-        toast.success(t('settings.weekStartUpdated', { day: t('settings.weekStartSunday') }))
+        notify.success(t('settings.weekStartUpdated', { day: t('settings.weekStartSunday') }))
       } else if (value === '1') {
         setWeekStart(1)
-        toast.success(t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }))
+        notify.success(t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }))
       }
     },
     [setWeekStart, t],

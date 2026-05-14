@@ -7,6 +7,34 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 734 — Phase 3a toast centralisation (sonner→notify wrapper + codemod + prek guard) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | design-system-maintainability Phase 3a (toast centralisation). |
+| **Items modified** | maintainability plan status note + README index row + DuePanel suppression cleanup. |
+| **Tests added** | 0 net (existing assertions on `vi.mocked(toast.error).toHaveBeenCalledWith(...)` keep working — wrapper forwards args with same arity via `...rest`). |
+| **Files touched** | 87 (new `src/lib/notify.ts` + 86 production files codemodded; `prek.toml` guard hook; pending docs). |
+
+**Summary:** mechanical single-PR migration per the plan's recommendation (option a). New `src/lib/notify.ts` exposes a `notify` wrapper that mirrors sonner's API surface (`notify.success` / `.error` / `.warning` / `.info` / `.message` / `.loading` / `.promise` / `.custom` / `.dismiss` + bare callable for `notify('text')`). All ~86 production files codemodded: `import { toast } from 'sonner'` → `import { notify } from '@/lib/notify'`, `toast.METHOD(args)` → `notify.METHOD(args)`, bare `toast(args)` → `notify(args)`. Critical detail: methods use `...rest: [ExternalToast?]` so `notify.error('msg')` forwards exactly one arg to `toast.error('msg')` (no trailing `undefined`) — keeps existing test assertions like `expect(toast.error).toHaveBeenCalledWith('msg')` passing. `notify.error` additionally accepts an `Error` instance (logs via `console.error`, shows `.message`). `promise` / `custom` / `dismiss` are lazy delegates (not `.bind()`-captured at module load) so per-file `vi.mock('sonner', ...)` overrides that omit those methods don't break import-time.
+
+**Prek guard:** new `no-direct-sonner-import` hook in `prek.toml` bans `from 'sonner'` outside the wrapper + the `Toaster` UI primitive + `test-setup.ts` + test files. Locks the chokepoint so the codemod gain stays durable.
+
+**Suppression cleanup:** removed the one biome-flagged unnecessary suppression in `DuePanel.tsx:465` (`noNoninteractiveTabindex` rule didn't fire on the wrapped `ListItem`; the comment was dead). Audited the remaining ~20 `biome-ignore lint/correctness/useExhaustiveDependencies` sites — all are genuinely intentional (carry explicit rationale comments) and were left in place.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9759 pass; 1 known-flake (`PageBrowser pagination`, passes on focused run).
+- `npx biome check src` — clean.
+- `prek run --all-files` — all 47 hooks pass (the new sonner guard included).
+
+**Process notes:** initial wrapper had two bugs caught by the test suite — (a) `String(opts)` cast wrong-arity'd every call site (fixed via `...rest: OptionalOpts` spread); (b) `.bind(toast)` at module load failed under per-file partial sonner mocks (fixed via lazy `(...args) => toast.method(...args)` delegates). After both fixes the 259 originally-failing tests dropped to 0 (plus the 1 known flake). 86 files codemodded in one perl pass; biome `--write` auto-fixed the import-order churn.
+
+**Commit plan:** single commit covering wrapper + codemod + guard + Phase 3a closure.
+
+---
 ## Session 733 — Close MAINT-207 bundle (SearchInput onClear + SearchPanel doc) (2026-05-14)
 
 | Metadata | Value |

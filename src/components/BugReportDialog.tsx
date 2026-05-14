@@ -20,7 +20,7 @@
  *               "Open GitHub issue" (openUrl). Dialog stays open so the user
  *               can re-download if the OS save dialog is dismissed.
  *   - logs OFF: user clicks "Open in GitHub" (openUrl), dialog closes.
- *   - On IPC/JSZip failure: toast.error + logger.warn; dialog stays open.
+ *   - On IPC/JSZip failure: notify.error + logger.warn; dialog stays open.
  *
  * Errors are never swallowed silently — every `.catch` routes through
  * `logger.warn` per AGENTS.md's "no silent catch" rule.
@@ -30,7 +30,6 @@ import { Eye } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -55,6 +54,7 @@ import { writeText } from '@/lib/clipboard'
 import { BUG_TRACKER } from '@/lib/config'
 import { downloadBlob } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
 import type { BugReport, LogFileEntry } from '@/lib/tauri'
 import { collectBugReportMetadata, readLogsForReport } from '@/lib/tauri'
@@ -122,7 +122,7 @@ export function BugReportDialog({
       setMetadata(md)
     },
     onError: () => {
-      toast.error(t('bugReport.loadMetadataFailed'))
+      notify.error(t('bugReport.loadMetadataFailed'))
     },
   })
 
@@ -164,7 +164,7 @@ export function BugReportDialog({
       })
       .catch((err: unknown) => {
         logger.warn(MODULE, 'failed to read logs', { redact }, err)
-        toast.error(t('bugReport.readLogsFailed'))
+        notify.error(t('bugReport.readLogsFailed'))
         if (!cancelled) setLogs([])
       })
       .finally(() => {
@@ -205,16 +205,16 @@ export function BugReportDialog({
     errorLogMessage: 'clipboard write failed',
     logLevel: 'warn',
     onSuccess: () => {
-      toast.success(t('bugReport.copied'))
+      notify.success(t('bugReport.copied'))
     },
     onError: () => {
-      toast.error(t('bugReport.copyFailed'))
+      notify.error(t('bugReport.copyFailed'))
     },
   })
 
   const handleCopy = useCallback(async () => {
     if (typeof navigator === 'undefined' || navigator.clipboard == null) {
-      toast.error(t('bugReport.copyFailed'))
+      notify.error(t('bugReport.copyFailed'))
       return
     }
     await executeCopy()
@@ -222,7 +222,7 @@ export function BugReportDialog({
 
   // MAINT-120: build + download the diagnostic-logs ZIP. `call` chains the
   // three sequential IPC + browser calls so a failure in any one routes
-  // through the hook's logger.warn + toast.error path. Returns `true` on
+  // through the hook's logger.warn + notify.error path. Returns `true` on
   // success so `handleSubmit` can branch on it (vs. `undefined` on error).
   const { execute: executeBuildZip } = useIpcCommand<
     { redact: boolean; metadata: BugReport },
@@ -239,7 +239,7 @@ export function BugReportDialog({
     errorLogContext: ({ redact: r }) => ({ redact: r }),
     logLevel: 'warn',
     onError: () => {
-      toast.error(t('bugReport.buildZipFailed'))
+      notify.error(t('bugReport.buildZipFailed'))
     },
   })
 
@@ -255,7 +255,7 @@ export function BugReportDialog({
     try {
       const ok = await executeBuildZip({ redact, metadata })
       if (ok === undefined) return
-      toast.success(t('bugReport.zipDownloaded', { fileName: zipFileName }))
+      notify.success(t('bugReport.zipDownloaded', { fileName: zipFileName }))
     } finally {
       setSubmitting(false)
     }
@@ -285,12 +285,12 @@ export function BugReportDialog({
             logger.warn(MODULE, 'clipboard fallback failed', undefined, err)
           }
         }
-        toast.error(
+        notify.error(
           t(copied ? 'bugReport.browserOpenFailed' : 'bugReport.browserOpenFailedNoClipboard'),
         )
         return
       }
-      toast.success(t('bugReport.submitted'))
+      notify.success(t('bugReport.submitted'))
       // PEND-bug-report-zip-affordance: when logs are ON, keep the
       // dialog open after opening the GitHub tab so the user can copy
       // the saved zip path or re-trigger Download zip if they dismissed

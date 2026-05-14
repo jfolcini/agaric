@@ -13,9 +13,9 @@
  * starts at `false` and flips to `true` once the first refresh resolves.
  */
 
-import { toast } from 'sonner'
 import { create } from 'zustand'
 import { persist, subscribeWithSelector } from 'zustand/middleware'
+import { notify } from '@/lib/notify'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { SpaceRow } from '../lib/tauri'
@@ -144,7 +144,7 @@ export const useSpaceStore = create<SpaceState>()(
             if (prevCurrent !== null && nextCurrent !== null && prevCurrent !== nextCurrent) {
               const newSpace = spaces.find((s) => s.id === nextCurrent)
               if (newSpace) {
-                toast.warning(i18n.t('space.activeDeletedNotification', { space: newSpace.name }))
+                notify.warning(i18n.t('space.activeDeletedNotification', { space: newSpace.name }))
               }
             }
           } catch (err) {

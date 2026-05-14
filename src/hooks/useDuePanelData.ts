@@ -10,8 +10,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { formatDate, getTodayString } from '@/lib/date-utils'
+import { notify } from '@/lib/notify'
 import { logger } from '../lib/logger'
 import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
 import {
@@ -501,14 +501,14 @@ export function useDuePanelData({
             // FE-M-2: skip side effects (logging, toast) if the effect has unmounted.
             if (stale) return
             logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
-            toast.error(t('duePanel.loadAgendaFailed'))
+            notify.error(t('duePanel.loadAgendaFailed'))
           })
         }
       })
       .catch((err) => {
         logger.warn('useDuePanelData', 'projected agenda fetch failed', undefined, err)
         if (!stale) setProjectedEntries([])
-        toast.error(t('duePanel.loadAgendaFailed'))
+        notify.error(t('duePanel.loadAgendaFailed'))
       })
       .finally(() => {
         if (!stale) setProjectedLoading(false)

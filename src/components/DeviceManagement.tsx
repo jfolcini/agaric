@@ -15,7 +15,6 @@ import { Copy, Globe, RefreshCw, Smartphone, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
@@ -23,6 +22,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { writeText } from '@/lib/clipboard'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { useSyncWithTimeout } from '../hooks/useSyncWithTimeout'
 import type { PeerRefRow } from '../lib/tauri'
@@ -243,7 +243,7 @@ export function DeviceManagement(): React.ReactElement {
                     onClick={async () => {
                       try {
                         await writeText(deviceId)
-                        toast.success(t('device.deviceIdCopied'))
+                        notify.success(t('device.deviceIdCopied'))
                       } catch (err) {
                         reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
                       }

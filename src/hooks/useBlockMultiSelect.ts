@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
-import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
+import { notify } from '@/lib/notify'
 import { deleteBlocksByIds, setTodoStateBatch } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
@@ -71,14 +71,14 @@ export function useBlockMultiSelect({
         }
         clearSelected()
         if (failCount > 0) {
-          toast.error(
+          notify.error(
             t('blockTree.updateFailedMessage', {
               failCount,
               totalCount: ids.length,
             }),
           )
         } else {
-          toast.success(
+          notify.success(
             t('blockTree.setStateMessage', {
               successCount,
               state: state ?? 'none',
@@ -140,14 +140,14 @@ export function useBlockMultiSelect({
       clearSelected()
       setBatchDeleteConfirm(false)
       if (failCount > 0) {
-        toast.error(
+        notify.error(
           t('blockTree.deleteFailedMessage', {
             failCount,
             totalCount: ids.length,
           }),
         )
       } else {
-        toast.success(t('blockTree.deletedMessage', { count: successCount }))
+        notify.success(t('blockTree.deletedMessage', { count: successCount }))
       }
     } finally {
       batchInProgressRef.current = false

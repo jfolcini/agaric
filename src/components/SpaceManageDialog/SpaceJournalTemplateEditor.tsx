@@ -34,10 +34,10 @@
 
 import { useCallback, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { deleteProperty, setProperty } from '@/lib/tauri'
 
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceJournalTemplateEditor'
@@ -108,7 +108,7 @@ export function SpaceJournalTemplateEditor({
       onCommitted(spaceId, trimmed)
     } catch (err) {
       logger.error(LOG_MODULE, 'journal template update failed', { spaceId }, err)
-      toast.error(t('space.journalTemplateFailed'))
+      notify.error(t('space.journalTemplateFailed'))
       // Revert to the last successfully-persisted value so the textarea
       // reflects backend truth instead of the unsaved edit.
       setJournalTemplate(previous)

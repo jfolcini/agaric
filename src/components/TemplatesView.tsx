@@ -9,7 +9,6 @@ import { LayoutTemplate, Plus, Search, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +21,7 @@ import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import {
@@ -100,7 +100,7 @@ export function TemplatesView(): React.ReactElement {
       // space).
       const currentSpaceId = useSpaceStore.getState().currentSpaceId
       if (currentSpaceId == null) {
-        toast.error(t('templates.createFailed'))
+        notify.error(t('templates.createFailed'))
         setIsCreating(false)
         return
       }
@@ -122,7 +122,7 @@ export function TemplatesView(): React.ReactElement {
       try {
         await deleteProperty(id, 'template')
         setTemplates((prev) => prev.filter((tpl) => tpl.id !== id))
-        toast.success(t('templates.templateRemoved', { name }))
+        notify.success(t('templates.templateRemoved', { name }))
       } catch (err) {
         reportIpcError('TemplatesView', 'templates.removeTemplateFailed', err, t, { id, name })
       }

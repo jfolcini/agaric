@@ -19,10 +19,10 @@
  * Resolves REVIEW-LATER #276, #386, #378.
  */
 
-import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -92,7 +92,7 @@ export function useSyncEvents(): void {
 
         // Show toast notification
         if (ops_received > 0) {
-          toast.success(i18n.t('sync.opsReceived', { count: ops_received }))
+          notify.success(i18n.t('sync.opsReceived', { count: ops_received }))
           announce(i18n.t('announce.syncOpsReceived', { count: ops_received }))
         }
 
@@ -129,7 +129,7 @@ export function useSyncEvents(): void {
       try {
         const { message } = event.payload
         useSyncStore.getState().setState('error', message)
-        toast.error(i18n.t('sync.failed', { message }))
+        notify.error(i18n.t('sync.failed', { message }))
         announce(i18n.t('announce.syncFailed'))
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:error handler failed', undefined, err)

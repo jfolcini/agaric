@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { i18n } from '../lib/i18n'
 import type { AttachmentRow } from '../lib/tauri'
 import { addAttachment, deleteAttachment, listAttachments } from '../lib/tauri'
@@ -67,7 +67,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
       .then(setAttachments)
       .catch((err) => {
         logger.warn('useBlockAttachments', 'list attachments failed', { blockId }, err)
-        toast.error(i18n.t('attachments.loadFailed'))
+        notify.error(i18n.t('attachments.loadFailed'))
       })
       .finally(() => setLoading(false))
   }, [blockId, batchActive, batchLoading, batchRows])
@@ -85,7 +85,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         batchProvider?.invalidate(blockId)
       } catch (err) {
         logger.error('useBlockAttachments', 'Failed to add attachment', { blockId }, err)
-        toast.error(i18n.t('attachments.addFailed'))
+        notify.error(i18n.t('attachments.addFailed'))
       }
     },
     [blockId, pageStore, batchProvider],
@@ -108,7 +108,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
           { blockId, attachmentId },
           err,
         )
-        toast.error(i18n.t('attachments.deleteFailed'))
+        notify.error(i18n.t('attachments.deleteFailed'))
       }
     },
     [blockId, pageStore, batchProvider],

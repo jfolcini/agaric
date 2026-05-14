@@ -10,11 +10,11 @@ import { Link } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
@@ -135,7 +135,7 @@ export function LinkedReferences({
           },
           err,
         )
-        toast.error(t('references.loadFailed'))
+        notify.error(t('references.loadFailed'))
       } finally {
         setLoading(false)
       }
@@ -165,7 +165,7 @@ export function LinkedReferences({
       .catch((e) => {
         if (cancelled) return
         logger.error('LinkedReferences', 'Failed to load tags', undefined, e)
-        toast.error(t('references.loadTagsFailed'))
+        notify.error(t('references.loadTagsFailed'))
       })
     return () => {
       cancelled = true

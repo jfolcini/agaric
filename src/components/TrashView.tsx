@@ -17,13 +17,13 @@ import { RotateCcw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { BatchActionToolbar } from '@/components/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { notify } from '@/lib/notify'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -135,11 +135,11 @@ export function TrashView(): React.ReactElement {
         if (block.block_type === 'page' || block.block_type === 'tag') {
           useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
         }
-        toast.success(t('trash.blockRestored'))
+        notify.success(t('trash.blockRestored'))
         announce(t('announce.blockRestored'))
       } catch (err) {
         logger.error('TrashView', 'Failed to restore block', { blockId: block.id }, err)
-        toast.error(t('trash.restoreFailed'))
+        notify.error(t('trash.restoreFailed'))
         announce(t('announce.restoreFailed'))
       }
     },
@@ -152,11 +152,11 @@ export function TrashView(): React.ReactElement {
         await purgeBlock(blockId)
         setBlocks((prev) => prev.filter((b) => b.id !== blockId))
         setConfirmPurgeId(null)
-        toast.success(t('trash.blockPurged'))
+        notify.success(t('trash.blockPurged'))
         announce(t('announce.blockPurged'))
       } catch (err) {
         logger.error('TrashView', 'Failed to purge block', { blockId }, err)
-        toast.error(t('trash.purgeFailed'))
+        notify.error(t('trash.purgeFailed'))
         announce(t('announce.purgeFailed'))
       }
     },
@@ -191,7 +191,7 @@ export function TrashView(): React.ReactElement {
     clearSelection()
     setConfirmBatchRestore(false)
     if (restored > 0) {
-      toast.success(t('trash.batchRestored', { count: restored }))
+      notify.success(t('trash.batchRestored', { count: restored }))
       announce(t('announce.batchRestored', { count: restored }))
     }
   }, [blocks, selected, reload, clearSelection, t])
@@ -243,7 +243,7 @@ export function TrashView(): React.ReactElement {
     clearSelection()
     setConfirmBatchPurge(false)
     if (purged > 0) {
-      toast.success(t('trash.batchPurged', { count: purged }))
+      notify.success(t('trash.batchPurged', { count: purged }))
       announce(t('announce.batchPurged', { count: purged }))
     }
   }, [selected, reload, clearSelection, t])
@@ -255,12 +255,12 @@ export function TrashView(): React.ReactElement {
       clearSelection()
       setConfirmEmptyTrash(false)
       if (result.affected_count > 0) {
-        toast.success(t('trash.allPurged', { count: result.affected_count }))
+        notify.success(t('trash.allPurged', { count: result.affected_count }))
         announce(t('announce.trashEmptied', { count: result.affected_count }))
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to empty trash', undefined, err)
-      toast.error(t('trash.emptyTrashFailed'))
+      notify.error(t('trash.emptyTrashFailed'))
       announce(t('announce.emptyTrashFailed'))
     }
   }, [reload, clearSelection, t])
@@ -272,12 +272,12 @@ export function TrashView(): React.ReactElement {
       clearSelection()
       setConfirmRestoreAll(false)
       if (result.affected_count > 0) {
-        toast.success(t('trash.allRestored', { count: result.affected_count }))
+        notify.success(t('trash.allRestored', { count: result.affected_count }))
         announce(t('announce.allRestored', { count: result.affected_count }))
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to restore all blocks', undefined, err)
-      toast.error(t('trash.restoreAllFailed'))
+      notify.error(t('trash.restoreAllFailed'))
       announce(t('announce.restoreAllFailed'))
     }
   }, [reload, clearSelection, t])

@@ -5,7 +5,7 @@
  * empty dep arrays.
  */
 
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { notifyUnknownNodeTypeToast } from '../../editor/markdown-serialize-toast'
 import { serialize } from '../../editor/markdown-serializer'
 import type { DocNode } from '../../editor/types'
@@ -46,7 +46,7 @@ export async function applyContentEdit(
     }))
     ctx.rovingEditor.mount(ctx.blockId, newContent)
   } catch {
-    toast.error(ctx.t(failKey))
+    notify.error(ctx.t(failKey))
   }
 }
 
@@ -62,7 +62,7 @@ export function warnIfBlocked(ctx: SlashCommandContext): void {
   getProperty(ctx.blockId, 'blocked_by')
     .then((row) => {
       const hasBlockedBy = row != null && row.value_ref != null
-      if (hasBlockedBy) toast.warning(ctx.t('dependency.dependencyWarning'))
+      if (hasBlockedBy) notify.warning(ctx.t('dependency.dependencyWarning'))
     })
     .catch((err) => {
       logger.warn('useBlockSlashCommands', 'dependency check failed', undefined, err)

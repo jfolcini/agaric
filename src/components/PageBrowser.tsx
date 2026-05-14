@@ -16,7 +16,6 @@ import { FileText, Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
@@ -25,6 +24,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePageBrowserGrouping } from '../hooks/usePageBrowserGrouping'
 import { usePageBrowserSort } from '../hooks/usePageBrowserSort'
@@ -173,7 +173,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     // prevents this branch from firing.
     const activeSpaceId = useSpaceStore.getState().currentSpaceId
     if (activeSpaceId == null) {
-      toast.error(t('pageBrowser.spaceNotReady'))
+      notify.error(t('pageBrowser.spaceNotReady'))
       return
     }
     setIsCreating(true)
@@ -196,7 +196,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       setNewPageName('')
       onPageSelect?.(newId, name)
     } catch (error) {
-      toast.error(t('pageBrowser.createFailed', { error: String(error) }), {
+      notify.error(t('pageBrowser.createFailed', { error: String(error) }), {
         action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
       })
     }

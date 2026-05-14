@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { logger } from '../../lib/logger'
 import { createBlock } from '../../lib/tauri'
 import { useBlockStore } from '../../stores/blocks'
@@ -91,7 +91,7 @@ export function useBlockAutoCreateFirstBlock({
           },
           err,
         )
-        toast.error(t('blockTree.createFirstBlockFailed'))
+        notify.error(t('blockTree.createFirstBlockFailed'))
       })
   }, [enabled, loading, blocksLength, rootParentId, t, pageStore])
 }

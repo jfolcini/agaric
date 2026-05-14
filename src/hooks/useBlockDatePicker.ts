@@ -1,7 +1,7 @@
 import type { RefObject } from 'react'
 import { useCallback, useRef, useState } from 'react'
-import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
+import { notify } from '@/lib/notify'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { announce } from '../lib/announcer'
 import {
@@ -78,7 +78,7 @@ function formatLegacyDate(d: Date): string {
 }
 
 // ---------------------------------------------------------------------------
-// Mode handlers — each owns its own optimistic store update + error toast.
+// Mode handlers — each owns its own optimistic store update + error notify.
 // ---------------------------------------------------------------------------
 
 async function handleDueMode(ctx: DatePickContext): Promise<void> {
@@ -91,7 +91,7 @@ async function handleDueMode(ctx: DatePickContext): Promise<void> {
       blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, due_date: ctx.dateStr } : b)),
     }))
   } catch {
-    toast.error(ctx.t('blockTree.setDueDateFailed'))
+    notify.error(ctx.t('blockTree.setDueDateFailed'))
   }
 }
 
@@ -104,9 +104,9 @@ async function handleRepeatUntilMode(ctx: DatePickContext): Promise<void> {
       valueDate: ctx.dateStr,
     })
     notifyUndo(ctx.rootParentId)
-    toast.success(ctx.t('blockTree.repeatUntilMessage', { date: ctx.dateStr }))
+    notify.success(ctx.t('blockTree.repeatUntilMessage', { date: ctx.dateStr }))
   } catch {
-    toast.error(ctx.t('blockTree.setRepeatEndDateFailed'))
+    notify.error(ctx.t('blockTree.setRepeatEndDateFailed'))
   }
 }
 
@@ -121,7 +121,7 @@ async function handleScheduleMode(ctx: DatePickContext): Promise<void> {
     }))
     announce(ctx.t('announce.scheduledDateSet', { date: ctx.dateStr }))
   } catch {
-    toast.error(ctx.t('blockTree.setScheduledDateFailed'))
+    notify.error(ctx.t('blockTree.setScheduledDateFailed'))
   }
 }
 

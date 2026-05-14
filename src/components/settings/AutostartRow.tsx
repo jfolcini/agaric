@@ -10,7 +10,7 @@
  * model, not this toggle.
  *
  * Toggle handler is optimistic-update + revert-on-failure, with a
- * single `toast.error(t('settings.autostart.toggleFailed'))` as the
+ * single `notify.error(t('settings.autostart.toggleFailed'))` as the
  * user-visible failure surface.  `logger.error` carries the cause
  * chain for the daily-rolling backend log.
  */
@@ -18,10 +18,10 @@
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/tauri'
 
 export function AutostartRow(): React.ReactElement | null {
@@ -79,7 +79,7 @@ export function AutostartRow(): React.ReactElement | null {
       } catch (err) {
         logger.error('SettingsView', 'failed to update autostart setting', { requested: next }, err)
         setEnabled(previous)
-        toast.error(t('settings.autostart.toggleFailed'))
+        notify.error(t('settings.autostart.toggleFailed'))
       } finally {
         setPending(false)
       }

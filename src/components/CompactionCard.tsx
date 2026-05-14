@@ -10,12 +10,12 @@ import { Archive } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import type { CompactionStatus } from '@/lib/tauri'
 import { compactOpLog, getCompactionStatus } from '@/lib/tauri'
 
@@ -38,7 +38,7 @@ export function CompactionCard(): React.ReactElement {
       setStatus(s)
     } catch (err) {
       logger.warn('CompactionCard', 'getCompactionStatus failed', undefined, err)
-      toast.error(t('compaction.loadFailed'))
+      notify.error(t('compaction.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -61,12 +61,12 @@ export function CompactionCard(): React.ReactElement {
     setCompacting(true)
     try {
       const result = await compactOpLog(status.retention_days)
-      toast.success(t('compaction.success', { count: result.ops_deleted }))
+      notify.success(t('compaction.success', { count: result.ops_deleted }))
       setConfirmOpen(false)
       void fetchStatus()
     } catch (err) {
       logger.error('CompactionCard', 'compaction failed', undefined, err)
-      toast.error(t('compaction.failed'))
+      notify.error(t('compaction.failed'))
     } finally {
       setCompacting(false)
     }

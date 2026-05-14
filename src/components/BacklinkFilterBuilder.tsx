@@ -12,8 +12,8 @@ import { Filter, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { notify } from '@/lib/notify'
 import type { BacklinkFilter, BacklinkSort, SortDir } from '../lib/tauri'
 import { AddFilterRow } from './backlink-filter/AddFilterRow'
 import { FilterPillRow, type FilterWithKey } from './FilterPillRow'
@@ -121,7 +121,7 @@ export function BacklinkFilterBuilder({
       const key = getFilterKey(filter)
       const isDuplicate = filters.some((f) => getFilterKey(f) === key)
       if (isDuplicate) {
-        toast.error(t('backlink.filterAlreadyApplied'))
+        notify.error(t('backlink.filterAlreadyApplied'))
         setShowAddRow(false)
         return
       }

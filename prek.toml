@@ -76,6 +76,21 @@ language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx", "css"]
 
+# Sonner chokepoint guard — every production toast call must route through
+# `src/lib/notify.ts` so the wrapper (Phase 3a, design-system-maintainability)
+# stays the single source of truth. Allowed direct importers: the wrapper
+# itself, the `Toaster` UI primitive that mounts the sonner provider, the
+# test mock, and the global vitest setup that wires the mock.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "no-direct-sonner-import"
+name = "no direct sonner import outside lib/notify + Toaster + tests"
+entry = "bash -c 'if grep -rnE \"from ['\\''\\\"]sonner['\\''\\\"]\" src/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=__tests__ --exclude=\"*.test.ts\" --exclude=\"*.test.tsx\" | grep -vE \"^src/lib/notify\\.ts:|^src/components/ui/sonner\\.tsx:|^src/test-setup\\.ts:\"; then echo \"ERROR: import sonner via @/lib/notify instead — Phase 3a chokepoint (design-system-maintainability)\"; exit 1; fi'"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx"]
+
 # Legacy React API guard — block re-introduction of APIs we migrated away from
 # (MAINT-48 React 19, MAINT-49 TypeScript 6, follow-up MutableRefObject removal).
 # Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are

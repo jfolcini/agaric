@@ -29,7 +29,7 @@
 
 import type { RefObject } from 'react'
 import { useCallback } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { parse } from '../../editor/markdown-serializer'
 import type { RovingEditorHandle } from '../../editor/use-roving-editor'
 import { processCheckboxSyntax } from '../../lib/block-utils'
@@ -99,7 +99,7 @@ export function useBlockFlush({
                 },
                 err,
               )
-              toast.error(t('blockTree.setTaskStateFailed'))
+              notify.error(t('blockTree.setTaskStateFailed'))
             })
           pageStore.setState((s) => ({
             blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: todoState } : b)),

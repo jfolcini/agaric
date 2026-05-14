@@ -20,7 +20,6 @@ import { Undo2 } from 'lucide-react'
 import type React from 'react'
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -30,6 +29,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { revertOps } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { ConfirmDialog } from '../ConfirmDialog'
@@ -87,7 +87,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
   // opRef-present rows.  Tracks in-flight state via `undoingKeys` so
   // the button disables and swaps to a spinner while the IPC call is
   // pending.  On `NonReversible` we show a dedicated toast; every
-  // other error falls through to the generic failure toast.
+  // other error falls through to the generic failure notify.
   const handleUndo = useCallback(
     async (opRef: { device_id: string; seq: number }) => {
       const key = `${opRef.device_id}:${opRef.seq}`
@@ -98,7 +98,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       })
       try {
         await revertOps({ ops: [opRef] })
-        toast.success(t('agentAccess.undoAgentOp.success'))
+        notify.success(t('agentAccess.undoAgentOp.success'))
         // UX-252 — mark this opRef's button as terminal-success so it
         // disappears from the feed. On error the key is NOT added, so
         // the user can retry.
@@ -109,7 +109,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         })
       } catch (err) {
         logger.error('AgentAccessSettingsTab', 'undo failed', { opRef }, err)
-        toast.error(
+        notify.error(
           isNonReversibleError(err)
             ? t('agentAccess.undoAgentOp.nonReversible')
             : t('agentAccess.undoAgentOp.failed'),
@@ -192,7 +192,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
     })
     try {
       await revertOps({ ops: target.ops })
-      toast.success(t('agentAccess.revertSession.success', { count: target.ops.length }))
+      notify.success(t('agentAccess.revertSession.success', { count: target.ops.length }))
       // UX-252 — mark every opRef in the batch as terminal-success so
       // the session header + every per-entry Undo button in this
       // session drop out of the feed. On error none are added, so
@@ -211,7 +211,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         { sessionId: target.sessionId, opCount: target.ops.length },
         err,
       )
-      toast.error(
+      notify.error(
         isNonReversibleError(err)
           ? t('agentAccess.revertSession.nonReversible')
           : t('agentAccess.revertSession.failed'),

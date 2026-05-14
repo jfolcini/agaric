@@ -24,7 +24,6 @@ import { Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
 import { Button } from '@/components/ui/button'
@@ -34,6 +33,7 @@ import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -324,7 +324,7 @@ export function SearchPanel(): React.ReactElement {
           }
         } else {
           logger.warn('SearchPanel', 'block has no parent page', { blockId: block.id })
-          toast.error(t('search.noParentPage'))
+          notify.error(t('search.noParentPage'))
         }
       } finally {
         setLoadingResultId(null)

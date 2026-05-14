@@ -13,11 +13,11 @@ import { AlertCircle } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { announce } from '@/lib/announcer'
 import { formatDate } from '@/lib/date-utils'
+import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useBlockReschedule } from '../hooks/useBlockReschedule'
@@ -65,7 +65,7 @@ export function DateChipEditor({
         } else {
           await setScheduledDate(blockId, newDate)
         }
-        toast.success(newDate ? t('dateChip.dateUpdated') : t('dateChip.dateCleared'))
+        notify.success(newDate ? t('dateChip.dateUpdated') : t('dateChip.dateCleared'))
         announce(newDate ? t('announce.dateUpdated', { date: newDate }) : t('announce.dateCleared'))
         onSuccess?.()
       } catch (err) {

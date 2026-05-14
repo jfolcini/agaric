@@ -13,7 +13,7 @@
 
 import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { logger } from '../lib/logger'
@@ -122,7 +122,7 @@ export function useBlockNavigateToLink({
           },
           err,
         )
-        toast.error(t('blockTree.linkTargetNotFound'))
+        notify.error(t('blockTree.linkTargetNotFound'))
       }
     },
     [handleFlushRef, rovingEditorRef, load, setFocused, rootParentId, onNavigateToPage, t],

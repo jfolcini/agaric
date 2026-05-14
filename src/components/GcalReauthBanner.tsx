@@ -43,10 +43,10 @@ import { listen } from '@tauri-apps/api/event'
 import { AlertCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 
 const EVENT_REAUTH = 'gcal:reauth_required'
 
@@ -117,7 +117,7 @@ export function GcalReauthBanner(): React.ReactElement | null {
       setAccountEmail(null)
     },
     onError: () => {
-      toast.error(t('gcal.connectFailed'))
+      notify.error(t('gcal.connectFailed'))
     },
   })
 

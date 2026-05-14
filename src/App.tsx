@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
 import { GcalReauthBanner } from './components/GcalReauthBanner'
@@ -284,7 +284,7 @@ function App() {
     const { currentSpaceId, isReady } = useSpaceStore.getState()
     if (!isReady || currentSpaceId == null) {
       logger.warn('App', 'handleNewPage fired before space hydrated')
-      toast.error(t('space.notReady'))
+      notify.error(t('space.notReady'))
       return
     }
     try {
@@ -294,7 +294,7 @@ function App() {
       announce(t('announce.newPageCreated'))
     } catch (err) {
       logger.error('App', 'Failed to create new page', undefined, err)
-      toast.error(t('error.createPageFailed'))
+      notify.error(t('error.createPageFailed'))
     }
   }, [navigateToPage, t])
 
