@@ -7,6 +7,32 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 737 — Boot hydration fix + e2e diagnostic deepening (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | None (release re-tag in flight, e2e cluster diagnosed but root cause beyond session scope). |
+| **Items modified** | `src/stores/boot.ts` (await space-store hydration before transitioning to ready); REVIEW-LATER TEST-E2E-1 (deeper diagnostic trail). |
+| **Tests added** | 0 (existing 15 boot-related tests still pass). |
+| **Files touched** | 2 (boot.ts + REVIEW-LATER). |
+
+**Summary:** investigated the 34-test e2e cluster, traced the actual root cause via playwright trace inspection, and shipped a defensive boot.ts improvement that closes the related class of race conditions even if it doesn't fix the specific failing tests.
+
+**Key e2e finding:** the failure mode is NOT environmental (chromium binary etc.). Playwright trace shows `useCalendarPageDates] journal pages loaded {pageCount: 1, durationMs: 79}` — data DOES load successfully — but `DuePanel` still doesn't appear in the DOM. The `<main>` element in the snapshot only contains `JournalControls` (Today / Agenda / Open-calendar buttons). DaySection never mounts despite `loading=false` and `pageMap.size=1`. **Working hypothesis (now in REVIEW-LATER):** something in the JournalPage view-tree below DailyView is failing silently (likely DuePanel's empty-data return-null branch — when useDuePanelData fires its first fetch, the `applySourceFilter` may strip all items for reasons that need deeper trace inspection).
+
+**Boot.ts fix (committed):** session 731's Phase 2 dropped the `invoke('list_blocks')` handshake but transitioned BootGate to ready immediately, racing the space store's `refreshAvailableSpaces()` hydration. Fix: `boot()` now awaits `refreshAvailableSpaces()` before flipping state. Downstream consumers see a non-null `currentSpaceId` on first mount, removing the empty-fetch / hide-component / refetch flicker. **This is a real correctness improvement** for any subsequent space-dependent feature — the e2e cluster's specific failure persists because the actual culprit is downstream of space hydration, not space hydration itself.
+
+**Release status:** run `25865947819` (tag `0.1.22` moved to HEAD) is still in CI, validate job in progress. Local agenda-advanced cluster still fails (26 tests), but the symptom predates session 731 and the 0.1.21 release shipped successfully on the same SHA yesterday — strongly suggests CI's playwright environment doesn't reproduce the symptom even though it persists locally.
+
+**Verification:**
+- 15 boot-related tests pass.
+- `npx tsc -b --noEmit` clean.
+
+**Commit plan:** boot.ts fix in one commit; will lock in the release once CI greens. The e2e cluster work is deferred to TEST-E2E-1 in REVIEW-LATER.
+
+---
 ## Session 736 — MAINT-215 + PageBrowser flake fix (2026-05-14)
 
 | Metadata | Value |
