@@ -35,7 +35,7 @@ const Label = ({ ref, className, size, muted, ...props }: LabelProps) => {
     <label
       ref={ref}
       data-slot="label"
-      className={cn(labelVariants({ size, muted, className }))}
+      className={cn(labelVariants({ size, muted }), className)}
       {...props}
     />
   )

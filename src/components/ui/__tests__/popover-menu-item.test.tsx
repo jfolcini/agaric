@@ -68,4 +68,24 @@ describe('PopoverMenuItem', () => {
     render(<PopoverMenuItem ref={ref}>Item</PopoverMenuItem>)
     expect(ref.current).toBeInstanceOf(HTMLButtonElement)
   })
+
+  // asChild polymorphism (Radix Slot): menu items should be renderable
+  // as `<a>` so popover menus can host navigation links without the
+  // per-call-site composition workaround.
+  it('renders as <a> when asChild is true with an anchor child', () => {
+    render(
+      <PopoverMenuItem asChild className="menu-link">
+        <a href="/page/abc">Open page</a>
+      </PopoverMenuItem>,
+    )
+    const link = screen.getByRole('link', { name: 'Open page' })
+    expect(link.tagName).toBe('A')
+    expect(link).toHaveAttribute('href', '/page/abc')
+    expect(link).toHaveAttribute('data-slot', 'popover-menu-item')
+    // Base + caller classes are merged onto the anchor.
+    expect(link.className).toContain('hover:bg-accent')
+    expect(link.className).toContain('menu-link')
+    // `type="button"` must NOT leak onto the anchor (invalid HTML).
+    expect(link).not.toHaveAttribute('type')
+  })
 })

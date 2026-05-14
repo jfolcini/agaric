@@ -154,11 +154,50 @@ function computeReorderPosition(
  * selector subscribers (e.g. `usePageBlockStore((s) => s.blocksById)`) to fire.
  * Last-write-wins on duplicate ids; in practice the loader and reducers never
  * produce duplicates, but a defensive `set()` keeps the contract explicit.
+ *
+ * **Perf invariant (Tier 1 #2, perf-review 2026-05-09).** This is a full O(n)
+ * scan of `blocks`. Hot single-block-edit paths (`edit()` and other reducers
+ * that touch one or a handful of entries) MUST NOT call this helper — instead,
+ * derive the next Map from the previous one via `cloneBlocksByIdWith()` or
+ * `cloneBlocksByIdWithout()` so only the touched keys allocate. Reserve
+ * `buildBlocksById` for true bulk paths (`load`, external `setState`).
  */
 function buildBlocksById(blocks: FlatBlock[]): Map<string, FlatBlock> {
   const map = new Map<string, FlatBlock>()
   for (const b of blocks) map.set(b.id, b)
   return map
+}
+
+/**
+ * Clone `prev` and `.set()` one or more touched entries — returns a new Map
+ * reference (so Zustand selector subscribers still fire) but only allocates
+ * O(k) work for the touched keys plus O(n) for the structural clone of the
+ * underlying Map (which is much cheaper than the per-entry object-property
+ * access of a fresh `blocks.map()` walk in `buildBlocksById`).
+ *
+ * Used by single/few-block-edit reducers (`edit`, `createBelow`, `appendBlock`,
+ * `reorder`, etc.) — see the perf invariant comment on `buildBlocksById`.
+ */
+function cloneBlocksByIdWith(
+  prev: Map<string, FlatBlock>,
+  touched: readonly FlatBlock[],
+): Map<string, FlatBlock> {
+  const next = new Map(prev)
+  for (const b of touched) next.set(b.id, b)
+  return next
+}
+
+/**
+ * Clone `prev` and `.delete()` the given ids — counterpart to
+ * `cloneBlocksByIdWith` for the `remove` reducer path.
+ */
+function cloneBlocksByIdWithout(
+  prev: Map<string, FlatBlock>,
+  removedIds: Iterable<string>,
+): Map<string, FlatBlock> {
+  const next = new Map(prev)
+  for (const id of removedIds) next.delete(id)
+  return next
 }
 
 /**
@@ -290,7 +329,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         }
         const newBlocks = [...blocks]
         newBlocks.splice(insertIdx, 0, newBlock)
-        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+        // Single-block insert (perf invariant): derive the new Map from the
+        // current one with one `.set()` instead of an O(n) rebuild.
+        set((state) => ({
+          blocks: newBlocks,
+          blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
+        }))
         notifyUndoNewAction(rootParentId)
         return result.id
       } catch (err) {
@@ -303,21 +347,38 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     edit: async (blockId: string, content: string) => {
       const { rootParentId, blocksById } = get()
       const previousContent = blocksById.get(blockId)?.content
+      // Single-block-edit hot path (perf-review Tier 1 #2): re-allocating the
+      // entire Map per keystroke fans out to every mounted EditableBlock on a
+      // 2000-block page. Derive `blocksById` from the previous Map and touch
+      // only the edited key — full-scan `buildBlocksById` is reserved for
+      // bulk paths (see invariant comment on `buildBlocksById`).
       set((state) => {
-        const blocks = state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b))
-        return { blocks, blocksById: buildBlocksById(blocks) }
+        let edited: FlatBlock | null = null
+        const blocks = state.blocks.map((b) => {
+          if (b.id !== blockId) return b
+          const next = { ...b, content }
+          edited = next
+          return next
+        })
+        if (edited == null) return { blocks }
+        return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [edited]) }
       })
       try {
         await editBlock(blockId, content)
         notifyUndoNewAction(rootParentId)
       } catch (err) {
-        // Rollback optimistic update
+        // Rollback optimistic update — also a single-block touch.
         if (previousContent !== undefined) {
           set((state) => {
-            const blocks = state.blocks.map((b) =>
-              b.id === blockId ? { ...b, content: previousContent } : b,
-            )
-            return { blocks, blocksById: buildBlocksById(blocks) }
+            let restored: FlatBlock | null = null
+            const blocks = state.blocks.map((b) => {
+              if (b.id !== blockId) return b
+              const next = { ...b, content: previousContent }
+              restored = next
+              return next
+            })
+            if (restored == null) return { blocks }
+            return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [restored]) }
           })
         }
         logger.error('page-blocks', 'Failed to edit block', { blockId }, err)
@@ -329,11 +390,16 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const { blocks, rootParentId } = get()
       try {
         await deleteBlock(blockId)
-        // Remove block AND its descendants from the flat tree
+        // Remove block AND its descendants from the flat tree.
+        // Few-block delete (perf invariant): touch only the removed keys on
+        // the prior Map; the remaining `n - k` entries are reused as-is.
         const descendants = getDragDescendants(blocks, blockId)
         set((state) => {
           const newBlocks = state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id))
-          return { blocks: newBlocks, blocksById: buildBlocksById(newBlocks) }
+          return {
+            blocks: newBlocks,
+            blocksById: cloneBlocksByIdWithout(state.blocksById, [blockId, ...descendants]),
+          }
         })
         // Focus/selection cleanup is the caller's responsibility — all current
         // callers (handleDeleteBlock, handleMerge*, handleEscapeCancel, BlockTree
@@ -373,11 +439,21 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             // back when no new blocks were created yet — the `lastId === blockId`
             // check is the durable signal for "first iteration failed."
             if (lastId === blockId && previousContent !== undefined) {
+              // Single-block rollback (perf invariant): touch only the
+              // restored key on the prior Map.
               set((state) => {
-                const blocks = state.blocks.map((b) =>
-                  b.id === blockId ? { ...b, content: previousContent } : b,
-                )
-                return { blocks, blocksById: buildBlocksById(blocks) }
+                let restored: FlatBlock | null = null
+                const blocks = state.blocks.map((b) => {
+                  if (b.id !== blockId) return b
+                  const next = { ...b, content: previousContent }
+                  restored = next
+                  return next
+                })
+                if (restored == null) return { blocks }
+                return {
+                  blocks,
+                  blocksById: cloneBlocksByIdWith(state.blocksById, [restored]),
+                }
               })
             }
             return
@@ -417,11 +493,18 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         await moveBlock(blockId, parentId, newPosition)
         const newBlocks = [...blocks]
         const [moved] = newBlocks.splice(oldIndex, 1)
-        newBlocks.splice(newIndex, 0, {
+        const movedNext: FlatBlock = {
           ...(moved as FlatBlock),
           position: newPosition,
-        })
-        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+        }
+        newBlocks.splice(newIndex, 0, movedNext)
+        // Single-block reorder (perf invariant): only the moved block's
+        // reference changed; the remaining `n - 1` entries are identical and
+        // can be reused from the previous Map.
+        set((state) => ({
+          blocks: newBlocks,
+          blocksById: cloneBlocksByIdWith(state.blocksById, [movedNext]),
+        }))
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
@@ -459,7 +542,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       try {
         await moveBlock(blockId, prevSibling.id, 1)
         const newBlocks = computeIndentedBlocks(blocks, blockId, prevSibling)
-        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+        // Subtree-touch (perf invariant): only the indented block and its
+        // descendants got new references; reuse the rest of the prior Map.
+        const descendantIds = getDragDescendants(blocks, blockId)
+        const touchedIds = new Set<string>([blockId, ...descendantIds])
+        const touched = newBlocks.filter((b) => touchedIds.has(b.id))
+        set((state) => ({
+          blocks: newBlocks,
+          blocksById: cloneBlocksByIdWith(state.blocksById, touched),
+        }))
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to indent block', { blockId }, err)
@@ -502,7 +593,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         }
 
         remaining.splice(insertAt, 0, ...movedItems)
-        set({ blocks: remaining, blocksById: buildBlocksById(remaining) })
+        // Subtree-touch (perf invariant): only `movedItems` got new references.
+        set((state) => ({
+          blocks: remaining,
+          blocksById: cloneBlocksByIdWith(state.blocksById, movedItems),
+        }))
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to dedent block', { blockId }, err)
@@ -558,7 +653,17 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
             const newBlocks = [...remaining]
             newBlocks.splice(insertAt, 0, ...movedItems)
-            set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+            // Subtree-touch (perf invariant): only the moved block (whose
+            // `position` was rewritten) actually got a new reference; the
+            // descendants are reused as-is. Update only that key on the
+            // prior Map.
+            set((state) => ({
+              blocks: newBlocks,
+              blocksById: cloneBlocksByIdWith(
+                state.blocksById,
+                movedItems.filter((b) => b.id === blockId),
+              ),
+            }))
           }
         }
         notifyUndoNewAction(rootParentId)
@@ -617,7 +722,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             }
             const newBlocks = [...remaining]
             newBlocks.splice(insertAt, 0, ...movedItems)
-            set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+            // Subtree-touch (perf invariant): only the moved block's
+            // `position` field changed; the descendants are reused as-is.
+            set((state) => ({
+              blocks: newBlocks,
+              blocksById: cloneBlocksByIdWith(
+                state.blocksById,
+                movedItems.filter((b) => b.id === blockId),
+              ),
+            }))
           }
         }
         notifyUndoNewAction(rootParentId)
@@ -634,7 +747,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       // top-level depth in the flat tree.
       const newBlock: FlatBlock = { ...row, depth: 0 }
       const newBlocks = [...blocks, newBlock]
-      set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks) })
+      // Single-block append (perf invariant): touch only the new key.
+      set((state) => ({
+        blocks: newBlocks,
+        blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
+      }))
     },
   }))
 

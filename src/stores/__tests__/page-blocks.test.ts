@@ -1835,6 +1835,76 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocksById).toBe(before)
     })
 
+    // ── perf invariant (perf-review Tier 1 #2, 2026-05-09) ───────────────
+    // Single-block-edit hot paths MUST NOT walk the entire `blocks` array to
+    // rebuild `blocksById`. They derive the new Map from the previous one and
+    // touch only the affected keys (`cloneBlocksByIdWith` / `cloneBlocksByIdWithout`).
+    //
+    // We assert this by counting reads of the per-block `.id` property across
+    // a single `edit()` call. The old `buildBlocksById(newBlocks)` path walks
+    // every block in the new array and reads `b.id` once per entry (to use as
+    // the Map key) — yielding at least N reads. The new cloneBlocksByIdWith
+    // path clones via `new Map(prev)`, which iterates the existing Map's
+    // internal slots without touching any FlatBlock's `.id` property, then
+    // sets the single touched key. Result: zero `.id` reads on the
+    // unedited blocks during the Map rebuild.
+    //
+    // We still allow a few `.id` reads (logger context, etc.) so the
+    // threshold is generous: any regression to a full-scan rebuild would
+    // produce O(N) reads, far above the small constant we allow.
+    it('edit() does not full-scan rebuild blocksById from the blocks array', async () => {
+      // Seed a 50-block page — large enough that a regression to full-scan
+      // would produce ~50 .id reads on top of any normal overhead.
+      const N = 50
+      const idReads = new Map<string, number>()
+      const seeded = Array.from({ length: N }, (_, i) => {
+        const raw = makeBlock({
+          id: `B${i}`,
+          content: `c${i}`,
+          position: i,
+          parent_id: 'PAGE_1',
+        })
+        idReads.set(raw.id, 0)
+        // Replace `.id` with an accessor that bumps a counter on read while
+        // preserving the same value semantics.
+        const trueId = raw.id
+        Object.defineProperty(raw, 'id', {
+          get() {
+            idReads.set(trueId, (idReads.get(trueId) ?? 0) + 1)
+            return trueId
+          },
+          enumerable: true,
+          configurable: true,
+        })
+        return raw
+      })
+      store.setState({ blocks: seeded })
+
+      // Reset counters after seeding (setState calls augmentBlocksUpdate,
+      // which legitimately walks the blocks array once on this entry path
+      // — that's seeding, not the hot path we're measuring).
+      for (const k of idReads.keys()) idReads.set(k, 0)
+
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('B25', 'edited content')
+
+      const total = [...idReads.values()].reduce((a, b) => a + b, 0)
+      // The hot path may legitimately read `.id` on the edited block (to
+      // identify it during `state.blocks.map`) — that's O(N) array walks
+      // touching `.id` for every block. Wait: the `.map` callback reads
+      // `b.id` on every entry. So we expect ~N reads from the `.map`
+      // identity check. What we're guarding against is the SECOND O(N)
+      // walk that `buildBlocksById` used to do. So budget: at most N + a
+      // small constant. With the new cloneBlocksByIdWith path the second
+      // walk is gone, leaving just the single `.map` traversal.
+      expect(total).toBeLessThanOrEqual(N + 5)
+
+      // Correctness check: the Map is right.
+      const { blocksById } = store.getState()
+      expect(blocksById.size).toBe(N)
+      expect(blocksById.get('B25')?.content).toBe('edited content')
+    })
+
     it('Probe component subscribed to blocksById re-renders on every mutation', async () => {
       let renderCount = 0
 
