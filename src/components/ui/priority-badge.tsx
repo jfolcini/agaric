@@ -23,7 +23,7 @@ const priorityBadgeVariants = cva(
   {
     variants: {
       size: {
-        sm: 'h-3.5 min-w-3.5 px-0.5 text-[10px]',
+        sm: 'h-3.5 min-w-3.5 px-0.5 text-xs',
         md: 'h-4 min-w-4 px-1 text-xs',
         lg: 'h-6 min-w-6 px-2 text-sm',
       },

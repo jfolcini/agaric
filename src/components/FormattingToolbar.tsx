@@ -347,7 +347,7 @@ export function FormattingToolbar({
         >
           <FileCode2 className="h-3.5 w-3.5" />
           {state.codeBlock && state.codeBlockLanguage && (
-            <span className="text-[10px] font-bold">
+            <span className="text-xs font-bold">
               {LANG_SHORT[state.codeBlockLanguage] ?? state.codeBlockLanguage}
             </span>
           )}
@@ -376,7 +376,7 @@ export function FormattingToolbar({
           <FileCode2 className="h-3.5 w-3.5 mr-2" />
           <span>{t('toolbar.codeBlockLanguage')}</span>
           {state.codeBlock && state.codeBlockLanguage && (
-            <span className="ml-auto text-[10px] font-bold">
+            <span className="ml-auto text-xs font-bold">
               {LANG_SHORT[state.codeBlockLanguage] ?? state.codeBlockLanguage}
             </span>
           )}
@@ -396,7 +396,7 @@ export function FormattingToolbar({
           >
             <FileCode2 className="h-3.5 w-3.5" />
             {state.codeBlock && state.codeBlockLanguage && (
-              <span className="text-[10px] font-bold">
+              <span className="text-xs font-bold">
                 {LANG_SHORT[state.codeBlockLanguage] ?? state.codeBlockLanguage}
               </span>
             )}
@@ -439,7 +439,7 @@ export function FormattingToolbar({
         >
           <Heading className="h-3.5 w-3.5" />
           {state.headingLevel > 0 && (
-            <span className="text-[10px] font-bold">{state.headingLevel}</span>
+            <span className="text-xs font-bold">{state.headingLevel}</span>
           )}
         </Button>
       )
@@ -464,7 +464,7 @@ export function FormattingToolbar({
           <Heading className="h-3.5 w-3.5 mr-2" />
           <span>{t('toolbar.headingLevel')}</span>
           {state.headingLevel > 0 && (
-            <span className="ml-auto text-[10px] font-bold">{state.headingLevel}</span>
+            <span className="ml-auto text-xs font-bold">{state.headingLevel}</span>
           )}
         </Button>
       ) : (
@@ -482,7 +482,7 @@ export function FormattingToolbar({
           >
             <Heading className="h-3.5 w-3.5" />
             {state.headingLevel > 0 && (
-              <span className="text-[10px] font-bold">{state.headingLevel}</span>
+              <span className="text-xs font-bold">{state.headingLevel}</span>
             )}
           </Button>
         </Tip>

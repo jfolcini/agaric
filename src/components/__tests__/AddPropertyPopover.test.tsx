@@ -374,7 +374,7 @@ describe('AddPropertyPopover', () => {
   })
 
   // UX-6 — the type-hint contrast fix. The hint must not use the old
-  // text-[10px] opacity-70 combo (both font-size and contrast were below
+  // text-xs opacity-70 combo (both font-size and contrast were below
   // WCAG AA); it should now use text-xs + text-muted-foreground.
   it('UX-6: create-new-type-hint uses text-xs + text-muted-foreground (no opacity-70)', async () => {
     const user = userEvent.setup()

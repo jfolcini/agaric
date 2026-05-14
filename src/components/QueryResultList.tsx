@@ -95,7 +95,7 @@ export function QueryResultList({
               )}
               <span className="flex-1 truncate">{title}</span>
               {pageTitle && block.parent_id && (
-                <span className="shrink-0 text-[10px] text-muted-foreground/60 truncate max-w-[120px]">
+                <span className="shrink-0 text-xs text-muted-foreground/60 truncate max-w-[120px]">
                   <PageLink pageId={block.parent_id} title={pageTitle} />
                 </span>
               )}

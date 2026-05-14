@@ -238,7 +238,7 @@ export const SuggestionList = ({
         </div>
       </ScrollArea>
       <div
-        className="border-t border-border/50 px-2 py-1 text-[10px] text-muted-foreground select-none hidden sm:flex items-center gap-2"
+        className="border-t border-border/50 px-2 py-1 text-xs text-muted-foreground select-none hidden sm:flex items-center gap-2"
         data-testid="suggestion-list-footer"
         aria-hidden="true"
       >

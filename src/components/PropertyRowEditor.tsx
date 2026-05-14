@@ -440,7 +440,7 @@ export function PropertyRowEditor({
               aria-label={t('pageProperty.valueLabel', { key: prop.key })}
             />
             {valueType === 'date' && datePreview && (
-              <p className="text-[10px] text-muted-foreground mt-0.5">{datePreview}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{datePreview}</p>
             )}
           </>
         )}
@@ -450,7 +450,7 @@ export function PropertyRowEditor({
           <Tooltip>
             <TooltipTrigger asChild>
               <span
-                className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground"
                 data-testid={`locked-options-${prop.key}`}
               >
                 <Lock className="h-3 w-3" aria-hidden="true" />
@@ -485,7 +485,7 @@ export function PropertyRowEditor({
               <span className="text-xs font-medium text-muted-foreground">
                 {t('pageProperty.editOptionsLabel', { key: prop.key })}
               </span>
-              <Badge variant="outline" className="text-[10px]" data-testid="options-count-badge">
+              <Badge variant="outline" className="text-xs" data-testid="options-count-badge">
                 {t('properties.optionsCount', { count: editingOptions.length })}
               </Badge>
             </div>

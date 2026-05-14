@@ -1,7 +1,7 @@
 # Agaric Design System — Performance Review
 
-> **Status:** Tier 2 + Tier 3 small wins shipped, plus Tier 1.4 (partial)
-> and Tier 1.1, 1.2, 1.5 closed. Closed: items **1** (`useResolveStore`
+> **Status:** Tier 2 + Tier 3 small wins shipped, plus Tier 1.1, 1.2,
+> 1.4, 1.5 closed. Closed: items **1** (`useResolveStore`
 > double-subscribe removed from `useBlockResolve` + `useRichContentCallbacks`
 > — sole subscription is `cache`; immutable-Map identity drives re-renders);
 > **2** (`page-blocks.ts` single-block-edit hot paths derive `blocksById`
@@ -34,14 +34,23 @@
 > cost), leaving only `currentView` + `pageStack` as effective rerender
 > triggers; AppSidebar's prop surface dropped from 16 to 10 props,
 > tightening the existing `React.memo` shallow-compare gate).
-> **Partial:** **4** — inline `onClick`/`onKeyDown` arrows on
-> `BlockListItem` rows replaced via a memoed per-block handler factory
-> in `useBlockNavigation` (`getRowHandlers`) across AgendaResults,
-> DuePanel, and DonePanel. The inline JSX `metadata` prop is unchanged,
-> so `BlockListItem.memo` will still not fully hit until the prop
-> surface is primitivized (BlockListItem renders its own metadata from
-> typed primitive props) — tracked as a follow-up.
-> **Still open:** Tier 1 item 3; the `metadata` half of item 4;
+> **4 closed (metadata half, Session 720).** `BlockListItem`'s prop
+> surface now exposes typed metadata primitives (`statusIconState`,
+> `priority` / `priorityVariant` / `priorityBadgeClassName`, `dueDate` /
+> `dueDateBlockId` / `onDateChanged`, `showCompletedIcon` /
+> `completedIconClassName`, `dependencyBlockId`) which a memoed
+> `BlockMetadataRow` sub-component renders internally. AgendaResults,
+> DuePanel, and DonePanel no longer pass inline `metadata={<>…</>}` JSX,
+> so `React.memo`'s shallow compare hits cleanly across parent
+> re-renders. The `metadata?: ReactNode` slot is retained as a
+> deprecated escape hatch (sole remaining caller: `UnfinishedTasks`,
+> which composes a one-off due-or-scheduled pill that doesn't map onto
+> the primitive surface; this caller is not on the perf-critical path).
+> The inline `DueDateChip` was lifted from `AgendaResults` into
+> `BlockListItem` so the `dueDate` primitive prop renders an editable
+> chip directly. Handlers half (Session 718) is unchanged — combined,
+> Tier 1.4 is fully closed.
+> **Still open:** Tier 1 item 3;
 > Tier 2 remaining items (6, 12). Item **7** closed —
 > `DaySection.lazyMount` defers per-day `BlockTree` mounting until the
 > day enters the viewport via a one-shot inline `IntersectionObserver`
@@ -91,13 +100,13 @@ const cache = useResolveStore((s) => s.cache)
 
 + Lazy-load the TipTap stack — JournalPage's static-render path can use `StaticBlock` until first focus/edit, then dynamic-import the editor and its 28 extensions.
 + Lazy-mount `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog` (currently mounted unconditionally at `src/App.tsx:494, 510, 515`) — drops `export-graph`/jszip out of the critical path.
-+ Investigate `LinkPreviewTooltip` (304K) with `ANALYZE=1 npm run build`; sub-deps are unattributed in the present build.
++ ~~Investigate `LinkPreviewTooltip` (304K) with `ANALYZE=1 npm run build`; sub-deps are unattributed in the present build.~~ *(closed — Session 723 investigation)* The "LinkPreviewTooltip" chunk name is a rolldown artifact, not a real dep. The chunk imports 73 modules (verified by `grep -oE 'from"[^"]+"' dist/assets/LinkPreviewTooltip-*.js | sort -u | wc -l`) — it's the page-editor's shared base chunk (RichContentRenderer core, ViewHeader, SearchablePopover, ListViewState, dnd, keyboard-config, EmptyState, LoadingSkeleton, PageLink, search-input, scroll-area, sheet, popover, datepicker, useDebouncedCallback, useIsMobile, useListKeyboardNavigation, etc.). No single heavy library to swap. The 312 KB is the natural sum of the page-editor's domain-component graph. **Mitigations if/when needed:** (a) split `RichContentRenderer` further — extract per-mark renderers as lazy chunks. (b) Make `LinkPreviewTooltip` itself a lazy-import from PageEditor (so its name better matches its actual role — only one file). (c) Accept the size — this chunk is parallel-fetched with the editor chunk, not on the critical path of first paint. Recommend (c) until profiling shows a regression.
 + ~~Curate `lowlight` languages — currently uses the `common` preset = 37 languages (`src/components/RichContentRenderer.tsx:33`, `src/editor/use-roving-editor.ts:89`). Estimated savings ~70-100 KB.~~ *(closed — Tier 1.3 sub-point 4)* Both call sites now import a shared `curatedLowlight` instance from `src/lib/lowlight-curated.ts`, which registers 16 hand-picked grammars (`bash`, `css`, `diff`, `dockerfile`, `go`, `javascript`, `json`, `markdown`, `plaintext`, `python`, `rust`, `shell`, `sql`, `typescript`, `xml`, `yaml`) covering the languages users actually write in the app. Dropped `arduino`, `c`, `cpp`, `csharp`, `graphql`, `ini`, `java`, `kotlin`, `less`, `lua`, `makefile`, `objectivec`, `perl`, `php`, `php-template`, `python-repl`, `r`, `ruby`, `scss`, `swift`, `vbnet`, `wasm` from the `common` preset — 21 grammars off the critical path. Unsupported languages fall back to plain text via the existing `try/catch` in `renderHighlightedCode`. Pinned by `src/lib/__tests__/lowlight-curated.test.ts` (exact-set assertion guards against drift back toward `common`).
 
-**4. `BlockListItem.memo` is defeated by inline JSX and inline handlers in every panel.** *(partial — handlers fixed; metadata still inline.)*
-Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions were confirmed at `src/components/AgendaResults.tsx:280, 313, 314`; `src/components/DuePanel.tsx:301, 320, 321`; `src/components/DonePanel.tsx:254, 268, 269`. New element + new function identities every parent render — the memo never hits.
-**What shipped (handlers half).** `useBlockNavigation` now exposes `getRowHandlers(block)` — a memoed factory backed by an internal `Map<blockId, { onClick, onKeyDown }>`. Each row pulls a stable pair instead of allocating `() => handleBlockClick(block)` / `(e) => handleBlockKeyDown(e, block)` per render. The cache invalidates whenever the underlying click/keydown identities change (driven by `onNavigateToPage` / `pageTitles` / `untitledLabel`). AgendaResults, DuePanel, and DonePanel row maps consume the factory; verified by `src/hooks/__tests__/useBlockNavigation.test.ts` (identity stability across renders, distinct ids → distinct bundles, cache invalidation on dep change).
-**Still open (metadata half).** `metadata={<>…</>}` JSX expressions in all three panels still allocate a fresh React element per render, so `BlockListItem.memo`'s shallow compare still bails on the `metadata` prop. Fully closing this requires changing `BlockListItem`'s prop surface from a `metadata?: ReactNode` slot to typed primitive fields (e.g. `metadataIcon?: 'check' | 'todo' | …`, `priority?: '1' | '2' | '3' | null`, `dueDate?: string | null`, `dependencyBlockId?: string`) and letting `BlockListItem` render those primitives itself. Memoing a `<RowMetadata />` sub-component is insufficient — the JSX expression still produces a new element each parent render. Track as a follow-up Tier 1 task; cost is moderate (touches the BlockListItem prop API and all three callers).
+**4. ~~`BlockListItem.memo` is defeated by inline JSX and inline handlers in every panel.~~** *(closed — both halves shipped.)*
+~~Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions were confirmed at `src/components/AgendaResults.tsx:280, 313, 314`; `src/components/DuePanel.tsx:301, 320, 321`; `src/components/DonePanel.tsx:254, 268, 269`. New element + new function identities every parent render — the memo never hits.~~
+**Handlers half (Session 718).** `useBlockNavigation` now exposes `getRowHandlers(block)` — a memoed factory backed by an internal `Map<blockId, { onClick, onKeyDown }>`. Each row pulls a stable pair instead of allocating `() => handleBlockClick(block)` / `(e) => handleBlockKeyDown(e, block)` per render. The cache invalidates whenever the underlying click/keydown identities change (driven by `onNavigateToPage` / `pageTitles` / `untitledLabel`). AgendaResults, DuePanel, and DonePanel row maps consume the factory; verified by `src/hooks/__tests__/useBlockNavigation.test.ts` (identity stability across renders, distinct ids → distinct bundles, cache invalidation on dep change).
+**Metadata half (Session 720).** `BlockListItem.tsx` gained typed primitive props — `statusIconState` / `statusIconShowDone`, `priority` / `priorityVariant` (`'default' | 'agenda'`) / `priorityBadgeClassName`, `dueDate` / `dueDateBlockId` / `onDateChanged`, `showCompletedIcon` / `completedIconClassName`, `dependencyBlockId` — and renders the metadata row internally via a memoed `BlockMetadataRow` sub-component that includes `StatusIcon`, `PriorityBadge` (or the legacy `agenda-results-priority` layout under `priorityVariant="agenda"`), `DueDateChip` (lifted from `AgendaResults`), `CheckCircle2` (DonePanel's completion icon), and `DependencyIndicator`. AgendaResults, DuePanel, and DonePanel migrated: the inline `metadata={<>…</>}` JSX is replaced by primitive props, so `React.memo`'s shallow compare hits cleanly across parent re-renders. The legacy `metadata?: ReactNode` slot is retained (marked `@deprecated`) as a documented escape hatch — sole remaining caller is `UnfinishedTasks`, which composes a one-off due-or-scheduled combined pill that doesn't map onto the primitive surface and lives outside the perf-critical agenda/due/done paths.
 
 **5. ~~`SortableBlockWrapper` is not memoized.~~** *(closed)*
 ~~`src/components/SortableBlockWrapper.tsx:53` is a plain `export function`. Every BlockTree re-render fans out to every wrapper, defeating downstream `SortableBlock`'s own `React.memo` because `rovingEditor` (a handle whose identity changes per render — `EditableBlock.tsx:128`) and `viewport` (recreated on observer state changes) flow through.~~
@@ -222,7 +231,7 @@ its `defaultProps` builder.
 2. ~~Fix `useResolveStore` double-subscription (#1) — hits every chip-rendering surface.~~ *(closed)*
 3. ~~In-place mutation for `blocksById` on single-block edits (#2) — reduces fan-out per keystroke.~~ *(closed; immutable touched-key path via `cloneBlocksByIdWith` / `cloneBlocksByIdWithout`.)*
 4. ~~Memoize `SortableBlockWrapper` and stabilize its props (#5).~~ *(closed)*
-5. ~~Replace inline handlers in DuePanel/DonePanel/AgendaResults rows~~ (closed; row handlers now sourced from `useBlockNavigation.getRowHandlers`). Remaining half of #4: primitivize `BlockListItem`'s `metadata` prop surface so `metadata={<>…</>}` JSX is no longer required at each call site.
+5. ~~Replace inline handlers in DuePanel/DonePanel/AgendaResults rows~~ (closed Session 718; row handlers now sourced from `useBlockNavigation.getRowHandlers`). ~~Remaining half of #4: primitivize `BlockListItem`'s `metadata` prop surface~~ *(closed Session 720 — typed primitive props + memoed `BlockMetadataRow` sub-component; AgendaResults / DuePanel / DonePanel migrated; `UnfinishedTasks` keeps the deprecated escape hatch for its combined due-or-scheduled pill).*
 6. Run `ANALYZE=1 npm run build` to attribute the unnamed 472K/212K chunks; then decide on TipTap split (#3).
 7. ~~Add `@tanstack/react-virtual` to AgendaResults and HistoryListView (#6).~~ *(closed 2026-05-14 — also extended to DonePanel and DuePanel; BlockListRenderer/BlockTree windowing remains a follow-up.)*
 8. ~~Memoize DonePanel `grouped`/`flatItems`, HistoryListItem, DaySection~~ (closed Session 710); AppSidebar still open (#10). ConflictListItem deleted by PEND-09 Phase 5.

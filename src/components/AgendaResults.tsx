@@ -10,17 +10,13 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { AlertCircle } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { StatusIcon } from '@/components/ui/status-icon'
 import { BatchPropertiesProvider } from '@/hooks/useBatchProperties'
-import { dueDateColor, formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
@@ -34,12 +30,9 @@ import {
   sortAgendaBlocksBy,
 } from '../lib/agenda-sort'
 import type { NavigateToPageFn } from '../lib/block-events'
-import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { BlockListItem } from './BlockListItem'
-import { DateChipEditor } from './DateChipEditor'
-import { DependencyIndicator } from './DependencyIndicator'
 import { LoadMoreButton } from './LoadMoreButton'
 
 export interface AgendaResultsProps {
@@ -65,71 +58,6 @@ export interface AgendaResultsProps {
   sortBy?: AgendaSortBy | undefined
   /** Callback fired when a date is changed inline (e.g. to refresh blocks). */
   onDateChanged?: (() => void) | undefined
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────
-
-/** Whether a YYYY-MM-DD date string represents an overdue date (UX-6). */
-function isOverdue(dateStr: string): boolean {
-  return dateStr < getTodayString()
-}
-
-// ── Due date chip with popover ─────────────────────────────────────────
-
-/** Inline editable due date chip — wraps the date in a Popover + DateChipEditor. */
-function DueDateChip({
-  block,
-  onDateChanged,
-}: {
-  block: BlockRow
-  onDateChanged?: (() => void) | undefined
-}): React.ReactElement | null {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-
-  if (!block.due_date) return null
-
-  const overdue = isOverdue(block.due_date)
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 font-medium cursor-pointer hover:ring-1 hover:ring-ring',
-            dueDateColor(block.due_date),
-          )}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          aria-label={t('dateChip.editDate')}
-        >
-          {/* UX-6: surface overdue with an icon as well as a colour so colour-blind users perceive the state. */}
-          {overdue && <AlertCircle className="h-3 w-3 mr-1" aria-hidden="true" />}
-          {formatCompactDate(block.due_date)}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-64 max-w-[calc(100vw-2rem)]"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
-        <DateChipEditor
-          blockId={block.id}
-          dateType="due"
-          currentDate={block.due_date}
-          onSuccess={() => {
-            // DateChipEditor already fires its own `toast.success` + `announce`
-            // on save, so UX-4's explicit-feedback requirement is satisfied
-            // without a second redundant toast here. Just close + refresh.
-            setOpen(false)
-            onDateChanged?.()
-          }}
-        />
-      </PopoverContent>
-    </Popover>
-  )
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -382,11 +310,9 @@ export function AgendaResults({
     virtualRow: { key: React.Key; index: number; start: number },
   ) {
     // Tier 1.4 (perf-review 2026-05-09): stable per-block handlers from the
-    // `useBlockNavigation` factory so `BlockListItem.memo` is not defeated by
-    // fresh inline-arrow identities every render. NOTE: the inline `metadata`
-    // fragment below still allocates a new React element per render, so the
-    // memo will not fully hit until `BlockListItem`'s prop surface is
-    // primitivized (left for a follow-up — bigger prop-shape refactor).
+    // `useBlockNavigation` factory + typed primitive metadata props so
+    // `BlockListItem.memo` shallow-compare hits cleanly across parent
+    // re-renders (perf-review 2026-05-14 follow-up).
     const rowHandlers = getRowHandlers(block)
     return (
       <BlockListItem
@@ -401,32 +327,16 @@ export function AgendaResults({
           transform: `translateY(${virtualRow.start}px)`,
         }}
         content={block.content}
-        metadata={
-          <>
-            {/* Status icon */}
-            <StatusIcon state={block.todo_state} />
-
-            {/* Priority badge */}
-            {block.priority && (
-              <span
-                className={cn(
-                  'agenda-results-priority inline-flex items-center justify-center rounded px-2 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:text-sm',
-                  priorityColor(block.priority),
-                )}
-              >
-                P{block.priority}
-              </span>
-            )}
-
-            {/* Due date chip — clickable with inline date editor */}
-            <DueDateChip block={block} onDateChanged={onDateChanged} />
-
-            {/* Dependency indicator — reads properties from the
-                BatchPropertiesProvider mounted at the AgendaResults
-                root (PEND-35 Tier 2.4a). One IPC for all rows. */}
-            <DependencyIndicator blockId={block.id} />
-          </>
-        }
+        // Metadata primitives — rendered by `BlockListItem`'s internal
+        // `BlockMetadataRow` sub-component (memoed) so a parent re-render
+        // without prop changes does NOT allocate fresh React elements per row.
+        statusIconState={block.todo_state}
+        priority={block.priority}
+        priorityVariant="agenda"
+        dueDate={block.due_date}
+        dueDateBlockId={block.id}
+        {...(onDateChanged !== undefined && { onDateChanged })}
+        dependencyBlockId={block.id}
         pageId={block.page_id}
         pageTitle={pageTitles.get(block.page_id ?? '') ?? t('agenda.untitled')}
         breadcrumbArrow={t('agenda.breadcrumbArrow')}

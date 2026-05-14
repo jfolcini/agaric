@@ -165,7 +165,7 @@ export function PeerListItem({
                     )}
                   </p>
                 )}
-                {/* UX-12: bumped from text-[10px] to text-xs (12px) so
+                {/* UX-12: bumped from text-xs to text-xs (12px) so
                     the format example is legible at default zoom. */}
                 <p className="text-xs text-muted-foreground">{t('device.addressHint')}</p>
                 <div className="flex gap-2">
