@@ -10,7 +10,7 @@ import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
 import { SidebarInset, SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
-import { useHeaderLabel, useTrashCount, ViewDispatcher } from './components/ViewDispatcher'
+import { useHeaderLabel, ViewDispatcher } from './components/ViewDispatcher'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
 import { useAppBootRecovery } from './hooks/useAppBootRecovery'
 import { useAppDialogs } from './hooks/useAppDialogs'
@@ -42,7 +42,6 @@ import { cn } from './lib/utils'
 import { useNavigationStore } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSpaceStore } from './stores/space'
-import { useSyncStore } from './stores/sync'
 import { selectPageStack, useTabsStore } from './stores/tabs'
 
 // `KeyboardShortcuts` and `WelcomeModal` are top-level overlays mounted
@@ -75,27 +74,28 @@ const NoPeersDialog = lazy(() =>
 
 function App() {
   const { t } = useTranslation()
+  // PERF-19 (design-system perf review tier-3 #19) — App subscribes
+  // ONLY to the routing / view-shell zustand slices it actually uses:
+  //   • `currentView`      — drives view routing, header switch, viewKey,
+  //                           and the focus-on-view-change effect.
+  //   • `setView`          — used by `handleOpenSyncSettings`; also
+  //                           forwarded to AppSidebar as `onSelectView`.
+  //   • `navigateToPage`   — used by `handleNewPage` / `handlePageSelect`
+  //                           and forwarded to ViewDispatcher.
+  //   • `pageStack`        — derives `activePage` for both `viewKey` and
+  //                           the ViewDispatcher page-editor branch.
+  // Everything that the sidebar alone consumed (sync state, peers,
+  // last-synced timestamp, space roster, current space id, trash badge)
+  // is subscribed directly inside `AppSidebar` now — the leaf owns the
+  // subscription. `goBack` lives inside `ViewDispatcher`, the sole
+  // consumer of the back action. `setView` and `navigateToPage` are
+  // stable zustand actions, so subscribing here is a zero-rerender cost.
   const currentView = useNavigationStore((s) => s.currentView)
   const setView = useNavigationStore((s) => s.setView)
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
-  const goBack = useTabsStore((s) => s.goBack)
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
-  const trashCount = useTrashCount()
   const { theme: currentTheme, isDark, toggleTheme } = useTheme()
-  const syncState = useSyncStore((s) => s.state)
-  const syncPeers = useSyncStore((s) => s.peers)
-  const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
-  // FEAT-3 Phase 2 — subscribe to `currentSpaceId` so the
-  // `clearPagesList` effect below re-runs whenever the active space
-  // changes (e.g. the user picks a different space in `SpaceSwitcher`).
-  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  // FEAT-3p10 — subscribe to `availableSpaces` so the visual-identity
-  // effect re-runs after `refreshAvailableSpaces()` finishes (boot
-  // path: the persisted `currentSpaceId` is set BEFORE the IPC
-  // resolves, so without this dep the title / accent stay stale until
-  // the next user-driven space switch).
-  const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
@@ -401,20 +401,14 @@ function App() {
         <AppSidebar
           currentView={currentView}
           onSelectView={setView}
-          trashCount={trashCount}
-          syncState={syncState}
-          syncPeers={syncPeers}
           syncing={syncing}
           isOnline={isOnline}
-          lastSyncedAt={lastSyncedAt}
           isDark={isDark}
           currentTheme={currentTheme}
           onToggleTheme={toggleTheme}
           onNewPage={handleNewPage}
           onSyncClick={handleSyncClick}
           onShowShortcuts={() => setShortcutsOpen(true)}
-          availableSpaces={availableSpaces}
-          currentSpaceId={currentSpaceId}
         />
         <SidebarInset>
           <ViewHeaderOutletProvider>
@@ -479,7 +473,6 @@ function App() {
                   currentView={currentView}
                   activePage={activePage ?? null}
                   onPageSelect={handlePageSelect}
-                  onBack={goBack}
                   navigateToPage={navigateToPage}
                 />
               </div>

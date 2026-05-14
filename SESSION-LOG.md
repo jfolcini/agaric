@@ -7,6 +7,42 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 720 — Perf Tier 1.3.4/2.7/2.11/3.19 + Maintain 2d (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 5 build (general-purpose) in parallel |
+| **Items closed** | design-system-perf-review Tier 1.3.4 (lowlight curation, ~94 KB raw / 30 KB gzip saved); Tier 2 items 7 (WeeklyView day BlockTree lazy-mount) + 11 (transactional tabs — verified by investigation that React 19 already batches; no helper needed); Tier 3 item 19 (App.tsx selector push-down, 10 → 4 selectors). Maintain Phase 2.2d (3 new primitives extracted: MetricCard, SectionGroupHeader, FormField). |
+| **Items modified** | design-system-perf-review status note updated; design-system-maintainability status note updated. |
+| **Tests added** | +6 lowlight-curated drift-guard tests; +5 DaySection lazyMount tests + WeeklyView regression; +2 navigation render-batching tests; +33 primitive tests for the 3 new extractions (MetricCard / SectionGroupHeader / FormField). |
+| **Files touched** | 28 (3 new primitives + 1 new lowlight module + 1 new lib test + perf modifications across App/AppSidebar/ViewDispatcher/DaySection/WeeklyView/StatusPanel/DuePanel/DonePanel/AppearanceTab/use-roving-editor/RichContentRenderer/tabs/stores tests + 2 plan-file status notes + 2 inventory bumps). |
+
+**Summary:** five parallel subagents closed three perf items, one investigation-only item, and three new primitive extractions.
+
+**Perf 1.3.4** — replaced `lowlight.common` (37 languages) with a curated 16-language set in a shared `src/lib/lowlight-curated.ts`; both `RichContentRenderer` and `use-roving-editor` import the shared instance. `highlight` chunk shrank from 148 KB raw → 54 KB raw (94 KB savings); gzip 30 KB savings.
+
+**Perf 2.7** — `DaySection` gains an optional `lazyMount` prop with an inline IntersectionObserver (`rootMargin: '200px 0px'`); WeeklyView opts in for all 7 days. `DailyView` keeps the eager default. `prefers-reduced-motion: reduce` eagerly mounts to avoid the visible placeholder→tree swap. A 7-day Week view that's only showing 2-3 days mounts only 2-3 BlockTrees.
+
+**Perf 2.11** — closed by investigation. Empirically verified that React 19's scheduler coalesces all `useSyncExternalStore` notifications in one sync tick into a single render pass per subscribed component, regardless of how many distinct stores fire. The 5 zustand `set()` calls inside `tabs.navigateToPage` produce 1 render per subscriber, not 5. Added 2 render-counting regression tests in `navigation.test.ts` to lock the behavior in. Documented inline at `tabs.ts:205`.
+
+**Perf 3.19** — App.tsx subscribed to 10 selectors; 6 of those were only passed through to AppSidebar / ViewDispatcher. Pushed `syncState` / `syncPeers` / `lastSyncedAt` / `currentSpaceId` / `availableSpaces` / `useTrashCount` into `AppSidebar`; pushed `goBack` action into `ViewDispatcher`. App.tsx now subscribes to 4 selectors (`currentView`, `pageStack`, `setView`, `navigateToPage`) — and 2 of those are stable zustand actions (zero re-render cost), so effective re-render triggers collapse to `currentView` + `pageStack`. AppSidebar's prop surface drops 16 → 10 props, tightening its existing `React.memo` shallow-compare gate.
+
+**Maintain 2.2d** — three new primitives extracted under `src/components/ui/`:
+- `MetricCard` (used by 8 StatusPanel tiles).
+- `SectionGroupHeader` (used by DuePanel + DonePanel — `HistoryPanel` did NOT actually contain the inline shape the plan flagged).
+- `FormField` (used by AppearanceTab; deferred KeyboardSettingsTab + PropertyRowEditor + GoogleCalendarSettingsTab per the plan's recommendation).
+
+`SectionGroupHeader` shipped as a **sibling** to `SectionTitle` rather than as an extended variant — different roles (heading vs section break), different layouts, different chrome — folding them into one CVA would produce illegal variant combinations. ARCHITECTURE.md inventory bumped to 41 shadcn/ui primitives.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9721 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** the parallel subagents' vitest runs sometimes captured each other's in-flight file modifications and stashed them. Manually reconciled at the end — final state confirmed via `git diff --stat`. Worth flagging the cross-subagent stashing bug separately.
+
+---
 ## Session 719 — Perf Tier 1.1/1.2/2.8 + Maintain 2a/2b (2026-05-14)
 
 | Metadata | Value |

@@ -43,6 +43,7 @@ vi.mock('../DaySection', () => ({
         data-compact={String(!!props['compact'])}
         data-mode={props['mode'] as string}
         data-has-navigate={String(!!props['onNavigateToPage'])}
+        data-lazy-mount={String(!!props['lazyMount'])}
         aria-label={`Journal for ${entry.displayDate}`}
       >
         <span>{entry.displayDate}</span>
@@ -154,6 +155,18 @@ describe('WeeklyView', () => {
     for (const section of sections) {
       expect(section).toHaveAttribute('data-compact', 'true')
       expect(section).toHaveAttribute('data-mode', 'weekly')
+    }
+  })
+
+  // perf-review Tier 2 item 7: opt every day into lazy-mount so the 4-5
+  // off-screen BlockTrees don't all mount on Week-view entry.
+  it('opts every DaySection into lazyMount', () => {
+    render(<WeeklyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const sections = screen.getAllByTestId(/^day-section-/)
+    expect(sections).toHaveLength(7)
+    for (const section of sections) {
+      expect(section).toHaveAttribute('data-lazy-mount', 'true')
     }
   })
 

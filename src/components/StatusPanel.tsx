@@ -20,6 +20,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -191,61 +192,77 @@ export function StatusPanel(): React.ReactElement {
             {status && (
               <output className="status-panel-metrics block">
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div
+                  <MetricCard
                     className={cn(
-                      'status-metric rounded-lg border bg-muted/30 p-4 text-center',
+                      'status-metric',
                       queueHealthClasses(status.foreground_queue_depth),
                     )}
-                  >
-                    <dd className="status-metric-value text-2xl font-bold">
-                      {status.foreground_queue_depth}
-                    </dd>
-                    <MetricLabel
-                      label={t('status.foregroundQueueLabel')}
-                      tooltip={t('status.foregroundQueueTooltip')}
-                    />
-                    <dd className="text-xs text-muted-foreground mt-1">
-                      {t('status.peakLabel')} {status.fg_high_water ?? 0}
-                    </dd>
-                  </div>
+                    value={
+                      <span className="status-metric-value">{status.foreground_queue_depth}</span>
+                    }
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.foregroundQueueLabel')}
+                        tooltip={t('status.foregroundQueueTooltip')}
+                      />
+                    }
+                    footer={
+                      <>
+                        {t('status.peakLabel')} {status.fg_high_water ?? 0}
+                      </>
+                    }
+                  />
 
-                  <div
+                  <MetricCard
                     className={cn(
-                      'status-metric rounded-lg border bg-muted/30 p-4 text-center',
+                      'status-metric',
                       queueHealthClasses(status.background_queue_depth),
                     )}
-                  >
-                    <dd className="status-metric-value text-2xl font-bold">
-                      {status.background_queue_depth}
-                    </dd>
-                    <MetricLabel
-                      label={t('status.backgroundQueueLabel')}
-                      tooltip={t('status.backgroundQueueTooltip')}
-                    />
-                    <dd className="text-xs text-muted-foreground mt-1">
-                      {t('status.peakLabel')} {status.bg_high_water ?? 0}
-                    </dd>
-                  </div>
+                    value={
+                      <span className="status-metric-value">{status.background_queue_depth}</span>
+                    }
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.backgroundQueueLabel')}
+                        tooltip={t('status.backgroundQueueTooltip')}
+                      />
+                    }
+                    footer={
+                      <>
+                        {t('status.peakLabel')} {status.bg_high_water ?? 0}
+                      </>
+                    }
+                  />
 
-                  <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
-                    <dd className="status-metric-value text-2xl font-bold">
-                      {status.total_ops_dispatched + status.total_background_dispatched}
-                    </dd>
-                    <MetricLabel
-                      label={t('status.opsDispatchedLabel')}
-                      tooltip={t('status.opsDispatchedTooltip')}
-                    />
-                  </div>
+                  <MetricCard
+                    className="status-metric"
+                    value={
+                      <span className="status-metric-value">
+                        {status.total_ops_dispatched + status.total_background_dispatched}
+                      </span>
+                    }
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.opsDispatchedLabel')}
+                        tooltip={t('status.opsDispatchedTooltip')}
+                      />
+                    }
+                  />
 
-                  <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
-                    <dd className="status-metric-value text-2xl font-bold">
-                      {status.total_background_dispatched}
-                    </dd>
-                    <MetricLabel
-                      label={t('status.backgroundDispatchedLabel')}
-                      tooltip={t('status.backgroundDispatchedTooltip')}
-                    />
-                  </div>
+                  <MetricCard
+                    className="status-metric"
+                    value={
+                      <span className="status-metric-value">
+                        {status.total_background_dispatched}
+                      </span>
+                    }
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.backgroundDispatchedLabel')}
+                        tooltip={t('status.backgroundDispatchedTooltip')}
+                      />
+                    }
+                  />
                 </dl>
 
                 {hasErrors && (
@@ -315,39 +332,49 @@ export function StatusPanel(): React.ReactElement {
                 )}
 
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
-                    <dd className="sync-peer-count text-2xl font-bold">{syncPeers.length}</dd>
-                    <MetricLabel
-                      label={t('status.peerLabel', { count: syncPeers.length })}
-                      tooltip={t('status.peerCountTooltip')}
-                    />
-                  </div>
+                  <MetricCard
+                    value={<span className="sync-peer-count">{syncPeers.length}</span>}
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.peerLabel', { count: syncPeers.length })}
+                        tooltip={t('status.peerCountTooltip')}
+                      />
+                    }
+                  />
 
-                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
-                    <dd className="sync-last-synced text-2xl font-bold">
-                      {syncLastSynced ? formatTimestamp(syncLastSynced, 'relative') : '--'}
-                    </dd>
-                    <MetricLabel
-                      label={t('status.lastSyncedLabel')}
-                      tooltip={t('status.lastSyncedTooltip')}
-                    />
-                  </div>
+                  <MetricCard
+                    value={
+                      <span className="sync-last-synced">
+                        {syncLastSynced ? formatTimestamp(syncLastSynced, 'relative') : '--'}
+                      </span>
+                    }
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.lastSyncedLabel')}
+                        tooltip={t('status.lastSyncedTooltip')}
+                      />
+                    }
+                  />
 
-                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
-                    <dd className="sync-ops-received text-2xl font-bold">{syncOpsReceived}</dd>
-                    <MetricLabel
-                      label={t('status.opsReceivedLabel')}
-                      tooltip={t('status.opsReceivedTooltip')}
-                    />
-                  </div>
+                  <MetricCard
+                    value={<span className="sync-ops-received">{syncOpsReceived}</span>}
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.opsReceivedLabel')}
+                        tooltip={t('status.opsReceivedTooltip')}
+                      />
+                    }
+                  />
 
-                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
-                    <dd className="sync-ops-sent text-2xl font-bold">{syncOpsSent}</dd>
-                    <MetricLabel
-                      label={t('status.opsSentLabel')}
-                      tooltip={t('status.opsSentTooltip')}
-                    />
-                  </div>
+                  <MetricCard
+                    value={<span className="sync-ops-sent">{syncOpsSent}</span>}
+                    labelSlot={
+                      <MetricLabel
+                        label={t('status.opsSentLabel')}
+                        tooltip={t('status.opsSentTooltip')}
+                      />
+                    }
+                  />
                 </dl>
               </div>
             )}

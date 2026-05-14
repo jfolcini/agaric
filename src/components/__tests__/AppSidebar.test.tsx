@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '../../lib/i18n'
 import { useSpaceStore } from '../../stores/space'
+import { type PeerInfo, type SyncState, useSyncStore } from '../../stores/sync'
 import { AppSidebar, type AppSidebarProps } from '../AppSidebar'
 import { SidebarProvider } from '../ui/sidebar'
 
@@ -24,22 +25,38 @@ function defaultProps(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps
   return {
     currentView: 'journal',
     onSelectView: vi.fn(),
-    trashCount: 0,
-    syncState: 'idle',
-    syncPeers: [],
     syncing: false,
     isOnline: true,
-    lastSyncedAt: null,
     isDark: false,
     currentTheme: 'auto',
     onToggleTheme: vi.fn(),
     onNewPage: vi.fn(),
     onSyncClick: vi.fn(),
     onShowShortcuts: vi.fn(),
-    availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
-    currentSpaceId: 'SPACE_PERSONAL',
     ...overrides,
   }
+}
+
+/**
+ * PERF-19 — `syncState`, `syncPeers`, `lastSyncedAt`, `availableSpaces`,
+ * `currentSpaceId`, and the `trashCount` badge are read directly from
+ * the zustand stores inside the sidebar rather than forwarded as props.
+ * Tests now seed those stores instead of injecting prop overrides.
+ */
+function seedSyncStore({
+  state = 'idle' as SyncState,
+  peers = [] as PeerInfo[],
+  lastSyncedAt = null as string | null,
+}: {
+  state?: SyncState
+  peers?: PeerInfo[]
+  lastSyncedAt?: string | null
+} = {}) {
+  useSyncStore.setState({
+    state,
+    peers,
+    lastSyncedAt,
+  })
 }
 
 function renderSidebar(overrides: Partial<AppSidebarProps> = {}) {
@@ -57,12 +74,19 @@ beforeEach(() => {
 
   // Seed the space store the same way App.test.tsx does so the embedded
   // SpaceSwitcher / SpaceAccentBadge render against a deterministic
-  // active space.
+  // active space. PERF-19 — AppSidebar now reads `availableSpaces` /
+  // `currentSpaceId` directly from the space store rather than via
+  // props, so the seed here doubles as the prop equivalent.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_PERSONAL',
     availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
     isReady: true,
   })
+
+  // PERF-19 — reset the sync store so each test starts from a
+  // deterministic `idle` / no-peers / never-synced state. Individual
+  // tests override via `seedSyncStore({…})`.
+  useSyncStore.getState().reset()
 
   // SpaceSwitcher fires `list_spaces` on mount; return the same single
   // seed entry. Other commands fall back to an empty page so any stray
@@ -128,13 +152,17 @@ describe('AppSidebar', () => {
   // tell whether to fix the network or pair a device. Pin the
   // distinction here so the two states keep diverging tokens.
   it('uses distinct sync dot colors for offline vs no-peers states (UX-380)', () => {
-    const { rerender, props } = renderSidebar({ syncState: 'offline', syncPeers: [] })
+    // PERF-19 — sync state lives in the store now; seed instead of
+    // passing as props.
+    seedSyncStore({ state: 'offline', peers: [] })
+    const { rerender, props } = renderSidebar()
     const offlineClass = screen.getByTestId('sync-button-status-dot').className
     expect(offlineClass).toContain('bg-muted-foreground')
 
+    seedSyncStore({ state: 'idle', peers: [] })
     rerender(
       <SidebarProvider>
-        <AppSidebar {...props} syncState="idle" syncPeers={[]} />
+        <AppSidebar {...props} />
       </SidebarProvider>,
     )
     const noPeersClass = screen.getByTestId('sync-button-status-dot').className
@@ -148,9 +176,12 @@ describe('AppSidebar', () => {
   // so the affordance survives the collapse.
   it('includes the last synced status in the sync button tooltip (UX-379)', async () => {
     const user = userEvent.setup()
+    // PERF-19 — `lastSyncedAt` lives in the store now; the default
+    // reset in `beforeEach` already leaves it as `null`, so no extra
+    // seed call is required.
     render(
       <SidebarProvider defaultOpen={false}>
-        <AppSidebar {...defaultProps({ lastSyncedAt: null })} />
+        <AppSidebar {...defaultProps()} />
       </SidebarProvider>,
     )
 

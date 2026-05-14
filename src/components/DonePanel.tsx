@@ -28,6 +28,7 @@ import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
+import { SectionGroupHeader } from './ui/section-group-header'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
@@ -242,14 +243,14 @@ export function DonePanel({
                   {grouped.map((group) => (
                     <div key={group.pageId} className="done-panel-group">
                       {/* Group sub-header: page title + block count (not individually collapsible) */}
-                      <div className="done-panel-group-header px-3 py-1 text-xs [@media(pointer:coarse)]:text-sm font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
+                      <SectionGroupHeader className="done-panel-group-header bg-muted">
                         <PageLink
                           pageId={group.pageId}
                           title={group.title}
                           className="hover:underline"
                         />{' '}
                         ({group.items.length})
-                      </div>
+                      </SectionGroupHeader>
 
                       <ul
                         className="done-panel-blocks ml-2 space-y-1"

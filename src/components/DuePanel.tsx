@@ -33,6 +33,7 @@ import { renderRichContent } from './RichContentRenderer'
 import { UpcomingSection } from './UpcomingSection'
 import { Badge } from './ui/badge'
 import { PriorityBadge } from './ui/priority-badge'
+import { SectionGroupHeader } from './ui/section-group-header'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -281,9 +282,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                 {grouped.map((group) => (
                   <div key={group.label} className="due-panel-group">
                     {/* Group sub-header (not collapsible) */}
-                    <div className="due-panel-group-header px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wide bg-muted/50 rounded [@media(pointer:coarse)]:text-sm">
+                    <SectionGroupHeader className="due-panel-group-header">
                       {group.label}
-                    </div>
+                    </SectionGroupHeader>
 
                     <ul
                       className="due-panel-blocks ml-2 space-y-1"

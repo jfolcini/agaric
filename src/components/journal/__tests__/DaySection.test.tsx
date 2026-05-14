@@ -25,10 +25,10 @@
  * 21. A11y audit passes (axe)
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
@@ -658,6 +658,169 @@ describe('DaySection', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── Lazy-mount (perf-review Tier 2 item 7) ─────────────────────────
+  describe('lazyMount', () => {
+    /**
+     * Per-test IntersectionObserver mock. The shared test-setup.ts ships a
+     * no-op stub that never reports intersection — fine for components that
+     * tolerate "never intersects" but not for asserting the swap-in. We
+     * install a controllable mock and uninstall in `afterEach`.
+     */
+    type IOCallback = (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void
+
+    class MockIntersectionObserver {
+      callback: IOCallback
+      rootMargin: string
+      observed: Set<Element> = new Set()
+      static instances: MockIntersectionObserver[] = []
+
+      constructor(callback: IOCallback, options?: IntersectionObserverInit) {
+        this.callback = callback
+        this.rootMargin = options?.rootMargin ?? '0px'
+        MockIntersectionObserver.instances.push(this)
+      }
+
+      observe(el: Element): void {
+        this.observed.add(el)
+      }
+      unobserve(el: Element): void {
+        this.observed.delete(el)
+      }
+      disconnect(): void {
+        this.observed.clear()
+      }
+      takeRecords(): IntersectionObserverEntry[] {
+        return []
+      }
+
+      /** Trigger an `isIntersecting: true` callback for all observed elements. */
+      enterAll(): void {
+        const entries = Array.from(this.observed).map(
+          (target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry,
+        )
+        this.callback(entries, this as unknown as IntersectionObserver)
+      }
+    }
+
+    beforeEach(() => {
+      MockIntersectionObserver.instances = []
+      vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+    })
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    // Default behaviour (lazyMount=false, today's default) — BlockTree mounts
+    // immediately, no placeholder. This is the path used by DailyView.
+    it('mounts BlockTree eagerly when lazyMount is not set (default)', () => {
+      const entry = makeDayEntry({ pageId: 'PAGE_1' })
+
+      render(<DaySection entry={entry} mode="daily" onAddBlock={noop} />)
+
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+      expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+    })
+
+    // Lazy path before viewport entry: a placeholder renders in place of
+    // BlockTree until IntersectionObserver fires.
+    it('renders placeholder until IntersectionObserver reports entry', () => {
+      const entry = makeDayEntry({
+        pageId: 'PAGE_1',
+        dateStr: '2025-06-15',
+        displayDate: 'Sun, Jun 15, 2025',
+      })
+
+      render(<DaySection entry={entry} mode="weekly" lazyMount onAddBlock={noop} />)
+
+      // Placeholder is there, BlockTree is NOT.
+      const placeholder = screen.getByTestId('day-section-lazy-placeholder')
+      expect(placeholder).toBeInTheDocument()
+      expect(placeholder).toHaveAttribute('data-date', '2025-06-15')
+      expect(placeholder).toHaveAttribute('aria-hidden', 'true')
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+
+      // The observer was wired up and is observing the placeholder element.
+      expect(MockIntersectionObserver.instances).toHaveLength(1)
+      const obs = MockIntersectionObserver.instances[0]
+      expect(obs).toBeDefined()
+      expect(obs?.observed.size).toBe(1)
+    })
+
+    // After the observer fires `isIntersecting: true`, the placeholder is
+    // swapped for the full BlockTree. Once mounted, it stays mounted (the
+    // observer disconnects in the same callback).
+    it('swaps placeholder for BlockTree after observer fires', async () => {
+      const entry = makeDayEntry({
+        pageId: 'PAGE_1',
+        dateStr: '2025-06-15',
+        displayDate: 'Sun, Jun 15, 2025',
+      })
+
+      render(<DaySection entry={entry} mode="weekly" lazyMount onAddBlock={noop} />)
+
+      // Sanity: placeholder rendered first.
+      expect(screen.getByTestId('day-section-lazy-placeholder')).toBeInTheDocument()
+
+      const obs = MockIntersectionObserver.instances[0]
+      expect(obs).toBeDefined()
+
+      act(() => {
+        obs?.enterAll()
+      })
+
+      // Placeholder swapped for the real tree.
+      await waitFor(() => {
+        expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+        expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+      })
+    })
+
+    // Reduced-motion path: lazyMount=true but the user prefers reduced
+    // motion → eagerly mount (avoid the visible placeholder→tree swap on
+    // scroll).
+    it('eagerly mounts under prefers-reduced-motion even when lazyMount=true', () => {
+      const originalMatchMedia = window.matchMedia
+      try {
+        // biome-ignore lint/suspicious/noExplicitAny: targeted matchMedia stub
+        ;(window as any).matchMedia = (query: string) => ({
+          matches: query === '(prefers-reduced-motion: reduce)',
+          media: query,
+          onchange: null,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        })
+
+        const entry = makeDayEntry({ pageId: 'PAGE_1' })
+
+        render(<DaySection entry={entry} mode="weekly" lazyMount onAddBlock={noop} />)
+
+        expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+        expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+      } finally {
+        // biome-ignore lint/suspicious/noExplicitAny: restore matchMedia
+        ;(window as any).matchMedia = originalMatchMedia
+      }
+    })
+
+    // Edge case: lazyMount with no pageId → no BlockTree to mount at all,
+    // and we should not render a phantom placeholder. The empty-state path
+    // handles the "no content" UX.
+    it('does not render placeholder when pageId is null', () => {
+      const entry = makeDayEntry({ pageId: null, displayDate: 'Sun, Jun 15, 2025' })
+
+      render(<DaySection entry={entry} mode="weekly" compact lazyMount onAddBlock={noop} />)
+
+      expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+      // Empty state still rendered.
+      expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
   })
 })

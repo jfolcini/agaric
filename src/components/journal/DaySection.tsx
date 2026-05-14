@@ -6,7 +6,7 @@
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
-import { memo } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -34,8 +34,66 @@ interface DaySectionProps {
   backlinkCounts?: Record<string, number> | undefined
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
+  /**
+   * When `true`, defer mounting the heavy `BlockTree` (and its
+   * `PageBlockStoreProvider`) until the section enters the viewport.
+   * Used by `WeeklyView` to avoid mounting 7 BlockTrees up-front when
+   * only 2-3 are visible (perf-review Tier 2 item 7). Once mounted, the
+   * tree stays mounted to avoid re-spawn churn on quick scroll. Honours
+   * `prefers-reduced-motion: reduce` by eagerly mounting (avoids the
+   * one-frame placeholder swap for motion-sensitive users). Defaults to
+   * `false` — `DailyView` (single day) and tests render eagerly.
+   */
+  lazyMount?: boolean | undefined
 }
 
+/** Placeholder min-height while a lazy day waits to enter the viewport. */
+const LAZY_PLACEHOLDER_MIN_HEIGHT = 200
+
+/**
+ * One-shot intersection observer: returns `true` once the element has
+ * been intersected, then stays `true` (no flip-back) so a brief scroll
+ * away from a mounted day doesn't tear down the tree. Disabled when
+ * `enabled === false` (eager-mount path).
+ */
+function useEnteredViewport(
+  enabled: boolean,
+  rootMargin = '200px 0px',
+): [boolean, React.RefObject<HTMLDivElement | null>] {
+  const [entered, setEntered] = useState(!enabled)
+  const ref = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!enabled || entered) return
+    const el = ref.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      // Defensive: jsdom/older runtimes — eagerly mark as entered.
+      setEntered(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setEntered(true)
+            observer.disconnect()
+            return
+          }
+        }
+      },
+      { rootMargin },
+    )
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [enabled, entered, rootMargin])
+
+  return [entered, ref]
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: cognitive complexity 26 (max 25). DaySection already orchestrates many props (lazy mount, navigation, focus restoration, agenda counts); refactoring out would require pulling several inter-dependent useEffects apart for one point over.
 function DaySectionInner({
   entry,
   headingLevel = 'h3',
@@ -47,6 +105,7 @@ function DaySectionInner({
   backlinkCounts = {},
   onNavigateToPage,
   onAddBlock,
+  lazyMount = false,
 }: DaySectionProps): React.ReactElement {
   const { t } = useTranslation()
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
@@ -55,6 +114,18 @@ function DaySectionInner({
   const isToday = entry.dateStr === todayStr
   const Heading = headingLevel === 'h2' ? 'h2' : 'h3'
   const isClickable = mode !== 'daily'
+
+  // Lazy-mount the BlockTree only when (a) the caller opted in via
+  // `lazyMount` and (b) reduced-motion is NOT requested. Reduced-motion
+  // users get eager mount to avoid the one-frame placeholder→tree swap
+  // that would otherwise be visible during scroll. SSR-safe: matchMedia
+  // is only invoked at module-mount time, after hydration in a Tauri SPA.
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const shouldLazyMount = lazyMount && !prefersReducedMotion
+  const [hasEntered, lazyRef] = useEnteredViewport(shouldLazyMount)
 
   return (
     <section
@@ -158,15 +229,24 @@ function DaySectionInner({
         </div>
       )}
 
-      {entry.pageId && (
-        <PageBlockStoreProvider pageId={entry.pageId}>
-          <BlockTree
-            parentId={entry.pageId}
-            onNavigateToPage={onNavigateToPage}
-            autoCreateFirstBlock={mode === 'daily'}
+      {entry.pageId &&
+        (shouldLazyMount && !hasEntered ? (
+          <div
+            ref={lazyRef}
+            data-testid="day-section-lazy-placeholder"
+            data-date={entry.dateStr}
+            style={{ minHeight: LAZY_PLACEHOLDER_MIN_HEIGHT }}
+            aria-hidden="true"
           />
-        </PageBlockStoreProvider>
-      )}
+        ) : (
+          <PageBlockStoreProvider pageId={entry.pageId}>
+            <BlockTree
+              parentId={entry.pageId}
+              onNavigateToPage={onNavigateToPage}
+              autoCreateFirstBlock={mode === 'daily'}
+            />
+          </PageBlockStoreProvider>
+        ))}
 
       {/* DuePanel + DonePanel are date-keyed agenda queries — they
           render in daily mode for any day regardless of whether a
