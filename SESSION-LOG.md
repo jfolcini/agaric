@@ -7,6 +7,34 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 717 — gcal-oauth wiring + perf followups + UX doc drift (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 2 build (general-purpose) in parallel + orchestrator-direct UX.md doc-drift + mock-handler follow-up |
+| **Items closed** | `pending/gcal-oauth-connect-wiring-2026-05-13.md` (plan file deleted); design-system-perf-review items 10 (AppSidebar.memo), 13 (`createSpaceSubscriber` via `subscribeWithSelector`), 14 (`MeasuringStrategy.WhileDragging`); design-system-ux-review Tier 2 doc-drift D2 + D4. |
+| **Items modified** | design-system-perf-review status note updated; UX.md updated for D2 (`sm` breakpoint not `md`) + D4 (narrow-viewport 12 px indent tier). |
+| **Tests added** | +7 gcal_push::oauth_callback unit tests; +3 commands::gcal command tests; +7 GoogleCalendarSettingsTab tests; +1 tauri-mock handler. Existing createSpaceSubscriber tests updated for immediate-seed semantics. |
+| **Files touched** | 14 (Rust: oauth_callback module + commands/gcal + lib.rs + mod.rs + oauth.rs; TS: GoogleCalendarSettingsTab + bindings + i18n + mock; perf: AppSidebar + createSpaceSubscriber + space store + BlockTree; docs: UX.md + plan-file status note) |
+
+**Summary:** two parallel subagents closed gcal-oauth-connect-wiring + three perf followups, plus orchestrator-direct UX doc-drift. **gcal-oauth wiring** — new `begin_gcal_oauth` Tauri command + `gcal_push::oauth_callback` module (manual `tokio::net::TcpListener` on `127.0.0.1:0`, single-accept, 5 min hard timeout, ~80 LOC). `OAuthClient::begin_authorize` gains a `redirect_uri: String` arg and `exchange_code` an `Option<String>` because Google validates byte-equality between authorize/exchange `redirect_uri`. Shared `Arc<OAuthClient>` registered in `app.manage()` so the per-flow PKCE verifier is findable when the callback fires. Frontend: Connect button gets `disabled` + `aria-busy` + spinner + `t('gcal.connecting')` label while IPC is in flight; 5 typed `AppError::Validation` keys (`oauth.timeout` / `invalid_state` / `exchange_failed` / `client_misconfigured` / `open_browser_failed`) mapped to specific toast strings. Pre-existing deprecation warning on `tauri_plugin_shell::Shell::open` (use `tauri-plugin-opener`) is upstream-noted; left for a separate migration. **Perf followups** — AppSidebar wrapped in `React.memo` via the BlockListItem Inner/memo pattern. `createSpaceSubscriber` now uses `subscribeWithSelector(useSpaceStore)` to listen only on `currentSpaceId` — eliminates spurious fan-out on `availableSpaces` refresh or `isReady` flip; module-level subscribers in journal/navigation/recent-pages/tabs untouched. `BlockTree`'s `MeasuringStrategy.Always` → `WhileDragging` (no callsite measures droppables manually). **UX doc-drift** — D2 in UX.md: responsive heading overrides actually fire at `sm` (`max-width:640px`), not `md`; D4: third indent tier at `12px` for `max-width:640px` documented. Tauri-mock gained a `begin_gcal_oauth` handler returning `{ account_email: null }` so the browser preview path doesn't trip the MAINT-123 drift-detection test.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3673 pass / 4 skipped (was 3663; +10 net from oauth-callback + gcal command tests).
+- `npx vitest run` — 9653 tests pass (was 9646; +7 from GoogleCalendarSettingsTab tests).
+- `npx tsc --noEmit` — clean.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- Backend (Rust): `src-tauri/src/gcal_push/oauth_callback.rs` (new), `gcal_push/mod.rs`, `gcal_push/oauth.rs`, `commands/gcal.rs`, `commands/mod.rs`, `lib.rs`.
+- Frontend (TS): `src/components/GoogleCalendarSettingsTab.tsx`, `src/lib/bindings.ts` (regenerated), `src/lib/i18n/settings.ts`, `src/lib/tauri-mock/handlers.ts`.
+- Perf: `src/components/AppSidebar.tsx`, `src/lib/createSpaceSubscriber.ts`, `src/stores/space.ts`, `src/components/BlockTree.tsx`, `src/lib/__tests__/createSpaceSubscriber.test.ts`.
+- Docs: `UX.md`, `pending/design-system-perf-review-2026-05-09.md` (status note), `pending/gcal-oauth-connect-wiring-2026-05-13.md` (deleted), `pending/README.md` (gcal row removed).
+
+**Commit plan:** single commit covering gcal-oauth plan close + perf followups + UX doc-drift + Session 717 entry.
+
+---
 ## Session 716 — Dialog + Sheet responsiveness primitives (2026-05-14)
 
 | Metadata | Value |

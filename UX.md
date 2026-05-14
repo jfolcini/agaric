@@ -145,7 +145,7 @@ System-level typography tokens with paired `@utility` classes for font-size + li
 | `--text-2xl` | 1.5rem | 1.25 (`--leading-tight`) | `text-scale-2xl` |
 | `--text-3xl` | 1.875rem | 1.25 (`--leading-tight`) | `text-scale-3xl` |
 
-Responsive heading overrides at the `md` breakpoint reduce `--text-2xl` (1.5→1.25rem) and `--text-3xl` (1.875→1.5rem) on mobile.
+Responsive heading overrides at the **`sm` breakpoint** (`@media (max-width: 640px)` in `src/index.css:847-853`) reduce `--text-2xl` (1.5→1.25rem) and `--text-3xl` (1.875→1.5rem) on mobile.
 
 ### Animation & Transition Tokens
 
@@ -193,6 +193,7 @@ File: `src/index.css` (custom properties), `src/components/SortableBlock.tsx` (c
 
 - **Desktop:** `--indent-width: 24px`
 - **Touch:** `--indent-width: 16px` (via `@media (pointer: coarse)`)
+- **Narrow viewport:** `--indent-width: 12px` at `@media (max-width: 640px)` — last-declared wins, so a narrow-phone tablet ends up at 12 px (the coarse-pointer 16 px loses to the narrow-viewport 12 px). See `src/index.css:841-845`.
 - **Block indent:** `padding-left: calc(var(--indent-width) * depth)`
 - **Indent guide:** Vertical line at `calc(var(--indent-width) * (depth - 1) + var(--indent-width) / 2)`
 - **Gutter width:** Fixed `44px` (holds drag handle + delete button)

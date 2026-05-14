@@ -602,6 +602,15 @@ export const commands = {
 	 *  [`set_gcal_privacy_mode_inner`].
 	 */
 	setGcalPrivacyMode: (mode: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
+	/**
+	 *  Tauri command: kick off the desktop OAuth flow. Binds a loopback
+	 *  listener, opens the authorize URL in the OS browser, waits for the
+	 *  redirect, exchanges the code, persists the token + email.
+	 *
+	 *  Returns the unverified account email so the FE can update its
+	 *  connected-state label without waiting for the next status poll.
+	 */
+	beginGcalOauth: () => typedError<BeginOauthOutcome, AppErrorSchema>(__TAURI_INVOKE("begin_gcal_oauth")),
 	// Tauri command: list every space. Delegates to [`list_spaces_inner`].
 	listSpaces: () => typedError<SpaceRow[], AppErrorSchema>(__TAURI_INVOKE("list_spaces")),
 	/**
@@ -833,6 +842,17 @@ export type BacklinkQueryResponse = {
 
 // Tagged union of sort modes for backlink queries.
 export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir };
+
+/**
+ *  Outcome of [`begin_gcal_oauth`] — the connected account's email
+ *  (when Google returned it in the ID token). The frontend uses this
+ *  to update its connected-state label without waiting for the next
+ *  status poll, though it also refetches `get_gcal_status` to land
+ *  the canonical state.
+ */
+export type BeginOauthOutcome = {
+	account_email: string | null,
+};
 
 /**
  *  Row returned by paginated block queries.

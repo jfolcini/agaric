@@ -74,9 +74,21 @@ export { processCheckboxSyntax } from '../lib/block-utils'
 
 export { guessMimeType } from '../lib/file-utils'
 
-/** Stable DnD measuring config — module-level to avoid re-creation per render. */
+/**
+ * Stable DnD measuring config — module-level to avoid re-creation per render.
+ *
+ * `WhileDragging` re-measures droppables only between drag operations
+ * (and on every drag move), not on unrelated state changes. For our
+ * usage this is identical to `Always` for drag UX because the tree
+ * does not manually invalidate measurements via `measureDroppables()`
+ * — the dnd-kit defaults handle the measurement lifecycle. See the
+ * `DndContext` block below: only the standard `onDragStart` /
+ * `onDragMove` / `onDragOver` / `onDragEnd` / `onDragCancel`
+ * callbacks are wired, no manual measurement plumbing depends on
+ * `Always`. (design-system-perf-review-2026-05-09.md item 14.)
+ */
 const DND_MEASURING = {
-  droppable: { strategy: MeasuringStrategy.Always },
+  droppable: { strategy: MeasuringStrategy.WhileDragging },
 } as const
 
 interface BlockTreeProps {

@@ -398,11 +398,20 @@ impl OAuthClient {
     /// CSRF token, caches the verifier keyed by the CSRF state, and
     /// returns the full authorize URL for the OS browser.
     ///
+    /// `redirect_uri` is threaded per-flow so each loopback listener
+    /// gets its own port — the construction-time `redirect_url` on
+    /// `self` is overridden for this single call. This matters because
+    /// `bind_one_shot` picks a fresh free port per flow and the
+    /// authorize URL must advertise the same port back to Google.
+    ///
     /// # Errors
-    /// [`AppError::Validation`] if the endpoint URLs are malformed.
+    /// [`AppError::Validation`] if `redirect_uri` fails to parse or the
+    /// endpoint URLs are malformed.
     #[tracing::instrument(skip(self), err)]
-    pub fn begin_authorize(&self) -> Result<AuthorizeUrl, AppError> {
-        let client = self.build_client();
+    pub fn begin_authorize(&self, redirect_uri: String) -> Result<AuthorizeUrl, AppError> {
+        let redirect = RedirectUrl::new(redirect_uri)
+            .map_err(|e| AppError::Validation(format!("oauth.invalid_redirect_url: {e}")))?;
+        let client = self.build_client().set_redirect_uri(redirect);
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
 
         let mut builder = client
@@ -453,11 +462,18 @@ impl OAuthClient {
     ///   CSRF state doesn't match any pending PKCE verifier.
     /// * [`AppError::Validation`] keyed `oauth.exchange_failed` — the
     ///   upstream returned an error or the network failed.
+    ///
+    /// `redirect_uri` MUST be the same URI that was passed to the
+    /// matching [`begin_authorize`] call — Google validates byte
+    /// equality (RFC 6749 §4.1.3). Pass `None` to fall back to the
+    /// client's construction-time redirect URI (kept for back-compat
+    /// with tests that don't thread a per-flow port).
     #[tracing::instrument(skip(self, code, state), err)]
     pub async fn exchange_code(
         &self,
         code: String,
         state: String,
+        redirect_uri: Option<String>,
     ) -> Result<(Token, Option<String>), AppError> {
         // M-88: sweep expired entries before recovering the verifier so
         // a stale verifier (older than `PKCE_CACHE_TTL`) is rejected as
@@ -474,7 +490,13 @@ impl OAuthClient {
                 .ok_or_else(|| AppError::Validation("oauth.invalid_state".to_owned()))?
         };
 
-        let client = self.build_client();
+        let client = if let Some(uri) = redirect_uri {
+            let redirect = RedirectUrl::new(uri)
+                .map_err(|e| AppError::Validation(format!("oauth.invalid_redirect_url: {e}")))?;
+            self.build_client().set_redirect_uri(redirect)
+        } else {
+            self.build_client()
+        };
         let response = client
             .exchange_code(AuthorizationCode::new(code))
             .set_pkce_verifier(verifier)
@@ -1052,7 +1074,7 @@ mod tests {
     async fn begin_authorize_returns_url_with_required_params_and_caches_verifier() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
-        let authorize = client.begin_authorize().unwrap();
+        let authorize = client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
 
         assert!(
             authorize
@@ -1107,8 +1129,8 @@ mod tests {
     async fn begin_authorize_generates_distinct_states_on_repeated_calls() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
-        let a = client.begin_authorize().unwrap();
-        let b = client.begin_authorize().unwrap();
+        let a = client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
+        let b = client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
         assert_ne!(
             a.state, b.state,
             "each call must produce a fresh CSRF state"
@@ -1134,7 +1156,7 @@ mod tests {
         let client = build_client(&mock).await;
 
         for _ in 0..100 {
-            client.begin_authorize().unwrap();
+            client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
         }
 
         let len = client
@@ -1214,7 +1236,7 @@ mod tests {
     async fn exchange_code_happy_path_returns_token_and_unverified_email_and_persists_it() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
-        let authorize = client.begin_authorize().unwrap();
+        let authorize = client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
 
         let id_token = build_id_token("user@example.com");
         let token_body = serde_json::json!({
@@ -1233,7 +1255,7 @@ mod tests {
             .await;
 
         let (token, unverified_email) = client
-            .exchange_code("the-code".to_owned(), authorize.state)
+            .exchange_code("the-code".to_owned(), authorize.state, None)
             .await
             .unwrap();
 
@@ -1291,7 +1313,7 @@ mod tests {
         let client = build_client(&mock).await;
         // Don't call begin_authorize — no state is cached.
         let result = client
-            .exchange_code("the-code".to_owned(), "bogus-state".to_owned())
+            .exchange_code("the-code".to_owned(), "bogus-state".to_owned(), None)
             .await;
         assert!(
             matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.invalid_state")),
@@ -1303,7 +1325,7 @@ mod tests {
     async fn exchange_code_surfaces_server_error_as_exchange_failed() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
-        let authorize = client.begin_authorize().unwrap();
+        let authorize = client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
 
         Mock::given(method("POST"))
             .and(path("/token"))
@@ -1315,7 +1337,7 @@ mod tests {
             .await;
 
         let result = client
-            .exchange_code("the-code".to_owned(), authorize.state)
+            .exchange_code("the-code".to_owned(), authorize.state, None)
             .await;
         assert!(
             matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.exchange_failed")),
@@ -1327,7 +1349,7 @@ mod tests {
     async fn exchange_code_consumes_pkce_verifier_even_on_success() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
-        let authorize = client.begin_authorize().unwrap();
+        let authorize = client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
 
         let token_body = serde_json::json!({
             "access_token": "a",
@@ -1344,14 +1366,14 @@ mod tests {
 
         let state_copy = authorize.state.clone();
         client
-            .exchange_code("the-code".to_owned(), authorize.state)
+            .exchange_code("the-code".to_owned(), authorize.state, None)
             .await
             .unwrap();
 
         // The verifier must have been removed — second attempt should
         // fail with invalid_state.
         let second = client
-            .exchange_code("the-code".to_owned(), state_copy)
+            .exchange_code("the-code".to_owned(), state_copy, None)
             .await;
         assert!(
             matches!(second, Err(AppError::Validation(ref m)) if m.contains("oauth.invalid_state")),

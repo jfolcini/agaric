@@ -30,6 +30,8 @@ use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::gcal_push::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use crate::gcal_push::lease::{self, LeaseState};
 use crate::gcal_push::models::{self, GcalSettingKey};
+use crate::gcal_push::oauth::{persist_oauth_account_email, OAuthClient};
+use crate::gcal_push::oauth_callback::{bind_one_shot, CallbackParams};
 use crate::spaces::bootstrap::SPACE_PERSONAL_ULID;
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,16 @@ pub struct LeaseHolder {
     pub held_by_this_device: bool,
     pub device_id: Option<String>,
     pub expires_at: Option<String>,
+}
+
+/// Outcome of [`begin_gcal_oauth`] — the connected account's email
+/// (when Google returned it in the ID token). The frontend uses this
+/// to update its connected-state label without waiting for the next
+/// status poll, though it also refetches `get_gcal_status` to land
+/// the canonical state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct BeginOauthOutcome {
+    pub account_email: Option<String>,
 }
 
 /// Full status snapshot for the Settings tab.  `connected` reflects
@@ -340,6 +352,95 @@ pub async fn set_gcal_privacy_mode_inner(pool: &SqlitePool, mode: &str) -> Resul
 }
 
 // ---------------------------------------------------------------------------
+// begin_gcal_oauth
+// ---------------------------------------------------------------------------
+
+/// Hard timeout for the loopback OAuth callback. Matches the human-paced
+/// nature of the consent flow (user has to click through the browser);
+/// abandoned flows release the listener and resolve with
+/// `AppError::Validation("oauth.timeout")` so the FE can show a typed
+/// error toast.
+const OAUTH_CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Pure implementation of [`begin_gcal_oauth`].  Runs the loopback
+/// OAuth dance: bind 127.0.0.1, build the authorize URL with that
+/// per-flow redirect_uri, open the URL in the OS browser via the
+/// caller-supplied `open_browser` callback, wait for the redirect,
+/// exchange the code, persist the token + email.
+///
+/// Separated from the Tauri wrapper so unit tests can drive the
+/// callback path without needing a real `AppHandle` — the test
+/// supplies a closure that drives a TcpStream into the listener.
+///
+/// # Errors
+/// * [`AppError::Validation`] keyed `oauth.timeout` — the user didn't
+///   complete the consent flow within [`OAUTH_CALLBACK_TIMEOUT`].
+/// * [`AppError::Validation`] keyed `oauth.invalid_state` — the
+///   returned CSRF state didn't match the one we issued (the
+///   verifier-cache miss).
+/// * [`AppError::Validation`] keyed `oauth.exchange_failed` — Google
+///   rejected the code-for-token exchange.
+/// * [`AppError::Validation`] keyed `oauth.client_misconfigured` —
+///   the client opens the browser failed (typically a sandboxed dev
+///   build with no default browser registered).
+pub async fn begin_gcal_oauth_inner<F>(
+    pool: &SqlitePool,
+    oauth_client: &OAuthClient,
+    token_store: &Arc<dyn TokenStore>,
+    open_browser: F,
+) -> Result<BeginOauthOutcome, AppError>
+where
+    F: FnOnce(String) -> Result<(), AppError>,
+{
+    // 1. Bind the loopback listener and capture the chosen port.
+    let (port, callback_future) = bind_one_shot(OAUTH_CALLBACK_TIMEOUT).await?;
+    let redirect_uri = format!("http://127.0.0.1:{port}/oauth/callback");
+
+    // 2. Build the authorize URL with that exact redirect_uri so
+    //    Google's response lands on our listener.
+    let authorize = oauth_client.begin_authorize(redirect_uri.clone())?;
+
+    // 3. Open the URL in the OS browser. Failures here are surfaced as
+    //    `oauth.client_misconfigured` so the FE can show a dedicated
+    //    error toast distinct from network failures.
+    open_browser(authorize.url.clone()).map_err(|e| match e {
+        AppError::Validation(_) => e,
+        other => AppError::Validation(format!(
+            "oauth.client_misconfigured: failed to open browser ({other})"
+        )),
+    })?;
+
+    // 4. Wait for the redirect with code + state.
+    let CallbackParams {
+        code,
+        state: returned_state,
+    } = callback_future.await?;
+
+    // 5. Defence in depth: the CSRF state must equal the one we issued.
+    //    `exchange_code` ALSO validates this via its PKCE-cache lookup,
+    //    but the explicit check here surfaces a typed
+    //    `oauth.invalid_state` error before we touch the network.
+    if returned_state != authorize.state {
+        return Err(AppError::Validation("oauth.invalid_state".to_owned()));
+    }
+
+    // 6. Trade the code for a token pair + (optional) account email.
+    let (token, email) = oauth_client
+        .exchange_code(code, returned_state, Some(redirect_uri))
+        .await?;
+
+    // 7. Persist the token to the keychain and the email to the DB.
+    token_store.store(&token).await?;
+    if let Some(email_str) = email.as_deref() {
+        persist_oauth_account_email(pool, email_str).await?;
+    }
+
+    Ok(BeginOauthOutcome {
+        account_email: email,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tauri wrappers
 // ---------------------------------------------------------------------------
 
@@ -425,6 +526,41 @@ pub async fn set_gcal_privacy_mode(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: kick off the desktop OAuth flow. Binds a loopback
+/// listener, opens the authorize URL in the OS browser, waits for the
+/// redirect, exchanges the code, persists the token + email.
+///
+/// Returns the unverified account email so the FE can update its
+/// connected-state label without waiting for the next status poll.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn begin_gcal_oauth(
+    app: tauri::AppHandle,
+    pool: tauri::State<'_, crate::db::WritePool>,
+    oauth_client: tauri::State<'_, GcalOAuthClientState>,
+    token_store: tauri::State<'_, GcalTokenStoreState>,
+) -> Result<BeginOauthOutcome, AppError> {
+    let app_for_open = app.clone();
+    let outcome = begin_gcal_oauth_inner(
+        &pool.inner().0,
+        oauth_client.inner().0.as_ref(),
+        &token_store.inner().0,
+        move |url| {
+            use tauri_plugin_shell::ShellExt;
+            // TODO: migrate to `tauri-plugin-opener` once that dep lands.
+            #[allow(deprecated)]
+            app_for_open
+                .shell()
+                .open(url, None)
+                .map_err(|e| AppError::Validation(format!("oauth.open_browser_failed: {e}")))
+        },
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
+    Ok(outcome)
+}
+
 // ---------------------------------------------------------------------------
 // Managed-state wrappers (so tauri::State resolves over trait objects)
 // ---------------------------------------------------------------------------
@@ -440,6 +576,13 @@ pub struct GcalEventEmitterState(pub Arc<dyn GcalEventEmitter>);
 /// Newtype wrapping the `Arc<GcalApi>` — used by
 /// [`disconnect_gcal`] to invoke `delete_calendar`.
 pub struct GcalClientState(pub Arc<GcalApi>);
+
+/// Newtype wrapping the `Arc<OAuthClient>` — used by [`begin_gcal_oauth`]
+/// to share the PKCE verifier cache with the connector's auto-refresh
+/// path. A single shared instance is load-bearing: the verifier
+/// produced by `begin_authorize` must be recoverable by the matching
+/// `exchange_code` call, and both go through the same client.
+pub struct GcalOAuthClientState(pub Arc<OAuthClient>);
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -1168,6 +1311,204 @@ mod tests {
             "push_disabled must only fire after the tx commits, got {:?}",
             recorder.events()
         );
+    }
+
+    // ── begin_gcal_oauth_inner ─────────────────────────────────────
+
+    /// Drive a TcpStream into the listener bound at `port` so the
+    /// loopback callback resolves. The query string carries
+    /// `code` and `state` verbatim, mirroring Google's redirect.
+    async fn drive_oauth_callback(port: u16, code: &str, state: &str) {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpStream;
+        let mut sock = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let request = format!(
+            "GET /oauth/callback?code={}&state={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            code, state,
+        );
+        sock.write_all(request.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        let _ = tokio::io::AsyncReadExt::read_to_end(&mut sock, &mut buf).await;
+    }
+
+    /// Build an `OAuthClient` pointed at the given wiremock server.
+    /// Mirrors the helper used in `oauth.rs::tests`.
+    async fn build_oauth_client(server: &MockServer) -> Arc<OAuthClient> {
+        Arc::new(
+            OAuthClient::new(
+                "test-client-id".to_owned(),
+                format!("{}/o/oauth2/v2/auth", server.uri()),
+                format!("{}/token", server.uri()),
+                "http://127.0.0.1:54321".to_owned(),
+                vec![
+                    "https://www.googleapis.com/auth/calendar".to_owned(),
+                    crate::gcal_push::oauth::OPENID_EMAIL_SCOPE.to_owned(),
+                ],
+            )
+            .expect("oauth client must build"),
+        )
+    }
+
+    fn id_token_for_email(email: &str) -> String {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine as _;
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(
+            serde_json::json!({ "email": email, "aud": "agaric" })
+                .to_string()
+                .as_bytes(),
+        );
+        let signature = URL_SAFE_NO_PAD.encode(b"signature-placeholder");
+        format!("{header}.{payload}.{signature}")
+    }
+
+    /// Extract `(redirect_port, state)` from a freshly-built authorize
+    /// URL — the `open_browser` callbacks in these tests use this to
+    /// hand both values to the driver task that synthesises the
+    /// loopback callback.
+    fn parse_authorize_url(url: &str) -> (u16, String) {
+        let parsed = url::Url::parse(url).expect("authorize URL must parse");
+        let redirect = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "redirect_uri")
+            .map(|(_, v)| v.into_owned())
+            .expect("authorize URL must carry redirect_uri");
+        let state = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned())
+            .expect("authorize URL must carry state");
+        let port: u16 = redirect
+            .strip_prefix("http://127.0.0.1:")
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|s| s.parse().ok())
+            .expect("redirect_uri must be loopback with a port");
+        (port, state)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn begin_oauth_happy_path_persists_token_and_email() {
+        // Wiremock for Google's token endpoint.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "ya29.access-abc",
+                "refresh_token": "1//refresh-xyz",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+                "id_token": id_token_for_email("user@example.com"),
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(None).await;
+        let client = build_oauth_client(&server).await;
+
+        // Per-flow channel: `open_browser` hands the loopback port +
+        // CSRF state to the driver task. `oneshot` is the right shape
+        // because each begin_oauth call binds exactly one listener.
+        let (port_tx, port_rx) = tokio::sync::oneshot::channel::<(u16, String)>();
+
+        let driver = tokio::spawn(async move {
+            let (port, state) = port_rx.await.expect("authorize url forwarded");
+            drive_oauth_callback(port, "the-code", &state).await;
+        });
+
+        let port_tx_cell = std::sync::Mutex::new(Some(port_tx));
+        let outcome = begin_gcal_oauth_inner(&pool, client.as_ref(), &store, |url| {
+            let (port, state) = parse_authorize_url(&url);
+            if let Some(tx) = port_tx_cell.lock().unwrap().take() {
+                let _ = tx.send((port, state));
+            }
+            Ok(())
+        })
+        .await
+        .expect("begin_gcal_oauth_inner must succeed");
+
+        driver.await.expect("driver task joined");
+
+        assert_eq!(outcome.account_email.as_deref(), Some("user@example.com"));
+        // Token landed.
+        assert!(store.load().await.unwrap().is_some());
+        // Email persisted.
+        let stored = models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)
+            .await
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some("user@example.com"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn begin_oauth_open_browser_failure_surfaces_typed_error() {
+        let server = MockServer::start().await;
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(None).await;
+        let client = build_oauth_client(&server).await;
+
+        let result = begin_gcal_oauth_inner(&pool, client.as_ref(), &store, |_url| {
+            Err(AppError::Validation("oauth.open_browser_failed: x".into()))
+        })
+        .await;
+
+        match result {
+            Err(AppError::Validation(msg)) => {
+                // The inner preserves validation-typed errors verbatim
+                // (so callers get the original key), not the
+                // misconfigured wrapper.
+                assert!(
+                    msg.contains("oauth.open_browser_failed"),
+                    "expected oauth.open_browser_failed key, got {msg}"
+                );
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        // No token landed.
+        assert!(store.load().await.unwrap().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn begin_oauth_invalid_state_rejected_before_exchange() {
+        // Echo a mismatched state to the listener — the inner must
+        // surface `oauth.invalid_state` without touching the network.
+        let server = MockServer::start().await;
+        // No mock for /token — if the test reaches the exchange the
+        // request will fail with a transport error, which would surface
+        // as `oauth.exchange_failed` instead of `oauth.invalid_state`,
+        // exposing the bug.
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(None).await;
+        let client = build_oauth_client(&server).await;
+
+        let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
+        let driver = tokio::spawn(async move {
+            let port = port_rx.await.expect("port forwarded");
+            // Send a bogus state that doesn't match the one in the
+            // authorize URL.
+            drive_oauth_callback(port, "the-code", "bogus-state").await;
+        });
+
+        let port_tx_cell = std::sync::Mutex::new(Some(port_tx));
+        let result = begin_gcal_oauth_inner(&pool, client.as_ref(), &store, |url| {
+            let (port, _state) = parse_authorize_url(&url);
+            if let Some(tx) = port_tx_cell.lock().unwrap().take() {
+                let _ = tx.send(port);
+            }
+            Ok(())
+        })
+        .await;
+
+        driver.await.expect("driver joined");
+
+        match result {
+            Err(AppError::Validation(msg)) => {
+                assert_eq!(msg, "oauth.invalid_state");
+            }
+            other => panic!("expected Validation(oauth.invalid_state), got {other:?}"),
+        }
+        // No token landed.
+        assert!(store.load().await.unwrap().is_none());
     }
 
     // ── force_gcal_resync_inner ────────────────────────────────────

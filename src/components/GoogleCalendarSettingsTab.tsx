@@ -313,15 +313,19 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
 
   // MAINT-120: kick off Google OAuth flow. On success refetch so the
   // panel reflects the new connected state once the round-trip completes.
-  const { execute: executeBeginOauth } = useIpcCommand<void, void>({
+  //
+  // PEND-gcal-oauth: the IPC takes 30s+ in the happy path (the user has
+  // to consent in the browser), so we expose `loading` from the hook to
+  // gate the button's disabled / aria-busy / spinner / label.
+  const { execute: executeBeginOauth, loading: oauthInFlight } = useIpcCommand<void, void>({
     call: () => invoke('begin_gcal_oauth'),
     module: 'GoogleCalendarSettingsTab',
     errorLogMessage: 'failed to begin gcal oauth',
     onSuccess: () => {
       void loadStatus()
     },
-    onError: () => {
-      toast.error(t('gcal.connectFailed'))
+    onError: (err) => {
+      toast.error(connectErrorMessage(err, t))
     },
   })
 
@@ -454,8 +458,12 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
               size="sm"
               onClick={() => void handleConnect()}
               aria-label={t('gcal.connectButton')}
+              aria-busy={oauthInFlight}
+              disabled={oauthInFlight}
+              data-testid="gcal-connect-button"
             >
-              {t('gcal.connectButton')}
+              {oauthInFlight && <Spinner size="sm" />}
+              {oauthInFlight ? t('gcal.connecting') : t('gcal.connectButton')}
             </Button>
             <p className="text-xs text-muted-foreground">{t('gcal.connectHelp')}</p>
           </div>
@@ -589,6 +597,48 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
       </AlertDialog>
     </div>
   )
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// connectErrorMessage — map an `AppError` payload from `begin_gcal_oauth`
+// onto a user-facing toast string. The backend serializes errors as
+// `{ kind: 'validation', message: 'oauth.<key>: …' }` (see
+// `src-tauri/src/error.rs` and `src-tauri/src/gcal_push/oauth.rs:451`).
+// Pattern-match the prefix so an unrecognised payload falls back to the
+// generic `gcal.connectFailed` rather than leaking the raw key.
+// ────────────────────────────────────────────────────────────────────────
+
+interface AppErrorPayload {
+  kind: string
+  message: string
+}
+
+function isAppErrorPayload(value: unknown): value is AppErrorPayload {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'kind' in value &&
+    'message' in value &&
+    typeof (value as Record<string, unknown>)['kind'] === 'string' &&
+    typeof (value as Record<string, unknown>)['message'] === 'string'
+  )
+}
+
+function connectErrorMessage(err: unknown, t: (key: string) => string): string {
+  if (!isAppErrorPayload(err)) {
+    return t('gcal.connectFailed')
+  }
+  // Validation messages from the OAuth path are dotted keys like
+  // `oauth.timeout` or `oauth.exchange_failed: 400 Bad Request`. Match
+  // the leading key; anything else collapses to the generic toast.
+  const msg = err.message
+  if (msg.startsWith('oauth.timeout')) return t('gcal.connect.timeout')
+  if (msg.startsWith('oauth.invalid_state')) return t('gcal.connect.invalidState')
+  if (msg.startsWith('oauth.exchange_failed')) return t('gcal.connect.exchangeFailed')
+  if (msg.startsWith('oauth.client_misconfigured') || msg.startsWith('oauth.open_browser_failed')) {
+    return t('gcal.connect.clientMisconfigured')
+  }
+  return t('gcal.connectFailed')
 }
 
 // ────────────────────────────────────────────────────────────────────────

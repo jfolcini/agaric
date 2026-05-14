@@ -43,3 +43,4 @@ pub(crate) mod migration;
 pub(crate) mod models;
 #[allow(dead_code)]
 pub(crate) mod oauth;
+pub(crate) mod oauth_callback;

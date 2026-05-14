@@ -72,6 +72,7 @@ const KNOWN_UNWRAPPED = new Set([
   'disconnectGcal',
   'setGcalWindowDays',
   'setGcalPrivacyMode',
+  'beginGcalOauth',
   // (b) wrapped under a different name in tauri.ts — see the wrapper
   // body for the corresponding `commands.*` call.
   'compactOpLogCmd', // wrapped as `compactOpLog`

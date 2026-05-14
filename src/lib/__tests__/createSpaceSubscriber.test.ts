@@ -1,15 +1,20 @@
 /**
- * Tests for `createSpaceSubscriber` — MAINT-122.
+ * Tests for `createSpaceSubscriber` — MAINT-122 (semantics) plus the
+ * design-system-perf-review-2026-05-09 item 13 migration to the
+ * `subscribeWithSelector` middleware on `useSpaceStore`.
  *
  * Validates the three semantic guarantees the navigation / journal /
- * recent-pages stores rely on:
- *   1. On first fire, `onChange` is invoked with `(newKey, newKey)` so
- *      the caller can seed its per-space slice from the rehydrated flat
- *      fields without sampling `currentSpaceId` at module-eval time.
- *   2. A subsequent fire with the same key (e.g. a space-store-internal
- *      `setState` that didn't change `currentSpaceId`) is suppressed.
- *   3. A subsequent fire with a new key invokes
- *      `onChange(prevKey, newKey)` so the caller can flush + pull.
+ * recent-pages / tabs stores rely on:
+ *   1. On subscribe, `onChange` is invoked once with `(newKey, newKey)`
+ *      so the caller can seed its per-space slice from the rehydrated
+ *      flat fields. Now fires synchronously at subscribe time via
+ *      `fireImmediately: true` (previously deferred to the first
+ *      store-write).
+ *   2. A state change that does NOT touch `currentSpaceId` (e.g. an
+ *      `availableSpaces` refresh or `isReady` flip) is suppressed by
+ *      the selector + `equalityFn`.
+ *   3. A `currentSpaceId` change invokes `onChange(prevKey, newKey)`
+ *      so the caller can flush + pull.
  *
  * Plus the legacy-key fallback: when `currentSpaceId === null`, the
  * callback receives `LEGACY_SPACE_KEY`.
@@ -26,14 +31,13 @@ beforeEach(() => {
 })
 
 describe('createSpaceSubscriber', () => {
-  it('invokes onChange on first space-store fire with (newKey, newKey)', () => {
+  it('invokes onChange synchronously on subscribe with (newKey, newKey)', () => {
     useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
     const onChange = vi.fn()
     const unsub = createSpaceSubscriber(onChange)
 
-    // Trigger the first fire by mutating the space store.
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
-
+    // `fireImmediately: true` seeds the callback at subscribe time
+    // using the current `currentSpaceId`.
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith('SPACE_A', 'SPACE_A')
     unsub()
@@ -43,25 +47,25 @@ describe('createSpaceSubscriber', () => {
     const onChange = vi.fn()
     const unsub = createSpaceSubscriber(onChange)
 
-    // currentSpaceId is null at this point — first fire seeds with the
+    // currentSpaceId is null in the beforeEach — seed receives the
     // legacy key.
-    useSpaceStore.setState({ currentSpaceId: null })
-
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith('__legacy__', '__legacy__')
     unsub()
   })
 
-  it('suppresses subsequent fires with the same key', () => {
+  it('suppresses fires that do not touch currentSpaceId', () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
     const onChange = vi.fn()
     const unsub = createSpaceSubscriber(onChange)
 
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
-    expect(onChange).toHaveBeenCalledTimes(1) // first fire
+    expect(onChange).toHaveBeenCalledTimes(1) // seed fire
 
-    // A no-op state change that re-fires the subscriber with the same
-    // key (e.g. availableSpaces refresh) must NOT re-invoke onChange.
+    // Writes that leave `currentSpaceId` unchanged must NOT re-invoke
+    // onChange — the subscribeWithSelector middleware compares the
+    // selected slice with `Object.is`.
     useSpaceStore.setState({ availableSpaces: [] })
+    useSpaceStore.setState({ isReady: true })
     useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
 
     expect(onChange).toHaveBeenCalledTimes(1)
@@ -69,11 +73,11 @@ describe('createSpaceSubscriber', () => {
   })
 
   it('invokes onChange with (prevKey, newKey) on space change', () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
     const onChange = vi.fn()
     const unsub = createSpaceSubscriber(onChange)
 
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' }) // first fire seeds
-    onChange.mockClear()
+    onChange.mockClear() // drop the seed call
 
     useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
 
@@ -83,10 +87,10 @@ describe('createSpaceSubscriber', () => {
   })
 
   it('tracks multiple space switches in sequence', () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
     const onChange = vi.fn()
     const unsub = createSpaceSubscriber(onChange)
-
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' }) // first fire: ('SPACE_A', 'SPACE_A')
+    // seed call: ('SPACE_A', 'SPACE_A')
     useSpaceStore.setState({ currentSpaceId: 'SPACE_B' }) // ('SPACE_A', 'SPACE_B')
     useSpaceStore.setState({ currentSpaceId: 'SPACE_C' }) // ('SPACE_B', 'SPACE_C')
     useSpaceStore.setState({ currentSpaceId: 'SPACE_A' }) // ('SPACE_C', 'SPACE_A')
@@ -101,11 +105,11 @@ describe('createSpaceSubscriber', () => {
   })
 
   it('returned unsubscribe function stops further onChange invocations', () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
     const onChange = vi.fn()
     const unsub = createSpaceSubscriber(onChange)
 
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' }) // first fire
-    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledTimes(1) // seed
 
     unsub()
 
