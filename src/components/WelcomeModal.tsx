@@ -3,15 +3,8 @@ import { AtSign, FileText, Keyboard, Layers, RefreshCw, Tag } from 'lucide-react
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
@@ -169,48 +162,60 @@ export function WelcomeModal() {
     }
   }, [t, handleDismiss])
 
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description, Footer } = parts
+
+  // Sheet's Content takes a `side` prop; DialogContent does not.
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+
   if (bootState !== 'ready') return null
 
+  // MAINT-215: feature list renders inside DialogBody on desktop so it
+  // scrolls when the viewport is short; the mobile Sheet path keeps the
+  // list inline (SheetContent already constrains height) so we don't nest
+  // scroll regions.
+  const featureList = (
+    /*
+      biome-ignore lint/a11y/noRedundantRoles: explicit role="list" is
+      required because Safari + VoiceOver strip the implicit list role
+      from a <ul> with `list-style: none` (Tailwind `list-none`). UX-278.
+    */
+    <ul role="list" className="grid list-none gap-4 py-2 pl-0">
+      {FEATURES.map((feature) => (
+        <li key={feature.titleKey} className="flex items-start gap-3">
+          <feature.icon
+            className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <div>
+            <p className="text-sm font-medium">{t(feature.titleKey)}</p>
+            <p className="text-sm text-muted-foreground">{t(feature.descKey)}</p>
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+
   return (
-    <Dialog
+    <Root
       open={open}
       onOpenChange={(value) => {
         if (!value) handleDismiss()
       }}
     >
-      <DialogContent data-testid="welcome-modal">
-        <DialogHeader>
-          <DialogTitle>{t('welcome.title')}</DialogTitle>
-          <DialogDescription>{t('welcome.description')}</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          {/*
-            biome-ignore lint/a11y/noRedundantRoles: explicit role="list" is
-            required because Safari + VoiceOver strip the implicit list role
-            from a <ul> with `list-style: none` (Tailwind `list-none`). UX-278.
-          */}
-          <ul role="list" className="grid list-none gap-4 py-2 pl-0">
-            {FEATURES.map((feature) => (
-              <li key={feature.titleKey} className="flex items-start gap-3">
-                <feature.icon
-                  className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <div>
-                  <p className="text-sm font-medium">{t(feature.titleKey)}</p>
-                  <p className="text-sm text-muted-foreground">{t(feature.descKey)}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </DialogBody>
-        <DialogFooter>
+      <Content data-testid="welcome-modal" {...contentSideProps}>
+        <Header>
+          <Title>{t('welcome.title')}</Title>
+          <Description>{t('welcome.description')}</Description>
+        </Header>
+        {parts.isMobile ? featureList : <DialogBody>{featureList}</DialogBody>}
+        <Footer>
           <Button variant="outline" onClick={handleCreateSamplePages} disabled={creating}>
             {t('welcome.createSamplePages')}
           </Button>
           <Button onClick={handleDismiss}>{t('welcome.getStarted')}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Footer>
+      </Content>
+    </Root>
   )
 }

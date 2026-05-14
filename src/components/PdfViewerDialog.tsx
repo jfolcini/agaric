@@ -14,16 +14,11 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDialogOrSheet } from '../hooks/useDialogOrSheet'
 import { logger } from '../lib/logger'
 import { Button } from './ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog'
+import { DialogBody } from './ui/dialog'
+import { SheetBody } from './ui/sheet'
 
 // Set worker path — served from public/
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -233,17 +228,25 @@ export function PdfViewerDialog({
     return () => observer.disconnect()
   }, [numPages, renderPage])
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh]">
-        <DialogHeader>
-          <DialogTitle>{filename}</DialogTitle>
-          <DialogDescription className="sr-only">
-            {t('pdfViewer.description', { filename })}
-          </DialogDescription>
-        </DialogHeader>
+  // MAINT-215: on phones < 768 px render as a bottom Sheet so the page
+  // navigation controls sit within thumb reach. The PDF iframe / canvas
+  // renderer is untouched — only the outer chrome swaps between Dialog
+  // and Sheet primitives. `'dialog'` kind keeps regular Dialog (not
+  // AlertDialog) on desktop.
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description } = parts
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+  const Body = parts.isMobile ? SheetBody : DialogBody
 
-        <DialogBody ref={containerRef} className="bg-muted/30 rounded-md">
+  return (
+    <Root open={open} onOpenChange={onOpenChange}>
+      <Content className="max-w-5xl max-h-[90vh]" {...contentSideProps}>
+        <Header>
+          <Title>{filename}</Title>
+          <Description className="sr-only">{t('pdfViewer.description', { filename })}</Description>
+        </Header>
+
+        <Body ref={containerRef} className="bg-muted/30 rounded-md">
           <div className="flex items-start justify-center">
             {loading && (
               <div className="flex items-center justify-center p-8" data-testid="pdf-loading">
@@ -261,7 +264,7 @@ export function PdfViewerDialog({
               <canvas ref={canvasRef} className="max-w-full" data-testid="pdf-canvas" />
             )}
           </div>
-        </DialogBody>
+        </Body>
 
         {!loading && !error && numPages > 0 && (
           <div className="flex items-center justify-center gap-4 pt-2" data-testid="pdf-nav">
@@ -288,7 +291,7 @@ export function PdfViewerDialog({
             </Button>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </Content>
+    </Root>
   )
 }

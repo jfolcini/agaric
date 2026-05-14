@@ -43,12 +43,18 @@ vi.mock('lucide-react', () => ({
   ),
 }))
 
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
 import { useBootStore } from '../../stores/boot'
 import { useSpaceStore } from '../../stores/space'
 import { WelcomeModal } from '../WelcomeModal'
 
+vi.mock('../../hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 /** No-op boot function to prevent side-effects. */
 const noopBoot = vi.fn(async () => {})
@@ -56,6 +62,8 @@ const noopBoot = vi.fn(async () => {})
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // Default to the desktop path so existing test bodies keep their semantics.
+  mockedUseIsMobile.mockReturnValue(false)
   useBootStore.setState({ state: 'ready', error: null, boot: noopBoot })
   // BUG-1 / H-3b — WelcomeModal routes onboarding sample-page creation
   // through `createPageInSpace`, which reads
@@ -437,6 +445,38 @@ describe('WelcomeModal', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ----------------------------------------------------------------------
+  // MAINT-215: modal mounts under both desktop (Dialog) and mobile (Sheet)
+  // paths via useDialogOrSheet('dialog'). We don't assert on Radix DOM
+  // specifics — just that the title / body content / buttons are
+  // accessible under both code paths.
+  // ----------------------------------------------------------------------
+
+  describe('responsive path (MAINT-215)', () => {
+    it('mounts on the mobile path (Sheet) with title, feature list, and buttons accessible', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+
+      render(<WelcomeModal />)
+
+      expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+      // Feature list still renders inline on mobile.
+      expect(screen.getAllByRole('listitem')).toHaveLength(6)
+      expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
+    })
+
+    it('mounts on the desktop path (Dialog) with title, feature list, and buttons accessible', () => {
+      mockedUseIsMobile.mockReturnValue(false)
+
+      render(<WelcomeModal />)
+
+      expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+      expect(screen.getAllByRole('listitem')).toHaveLength(6)
+      expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
     })
   })
 })
