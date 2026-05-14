@@ -7,6 +7,52 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 741 — SQL-review Phase 2 (M-1 + M-3 + B-4) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 3 build + 3 review (parallel, pipelined) |
+| **Items closed** | sql-review M-1, M-3, B-4 (from `pending/sql-review-2026-05-14.md`) |
+| **Items modified** | — |
+| **Tests added** | +4 (backend): apply_tx_uses_begin_immediate_not_deferred (static source), cascade_soft_delete_dispatches_materializer, restore_block_dispatches_materializer, op_log_attachment_id_column_and_index_exist |
+| **Files touched** | 15 source + 1 migration + 1 bench + 13 sqlx cache entries (7 added, 7 deleted) |
+
+**Summary:** Shipped sql-review Phase 2 in one parallel batch. M-1 swapped the materializer apply tx from `pool.begin()` (DEFERRED) to `crate::db::begin_immediate_logged` at two production sites (BatchApplyOps + apply_op) so contention surfaces as upfront slow-acquire warns instead of silent 5 s `busy_timeout` stalls. M-3 added `&Materializer` to `cascade_soft_delete` and `restore_block`, with the primitives themselves dispatching FULL_CACHE_REBUILD_TASKS + the appropriate FTS task after the SQL commits; 61 test/integration call sites + 4 bench call sites (orchestrator-direct) updated. The M-3 reviewer verified no production callers exist in `crud.rs` (which inlines the SQL), confirming the change is pure type-system future-proofing. B-4 denormalised `op_log.attachment_id` as an indexed TEXT column (migration 0064 — mirrors the proven 0030 `block_id` pattern); reverse-attachment lookup at `attachment_ops.rs:55-72` now uses the native column. New `OpPayload::attachment_id()` accessor with exhaustive match. Sentinel-based H-13 trigger bypass for the backfill UPDATE.
+
+**Phase-2 closure on `pending/sql-review-2026-05-14.md`:** B-4 detail section + M-1 & M-3 bullets removed. §1 / §3 counts decremented (2→1, 7→5). §7 Phase 2 marked SHIPPED. §8 Phase 2 entry rewritten to record the M-3 call-site fan-out.
+
+**REVIEW-LATER impact:** none.
+
+**Files touched (this session):**
+- `src-tauri/migrations/0064_op_log_attachment_id_column.sql` (new, ~50 LOC)
+- `src-tauri/src/materializer/handlers.rs` (M-1: 2 swaps + new static_source_checks test module)
+- `src-tauri/src/soft_delete/trash.rs` (M-3: signature + dispatch + regression test)
+- `src-tauri/src/soft_delete/restore.rs` (M-3: signature + dispatch + regression test)
+- `src-tauri/src/soft_delete/mod.rs` (test_pool_and_mat helper)
+- `src-tauri/src/op_log.rs` (B-4: INSERT column + extract helper + pinning test)
+- `src-tauri/src/op.rs` (B-4: attachment_id accessor)
+- `src-tauri/src/dag.rs` (B-4: 2 INSERT paths)
+- `src-tauri/src/reverse/attachment_ops.rs` (B-4: SQL swap + doc-comment rewrite)
+- `src-tauri/src/commands/tests/{tag,edge_case,block}_cmd_tests.rs` (M-3: call-site updates)
+- `src-tauri/src/command_integration_tests/{block,trash}_integration.rs` (M-3: call-site updates)
+- `src-tauri/src/reverse/tests.rs` (M-3: call-site updates)
+- `src-tauri/benches/soft_delete_bench.rs` (M-3: 4 bench sites, orchestrator-direct)
+- `src-tauri/.sqlx/` (7 entries added, 7 deleted — schema-changed query reshape)
+- `pending/sql-review-2026-05-14.md` (Phase 2 sections removed, counts decremented)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3684 / 3684 pass, 4 skipped.
+- `prek run --all-files` — all hooks pass (cargo fmt auto-fixed 1 nit on first run, clean on re-run).
+
+**Process notes:** M-3's subagent ran `cargo nextest run` to verify but missed bench compilation (benches aren't compiled by nextest by default). Orchestrator caught 4 broken bench sites in `soft_delete_bench.rs` via `cargo check --tests --benches` and fixed inline. B-4's reviewer caught a factual doc-comment error in migration 0064 header (claimed `op_log` is STRICT — it's not, it's pre-PEND-07); fixed inline.
+
+**Lessons learned (for future sessions):** When a subagent makes a signature change to a function called from production code, tests, AND benches, the subagent's `cargo nextest run` verification is incomplete — benches use Cargo's `[[bench]]` target which nextest skips. Add `cargo check --tests --benches` to subagent verification prompts when signature-change scope might reach benches.
+
+**Commit plan:** single commit; will be pushed for 0.1.23 release.
+
+---
+
 ## Session 740 — SQL-review Phase 1 + M-4 (B-1 + B-2 + H-4 + M-4) (2026-05-14)
 
 | Metadata | Value |

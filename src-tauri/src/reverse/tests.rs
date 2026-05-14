@@ -1567,9 +1567,15 @@ async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
 /// through the reverse (with explicit user approval per
 /// Architectural Stability), the `assert_ne!` below will need to flip
 /// to `assert_eq!`, and the doc comment must be updated in lockstep.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     let (pool, _dir) = test_pool().await;
+    // SQL-review M-3: `cascade_soft_delete` / `restore_block` now take
+    // `&Materializer` so cache-invalidation dispatch is type-system-
+    // enforced. The dispatched tasks are background fire-and-forget;
+    // we don't await them here because this test only asserts the
+    // op-log shape, not cache state.
+    let mat = crate::materializer::Materializer::new(pool.clone());
 
     // Seed a block in the `blocks` table so cascade_soft_delete /
     // restore_block have a target. Direct SQL mirrors the inline
@@ -1587,14 +1593,14 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
 
     // Step 1: cascade_soft_delete records the original `deleted_at_a`.
     let (deleted_at_a, _count_a) =
-        crate::soft_delete::cascade_soft_delete(&pool, TEST_DEVICE, block_id)
+        crate::soft_delete::cascade_soft_delete(&pool, &mat, TEST_DEVICE, block_id)
             .await
             .unwrap();
 
     // Step 2: restore so the block is alive again, then append a
     // RestoreBlock op carrying `deleted_at_a` so we have a record to
     // feed into compute_reverse.
-    crate::soft_delete::restore_block(&pool, block_id, &deleted_at_a)
+    crate::soft_delete::restore_block(&pool, &mat, block_id, &deleted_at_a)
         .await
         .unwrap();
     let restore_rec = append_op(
@@ -1625,7 +1631,7 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     // Step 4: apply the reverse — equivalent to what the redo path
     // does in production — and capture the new `deleted_at_b`.
     let (deleted_at_b, _count_b) =
-        crate::soft_delete::cascade_soft_delete(&pool, TEST_DEVICE, block_id)
+        crate::soft_delete::cascade_soft_delete(&pool, &mat, TEST_DEVICE, block_id)
             .await
             .unwrap();
 

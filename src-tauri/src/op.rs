@@ -334,6 +334,35 @@ impl OpPayload {
         }
     }
 
+    /// Returns the `attachment_id` from the inner payload, if present.
+    ///
+    /// Only [`AddAttachment`](OpPayload::AddAttachment) and
+    /// [`DeleteAttachment`](OpPayload::DeleteAttachment) carry an
+    /// `attachment_id`; every other variant identifies its target by
+    /// `block_id` and returns `None` here.
+    ///
+    /// Used by `op_log::append_local_op_in_tx`, `dag::append_merge_op`,
+    /// and `dag::insert_remote_op` to populate the indexed
+    /// `op_log.attachment_id` column added by migration 0064
+    /// (SQL-review B-4), so reverse-attachment lookups are O(log N)
+    /// rather than scanning every `add_attachment` row.
+    pub fn attachment_id(&self) -> Option<&str> {
+        match self {
+            OpPayload::AddAttachment(p) => Some(p.attachment_id.as_str()),
+            OpPayload::DeleteAttachment(p) => Some(p.attachment_id.as_str()),
+            OpPayload::CreateBlock(_)
+            | OpPayload::EditBlock(_)
+            | OpPayload::DeleteBlock(_)
+            | OpPayload::RestoreBlock(_)
+            | OpPayload::PurgeBlock(_)
+            | OpPayload::MoveBlock(_)
+            | OpPayload::AddTag(_)
+            | OpPayload::RemoveTag(_)
+            | OpPayload::SetProperty(_)
+            | OpPayload::DeleteProperty(_) => None,
+        }
+    }
+
     /// No-op contract marker: BlockId fields already auto-normalize to
     /// uppercase Crockford base32 on construction and deserialization
     /// (see `BlockId::from_trusted` and the `Deserialize` impl). This

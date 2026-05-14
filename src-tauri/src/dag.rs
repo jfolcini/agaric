@@ -15,7 +15,8 @@ use crate::error::AppError;
 use crate::hash::{compute_op_hash, verify_op_hash};
 use crate::op::*;
 use crate::op_log::{
-    extract_block_id_from_payload, get_op_by_seq, serialize_inner_payload, OpRecord,
+    extract_attachment_id_from_payload, extract_block_id_from_payload, get_op_by_seq,
+    serialize_inner_payload, OpRecord,
 };
 
 /// M-4: hard cap on the number of `prev_edit` chain steps `find_lca` will
@@ -407,10 +408,17 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
     // have the serialized payload string.
     let block_id: Option<String> = extract_block_id_from_payload(&record.payload);
 
+    // SQL-review B-4 / migration 0064: same denormalisation pattern as
+    // block_id, applied to attachment_id. Remote attachment ops must
+    // populate the column so the reverse-attachment lookup in
+    // `reverse::attachment_ops::reverse_delete_attachment` finds them
+    // via the indexed `idx_op_log_attachment_id` partial index.
+    let attachment_id: Option<String> = extract_attachment_id_from_payload(&record.payload);
+
     let result = sqlx::query!(
         "INSERT OR IGNORE INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         record.device_id,
         record.seq,
         record.parent_seqs,
@@ -419,6 +427,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         record.payload,
         record.created_at,
         block_id,
+        attachment_id,
     )
     .execute(pool)
     .await?;
@@ -480,10 +489,14 @@ pub async fn append_merge_op(
     // PERF-26: populate indexed block_id column from the typed payload.
     let block_id: Option<&str> = op_payload.block_id();
 
+    // SQL-review B-4 / migration 0064: same denormalisation pattern as
+    // block_id, applied to attachment_id (Some only for attachment ops).
+    let attachment_id: Option<&str> = op_payload.attachment_id();
+
     sqlx::query!(
         "INSERT INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         device_id,
         seq,
         parent_seqs_json,
@@ -492,6 +505,7 @@ pub async fn append_merge_op(
         payload_json,
         created_at,
         block_id,
+        attachment_id,
     )
     .execute(&mut *tx)
     .await?;

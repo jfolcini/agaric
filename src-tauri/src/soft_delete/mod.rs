@@ -34,6 +34,7 @@ pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool
 mod tests {
     use super::*;
     use crate::db::init_pool;
+    use crate::materializer::Materializer;
     use sqlx::SqlitePool;
     use tempfile::TempDir;
 
@@ -52,6 +53,15 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let pool = init_pool(&db_path).await.unwrap();
         (pool, dir)
+    }
+
+    /// SQL-review M-3: `cascade_soft_delete` / `restore_block` now take
+    /// `&Materializer`, so every test setup needs one. Pool + Materializer
+    /// + TempDir bundle; drop order matters (TempDir last).
+    async fn test_pool_and_mat() -> (SqlitePool, Materializer, TempDir) {
+        let (pool, dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        (pool, mat, dir)
     }
 
     async fn insert_block(
@@ -124,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_soft_delete_marks_entire_subtree() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
         insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
@@ -136,7 +146,7 @@ mod tests {
             Some(1),
         )
         .await;
-        let (ts, count) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
         assert_eq!(count, 3);
@@ -147,7 +157,7 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_soft_delete_skips_already_deleted_subtree() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
         insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
@@ -161,7 +171,7 @@ mod tests {
         .await;
         let t1 = soft_delete_block(&pool, CHILD).await.unwrap().unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let (t2, count) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (t2, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
         assert_ne!(t1, t2);
@@ -173,9 +183,9 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_soft_delete_on_leaf_node_deletes_only_itself() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, "LEAF01", "content", "leaf node", None, Some(1)).await;
-        let (ts, count) = cascade_soft_delete(&pool, TEST_DEVICE, "LEAF01")
+        let (ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, "LEAF01")
             .await
             .unwrap();
         assert_eq!(count, 1);
@@ -184,8 +194,8 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_soft_delete_on_nonexistent_returns_zero() {
-        let (pool, _dir) = test_pool().await;
-        let (_ts, count) = cascade_soft_delete(&pool, TEST_DEVICE, "NONEXISTENT")
+        let (pool, mat, _dir) = test_pool_and_mat().await;
+        let (_ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, "NONEXISTENT")
             .await
             .unwrap();
         assert_eq!(count, 0);
@@ -193,7 +203,7 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_soft_delete_handles_deep_linear_chain() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, "L00", "page", "level 0", None, Some(1)).await;
         for i in 1..=10 {
             let id = format!("L{i:02}");
@@ -208,7 +218,7 @@ mod tests {
             )
             .await;
         }
-        let (ts, count) = cascade_soft_delete(&pool, TEST_DEVICE, "L00")
+        let (ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, "L00")
             .await
             .unwrap();
         assert_eq!(count, 11);
@@ -220,7 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_soft_delete_handles_wide_tree() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, "WROOT", "page", "wide root", None, Some(1)).await;
         for i in 0..100 {
             let id = format!("WC{i:03}");
@@ -234,7 +244,7 @@ mod tests {
             )
             .await;
         }
-        let (ts, count) = cascade_soft_delete(&pool, TEST_DEVICE, "WROOT")
+        let (ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, "WROOT")
             .await
             .unwrap();
         assert_eq!(count, 101);
@@ -247,7 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_soft_delete_leaves_sibling_trees_untouched() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, "TREE_A", "page", "tree a root", None, Some(1)).await;
         insert_block(
             &pool,
@@ -268,7 +278,7 @@ mod tests {
             Some(1),
         )
         .await;
-        cascade_soft_delete(&pool, TEST_DEVICE, "TREE_A")
+        cascade_soft_delete(&pool, &mat, TEST_DEVICE, "TREE_A")
             .await
             .unwrap();
         assert_eq!(get_deleted_at(&pool, "TREE_B").await, None);
@@ -281,7 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_block_clears_entire_subtree() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
         insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
@@ -293,10 +303,10 @@ mod tests {
             Some(1),
         )
         .await;
-        let (ts, _) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (ts, _) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
-        let restored = restore_block(&pool, PARENT, &ts).await.unwrap();
+        let restored = restore_block(&pool, &mat, PARENT, &ts).await.unwrap();
         assert_eq!(restored, 3);
         assert_eq!(get_deleted_at(&pool, PARENT).await, None);
         assert_eq!(get_deleted_at(&pool, CHILD).await, None);
@@ -305,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_block_preserves_independently_deleted_descendants() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
         insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
@@ -325,10 +335,10 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let (t2, _) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (t2, _) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
-        let restored = restore_block(&pool, PARENT, &t2).await.unwrap();
+        let restored = restore_block(&pool, &mat, PARENT, &t2).await.unwrap();
         assert_eq!(restored, 2);
         assert_eq!(get_deleted_at(&pool, PARENT).await, None);
         assert_eq!(get_deleted_at(&pool, CHILD).await, None);
@@ -340,9 +350,9 @@ mod tests {
 
     #[tokio::test]
     async fn restore_block_on_non_deleted_returns_zero() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, BLOCK_A, "content", "alive", None, None).await;
-        let restored = restore_block(&pool, BLOCK_A, FIXED_DELETED_AT)
+        let restored = restore_block(&pool, &mat, BLOCK_A, FIXED_DELETED_AT)
             .await
             .unwrap();
         assert_eq!(restored, 0);
@@ -367,15 +377,15 @@ mod tests {
 
     #[tokio::test]
     async fn restore_block_with_wrong_deleted_at_ref() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
         insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
-        let (real_ts, count) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (real_ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
         assert_eq!(count, 2);
         let wrong_ts = "1999-01-01T00:00:00+00:00";
-        let restored = restore_block(&pool, PARENT, wrong_ts).await.unwrap();
+        let restored = restore_block(&pool, &mat, PARENT, wrong_ts).await.unwrap();
         assert_eq!(restored, 0);
         assert_eq!(get_deleted_at(&pool, PARENT).await, Some(real_ts.clone()));
         assert_eq!(get_deleted_at(&pool, CHILD).await, Some(real_ts));
@@ -389,16 +399,16 @@ mod tests {
     /// at the source site (`soft_delete/restore.rs`).
     #[tokio::test]
     async fn restore_block_warns_when_no_rows_match() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
         insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
-        let (real_ts, count) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (real_ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
         assert_eq!(count, 2);
 
         let wrong_ts = "1999-01-01T00:00:00+00:00";
-        let restored = restore_block(&pool, PARENT, wrong_ts).await.unwrap();
+        let restored = restore_block(&pool, &mat, PARENT, wrong_ts).await.unwrap();
 
         // Contract: wrong token is a silent no-op at the return-value level.
         // The warn breadcrumb is emitted as a side effect (verified by code
@@ -411,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn double_cascade_soft_delete_is_idempotent() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
         insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
@@ -423,11 +433,11 @@ mod tests {
             Some(1),
         )
         .await;
-        let (ts1, count1) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (ts1, count1) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
         assert_eq!(count1, 3);
-        let (_ts2, count2) = cascade_soft_delete(&pool, TEST_DEVICE, PARENT)
+        let (_ts2, count2) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
         assert_eq!(count2, 0);
@@ -436,9 +446,9 @@ mod tests {
         assert_eq!(get_deleted_at(&pool, GRANDCHILD).await, Some(ts1));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn concurrent_deletes_dont_panic() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
         insert_block(&pool, "CPAR01", "page", "concurrent parent", None, Some(1)).await;
         for i in 1..=5_i64 {
             let id = format!("CCHD{i:02}");
@@ -455,9 +465,10 @@ mod tests {
         let mut handles = Vec::new();
         for i in 1..=5_i64 {
             let pool = pool.clone();
+            let mat = mat.clone();
             handles.push(tokio::spawn(async move {
                 let id = format!("CCHD{i:02}");
-                cascade_soft_delete(&pool, TEST_DEVICE, &id).await
+                cascade_soft_delete(&pool, &mat, TEST_DEVICE, &id).await
             }));
         }
         for handle in handles {
@@ -512,7 +523,7 @@ mod tests {
     async fn cascade_soft_delete_warns_on_depth_saturated_subtree_pend26n2() {
         use tracing_subscriber::layer::SubscriberExt;
 
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
 
         // Build 105-block linear chain rooted at PEND26N2_DEEP_R.
         insert_block(&pool, "PEND26N2_DEEP_R", "page", "root", None, Some(1)).await;
@@ -544,7 +555,7 @@ mod tests {
         );
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        let (_ts, _count) = cascade_soft_delete(&pool, TEST_DEVICE, "PEND26N2_DEEP_R")
+        let (_ts, _count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, "PEND26N2_DEEP_R")
             .await
             .unwrap();
 
@@ -578,7 +589,7 @@ mod tests {
     async fn cascade_soft_delete_does_not_warn_under_threshold_pend26n2() {
         use tracing_subscriber::layer::SubscriberExt;
 
-        let (pool, _dir) = test_pool().await;
+        let (pool, mat, _dir) = test_pool_and_mat().await;
 
         // Build 99-block linear chain (depths 0..98).
         insert_block(&pool, "PEND26N2_OK_R", "page", "root", None, Some(1)).await;
@@ -610,7 +621,7 @@ mod tests {
         );
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        let _ = cascade_soft_delete(&pool, TEST_DEVICE, "PEND26N2_OK_R")
+        let _ = cascade_soft_delete(&pool, &mat, TEST_DEVICE, "PEND26N2_OK_R")
             .await
             .unwrap();
 

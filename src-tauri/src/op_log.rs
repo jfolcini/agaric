@@ -168,6 +168,13 @@ pub async fn append_local_op_in_tx(
     // None for `delete_attachment` which targets an attachment_id only.
     let block_id: Option<&str> = op_payload.block_id();
 
+    // SQL-review B-4 / migration 0064: extract attachment_id for the
+    // indexed column. Returns Some only for the two attachment-bearing
+    // variants (`add_attachment` / `delete_attachment`); every other
+    // variant yields None and the column is NULL (excluded by the
+    // partial index `idx_op_log_attachment_id`).
+    let attachment_id: Option<&str> = op_payload.attachment_id();
+
     // NOTE: `COALESCE(MAX(seq), 0) + 1` is efficient here because the
     // PRIMARY KEY (device_id, seq) gives SQLite a B-tree index that makes
     // `MAX(seq) WHERE device_id = ?` an O(log n) seek, not a table scan.
@@ -223,8 +230,8 @@ pub async fn append_local_op_in_tx(
     let origin = crate::mcp::actor::current_actor().origin_tag();
 
     sqlx::query!(
-        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, origin) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, origin, attachment_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         device_id,
         seq,
         parent_seqs,
@@ -234,6 +241,7 @@ pub async fn append_local_op_in_tx(
         created_at,
         block_id,
         origin,
+        attachment_id,
     )
     .execute(&mut **tx)
     .await?;
@@ -361,6 +369,34 @@ pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String
                 error = %e,
                 op_payload_prefix = %prefix,
                 "failed to extract block_id from payload"
+            );
+            None
+        }
+    }
+}
+
+/// Extract the `attachment_id` from a serialized payload JSON string.
+///
+/// Used by [`crate::dag::insert_remote_op`] to populate the indexed
+/// `op_log.attachment_id` column (added in migration 0064, SQL-review
+/// B-4) when the caller only has the payload as a JSON string rather
+/// than a typed [`OpPayload`].
+///
+/// Returns `None` if the payload has no `attachment_id` field (every
+/// op except `add_attachment` and `delete_attachment`) or if the JSON
+/// cannot be parsed. Same warn-and-continue contract as
+/// [`extract_block_id_from_payload`] — silent-swallow of malformed
+/// JSON would lose the indexed entry and produce hard-to-attribute
+/// "reverse-attachment query misses this op" bugs.
+pub(crate) fn extract_attachment_id_from_payload(payload_json: &str) -> Option<String> {
+    match serde_json::from_str::<serde_json::Value>(payload_json) {
+        Ok(value) => value.get("attachment_id")?.as_str().map(str::to_owned),
+        Err(e) => {
+            let prefix: String = payload_json.chars().take(80).collect();
+            tracing::warn!(
+                error = %e,
+                op_payload_prefix = %prefix,
+                "failed to extract attachment_id from payload"
             );
             None
         }
@@ -1798,6 +1834,41 @@ mod tests {
         assert_eq!(
             native, 1,
             "idx_op_log_block_id (native column index from migration 0030) must remain"
+        );
+    }
+
+    /// SQL-review B-4 / migration 0064: the native `attachment_id`
+    /// column and its partial index `idx_op_log_attachment_id` must
+    /// exist after migrations run. This pins the schema contract that
+    /// `reverse::attachment_ops::reverse_delete_attachment` relies on
+    /// (O(log N) lookup instead of a full `op_log` scan filtered by
+    /// `json_extract(payload, '$.attachment_id')`). Mirrors the
+    /// `op_log_block_id_indexes_post_migration_0048` guard immediately
+    /// above.
+    #[tokio::test]
+    async fn op_log_attachment_id_column_and_index_exist() {
+        let (pool, _dir) = test_pool().await;
+
+        let col_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM pragma_table_info('op_log') WHERE name = 'attachment_id'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            col_count, 1,
+            "migration 0064 must add the `attachment_id` column to op_log"
+        );
+
+        let idx_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_op_log_attachment_id'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            idx_count, 1,
+            "migration 0064 must create the `idx_op_log_attachment_id` partial index"
         );
     }
 

@@ -50,7 +50,14 @@ pub(super) async fn handle_foreground_task(
             // would violate the "notify only on durable state"
             // invariant — a DirtyEvent fired mid-batch and then
             // rolled back would send the connector chasing a ghost.
-            let mut tx = pool.begin().await?;
+            //
+            // SQL-review M-1: route through `begin_immediate_logged`
+            // so sync-burst contention surfaces as upfront serialised
+            // wait (with a `warn!` if slow) instead of mid-tx
+            // `busy_timeout` stalls under SQLite's default DEFERRED
+            // isolation.
+            let mut tx =
+                crate::db::begin_immediate_logged(pool, "materializer_apply_batch").await?;
             let mut pending_events: Vec<DeferredNotification> = Vec::new();
             // C-2b: track the highest seq across the batch so we can
             // advance the apply cursor exactly once before commit. An
@@ -165,7 +172,11 @@ pub(super) async fn apply_op(
     record: &Arc<OpRecord>,
     gcal_handle: &OnceLock<GcalConnectorHandle>,
 ) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
+    // SQL-review M-1: route through `begin_immediate_logged` so
+    // sync-burst contention surfaces as upfront serialised wait (with
+    // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
+    // under SQLite's default DEFERRED isolation.
+    let mut tx = crate::db::begin_immediate_logged(pool, "materializer_apply_op").await?;
     let snapshot = snapshot_for_op(&mut tx, record).await?;
     let effects = apply_op_tx(&mut tx, record).await?;
     // C-2b: advance the cursor in the same tx so `apply + cursor` are
@@ -3334,6 +3345,61 @@ mod engine_path_tests {
         assert!(
             prop.is_none(),
             "engine must drop the property; got {prop:?}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod static_source_checks {
+    /// SQL-review M-1: the two production apply-tx sites in this file —
+    /// `apply_op` and the `BatchApplyOps` arm of
+    /// `handle_foreground_task` — must open their write transaction
+    /// via [`crate::db::begin_immediate_logged`], NOT the sqlx default
+    /// `pool.begin()` (which uses DEFERRED isolation). Under sync
+    /// burst, two materializer batches starting with DEFERRED
+    /// transactions only collide on the first write and stall silently
+    /// on `busy_timeout` mid-tx; routing through
+    /// `begin_immediate_logged` forces upfront write-lock acquisition
+    /// and surfaces contention as a loud `warn!` log line. This guard
+    /// reads `handlers.rs` from disk and asserts the immediate-helper
+    /// labels are present and that the production paths do not
+    /// re-introduce a bare `pool.begin()`. Test-only `pool.begin()`
+    /// sites under `#[cfg(test)]` are explicitly out of scope.
+    ///
+    /// Style mirrors `op_log::tests::dag_queries_no_longer_use_json_extract_block_id`
+    /// (the canonical static-source regression pattern in this repo).
+    #[test]
+    fn apply_tx_uses_begin_immediate_not_deferred() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/materializer/handlers.rs");
+        let contents =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+
+        assert!(
+            contents.contains("crate::db::begin_immediate_logged(pool, \"materializer_apply_op\")"),
+            "apply_op must open its write tx via `begin_immediate_logged` with the \
+             `materializer_apply_op` label — see SQL-review M-1.",
+        );
+        assert!(
+            contents
+                .contains("crate::db::begin_immediate_logged(pool, \"materializer_apply_batch\")"),
+            "BatchApplyOps must open its write tx via `begin_immediate_logged` with \
+             the `materializer_apply_batch` label — see SQL-review M-1.",
+        );
+
+        // Defence in depth: the production paths must not regress to a
+        // bare `pool.begin()`. Test modules in this file legitimately
+        // use `pool.begin()` (rollback semantics suit unit tests that
+        // never commit), so split the file at the first `#[cfg(test)]`
+        // attribute and only scan the production prefix.
+        let prod_prefix = contents
+            .split("#[cfg(test)]")
+            .next()
+            .expect("split always yields at least one element");
+        assert!(
+            !prod_prefix.contains("pool.begin()"),
+            "production code in src/materializer/handlers.rs must not call bare \
+             `pool.begin()` (DEFERRED isolation) — use `begin_immediate_logged` \
+             so sync-burst contention serialises upfront. See SQL-review M-1.",
         );
     }
 }

@@ -74,14 +74,24 @@ fn bench_cascade_soft_delete(c: &mut Criterion) {
                 b.iter_batched(
                     || {
                         let dir = TempDir::new().unwrap();
-                        let pool = rt.block_on(async {
+                        let (pool, materializer) = rt.block_on(async {
                             let p = init_pool(&dir.path().join("b.db")).await.unwrap();
                             seed_tree(&p, d, w).await;
-                            p
+                            let m = Materializer::new(p.clone());
+                            (p, m)
                         });
-                        (pool, dir)
+                        (pool, dir, materializer)
                     },
-                    |(pool, _dir)| rt.block_on(cascade_soft_delete(&pool, BENCH_DEVICE, ROOT_ID)),
+                    |(pool, _dir, materializer)| {
+                        let result = rt.block_on(cascade_soft_delete(
+                            &pool,
+                            &materializer,
+                            BENCH_DEVICE,
+                            ROOT_ID,
+                        ));
+                        materializer.shutdown();
+                        result
+                    },
                     criterion::BatchSize::SmallInput,
                 );
             },
@@ -105,11 +115,11 @@ fn bench_purge_block(c: &mut Criterion) {
                         let (pool, materializer) = rt.block_on(async {
                             let p = init_pool(&dir.path().join("b.db")).await.unwrap();
                             seed_tree(&p, d, w).await;
+                            let m = Materializer::new(p.clone());
                             // Soft-delete first so purge exercises the full path.
-                            cascade_soft_delete(&p, BENCH_DEVICE, ROOT_ID)
+                            cascade_soft_delete(&p, &m, BENCH_DEVICE, ROOT_ID)
                                 .await
                                 .unwrap();
-                            let m = Materializer::new(p.clone());
                             (p, m)
                         });
                         (pool, dir, materializer)
@@ -145,17 +155,22 @@ fn bench_restore_block(c: &mut Criterion) {
                 b.iter_batched(
                     || {
                         let dir = TempDir::new().unwrap();
-                        let (pool, ts) = rt.block_on(async {
+                        let (pool, materializer, ts) = rt.block_on(async {
                             let p = init_pool(&dir.path().join("b.db")).await.unwrap();
                             seed_tree(&p, d, w).await;
-                            let (ts, _) = cascade_soft_delete(&p, BENCH_DEVICE, ROOT_ID)
+                            let m = Materializer::new(p.clone());
+                            let (ts, _) = cascade_soft_delete(&p, &m, BENCH_DEVICE, ROOT_ID)
                                 .await
                                 .unwrap();
-                            (p, ts)
+                            (p, m, ts)
                         });
-                        (pool, dir, ts)
+                        (pool, dir, materializer, ts)
                     },
-                    |(pool, _dir, ts)| rt.block_on(restore_block(&pool, ROOT_ID, &ts)),
+                    |(pool, _dir, materializer, ts)| {
+                        let result = rt.block_on(restore_block(&pool, &materializer, ROOT_ID, &ts));
+                        materializer.shutdown();
+                        result
+                    },
                     criterion::BatchSize::SmallInput,
                 );
             },

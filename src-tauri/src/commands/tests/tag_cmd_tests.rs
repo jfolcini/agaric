@@ -158,7 +158,7 @@ async fn add_tag_deleted_block_returns_not_found() {
     insert_block(&pool, "ATDEL_BLK", "content", "my block", None, Some(1)).await;
     insert_block(&pool, "ATDEL_TAG", "tag", "urgent", None, None).await;
 
-    soft_delete::cascade_soft_delete(&pool, DEV, "ATDEL_BLK")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "ATDEL_BLK")
         .await
         .unwrap();
 
@@ -260,7 +260,7 @@ async fn remove_tag_deleted_block_returns_not_found() {
         .await
         .unwrap();
 
-    soft_delete::cascade_soft_delete(&pool, DEV, "RTDEL_BLK")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "RTDEL_BLK")
         .await
         .unwrap();
 

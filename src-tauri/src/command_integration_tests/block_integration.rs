@@ -850,7 +850,7 @@ async fn restore_block_clears_deleted_at() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "REST01", "content", "restore me", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "REST01")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, &mat, DEV, "REST01")
         .await
         .unwrap();
 
@@ -888,7 +888,7 @@ async fn restore_block_cascades_to_descendants() {
     )
     .await;
 
-    let (ts, count) = soft_delete::cascade_soft_delete(&pool, DEV, "RPAR")
+    let (ts, count) = soft_delete::cascade_soft_delete(&pool, &mat, DEV, "RPAR")
         .await
         .unwrap();
     assert_eq!(count, 3, "cascade must delete parent + child + grandchild");
@@ -914,7 +914,7 @@ async fn restore_block_writes_op_log_entry() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "REST_LOG", "content", "restore-log", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "REST_LOG")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, &mat, DEV, "REST_LOG")
         .await
         .unwrap();
 
@@ -989,7 +989,7 @@ async fn restore_with_wrong_deleted_at_ref_returns_invalid_operation() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "MISMATCH01", "content", "test", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "MISMATCH01")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, &mat, DEV, "MISMATCH01")
         .await
         .unwrap();
 
@@ -1017,7 +1017,7 @@ async fn purge_block_removes_from_db() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "PURGE01", "content", "doomed", None, Some(1)).await;
-    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE01")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGE01")
         .await
         .unwrap();
 
@@ -1162,7 +1162,7 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .unwrap();
 
     // Soft-delete then purge
-    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_REL")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGE_REL")
         .await
         .unwrap();
     purge_block_inner(&pool, DEV, &mat, "PURGE_REL".into())
@@ -1322,7 +1322,7 @@ async fn purge_block_inner_succeeds_when_tag_still_inherited_by_alive_blocks() {
     .unwrap();
 
     // Soft-delete only the tag.
-    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_TAG")
+    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGE_TAG")
         .await
         .unwrap();
     assert_eq!(cnt, 1, "only the tag should be soft-deleted");
@@ -1377,7 +1377,7 @@ async fn purge_block_writes_op_log_entry() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "PURGE_LOG", "content", "purge-log", None, Some(1)).await;
-    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_LOG")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGE_LOG")
         .await
         .unwrap();
 

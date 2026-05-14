@@ -1135,7 +1135,7 @@ async fn restore_block_restores_block_and_descendants() {
     .await;
 
     // Cascade soft-delete directly
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "RST_PAR")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, &mat, DEV, "RST_PAR")
         .await
         .unwrap();
 
@@ -1189,7 +1189,7 @@ async fn restore_block_mismatched_deleted_at_returns_invalid_operation() {
     let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "MISMATCH1", "content", "test", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "MISMATCH1")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, &mat, DEV, "MISMATCH1")
         .await
         .unwrap();
 
@@ -1215,7 +1215,7 @@ async fn purge_block_physically_removes_from_db() {
     insert_block(&pool, "PURGE1", "content", "doomed", None, Some(1)).await;
 
     // Soft-delete first (purge requires prior soft-delete)
-    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE1")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGE1")
         .await
         .unwrap();
 
@@ -1293,7 +1293,7 @@ async fn purge_block_inner_cleans_page_aliases() {
             .unwrap();
     assert_eq!(count, 1, "alias should exist before purge");
 
-    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_PA_CMD")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGE_PA_CMD")
         .await
         .unwrap();
 
@@ -1339,7 +1339,7 @@ async fn purge_block_inner_cleans_projected_agenda_cache() {
         "projected_agenda_cache row should exist before purge"
     );
 
-    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_PAC_CMD")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGE_PAC_CMD")
         .await
         .unwrap();
 
@@ -1374,7 +1374,7 @@ async fn restore_blocks_by_ids_clears_deleted_at_for_n_blocks() {
     for i in 0..4 {
         let id = format!("RBBI{i:03}");
         insert_block(&pool, &id, "content", "rbbi", None, Some(1)).await;
-        soft_delete::cascade_soft_delete(&pool, DEV, &id)
+        soft_delete::cascade_soft_delete(&pool, &mat, DEV, &id)
             .await
             .unwrap();
     }
@@ -1426,10 +1426,10 @@ async fn restore_blocks_by_ids_restores_descendants_too() {
         Some(1),
     )
     .await;
-    soft_delete::cascade_soft_delete(&pool, DEV, "RBBIPAR1")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "RBBIPAR1")
         .await
         .unwrap();
-    soft_delete::cascade_soft_delete(&pool, DEV, "RBBIPAR2")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "RBBIPAR2")
         .await
         .unwrap();
 
@@ -1524,7 +1524,7 @@ async fn restore_blocks_by_ids_writes_one_op_log_seq_range() {
     for i in 0..3 {
         let id = format!("RBBOPS{i}");
         insert_block(&pool, &id, "content", "rbbops", None, Some(1)).await;
-        soft_delete::cascade_soft_delete(&pool, DEV, &id)
+        soft_delete::cascade_soft_delete(&pool, &mat, DEV, &id)
             .await
             .unwrap();
     }
@@ -1625,7 +1625,7 @@ async fn purge_blocks_by_ids_clears_all_related_state() {
     .await
     .unwrap();
 
-    soft_delete::cascade_soft_delete(&pool, DEV, "PBBISTATE")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PBBISTATE")
         .await
         .unwrap();
 
@@ -1707,7 +1707,7 @@ async fn purge_blocks_by_ids_atomic_rollback_on_validation_error() {
     // path is itself a fast `Validation` return. We use it as the
     // "trigger an error" surface to assert no row is touched on error.
     insert_block(&pool, "PBBIROLL", "content", "doomed", None, Some(1)).await;
-    soft_delete::cascade_soft_delete(&pool, DEV, "PBBIROLL")
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PBBIROLL")
         .await
         .unwrap();
 

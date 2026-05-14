@@ -28,7 +28,7 @@
   sound (the relaunched op-log-core agent gave a clean bill of health on
   invariants).
 
-## §1 — Verified blocking issues (2)
+## §1 — Verified blocking issues (1)
 
 ### B-3 — Reverse-op replay is N+1 across the entire batch
 
@@ -57,25 +57,6 @@ captured in the parallel scale-benchmarks plan
 
 Goes from 3 N queries to **3 queries total**. **Cost M** (~2 days
 including parity tests against the pre-batched code).
-
-### B-4 — Unindexed reverse-attachment lookup
-
-**Where:** `src-tauri/src/reverse/attachment_ops.rs:59-65`.
-
-```sql
-SELECT payload FROM op_log
-WHERE op_type = 'add_attachment'
-  AND json_extract(payload, '$.attachment_id') = ?
-```
-
-No covering index on `attachment_id`. With 5K attachments in op_log,
-every `delete_attachment` undo full-scans those rows. Same fix pattern as
-B-2: denormalise `attachment_id` to a column with an index, or accept the
-slower path and add an expression index on `json_extract(payload,
-'$.attachment_id')` filtered by `op_type = 'add_attachment'` (smaller
-footprint, narrower coverage).
-
-**Cost S-M** (column + backfill + write-site update + migration test).
 
 ## §2 — High-impact perf issues (3)
 
@@ -150,27 +131,13 @@ COALESCE-defeats-index pattern from H-1, applied to the cache join.
 **Fix:** Resolves automatically once H-1's audit lands. **Cost: 0**
 (subsumed by H-1).
 
-## §3 — Medium-impact (7 — bullet form)
+## §3 — Medium-impact (5 — bullet form)
 
-- **M-1: Materializer apply tx uses `pool.begin()` (DEFERRED), not
-  `BEGIN IMMEDIATE`** (`materializer/handlers.rs:53,168`). Atomicity is
-  preserved (apply + cursor advance are in the same tx), but during
-  sync bursts two writers can collide and hit `busy_timeout` instead
-  of upfront-serialising. Fix is one line per call site
-  (`pool.begin_with("BEGIN IMMEDIATE")`). The earlier BLOCKER framing
-  was wrong — this is perf, not correctness. **Cost S**.
 - **M-2: Three full-rebuild cache paths could be incremental.**
   `rebuild_pages_cache`, `rebuild_tags_cache`, `rebuild_block_tag_refs_
   cache` all use `DELETE *; INSERT SELECT …`. At 100K rows this is two
   passes. `rebuild_agenda_cache` already did the sort-merge incremental
   upgrade (M-19b) — apply the same pattern to the other three. **Cost M**.
-- **M-3: `cascade_soft_delete` and `restore_block` primitives don't
-  dispatch the materializer themselves** (`soft_delete/trash.rs:43`,
-  `soft_delete/restore.rs:26`). Today this is masked because the
-  callsites in `crud.rs` dispatch on their behalf — but it's a hidden
-  coupling: a future caller of these primitives that forgets to dispatch
-  leaves caches stale. Fix: wire `&Materializer` into the primitive
-  signature so dispatch is enforced at the type system. **Cost S-M**.
 - **M-5: `query_by_property` (`pagination/properties.rs:89-298`) is
   250 LOC of `format!()`-built SQL** that interpolates the column name
   `b.{col}`. The column is a whitelisted reserved key, so injection is
@@ -302,10 +269,12 @@ B-2 (dag.rs `block_id` swap, 2 sites), H-4 (cursor sanity check) all landed
 with regression tests. M-4 (retry-queue covering index, migration 0063) also
 absorbed into this batch.
 
-**Phase 2 — Index + dispatch hygiene (S+S+M, ~3 days).**
-M-1 (BEGIN IMMEDIATE on apply path), M-3 (soft_delete dispatch plumbing),
-B-4 (attachment_id index + column). Improves contention behaviour and
-closes the dispatch coupling.
+**Phase 2 — Index + dispatch hygiene.** ✅ SHIPPED session 741. M-1 (BEGIN
+IMMEDIATE on apply path via `db::begin_immediate_logged`), M-3 (soft_delete
+primitives now take `&Materializer` and dispatch FULL_CACHE_REBUILD_TASKS +
+FTS task themselves; 61 test/integration call sites updated), B-4 (new
+`op_log.attachment_id` column via migration 0064, mirroring the 0030
+`block_id` pattern; reverse-attachment query swapped to the native column).
 
 **Phase 3 — Reverse-op + write-loop batching (M+M, ~4 days).**
 B-3 (revert_ops batching) + the cross-cut "audit top-10 write loops for
@@ -328,7 +297,12 @@ Gated on Android profiling for M-8 cost/benefit.
   flip on `block_properties.value_ref`, which fanned out to 4 production sites
   that previously did app-level `SET value_ref = NULL`; they now `DELETE`
   the property row instead, matching the new CASCADE direction).
-- **Phase 2:** Cost **S-M** (~3 d). Impact: removes contention
+- **Phase 2:** ✅ SHIPPED session 741 (M-1 + M-3 + B-4). M-3 expanded to 61
+  test/integration call sites + 4 bench sites because the dispatch contract
+  is enforced at the type system; B-4 added migration 0064 mirroring the
+  proven 0030 `block_id` denormalisation pattern. Subsumes original M-1
+  framing.
+- **Phase 2 (original):** Cost **S-M** (~3 d). Impact: removes contention
   storms during sync bursts; closes hidden dispatch coupling.
   Risk: medium — `BEGIN IMMEDIATE` conversion can surface upstream
   stalls that DEFERRED hid (a feature, not a bug, but PRs may need
