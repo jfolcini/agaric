@@ -187,6 +187,11 @@ export const settings: Record<string, string> = {
   'gcal.connectHelp':
     'Click to authorize Agaric to push your daily agenda to a dedicated \u201CAgaric Agenda\u201D calendar on your Google account.',
   'gcal.connectFailed': 'Failed to start Google sign-in',
+  'gcal.connecting': 'Waiting for Google…',
+  'gcal.connect.timeout': 'Timed out waiting for Google sign-in. Please try again.',
+  'gcal.connect.invalidState': 'Sign-in could not be verified. Please try again.',
+  'gcal.connect.exchangeFailed': 'Google rejected the sign-in. Check your network and try again.',
+  'gcal.connect.clientMisconfigured': 'Google OAuth is not configured. Contact the maintainer.',
   'gcal.pushingToCalendar': 'Pushing to calendar: Agaric Agenda',
   'gcal.windowLabel': 'Sync days forward from today',
   'gcal.windowHelp': 'Agaric will mirror the next N days of agenda entries. Range: 7\u201390 days.',

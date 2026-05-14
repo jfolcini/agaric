@@ -272,6 +272,96 @@ describe('GoogleCalendarSettingsTab — account states', () => {
     })
     expect(mockedToastError).toHaveBeenCalledWith('Failed to start Google sign-in')
   })
+
+  // PEND-gcal-oauth: typed error-payload mapping. The backend serialises
+  // `AppError::Validation` as `{ kind: 'validation', message: 'oauth.<key>: …' }`
+  // (see `src-tauri/src/error.rs`); the FE must surface a dedicated toast
+  // for each key rather than collapsing to the generic
+  // `gcal.connectFailed` string.
+  it.each([
+    ['oauth.timeout', 'Timed out waiting for Google sign-in. Please try again.'],
+    ['oauth.invalid_state', 'Sign-in could not be verified. Please try again.'],
+    [
+      'oauth.exchange_failed: 400 Bad Request',
+      'Google rejected the sign-in. Check your network and try again.',
+    ],
+    [
+      'oauth.client_misconfigured: invalid client id',
+      'Google OAuth is not configured. Contact the maintainer.',
+    ],
+    [
+      'oauth.open_browser_failed: no default handler',
+      'Google OAuth is not configured. Contact the maintainer.',
+    ],
+  ])('maps %s -> typed toast', async (message, expectedToast) => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_gcal_status') return makeDisconnectedStatus()
+      if (cmd === 'begin_gcal_oauth') {
+        return Promise.reject({ kind: 'validation', message })
+      }
+      return undefined
+    })
+
+    render(<GoogleCalendarSettingsTab />)
+    const connectBtn = await screen.findByRole('button', { name: /Connect Google Account/i })
+    await user.click(connectBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(expectedToast)
+    })
+  })
+
+  it('falls back to generic toast for unknown error payloads', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_gcal_status') return makeDisconnectedStatus()
+      if (cmd === 'begin_gcal_oauth') {
+        return Promise.reject({ kind: 'database', message: 'something else' })
+      }
+      return undefined
+    })
+
+    render(<GoogleCalendarSettingsTab />)
+    const connectBtn = await screen.findByRole('button', { name: /Connect Google Account/i })
+    await user.click(connectBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to start Google sign-in')
+    })
+  })
+
+  it('disables the Connect button + shows the waiting label while begin_gcal_oauth is in flight', async () => {
+    const user = userEvent.setup()
+    // Hold the OAuth call open so we can observe the in-flight state.
+    let releaseOauth: () => void = () => {}
+    const oauthPromise = new Promise<null>((resolve) => {
+      releaseOauth = () => resolve(null)
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_gcal_status') return makeDisconnectedStatus()
+      if (cmd === 'begin_gcal_oauth') return oauthPromise
+      return undefined
+    })
+
+    render(<GoogleCalendarSettingsTab />)
+    const connectBtn = await screen.findByTestId('gcal-connect-button')
+    await user.click(connectBtn)
+
+    // While the IPC is in flight, the button is busy + disabled + shows
+    // the waiting label.
+    await waitFor(() => {
+      expect(connectBtn).toBeDisabled()
+      expect(connectBtn).toHaveAttribute('aria-busy', 'true')
+    })
+    expect(connectBtn).toHaveTextContent(/Waiting for Google/i)
+
+    // Resolve the IPC; the button returns to its default state.
+    releaseOauth()
+    await waitFor(() => {
+      expect(connectBtn).not.toBeDisabled()
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

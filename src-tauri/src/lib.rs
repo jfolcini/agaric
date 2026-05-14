@@ -236,6 +236,8 @@ macro_rules! agaric_commands {
             $crate::commands::disconnect_gcal,
             $crate::commands::set_gcal_window_days,
             $crate::commands::set_gcal_privacy_mode,
+            // Desktop OAuth flow entry point (FEAT-5b).
+            $crate::commands::begin_gcal_oauth,
             // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
             $crate::commands::list_spaces,
             $crate::commands::create_page_in_space,
@@ -1252,6 +1254,24 @@ pub fn run() {
             app.manage(commands::GcalTokenStoreState(gcal_token_store));
             app.manage(commands::GcalEventEmitterState(gcal_emitter));
             app.manage(commands::GcalClientState(gcal_client));
+
+            // FEAT-5b — shared `OAuthClient` for the desktop OAuth
+            // flow. A single shared instance is load-bearing: the
+            // PKCE verifier produced by `begin_authorize` must be
+            // recoverable by the matching `exchange_code` call, and
+            // both go through this client. The `redirect_url`
+            // configured here is a sentinel — every flow overrides
+            // it with its per-flow loopback port in `begin_authorize`
+            // / `exchange_code`. A construction-time failure here
+            // means the pinned Google endpoint URLs failed to parse,
+            // which is structurally impossible — surface via `expect`
+            // so a regression in `OAuthClient::google` panics at
+            // startup rather than silently disabling Connect.
+            let oauth_client = std::sync::Arc::new(
+                gcal_push::oauth::OAuthClient::google(0)
+                    .expect("Google OAuth endpoints must parse"),
+            );
+            app.manage(commands::GcalOAuthClientState(oauth_client));
 
             Ok(())
         })

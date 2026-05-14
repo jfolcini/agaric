@@ -14,7 +14,7 @@
  */
 
 import { ChevronsLeft, Keyboard, Moon, Plus, RefreshCw, Sun, WifiOff } from 'lucide-react'
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { THEME_NAME_KEY, type ThemePreference } from '../hooks/useTheme'
 import { formatRelativeTime } from '../lib/format-relative-time'
@@ -100,7 +100,7 @@ export interface AppSidebarProps {
   currentSpaceId: string | null
 }
 
-export function AppSidebar({
+function AppSidebarInner({
   currentView,
   onSelectView,
   trashCount,
@@ -310,3 +310,15 @@ export function AppSidebar({
     </Sidebar>
   )
 }
+
+/**
+ * Memoized export — App.tsx forwards ~16 store-derived props on every
+ * top-level render (see design-system-perf-review-2026-05-09.md item 10).
+ * Wrapping with `React.memo` collapses parent-driven rerenders to the
+ * subset where a prop identity actually changed; intra-sidebar state
+ * (sync dot colour, theme cycle) re-renders on its own subscriptions
+ * through `SpaceSwitcher` and `useSidebar()`. Mirrors the
+ * `BlockListItem` Inner/memo pattern used elsewhere in the tree.
+ */
+export const AppSidebar = memo(AppSidebarInner)
+AppSidebar.displayName = 'AppSidebar'

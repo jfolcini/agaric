@@ -88,10 +88,11 @@ pub use drafts::{
     list_drafts, list_drafts_inner, save_draft, FlushAllDraftsResult,
 };
 pub use gcal::{
-    disconnect_gcal, disconnect_gcal_inner, force_gcal_resync, force_gcal_resync_inner,
-    get_gcal_status, get_gcal_status_inner, set_gcal_privacy_mode, set_gcal_privacy_mode_inner,
-    set_gcal_window_days, set_gcal_window_days_inner, GcalClientState, GcalEventEmitterState,
-    GcalStatus, GcalTokenStoreState, LeaseHolder,
+    begin_gcal_oauth, begin_gcal_oauth_inner, disconnect_gcal, disconnect_gcal_inner,
+    force_gcal_resync, force_gcal_resync_inner, get_gcal_status, get_gcal_status_inner,
+    set_gcal_privacy_mode, set_gcal_privacy_mode_inner, set_gcal_window_days,
+    set_gcal_window_days_inner, BeginOauthOutcome, GcalClientState, GcalEventEmitterState,
+    GcalOAuthClientState, GcalStatus, GcalTokenStoreState, LeaseHolder,
 };
 pub use history::{
     apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
@@ -197,8 +198,9 @@ pub use drafts::{
 };
 #[doc(hidden)]
 pub use gcal::{
-    __specta__fn__disconnect_gcal, __specta__fn__force_gcal_resync, __specta__fn__get_gcal_status,
-    __specta__fn__set_gcal_privacy_mode, __specta__fn__set_gcal_window_days,
+    __specta__fn__begin_gcal_oauth, __specta__fn__disconnect_gcal, __specta__fn__force_gcal_resync,
+    __specta__fn__get_gcal_status, __specta__fn__set_gcal_privacy_mode,
+    __specta__fn__set_gcal_window_days,
 };
 #[doc(hidden)]
 pub use history::{
@@ -296,8 +298,8 @@ pub use drafts::{
 };
 #[doc(hidden)]
 pub use gcal::{
-    __cmd__disconnect_gcal, __cmd__force_gcal_resync, __cmd__get_gcal_status,
-    __cmd__set_gcal_privacy_mode, __cmd__set_gcal_window_days,
+    __cmd__begin_gcal_oauth, __cmd__disconnect_gcal, __cmd__force_gcal_resync,
+    __cmd__get_gcal_status, __cmd__set_gcal_privacy_mode, __cmd__set_gcal_window_days,
 };
 #[doc(hidden)]
 pub use history::{

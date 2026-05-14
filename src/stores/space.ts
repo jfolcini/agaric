@@ -15,7 +15,7 @@
 
 import { toast } from 'sonner'
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, subscribeWithSelector } from 'zustand/middleware'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { SpaceRow } from '../lib/tauri'
@@ -82,78 +82,88 @@ function reconcileCurrentSpaceId(current: string | null, available: SpaceRow[]):
 }
 
 export const useSpaceStore = create<SpaceState>()(
-  persist(
-    (set, get) => ({
-      currentSpaceId: null,
-      availableSpaces: [],
-      isReady: false,
+  // `subscribeWithSelector` lets `createSpaceSubscriber` (and any future
+  // narrow subscriber) listen on a single selector — currentSpaceId —
+  // instead of waking on every space-store write (`availableSpaces`
+  // refresh, `isReady` flip). See design-system-perf-review-2026-05-09
+  // item 13.
+  subscribeWithSelector(
+    persist(
+      (set, get) => ({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: false,
 
-      setCurrentSpace: (id: string) => {
-        set({ currentSpaceId: id })
-      },
+        setCurrentSpace: (id: string) => {
+          set({ currentSpaceId: id })
+        },
 
-      getCurrentAccent: () => {
-        const { currentSpaceId, availableSpaces } = get()
-        if (currentSpaceId === null) return DEFAULT_ACCENT_TOKEN
-        const active = availableSpaces.find((s) => s.id === currentSpaceId)
-        // `accent_color` is `string | null` on the wire — fall back to
-        // the default when unset (or when the row was filtered out
-        // between the IPC and the selector call). Empty string is also
-        // treated as "unset" so a malformed payload doesn't blank the
-        // chip.
-        const token = active?.accent_color
-        if (token == null || token === '') return DEFAULT_ACCENT_TOKEN
-        return token
-      },
+        getCurrentAccent: () => {
+          const { currentSpaceId, availableSpaces } = get()
+          if (currentSpaceId === null) return DEFAULT_ACCENT_TOKEN
+          const active = availableSpaces.find((s) => s.id === currentSpaceId)
+          // `accent_color` is `string | null` on the wire — fall back to
+          // the default when unset (or when the row was filtered out
+          // between the IPC and the selector call). Empty string is also
+          // treated as "unset" so a malformed payload doesn't blank the
+          // chip.
+          const token = active?.accent_color
+          if (token == null || token === '') return DEFAULT_ACCENT_TOKEN
+          return token
+        },
 
-      refreshAvailableSpaces: async () => {
-        try {
-          const raw = await listSpaces()
-          // Defensive — IPC boundary hardening (AGENTS pitfall #25).
-          // Any non-array response is treated as "no spaces" so the
-          // UI never crashes on a shape mismatch.
-          if (!Array.isArray(raw)) {
-            logger.warn(LOG_MODULE, 'list_spaces returned a non-array response; treating as empty')
-            set({ availableSpaces: [], currentSpaceId: null, isReady: true })
-            return
-          }
-          const spaces = raw
-          const prevCurrent = get().currentSpaceId
-          const nextCurrent = reconcileCurrentSpaceId(prevCurrent, spaces)
-          set({
-            availableSpaces: spaces,
-            currentSpaceId: nextCurrent,
-            isReady: true,
-          })
-          // UX-266 — when the previously-active space disappeared from the
-          // server-truth list (e.g. deleted on another device and synced
-          // down) we silently fall back to the first available space. Tell
-          // the user once via a one-shot toast so they understand why the
-          // active space changed without their action. Skip on first boot
-          // (`prevCurrent === null`) and when the fallback finds no space
-          // to switch to (`nextCurrent === null`).
-          if (prevCurrent !== null && nextCurrent !== null && prevCurrent !== nextCurrent) {
-            const newSpace = spaces.find((s) => s.id === nextCurrent)
-            if (newSpace) {
-              toast.warning(i18n.t('space.activeDeletedNotification', { space: newSpace.name }))
+        refreshAvailableSpaces: async () => {
+          try {
+            const raw = await listSpaces()
+            // Defensive — IPC boundary hardening (AGENTS pitfall #25).
+            // Any non-array response is treated as "no spaces" so the
+            // UI never crashes on a shape mismatch.
+            if (!Array.isArray(raw)) {
+              logger.warn(
+                LOG_MODULE,
+                'list_spaces returned a non-array response; treating as empty',
+              )
+              set({ availableSpaces: [], currentSpaceId: null, isReady: true })
+              return
             }
+            const spaces = raw
+            const prevCurrent = get().currentSpaceId
+            const nextCurrent = reconcileCurrentSpaceId(prevCurrent, spaces)
+            set({
+              availableSpaces: spaces,
+              currentSpaceId: nextCurrent,
+              isReady: true,
+            })
+            // UX-266 — when the previously-active space disappeared from the
+            // server-truth list (e.g. deleted on another device and synced
+            // down) we silently fall back to the first available space. Tell
+            // the user once via a one-shot toast so they understand why the
+            // active space changed without their action. Skip on first boot
+            // (`prevCurrent === null`) and when the fallback finds no space
+            // to switch to (`nextCurrent === null`).
+            if (prevCurrent !== null && nextCurrent !== null && prevCurrent !== nextCurrent) {
+              const newSpace = spaces.find((s) => s.id === nextCurrent)
+              if (newSpace) {
+                toast.warning(i18n.t('space.activeDeletedNotification', { space: newSpace.name }))
+              }
+            }
+          } catch (err) {
+            // Never freeze the UI on backend error — mark ready and leave
+            // `availableSpaces` untouched so a previously-loaded snapshot
+            // (if any) remains usable. Log via the shared logger so the
+            // failure surfaces in the daily log file, not a silent catch.
+            logger.warn(LOG_MODULE, 'failed to load spaces', undefined, err)
+            set({ isReady: true })
           }
-        } catch (err) {
-          // Never freeze the UI on backend error — mark ready and leave
-          // `availableSpaces` untouched so a previously-loaded snapshot
-          // (if any) remains usable. Log via the shared logger so the
-          // failure surfaces in the daily log file, not a silent catch.
-          logger.warn(LOG_MODULE, 'failed to load spaces', undefined, err)
-          set({ isReady: true })
-        }
+        },
+      }),
+      {
+        name: 'agaric:space',
+        // Persist only the id — `availableSpaces` is server truth and must
+        // be re-fetched every boot so a space deleted on another device
+        // doesn't linger in the switcher.
+        partialize: (state) => ({ currentSpaceId: state.currentSpaceId }),
       },
-    }),
-    {
-      name: 'agaric:space',
-      // Persist only the id — `availableSpaces` is server truth and must
-      // be re-fetched every boot so a space deleted on another device
-      // doesn't linger in the switcher.
-      partialize: (state) => ({ currentSpaceId: state.currentSpaceId }),
-    },
+    ),
   ),
 )

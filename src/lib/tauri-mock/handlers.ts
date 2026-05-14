@@ -2296,6 +2296,12 @@ export const HANDLERS: Record<string, Handler> = {
 
   force_gcal_resync: returnNull,
 
+  // Browser mock for the FEAT-5b OAuth flow. Real loopback OAuth is a
+  // Tauri-only concern; in the browser preview just return an empty
+  // outcome so the UI can exercise the success path without spinning up
+  // a real listener. Real-flow tests live under src-tauri.
+  begin_gcal_oauth: () => ({ account_email: null }),
+
   disconnect_gcal: (args) => {
     // Acknowledge the binding's `deleteCalendar: boolean` arg even though
     // the mock has no calendar to delete — the destructured (and discarded)
