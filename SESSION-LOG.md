@@ -7,6 +7,27 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 723 — Tier A cleanup: metadata reshape + lowlight investigation + text-[10px] + agenda-sort re-eval (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 1 build (BlockListItem metadata reshape) — orchestrator-direct for A1, A3, A4 |
+| **Items closed** | A1 LinkPreviewTooltip investigation (closed by investigation — chunk name is misleading; no single dep to swap); A2 BlockListItem metadata half (Tier 1 item 4 fully closed); A3 text-[10px] → text-xs sweep (Maintain Phase 1.1d); A4 agenda-sort-sql-pushdown re-eval (deferred status updated with PEND-15 impact). |
+| **Items modified** | design-system-perf-review status note updated (1.4 fully closed, 1.3.3 investigation result); agenda-sort-sql-pushdown plan updated. |
+| **Tests added** | 0 (existing tests cover the metadata reshape; A3 was a class-name sweep). |
+| **Files touched** | 23 (BlockListItem + 3 panel migrations + 16 text-[10px] sweeps + 3 doc updates) |
+
+**Summary:** four Tier A items closed in one batch — three orchestrator-direct + one subagent. **A1 LinkPreviewTooltip** — bundle inspection (`grep -oE 'from"[^"]+"' dist/assets/LinkPreviewTooltip-*.js`) showed the 312 KB chunk imports 73 modules — it's the page-editor's shared base chunk (RichContentRenderer core + ViewHeader + SearchablePopover + ListViewState + dnd + keyboard-config + EmptyState + LoadingSkeleton + PageLink + 60 other domain modules). The "LinkPreviewTooltip" name is a rolldown artifact; no single heavy library to swap. Recommended (c) accept-the-size — the chunk parallel-fetches with the editor chunk, not on first-paint critical path. **A2 BlockListItem metadata reshape** — typed primitive props: `statusIconState`, `priority` + `priorityVariant` + `priorityBadgeClassName`, `dueDate` + `dueDateBlockId` + `onDateChanged`, `showCompletedIcon` + `completedIconClassName`, `dependencyBlockId`. A memoed `BlockMetadataRow` sub-component renders the row inside BlockListItem. `DueDateChip` lifted from AgendaResults into BlockListItem and memoed. AgendaResults / DuePanel / DonePanel migrated (3 callers); `metadata?: ReactNode` slot retained as @deprecated escape hatch for `UnfinishedTasks` (one-off due-or-scheduled combined pill that doesn't map onto primitives, not perf-critical). Combined with Session 718's handlers half, **Tier 1.4 fully closed**. **A3 text-[10px] sweep** — 27 occurrences across 16 files → `text-xs`. One test fixture regression caught: my sed converted `.not.toContain('text-[10px]')` into `.not.toContain('text-xs')` which contradicted sibling `.toContain('text-xs')` assertions on the same hint element; restored the negation assertions to their original `text-[10px]` form. **A4 agenda-sort-sql-pushdown** — "when to revisit" criteria updated to note PEND-15's per-space partitioning adds another ~half day to the compound-cursor reshape (original M estimate was pre-PEND-15).
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9733 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit covering Tier A batch + Session 723 entry.
+
+---
 ## Session 722 — FeaturePageHeader primitive + ConfirmDialog merge (2026-05-14)
 
 | Metadata | Value |

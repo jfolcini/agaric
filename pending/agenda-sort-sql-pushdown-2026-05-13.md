@@ -88,20 +88,28 @@ JS comparator-based sort is microseconds-fast on modern V8.
 
 - Profiling shows the per-page sort is measurably hot on real user
   data (e.g. p95 > 5 ms).
-- The practical agenda size grows past one page consistently (which
-  would also surface the load-more cursor bug in
-  `pending/agenda-loadmore-cursor-namespace-2026-05-13.md`).
+- The practical agenda size grows past one page consistently. The
+  load-more cursor bug that previously paired with this trigger
+  shipped in Session 714 (`loadMoreAgendaFilters`), so users who hit
+  page 2 today get a correct AND-intersected result — meaning a
+  measurable agenda-size-past-one-page is now genuine signal, not
+  a latent footgun.
 - A new agenda-style view emerges that wants the same ORDER BY shape
   (the compound-cursor pattern would then have two consumers,
   improving the ROI).
 - The backend `filtered_blocks_query` is being refactored for unrelated
   reasons and the compound-cursor change is local to that work.
 
-## Cost when picked up
+## Cost when picked up (2026-05-14 update)
 
-- **M (1-3 days).** Backend extension is ~half a day; the cursor type
-  reshape + all-callers update is the bulk; tests for compound-cursor
-  correctness add another half day.
+- **M-L (2-4 days).** Backend extension is ~half a day; the cursor
+  type reshape + all-callers update is the bulk; tests for
+  compound-cursor correctness add another half day. **PEND-15
+  (hard space separation, shipped Session 679) added a per-space
+  partition to every cursor-namespaced query — the compound cursor
+  must thread `space_id` through alongside (date, state, priority,
+  id), which adds another ~half day to the cursor type reshape +
+  property-test coverage.** Original M estimate was pre-PEND-15.
 
 ## Risk
 

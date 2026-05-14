@@ -373,9 +373,13 @@ export function DonePanel({
                             dataIndex={virtualRow.index}
                             style={rowStyle}
                             content={block.content}
-                            metadata={
-                              <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
-                            }
+                            // Typed metadata primitives — `BlockListItem`
+                            // renders the `CheckCircle2` icon internally so
+                            // the memo shallow-compare hits cleanly across
+                            // parent re-renders (perf-review Tier 1.4
+                            // metadata half, 2026-05-14).
+                            showCompletedIcon
+                            completedIconClassName="done-panel-check"
                             pageId={block.page_id}
                             pageTitle={
                               block.page_id

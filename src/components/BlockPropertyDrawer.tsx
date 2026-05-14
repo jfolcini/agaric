@@ -477,13 +477,13 @@ export function PropertyRow({
           />
         )}
         {isDate && isParsing && (
-          <p className="text-[10px] text-muted-foreground mt-0.5">{t('property.dateParsing')}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{t('property.dateParsing')}</p>
         )}
         {isDate && datePreview && (
-          <p className="text-[10px] text-muted-foreground mt-0.5">{datePreview}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{datePreview}</p>
         )}
         {isDate && dateError && (
-          <p className="text-[10px] text-destructive mt-0.5">{t('property.dateParseError')}</p>
+          <p className="text-xs text-destructive mt-0.5">{t('property.dateParseError')}</p>
         )}
       </div>
       {onRemove && (

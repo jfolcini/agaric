@@ -67,7 +67,7 @@ export function BacklinkGroupRenderer({
         <div className="flex justify-end px-2 pb-1">
           <Badge
             variant="outline"
-            className="linked-references-link-type-badge text-[10px] font-normal text-muted-foreground"
+            className="linked-references-link-type-badge text-xs font-normal text-muted-foreground"
           >
             {linkType === 'linked' ? t('references.linkedBadge') : t('references.unlinkedBadge')}
           </Badge>

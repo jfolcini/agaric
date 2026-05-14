@@ -363,7 +363,7 @@ export function UnlinkedReferences({
         {!collapsed && filters.length > 0 && (
           <Badge
             variant="secondary"
-            className="unlinked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-[10px]"
+            className="unlinked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-xs"
             aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
           >
             {t('references.filtersAppliedBadge', { count: filters.length })}

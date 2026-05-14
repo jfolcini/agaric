@@ -265,7 +265,7 @@ describe('PeerListItem', () => {
       expect(mockedInvoke).not.toHaveBeenCalled()
     })
 
-    it('renders the format hint at text-xs (12px) — bumped from text-[10px]', async () => {
+    it('renders the format hint at text-xs (12px) — bumped from text-xs', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
 
@@ -277,7 +277,7 @@ describe('PeerListItem', () => {
       expect(hint).toBeInTheDocument()
       expect(hint.textContent).toContain('192.168.1.100:5000')
 
-      // Hint must use text-xs, not the old text-[10px].
+      // Hint must use text-xs, not the old text-xs.
       expect(hint.className).toContain('text-xs')
       expect(hint.className).not.toContain('text-[10px]')
 

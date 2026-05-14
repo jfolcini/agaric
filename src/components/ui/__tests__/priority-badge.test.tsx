@@ -146,8 +146,8 @@ describe('PriorityBadge', () => {
       const el = screen.getByText('P1')
       expect(el.className).toContain('h-3.5')
       expect(el.className).toContain('px-0.5')
-      expect(el.className).toContain('text-[10px]')
-      expect(el.className).not.toContain('text-xs')
+      expect(el.className).toContain('text-xs')
+      expect(el.className).not.toContain('text-[10px]')
     })
 
     it('renders lg variant with h-6 and larger text', () => {

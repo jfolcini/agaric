@@ -114,7 +114,7 @@ export function PageHeaderMenu({
           <div>
             {t('pageHeader.undoAction')} {getShortcutKeys('undoLastPageOp')}
           </div>
-          <div className="mt-1 text-[10px] opacity-80">{t('undo.tipPage')}</div>
+          <div className="mt-1 text-xs opacity-80">{t('undo.tipPage')}</div>
         </TooltipContent>
       </Tooltip>
       <Tooltip>

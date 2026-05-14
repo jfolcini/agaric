@@ -156,7 +156,7 @@ export function PairingEntryForm({
         >
           <Camera className="h-4 w-4 mr-1" />
           {t('pairing.scanQrCodeButton')}
-          <Badge variant="secondary" className="ml-1.5 text-[10px] py-0 px-1.5">
+          <Badge variant="secondary" className="ml-1.5 text-xs py-0 px-1.5">
             {t('pairing.recommendedBadge')}
           </Badge>
         </Button>

@@ -417,14 +417,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             content={block.content}
                             contentMaxLength={120}
                             emptyContentFallback={t('duePanel.emptyContent')}
-                            metadata={
-                              block.priority ? (
-                                <PriorityBadge
-                                  priority={block.priority}
-                                  className="due-panel-priority [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
-                                />
-                              ) : undefined
-                            }
+                            // Typed metadata primitives — `BlockListItem`
+                            // renders the priority badge internally so the
+                            // memo shallow-compare hits cleanly across
+                            // parent re-renders (perf-review Tier 1.4
+                            // metadata half, 2026-05-14).
+                            priority={block.priority}
+                            priorityBadgeClassName="due-panel-priority [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
                             pageId={block.page_id}
                             pageTitle={
                               block.page_id
