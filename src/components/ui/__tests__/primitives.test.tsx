@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { CardButton } from '../card-button'
 import { CloseButtonIcon, closeButtonClassName } from '../close-button'
+import { FeaturePageHeader } from '../feature-page-header'
 import { FormField } from '../form-field'
 import { IconButton } from '../icon-button'
 import { Input } from '../input'
@@ -1006,6 +1007,167 @@ describe('FormField', () => {
       <FormField label="Theme" description="Pick one" htmlFor="theme-select">
         <input id="theme-select" />
       </FormField>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FeaturePageHeader — shared title / breadcrumb / actions chrome wrapping
+// the six top-level views previously without a uniform header
+// (Trash, Settings, Status, Journal, Graph, Templates). See the
+// component header for the slot contract and rationale.
+// ---------------------------------------------------------------------------
+
+describe('FeaturePageHeader', () => {
+  it('renders the title as an <h1>', () => {
+    render(<FeaturePageHeader title="Trash" />)
+    const heading = screen.getByRole('heading', { level: 1, name: 'Trash' })
+    expect(heading).toBeInTheDocument()
+    expect(heading.tagName).toBe('H1')
+  })
+
+  it('wraps the title in a <header> landmark', () => {
+    const { container } = render(<FeaturePageHeader title="Trash" />)
+    const header = q(container, '[data-slot="feature-page-header"]')
+    expect(header.tagName).toBe('HEADER')
+  })
+
+  it('emits the documented data-slot attributes', () => {
+    const { container } = render(<FeaturePageHeader title="Trash" />)
+    expect(container.querySelector('[data-slot="feature-page-header"]')).toBeInTheDocument()
+    expect(container.querySelector('[data-slot="feature-page-header-title"]')).toBeInTheDocument()
+  })
+
+  it('renders the breadcrumb slot when provided', () => {
+    render(
+      <FeaturePageHeader
+        title="Settings"
+        breadcrumb={
+          <nav aria-label="Settings">
+            <span>Settings / General</span>
+          </nav>
+        }
+      />,
+    )
+    expect(screen.getByRole('navigation', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.getByText('Settings / General')).toBeInTheDocument()
+  })
+
+  it('omits the breadcrumb slot when not provided', () => {
+    const { container } = render(<FeaturePageHeader title="Trash" />)
+    expect(
+      container.querySelector('[data-slot="feature-page-header-breadcrumb"]'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('renders the actions slot when provided', () => {
+    render(
+      <FeaturePageHeader
+        title="Trash"
+        actions={
+          <button type="button" data-testid="empty-trash">
+            Empty
+          </button>
+        }
+      />,
+    )
+    expect(screen.getByTestId('empty-trash')).toBeInTheDocument()
+  })
+
+  it('omits the actions slot when not provided', () => {
+    const { container } = render(<FeaturePageHeader title="Trash" />)
+    expect(
+      container.querySelector('[data-slot="feature-page-header-actions"]'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('renders the kebab slot when provided', () => {
+    render(
+      <FeaturePageHeader
+        title="Journal"
+        kebab={
+          <button type="button" data-testid="overflow">
+            ⋯
+          </button>
+        }
+      />,
+    )
+    expect(screen.getByTestId('overflow')).toBeInTheDocument()
+  })
+
+  it('omits the kebab slot when not provided', () => {
+    const { container } = render(<FeaturePageHeader title="Trash" />)
+    expect(
+      container.querySelector('[data-slot="feature-page-header-kebab"]'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('renders all four slots together', () => {
+    render(
+      <FeaturePageHeader
+        title="Settings"
+        breadcrumb={
+          <nav aria-label="Settings">
+            <span>Settings / General</span>
+          </nav>
+        }
+        actions={
+          <button type="button" data-testid="action">
+            Save
+          </button>
+        }
+        kebab={
+          <button type="button" data-testid="more">
+            ⋯
+          </button>
+        }
+      />,
+    )
+    expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.getByTestId('action')).toBeInTheDocument()
+    expect(screen.getByTestId('more')).toBeInTheDocument()
+  })
+
+  it('truncates the title via flex-1 + truncate utilities', () => {
+    const { container } = render(<FeaturePageHeader title="Trash" />)
+    const title = q(container, '[data-slot="feature-page-header-title"]')
+    expect(getClasses(title)).toContain('flex-1')
+    expect(getClasses(title)).toContain('truncate')
+    expect(getClasses(title)).toContain('font-semibold')
+  })
+
+  it('merges custom className onto the outer <header>', () => {
+    const { container } = render(<FeaturePageHeader title="Trash" className="trash-view-header" />)
+    const header = q(container, '[data-slot="feature-page-header"]')
+    expect(getClasses(header)).toContain('trash-view-header')
+    expect(getClasses(header)).toContain('feature-page-header')
+  })
+
+  it('forwards ref to the <header> element', () => {
+    const ref = React.createRef<HTMLElement>()
+    render(<FeaturePageHeader title="Trash" ref={ref} />)
+    expect(ref.current).toBeInstanceOf(HTMLElement)
+    expect(ref.current?.tagName).toBe('HEADER')
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <FeaturePageHeader
+        title="Settings"
+        breadcrumb={
+          <nav aria-label="Settings breadcrumb">
+            <span>Settings / General</span>
+          </nav>
+        }
+        actions={
+          <button type="button" aria-label="Save settings">
+            Save
+          </button>
+        }
+      />,
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()

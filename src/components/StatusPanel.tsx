@@ -20,6 +20,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '@/lib/format'
@@ -169,6 +170,12 @@ export function StatusPanel(): React.ReactElement {
   return (
     <TooltipProvider>
       <div className="status-panel space-y-4">
+        {/* PEND-UX item 5 — top-level `<h1>` landmark consistent with the
+            other top-level views. The two existing CardHeader/CardTitle
+            elements (Materializer / Sync) remain as sub-section
+            headings beneath. */}
+        <FeaturePageHeader title={t('sidebar.status')} className="status-panel-header" />
+
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="status-panel-title flex items-center gap-2 text-base">

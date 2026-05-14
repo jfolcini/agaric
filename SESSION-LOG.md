@@ -7,6 +7,29 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 722 — FeaturePageHeader primitive + ConfirmDialog merge (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 2 build (general-purpose) in parallel |
+| **Items closed** | design-system-ux-review Tier 1 item 5 (FeaturePageHeader + 6 view migrations); Tier 1 item 11 (ConfirmDialog + ConfirmDestructiveAction merged into unified API). |
+| **Items modified** | design-system-ux-review status note updated; pending/README.md status updated. |
+| **Tests added** | +14 FeaturePageHeader primitive tests; +16 ConfirmDialog tests (i18n keys + async onConfirm + secondaryAction); −5 from ConfirmDestructiveAction.test deletion. |
+| **Files touched** | 17 (1 new primitive + 1 deleted component + 1 deleted test + 6 views migrated + ConfirmDialog rewrite + 3 consumer migrations + AGENTS.md + 2 plan files + 2 test files). |
+
+**Summary:** two parallel subagents closed the two remaining Tier 1 UX items the user picked. **FeaturePageHeader** — investigation revealed the audit's premise was off: `ViewHeader` is a `createPortal` wrapper that lifts content above the main `<ScrollArea>` (filter bars / batch toolbars stay visible during scroll); its children are freeform and don't render a title. So FeaturePageHeader shipped as a new sibling primitive (option (b) from the brief) — orthogonal to ViewHeader's portal mechanic. The 6 unwrapped top-level views (JournalPage, TrashView, SettingsView, StatusPanel, GraphView, TemplatesView) now use `<FeaturePageHeader title="..." actions={...}>`. GraphView required wrapping its 4 render states (loading/error/empty/populated) in a single flex column so the header is consistent. SettingsView preserves its UX-381 `<nav aria-label="Settings">` breadcrumb via the `breadcrumb` slot.
+
+**ConfirmDialog merge** — one unified API supporting both i18n-key path (`titleKey`/`descriptionKey`/`confirmKey`/`cancelKey`/`values`) and legacy pre-resolved-string path. `onConfirm` is async-aware: Promise rejections keep the dialog open and show a spinner during in-flight IPC; sync returns close immediately. Legacy `onAction` + `actionVariant` aliases retained for backwards compat (marked `@deprecated`). New `secondaryAction` prop adds a third button between Cancel and Confirm — used by GoogleCalendarSettingsTab's disconnect dialog (Cancel + Keep Calendar [outline] + Delete Calendar [destructive]). Mobile Sheet path preserved. ConfirmDestructiveAction.tsx + its test deleted; PairingDialog (UX-263 close-guard) + GoogleCalendarSettingsTab migrated. Behavior change: legacy sync-`onAction` callers passing async functions (PageHeader's `handleDeletePage`, HistoryRestoreDialog's `handleAction`) now correctly show a spinner during the in-flight IPC instead of auto-closing on click. PageHeader test's lucide-react mock needed `Loader2` added.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9733 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit covering 2-stream batch + Session 722 entry.
+
+---
 ## Session 721 — Perf 2.6 virtualization sweep + UX 1.7 FilterPill consolidation (2026-05-14)
 
 | Metadata | Value |

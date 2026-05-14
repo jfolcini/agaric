@@ -14,6 +14,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
@@ -137,6 +138,12 @@ export function TemplatesView(): React.ReactElement {
 
   return (
     <section className="space-y-4" aria-label={t('sidebar.templates')}>
+      {/* PEND-UX item 5 — `<h1>` landmark above the create form. The form
+          stays a standalone block (it spans the row at sm+ breakpoints
+          and would not fit comfortably inside the header's right-aligned
+          `actions` slot). */}
+      <FeaturePageHeader title={t('sidebar.templates')} className="templates-view-header" />
+
       {/* Create template form — always visible, including empty state */}
       <form
         onSubmit={(e) => {

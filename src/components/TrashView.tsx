@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { BatchActionToolbar } from '@/components/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -303,6 +304,39 @@ export function TrashView(): React.ReactElement {
 
   return (
     <section className="trash-view space-y-4" aria-label={t('trash.regionLabel')}>
+      {/* PEND-UX item 5 — `FeaturePageHeader` carries the `<h1>` landmark
+          + right-aligned action buttons. Restore-all / Empty-trash are
+          surfaced as `actions` only when the trash is non-empty so an
+          empty bin doesn't display destructive controls. */}
+      <FeaturePageHeader
+        title={t('sidebar.trash')}
+        className="trash-view-header"
+        {...(blocks.length > 0 && {
+          actions: (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmRestoreAll(true)}
+                data-testid="trash-restore-all-btn"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {t('trash.restoreAllHeaderButton')}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setConfirmEmptyTrash(true)}
+                data-testid="trash-empty-trash-btn"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t('trash.emptyTrashButton')}
+              </Button>
+            </>
+          ),
+        })}
+      />
+
       {/* Filter input — SearchInput already provides an inline ✕ clear button
           (UX-221) with proper touch-target + focus-ring + a11y per AGENTS.md. */}
       {blocks.length > 0 && (
@@ -317,30 +351,6 @@ export function TrashView(): React.ReactElement {
             data-testid="trash-filter-input"
             clearAriaLabelKey="trash.searchClear"
           />
-        </div>
-      )}
-
-      {/* Header actions — always visible when trash has items */}
-      {blocks.length > 0 && (
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setConfirmRestoreAll(true)}
-            data-testid="trash-restore-all-btn"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            {t('trash.restoreAllHeaderButton')}
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setConfirmEmptyTrash(true)}
-            data-testid="trash-empty-trash-btn"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t('trash.emptyTrashButton')}
-          </Button>
         </div>
       )}
 

@@ -26,6 +26,7 @@ import { EmptyState } from './EmptyState'
 import { GraphFilterBar } from './GraphFilterBar'
 import { fetchGraphData, type GraphEdge, type GraphNode } from './GraphView.helpers'
 import { LoadingSkeleton } from './LoadingSkeleton'
+import { FeaturePageHeader } from './ui/feature-page-header'
 import { IconButton } from './ui/icon-button'
 
 // ── Module-level cache for stale-while-revalidate (UX-113) ────────────
@@ -167,92 +168,119 @@ export function GraphView(): React.ReactElement {
     navigateToPage,
   })
 
-  if (loading) return <LoadingSkeleton count={3} height="h-16" />
+  // PEND-UX item 5 — wrap the loading / error / empty bodies in a flex
+  // column with the shared `<h1>` landmark so the page header stays
+  // consistent across all four render states (loading, error, no-pages,
+  // graph). Without this, only the populated graph carries a header and
+  // the four states render different top-level structures.
+  const headerNode = <FeaturePageHeader title={t('sidebar.graph')} className="graph-view-header" />
+  if (loading)
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+        {headerNode}
+        <LoadingSkeleton count={3} height="h-16" />
+      </div>
+    )
   // PEND-23 M9: render `error` via the shared EmptyState primitive instead
   // of an ad-hoc `role="alert"` card so the failure mode reuses the same
   // visual language as the empty / no-data path.
-  if (error) return <EmptyState icon={AlertCircle} message={error} />
-  if (nodes.length === 0) return <EmptyState icon={Network} message={t('graph.noPages')} />
+  if (error)
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+        {headerNode}
+        <EmptyState icon={AlertCircle} message={error} />
+      </div>
+    )
+  if (nodes.length === 0)
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+        {headerNode}
+        <EmptyState icon={Network} message={t('graph.noPages')} />
+      </div>
+    )
 
   return (
-    <div
-      className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
-      data-testid="graph-view"
-    >
-      {/* Multi-dimension filter bar (UX-205) */}
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+      {headerNode}
       <div
-        className="absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]"
-        data-testid="graph-tag-filter"
+        className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
+        data-testid="graph-view"
       >
-        <GraphFilterBar
-          filters={filters}
-          onFiltersChange={setFilters}
-          allTags={tags}
-          totalCount={nodes.length}
-          filteredCount={filteredNodes.length}
+        {/* Multi-dimension filter bar (UX-205) */}
+        <div
+          className="absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]"
+          data-testid="graph-tag-filter"
+        >
+          <GraphFilterBar
+            filters={filters}
+            onFiltersChange={setFilters}
+            allTags={tags}
+            totalCount={nodes.length}
+            filteredCount={filteredNodes.length}
+          />
+        </div>
+        {/*
+         * UX-244: `position: absolute; inset: 0` is required for the SVG to fill
+         * the `.graph-view` (relative) container. Bare `h-full` on an inline SVG
+         * does NOT resolve against a block-level flex-item parent in Chromium —
+         * it falls back to the SVG's intrinsic 150 px default height, which was
+         * the symptom (nodes clustered in the top 150 px of an 800 px container).
+         * All other children of `.graph-view` are already absolutely positioned
+         * (filter bar, truncated badge, zoom buttons); this keeps every child in
+         * the same layout model and stacks via source order (SVG first → z-0,
+         * overlays after → above).
+         */}
+        {/*
+         * UX-270: dropped `role="img"` from the SVG wrapper. The graph's nodes
+         * are interactive (`role="button"` + `tabindex=0` + Enter/Space handlers
+         * via `useGraphSimulation`), and `role="img"` on a container of
+         * interactive descendants is incorrect — ATs treat it as one opaque
+         * graphic and hide the buttons. The accessible name lives on the
+         * `aria-label`, which still gives the SVG a label when ATs surface it
+         * via its default graphics role.
+         */}
+        {/*
+         * UX-355: pair the SVG with a visually-hidden hint so keyboard users
+         * discover that nodes are activatable. `aria-describedby` points at
+         * the `sr-only` paragraph so ATs read the hint alongside the SVG's
+         * accessible name without affecting visual layout.
+         */}
+        <p id="graph-keyboard-hint" className="sr-only">
+          {t('graph.keyboardHint')}
+        </p>
+        <svg
+          ref={svgRef}
+          className="absolute inset-0 h-full w-full"
+          aria-label={t('graph.title')}
+          aria-describedby="graph-keyboard-hint"
+          data-testid="graph-svg"
         />
-      </div>
-      {/*
-       * UX-244: `position: absolute; inset: 0` is required for the SVG to fill
-       * the `.graph-view` (relative) container. Bare `h-full` on an inline SVG
-       * does NOT resolve against a block-level flex-item parent in Chromium —
-       * it falls back to the SVG's intrinsic 150 px default height, which was
-       * the symptom (nodes clustered in the top 150 px of an 800 px container).
-       * All other children of `.graph-view` are already absolutely positioned
-       * (filter bar, truncated badge, zoom buttons); this keeps every child in
-       * the same layout model and stacks via source order (SVG first → z-0,
-       * overlays after → above).
-       */}
-      {/*
-       * UX-270: dropped `role="img"` from the SVG wrapper. The graph's nodes
-       * are interactive (`role="button"` + `tabindex=0` + Enter/Space handlers
-       * via `useGraphSimulation`), and `role="img"` on a container of
-       * interactive descendants is incorrect — ATs treat it as one opaque
-       * graphic and hide the buttons. The accessible name lives on the
-       * `aria-label`, which still gives the SVG a label when ATs surface it
-       * via its default graphics role.
-       */}
-      {/*
-       * UX-355: pair the SVG with a visually-hidden hint so keyboard users
-       * discover that nodes are activatable. `aria-describedby` points at
-       * the `sr-only` paragraph so ATs read the hint alongside the SVG's
-       * accessible name without affecting visual layout.
-       */}
-      <p id="graph-keyboard-hint" className="sr-only">
-        {t('graph.keyboardHint')}
-      </p>
-      <svg
-        ref={svgRef}
-        className="absolute inset-0 h-full w-full"
-        aria-label={t('graph.title')}
-        aria-describedby="graph-keyboard-hint"
-        data-testid="graph-svg"
-      />
-      <div className="absolute bottom-3 right-3 flex flex-col gap-1">
-        <IconButton
-          variant="outline"
-          onClick={zoomIn}
-          tooltip={t('graph.zoomIn')}
-          ariaLabel={withShortcut(t('graph.zoomIn'), 'graphZoomIn')}
-        >
-          <Plus className="h-4 w-4" />
-        </IconButton>
-        <IconButton
-          variant="outline"
-          onClick={zoomOut}
-          tooltip={t('graph.zoomOut')}
-          ariaLabel={withShortcut(t('graph.zoomOut'), 'graphZoomOut')}
-        >
-          <Minus className="h-4 w-4" />
-        </IconButton>
-        <IconButton
-          variant="outline"
-          onClick={zoomReset}
-          tooltip={t('graph.zoomReset')}
-          ariaLabel={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
-        >
-          <Maximize2 className="h-4 w-4" />
-        </IconButton>
+        <div className="absolute bottom-3 right-3 flex flex-col gap-1">
+          <IconButton
+            variant="outline"
+            onClick={zoomIn}
+            tooltip={t('graph.zoomIn')}
+            ariaLabel={withShortcut(t('graph.zoomIn'), 'graphZoomIn')}
+          >
+            <Plus className="h-4 w-4" />
+          </IconButton>
+          <IconButton
+            variant="outline"
+            onClick={zoomOut}
+            tooltip={t('graph.zoomOut')}
+            ariaLabel={withShortcut(t('graph.zoomOut'), 'graphZoomOut')}
+          >
+            <Minus className="h-4 w-4" />
+          </IconButton>
+          <IconButton
+            variant="outline"
+            onClick={zoomReset}
+            tooltip={t('graph.zoomReset')}
+            ariaLabel={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </IconButton>
+        </div>
       </div>
     </div>
   )

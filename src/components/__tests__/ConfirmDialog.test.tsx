@@ -520,4 +520,348 @@ describe('ConfirmDialog', () => {
       })
     })
   })
+
+  // ─── i18n-key API + async onConfirm (merged from former ConfirmDestructiveAction) ─
+  //
+  // The merged ConfirmDialog absorbs the prior `ConfirmDestructiveAction`
+  // surface area: i18n keys instead of pre-resolved strings, async-aware
+  // confirm handler, and "stay open on rejection" semantics.
+
+  describe('i18n-key API + async onConfirm', () => {
+    // Use existing i18n keys from the catalog so we don't fuss with a fixture.
+    const TITLE = 'Cancel pairing?'
+    const DESCRIPTION =
+      'Pairing is in progress. Closing this dialog will cancel the handshake and the other device will need to start over.'
+    const CONFIRM = 'Cancel pairing'
+    const CANCEL_KEEP = 'Keep pairing'
+
+    const baseProps = {
+      open: true as const,
+      titleKey: 'pairing.confirmCloseTitle',
+      descriptionKey: 'pairing.confirmCloseDescription',
+      confirmKey: 'pairing.confirmCloseAction',
+      cancelKey: 'pairing.confirmCloseKeep',
+      variant: 'destructive' as const,
+    }
+
+    it('renders title, description, confirm, and cancel via i18n keys', () => {
+      render(<ConfirmDialog {...baseProps} onOpenChange={vi.fn()} onConfirm={vi.fn()} />)
+
+      expect(screen.getByText(TITLE)).toBeInTheDocument()
+      expect(screen.getByText(DESCRIPTION)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: CONFIRM })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: CANCEL_KEEP })).toBeInTheDocument()
+    })
+
+    it('falls back to dialog.cancel when cancelKey is not provided', () => {
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          titleKey="pairing.confirmCloseTitle"
+          descriptionKey="pairing.confirmCloseDescription"
+          confirmKey="pairing.confirmCloseAction"
+        />,
+      )
+
+      // dialog.cancel resolves to "Cancel" (see src/lib/i18n/common.ts).
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+    })
+
+    it('async onConfirm: awaits and closes via onOpenChange(false) on resolve', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn().mockResolvedValue(undefined)
+      const onOpenChange = vi.fn()
+
+      render(<ConfirmDialog {...baseProps} onOpenChange={onOpenChange} onConfirm={onConfirm} />)
+
+      await user.click(screen.getByRole('button', { name: CONFIRM }))
+
+      await waitFor(() => {
+        expect(onConfirm).toHaveBeenCalledTimes(1)
+      })
+      await waitFor(() => {
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+      })
+      expect(onOpenChange.mock.invocationCallOrder[0]).toBeGreaterThan(
+        onConfirm.mock.invocationCallOrder[0] ?? Infinity,
+      )
+    })
+
+    it('synchronous onConfirm also closes the dialog', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn() // returns undefined (sync)
+      const onOpenChange = vi.fn()
+
+      render(<ConfirmDialog {...baseProps} onOpenChange={onOpenChange} onConfirm={onConfirm} />)
+
+      await user.click(screen.getByRole('button', { name: CONFIRM }))
+
+      await waitFor(() => {
+        expect(onConfirm).toHaveBeenCalledTimes(1)
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+      })
+    })
+
+    it('onConfirm rejection: dialog stays open and rejection does not escape', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn().mockRejectedValue(new Error('backend exploded'))
+      const onOpenChange = vi.fn()
+      const unhandled = vi.fn()
+      process.on('unhandledRejection', unhandled)
+
+      render(<ConfirmDialog {...baseProps} onOpenChange={onOpenChange} onConfirm={onConfirm} />)
+
+      await user.click(screen.getByRole('button', { name: CONFIRM }))
+
+      await waitFor(() => {
+        expect(onConfirm).toHaveBeenCalledTimes(1)
+      })
+
+      // onOpenChange(false) was NOT called — the dialog stays open.
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+      expect(screen.getByText(TITLE)).toBeInTheDocument()
+      expect(unhandled).not.toHaveBeenCalled()
+
+      process.off('unhandledRejection', unhandled)
+    })
+
+    it('interpolates values into title and description', () => {
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          titleKey="device.unpairConfirmTitle"
+          descriptionKey="device.unpairConfirmDescription"
+          confirmKey="device.unpairConfirmAction"
+          values={{ deviceName: 'Work Laptop' }}
+        />,
+      )
+
+      expect(screen.getByText('Unpair device?')).toBeInTheDocument()
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    })
+
+    it('disables both buttons while async onConfirm is pending', async () => {
+      const user = userEvent.setup()
+      let resolveConfirm: () => void = () => {}
+      const onConfirm = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveConfirm = resolve
+          }),
+      )
+
+      render(<ConfirmDialog {...baseProps} onOpenChange={vi.fn()} onConfirm={onConfirm} />)
+
+      const cancelBtn = screen.getByRole('button', { name: CANCEL_KEEP })
+      const confirmBtn = screen.getByRole('button', { name: CONFIRM })
+
+      await user.click(confirmBtn)
+
+      await waitFor(() => {
+        expect(confirmBtn).toBeDisabled()
+        expect(cancelBtn).toBeDisabled()
+      })
+
+      resolveConfirm()
+    })
+
+    it('renders a Spinner inside the confirm button while async onConfirm is pending', async () => {
+      const user = userEvent.setup()
+      let resolveConfirm: () => void = () => {}
+      const onConfirm = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveConfirm = resolve
+          }),
+      )
+
+      render(
+        <ConfirmDialog
+          {...baseProps}
+          onOpenChange={vi.fn()}
+          onConfirm={onConfirm}
+          actionTestId="confirm-action"
+        />,
+      )
+
+      const confirmBtn = screen.getByTestId('confirm-action')
+
+      expect(confirmBtn.querySelector('[data-slot="spinner"]')).toBeNull()
+
+      await user.click(confirmBtn)
+
+      await waitFor(() => {
+        expect(confirmBtn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+      })
+
+      resolveConfirm()
+
+      await waitFor(() => {
+        expect(confirmBtn.querySelector('[data-slot="spinner"]')).toBeNull()
+      })
+    })
+
+    it('explicit `title` overrides `titleKey` when both are set', () => {
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          titleKey="pairing.confirmCloseTitle"
+          title="Custom override"
+          descriptionKey="pairing.confirmCloseDescription"
+          confirmKey="pairing.confirmCloseAction"
+          onConfirm={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByText('Custom override')).toBeInTheDocument()
+      expect(screen.queryByText(TITLE)).not.toBeInTheDocument()
+    })
+
+    it('reflex Enter on open dismisses without firing onConfirm (UX-259)', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(<ConfirmDialog {...baseProps} onOpenChange={onOpenChange} onConfirm={onConfirm} />)
+
+      await user.keyboard('{Enter}')
+
+      expect(onConfirm).not.toHaveBeenCalled()
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('has no a11y violations on the i18n-key path', async () => {
+      const { container } = render(
+        <ConfirmDialog {...baseProps} onOpenChange={vi.fn()} onConfirm={vi.fn()} />,
+      )
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+  })
+
+  // ─── secondaryAction escape hatch (multi-action dialogs, e.g. GCal disconnect) ─
+
+  describe('secondaryAction', () => {
+    const props = {
+      open: true,
+      onOpenChange: vi.fn(),
+      title: 'Disconnect calendar?',
+      description: 'Choose how to disconnect.',
+      actionLabel: 'Delete calendar',
+      cancelLabel: 'Cancel',
+    }
+
+    it('renders the secondary button between Cancel and Confirm', () => {
+      render(
+        <ConfirmDialog
+          {...props}
+          variant="destructive"
+          onConfirm={vi.fn()}
+          secondaryAction={{
+            label: 'Keep calendar',
+            variant: 'outline',
+            onConfirm: vi.fn(),
+            testId: 'secondary',
+          }}
+        />,
+      )
+
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Keep calendar' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Delete calendar' })).toBeInTheDocument()
+      expect(screen.getByTestId('secondary')).toBeInTheDocument()
+    })
+
+    it('clicking secondary fires its onConfirm and closes the dialog', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      const onSecondary = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(
+        <ConfirmDialog
+          {...props}
+          onOpenChange={onOpenChange}
+          variant="destructive"
+          onConfirm={onConfirm}
+          secondaryAction={{
+            label: 'Keep calendar',
+            variant: 'outline',
+            onConfirm: onSecondary,
+          }}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Keep calendar' }))
+
+      expect(onSecondary).toHaveBeenCalledTimes(1)
+      expect(onConfirm).not.toHaveBeenCalled()
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('secondary async handler awaits + closes on resolve', async () => {
+      const user = userEvent.setup()
+      const onSecondary = vi.fn().mockResolvedValue(undefined)
+      const onOpenChange = vi.fn()
+
+      render(
+        <ConfirmDialog
+          {...props}
+          onOpenChange={onOpenChange}
+          variant="destructive"
+          onConfirm={vi.fn()}
+          secondaryAction={{
+            label: 'Keep calendar',
+            variant: 'outline',
+            onConfirm: onSecondary,
+          }}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Keep calendar' }))
+
+      await waitFor(() => {
+        expect(onSecondary).toHaveBeenCalledTimes(1)
+      })
+      await waitFor(() => {
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+      })
+    })
+
+    it('labelKey resolves via i18n', () => {
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          titleKey="gcal.disconnect.title"
+          descriptionKey="gcal.disconnect.description"
+          confirmKey="gcal.disconnect.deleteCalendar"
+          cancelKey="gcal.disconnect.cancel"
+          variant="destructive"
+          onConfirm={vi.fn()}
+          secondaryAction={{
+            labelKey: 'gcal.disconnect.keepCalendar',
+            variant: 'outline',
+            onConfirm: vi.fn(),
+          }}
+        />,
+      )
+
+      // gcal.disconnect.keepCalendar resolves to "Disconnect but keep calendar"
+      expect(
+        screen.getByRole('button', { name: 'Disconnect but keep calendar' }),
+      ).toBeInTheDocument()
+    })
+  })
 })

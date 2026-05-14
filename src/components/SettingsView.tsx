@@ -25,6 +25,7 @@ import { ChevronRight } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
@@ -141,16 +142,24 @@ export function SettingsView(): React.ReactElement {
 
   return (
     <div className="settings-view space-y-6">
-      {/* UX-381 — Breadcrumb naming the active tab so the user has a clear
-          location indicator outside the tab strip itself. */}
-      <nav
-        aria-label={t('sidebar.settings')}
-        className="flex items-center gap-1 text-sm text-muted-foreground"
-      >
-        <span>{t('sidebar.settings')}</span>
-        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-        <span className="text-foreground font-medium">{t(TAB_LABEL_KEYS[activeTab])}</span>
-      </nav>
+      {/* PEND-UX item 5 — `FeaturePageHeader` carries the `<h1>` landmark
+          + the UX-381 breadcrumb. The `<nav>` keeps its aria-label so
+          existing role="navigation" assertions in SettingsView.test.tsx
+          continue to resolve unchanged. */}
+      <FeaturePageHeader
+        title={t('sidebar.settings')}
+        className="settings-view-header"
+        breadcrumb={
+          <nav
+            aria-label={t('sidebar.settings')}
+            className="flex items-center gap-1 text-sm text-muted-foreground"
+          >
+            <span>{t('sidebar.settings')}</span>
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="text-foreground font-medium">{t(TAB_LABEL_KEYS[activeTab])}</span>
+          </nav>
+        }
+      />
 
       {/* Tab bar — wraps in a horizontal ScrollArea so the row scrolls
           instead of overflowing the panel when the window is narrow or
