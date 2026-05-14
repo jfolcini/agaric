@@ -27,3 +27,4 @@ items:
     page_id: "[ULID]"
 next_cursor: "[CURSOR]"
 has_more: false
+total_count: ~

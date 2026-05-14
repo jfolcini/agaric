@@ -76,7 +76,7 @@ vi.mock('../TrashView', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 function defaultProps(overrides: Partial<ViewDispatcherProps> = {}): ViewDispatcherProps {
   return {

@@ -43,7 +43,7 @@ afterEach(() => {
   })
 })
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -69,6 +69,7 @@ describe('useBlockTags allTags', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return tagBlocks

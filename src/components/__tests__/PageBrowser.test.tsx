@@ -33,6 +33,14 @@ import { PageBrowser } from '../PageBrowser'
 type EstimateSizeFn = (...args: never[]) => number
 const capturedEstimateSizes: Array<EstimateSizeFn> = []
 
+// PageBrowser pagination UX (2026-05-14) — `vi.mock` is hoisted to
+// the top of the file before module-level `const`s, so a mock that
+// references a captured spy has to declare the spy via
+// `vi.hoisted(…)` (which IS hoisted alongside the mocks).
+const { scrollToOffsetMock } = vi.hoisted(() => ({
+  scrollToOffsetMock: vi.fn(),
+}))
+
 // Mock @tanstack/react-virtual to render all items (jsdom has zero-height containers)
 vi.mock('@tanstack/react-virtual', () => {
   const scrollToIndex = vi.fn()
@@ -52,6 +60,12 @@ vi.mock('@tanstack/react-virtual', () => {
           })),
         getTotalSize: () => opts.count * size(),
         scrollToIndex,
+        // PageBrowser pagination UX (2026-05-14) — scroll restoration
+        // reads `sessionStorage[…]` and calls `scrollToOffset(...)`
+        // once the first batch has hydrated. The mock captures the
+        // call so the restore-on-remount test can assert it fired
+        // with the saved offset.
+        scrollToOffset: scrollToOffsetMock,
         measureElement,
       }
     },
@@ -80,6 +94,10 @@ function findTrashButton(row: HTMLElement): HTMLButtonElement {
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
+  scrollToOffsetMock.mockClear()
+  // PageBrowser pagination UX (2026-05-14) — scroll-restoration tests
+  // round-trip values through sessionStorage; isolate each test.
+  sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
   localStorage.removeItem('starred-pages')
   // FEAT-3 Phase 2 — PageBrowser now gates its render and listBlocks
@@ -128,6 +146,7 @@ describe('PageBrowser', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -161,6 +180,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: null })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -170,26 +190,29 @@ describe('PageBrowser', () => {
   })
 
   it('uses cursor-based pagination with Load More', async () => {
-    const user = userEvent.setup()
     const page1 = {
       items: [makePage({ id: 'P1', content: 'Page 1' })],
       next_cursor: 'cursor_abc',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makePage({ id: 'P2', content: 'Page 2' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
 
     render(<PageBrowser />)
 
-    // Load More button should be visible after initial load
-    const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
-    expect(loadMoreBtn).toBeInTheDocument()
-
-    await user.click(loadMoreBtn)
+    // PageBrowser pagination UX (2026-05-14) — auto-load now fires
+    // when the last visible row is within 5 rows of the end. Under
+    // the mocked virtualizer (which renders ALL items) that's true
+    // from the first paint, so a second `list_blocks` IPC fires
+    // immediately without a button click. The existing
+    // `<LoadMoreButton>` remains the a11y / no-JS fallback (covered
+    // by its own component tests).
 
     // Should call with the cursor from page 1
     await waitFor(() => {
@@ -220,6 +243,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'Click me' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -238,6 +262,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'My Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -261,6 +286,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Deletable Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -286,6 +312,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Keep This Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -312,6 +339,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'To Be Deleted' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -538,6 +566,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Fail Delete' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -570,6 +599,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'Accessible page' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -588,6 +618,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'Focus Page' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<PageBrowser />)
@@ -607,6 +638,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'Inset Page' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<PageBrowser />)
@@ -642,6 +674,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'Inset Buttons Page' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<PageBrowser />)
@@ -661,6 +694,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'Deleting Page' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<PageBrowser />)
@@ -691,6 +725,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'Toast Page' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<PageBrowser />)
@@ -721,6 +756,7 @@ describe('PageBrowser', () => {
       items: [makePage({ id: 'P1', content: 'A very long page name that should be truncated' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<PageBrowser />)
@@ -803,6 +839,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -827,6 +864,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -850,6 +888,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -884,6 +923,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser onPageSelect={onPageSelect} />)
@@ -904,6 +944,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser onPageSelect={onPageSelect} />)
@@ -929,6 +970,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -964,6 +1006,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -991,6 +1034,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1021,6 +1065,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1042,6 +1087,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1058,6 +1104,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1079,6 +1126,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1102,6 +1150,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1128,6 +1177,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1153,6 +1203,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Meeting notes' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1172,6 +1223,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Meeting Notes' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1197,6 +1249,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1218,6 +1271,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1239,6 +1293,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1260,6 +1315,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1304,6 +1360,7 @@ describe('PageBrowser', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           })
         }
         if (cmd === 'resolve_page_by_alias') {
@@ -1374,6 +1431,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'A Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1393,6 +1451,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'A Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1412,6 +1471,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1437,6 +1497,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1469,6 +1530,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1494,6 +1556,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'A Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1513,6 +1576,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'A Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1528,6 +1592,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Accessible page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -1547,6 +1612,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1566,6 +1632,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Starrable Page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1603,6 +1670,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1651,6 +1719,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1677,6 +1746,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1710,6 +1780,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1737,6 +1808,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1775,6 +1847,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1800,6 +1873,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -1820,6 +1894,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1835,6 +1910,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Solo' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1855,6 +1931,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1884,6 +1961,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -1916,6 +1994,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1933,6 +2012,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1952,6 +2032,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -1997,6 +2078,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -2020,6 +2102,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -2050,6 +2133,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -2077,6 +2161,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -2106,6 +2191,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2131,6 +2217,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'work/foo' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2163,6 +2250,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2190,6 +2278,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2213,6 +2302,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2291,6 +2381,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -2318,6 +2409,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -2334,6 +2426,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'A page' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<PageBrowser />)
@@ -2364,6 +2457,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { unmount } = render(<PageBrowser />)
@@ -2413,6 +2507,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2440,6 +2535,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2529,6 +2625,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2560,6 +2657,7 @@ describe('PageBrowser', () => {
         items: [makePage({ id: 'P1', content: 'Meeting notes' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)
@@ -2596,6 +2694,255 @@ describe('PageBrowser', () => {
   // Virtual treats option-identity changes as a re-measure trigger.
   // ====================================================================
 
+  // PageBrowser pagination UX (2026-05-14)
+  describe('pagination UX — count chip, auto-load, scroll restoration', () => {
+    it('renders "{{count}} pages" count chip when backend supplies total_count', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Page 1' }),
+          makePage({ id: 'P2', content: 'Page 2' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 312,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Page 1')
+
+      const chip = await screen.findByTestId('page-browser-count')
+      expect(chip.textContent).toMatch(/312 pages/)
+    })
+
+    it('renders "X of Y matching" when a filter is active', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 312,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const search = screen.getByPlaceholderText('Search pages...')
+      await user.type(search, 'an')
+
+      // "Banana" matches; Apple/Cherry don't. The chip should switch
+      // to "X of Y matching" form.
+      const chip = await screen.findByTestId('page-browser-count')
+      await waitFor(() => expect(chip.textContent).toMatch(/1 of 312 matching/))
+    })
+
+    it('omits the count chip when backend does not supply total_count', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Page 1' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+        // no total_count — older bindings / cursor-only endpoints.
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Page 1')
+      expect(screen.queryByTestId('page-browser-count')).not.toBeInTheDocument()
+    })
+
+    it('LoadMoreButton receives loadedCount + totalCount and renders progress line', async () => {
+      // Page 1 resolves with `has_more: true` + total_count; the
+      // second page request never resolves so `hasMore` stays true
+      // and the LoadMoreButton (and its progress line) stay mounted.
+      // The progress line is only rendered when `hasMore` is true
+      // AND both counts are numbers — so this proves the wiring.
+      mockedInvoke
+        .mockResolvedValueOnce({
+          items: [makePage({ id: 'P1', content: 'Page 1' })],
+          next_cursor: 'cursor_abc',
+          has_more: true,
+          total_count: 50,
+        })
+        // The second page request never resolves — `hasMore` stays true
+        // so the LoadMoreButton + progress line remain mounted.
+        .mockReturnValueOnce(new Promise(() => undefined))
+
+      render(<PageBrowser />)
+      await screen.findByText('Page 1')
+
+      const progress = await screen.findByTestId('load-more-progress')
+      // LoadMoreButton template: "Loaded {{loaded}} of {{total}}"
+      expect(progress.textContent).toMatch(/1.*50/)
+    })
+
+    it('auto-loads the next page when the last visible row is near the end', async () => {
+      // The mocked virtualizer renders ALL items; lastVisible.index ===
+      // virtualItemCount - 1 every render. So the auto-load effect
+      // fires as soon as we mount and there are more pages.
+      const page1 = {
+        items: [makePage({ id: 'P1', content: 'One' }), makePage({ id: 'P2', content: 'Two' })],
+        next_cursor: 'cursor_abc',
+        has_more: true,
+        total_count: 5,
+      }
+      const page2 = {
+        items: [
+          makePage({ id: 'P3', content: 'Three' }),
+          makePage({ id: 'P4', content: 'Four' }),
+          makePage({ id: 'P5', content: 'Five' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 5,
+      }
+      mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+
+      render(<PageBrowser />)
+
+      // page 1 fetched on mount; auto-load should fire a second IPC
+      // for page 2 without any click on the Load More button.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
+          parentId: null,
+          blockType: 'page',
+          tagId: null,
+          showDeleted: null,
+          agenda: null,
+          cursor: 'cursor_abc',
+          limit: 50,
+          spaceId: 'SPACE_TEST',
+        })
+      })
+
+      // Both pages should be rendered (accumulated).
+      expect(await screen.findByText('One')).toBeInTheDocument()
+      expect(await screen.findByText('Five')).toBeInTheDocument()
+    })
+
+    it('restores saved scroll offset on mount once items have hydrated', async () => {
+      // Seed sessionStorage as if a prior session saved a position.
+      // Value bounded by `virtualizer.getTotalSize()` on read; under
+      // the mocked virtualizer that's `count * 44 ~= 132-176` for
+      // three pages plus an optional section header, so use 60 to
+      // stay safely below the clamp.
+      sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '60')
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'One' }),
+          makePage({ id: 'P2', content: 'Two' }),
+          makePage({ id: 'P3', content: 'Three' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 3,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('One')
+
+      await waitFor(() => {
+        expect(scrollToOffsetMock).toHaveBeenCalledWith(60, { align: 'start' })
+      })
+    })
+
+    it('clamps saved scroll offset to virtualizer.getTotalSize()', async () => {
+      // Seed a value larger than any plausible total size; the
+      // restoration should clamp it to `getTotalSize()` so the
+      // virtualizer doesn't scroll into empty space when the list
+      // shrank between sessions.
+      sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '99999')
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Only' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Only')
+
+      await waitFor(() => expect(scrollToOffsetMock).toHaveBeenCalled())
+      const firstCall = scrollToOffsetMock.mock.calls[0]
+      if (firstCall === undefined) throw new Error('scrollToOffset never called')
+      const [offset, opts] = firstCall
+      expect(offset).toBeLessThan(99999)
+      expect(offset).toBeGreaterThanOrEqual(0)
+      expect(opts).toEqual({ align: 'start' })
+    })
+
+    it('does not restore scroll when sessionStorage is empty', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'One' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('One')
+
+      // Wait a tick for restore effect to run if it was going to.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(scrollToOffsetMock).not.toHaveBeenCalled()
+    })
+
+    it('clears saved scroll offset when the filter changes', async () => {
+      // Seed; mount with a filtered result so the user types, and the
+      // saved offset should be wiped (the saved position is
+      // meaningless against the post-filter view).
+      sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '480')
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 2,
+      })
+
+      const user = userEvent.setup()
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+      // Restoration runs first; assert it happened, then clear the
+      // mock so the next event triggers a fresh state.
+      await waitFor(() => expect(scrollToOffsetMock).toHaveBeenCalled())
+
+      const search = screen.getByPlaceholderText('Search pages...')
+      await user.type(search, 'app')
+
+      // Saved offset should have been removed.
+      await waitFor(() => {
+        expect(sessionStorage.getItem('pageBrowser:scrollOffset:SPACE_TEST')).toBeNull()
+      })
+    })
+
+    it('uses a per-space sessionStorage key', async () => {
+      // Seed a value for SPACE_OTHER — it should NOT be applied to
+      // SPACE_TEST. Cross-space contamination is the bug this guards.
+      sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_OTHER', '999')
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'One' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('One')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      // No call: the SPACE_OTHER value must not leak into SPACE_TEST.
+      expect(scrollToOffsetMock).not.toHaveBeenCalled()
+    })
+  })
+
   describe('PEND-30 L-5 estimateSize referential stability', () => {
     it('estimateSize identity is preserved across re-renders that do not change groupedRows', async () => {
       const user = userEvent.setup()
@@ -2606,6 +2953,7 @@ describe('PageBrowser', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<PageBrowser />)

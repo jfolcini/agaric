@@ -30,7 +30,7 @@ import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { common, createLowlight } from 'lowlight'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { AtTagPicker, atTagPickerPluginKey } from './extensions/at-tag-picker'
@@ -510,16 +510,29 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     return serialize(json, notifyUnknownNodeTypeToast)
   }, [editor])
 
-  return {
-    editor,
-    mount,
-    unmount,
-    get activeBlockId() {
-      return activeBlockIdRef.current
-    },
-    getMarkdown,
-    get originalMarkdown() {
-      return originalMarkdownRef.current
-    },
-  }
+  // Memoize the returned handle so its object identity is stable across
+  // renders that don't change `editor` / `mount` / `unmount` / `getMarkdown`.
+  // The two `activeBlockId` / `originalMarkdown` getters read from refs, so
+  // they remain live regardless of memo freshness — consumers that need
+  // up-to-date values either read them via the getters or capture the
+  // handle in a ref (e.g. `EditableBlock.tsx:129`, `BlockTree.tsx:201`).
+  //
+  // Without this, every parent re-render produced a fresh handle object
+  // that propagated to `SortableBlockWrapper` and defeated its `React.memo`
+  // (design-system-perf-review-2026-05-09.md item 5.)
+  return useMemo<RovingEditorHandle>(
+    () => ({
+      editor,
+      mount,
+      unmount,
+      get activeBlockId() {
+        return activeBlockIdRef.current
+      },
+      getMarkdown,
+      get originalMarkdown() {
+        return originalMarkdownRef.current
+      },
+    }),
+    [editor, mount, unmount, getMarkdown],
+  )
 }

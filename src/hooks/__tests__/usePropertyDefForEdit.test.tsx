@@ -44,7 +44,12 @@ beforeEach(() => {
   // PEND-35 Tier 2.6: single-key PK lookup; default mock returns null
   // (no def for the requested key).
   mockGetPropertyDef.mockResolvedValue(null)
-  mockListBlocks.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+  mockListBlocks.mockResolvedValue({
+    items: [],
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+  })
 })
 
 describe('usePropertyDefForEdit', () => {
@@ -88,6 +93,7 @@ describe('usePropertyDefForEdit', () => {
       items: [makePage('PAGE_1', 'Project A'), makePage('PAGE_2', 'Project B')],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const editingProp = { key: 'related', value: '' }

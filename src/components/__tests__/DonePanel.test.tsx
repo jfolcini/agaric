@@ -118,6 +118,7 @@ const emptyResponse = {
   items: [],
   next_cursor: null,
   has_more: false,
+  total_count: null,
 }
 
 beforeEach(() => {
@@ -134,6 +135,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' }), makeBlock({ id: 'B3' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DonePanel date="2025-06-15" />)
@@ -147,6 +149,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DonePanel date="2025-06-15" />)
@@ -183,6 +186,7 @@ describe('DonePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Alpha Page', block_type: 'page', deleted: false },
@@ -211,6 +215,7 @@ describe('DonePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Test Page', block_type: 'page', deleted: false },
@@ -247,6 +252,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'My Page Title', block_type: 'page', deleted: false },
@@ -267,6 +273,7 @@ describe('DonePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Source Page', block_type: 'page', deleted: false },
@@ -290,6 +297,7 @@ describe('DonePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DonePanel date="2025-06-15" />)
@@ -307,11 +315,13 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'first block' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makeBlock({ id: 'B2', content: 'second block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     let callCount = 0
     mockedQueryByProperty.mockImplementation(async () => {
@@ -341,6 +351,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'only block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DonePanel date="2025-06-15" />)
@@ -357,6 +368,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'visible block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DonePanel date="2025-06-15" />)
@@ -387,6 +399,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { rerender } = render(<DonePanel date="2025-06-15" />)
@@ -404,6 +417,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B2' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     rerender(<DonePanel date="2025-06-16" />)
@@ -421,6 +435,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1', todo_state: 'DONE', content: 'accessible block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Page Title', block_type: 'page', deleted: false },
@@ -447,6 +462,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'done task' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'My Project', block_type: 'page', deleted: false },
@@ -500,6 +516,7 @@ describe('DonePanel', () => {
       items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'done task' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockRejectedValueOnce(new Error('resolve error'))
 
@@ -525,6 +542,7 @@ describe('DonePanel', () => {
         items: [makeBlock({ id: 'B1', content: 'existing block' })],
         next_cursor: 'cursor_2',
         has_more: true,
+        total_count: null,
       })
       .mockRejectedValueOnce(new Error('network error'))
 
@@ -557,6 +575,7 @@ describe('DonePanel', () => {
         ],
         next_cursor: 'cursor_2',
         has_more: true,
+        total_count: null,
       })
       .mockResolvedValueOnce({
         items: [
@@ -564,6 +583,7 @@ describe('DonePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
     mockedBatchResolve
       .mockResolvedValueOnce([
@@ -610,6 +630,7 @@ describe('DonePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DonePanel date="2025-06-15" />)
@@ -631,6 +652,7 @@ describe('DonePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE_2', title: 'Other Page', block_type: 'page', deleted: false },
@@ -658,6 +680,7 @@ describe('DonePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DonePanel date="2025-06-15" excludePageId="PAGE_X" />)

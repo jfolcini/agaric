@@ -81,6 +81,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     hasMore,
     loadMore,
     setItems: setPages,
+    totalCount,
   } = usePaginatedQuery(queryFn, {
     onError: t('pageBrowser.loadFailed'),
     enabled: spaceIsReady,
@@ -297,6 +298,120 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     overscan: 5,
   })
 
+  // PageBrowser pagination UX (2026-05-14) — sessionStorage-backed
+  // scroll restoration. The user clicks a page → editor → Back, and
+  // PageBrowser remounts; without this they land at row 0 even when
+  // they were halfway down a 300-page list. The save side debounces
+  // via a ref-tracked timeout (no `requestIdleCallback` because not
+  // every test/browser has it and the cost is the same single
+  // setTimeout); the restore side fires once per mount AFTER the
+  // first batch hydrates so the virtualizer has a non-zero total
+  // size to scroll inside of.
+  //
+  // Key is per-space so switching spaces and back restores each
+  // space's last position independently. Filter / sort changes
+  // clear the saved offset because the saved position is meaningless
+  // against a re-ordered or re-filtered set.
+  const scrollStorageKey =
+    currentSpaceId != null ? `pageBrowser:scrollOffset:${currentSpaceId}` : null
+  const restoredRef = useRef(false)
+  const scrollSaveTimerRef = useRef<number | null>(null)
+
+  // Reset the restore-once latch when the storage key changes (space
+  // switch). Each space gets its own first-batch restoration; without
+  // this, switching to space B and back to space A would skip
+  // restoration for A because `restoredRef.current` was set during
+  // A's first mount in this session.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-arm only on key change
+  useEffect(() => {
+    restoredRef.current = false
+  }, [scrollStorageKey])
+
+  // Restore once per (mount, space) tuple, after items hydrate.
+  useEffect(() => {
+    if (restoredRef.current) return
+    if (scrollStorageKey == null) return
+    if (pages.length === 0) return
+    const totalSize = virtualizer.getTotalSize()
+    if (totalSize <= 0) return
+    const raw = sessionStorage.getItem(scrollStorageKey)
+    if (raw == null) {
+      restoredRef.current = true
+      return
+    }
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      restoredRef.current = true
+      return
+    }
+    // Bound to [0, totalSize] in case the list shrank between
+    // sessions (pages deleted in another tab, etc.).
+    const bounded = Math.min(parsed, totalSize)
+    virtualizer.scrollToOffset(bounded, { align: 'start' })
+    restoredRef.current = true
+  }, [pages.length, virtualizer, scrollStorageKey])
+
+  // Save scroll offset on scroll (debounced ~150ms).
+  useEffect(() => {
+    const el = listRef.current
+    if (el == null) return
+    if (scrollStorageKey == null) return
+    function handleScroll() {
+      if (scrollSaveTimerRef.current != null) {
+        window.clearTimeout(scrollSaveTimerRef.current)
+      }
+      scrollSaveTimerRef.current = window.setTimeout(() => {
+        scrollSaveTimerRef.current = null
+        // Read at flush time, not at scroll time, so the saved
+        // value reflects the user's final resting offset rather
+        // than every intermediate frame.
+        if (el == null || scrollStorageKey == null) return
+        sessionStorage.setItem(scrollStorageKey, String(el.scrollTop))
+      }, 150)
+    }
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', handleScroll)
+      if (scrollSaveTimerRef.current != null) {
+        window.clearTimeout(scrollSaveTimerRef.current)
+        scrollSaveTimerRef.current = null
+      }
+    }
+  }, [scrollStorageKey])
+
+  // Clear saved offset when filter / sort / space changes — the saved
+  // offset is keyed only by space, so a filter or sort change against
+  // the same space would otherwise restore a meaningless position the
+  // next time the user revisits this view. Allow restoration again on
+  // next mount by leaving `restoredRef` intact within this mount but
+  // dropping the stored value.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollStorageKey already covers space changes; filterText and sortOption are the explicit triggers
+  useEffect(() => {
+    if (scrollStorageKey == null) return
+    // Skip the very first run (mount) — that's when we want to
+    // restore, not clear. `restoredRef.current === false` means we
+    // haven't tried yet; the restore effect will handle it. After
+    // restoration completes, any subsequent change clears.
+    if (!restoredRef.current) return
+    sessionStorage.removeItem(scrollStorageKey)
+  }, [filterText, sortOption])
+
+  // PageBrowser pagination UX (2026-05-14) — auto-load near the
+  // bottom. When the last *visible* virtual item is within ~5 rows
+  // of the end of the loaded set AND there are more pages AND we're
+  // not already fetching, fire `loadMore()` so the user doesn't have
+  // to find the button. The existing `<LoadMoreButton>` stays
+  // rendered as the a11y / no-JS / reduced-motion fallback.
+  const virtualItems = virtualizer.getVirtualItems()
+  const lastVisibleIndex = virtualItems.at(-1)?.index
+  useEffect(() => {
+    if (!hasMore || loading) return
+    if (lastVisibleIndex == null) return
+    if (lastVisibleIndex >= virtualItemCount - 5) {
+      loadMore()
+    }
+  }, [lastVisibleIndex, hasMore, loading, loadMore, virtualItemCount])
+
   // Document-level keydown: skip if user is typing in input/select/textarea
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -356,6 +471,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onFilterTextChange={setFilterText}
           sortOption={sortOption}
           onSortChange={setSortOption}
+          totalCount={totalCount}
+          filteredCount={filteredPages.length}
+          isFiltering={isFiltering}
         />
       </ViewHeader>
 
@@ -416,7 +534,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               position: 'relative',
             }}
           >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
+            {virtualItems.map((virtualRow) => {
               const row = groupedRows[virtualRow.index]
               if (!row) return null
               return (
@@ -451,6 +569,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         className="page-browser-load-more"
         label={t('pageBrowser.loadMore')}
         loadingLabel={t('pageBrowser.loading')}
+        loadedCount={pages.length}
+        totalCount={totalCount}
       />
 
       <output className="sr-only" aria-live="polite">

@@ -49,7 +49,12 @@ beforeEach(() => {
 describe('BootGate', () => {
   it('calls boot() on mount', async () => {
     // Let boot succeed so the effect completes cleanly.
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     render(
       <BootGate>
@@ -389,7 +394,12 @@ describe('BootGate', () => {
         expect(screen.getByText('Boot failed')).toBeInTheDocument()
       })
 
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
       await user.click(screen.getByRole('button', { name: /Retry/i }))
 
       await waitFor(() => {

@@ -1,5 +1,6 @@
 ---
 source: src/pagination/tests.rs
+assertion_line: 2892
 expression: resp
 ---
 items:
@@ -10,3 +11,4 @@ items:
     created_at: "[TIMESTAMP]"
 next_cursor: "[CURSOR]"
 has_more: false
+total_count: ~

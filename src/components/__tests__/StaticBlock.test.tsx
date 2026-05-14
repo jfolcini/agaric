@@ -1324,6 +1324,7 @@ describe('StaticBlock', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         })
         .mockRejectedValueOnce(new Error('Batch resolve failed'))
       render(

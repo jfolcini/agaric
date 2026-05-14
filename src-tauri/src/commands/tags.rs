@@ -287,6 +287,7 @@ pub async fn query_by_tags_inner(
             items: vec![],
             next_cursor: None,
             has_more: false,
+            total_count: None,
         });
     }
 

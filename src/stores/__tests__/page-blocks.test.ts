@@ -873,7 +873,12 @@ describe('PageBlockStore', () => {
         new_position: 0,
       })
       // load_page_subtree (reload from load())
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
 
       await store.getState().moveToParent('B', 'A', 0)
 
@@ -921,7 +926,12 @@ describe('PageBlockStore', () => {
       })
       mockedInvoke.mockReturnValueOnce(movePending)
       // load_page_subtree call for the load() that follows moveBlock resolve.
-      mockedInvoke.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValue({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
 
       const promise = store.getState().moveToParent('B', 'A', 0)
 
@@ -1346,7 +1356,12 @@ describe('PageBlockStore', () => {
         new_position: -1,
       })
       // load_page_subtree (fallback reload)
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
 
       await store.getState().moveUp('B')
 
@@ -1428,7 +1443,12 @@ describe('PageBlockStore', () => {
         new_parent_id: 'OTHER',
         new_position: 6,
       })
-      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
 
       await store.getState().moveDown('A')
 

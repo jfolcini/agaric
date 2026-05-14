@@ -36,7 +36,7 @@ const makeTag = (overrides?: Partial<Record<string, unknown>>) => ({
   ...overrides,
 })
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 /**
  * Find a matching-tag <span> in the tag list by its full textContent.
@@ -301,6 +301,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'work note' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -336,6 +337,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'first result' })],
       next_cursor: 'cursor_abc',
       has_more: true,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -350,6 +352,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B2', content: 'second result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(loadMoreBtn)
@@ -412,6 +415,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'stale result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(screen.getByRole('button', { name: /Add/i }))
@@ -449,7 +453,7 @@ describe('TagFilterPanel', () => {
 
     // Cleanup: resolve the pending query
     await act(async () => {
-      resolveQuery({ items: [], next_cursor: null, has_more: false })
+      resolveQuery({ items: [], next_cursor: null, has_more: false, total_count: null })
       await vi.advanceTimersByTimeAsync(0)
     })
   })
@@ -484,6 +488,7 @@ describe('TagFilterPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -511,6 +516,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'only result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -615,6 +621,7 @@ describe('TagFilterPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -667,6 +674,7 @@ describe('TagFilterPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -702,6 +710,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'work item' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -747,6 +756,7 @@ describe('TagFilterPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -778,6 +788,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'excluded result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -821,6 +832,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'excluded result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -921,6 +933,7 @@ describe('TagFilterPanel', () => {
       items: [makeBlock({ id: 'B1', content: 'result one' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     await user.click(addBtn)
@@ -1044,6 +1057,7 @@ describe('TagFilterPanel', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -1090,6 +1104,7 @@ describe('TagFilterPanel', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {

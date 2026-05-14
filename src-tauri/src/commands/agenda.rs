@@ -348,6 +348,7 @@ pub async fn list_projected_agenda_inner(
         items: entries,
         next_cursor,
         has_more,
+        total_count: None,
     })
 }
 
@@ -731,6 +732,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         items: entries,
         next_cursor,
         has_more,
+        total_count: None,
     })
 }
 

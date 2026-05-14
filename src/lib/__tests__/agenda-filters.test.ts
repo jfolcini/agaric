@@ -19,7 +19,7 @@ import {
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -128,6 +128,7 @@ describe('executeAgendaFilters', () => {
         items: [block],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const result = await executeAgendaFilters([], null)
@@ -983,7 +984,7 @@ describe('loadMoreAgendaFilters', () => {
   it('normalizes a null spaceId to "" (FE-L-12 boundary)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return emptyPage
     })
@@ -997,7 +998,7 @@ describe('loadMoreAgendaFilters', () => {
   it('forwards a non-null spaceId verbatim', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return emptyPage
     })

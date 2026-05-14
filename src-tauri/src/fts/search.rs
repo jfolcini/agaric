@@ -239,6 +239,7 @@ pub async fn search_fts(
             items: vec![],
             next_cursor: None,
             has_more: false,
+            total_count: None,
         });
     }
 
@@ -256,6 +257,7 @@ pub async fn search_fts(
             items: vec![],
             next_cursor: None,
             has_more: false,
+            total_count: None,
         });
     }
 
@@ -445,5 +447,6 @@ pub async fn search_fts(
         items: block_rows,
         next_cursor,
         has_more,
+        total_count: None,
     })
 }

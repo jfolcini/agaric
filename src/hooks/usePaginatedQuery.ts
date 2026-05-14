@@ -17,6 +17,13 @@ export interface PaginatedResponse<T> {
   items: T[]
   next_cursor: string | null
   has_more: boolean
+  /**
+   * Total number of matching rows in the underlying table, ignoring
+   * the page cursor/limit. `undefined` / `null` when the backend
+   * helper does not compute it (the default for cursor pagination).
+   * Populated by `list_blocks` (PageBrowser "X of Y" progress chip).
+   */
+  total_count?: number | null
 }
 
 export interface UsePaginatedQueryOptions {
@@ -42,6 +49,16 @@ export interface UsePaginatedQueryResult<T> {
   reload: () => void
   /** Direct setter for optimistic updates or manual clearing. */
   setItems: Dispatch<SetStateAction<T[]>>
+  /**
+   * Total number of matching rows from the latest backend response,
+   * or `undefined` when the backend does not surface a count
+   * (most cursor-paginated endpoints). Last-write wins across pages
+   * — when a query returns the same `total_count` for every cursor
+   * step the value is stable; when it doesn't, the most recent
+   * response's value is exposed. Consumers can render "X of Y"
+   * progress when this is a number.
+   */
+  totalCount: number | undefined
 }
 
 export function usePaginatedQuery<T>(
@@ -54,6 +71,7 @@ export function usePaginatedQuery<T>(
   const [hasMore, setHasMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [capped, setCapped] = useState(false)
+  const [totalCount, setTotalCount] = useState<number | undefined>(undefined)
   const requestIdRef = useRef(0)
 
   // Store options in a ref so `load` only depends on `queryFn`.
@@ -82,6 +100,13 @@ export function usePaginatedQuery<T>(
         }
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
+        // Last-write wins. The backend's `total_count` should be
+        // stable across cursor pages for the same query (it ignores
+        // the cursor/limit), but if it ever isn't, the most recent
+        // response is the closest to truth. `null` -> `undefined`
+        // so consumers can do `typeof totalCount === 'number'` to
+        // gate "X of Y" rendering without a separate `!= null` step.
+        setTotalCount(resp.total_count == null ? undefined : resp.total_count)
         setError(null)
       } catch (err) {
         if (requestIdRef.current !== rid) return
@@ -104,6 +129,10 @@ export function usePaginatedQuery<T>(
     setNextCursor(null)
     setHasMore(false)
     setCapped(false)
+    // Reset totalCount when deps change so a stale count from the
+    // previous queryFn doesn't briefly drive an "X of Y" chip
+    // against a fresh, unrelated result set.
+    setTotalCount(undefined)
     if (!enabled) return
     load()
   }, [load, enabled])
@@ -118,5 +147,5 @@ export function usePaginatedQuery<T>(
     load()
   }, [load])
 
-  return { items, loading, hasMore, capped, error, loadMore, reload, setItems }
+  return { items, loading, hasMore, capped, error, loadMore, reload, setItems, totalCount }
 }

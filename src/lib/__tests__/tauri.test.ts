@@ -343,7 +343,7 @@ describe('purgeBlock', () => {
 // ---------------------------------------------------------------------------
 
 describe('listBlocks', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes list_blocks with all nulls + the required spaceId', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -378,6 +378,7 @@ describe('listBlocks', () => {
       ],
       next_cursor: 'abc123',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
@@ -442,7 +443,7 @@ describe('listBlocks', () => {
 // ---------------------------------------------------------------------------
 
 describe('listUndatedTasks', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes list_undated_tasks with correct args', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -586,7 +587,7 @@ describe('removeTag', () => {
 // ---------------------------------------------------------------------------
 
 describe('searchBlocks', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes search_blocks with all nulls when no optional params given', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -619,6 +620,7 @@ describe('searchBlocks', () => {
       ],
       next_cursor: 'next123',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
@@ -653,7 +655,7 @@ describe('searchBlocks', () => {
 // ---------------------------------------------------------------------------
 
 describe('queryByTags', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes query_by_tags with required params and null defaults', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -694,6 +696,7 @@ describe('queryByTags', () => {
       ],
       next_cursor: 'next123',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
@@ -746,7 +749,7 @@ describe('queryByTags', () => {
 // ---------------------------------------------------------------------------
 
 describe('filteredBlocksQuery', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('marshals propertyFilters into the camelCase IPC shape', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -828,6 +831,7 @@ describe('filteredBlocksQuery', () => {
       ],
       next_cursor: 'next123',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(payload)
 
@@ -926,7 +930,7 @@ describe('batchResolve', () => {
 // ---------------------------------------------------------------------------
 
 describe('getBacklinks', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes get_backlinks with all parameters', async () => {
     const pageResp = {
@@ -942,6 +946,7 @@ describe('getBacklinks', () => {
       ],
       next_cursor: 'next1',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
@@ -987,13 +992,14 @@ describe('getBacklinks', () => {
 // ---------------------------------------------------------------------------
 
 describe('getBlockHistory', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes get_block_history with all parameters', async () => {
     const pageResp = {
       items: [{ op_type: 'edit', seq: 1, device_id: 'dev1', timestamp: '2025-01-15T00:00:00Z' }],
       next_cursor: 'next1',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
@@ -1235,13 +1241,14 @@ describe('getBatchProperties', () => {
 // ---------------------------------------------------------------------------
 
 describe('listPageHistory', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes list_page_history with all parameters', async () => {
     const pageResp = {
       items: [{ op_type: 'edit', seq: 1, device_id: 'dev1', timestamp: '2025-01-15T00:00:00Z' }],
       next_cursor: 'next1',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
@@ -1310,7 +1317,7 @@ describe('revertOps', () => {
 // ---------------------------------------------------------------------------
 
 describe('queryByProperty', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false }
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
   it('invokes query_by_property with all parameters', async () => {
     const pageResp = {
@@ -1326,6 +1333,7 @@ describe('queryByProperty', () => {
       ],
       next_cursor: 'next1',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(pageResp)
 
@@ -2682,6 +2690,7 @@ describe('listProjectedAgenda', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(expected)
 
@@ -2703,7 +2712,12 @@ describe('listProjectedAgenda', () => {
   })
 
   it('defaults optional cursor, limit to null and scope to global', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await listProjectedAgenda({ startDate: '2025-01-15', endDate: '2025-02-15' })
 
@@ -2717,7 +2731,12 @@ describe('listProjectedAgenda', () => {
   })
 
   it('forwards an explicit cursor for page-2 fetches (M-25)', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await listProjectedAgenda({
       startDate: '2025-01-15',
@@ -2736,7 +2755,12 @@ describe('listProjectedAgenda', () => {
   })
 
   it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
     await listProjectedAgenda({
       startDate: '2025-01-15',
       endDate: '2025-02-15',

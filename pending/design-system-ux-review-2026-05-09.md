@@ -3,11 +3,15 @@
 > **Status:** Tier 1 + Tier 3 hygiene mostly shipped. **Tier 1 closed:**
 > item 1 (Button `active:` states across all 6 variants + size-dependent
 > scale), item 2 (iOS auto-zoom on `<Select>`), item 3
-> (`useAutoScrollOnDrag` reduced-motion), item 9 (3 `return null`
-> empty-state guards → `<EmptyState compact>` in DonePanel +
-> LinkedReferences + UnlinkedReferences), item 10 (LoadingSkeleton
-> accepts `loading` prop with `role="status" aria-busy`; StatusPanel +
-> PageBrowser + TagList + JournalPage migrated).
+> (`useAutoScrollOnDrag` reduced-motion), item 6 (settings-tab heading
+> style standardized on `Card`/`CardHeader`/`CardTitle` —
+> AgentAccessSettingsTab + GoogleCalendarSettingsTab +
+> KeyboardSettingsTab + settings/HelpTab migrated, DataSettingsTab
+> already on the pattern), item 9 (3 `return null` empty-state guards →
+> `<EmptyState compact>` in DonePanel + LinkedReferences +
+> UnlinkedReferences), item 10 (LoadingSkeleton accepts `loading` prop
+> with `role="status" aria-busy`; StatusPanel + PageBrowser + TagList +
+> JournalPage migrated).
 > **Tier 2 (doc drift) closed:** D1 (`task-todo` token), D3 (ProseMirror
 > padding), D5 (sync indicator tokens), D6 (single-RAF clarified), D8
 > (ListViewState pattern label), D9 (priority badge touch table), D10
@@ -29,7 +33,7 @@
 > block extended to cover `--ring`, every `--alert-*`, `--op-*`,
 > `--date-*`, `--conflict-*`, `--task-*`, `--block-ref`, `--highlight`,
 > and `--sync-*` family (both light and dark themes).
-> **Still open:** Tier 1 items 1, 4–11 + every Tier 2 entry +
+> **Still open:** Tier 1 items 4, 5, 7, 8, 11 + every Tier 2 entry +
 > component-decomposition backlog + FeatureErrorBoundary in-view
 > sections + list rendering primitive zoo.
 

@@ -28,6 +28,7 @@ describe('loadTemplatePages', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const result = await loadTemplatePages(null)
@@ -61,6 +62,7 @@ describe('loadTemplatePages', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const result = await loadTemplatePages(null)
@@ -221,6 +223,7 @@ describe('loadJournalTemplate', () => {
       items: [{ id: 'JT1', block_type: 'page', content: 'Journal Template' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { template, duplicateWarning } = await loadJournalTemplate(null)
@@ -242,6 +245,7 @@ describe('loadJournalTemplate', () => {
       items: [],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { template, duplicateWarning } = await loadJournalTemplate(null)
@@ -257,6 +261,7 @@ describe('loadJournalTemplate', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { template, duplicateWarning } = await loadJournalTemplate(null)
@@ -273,6 +278,7 @@ describe('loadJournalTemplate', () => {
       items: [{ id: 'JT1', block_type: 'page', content: 'Only Journal' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { duplicateWarning } = await loadJournalTemplate(null)
@@ -287,6 +293,7 @@ describe('loadTemplatePagesWithPreview', () => {
       items: [{ id: 'T1', block_type: 'page', content: 'Meeting Notes' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     // PEND-35 Tier 2.8 — first_child_for_blocks([T1]) returns
     // { T1: child } in a single batch call.
@@ -317,6 +324,7 @@ describe('loadTemplatePagesWithPreview', () => {
       items: [{ id: 'T1', block_type: 'page', content: 'Empty Template' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     // Empty record \u2014 T1 omitted because it has no children.
     mockedInvoke.mockResolvedValueOnce({})
@@ -331,6 +339,7 @@ describe('loadTemplatePagesWithPreview', () => {
       items: [{ id: 'T1', block_type: 'page', content: 'Long Template' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedInvoke.mockResolvedValueOnce({
       T1: { id: 'C1', block_type: 'content', content: longContent, parent_id: 'T1', position: 0 },
@@ -345,6 +354,7 @@ describe('loadTemplatePagesWithPreview', () => {
       items: [{ id: 'T1', block_type: 'page', content: 'Template' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     // Batch fetch rejection \u2014 every page surfaces a null preview.
     mockedInvoke.mockRejectedValueOnce(new Error('first_child_for_blocks failed'))
@@ -363,6 +373,7 @@ describe('loadTemplatePagesWithPreview', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedInvoke.mockResolvedValueOnce({
       T1: { id: 'C1', block_type: 'content', content: 'first-A', parent_id: 'T1', position: 0 },

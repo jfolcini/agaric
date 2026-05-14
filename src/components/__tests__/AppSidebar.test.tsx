@@ -18,7 +18,7 @@ import { AppSidebar, type AppSidebarProps } from '../AppSidebar'
 import { SidebarProvider } from '../ui/sidebar'
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 function defaultProps(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps {
   return {

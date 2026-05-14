@@ -20,7 +20,7 @@
  *   </div>
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 export interface ViewportObserver {
   /**
@@ -110,5 +110,16 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
 
   const getHeight = useCallback((id: string) => heightsRef.current.get(id), [])
 
-  return { createObserveRef, isOffscreen, getHeight }
+  // Memoize the returned observer object so its identity is stable across
+  // renders. Identity only changes when `isOffscreen` rebinds (i.e. when
+  // `offscreenIds` actually changes); `createObserveRef` is `[]`-keyed and
+  // `getHeight` is `[]`-keyed, so neither perturbs the memo on its own.
+  //
+  // Without this, every parent re-render produced a fresh observer object
+  // that propagated through SortableBlockWrapper and defeated its
+  // `React.memo` (design-system-perf-review-2026-05-09.md item 5.)
+  return useMemo<ViewportObserver>(
+    () => ({ createObserveRef, isOffscreen, getHeight }),
+    [createObserveRef, isOffscreen, getHeight],
+  )
 }

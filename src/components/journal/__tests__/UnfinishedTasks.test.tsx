@@ -119,7 +119,7 @@ function mockInvokeForBlocks(blocks: BlockRow[], resolvedPages?: { id: string; t
         deleted: false,
       }))
     }
-    return { items: [], next_cursor: null, has_more: false }
+    return { items: [], next_cursor: null, has_more: false, total_count: null }
   })
 }
 
@@ -583,7 +583,7 @@ describe('UnfinishedTasks', () => {
         if (cmd === 'list_unfinished_tasks') {
           throw new Error('query failure')
         }
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       })
 
       const { container } = render(<UnfinishedTasks />)
@@ -636,7 +636,7 @@ describe('UnfinishedTasks', () => {
         if (cmd === 'batch_resolve') {
           throw new Error('resolve failure')
         }
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       })
 
       render(<UnfinishedTasks />)

@@ -163,6 +163,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -180,7 +181,7 @@ describe('QueryResult', () => {
   it('renders empty state when no results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -221,6 +222,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       return {}
@@ -264,6 +266,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -302,6 +305,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -349,6 +353,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -380,6 +385,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       return {}
@@ -432,6 +438,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -484,6 +491,7 @@ describe('QueryResult', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -609,6 +617,7 @@ describe('QueryResult – table mode', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -860,6 +869,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -907,6 +917,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -946,6 +957,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -987,6 +999,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -1012,7 +1025,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
     // needed.
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -1103,6 +1116,7 @@ describe('QueryResult – error paths', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       .mockRejectedValueOnce(new Error('Batch resolve failed'))
 
@@ -1131,6 +1145,7 @@ describe('QueryResult – error paths', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       .mockRejectedValueOnce(new Error('Resolution service down'))
 
@@ -1162,6 +1177,7 @@ describe('QueryResult – pagination', () => {
           ],
           next_cursor: 'cursor1',
           has_more: true,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -1183,6 +1199,7 @@ describe('QueryResult – pagination', () => {
           items: [makeBlock({ id: 'B1', content: 'Only page', parent_id: null })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       return null
@@ -1204,12 +1221,14 @@ describe('QueryResult – pagination', () => {
             items: [makeBlock({ id: 'B1', content: 'First page item', parent_id: null })],
             next_cursor: 'cursor1',
             has_more: true,
+            total_count: null,
           }
         }
         return {
           items: [makeBlock({ id: 'B2', content: 'Second page item', parent_id: null })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -1247,6 +1266,7 @@ describe('QueryResult – pagination', () => {
           ],
           next_cursor: 'cursor1',
           has_more: true,
+          total_count: null,
         }
       }
       return {}
@@ -1269,7 +1289,7 @@ describe('QueryResult – expression pills', () => {
   it('renders query expression as Badge pills', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1292,7 +1312,7 @@ describe('QueryResult – expression pills', () => {
   it('renders property filter pills for filtered queries', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1315,7 +1335,7 @@ describe('QueryResult – expression pills', () => {
   it('renders tag filter pills', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1332,7 +1352,7 @@ describe('QueryResult – expression pills', () => {
   it('raw expression is visible on hover via title attribute', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1352,6 +1372,7 @@ describe('QueryResult – expression pills', () => {
           items: [makeBlock({ id: 'B1', content: 'Item', parent_id: null, todo_state: 'TODO' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       return {}
@@ -1378,7 +1399,7 @@ describe('QueryResult – operator syntax', () => {
   it('forwards operator "gt" inside filtered_blocks_query for property:due_date>today', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1410,7 +1431,7 @@ describe('QueryResult – operator syntax', () => {
   it('forwards operator "lte" inside filtered_blocks_query for property:due_date<=2025-12-31', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1442,6 +1463,7 @@ describe('QueryResult – operator syntax', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -1469,7 +1491,7 @@ describe('QueryResult – operator syntax', () => {
   it('resolves relative date "today" to ISO date string', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1490,7 +1512,7 @@ describe('QueryResult – operator syntax', () => {
   it('pills display operator symbol for gt', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1506,7 +1528,7 @@ describe('QueryResult – operator syntax', () => {
   it('pills display ≤ symbol for lte operator', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1522,7 +1544,7 @@ describe('QueryResult – operator syntax', () => {
   it('pills display ≠ symbol for neq operator', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1546,7 +1568,7 @@ describe('QueryResult – Edit Query button', () => {
   function mockEmptyTagResults() {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       return null
     })
@@ -1559,6 +1581,7 @@ describe('QueryResult – Edit Query button', () => {
           items: [makeBlock({ id: 'B1', content: 'Result item', parent_id: 'P1', page_id: 'P1' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -1662,7 +1685,7 @@ describe('QueryResult – Edit Query button', () => {
   it('shows toast error when editBlock fails', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
-        return { items: [], next_cursor: null, has_more: false }
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       }
       if (cmd === 'edit_block') {
         throw new Error('Backend error')

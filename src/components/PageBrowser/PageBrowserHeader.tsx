@@ -38,6 +38,18 @@ export interface PageBrowserHeaderProps {
   onFilterTextChange: (value: string) => void
   sortOption: SortOption
   onSortChange: (value: SortOption) => void
+  /**
+   * Total number of pages available (from the backend `total_count`).
+   * When omitted, the count chip is not rendered.
+   */
+  totalCount?: number | undefined
+  /**
+   * Number of pages matching the current filter (post-filter).
+   * Drives the "X of Y matching" form when a filter is active.
+   */
+  filteredCount?: number | undefined
+  /** True when a search filter is active (suppresses the "all pages" form). */
+  isFiltering?: boolean
 }
 
 export function PageBrowserHeader({
@@ -52,8 +64,27 @@ export function PageBrowserHeader({
   onFilterTextChange,
   sortOption,
   onSortChange,
+  totalCount,
+  filteredCount,
+  isFiltering,
 }: PageBrowserHeaderProps): React.ReactElement {
   const { t } = useTranslation()
+  // PageBrowser pagination UX (2026-05-14) — small muted text near
+  // the search input so users always know roughly how many pages
+  // they're looking at. Two forms:
+  //  - "312 pages" when no filter is active.
+  //  - "23 of 312 matching" when filtering against an alpha set.
+  // Hidden when `totalCount` is `undefined` (backend didn't report).
+  const countLabel: string | null = (() => {
+    if (typeof totalCount !== 'number') return null
+    if (isFiltering && typeof filteredCount === 'number') {
+      return t('pageBrowser.countFiltered', {
+        loaded: filteredCount,
+        total: totalCount,
+      })
+    }
+    return t('pageBrowser.countAll', { count: totalCount })
+  })()
   return (
     <div className="page-browser-header space-y-2">
       {/* Create page form */}
@@ -98,6 +129,14 @@ export function PageBrowserHeader({
               aria-label={t('pageBrowser.searchPlaceholder')}
             />
           </div>
+          {countLabel != null && (
+            <span
+              className="text-xs text-muted-foreground whitespace-nowrap"
+              data-testid="page-browser-count"
+            >
+              {countLabel}
+            </span>
+          )}
           <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>
             <TooltipProvider>
               <Tooltip>

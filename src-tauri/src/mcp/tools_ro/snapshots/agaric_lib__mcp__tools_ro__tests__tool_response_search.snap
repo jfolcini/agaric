@@ -1,5 +1,6 @@
 ---
-source: src/mcp/tools_ro.rs
+source: src/mcp/tools_ro/tests.rs
+assertion_line: 1774
 expression: result
 ---
 has_more: false
@@ -16,3 +17,4 @@ items:
     scheduled_date: ~
     todo_state: ~
 next_cursor: "[CURSOR]"
+total_count: ~

@@ -21,7 +21,12 @@ describe('useBootStore', () => {
     const states: string[] = []
     const unsub = useBootStore.subscribe((s) => states.push(s.state))
 
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
     await useBootStore.getState().boot()
     unsub()
 
@@ -48,7 +53,12 @@ describe('useBootStore', () => {
     await useBootStore.getState().boot()
     expect(useBootStore.getState().state).toBe('error')
 
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
     await useBootStore.getState().boot()
     expect(useBootStore.getState().state).toBe('ready')
   })
@@ -66,7 +76,7 @@ describe('useBootStore', () => {
     // While invoke is pending, state should be 'recovering'
     expect(useBootStore.getState().state).toBe('recovering')
 
-    resolveInvoke?.({ items: [], next_cursor: null, has_more: false })
+    resolveInvoke?.({ items: [], next_cursor: null, has_more: false, total_count: null })
     await bootPromise
 
     expect(useBootStore.getState().state).toBe('ready')

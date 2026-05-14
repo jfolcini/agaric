@@ -91,6 +91,7 @@ const emptyResponse = {
   items: [],
   next_cursor: null,
   has_more: false,
+  total_count: null,
 }
 
 beforeEach(() => {
@@ -98,7 +99,12 @@ beforeEach(() => {
   clearProjectedCache()
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
-  mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+  mockedListProjectedAgenda.mockResolvedValue({
+    items: [],
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+  })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   useNavigationStore.setState({
     currentView: 'journal',
@@ -117,6 +123,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' }), makeBlock({ id: 'B3' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -130,6 +137,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -165,6 +173,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -191,6 +200,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -226,6 +236,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'My Page Title', block_type: 'page', deleted: false },
@@ -246,6 +257,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Source Page', block_type: 'page', deleted: false },
@@ -275,6 +287,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Source Page', block_type: 'page', deleted: false },
@@ -300,6 +313,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -315,6 +329,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', priority: null, content: 'no prio' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -331,11 +346,13 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'first block' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makeBlock({ id: 'B2', content: 'second block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     let callCount = 0
     mockedListBlocks.mockImplementation(async () => {
@@ -365,6 +382,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'only block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -381,6 +399,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'visible block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -411,6 +430,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { rerender } = render(<DuePanel date="2025-06-15" />)
@@ -428,6 +448,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B2', due_date: '2025-06-16' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     rerender(<DuePanel date="2025-06-16" />)
@@ -447,6 +468,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Page Title', block_type: 'page', deleted: false },
@@ -468,6 +490,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'filter test block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -492,6 +515,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'due filter block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -503,6 +527,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B2', content: 'filtered due block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const dueBtn = screen.getByRole('button', { name: /^Due/ })
@@ -524,6 +549,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'all filter block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -545,6 +571,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B3', content: 'all blocks again' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     // Now click "All" to clear the filter
@@ -567,6 +594,7 @@ describe('DuePanel', () => {
       items: [makeBlock({ id: 'B1', content: 'props filter block' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -580,6 +608,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const propsBtn = screen.getByRole('button', { name: /^Properties/ })
@@ -611,6 +640,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -649,6 +679,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -669,6 +700,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<DuePanel date="2025-06-15" />)
@@ -681,7 +713,12 @@ describe('DuePanel', () => {
   it('returns null when all data sources return empty', async () => {
     // All data sources return empty
     mockedListBlocks.mockResolvedValue(emptyResponse)
-    mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+    mockedListProjectedAgenda.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
     mockedQueryByProperty.mockResolvedValue(emptyResponse)
 
     const { container } = render(<DuePanel date="2025-06-15" />)
@@ -720,6 +757,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-13" />)
@@ -733,7 +771,12 @@ describe('DuePanel', () => {
 
     it('does not render projected section when no projections', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
 
       render(<DuePanel date="2026-04-13" />)
 
@@ -774,6 +817,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-13" />)
@@ -809,6 +853,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-13" />)
@@ -839,6 +884,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       mockedBatchResolve.mockResolvedValue([
         { id: 'PAGE2', title: 'My Page', block_type: 'page', deleted: false },
@@ -872,6 +918,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-27" />)
@@ -897,6 +944,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       const { container } = render(<DuePanel date="2026-04-13" />)
@@ -930,6 +978,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       mockedListProjectedAgenda.mockResolvedValue({
         items: [
@@ -948,6 +997,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       mockedBatchResolve.mockResolvedValue([
         { id: 'PAGE2', title: 'Projected Page', block_type: 'page', deleted: false },
@@ -996,6 +1046,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-13" />)
@@ -1012,6 +1063,7 @@ describe('DuePanel', () => {
         items: [makeBlock({ id: 'B1', content: 'Real block', todo_state: 'TODO' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       // Projected entry also references B1
       mockedListProjectedAgenda.mockResolvedValue({
@@ -1031,6 +1083,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2025-06-15" />)
@@ -1067,6 +1120,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date={todayStr} />)
@@ -1103,6 +1157,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date={todayStr} />)
@@ -1135,6 +1190,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-03" />)
@@ -1158,6 +1214,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-03" />)
@@ -1173,6 +1230,7 @@ describe('DuePanel', () => {
         items: [makeBlock({ id: 'B1', content: 'label test block' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date="2026-04-03" />)
@@ -1216,6 +1274,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<DuePanel date={todayStr} />)
@@ -1251,6 +1310,7 @@ describe('DuePanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PAGE1', title: 'Linked Page', block_type: 'page', deleted: false },
@@ -1291,6 +1351,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       mockedBatchResolve.mockRejectedValueOnce(new Error('resolve failure'))
 
@@ -1308,6 +1369,7 @@ describe('DuePanel', () => {
         items: [makeBlock({ id: 'B1', content: 'normal block' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       mockedListProjectedAgenda.mockRejectedValueOnce(new Error('projected fetch failed'))
 
@@ -1344,6 +1406,7 @@ describe('DuePanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       // listBlocks returns empty so no batchResolve is triggered from that path.
       // The only batchResolve call comes from the projected entries path.
@@ -1421,6 +1484,7 @@ describe('DuePanel', () => {
         items: [makeBlock({ id: 'B1', content: 'first block' })],
         next_cursor: 'cursor_page2',
         has_more: true,
+        total_count: null,
       })
 
       render(<DuePanel date="2025-06-15" />)

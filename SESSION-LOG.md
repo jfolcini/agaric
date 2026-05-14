@@ -7,6 +7,34 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 718 — PageBrowser pagination UX + Tier 1 perf + UX-T1.6 (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 4 build (general-purpose) in parallel |
+| **Items closed** | `pending/page-browser-pagination-ux-2026-05-14.md` (plan file deleted); design-system-perf-review Tier 1 item 4 (handlers half; metadata half deferred and documented) + Tier 1 item 5 (SortableBlockWrapper memoized + roving-editor + viewport-observer return values memoized); design-system-ux-review Tier 1 item 6 (settings tab heading style standardized on Card/CardHeader/CardTitle). |
+| **Items modified** | design-system-perf-review status note updated; design-system-ux-review status note updated. |
+| **Tests added** | +4 usePaginatedQuery (totalCount), +8 PageBrowser pagination UX (count chip, auto-load, scroll restore, per-space key, clamp), +5 useBlockNavigation (getRowHandlers identity stability + cache invalidation). |
+| **Files touched** | 30+ (Rust: pagination + 7 PageResponse callsites + 8 snapshots + new sqlx cache; FE: PageBrowser + Header + usePaginatedQuery + 3 perf panels + useBlockNavigation + SortableBlockWrapper + use-roving-editor + useViewportObserver + 4 settings tabs + i18n; docs: 3 plan status updates) |
+
+**Summary:** four parallel subagents closed one big plan + three audit items. **page-browser-pagination-ux** — backend adds `total_count: Option<i64>` to `PageResponse<T>`; `list_blocks_inner`'s `block_type` branch runs a new `count_blocks_by_type` COUNT alongside the LIMIT/OFFSET fetch (every other PageResponse caller emits `None`). Frontend `usePaginatedQuery` exposes `totalCount: number | undefined`; PageBrowserHeader gains a `[data-testid="page-browser-count"]` chip ("312 pages" or "23 of 312 matching"). PageBrowser plumbs `totalCount` into LoadMoreButton's existing progress line. Scroll restoration via `sessionStorage[pageBrowser:scrollOffset:${spaceId}]` (debounced 150 ms save, single-shot restore with `getTotalSize() > 0` gate + clamp + per-space key). Auto-load fires `loadMore()` when last visible row is within 5 rows of the end; LoadMoreButton kept as a11y fallback. **Perf Tier 1.4** (handlers half) — new `getRowHandlers` factory in `useBlockNavigation` caches per-block `{onClick, onKeyDown}` bundles, eliminating inline-arrow identity churn in AgendaResults/DuePanel/DonePanel. Metadata half explicitly deferred — fully closing it requires reshaping `BlockListItem`'s `metadata?: ReactNode` prop into typed primitive fields. **Perf Tier 1.5** (SortableBlockWrapper) — wrapped with `React.memo` via Inner+memo. Root-cause fix: `useRovingEditor` + `useViewportObserver` now `useMemo` their return values so handle/observer identity is stable across parent re-renders (no custom memo comparator needed; the fix helps every downstream consumer). **UX-T1.6** (settings tabs heading) — AgentAccessSettingsTab + GoogleCalendarSettingsTab + KeyboardSettingsTab + HelpTab migrated to `<Card><CardHeader><CardTitle>` pattern matching DataSettingsTab. One Card per tab (none had multi-top-heading panels); inner `<h4>` sub-headings preserved.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3673 pass / 4 skipped.
+- `npx vitest run` — 9672 tests pass.
+- `npx tsc --noEmit` — clean.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- Backend: `pagination/mod.rs`, `commands/blocks/queries.rs` (+`count_blocks_by_type`), `commands/queries.rs`, `commands/tags.rs`, `commands/agenda.rs`, `fts/search.rs`, `tag_query/query.rs`, `space_filter_canonical.rs` (EXPECTED_HITS 23→24), 8 .snap fixtures, 1 new .sqlx cache entry.
+- Frontend: `src/hooks/usePaginatedQuery.ts`, `src/hooks/useBlockNavigation.ts`, `src/hooks/useViewportObserver.ts`, `src/editor/use-roving-editor.ts`, `src/components/PageBrowser.tsx`, `PageBrowser/PageBrowserHeader.tsx`, `AgendaResults.tsx`, `DuePanel.tsx`, `DonePanel.tsx`, `SortableBlockWrapper.tsx`, `AgentAccessSettingsTab.tsx`, `GoogleCalendarSettingsTab.tsx`, `KeyboardSettingsTab.tsx`, `settings/HelpTab.tsx`, `src/lib/i18n/pages.ts`, `src/lib/bindings.ts` (regenerated).
+- Tests: usePaginatedQuery.test, PageBrowser.test, useBlockNavigation.test + 3 settings tab tests (incl assertion updates).
+- Docs: `pending/page-browser-pagination-ux-2026-05-14.md` (deleted), `pending/README.md` (row removed), `pending/design-system-perf-review-2026-05-09.md` (status), `pending/design-system-ux-review-2026-05-09.md` (status).
+
+**Commit plan:** single commit covering 4-stream batch + Session 718 entry.
+
+---
 ## Session 717 — gcal-oauth wiring + perf followups + UX doc drift (2026-05-14)
 
 | Metadata | Value |

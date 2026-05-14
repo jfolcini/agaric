@@ -41,6 +41,7 @@ const returnEmptyPage: Handler = () => ({
   items: [],
   next_cursor: null,
   has_more: false,
+  total_count: null,
 })
 
 export const HANDLERS: Record<string, Handler> = {
@@ -738,7 +739,7 @@ export const HANDLERS: Record<string, Handler> = {
     // present, but accepting the arg is the right shape). Browser-mode
     // callers don't currently exercise per-block history end-to-end, so
     // returning an empty page is still the cheapest correct behaviour.
-    return { items: [], next_cursor: null, has_more: false }
+    return { items: [], next_cursor: null, has_more: false, total_count: null }
   },
 
   list_page_history: () => {

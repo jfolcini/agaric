@@ -44,7 +44,7 @@ vi.mock('../../lib/announcer', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -67,6 +67,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -87,6 +88,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -117,6 +119,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -152,6 +155,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -180,6 +184,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -207,6 +212,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -235,6 +241,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // initial load
@@ -279,6 +286,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -300,6 +308,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -317,11 +326,13 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'entry 1' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makeHistoryEntry(2, 'edit_block', { to_text: 'entry 2' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
 
@@ -383,6 +394,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -409,6 +421,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -432,6 +445,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -462,6 +476,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -487,6 +502,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -531,6 +547,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'purge_block', { block_id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -564,6 +581,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -588,6 +606,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'purge_block', { block_id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -622,6 +641,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -664,6 +684,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // initial load
@@ -699,6 +720,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, '2025-01-15T12:00:00Z')],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     const page2 = {
       items: [
@@ -713,6 +735,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page1) // initial load
@@ -754,6 +777,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // initial load
@@ -800,6 +824,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // initial load
@@ -844,6 +869,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<HistoryView />)
@@ -875,6 +901,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'filtered item' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<HistoryView />)
@@ -937,6 +964,7 @@ describe('HistoryView', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // initial load
@@ -981,6 +1009,7 @@ describe('HistoryView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1000,6 +1029,7 @@ describe('HistoryView', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1029,6 +1059,7 @@ describe('HistoryView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke
         .mockResolvedValueOnce(page) // initial load
@@ -1061,6 +1092,7 @@ describe('HistoryView', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke
         .mockResolvedValueOnce(page) // initial load
@@ -1086,6 +1118,7 @@ describe('HistoryView', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke
         .mockResolvedValueOnce(page) // initial load
@@ -1111,6 +1144,7 @@ describe('HistoryView', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke
         .mockResolvedValueOnce(page) // initial load
@@ -1144,6 +1178,7 @@ describe('HistoryView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1172,6 +1207,7 @@ describe('HistoryView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1199,6 +1235,7 @@ describe('HistoryView', () => {
         items: entries,
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1226,6 +1263,7 @@ describe('HistoryView', () => {
         items: entries,
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1254,6 +1292,7 @@ describe('HistoryView', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'ux198 regression' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1280,6 +1319,7 @@ describe('HistoryView', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1311,6 +1351,7 @@ describe('HistoryView', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1359,6 +1400,7 @@ describe('HistoryView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1380,6 +1422,7 @@ describe('HistoryView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1406,6 +1449,7 @@ describe('HistoryView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page)
 
@@ -1442,6 +1486,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // initial load
@@ -1468,6 +1513,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'a' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // initial load

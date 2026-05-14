@@ -90,7 +90,7 @@ vi.mock('../../hooks/useSyncTrigger', () => ({
 const mockedInvoke = vi.mocked(invoke)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -2012,6 +2012,7 @@ describe('App', () => {
             items: [{ id: 'PAGE_A1', content: 'Page A1', deleted_at: null }],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         if (cmd === 'list_tags_by_prefix') return []
@@ -2072,7 +2073,7 @@ describe('App', () => {
           ]
         }
         if (cmd === 'list_blocks') {
-          return { items: [], next_cursor: null, has_more: false }
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
         }
         if (cmd === 'list_tags_by_prefix') return []
         return emptyPage

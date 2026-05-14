@@ -35,7 +35,7 @@ vi.mock('../hooks/useSyncTrigger', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 beforeEach(() => {
   vi.clearAllMocks()

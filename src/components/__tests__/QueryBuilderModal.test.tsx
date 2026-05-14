@@ -46,7 +46,8 @@ describe('QueryBuilderModal', () => {
     vi.clearAllMocks()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       // M-85: `list_property_defs` returns a paginated PageResponse envelope.
-      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
       return null
     })
   })
@@ -367,6 +368,7 @@ describe('QueryBuilderModal', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return null
@@ -401,6 +403,7 @@ describe('QueryBuilderModal', () => {
             items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return null
@@ -436,6 +439,7 @@ describe('QueryBuilderModal', () => {
             items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return null
@@ -480,6 +484,7 @@ describe('QueryBuilderModal', () => {
             items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return null
@@ -522,6 +527,7 @@ describe('QueryBuilderModal', () => {
             items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return null

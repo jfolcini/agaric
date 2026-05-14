@@ -25,7 +25,7 @@ import { TemplatesView } from '../TemplatesView'
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 function makeTemplate(id: string, content: string) {
   return {
@@ -109,6 +109,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Weekly Review')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         // journal-template query
@@ -151,6 +152,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Weekly Review')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -191,6 +193,7 @@ describe('TemplatesView', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -220,6 +223,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -252,6 +256,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -307,6 +312,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -337,6 +343,7 @@ describe('TemplatesView', () => {
               items: [makeTemplate('T1', 'Meeting Notes')],
               next_cursor: null,
               has_more: false,
+              total_count: null,
             }
           }
           return emptyPage
@@ -434,6 +441,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Daily Journal')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         if (params.key === 'journal-template') {
@@ -441,6 +449,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T2', 'Daily Journal')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -470,6 +479,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Daily Journal')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         if (params.key === 'journal-template') {
@@ -477,6 +487,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Daily Journal')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -522,6 +533,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -531,6 +543,7 @@ describe('TemplatesView', () => {
           items: [makeChild('C1', 'First child preview', 'T1')],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       return emptyPage
@@ -561,6 +574,7 @@ describe('TemplatesView', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage
@@ -605,6 +619,7 @@ describe('TemplatesView', () => {
             items: [makeTemplate('T1', 'Meeting Notes')],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return emptyPage

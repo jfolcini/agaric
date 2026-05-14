@@ -248,6 +248,7 @@ describe('GraphView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
@@ -292,6 +293,7 @@ describe('GraphView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
@@ -409,6 +411,7 @@ describe('GraphView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
@@ -443,6 +446,7 @@ describe('GraphView', () => {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
@@ -469,6 +473,7 @@ describe('GraphView', () => {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     // Link references a non-existent page — should be filtered out
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-nonexistent' }]
@@ -496,6 +501,7 @@ describe('GraphView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
@@ -524,6 +530,7 @@ describe('GraphView', () => {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     function mockGraphData() {
@@ -600,6 +607,7 @@ describe('GraphView', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
 
@@ -638,6 +646,7 @@ describe('GraphView', () => {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
@@ -666,6 +675,7 @@ describe('GraphView', () => {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
@@ -696,6 +706,7 @@ describe('GraphView', () => {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     mockedInvoke.mockImplementation((cmd: string) => {
@@ -727,6 +738,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -831,6 +843,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -868,6 +881,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -896,6 +910,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -924,6 +939,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -958,6 +974,7 @@ describe('GraphView', () => {
           items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
 
         mockedInvoke.mockImplementation((cmd: string) => {
@@ -1065,6 +1082,7 @@ describe('GraphView', () => {
           items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         })
         resolveLinks([])
       })
@@ -1083,6 +1101,7 @@ describe('GraphView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       const linksResponse = [{ source_id: 'page-1', target_id: 'page-2', ref_count: 1 }]
 
@@ -1117,6 +1136,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -1152,6 +1172,7 @@ describe('GraphView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -1191,6 +1212,7 @@ describe('GraphView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -1250,6 +1272,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -1290,6 +1313,7 @@ describe('GraphView', () => {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -1332,6 +1356,7 @@ describe('GraphView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {
@@ -1366,6 +1391,7 @@ describe('GraphView', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
 
       mockedInvoke.mockImplementation((cmd: string) => {

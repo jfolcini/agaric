@@ -320,6 +320,74 @@ describe('usePaginatedQuery', () => {
     expect(result.current.capped).toBe(false)
   })
 
+  // ── totalCount exposure ─────────────────────────────────────────
+
+  it('exposes totalCount from the response when supplied', async () => {
+    const queryFn = vi.fn().mockResolvedValueOnce({
+      items: ['a', 'b'],
+      next_cursor: 'c1',
+      has_more: true,
+      total_count: 312,
+    })
+    const { result } = renderHook(() => usePaginatedQuery(queryFn))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.totalCount).toBe(312)
+  })
+
+  it('totalCount is undefined when the response omits it', async () => {
+    const queryFn = vi.fn().mockResolvedValue(makePage(['a']))
+    const { result } = renderHook(() => usePaginatedQuery(queryFn))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.totalCount).toBeUndefined()
+  })
+
+  it('totalCount tracks the latest response across cursor pages', async () => {
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: ['a', 'b'],
+        next_cursor: 'c1',
+        has_more: true,
+        total_count: 300,
+      })
+      .mockResolvedValueOnce({
+        items: ['c'],
+        next_cursor: null,
+        has_more: false,
+        total_count: 301, // backend re-counted; new value wins
+      })
+    const { result } = renderHook(() => usePaginatedQuery(queryFn))
+
+    await waitFor(() => expect(result.current.totalCount).toBe(300))
+    await act(async () => result.current.loadMore())
+    expect(result.current.totalCount).toBe(301)
+  })
+
+  it('totalCount resets to undefined when queryFn changes', async () => {
+    const qf1 = vi.fn().mockResolvedValue({
+      items: ['a'],
+      next_cursor: null,
+      has_more: false,
+      total_count: 7,
+    })
+    const qf2 = vi.fn().mockResolvedValue(makePage(['b']))
+
+    const { result, rerender } = renderHook(
+      ({ qf }: { qf: (cursor?: string) => Promise<PaginatedResponse<string>> }) =>
+        usePaginatedQuery(qf),
+      { initialProps: { qf: qf1 } },
+    )
+
+    await waitFor(() => expect(result.current.totalCount).toBe(7))
+    rerender({ qf: qf2 })
+    // After deps change the count resets; once qf2 resolves it stays undefined
+    // because qf2 doesn't supply a total_count.
+    await waitFor(() => expect(result.current.items).toEqual(['b']))
+    expect(result.current.totalCount).toBeUndefined()
+  })
+
   it('respects a custom maxItems value', async () => {
     const queryFn = vi
       .fn()

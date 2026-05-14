@@ -40,7 +40,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 /**
  * Route IPC calls by command name. Test files used to chain
@@ -120,6 +120,7 @@ describe('HistoryPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -136,6 +137,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: longText })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -154,6 +156,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({
       get_block_history: () => page,
@@ -194,6 +197,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({
       get_block_history: () => page,
@@ -221,6 +225,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'create_block', { block_type: 'content' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -237,6 +242,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page1 })
 
@@ -253,11 +259,13 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'entry 1' })],
       next_cursor: 'cursor_page2',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makeHistoryEntry(2, 'edit_block', { to_text: 'entry 2' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     let callCount = 0
     setupInvokeRouter({
@@ -318,6 +326,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'accessible' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -367,6 +376,7 @@ describe('HistoryPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -383,6 +393,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { some_other_field: 'value' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -399,6 +410,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'some content' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({
       get_block_history: () => page,
@@ -427,6 +439,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'content' }, '2025-01-15T12:00:00Z')],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -562,6 +575,7 @@ describe('HistoryPanel', () => {
         items: filteredItems,
         next_cursor: 'page2',
         has_more: true,
+        total_count: null,
       }),
     })
 
@@ -584,6 +598,7 @@ describe('HistoryPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -608,6 +623,7 @@ describe('HistoryPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -623,6 +639,7 @@ describe('HistoryPanel', () => {
       items: [makeHistoryEntry(1, 'delete_property', { key: 'due_date' }, '2025-01-15T12:00:00Z')],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     setupInvokeRouter({ get_block_history: () => page })
 
@@ -644,6 +661,7 @@ describe('HistoryPanel', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       let editBlockCallCount = 0
       setupInvokeRouter({
@@ -702,6 +720,7 @@ describe('HistoryPanel', () => {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       setupInvokeRouter({
         get_block_history: () => page,
@@ -740,6 +759,7 @@ describe('HistoryPanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       }
       setupInvokeRouter({
         get_block_history: () => page,

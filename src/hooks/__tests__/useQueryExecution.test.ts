@@ -28,6 +28,7 @@ describe('useQueryExecution', () => {
           items: [makeBlock({ id: 'B1', content: 'Tagged block', parent_id: 'P1', page_id: 'P1' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -57,6 +58,7 @@ describe('useQueryExecution', () => {
           items: [makeBlock({ id: 'B1', content: 'Priority task', priority: '1' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -131,6 +133,7 @@ describe('useQueryExecution', () => {
           ],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -181,12 +184,14 @@ describe('useQueryExecution', () => {
             items: [makeBlock({ id: 'B1', content: 'First' })],
             next_cursor: 'cursor1',
             has_more: true,
+            total_count: null,
           }
         }
         return {
           items: [makeBlock({ id: 'B2', content: 'Second' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -231,7 +236,7 @@ describe('useQueryExecution', () => {
     expect(result.current.loadingMore).toBe(false)
 
     await act(async () => {
-      resolveQuery?.({ items: [], next_cursor: null, has_more: false })
+      resolveQuery?.({ items: [], next_cursor: null, has_more: false, total_count: null })
     })
 
     await waitFor(() => {
@@ -270,6 +275,7 @@ describe('useQueryExecution', () => {
           items: [makeBlock({ id: 'B1', content: 'Result' })],
           next_cursor: null,
           has_more: false,
+          total_count: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -358,6 +364,7 @@ describe('useQueryExecution', () => {
         items: [makeBlock({ id: 'B1', content: 'beta-result' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
     })
 
@@ -375,6 +382,7 @@ describe('useQueryExecution', () => {
         items: [makeBlock({ id: 'A1', content: 'alpha-result' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
       await Promise.resolve()
     })
@@ -392,6 +400,7 @@ describe('fetchTagQuery', () => {
       items: [makeBlock({ id: 'B1', content: 'Tagged' })],
       next_cursor: 'cur1',
       has_more: true,
+      total_count: null,
     })
 
     const result = await fetchTagQuery({ expr: 'project' })
@@ -407,7 +416,12 @@ describe('fetchTagQuery', () => {
   })
 
   it('passes no prefixes when expr is empty', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await fetchTagQuery({})
 
@@ -418,7 +432,12 @@ describe('fetchTagQuery', () => {
   })
 
   it('forwards pageCursor for pagination', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await fetchTagQuery({ expr: 'project' }, 'CURSOR123')
 
@@ -441,6 +460,7 @@ describe('fetchPropertyQuery', () => {
       items: [makeBlock({ id: 'B1', content: 'High priority' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const result = await fetchPropertyQuery({ key: 'priority', value: '1' })
@@ -455,7 +475,12 @@ describe('fetchPropertyQuery', () => {
   })
 
   it('uses valueDate when a date param is provided', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await fetchPropertyQuery({ key: 'due_date', date: '2025-06-15' })
 
@@ -486,6 +511,7 @@ describe('fetchBacklinksQuery', () => {
       items: [makeBlock({ id: 'B1', parent_id: 'TARGET1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const result = await fetchBacklinksQuery({ target: 'TARGET1' })
@@ -552,6 +578,7 @@ describe('fetchFilteredQuery', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const result = await fetchFilteredQuery(
@@ -582,6 +609,7 @@ describe('fetchFilteredQuery', () => {
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const result = await fetchFilteredQuery([], ['alpha', 'beta'])
@@ -627,6 +655,7 @@ describe('fetchFilteredQuery', () => {
       items: [rareMatch],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const result = await fetchFilteredQuery(
@@ -645,7 +674,12 @@ describe('fetchFilteredQuery', () => {
 
 describe('dispatchQuery', () => {
   it('routes tag queries to query_by_tags', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await dispatchQuery({
       type: 'tag',
@@ -658,7 +692,12 @@ describe('dispatchQuery', () => {
   })
 
   it('routes property queries to query_by_property', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await dispatchQuery({
       type: 'property',
@@ -671,7 +710,12 @@ describe('dispatchQuery', () => {
   })
 
   it('routes backlinks queries to list_blocks', async () => {
-    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await dispatchQuery({
       type: 'backlinks',
@@ -687,7 +731,12 @@ describe('dispatchQuery', () => {
   })
 
   it('routes filtered queries to a single filtered_blocks_query IPC (Tier 2.10b)', async () => {
-    mockedInvoke.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+    mockedInvoke.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
 
     await dispatchQuery({
       type: 'filtered',

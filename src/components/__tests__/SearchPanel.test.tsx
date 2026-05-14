@@ -42,7 +42,7 @@ import { resolvePageByAlias } from '../../lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
   id: 'BLOCK1',
@@ -153,6 +153,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult()],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -183,6 +184,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult({ id: 'B2', content: 'button result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -242,11 +244,13 @@ describe('SearchPanel', () => {
       items: [makeSearchResult({ id: 'B1', content: 'first result' })],
       next_cursor: 'cursor_abc',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makeSearchResult({ id: 'B2', content: 'second result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
@@ -289,6 +293,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult()],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -319,6 +324,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult()],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -347,6 +353,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult()],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     const { container } = render(<SearchPanel />)
@@ -482,6 +489,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -531,6 +539,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -568,6 +577,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -602,6 +612,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -692,6 +703,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult({ content: 'final result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -732,16 +744,19 @@ describe('SearchPanel', () => {
       items: [makeSearchResult({ id: 'P1', content: 'page one result' })],
       next_cursor: 'cursor_1',
       has_more: true,
+      total_count: null,
     }
     const page2 = {
       items: [makeSearchResult({ id: 'P2', content: 'page two result' })],
       next_cursor: 'cursor_2',
       has_more: true,
+      total_count: null,
     }
     const page3 = {
       items: [makeSearchResult({ id: 'P3', content: 'page three result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     mockedInvoke
@@ -812,6 +827,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -875,6 +891,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult()],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -891,6 +908,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult()],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -976,6 +994,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -1019,6 +1038,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     const parentBlock = {
       id: 'PARENT1',
@@ -1094,6 +1114,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult(), makeSearchResult({ id: 'B2', content: 'second result' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -1116,6 +1137,7 @@ describe('SearchPanel', () => {
       items: [makeSearchResult({ content: 'the test content here' })],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
 
     render(<SearchPanel />)
@@ -1148,6 +1170,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     })
     // batch_resolve returns the parent page title
     mockedInvoke.mockResolvedValueOnce([
@@ -1186,6 +1209,7 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'search_blocks') return searchResults
@@ -1224,6 +1248,7 @@ describe('SearchPanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -1272,6 +1297,7 @@ describe('SearchPanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -1321,6 +1347,7 @@ describe('SearchPanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -1532,6 +1559,7 @@ describe('SearchPanel', () => {
         items: [makeSearchResult({ content: 'filtered result' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       // Search with filter active
@@ -1643,6 +1671,7 @@ describe('SearchPanel', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }
         }
         return null
@@ -1696,6 +1725,7 @@ describe('SearchPanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -1736,6 +1766,7 @@ describe('SearchPanel', () => {
         items,
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -1855,6 +1886,7 @@ describe('SearchPanel', () => {
         items: [makeSearchResult({ id: 'B1', content: 'first' })],
         next_cursor: 'cursor_1',
         has_more: true,
+        total_count: null,
       }
       mockedInvoke.mockResolvedValueOnce(page1)
 
@@ -1887,6 +1919,7 @@ describe('SearchPanel', () => {
         items: [makeSearchResult({ id: 'B1', content: 'live region result' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -2005,6 +2038,7 @@ describe('SearchPanel', () => {
         ],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -2053,6 +2087,7 @@ describe('SearchPanel', () => {
         items: [makeSearchResult({ id: 'B1', content: 'previous result' })],
         next_cursor: null,
         has_more: false,
+        total_count: null,
       })
 
       render(<SearchPanel />)

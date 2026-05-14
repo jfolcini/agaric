@@ -59,6 +59,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
@@ -401,171 +402,177 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
   }
 
   return (
-    <div className="gcal-settings-tab space-y-6 max-w-xl">
-      {/* Header + experimental warning */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <h2 className="text-base font-medium">{t('gcal.title')}</h2>
-          <Badge
-            variant="outline"
-            className="border-alert-warning-border bg-alert-warning text-alert-warning-foreground"
-          >
-            {t('gcal.experimentalBadge')}
-          </Badge>
-        </div>
-        <p className="text-sm text-muted-foreground">{t('gcal.description')}</p>
-        <p
-          className="rounded-md border border-alert-warning-border bg-alert-warning p-3 text-xs text-alert-warning-foreground"
-          role="status"
-        >
-          {t('gcal.experimentalWarning')}
-        </p>
-      </div>
-
-      {statusError !== null && (
-        <p className="text-sm text-destructive" role="status">
-          {statusError}
-        </p>
-      )}
-
-      {/* Account section */}
-      <div className="space-y-2">
-        <Label muted={false}>{t('gcal.accountLabel')}</Label>
-        {effectiveStatus.connected && effectiveStatus.account_email !== null ? (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-4">
-              <code
-                className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono break-all"
-                data-testid="gcal-account-email"
-              >
-                {effectiveStatus.account_email}
-              </code>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setDisconnectOpen(true)}
-                aria-label={t('gcal.disconnect.button')}
-              >
-                {t('gcal.disconnect.button')}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">{t('gcal.pushingToCalendar')}</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => void handleConnect()}
-              aria-label={t('gcal.connectButton')}
-              aria-busy={oauthInFlight}
-              disabled={oauthInFlight}
-              data-testid="gcal-connect-button"
+    <div className="gcal-settings-tab space-y-4 max-w-xl">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            {t('gcal.title')}
+            <Badge
+              variant="outline"
+              className="border-alert-warning-border bg-alert-warning text-alert-warning-foreground"
             >
-              {oauthInFlight && <Spinner size="sm" />}
-              {oauthInFlight ? t('gcal.connecting') : t('gcal.connectButton')}
-            </Button>
-            <p className="text-xs text-muted-foreground">{t('gcal.connectHelp')}</p>
-          </div>
-        )}
-      </div>
+              {t('gcal.experimentalBadge')}
+            </Badge>
+          </CardTitle>
+          <CardDescription>{t('gcal.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <p
+            className="rounded-md border border-alert-warning-border bg-alert-warning p-3 text-xs text-alert-warning-foreground"
+            role="status"
+          >
+            {t('gcal.experimentalWarning')}
+          </p>
 
-      {/* Window size */}
-      <div className="space-y-2">
-        <Label htmlFor="gcal-window-days" muted={false}>
-          {t('gcal.windowLabel')}
-        </Label>
-        <Input
-          id="gcal-window-days"
-          type="number"
-          min={WINDOW_MIN}
-          max={WINDOW_MAX}
-          step={1}
-          value={windowInput}
-          onChange={handleWindowChange}
-          onBlur={handleWindowBlur}
-          aria-label={t('gcal.windowLabel')}
-          className="max-w-[8rem]"
-          disabled={!effectiveStatus.connected}
-          data-testid="gcal-window-input"
-        />
-        <p className="text-xs text-muted-foreground">{t('gcal.windowHelp')}</p>
-      </div>
-
-      {/* Privacy mode */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <Label htmlFor="gcal-privacy-toggle" muted={false}>
-            {t('gcal.privacyLabel')}
-          </Label>
-          <p className="text-xs text-muted-foreground mt-1">{t('gcal.privacyHelp')}</p>
-        </div>
-        <Switch
-          id="gcal-privacy-toggle"
-          checked={effectiveStatus.privacy_mode === 'minimal'}
-          onCheckedChange={handlePrivacyToggle}
-          aria-label={t('gcal.privacyLabel')}
-          disabled={!effectiveStatus.connected}
-        />
-      </div>
-
-      {/* Status panel */}
-      <div className="space-y-2" data-testid="gcal-status-panel">
-        <Label muted={false}>{t('gcal.statusLabel')}</Label>
-        <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">{t('gcal.lastPushLabel')}</span>
-            <span className="tabular-nums" data-testid="gcal-last-push">
-              {effectiveStatus.last_push_at !== null
-                ? formatRelativeTime(effectiveStatus.last_push_at, t)
-                : t('gcal.neverPushed')}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">{t('gcal.leaseLabel')}</span>
-            <LeaseIndicator
-              connected={effectiveStatus.connected}
-              lease={effectiveStatus.push_lease}
-              thisDeviceLabel={t('gcal.leaseThisDevice')}
-              otherDeviceLabel={t('gcal.leaseOtherDevice', {
-                deviceId: effectiveStatus.push_lease.device_id ?? '—',
-              })}
-              noLeaseLabel={t('gcal.leaseNone')}
-            />
-          </div>
-          {effectiveStatus.last_error !== null && (
-            <p className="text-destructive text-sm pt-1 break-words" data-testid="gcal-last-error">
-              {effectiveStatus.last_error}
+          {statusError !== null && (
+            <p className="text-sm text-destructive" role="status">
+              {statusError}
             </p>
           )}
-        </div>
-      </div>
 
-      {/* Actions */}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void handleForceResync()}
-          disabled={isResyncing || !effectiveStatus.connected}
-          aria-label={t('gcal.resyncButton')}
-          aria-busy={isResyncing}
-          data-testid="gcal-resync-button"
-        >
-          {isResyncing && <Spinner size="sm" />}
-          {t('gcal.resyncButton')}
-        </Button>
-        <Button
-          variant="destructive"
-          size="sm"
-          onClick={() => setDisconnectOpen(true)}
-          disabled={!effectiveStatus.connected}
-          aria-label={t('gcal.disconnect.openButton')}
-          data-testid="gcal-disconnect-button"
-        >
-          {t('gcal.disconnect.openButton')}
-        </Button>
-      </div>
+          {/* Account section */}
+          <div className="space-y-2">
+            <Label muted={false}>{t('gcal.accountLabel')}</Label>
+            {effectiveStatus.connected && effectiveStatus.account_email !== null ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-4">
+                  <code
+                    className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono break-all"
+                    data-testid="gcal-account-email"
+                  >
+                    {effectiveStatus.account_email}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDisconnectOpen(true)}
+                    aria-label={t('gcal.disconnect.button')}
+                  >
+                    {t('gcal.disconnect.button')}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">{t('gcal.pushingToCalendar')}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => void handleConnect()}
+                  aria-label={t('gcal.connectButton')}
+                  aria-busy={oauthInFlight}
+                  disabled={oauthInFlight}
+                  data-testid="gcal-connect-button"
+                >
+                  {oauthInFlight && <Spinner size="sm" />}
+                  {oauthInFlight ? t('gcal.connecting') : t('gcal.connectButton')}
+                </Button>
+                <p className="text-xs text-muted-foreground">{t('gcal.connectHelp')}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Window size */}
+          <div className="space-y-2">
+            <Label htmlFor="gcal-window-days" muted={false}>
+              {t('gcal.windowLabel')}
+            </Label>
+            <Input
+              id="gcal-window-days"
+              type="number"
+              min={WINDOW_MIN}
+              max={WINDOW_MAX}
+              step={1}
+              value={windowInput}
+              onChange={handleWindowChange}
+              onBlur={handleWindowBlur}
+              aria-label={t('gcal.windowLabel')}
+              className="max-w-[8rem]"
+              disabled={!effectiveStatus.connected}
+              data-testid="gcal-window-input"
+            />
+            <p className="text-xs text-muted-foreground">{t('gcal.windowHelp')}</p>
+          </div>
+
+          {/* Privacy mode */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <Label htmlFor="gcal-privacy-toggle" muted={false}>
+                {t('gcal.privacyLabel')}
+              </Label>
+              <p className="text-xs text-muted-foreground mt-1">{t('gcal.privacyHelp')}</p>
+            </div>
+            <Switch
+              id="gcal-privacy-toggle"
+              checked={effectiveStatus.privacy_mode === 'minimal'}
+              onCheckedChange={handlePrivacyToggle}
+              aria-label={t('gcal.privacyLabel')}
+              disabled={!effectiveStatus.connected}
+            />
+          </div>
+
+          {/* Status panel */}
+          <div className="space-y-2" data-testid="gcal-status-panel">
+            <Label muted={false}>{t('gcal.statusLabel')}</Label>
+            <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">{t('gcal.lastPushLabel')}</span>
+                <span className="tabular-nums" data-testid="gcal-last-push">
+                  {effectiveStatus.last_push_at !== null
+                    ? formatRelativeTime(effectiveStatus.last_push_at, t)
+                    : t('gcal.neverPushed')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">{t('gcal.leaseLabel')}</span>
+                <LeaseIndicator
+                  connected={effectiveStatus.connected}
+                  lease={effectiveStatus.push_lease}
+                  thisDeviceLabel={t('gcal.leaseThisDevice')}
+                  otherDeviceLabel={t('gcal.leaseOtherDevice', {
+                    deviceId: effectiveStatus.push_lease.device_id ?? '—',
+                  })}
+                  noLeaseLabel={t('gcal.leaseNone')}
+                />
+              </div>
+              {effectiveStatus.last_error !== null && (
+                <p
+                  className="text-destructive text-sm pt-1 break-words"
+                  data-testid="gcal-last-error"
+                >
+                  {effectiveStatus.last_error}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleForceResync()}
+              disabled={isResyncing || !effectiveStatus.connected}
+              aria-label={t('gcal.resyncButton')}
+              aria-busy={isResyncing}
+              data-testid="gcal-resync-button"
+            >
+              {isResyncing && <Spinner size="sm" />}
+              {t('gcal.resyncButton')}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDisconnectOpen(true)}
+              disabled={!effectiveStatus.connected}
+              aria-label={t('gcal.disconnect.openButton')}
+              data-testid="gcal-disconnect-button"
+            >
+              {t('gcal.disconnect.openButton')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Disconnect dialog — two destructive-ish choices + cancel */}
       <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
