@@ -1,7 +1,7 @@
 import type React from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode } from '../editor/types'
-import { type RenderContext } from './RichContentRenderer/context'
+import type { RenderContext } from './RichContentRenderer/context'
 import { renderBlock } from './RichContentRenderer/marks/block'
 
 // Re-export `CALLOUT_CONFIG` so existing imports keep working.

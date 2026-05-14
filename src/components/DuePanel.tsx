@@ -33,6 +33,7 @@ import { OverdueSection } from './OverdueSection'
 import { renderRichContent } from './RichContentRenderer'
 import { UpcomingSection } from './UpcomingSection'
 import { Badge } from './ui/badge'
+import { ListItem } from './ui/list-item'
 import { SectionGroupHeader } from './ui/section-group-header'
 
 export interface DuePanelProps {
@@ -457,14 +458,16 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                         const currentFlatIndex = flatIndex++
                         const projectedFocused = focusedIndex === currentFlatIndex
                         return (
-                          <li
+                          <ListItem
                             key={`projected-${entry.block.id}-${entry.source}`}
                             data-block-list-item
                             data-testid="projected-entry"
                             // biome-ignore lint/a11y/noNoninteractiveTabindex: projected-entry needs to be a keyboard-nav target
                             tabIndex={0}
                             className={cn(
-                              'flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors',
+                              // Override ListItem's `gap-3 rounded-lg px-3 py-2 hover:bg-accent/50` chrome
+                              // with the muted dashed-border "projected" shape via tailwind-merge.
+                              'gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70',
                               projectedFocused && 'ring-2 ring-ring/50 bg-accent/30',
                             )}
                             onClick={() => {
@@ -509,7 +512,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                                 P{entry.block.priority}
                               </Badge>
                             )}
-                          </li>
+                          </ListItem>
                         )
                       })}
                     </ul>
