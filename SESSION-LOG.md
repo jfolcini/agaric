@@ -7,6 +7,66 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 727 — BlockTree.tsx decomp (final structural item) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 1 build (general-purpose) solo |
+| **Items closed** | Maintain Phase 3 + UX Tier 3 BlockTree.tsx decomp (final structural backlog item). |
+| **Items modified** | design-system-maintainability + design-system-ux-review status notes updated. |
+| **Tests added** | +5 use-block-tree-context-bags identity-stability tests. |
+| **Files touched** | 5 (BlockTree.tsx + 3 new hooks + 1 new test + 2 plan files) |
+
+**Summary:** investigation revealed BlockTree.tsx was **already heavily decomposed** in earlier sessions — the docstring bills it as a "thin orchestrator" that delegates to 30+ extracted hooks + 5 extracted components. The audit's flagged seams (recursion + DnD overlay) were already addressed: `getDragDescendants` in `src/lib/tree-utils.ts`, collapse/zoom flattening in `useBlockCollapse` + `useBlockZoom`, `useBlockDnD`, `BlockDndOverlay`. The remaining 802 LOC was cohesive glue with strict cross-callback ref ordering constraints (`rovingEditorRef`, `handleFlushRef`, `handleSlashCommandRef`, `handleCheckboxRef`, `handlePropertySelectRef`, `handleBeforeCollapseRef`) bridging hooks that must be created in a fixed order. Aggressive splitting would have broken the creation order or duplicated the bridging logic. Three seams were genuinely safe and worth extracting: `useBlockFlush` (~44 LOC), `useBlockAutoCreateFirstBlock` (~50 LOC), `useBlockTreeContextBags` (~50 LOC of two `useMemo` bags — 14 actions + 4 resolvers — whose identity stability is the whole contract). **802 → 697 LOC (-13%)** — well short of the ~400-500 target but reflects the cohesive orchestrator-glue that genuinely belongs at that level. Forcing more aggressive splitting was explicitly warned against in the task brief.
+
+**Preserved** (per task brief): `useRovingEditor` / `useViewportObserver` memoed returns (Sessions 717-720), `MeasuringStrategy.WhileDragging` (Session 719), `SortableBlockWrapper` `React.memo` (Session 720), `BlockListItem.metadata` typed primitives (Session 723), all cross-callback ref indirections + their creation order, public API (`BlockTree`, `processCheckboxSyntax`, `guessMimeType`) unchanged.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9751 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Audit close-out status (Sessions 716-727 combined):**
+- design-system-perf-review: all items closed except Perf 1.3.1 (TipTap lazy — architectural, deferred to discussion).
+- design-system-ux-review: all items closed except Tier 1 item 8 (was closed Session 715) and structural items now all done.
+- design-system-maintainability: all items closed except 1d text-[10px] (was closed Session 723) and Phase 3 BlockTree (now closed this session).
+
+**Remaining open pending/:**
+- search-dialog-replace-view (DRAFT, 8 open questions — needs user decisions before code).
+- agenda-sort-sql-pushdown (deferred — kept for future revisit).
+- tauri-2.11-migration (blocked on upstream tauri-specta).
+- PEND-10 iroh transport adoption (strategic, 14-19 weeks).
+- PEND-38 import progress streaming (deferred).
+- Perf 1.3.1 TipTap lazy-load (architectural — needs prototype).
+
+**Commit plan:** single commit covering BlockTree decomp + Session 727 entry.
+
+---
+## Session 726 — ListRow narrow fix (UX Tier 3) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 1 build (general-purpose) solo |
+| **Items closed** | UX Tier 3 "List rendering primitive zoo" — narrow scope only. |
+| **Items modified** | design-system-ux-review status note updated. |
+| **Tests added** | 0 (existing component tests cover the migration). |
+| **Files touched** | 3 (DuePanel.tsx + TemplatesView.tsx + plan file). |
+
+**Summary:** subagent did an inventory pass before touching code and **rejected broad consolidation** after finding the 7 "row primitives" are really 5 intentional specializations + 1 shared base + 2 raw `<li>` violations:
+- `PeerListItem` is a `<div>` card (not in a list) — wrapping in `<li>` emits invalid HTML.
+- `HistoryListItem` uses `<div role="row">` inside an ARIA grid pattern — cannot become `<li>`.
+- `BlockListItem` is already the unified primitive for its 4 callers + has the perf-review Tier 1.4 memo contract.
+- `AlertListRow` has different visual chrome.
+
+Actual violations fixed: `TemplatesView.tsx:200-252` template-row + `DuePanel.tsx:460-515` projected-entry row both wrote raw `<li>`. Both migrated to the existing `ListItem` primitive — inherit 44px coarse-pointer touch target, `focus-ring-visible` utility, `data-slot="list-item"`, `transition-colors` hover.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` on touched files — 93 pass.
+
+---
 ## Session 725 — Badge consolidation (UX 1.4 / Maintain 2c) (2026-05-14)
 
 | Metadata | Value |
