@@ -7,6 +7,9 @@
  * - useBlockLinkResolve — `[[ULID]]` cache scan + batch resolve (MAINT-128)
  * - useBlockPropertiesBatch — per-block extra-property fetch (MAINT-128)
  * - useBlockNavigateToLink — `handleNavigate` + `handleNavigateRef` (MAINT-128)
+ * - useBlockFlush — editor flush + split + checkbox/todo persistence
+ * - useBlockAutoCreateFirstBlock — H-9 first-block-on-empty-page effect
+ * - useBlockTreeContextBags — memoised action + resolver bags (MAINT-118)
  * - BlockZoomBar — zoom breadcrumb UI
  * - BlockListRenderer — SortableContext + block map
  * - BlockHistorySheet — block history overlay
@@ -21,12 +24,11 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
 import { logger } from '@/lib/logger'
-import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { type RovingEditorHandle, useRovingEditor } from '../editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '../hooks/useBatchAttachments'
-import { type BlockActions, BlockActionsProvider } from '../hooks/useBlockActions'
+import { BlockActionsProvider } from '../hooks/useBlockActions'
 import { useBlockCollapse } from '../hooks/useBlockCollapse'
 import { useBlockDatePicker } from '../hooks/useBlockDatePicker'
 import { useBlockDnD } from '../hooks/useBlockDnD'
@@ -37,7 +39,7 @@ import { useBlockNavigateToLink } from '../hooks/useBlockNavigateToLink'
 import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockPropertiesBatch } from '../hooks/useBlockPropertiesBatch'
 import { useBlockResolve } from '../hooks/useBlockResolve'
-import { type BlockResolvers, BlockResolversProvider } from '../hooks/useBlockResolvers'
+import { BlockResolversProvider } from '../hooks/useBlockResolvers'
 import {
   searchPropertyKeys,
   searchSlashCommands,
@@ -49,17 +51,10 @@ import { useBlockZoom } from '../hooks/useBlockZoom'
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { NavigateToPageFn } from '../lib/block-events'
-import { processCheckboxSyntax } from '../lib/block-utils'
-import {
-  createBlock,
-  deleteDraft,
-  setProperty,
-  setTodoState as setTodoStateCmd,
-} from '../lib/tauri'
+import { deleteDraft, setProperty } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
-import { useUndoStore } from '../stores/undo'
 import { BlockHistorySheet } from './BlockHistorySheet'
 import { BlockListRenderer } from './BlockListRenderer'
 import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
@@ -68,6 +63,9 @@ import { BlockBatchActionMenu } from './block-tree/BlockBatchActionMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
 import { TemplatePicker } from './block-tree/TemplatePicker'
+import { useBlockAutoCreateFirstBlock } from './block-tree/use-block-auto-create-first-block'
+import { useBlockFlush } from './block-tree/use-block-flush'
+import { useBlockTreeContextBags } from './block-tree/use-block-tree-context-bags'
 import { Skeleton } from './ui/skeleton'
 
 export { processCheckboxSyntax } from '../lib/block-utils'
@@ -310,54 +308,14 @@ export function BlockTree({
   }, [load, parentId])
 
   // ── H-9: Auto-create first block on empty pages ─────────────────────
-  // When a page loads with no child blocks, auto-create an empty content
-  // block so the user can immediately start typing.  Uses a ref to prevent
-  // double-creation on the same page.
-  const autoCreatedForRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (!autoCreateFirstBlock) return
-    if (loading || blocks.length > 0 || !rootParentId) return
-    if (autoCreatedForRef.current === rootParentId) return
-    autoCreatedForRef.current = rootParentId
-
-    createBlock({ blockType: 'content', content: '', parentId: rootParentId })
-      .then((result) => {
-        // Only apply if we're still on the same page
-        if (pageStore.getState().rootParentId !== rootParentId) return
-        // Defensive guard: a malformed result (missing id) must never reach the
-        // store, because downstream renderers key by block.id and would emit
-        // "Each child in a list should have a unique key" warnings for the
-        // transient render before the next refetch. In production this guard
-        // never fires; it catches test-mock leaks and any future regression.
-        if (!result?.id) {
-          logger.warn('BlockTree', 'auto-create returned result without id; skipping store write', {
-            rootParentId: rootParentId ?? '',
-          })
-          return
-        }
-        pageStore.setState({
-          blocks: [
-            {
-              ...result,
-              depth: 0,
-            },
-          ],
-        })
-        useBlockStore.setState({ focusedBlockId: result.id })
-      })
-      .catch((err: unknown) => {
-        logger.error(
-          'BlockTree',
-          'Failed to auto-create first block',
-          {
-            rootParentId: rootParentId ?? '',
-          },
-          err,
-        )
-        toast.error(t('blockTree.createFirstBlockFailed'))
-      })
-  }, [autoCreateFirstBlock, loading, blocks.length, rootParentId, t, pageStore])
+  useBlockAutoCreateFirstBlock({
+    enabled: autoCreateFirstBlock,
+    loading,
+    blocksLength: blocks.length,
+    rootParentId,
+    pageStore,
+    t,
+  })
 
   // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
   // and batch-fetch them. See `useBlockLinkResolve` for the cache-scope
@@ -368,50 +326,15 @@ export function BlockTree({
   // todo/priority/due/scheduled fields) for the row-rendering UI.
   const blockProperties = useBlockPropertiesBatch(blocks)
 
-  // Keyboard callbacks
-  const handleFlush = useCallback((): string | null => {
-    const handle = rovingEditorRef.current
-    if (!handle?.activeBlockId) return null
-    const blockId = handle.activeBlockId // capture BEFORE unmount nullifies it
-    const changed = handle.unmount()
-    if (changed !== null) {
-      // Use the parser to detect multi-block content (headings, code blocks, etc.)
-      // A single code block or heading with newlines should NOT split.
-      const doc = parse(changed)
-      const blockCount = doc.content?.length ?? 0
-      if (blockCount > 1) {
-        splitBlock(blockId, changed)
-      } else {
-        // Check for checkbox markdown syntax before saving
-        const { cleanContent, todoState } = processCheckboxSyntax(changed)
-        if (todoState) {
-          // Set todo state via thin command and save cleaned content
-          setTodoStateCmd(blockId, todoState)
-            .then(() => {
-              if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            })
-            .catch((err: unknown) => {
-              logger.error(
-                'BlockTree',
-                'Failed to set task state from checkbox syntax',
-                {
-                  blockId,
-                },
-                err,
-              )
-              toast.error(t('blockTree.setTaskStateFailed'))
-            })
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: todoState } : b)),
-          }))
-          edit(blockId, cleanContent)
-        } else {
-          edit(blockId, changed)
-        }
-      }
-    }
-    return changed
-  }, [edit, splitBlock, rootParentId, t, pageStore])
+  // ── Editor flush callback (split + checkbox/todo persistence) ──────
+  const handleFlush = useBlockFlush({
+    rovingEditorRef,
+    edit,
+    splitBlock,
+    rootParentId,
+    pageStore,
+    t,
+  })
 
   // Sync the flush ref so `useBlockNavigateToLink` (created above) can
   // call into the latest `handleFlush` lazily.
@@ -635,54 +558,26 @@ export function BlockTree({
 
   // ── Action / resolver bags published via context (MAINT-118) ────────
   // Memoised so descendants only re-render when callbacks change.
-  const blockActions = useMemo<BlockActions>(
-    () => ({
-      onNavigate: handleNavigate,
-      onDelete: remove,
-      onIndent: indent,
-      onDedent: dedent,
-      onMoveUp: handleMoveUpById,
-      onMoveDown: handleMoveDownById,
-      onMerge: handleMergeById,
-      onToggleTodo: handleToggleTodo,
-      onTogglePriority: handleTogglePriority,
-      onToggleCollapse: toggleCollapse,
-      onShowHistory: handleShowHistory,
-      onShowProperties: handleShowProperties,
-      onZoomIn: handleZoomIn,
-      onSelect: handleSelect,
-    }),
-    [
-      handleNavigate,
-      remove,
-      indent,
-      dedent,
-      handleMoveUpById,
-      handleMoveDownById,
-      handleMergeById,
-      handleToggleTodo,
-      handleTogglePriority,
-      toggleCollapse,
-      handleShowHistory,
-      handleShowProperties,
-      handleZoomIn,
-      handleSelect,
-    ],
-  )
-  const blockResolvers = useMemo<BlockResolvers>(
-    () => ({
-      resolveBlockTitle: resolve.resolveBlockTitle,
-      resolveTagName: resolve.resolveTagName,
-      resolveBlockStatus: resolve.resolveBlockStatus,
-      resolveTagStatus: resolve.resolveTagStatus,
-    }),
-    [
-      resolve.resolveBlockTitle,
-      resolve.resolveTagName,
-      resolve.resolveBlockStatus,
-      resolve.resolveTagStatus,
-    ],
-  )
+  const { blockActions, blockResolvers } = useBlockTreeContextBags({
+    onNavigate: handleNavigate,
+    onDelete: remove,
+    onIndent: indent,
+    onDedent: dedent,
+    onMoveUp: handleMoveUpById,
+    onMoveDown: handleMoveDownById,
+    onMerge: handleMergeById,
+    onToggleTodo: handleToggleTodo,
+    onTogglePriority: handleTogglePriority,
+    onToggleCollapse: toggleCollapse,
+    onShowHistory: handleShowHistory,
+    onShowProperties: handleShowProperties,
+    onZoomIn: handleZoomIn,
+    onSelect: handleSelect,
+    resolveBlockTitle: resolve.resolveBlockTitle,
+    resolveTagName: resolve.resolveTagName,
+    resolveBlockStatus: resolve.resolveBlockStatus,
+    resolveTagStatus: resolve.resolveTagStatus,
+  })
 
   // ── Batch attachment counts (MAINT-131) ─────────────────────────────
   // Single IPC for the whole page that publishes block_id → count to all
