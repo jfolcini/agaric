@@ -122,11 +122,20 @@ stale. Trivial; bundle with whichever bench-add commit lands first.
 
 ## Phases
 
-1. **Phase 1 — Gate (S, ~half day).** Land `interactive_slo.rs` with the
-   commands already covered at 100K (all green except the two Problem
-   commands, which are explicitly marked `#[ignore]` with a TODO referencing
-   their mitigation plans). Wire into CI bench target — keep the run under
-   2 min by reusing fixtures and `sample_size(10)` for the gate target.
+1. **Phase 1 — Gate (S, ~half day).** ✅ SHIPPED session 742.
+   `src-tauri/benches/interactive_slo.rs` landed with eight green-tier
+   commands (`get_block`, `get_properties`, `list_blocks`,
+   `batch_resolve`, `count_agenda_batch`, `count_backlinks_batch`,
+   `export_page_markdown` (2K), `create_block`) gated against their
+   per-command budgets at the 100K fixture; mean elapsed > budget
+   `panic!`s with a grep-friendly `interactive_slo: <cmd> = <ms> > budget
+   <budget>` message. The two §A Problem commands (`list_page_links`,
+   `list_projected_agenda`) ship in the same file with the aspirational
+   200 ms budget but are gated behind the `SLO_INCLUDE_PROBLEM=1` env var
+   so they don't fail CI today — drop the gate per command as Phase 3
+   fixes land. Sample size pinned to 10 per the runtime budget; `[[bench]]`
+   entry added to `src-tauri/Cargo.toml`. CI wiring is **out of scope for
+   Phase 1** and is owned by the user.
 2. **Phase 2 — Cover the gaps (M, ~1.5 days).** Add `history_bench.rs`,
    extend `graph_bench.rs` to 100K, add `agenda_expansion_bench.rs`. No new
    product code; pure bench harness. Each new bench gets a row in

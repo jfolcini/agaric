@@ -7,6 +7,41 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 742 — scale-benchmarks Phase 1 (interactive_slo gate) + PUB-8 closure (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 1 build + 1 review |
+| **Items closed** | scale-benchmarks Phase 1 (`pending/scale-benchmarks-100k-2026-05-14.md`); PUB-8 (Android keystore + secrets — user landed the keystore + 4 GH secrets earlier in this session) |
+| **Items modified** | — |
+| **Tests added** | +10 bench targets (interactive_slo gate; 8 green + 2 env-gated) |
+| **Files touched** | 1 new bench + Cargo.toml + 2 plan/audit files |
+
+**Summary:** Landed the latency-assertion gate `src-tauri/benches/interactive_slo.rs` — Phase 1 of the 100K-scale-benchmarks plan. The bench measures 8 green-tier interactive commands against per-command budgets sourced from ARCHITECTURE.md §25 and `panic!`s with a grep-friendly `interactive_slo: <cmd> = <ms> > budget <budget> ms` message if any mean exceeds budget. The two known §A Problem commands (`list_page_links`, `list_projected_agenda`) ship gated behind `SLO_INCLUDE_PROBLEM=1` so they don't fail CI today — Phase 3 of the same plan removes the gate per-command as fixes land. `iter_custom` + `Rc<Cell<…>>` Acc pattern computes the iteration-weighted mean correctly. Reviewer verified all 10 budgets match the plan, the production `*_inner` paths are the measurement target, and the 100K fixtures match the originals. Separately, PUB-8 (Android keystore + 4 GH Actions secrets) closed earlier in this session — secrets configured at 19:25-19:26Z and exercised by the 0.1.23 tag-push release run (in-flight at session end).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 13 → 12 (PUB-8 removed: summary table row + quick-wins entry + detail section).
+- **Detail entries:** 21 → 20.
+- **PUB-* status footnote** updated: PUB-5 remains ACTIONABLE; PUB-3 remains DEFERRED.
+
+**Files touched (this session):**
+- `src-tauri/benches/interactive_slo.rs` (new, +913 LOC)
+- `src-tauri/Cargo.toml` (+11: new `[[bench]]` entry)
+- `pending/scale-benchmarks-100k-2026-05-14.md` (Phase 1 marked SHIPPED)
+- `pending/REVIEW-LATER.md` (PUB-8 removed; counts + footnote updated)
+
+**Verification:**
+- `cd src-tauri && cargo bench --bench interactive_slo --no-run` — compiles clean.
+- `cd src-tauri && cargo nextest run` — 3684 / 3684 pass, 4 skipped.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** CI wiring (running `cargo bench --bench interactive_slo` in a workflow job) is **out of scope for Phase 1** per the plan — owned by user. The bench is runnable locally today; on first regression-budget violation it will `panic!` with a grep-friendly message identifying the regressed command.
+
+**Commit plan:** single commit; pushed.
+
+---
+
 ## Session 741 — SQL-review Phase 2 (M-1 + M-3 + B-4) (2026-05-14)
 
 | Metadata | Value |

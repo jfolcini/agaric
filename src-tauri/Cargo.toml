@@ -370,6 +370,17 @@ harness = false
 name = "property_def_bench"
 harness = false
 
+# Phase 1 of `pending/scale-benchmarks-100k-2026-05-14.md` — latency-gate
+# bench that re-runs every interactive Tauri command at the 100K-scale
+# fixture and `panic!`s if any sample's mean elapsed exceeds the
+# per-command budget (sourced from ARCHITECTURE.md §25). Intended to be
+# run once in CI; the two §25 *Problem* commands (`list_page_links`,
+# `list_projected_agenda`) are gated behind `SLO_INCLUDE_PROBLEM=1`
+# until their fix plans land.
+[[bench]]
+name = "interactive_slo"
+harness = false
+
 # PEND-09 Phase 0 day-10 — paired SQL read benchmark mirroring the
 # (now-archived) spike's `read_path_bench` (day-7); see git tag
 # `pend-09/spike-archive` for the original source.  Throwaway in

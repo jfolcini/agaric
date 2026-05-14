@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-13 open items in the summary table; 21 detail entries (FE-* sub-tables don't appear in the summary).
+12 open items in the summary table; 20 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -45,7 +45,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
-| PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 
 ### Quick wins (S-cost, ready to grab)
@@ -54,12 +53,11 @@ These can be tackled in a single session with low risk — listed for prioritiza
 
 - **MAINT-192** — 2 AGENTS.md additions (picker-debouncing convention; `INTERNAL_PROPERTY_KEYS` reference) — gated on user approval to edit AGENTS.md
 - **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
-- **PUB-8** — Android release keystore + 4 GH Actions secrets (CI wiring already shipped)
 
 > **`PERF-19` and `PERF-20` are NOT quick-grab items** despite their summary-table presence — read their detail entries: both end with `**Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix`. They are listed only so the loops aren't reinvented as "fixes" later. Skip them in batch-picking.
 
 > **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
-> PUB-5 / PUB-8 are ACTIONABLE; PUB-2 / PUB-3 remain DEFERRED on the identity / employer-IP decisions. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
+> PUB-5 is ACTIONABLE; PUB-3 remains DEFERRED on the employer-IP decision. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
 
 ---
 
@@ -607,33 +605,6 @@ Or a simpler cap: reject filter lists longer than some reasonable limit (e.g., 1
 
 **Cost:** S (~30 min of user work once the keypair is generated).
 **Status:** DEFERRED — user-only. Agent action is none.
-
-### PUB-8 — Android release keystore + 4 GH Actions secrets
-
-**Problem:** `release.yml`'s `android-build-and-release` job already contains the full apksigner pipeline (zipalign + apksigner sign + apksigner verify + `gh release upload`), gated on a `ANDROID_KEYSTORE_BASE64` secret. Without the keystore + secrets the job uploads `agaric-<tag>-android-aarch64-unsigned.apk` (works on personal devices, but Play Protect warns and the APK can never be updated by a release-keystore-signed APK without uninstalling and losing data). The local `agaric-release.apk` previously in repo root was debug-keystore-signed and has the same dead-end property.
-
-**Concrete remaining work:**
-1. **Generate a release keystore** (one-time, locally):
-   ```bash
-   keytool -genkeypair -v \
-     -keystore ~/agaric-release.jks \
-     -alias agaric \
-     -keyalg RSA -keysize 4096 -validity 10000 \
-     -storetype PKCS12
-   ```
-   Pick stable CN/OU/O/L/ST/C — these are visible in Android Settings → Apps → Agaric → Advanced → "App signed by".
-2. **Back up `agaric-release.jks` offline** (not in the repo, not in the GH secret, not in any cloud-synced folder you might lose). Lose this key and you lose the ability to ship updates that overwrite installed apps — Android refuses signature changes on upgrade. The base64 in the GH secret is *not* a backup; secrets are write-only after creation.
-3. **Add 4 GH Actions secrets** at `Settings → Secrets and variables → Actions`:
-   - `ANDROID_KEYSTORE_BASE64` ← `base64 -w0 ~/agaric-release.jks`
-   - `ANDROID_KEYSTORE_PASSWORD` ← the store password from step 1
-   - `ANDROID_KEY_ALIAS` ← `agaric` (or whatever alias you chose)
-   - `ANDROID_KEY_PASSWORD` ← the key password from step 1
-4. **Tag a release.** Next `git push --tags` produces `agaric-<tag>-android-aarch64.apk` (no `-unsigned` suffix) on the GitHub Release.
-
-Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Builds"). If you ever want to ship via Play Store later, this same key becomes the **upload key** under Play App Signing — Google holds the actual app signing key in that flow.
-
-**Cost:** S (~15 min once you've decided what to use as DN).
-**Status:** ACTIONABLE — pure operations, no design decision pending.
 
 ### L-55 — `redact_log` newline split-and-rejoin is O(n²) in the worst case
 - **Domain:** Commands (System)
