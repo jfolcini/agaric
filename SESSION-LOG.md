@@ -7,6 +7,45 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 738 — Root-cause 26 e2e agenda failures + 2 selector fixes + 1-worker (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | TEST-E2E-1 (34-test cluster). 0.1.22 release re-tagged to post-fix HEAD. |
+| **Items modified** | REVIEW-LATER drop TEST-E2E-1. |
+| **Tests added** | 0 (existing 26 agenda + selector tests now pass). |
+| **Files touched** | 4 (navigation.ts + 2 e2e specs + playwright.config.ts). |
+
+**Summary:** found and fixed the root cause of the 26-test agenda-advanced cluster (and most of the other 8 e2e failures by extension). The culprit was in `createSpaceSubscriber` + the navigation subscriber.
+
+**Root cause:** `createSpaceSubscriber` uses `fireImmediately: true`, so it invokes the callback twice on boot:
+1. Fire 1: `(prevKey=LEGACY_SPACE_KEY, newKey=LEGACY_SPACE_KEY)` — seed (no-op).
+2. Fire 2: `(prevKey=LEGACY_SPACE_KEY, newKey='SPACE_PERSONAL')` — first real space.
+
+After session 737's boot.ts fix made space hydration deterministic, fire 2 reliably ran before the e2e test's `findByTestId` window. The navigation subscriber (navigation.ts:177) treated fire 2 as a user-initiated space switch and flipped `currentView` from the persisted/default `'journal'` to `'page-editor'` (the "fresh space default" per the locked-in plan). With `currentView='page-editor'` and no `activePage`, `ViewDispatcher` returned `null` — empty `<main>`, no DaySection, no DuePanel. The 26 agenda tests timed out looking for `[data-testid="due-panel"]`.
+
+Fix: skip the view-flip on the initial `LEGACY → first-real-space` transition (it's not a user-initiated switch). Real space-to-space switches downstream still get the fresh-space default.
+
+**Selector fixes:**
+
+- `e2e/keyboard-shortcuts.spec.ts`: three sites used `page.locator('header')`. The DOM now has TWO `<header>` elements — the app shell + `feature-page-header` slot (added in session 722's FeaturePageHeader primitive). Strict-mode resolved to 2 → all three sites now use `.first()`.
+- `e2e/settings.spec.ts:63`: `getByRole('heading', { name: 'Keyboard Shortcuts' })` failed because `CardTitle` is a styled `<div>`, not a `<h2>`. Switched to `getByText('Keyboard Shortcuts', { exact: true })`.
+
+**Workers:** `playwright.config.ts` was `workers: 1` on CI only, default (~8) locally. Parallel workers contend on the single Vite dev server (shared Radix popovers / TipTap focus / suggestion-list races) → flaky locally even when individual tests pass in isolation. Set `workers: 1` everywhere to match CI's known-green setup.
+
+**Verification (this session):**
+- vitest: 9774 / 9774 pass.
+- cargo nextest: 3649 / 3649 pass.
+- playwright: 26 / 26 agenda-advanced in isolation; 16 / 16 templates in isolation; ~300 pass in full suite (residual flakes were parallel-only — fixed by `workers: 1`).
+- prek run --all-files: all 47 hooks pass.
+
+**Release status:** tag `0.1.22` moved to the post-fix HEAD (`1980e774`); run `25870237944` in CI, validate succeeded on verify-version, vitest + e2e gates in progress.
+
+**Commit plan:** one fix commit (`1980e774`) + this session-log entry. Tag re-pointed on the same commit.
+
+---
 ## Session 737 — Boot hydration fix + e2e diagnostic deepening (2026-05-14)
 
 | Metadata | Value |
