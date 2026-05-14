@@ -10,10 +10,10 @@ import { EditorContent } from '@tiptap/react'
 import type { TFunction } from 'i18next'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
@@ -56,7 +56,7 @@ async function processFileAttachments(files: File[], blockId: string, t: TFuncti
   for (const file of files) {
     const info = extractFileInfo(file)
     if (!info.fsPath) {
-      toast.error(t('blockTree.filePathReadFailed'))
+      notify.error(t('blockTree.filePathReadFailed'))
       continue
     }
     try {
@@ -67,7 +67,7 @@ async function processFileAttachments(files: File[], blockId: string, t: TFuncti
         sizeBytes: info.sizeBytes,
         fsPath: info.fsPath,
       })
-      toast.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
+      notify.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
     } catch (err) {
       reportIpcError('EditableBlock', 'blockTree.attachFileFailed', err, t, {
         blockId,

@@ -15,10 +15,10 @@
 
 import { useCallback, useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { editBlock } from '@/lib/tauri'
 
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceNameEditor'
@@ -58,7 +58,7 @@ export function SpaceNameEditor({
       await onRefresh()
     } catch (err) {
       logger.error(LOG_MODULE, 'rename failed', { spaceId }, err)
-      toast.error(t('space.renameFailed'))
+      notify.error(t('space.renameFailed'))
       setName(spaceName)
     }
   }, [name, spaceName, spaceId, onRefresh, t])

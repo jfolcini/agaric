@@ -22,13 +22,13 @@ import {
 } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
@@ -501,7 +501,7 @@ export function BlockHistoryItem({
           { blockId, seq: entry.seq },
           err,
         )
-        toast.error(t('history.loadDiffFailed'))
+        notify.error(t('history.loadDiffFailed'))
         setComparedFailed(true)
       })
       .finally(() => {

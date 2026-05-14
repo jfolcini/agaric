@@ -15,7 +15,6 @@
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -24,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { notify } from '@/lib/notify'
 import type { BacklinkFilter } from '../../lib/tauri'
 import { ContainsFilterForm } from './categories/ContainsFilterForm'
 import { DateFilterForm } from './categories/DateFilterForm'
@@ -212,7 +212,7 @@ export function AddFilterRow({
     if ('filter' in result) {
       onApply(result.filter)
     } else {
-      toast.error(result.error)
+      notify.error(result.error)
     }
   }, [category, propertyKeys, onApply, t])
 

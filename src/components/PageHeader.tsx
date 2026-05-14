@@ -9,7 +9,6 @@ import { ArrowLeft, Star } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
@@ -18,6 +17,7 @@ import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { useBlockTags } from '../hooks/useBlockTags'
 import { useStarredPages } from '../hooks/useStarredPages'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
@@ -128,7 +128,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         [action](pageId)
         .then(async (result) => {
           if (result) {
-            toast(t(successKey), { duration: 1500 })
+            notify(t(successKey), { duration: 1500 })
             await pageStore.getState().load()
             try {
               const pageBlock = await getBlock(pageId)
@@ -150,7 +150,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         })
         .catch((err: unknown) => {
           logger.error('PageHeader', 'Undo/redo operation failed', { pageId }, err)
-          toast.error(t(errorKey))
+          notify.error(t(errorKey))
         })
     },
     [pageId, t, pageStore.getState],
@@ -212,11 +212,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         if (currentState) {
           await deleteProperty(pageId, key)
           setState(false)
-          toast.success(t(removedKey))
+          notify.success(t(removedKey))
         } else {
           await setProperty({ blockId: pageId, key, valueText: 'true' })
           setState(true)
-          toast.success(t(savedKey))
+          notify.success(t(savedKey))
         }
       } catch (err) {
         logger.error(
@@ -228,7 +228,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           },
           err,
         )
-        toast.error(t(failedKey))
+        notify.error(t(failedKey))
       }
       setKebabOpen(false)
     }
@@ -254,11 +254,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     try {
       const markdown = await exportPageMarkdown(pageId)
       await writeText(markdown)
-      toast.success(t('pageHeader.exportCopied'))
+      notify.success(t('pageHeader.exportCopied'))
       announce(t('announce.exported'))
     } catch (err) {
       logger.error('PageHeader', 'Failed to export page markdown', { pageId }, err)
-      toast.error(t('pageHeader.exportFailed'))
+      notify.error(t('pageHeader.exportFailed'))
       announce(t('announce.exportFailed'))
     }
     setKebabOpen(false)
@@ -272,7 +272,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         exportPageMarkdown(pageId)
           .then(async (markdown) => {
             await writeText(markdown)
-            toast.success(t('pageHeader.exportCopied'))
+            notify.success(t('pageHeader.exportCopied'))
             announce(t('announce.exported'))
           })
           .catch((err: unknown) => {
@@ -282,7 +282,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               { pageId },
               err,
             )
-            toast.error(t('pageHeader.exportFailed'))
+            notify.error(t('pageHeader.exportFailed'))
             announce(t('announce.exportFailed'))
           })
       }
@@ -294,12 +294,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const handleDeletePage = useCallback(async () => {
     try {
       await deleteBlock(pageId)
-      toast.success(t('pageHeader.pageDeleted'))
+      notify.success(t('pageHeader.pageDeleted'))
       announce(t('announce.pageDeleted'))
       onBack?.()
     } catch (err) {
       logger.error('PageHeader', 'Failed to delete page', { pageId }, err)
-      toast.error(t('pageHeader.deleteFailed'))
+      notify.error(t('pageHeader.deleteFailed'))
       announce(t('announce.pageDeleteFailed'))
     }
     setDeleteDialogOpen(false)
@@ -344,14 +344,14 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       try {
         await setProperty({ blockId: pageId, key: 'space', valueRef: targetSpaceId })
         setPageSpaceId(targetSpaceId)
-        toast.success(t('space.movedToast', { space: targetName }))
+        notify.success(t('space.movedToast', { space: targetName }))
         announce(t('announce.pageMoved'))
         // Refresh the page block store so any space-scoped subviews
         // (outline, property table) pick up the new ownership.
         await pageStore.getState().load()
       } catch (err) {
         logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
-        toast.error(t('space.moveFailed'))
+        notify.error(t('space.moveFailed'))
         announce(t('announce.pageMoveFailed'))
       }
     },
@@ -370,7 +370,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       .then((result) => setAliases(Array.isArray(result) ? result : []))
       .catch((err: unknown) => {
         logger.error('PageHeader', 'Failed to load page aliases', { pageId }, err)
-        toast.error(t('pageHeader.loadAliasesFailed'))
+        notify.error(t('pageHeader.loadAliasesFailed'))
       })
   }, [pageId, t])
 
@@ -400,10 +400,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         useTabsStore.getState().replacePage(pageId, newTitle)
         useResolveStore.getState().set(pageId, newTitle, false)
         announce(t('announce.pageRenamed'))
-        toast.success(t('pageHeader.pageRenamed'))
+        notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)
-        toast.error(t('pageHeader.renameFailed'))
+        notify.error(t('pageHeader.renameFailed'))
         announce(t('announce.pageRenameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title
@@ -452,7 +452,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       announce(t('announce.aliasAdded'))
       setPageAliases(pageId, next).catch((err: unknown) => {
         logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
-        toast.error(t('pageHeader.aliasUpdateFailed'))
+        notify.error(t('pageHeader.aliasUpdateFailed'))
         announce(t('announce.aliasFailed'))
       })
       setAliasInput('')
@@ -466,7 +466,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       announce(t('announce.aliasRemoved'))
       setPageAliases(pageId, next).catch((err: unknown) => {
         logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
-        toast.error(t('pageHeader.aliasUpdateFailed'))
+        notify.error(t('pageHeader.aliasUpdateFailed'))
         announce(t('announce.aliasFailed'))
       })
     },

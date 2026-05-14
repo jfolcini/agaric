@@ -12,7 +12,7 @@
  */
 
 import { useCallback } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { announce } from '../lib/announcer'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
@@ -62,7 +62,7 @@ function warnIfBlocked(blockId: string): void {
   getProperty(blockId, 'blocked_by')
     .then((row) => {
       const hasBlockedBy = row != null && row.value_ref != null
-      if (hasBlockedBy) toast.warning(i18n.t('dependency.dependencyWarning'))
+      if (hasBlockedBy) notify.warning(i18n.t('dependency.dependencyWarning'))
     })
     .catch((err) => {
       logger.warn('useBlockProperties', 'F-37 dependency check failed', undefined, err)
@@ -102,7 +102,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: current } : b)),
         }))
-        toast.error(i18n.t('blockTree.setTaskStateFailed'))
+        notify.error(i18n.t('blockTree.setTaskStateFailed'))
         return
       }
 
@@ -146,7 +146,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: current } : b)),
         }))
-        toast.error(i18n.t('blockTree.setPriorityFailed'))
+        notify.error(i18n.t('blockTree.setPriorityFailed'))
         return
       }
 

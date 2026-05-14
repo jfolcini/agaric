@@ -15,8 +15,8 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { notify } from '@/lib/notify'
 import { resetOnboardingSeen } from '../SpaceManageDialog'
 
 export function ResetOnboardingRow(): React.ReactElement {
@@ -35,7 +35,7 @@ export function ResetOnboardingRow(): React.ReactElement {
           size="sm"
           onClick={() => {
             resetOnboardingSeen()
-            toast.success(t('settings.resetOnboarding.success'))
+            notify.success(t('settings.resetOnboarding.success'))
           }}
           data-testid="reset-onboarding-btn"
         >

@@ -19,7 +19,7 @@
  */
 
 import { useEffect } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { setPriorityLevels } from '../lib/priority-levels'
@@ -38,7 +38,7 @@ export function useAppBootRecovery(): void {
           // UX-303: surface the recovery to the user — silent recovery
           // means crashed-mid-edit users have no clue their work was
           // saved. Stay silent on count === 0 (no announcement needed).
-          toast.info(i18n.t('boot.recoveredDrafts', { count: flushed }))
+          notify.info(i18n.t('boot.recoveredDrafts', { count: flushed }))
         }
       })
       .catch((err: unknown) => {

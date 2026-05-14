@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useState } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
@@ -49,13 +49,13 @@ export function useTemplateSelection({
       const tplSpaceId = useSpaceStore.getState().currentSpaceId
       const pages = await loadTemplatePagesWithPreview(tplSpaceId)
       if (pages.length === 0) {
-        toast.error(t('slash.noTemplates'))
+        notify.error(t('slash.noTemplates'))
         return
       }
       setTemplatePages(pages)
       setTemplatePickerOpen(true)
     } catch {
-      toast.error(t('slash.templateLoadFailed'))
+      notify.error(t('slash.templateLoadFailed'))
     }
   }, [t])
 
@@ -77,10 +77,10 @@ export function useTemplateSelection({
         })
         if (ids.length > 0) {
           await load()
-          toast.success(t('slash.templateInserted'))
+          notify.success(t('slash.templateInserted'))
         }
       } catch {
-        toast.error(t('slash.templateInsertFailed'))
+        notify.error(t('slash.templateInsertFailed'))
       }
     },
     [focusedBlockId, blocks, rootParentId, load, t],

@@ -9,7 +9,7 @@
  *      so it doesn't double-fire while the new chord installs.
  *   2. `registerGlobalShortcut(next, …)` — try the new chord; if the
  *      OS rejects (chord conflict / IPC failure), revert to `previous`
- *      and surface `toast.error(t('settings.quickCapture.saveFailed'))`.
+ *      and surface `notify.error(t('settings.quickCapture.saveFailed'))`.
  *   3. On success: persist via `saveQuickCaptureShortcut` so subsequent
  *      App.tsx mounts re-bind the chosen chord.
  *
@@ -26,11 +26,11 @@
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import {
   defaultQuickCaptureShortcut,
   loadQuickCaptureShortcut,
@@ -103,7 +103,7 @@ export function QuickCaptureRow(): React.ReactElement | null {
         { previous, next },
         err,
       )
-      toast.error(t('settings.quickCapture.saveFailed'))
+      notify.error(t('settings.quickCapture.saveFailed'))
       // No restore needed — the previous chord stays bound by App.tsx
       // because we never touched its registration; we only probed
       // `next` (which we've already unregistered above on failure

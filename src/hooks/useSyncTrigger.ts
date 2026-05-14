@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { announce } from '../lib/announcer'
 import { i18n } from '../lib/i18n'
 import { listPeerRefs, startSync } from '../lib/tauri'
@@ -99,7 +99,7 @@ async function syncOnePeerWithToast(peerId: string): Promise<boolean> {
     )
     return true
   } catch {
-    toast.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }), {
+    notify.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }), {
       duration: 5000,
       action: {
         label: i18n.t('sync.retryAction'),
@@ -170,14 +170,14 @@ export function useSyncTrigger() {
       intervalRef.current = computeNextSyncDelay(intervalRef.current, hadFailure)
       if (!hadFailure) {
         setState('idle')
-        toast.success(i18n.t('device.syncComplete'))
+        notify.success(i18n.t('device.syncComplete'))
         announce(i18n.t('announce.syncCompleted'))
       }
     } catch {
       hadFailure = true
       if (mountedRef.current) {
         setState('error', 'Sync failed')
-        toast.error(i18n.t('device.syncFailed'))
+        notify.error(i18n.t('device.syncFailed'))
         announce(i18n.t('announce.syncFailed'))
         intervalRef.current = computeNextSyncDelay(intervalRef.current, true)
       }
@@ -217,13 +217,13 @@ export function useSyncTrigger() {
   }, [syncAll, scheduleNext])
 
   // Trigger immediate sync when coming back online (#667).
-  // UX-264: surface a `toast.info` when transitioning offline → online,
+  // UX-264: surface a `notify.info` when transitioning offline → online,
   // gated by the prior `offline` sync-store state so we don't fire on
   // benign repeats (some browsers dispatch multiple `online` events).
   useEffect(() => {
     const handleOnline = () => {
       if (useSyncStore.getState().state === 'offline') {
-        toast.info(i18n.t('sync.backOnline'))
+        notify.info(i18n.t('sync.backOnline'))
       }
       syncAll()
     }

@@ -21,12 +21,12 @@
  *    hook just created (so `JournalPage.makeDayEntry` can render the
  *    BlockTree immediately, before any refetch lands).
  *  - `handleAddBlock(dateStr)` — the orchestrator; idempotent against
- *    `pageMap`/`createdPages`, surface-level error reporting via toast.
+ *    `pageMap`/`createdPages`, surface-level error reporting via notify.
  */
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { createBlock, createPageInSpace } from '../lib/tauri'
 import {
   insertTemplateBlocks,
@@ -131,7 +131,7 @@ export function useJournalBlockCreation({
             const { template: journalTemplate, duplicateWarning } =
               await loadJournalTemplate(currentSpaceId)
             if (duplicateWarning) {
-              toast.warning(duplicateWarning)
+              notify.warning(duplicateWarning)
             }
             if (journalTemplate) {
               const ids = await insertTemplateBlocks(journalTemplate.id, pageId, currentSpaceId, {
@@ -175,7 +175,7 @@ export function useJournalBlockCreation({
         }
       } catch (err) {
         logger.warn('useJournalBlockCreation', 'addBlock failed', undefined, err)
-        toast.error(t('journal.addBlockFailed'))
+        notify.error(t('journal.addBlockFailed'))
       }
     },
     [createdPages, pageMap, onPageCreated, t],

@@ -11,11 +11,11 @@ import { Copy, Pause } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 
 export interface PairingQrDisplayProps {
   qrSvg: string
@@ -93,11 +93,11 @@ export function PairingQrDisplay({
             onClick={() => {
               writeText(passphrase)
                 .then(() => {
-                  toast.success(t('pairing.passphraseCopied'))
+                  notify.success(t('pairing.passphraseCopied'))
                 })
                 .catch((err: unknown) => {
                   logger.warn('PairingQrDisplay', 'failed to copy passphrase', undefined, err)
-                  toast.error(t('pairing.passphraseCopyFailed'))
+                  notify.error(t('pairing.passphraseCopyFailed'))
                 })
             }}
           >

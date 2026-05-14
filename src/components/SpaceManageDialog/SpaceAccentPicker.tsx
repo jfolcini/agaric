@@ -19,8 +19,8 @@
 import { Check } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { setProperty } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
@@ -65,7 +65,7 @@ export function SpaceAccentPicker({ spaceId }: SpaceAccentPickerProps): React.JS
         })
       } catch (err) {
         logger.error(LOG_MODULE, 'accent color update failed', { spaceId }, err)
-        toast.error(t('space.accentFailed'))
+        notify.error(t('space.accentFailed'))
         setAccent(previous)
       } finally {
         setSavingAccent(false)

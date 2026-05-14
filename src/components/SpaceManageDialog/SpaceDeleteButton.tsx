@@ -23,7 +23,6 @@
 import { Trash2 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,6 +36,7 @@ import {
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { deleteBlock } from '@/lib/tauri'
 
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceDeleteButton'
@@ -73,7 +73,7 @@ export function SpaceDeleteButton({
       await onRefresh()
     } catch (err) {
       logger.error(LOG_MODULE, 'delete failed', { spaceId }, err)
-      toast.error(t('space.deleteFailed'))
+      notify.error(t('space.deleteFailed'))
     }
   }, [spaceId, onRefresh, t])
 

@@ -1,7 +1,7 @@
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
-import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { parse } from '../editor/markdown-serializer'
 import { pmEndOfFirstBlock } from '../editor/types'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
@@ -122,7 +122,7 @@ export function useBlockKeyboardHandlers({
     if (!focusedBlockId) return
     if (deleteInProgress.current) return
     if (collapsedVisible.length <= 1) {
-      toast.error(t('blockTree.cannotDeleteLastBlock'))
+      notify.error(t('blockTree.cannotDeleteLastBlock'))
       return
     }
     deleteInProgress.current = true
@@ -259,7 +259,7 @@ export function useBlockKeyboardHandlers({
           err,
         )
         params.onEditFailureCleanup()
-        toast.error(t('blockTree.mergeBlocksFailed'))
+        notify.error(t('blockTree.mergeBlocksFailed'))
         return false
       }
       try {
@@ -285,7 +285,7 @@ export function useBlockKeyboardHandlers({
           )
         })
         params.onRemoveFailureCleanup()
-        toast.error(t('blockTree.mergeBlocksFailed'))
+        notify.error(t('blockTree.mergeBlocksFailed'))
         return false
       }
       return true
@@ -422,7 +422,7 @@ export function useBlockKeyboardHandlers({
     discardDraft(focusedBlockId)
     const changed = rovingEditorRef.current.unmount()
     if (changed !== null) {
-      toast(t('blockTree.changesDiscarded'), { duration: 2000 })
+      notify(t('blockTree.changesDiscarded'), { duration: 2000 })
     }
     // If the block was just created and the user made no edits (changed === null),
     // delete the empty block instead of leaving it around.

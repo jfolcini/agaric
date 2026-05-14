@@ -12,7 +12,6 @@
 import { ArrowDown, ArrowUp, FileSearch, Lock, Pencil, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -30,6 +29,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { useDateInput } from '../hooks/useDateInput'
@@ -224,7 +224,7 @@ export function PropertyRowEditor({
         },
         err,
       )
-      toast.error(t('pageProperty.updateOptionsFailed'))
+      notify.error(t('pageProperty.updateOptionsFailed'))
     }
   }, [def, editingOptions, onDefUpdated, t])
 
@@ -260,7 +260,7 @@ export function PropertyRowEditor({
       })
       .catch((err: unknown) => {
         logger.error('PropertyRowEditor', 'Failed to load pages for ref picker', undefined, err)
-        toast.error(t('pageProperty.loadPagesFailed'))
+        notify.error(t('pageProperty.loadPagesFailed'))
         setRefPages([])
         setRefPickerOpen(false)
       })
@@ -291,7 +291,7 @@ export function PropertyRowEditor({
           },
           err,
         )
-        toast.error(t('pageProperty.saveFailed'))
+        notify.error(t('pageProperty.saveFailed'))
       } finally {
         setSavingRefPageId(null)
       }
@@ -313,7 +313,7 @@ export function PropertyRowEditor({
         { blockId, key: prop.key, title },
         err,
       )
-      toast.error(t('pageProperty.saveFailed'))
+      notify.error(t('pageProperty.saveFailed'))
     }
   }, [onCreateNewPage, refSearch, blockId, prop.key, t])
 

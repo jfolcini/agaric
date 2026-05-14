@@ -23,8 +23,8 @@
  */
 
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
-import { toast } from 'sonner'
 import { createStore, type StoreApi, useStore } from 'zustand'
+import { notify } from '@/lib/notify'
 import {
   computeIndentedBlocks,
   findPrevSiblingAt,
@@ -286,7 +286,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           },
           err,
         )
-        toast.error(i18n.t('error.loadBlocksFailed'))
+        notify.error(i18n.t('error.loadBlocksFailed'))
       }
     },
 
@@ -339,7 +339,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         return result.id
       } catch (err) {
         logger.error('page-blocks', 'Failed to create block', { afterBlockId }, err)
-        toast.error(i18n.t('error.createBlockFailed'))
+        notify.error(i18n.t('error.createBlockFailed'))
         return null
       }
     },
@@ -382,7 +382,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           })
         }
         logger.error('page-blocks', 'Failed to edit block', { blockId }, err)
-        toast.error(i18n.t('error.saveFailed'))
+        notify.error(i18n.t('error.saveFailed'))
       }
     },
 
@@ -407,7 +407,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to delete block', { blockId }, err)
-        toast.error(i18n.t('error.deleteBlockFailed'))
+        notify.error(i18n.t('error.deleteBlockFailed'))
       }
     },
 
@@ -508,7 +508,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
-        toast.error(i18n.t('error.reorderBlockFailed'))
+        notify.error(i18n.t('error.reorderBlockFailed'))
       }
     },
 
@@ -528,7 +528,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           },
           err,
         )
-        toast.error(i18n.t('error.moveBlockFailed'))
+        notify.error(i18n.t('error.moveBlockFailed'))
       }
     },
 
@@ -554,7 +554,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to indent block', { blockId }, err)
-        toast.error(i18n.t('error.indentBlockFailed'))
+        notify.error(i18n.t('error.indentBlockFailed'))
       }
     },
 
@@ -601,7 +601,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to dedent block', { blockId }, err)
-        toast.error(i18n.t('error.dedentBlockFailed'))
+        notify.error(i18n.t('error.dedentBlockFailed'))
       }
     },
 
@@ -669,7 +669,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to move block up', { blockId }, err)
-        toast.error(i18n.t('error.moveBlockUpFailed'))
+        notify.error(i18n.t('error.moveBlockUpFailed'))
       }
     },
 
@@ -736,7 +736,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to move block down', { blockId }, err)
-        toast.error(i18n.t('error.moveBlockDownFailed'))
+        notify.error(i18n.t('error.moveBlockDownFailed'))
       }
     },
 

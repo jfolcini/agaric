@@ -13,8 +13,8 @@
 import { FileText, Hash, Tag } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import { useCallback, useRef } from 'react'
-import { toast } from 'sonner'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { notify } from '@/lib/notify'
 import type { PickerItem } from '../editor/SuggestionList'
 import { foldForSearch, matchesSearchFolded } from '../lib/fold-for-search'
 import { t as translate } from '../lib/i18n'
@@ -431,7 +431,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
         'onCreatePage called before space hydrated; refusing to create',
         { label },
       )
-      toast.error(translate('space.notReady'))
+      notify.error(translate('space.notReady'))
       throw new Error('Space store is not ready')
     }
     try {

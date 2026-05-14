@@ -2,7 +2,6 @@ import type { TFunction } from 'i18next'
 import { AtSign, FileText, Keyboard, Layers, RefreshCw, Tag } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { createBlock, createPageInSpace } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
@@ -159,11 +159,11 @@ export function WelcomeModal() {
     setCreating(true)
     try {
       await createSamplePages(t)
-      toast.success(t('welcome.samplePagesCreated'))
+      notify.success(t('welcome.samplePagesCreated'))
       handleDismiss()
     } catch (err) {
       logger.error('WelcomeModal', 'Failed to create sample pages', undefined, err)
-      toast.error(t('welcome.samplePagesFailed'))
+      notify.error(t('welcome.samplePagesFailed'))
     } finally {
       setCreating(false)
     }

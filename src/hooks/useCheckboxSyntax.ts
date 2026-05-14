@@ -9,8 +9,8 @@
  */
 
 import { useCallback } from 'react'
-import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
+import { notify } from '@/lib/notify'
 import { logger } from '../lib/logger'
 import { getProperty, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
@@ -49,7 +49,7 @@ export function useCheckboxSyntax({
               .then((row) => {
                 const hasBlockedBy = row != null && row.value_ref != null
                 if (hasBlockedBy) {
-                  toast.warning(t('dependency.dependencyWarning'))
+                  notify.warning(t('dependency.dependencyWarning'))
                 }
               })
               .catch((err) => {
@@ -59,7 +59,7 @@ export function useCheckboxSyntax({
         })
         .catch((err) => {
           logger.error('useCheckboxSyntax', 'setTodoState failed', { focusedBlockId, state }, err)
-          toast.error(t('blockTree.setTaskStateFailed'))
+          notify.error(t('blockTree.setTaskStateFailed'))
           // FE-H-7: revert the optimistic mutation so UI state stays in sync
           // with the backend after a rejected `setTodoStateCmd`.
           pageStore.setState((s) => ({

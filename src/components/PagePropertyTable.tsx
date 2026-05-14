@@ -9,9 +9,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { usePropertySave } from '../hooks/usePropertySave'
@@ -130,7 +130,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         setProperties(updated)
       } catch (err) {
         logger.warn('PagePropertyTable', 'add property failed', { pageId }, err)
-        toast.error(t('pageProperty.addFailed'))
+        notify.error(t('pageProperty.addFailed'))
       }
     },
     [pageId, t],
@@ -149,7 +149,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : undefined
-        toast.error(message ?? t('property.createDefFailed'))
+        notify.error(message ?? t('property.createDefFailed'))
       }
     },
     [pageId, t],

@@ -9,7 +9,7 @@
  */
 
 import { useMemo } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { guessMimeType } from '../../lib/file-utils'
 import { logger } from '../../lib/logger'
 import { formatRepeatLabel } from '../../lib/repeat-utils'
@@ -33,7 +33,7 @@ async function handleTodoState(ctx: SlashCommandContext, state: string): Promise
     // F-37: warn when completing a task that has unresolved dependencies
     if (state === 'DONE') warnIfBlocked(ctx)
   } catch {
-    toast.error(ctx.t('blockTree.setTaskStateFailed'))
+    notify.error(ctx.t('blockTree.setTaskStateFailed'))
   }
 }
 
@@ -45,7 +45,7 @@ async function handlePriority(ctx: SlashCommandContext, priority: string): Promi
       blocks: s.blocks.map((b) => (b.id === ctx.blockId ? { ...b, priority } : b)),
     }))
   } catch {
-    toast.error(ctx.t('blockTree.setPriorityFailed'))
+    notify.error(ctx.t('blockTree.setPriorityFailed'))
   }
 }
 
@@ -57,13 +57,13 @@ async function handleAssigneeOrLocation(
   try {
     await setProperty({ blockId: ctx.blockId, key, valueText: '' })
     notifyUndo(ctx.rootParentId)
-    toast.success(
+    notify.success(
       ctx.t('blockTree.addedPropertyMessage', {
         name: label.split(' — ')[0]?.toLowerCase(),
       }),
     )
   } catch {
-    toast.error(ctx.t('blockTree.addPropertyFailed'))
+    notify.error(ctx.t('blockTree.addPropertyFailed'))
   }
 }
 
@@ -76,9 +76,9 @@ async function handleAssigneePreset(
     try {
       await setProperty({ blockId: ctx.blockId, key: 'assignee', valueText: '' })
       notifyUndo(ctx.rootParentId)
-      toast.success(ctx.t('blockTree.addedAssigneeProperty'))
+      notify.success(ctx.t('blockTree.addedAssigneeProperty'))
     } catch {
-      toast.error(ctx.t('blockTree.addPropertyFailed'))
+      notify.error(ctx.t('blockTree.addPropertyFailed'))
     }
     return
   }
@@ -90,9 +90,9 @@ async function handleAssigneePreset(
       ...(value != null && { valueText: value }),
     })
     notifyUndo(ctx.rootParentId)
-    toast.success(ctx.t('blockTree.setAssigneeMessage', { value }))
+    notify.success(ctx.t('blockTree.setAssigneeMessage', { value }))
   } catch {
-    toast.error(ctx.t('blockTree.setAssigneeFailed'))
+    notify.error(ctx.t('blockTree.setAssigneeFailed'))
   }
 }
 
@@ -105,9 +105,9 @@ async function handleLocationPreset(
     try {
       await setProperty({ blockId: ctx.blockId, key: 'location', valueText: '' })
       notifyUndo(ctx.rootParentId)
-      toast.success(ctx.t('blockTree.addedLocationProperty'))
+      notify.success(ctx.t('blockTree.addedLocationProperty'))
     } catch {
-      toast.error(ctx.t('blockTree.addPropertyFailed'))
+      notify.error(ctx.t('blockTree.addPropertyFailed'))
     }
     return
   }
@@ -119,9 +119,9 @@ async function handleLocationPreset(
       valueText: value,
     })
     notifyUndo(ctx.rootParentId)
-    toast.success(ctx.t('blockTree.setLocationMessage', { value }))
+    notify.success(ctx.t('blockTree.setLocationMessage', { value }))
   } catch {
-    toast.error(ctx.t('blockTree.setLocationFailed'))
+    notify.error(ctx.t('blockTree.setLocationFailed'))
   }
 }
 
@@ -129,9 +129,9 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
   try {
     await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: value })
     notifyUndo(ctx.rootParentId)
-    toast.success(ctx.t('slash.effortSet', { value }))
+    notify.success(ctx.t('slash.effortSet', { value }))
   } catch {
-    toast.error(ctx.t('slash.effortFailed'))
+    notify.error(ctx.t('slash.effortFailed'))
   }
 }
 
@@ -140,9 +140,9 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
     try {
       await deleteProperty(ctx.blockId, 'repeat-count')
       await deleteProperty(ctx.blockId, 'repeat-until')
-      toast.success(ctx.t('blockTree.repeatEndConditionRemoved'))
+      notify.success(ctx.t('blockTree.repeatEndConditionRemoved'))
     } catch {
-      toast.error(ctx.t('blockTree.removeEndConditionFailed'))
+      notify.error(ctx.t('blockTree.removeEndConditionFailed'))
     }
     return
   }
@@ -151,9 +151,9 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
   try {
     await setProperty({ blockId: ctx.blockId, key: 'repeat-count', valueNum: count })
     notifyUndo(ctx.rootParentId)
-    toast.success(ctx.t('blockTree.repeatLimitedMessage', { count }))
+    notify.success(ctx.t('blockTree.repeatLimitedMessage', { count }))
   } catch {
-    toast.error(ctx.t('blockTree.setRepeatLimitFailed'))
+    notify.error(ctx.t('blockTree.setRepeatLimitFailed'))
   }
 }
 
@@ -161,9 +161,9 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
   if (value === 'remove') {
     try {
       await deleteProperty(ctx.blockId, 'repeat')
-      toast.success(ctx.t('slash.repeatRemoved'))
+      notify.success(ctx.t('slash.repeatRemoved'))
     } catch {
-      toast.error(ctx.t('slash.repeatRemoveFailed'))
+      notify.error(ctx.t('slash.repeatRemoveFailed'))
     }
     return
   }
@@ -174,13 +174,13 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
     // generic; formatRepeatLabel takes the strict i18next `TFunction`. The
     // cast is safe because ctx.t IS the i18next translator at runtime —
     // only the type alias is loose. See the `TFn` declaration in `types.ts`.
-    toast.success(
+    notify.success(
       ctx.t('slash.repeatSet', {
         value: formatRepeatLabel(value, ctx.t as unknown as import('i18next').TFunction),
       }),
     )
   } catch {
-    toast.error(ctx.t('slash.repeatFailed'))
+    notify.error(ctx.t('slash.repeatFailed'))
   }
 }
 
@@ -195,7 +195,7 @@ function handleAttach(ctx: SlashCommandContext): void {
     const mimeType = file.type || guessMimeType(filename)
     const fsPath = (file as File & { path?: string }).path
     if (!fsPath) {
-      toast.error(ctx.t('blockTree.filePathReadFailed'))
+      notify.error(ctx.t('blockTree.filePathReadFailed'))
       return
     }
     try {
@@ -206,9 +206,9 @@ function handleAttach(ctx: SlashCommandContext): void {
         sizeBytes,
         fsPath,
       })
-      toast.success(ctx.t('blockTree.attachedFileMessage', { filename }))
+      notify.success(ctx.t('blockTree.attachedFileMessage', { filename }))
     } catch {
-      toast.error(ctx.t('blockTree.attachFileFailed'))
+      notify.error(ctx.t('blockTree.attachFileFailed'))
     }
   }
   // FE-M-6: `input.click()` can throw on some platforms (e.g. when the user
@@ -218,7 +218,7 @@ function handleAttach(ctx: SlashCommandContext): void {
   try {
     input.click()
   } catch (err) {
-    toast.error(ctx.t('attachments.openFileDialogFailed'))
+    notify.error(ctx.t('attachments.openFileDialogFailed'))
     logger.warn('useBlockSlashCommands', 'input.click failed', undefined, err)
   }
 }

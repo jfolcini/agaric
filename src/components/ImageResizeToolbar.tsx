@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { logger } from '../lib/logger'
 import { setProperty } from '../lib/tauri'
 import { Button } from './ui/button'
@@ -37,7 +37,7 @@ export function ImageResizeToolbar({
         logger.warn('ImageResizeToolbar', 'property save failed', { blockId, value }, err)
         // Revert on failure — restore previous width
         onWidthChange(currentWidth)
-        toast.error(t('imageResize.saveFailed'))
+        notify.error(t('imageResize.saveFailed'))
       })
     },
     [blockId, currentWidth, onWidthChange, t],

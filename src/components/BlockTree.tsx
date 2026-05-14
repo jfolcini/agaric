@@ -21,9 +21,9 @@ import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { type RovingEditorHandle, useRovingEditor } from '../editor/use-roving-editor'
@@ -401,7 +401,7 @@ export function BlockTree({
             },
             err,
           )
-          toast.error(t('blockTree.setPropertyFailed'))
+          notify.error(t('blockTree.setPropertyFailed'))
         },
       )
     },

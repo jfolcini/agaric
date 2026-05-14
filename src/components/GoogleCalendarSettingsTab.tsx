@@ -46,7 +46,6 @@ import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -58,6 +57,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import type { GcalStatus } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { ConfirmDialog } from './ConfirmDialog'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
@@ -159,17 +159,17 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
 
     void Promise.all([
       register(EVENT_REAUTH, () => {
-        toast.error(t('gcal.reauthRequired'))
+        notify.error(t('gcal.reauthRequired'))
       }),
       register(EVENT_PUSH_DISABLED, () => {
         void loadStatus()
-        toast.info(t('gcal.pushDisabled'))
+        notify.info(t('gcal.pushDisabled'))
       }),
       register(EVENT_KEYRING, () => {
-        toast.error(t('gcal.keyringUnavailable'))
+        notify.error(t('gcal.keyringUnavailable'))
       }),
       register(EVENT_CALENDAR_RECREATED, () => {
-        toast.info(t('gcal.calendarRecreated'))
+        notify.info(t('gcal.calendarRecreated'))
       }),
     ])
 
@@ -209,10 +209,10 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
       setStatus((s) => (s === null ? s : { ...s, window_days: n }))
     },
     onSuccess: () => {
-      toast.success(t('gcal.windowUpdated'))
+      notify.success(t('gcal.windowUpdated'))
     },
     onError: () => {
-      toast.error(t('gcal.windowFailed'))
+      notify.error(t('gcal.windowFailed'))
       void loadStatus()
     },
   })
@@ -260,7 +260,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     // range. Silent clamping (e.g. typing 100 and getting 90 with no
     // feedback) is a documented anti-pattern.
     if (Number.isFinite(parsed) && (parsed < WINDOW_MIN || parsed > WINDOW_MAX)) {
-      toast.info(t('settings.valueClamped', { min: WINDOW_MIN, max: WINDOW_MAX }))
+      notify.info(t('settings.valueClamped', { min: WINDOW_MIN, max: WINDOW_MAX }))
     }
     if (status && clamped === status.window_days) {
       // No-op: just sync the input in case the user typed out-of-range.
@@ -287,10 +287,10 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
       setStatus(previous)
     },
     onSuccess: () => {
-      toast.success(t('gcal.privacyUpdated'))
+      notify.success(t('gcal.privacyUpdated'))
     },
     onError: () => {
-      toast.error(t('gcal.privacyFailed'))
+      notify.error(t('gcal.privacyFailed'))
     },
   })
 
@@ -316,7 +316,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
       void loadStatus()
     },
     onError: (err) => {
-      toast.error(connectErrorMessage(err, t))
+      notify.error(connectErrorMessage(err, t))
     },
   })
 
@@ -332,11 +332,11 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     module: 'GoogleCalendarSettingsTab',
     errorLogMessage: 'failed to force resync',
     onSuccess: () => {
-      toast.success(t('gcal.resyncStarted'))
+      notify.success(t('gcal.resyncStarted'))
       void loadStatus()
     },
     onError: () => {
-      toast.error(t('gcal.resyncFailed'))
+      notify.error(t('gcal.resyncFailed'))
     },
   })
 
@@ -354,13 +354,13 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     errorLogMessage: 'failed to disconnect gcal',
     errorLogContext: ({ deleteCalendar }) => ({ deleteCalendar }),
     onSuccess: (_result, { deleteCalendar }) => {
-      toast.success(
+      notify.success(
         deleteCalendar ? t('gcal.disconnect.successWithDelete') : t('gcal.disconnect.successKeep'),
       )
       void loadStatus()
     },
     onError: () => {
-      toast.error(t('gcal.disconnect.failed'))
+      notify.error(t('gcal.disconnect.failed'))
     },
   })
 
@@ -622,7 +622,7 @@ function connectErrorMessage(err: unknown, t: (key: string) => string): string {
   }
   // Validation messages from the OAuth path are dotted keys like
   // `oauth.timeout` or `oauth.exchange_failed: 400 Bad Request`. Match
-  // the leading key; anything else collapses to the generic toast.
+  // the leading key; anything else collapses to the generic notify.
   const msg = err.message
   if (msg.startsWith('oauth.timeout')) return t('gcal.connect.timeout')
   if (msg.startsWith('oauth.invalid_state')) return t('gcal.connect.invalidState')

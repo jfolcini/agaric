@@ -7,7 +7,7 @@
 
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -44,9 +44,9 @@ export function usePageDelete(
         await deleteBlock(pageId)
         setPages((prev) => prev.filter((p) => p.id !== pageId))
         useResolveStore.getState().set(pageId, '(deleted)', true)
-        toast.success(t('pageBrowser.deleteSuccess'))
+        notify.success(t('pageBrowser.deleteSuccess'))
       } catch (error) {
-        toast.error(t('pageBrowser.deleteFailed', { error: String(error) }), {
+        notify.error(t('pageBrowser.deleteFailed', { error: String(error) }), {
           action: { label: t('pageBrowser.retry'), onClick: () => handleDeletePage(pageId) },
         })
       } finally {

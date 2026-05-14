@@ -10,7 +10,7 @@
  */
 
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 
 /** Minimum response shape for cursor-based pagination. */
 export interface PaginatedResponse<T> {
@@ -113,7 +113,7 @@ export function usePaginatedQuery<T>(
         const msg =
           optionsRef.current?.onError ?? (err instanceof Error ? err.message : 'Request failed')
         setError(msg)
-        if (optionsRef.current?.onError) toast.error(optionsRef.current.onError)
+        if (optionsRef.current?.onError) notify.error(optionsRef.current.onError)
       } finally {
         if (requestIdRef.current === rid) setLoading(false)
       }

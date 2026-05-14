@@ -10,9 +10,9 @@ import { Download, Upload } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { notify } from '@/lib/notify'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import { formatBytes } from '../lib/format'
 import { logger } from '../lib/logger'
@@ -79,7 +79,7 @@ export function DataSettingsTab(): React.ReactElement {
       // instead of letting the IPC error bubble up.
       const activeSpaceId = useSpaceStore.getState().currentSpaceId
       if (activeSpaceId == null) {
-        toast.error(t('data.importSpaceNotReady'))
+        notify.error(t('data.importSpaceNotReady'))
         e.target.value = ''
         return
       }
@@ -131,7 +131,7 @@ export function DataSettingsTab(): React.ReactElement {
       setImporting(false)
 
       if (totalBlocks > 0) {
-        toast.success(t('data.importedMessage', { totalBlocks, fileCount: files.length }))
+        notify.success(t('data.importedMessage', { totalBlocks, fileCount: files.length }))
       }
 
       // Reset file input
@@ -153,10 +153,10 @@ export function DataSettingsTab(): React.ReactElement {
       const sanitizedSpaceName = sanitizeSpaceNameForFilename(activeSpace?.name ?? '')
       const spacePart = sanitizedSpaceName.length > 0 ? `${sanitizedSpaceName}-` : ''
       downloadBlob(blob, `agaric-export-${spacePart}${date}.zip`)
-      toast.success(t('data.exportSuccess'))
+      notify.success(t('data.exportSuccess'))
     } catch (err) {
       logger.error('DataSettingsTab', 'export failed', undefined, err)
-      toast.error(t('data.exportFailed'))
+      notify.error(t('data.exportFailed'))
     }
     setExporting(false)
   }, [t, currentSpaceId, availableSpaces])

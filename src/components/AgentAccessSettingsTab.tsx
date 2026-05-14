@@ -35,7 +35,6 @@ import { invoke } from '@tauri-apps/api/core'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -43,6 +42,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMcpActivityFeed } from '@/hooks/useMcpActivityFeed'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { ActivityFeed } from './agent-access/ActivityFeed'
 import type { McpRwStatus, McpStatus } from './agent-access/McpStatusSection'
 import { McpStatusSection } from './agent-access/McpStatusSection'
@@ -116,11 +116,11 @@ export function AgentAccessSettingsTab(): React.ReactElement {
       setStatus(previous)
     },
     onSuccess: (_result, { enabled }) => {
-      toast.success(enabled ? t('agentAccess.toggleOnSuccess') : t('agentAccess.toggleOffSuccess'))
+      notify.success(enabled ? t('agentAccess.toggleOnSuccess') : t('agentAccess.toggleOffSuccess'))
       void loadStatus()
     },
     onError: () => {
-      toast.error(t('agentAccess.toggleFailed'))
+      notify.error(t('agentAccess.toggleFailed'))
     },
   })
 
@@ -147,13 +147,13 @@ export function AgentAccessSettingsTab(): React.ReactElement {
       setRwStatus(previous)
     },
     onSuccess: (_result, { enabled }) => {
-      toast.success(
+      notify.success(
         enabled ? t('agentAccess.rwToggleOnSuccess') : t('agentAccess.rwToggleOffSuccess'),
       )
       void loadStatus()
     },
     onError: () => {
-      toast.error(t('agentAccess.toggleFailed'))
+      notify.error(t('agentAccess.toggleFailed'))
     },
   })
 
@@ -170,11 +170,11 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     module: 'AgentAccessSettingsTab',
     errorLogMessage: 'failed to disconnect all',
     onSuccess: () => {
-      toast.success(t('agentAccess.disconnectSuccess'))
+      notify.success(t('agentAccess.disconnectSuccess'))
       void loadStatus()
     },
     onError: () => {
-      toast.error(t('agentAccess.disconnectFailed'))
+      notify.error(t('agentAccess.disconnectFailed'))
     },
   })
 
@@ -188,11 +188,11 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     module: 'AgentAccessSettingsTab',
     errorLogMessage: 'failed to disconnect all RW',
     onSuccess: () => {
-      toast.success(t('agentAccess.rwDisconnectSuccess'))
+      notify.success(t('agentAccess.rwDisconnectSuccess'))
       void loadStatus()
     },
     onError: () => {
-      toast.error(t('agentAccess.rwDisconnectFailed'))
+      notify.error(t('agentAccess.rwDisconnectFailed'))
     },
   })
 
@@ -242,10 +242,10 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     async (text: string, successKey: string) => {
       try {
         await writeText(text)
-        toast.success(t(successKey))
+        notify.success(t(successKey))
       } catch (err) {
         logger.warn('AgentAccessSettingsTab', 'clipboard write failed', undefined, err)
-        toast.error(t('agentAccess.copyFailed'))
+        notify.error(t('agentAccess.copyFailed'))
       }
     },
     [t],

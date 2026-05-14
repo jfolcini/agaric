@@ -8,7 +8,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { isDateFormattedPage } from '../lib/date-utils'
 import { useBlockStore } from '../stores/blocks'
@@ -124,7 +124,7 @@ function PageEditorInner({
         pageStore.getState().appendBlock(result)
         setFocused(result.id)
       } catch {
-        toast.error(t('error.createBlockFailed'))
+        notify.error(t('error.createBlockFailed'))
       }
     }
   }, [blocks, createBelow, setFocused, pageId, t, pageStore])

@@ -15,9 +15,9 @@
 
 import type { RefObject } from 'react'
 import { useEffect, useRef } from 'react'
-import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
 import { setPriority as setPriorityCmd } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
@@ -106,7 +106,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
           },
           err,
         )
-        toast.error(t('blockTree.setPriorityFailed'))
+        notify.error(t('blockTree.setPriorityFailed'))
       }
     }
     const cleanup1 = onBlockEvent(document, 'SET_PRIORITY_1', handleSetPriority)

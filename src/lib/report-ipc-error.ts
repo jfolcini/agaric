@@ -1,12 +1,12 @@
 import type { TFunction } from 'i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { logger } from './logger'
 
 /**
  * Unified IPC error reporting helper.
  *
  * Logs a structured error (with stack, cause chain, and context) AND shows a
- * user-visible toast translated via i18n. Replaces the `catch { toast.error(...) }`
+ * user-visible toast translated via i18n. Replaces the `catch { notify.error(...) }`
  * pattern that previously lacked any logging — see MAINT-115.
  *
  * @param module    - Logger module name (typically the component / hook name).
@@ -23,5 +23,5 @@ export function reportIpcError(
   context?: Record<string, unknown>,
 ): void {
   logger.error(module, `${messageKey} (IPC error)`, context, err)
-  toast.error(t(messageKey))
+  notify.error(t(messageKey))
 }

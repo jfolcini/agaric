@@ -9,9 +9,9 @@
 import type { Dispatch, SetStateAction } from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
 import type { PropertyRow } from '@/lib/tauri'
 
@@ -57,7 +57,7 @@ export function usePropertySave({
           setProperties(props),
         )
         if (!ok) {
-          toast.error(t(toasts?.invalidNumber ?? 'property.invalidNumber'))
+          notify.error(t(toasts?.invalidNumber ?? 'property.invalidNumber'))
           return
         }
         if (announceOnSave) {
@@ -75,7 +75,7 @@ export function usePropertySave({
             err,
           )
         }
-        toast.error(t(toasts?.saveFailed ?? 'property.saveFailed'))
+        notify.error(t(toasts?.saveFailed ?? 'property.saveFailed'))
       }
     },
     [blockId, t, setProperties, toasts?.invalidNumber, toasts?.saveFailed, announceOnSave, logTag],
@@ -103,7 +103,7 @@ export function usePropertySave({
             err,
           )
         }
-        toast.error(t(toasts?.deleteFailed ?? 'property.deleteFailed'))
+        notify.error(t(toasts?.deleteFailed ?? 'property.deleteFailed'))
       }
     },
     [blockId, t, setProperties, toasts?.deleteFailed, announceOnDelete, logTag],

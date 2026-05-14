@@ -10,7 +10,6 @@ import { Paintbrush, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { RenameDialog } from '@/components/RenameDialog'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { notify } from '@/lib/notify'
 import {
   clearTagColor,
   getTagColors,
@@ -77,7 +77,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       setTags(resp)
     } catch (error) {
       logger.error('TagList', 'failed to load tags', undefined, error)
-      toast.error(t('tags.loadFailed'))
+      notify.error(t('tags.loadFailed'))
     }
     setLoading(false)
   }, [t])
@@ -90,7 +90,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     const name = newTagName.trim()
     if (!name) return
     if (name.length > 100) {
-      toast.error(t('tags.nameTooLong'))
+      notify.error(t('tags.nameTooLong'))
       return
     }
     setIsCreating(true)
@@ -108,7 +108,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       useResolveStore.getState().set(resp.id, name, false)
     } catch (error) {
       logger.error('TagList', 'failed to create tag', { name }, error)
-      toast.error(t('tags.createFailed'))
+      notify.error(t('tags.createFailed'))
     }
     setIsCreating(false)
   }, [newTagName, t])
@@ -126,7 +126,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         useResolveStore.getState().set(tagId, '(deleted)', true)
       } catch (error) {
         logger.error('TagList', 'failed to delete tag', { tagId }, error)
-        toast.error(t('tags.deleteFailed'))
+        notify.error(t('tags.deleteFailed'))
       }
     },
     [t],
@@ -145,7 +145,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       const trimmed = newName.trim()
       if (!trimmed) return
       if (tags.some((tag) => tag.tag_id !== renameTarget.id && tag.name === trimmed)) {
-        toast.error(t('tags.duplicateName'))
+        notify.error(t('tags.duplicateName'))
         return
       }
       try {
@@ -154,7 +154,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           prev.map((tag) => (tag.tag_id === renameTarget.id ? { ...tag, name: trimmed } : tag)),
         )
         useResolveStore.getState().set(renameTarget.id, trimmed, false)
-        toast.success(t('tags.renameSuccess'))
+        notify.success(t('tags.renameSuccess'))
       } catch (error) {
         logger.warn(
           'TagList',
@@ -162,7 +162,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           { tagId: renameTarget.id, newName: trimmed },
           error,
         )
-        toast.error(`${t('tags.renameFailed')}: ${String(error)}`)
+        notify.error(`${t('tags.renameFailed')}: ${String(error)}`)
       }
     },
     [renameTarget, tags, t],

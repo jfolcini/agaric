@@ -12,7 +12,6 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -25,6 +24,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import type { PeerRefRow } from '../lib/tauri'
 import {
   cancelPairing,
@@ -134,7 +134,7 @@ export function PairingDialog({
   }, [executeInit])
 
   // MAINT-120: cleanup-side cancelPairing — fires when the dialog closes
-  // or unmounts. Logger.warn + toast.error matches the original inline
+  // or unmounts. Logger.warn + notify.error matches the original inline
   // shape (handleCancel uses a different logger.error-only flavor that
   // stays inline because it has no toast).
   const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
@@ -143,7 +143,7 @@ export function PairingDialog({
     errorLogMessage: 'cancelPairing on close/unmount failed',
     logLevel: 'warn',
     onError: () => {
-      toast.error(t('pairing.cancelFailed'))
+      notify.error(t('pairing.cancelFailed'))
     },
   })
 
@@ -304,7 +304,7 @@ export function PairingDialog({
     errorLogMessage: 'Pairing failed',
     onSuccess: () => {
       setWords(['', '', '', ''])
-      toast.success(t('pairing.successMessage'))
+      notify.success(t('pairing.successMessage'))
       onOpenChange(false)
     },
     onError: (err) => {
@@ -362,7 +362,7 @@ export function PairingDialog({
       ]
       setWords(newWords)
       setEntryMode('manual') // Switch back so user can verify before confirming
-      toast.success(t('pairing.qrScannedMessage'))
+      notify.success(t('pairing.qrScannedMessage'))
     },
     [t],
   )

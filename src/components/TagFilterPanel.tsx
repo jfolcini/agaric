@@ -10,7 +10,6 @@ import { Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
@@ -18,6 +17,7 @@ import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -79,7 +79,7 @@ export function TagFilterPanel(): React.ReactElement {
           })),
         )
       } catch {
-        toast.error(t('tags.loadFailed'))
+        notify.error(t('tags.loadFailed'))
       }
     },
     [t],
@@ -179,7 +179,7 @@ export function TagFilterPanel(): React.ReactElement {
           const parent = await getBlock(block.parent_id)
           navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
         } catch {
-          toast.error(t('tags.loadFailed'))
+          notify.error(t('tags.loadFailed'))
         }
       }
     },

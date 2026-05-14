@@ -8,7 +8,7 @@
 
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { useNavigationStore } from '@/stores/navigation'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -70,13 +70,13 @@ export function useUndoShortcuts(): void {
               // Use per-op-type translation; fall back to generic "Undone" if unknown.
               const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
               const message = t(opKey, { defaultValue: t('undo.undoneMessage') })
-              toast(message, { duration: 1500 })
+              notify(message, { duration: 1500 })
               announce(t('announce.undone'))
               await refreshAfterUndoRedo(pageId)
             }
           })
           .catch(() => {
-            toast.error(t('undo.undoFailedMessage'))
+            notify.error(t('undo.undoFailedMessage'))
             announce(t('announce.undoFailed'))
           })
         return
@@ -96,13 +96,13 @@ export function useUndoShortcuts(): void {
               // Use per-op-type translation; fall back to generic "Redone" if unknown.
               const opKey = `redo.op.${snakeToCamel(result.reversed_op_type)}`
               const message = t(opKey, { defaultValue: t('undo.redoneMessage') })
-              toast(message, { duration: 1500 })
+              notify(message, { duration: 1500 })
               announce(t('announce.redone'))
               await refreshAfterUndoRedo(pageId)
             }
           })
           .catch(() => {
-            toast.error(t('undo.redoFailedMessage'))
+            notify.error(t('undo.redoFailedMessage'))
             announce(t('announce.redoFailed'))
           })
         return
