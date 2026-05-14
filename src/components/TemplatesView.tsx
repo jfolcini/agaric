@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ListItem } from '@/components/ui/list-item'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -197,10 +198,7 @@ export function TemplatesView(): React.ReactElement {
             {filtered.length > 0 && (
               <ul className="space-y-1">
                 {filtered.map((tpl) => (
-                  <li
-                    key={tpl.id}
-                    className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/50 active:bg-accent/70 cursor-pointer"
-                  >
+                  <ListItem key={tpl.id} className="active:bg-accent/70 cursor-pointer">
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -249,7 +247,7 @@ export function TemplatesView(): React.ReactElement {
                     >
                       <X className="h-3.5 w-3.5" />
                     </Button>
-                  </li>
+                  </ListItem>
                 ))}
               </ul>
             )}
