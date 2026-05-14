@@ -1132,7 +1132,7 @@ PageBrowser, TrashView, ConflictList, BacklinksPanel, HistoryView, StatusPanel, 
 `useHasConflicts`. The caller stabilises `queryFn` with `useCallback`; when its identity
 changes the hook re-fetches page 1 (paginated) or restarts polling.
 
-### Component inventory (120+ domain + 41 shadcn/ui + 1 editor = 162+ total)
+### Component inventory (120+ domain + 40 shadcn/ui + 1 editor = 161+ total)
 
 **Page-level**: PageEditor, PageHeader (with PageTitleEditor, PageAliasSection, PageTagSection, PageHeaderMenu), PageBrowser (with PageTreeItem), JournalPage, SearchPanel (with SearchablePopover), TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel, PropertiesView (with PropertyDefinitionsList, TaskStatesSection, DeadlineWarningSection), TemplatesView, GraphView
 
@@ -1156,7 +1156,7 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 
 **Editor**: SuggestionList
 
-**shadcn/ui (39)**: alert-dialog, alert-list-row, badge, breadcrumb, button, calendar, card, card-button, checkbox, chevron-toggle, close-button, dialog, filter-pill, form-field, icon-button, input, label, list-item, menu-popover-content, metric-card, popover, popover-menu-item, recent-page-chip, scroll-area, search-input, section-group-header, section-title, select, separator, sheet, sidebar, skeleton, sonner, spinner, status-icon, switch, textarea, toggle-group, tooltip
+**shadcn/ui (40)**: alert-dialog, alert-list-row, badge, breadcrumb, button, calendar, card, card-button, checkbox, chevron-toggle, close-button, dialog, feature-page-header, filter-pill, form-field, icon-button, input, label, list-item, menu-popover-content, metric-card, popover, popover-menu-item, recent-page-chip, scroll-area, search-input, section-group-header, section-title, select, separator, sheet, sidebar, skeleton, sonner, spinner, status-icon, switch, textarea, toggle-group, tooltip
 
 ### Utility modules (src/lib/ — 37 modules)
 
@@ -2390,7 +2390,7 @@ SQLite WAL mode with 2-writer + 4-reader pool.
 
 **Design budget:** PK lookups and paginated reads stay O(1) or O(log n) — the app remains
 responsive for typical use (<10K blocks). Graph and projected-agenda queries are the known
-scaling bottlenecks; see REVIEW-LATER.md P-15/P-16 for mitigation plans.
+scaling bottlenecks; see REVIEW-LATER.md PERF-19/PERF-20 for mitigation plans.
 
 **Write path:** `create_block` involves 6 SQL queries + blake3 hash + materializer dispatch.
 Tag inheritance contributes ~3-5ms. Lazy hash computation was rejected (breaks sync protocol

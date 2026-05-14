@@ -1,10 +1,10 @@
 # Design-system performance review — remaining open work
 
-> **Status:** Tier 1.1, 1.2, 1.4, 1.5 closed. Tier 2.6 (virtualization for AgendaResults / HistoryListView / DonePanel / DuePanel), 2.7 (DaySection lazyMount), 2.8 (GraphView simulation patch), 2.9 (DonePanel useMemo), 2.10 (React.memo on HistoryListItem/DaySection/AppSidebar), 2.11 (navigateToPage batching — verified, no fix needed), 2.19 closed. Tier 3.13-3.18 closed.
+> **Status:** Tier 1.1, 1.2, 1.4, 1.5 closed. Tier 2.6 (virtualization for AgendaResults / HistoryListView / DonePanel / DuePanel), 2.7 (DaySection lazyMount), 2.8 (GraphView simulation patch), 2.9 (DonePanel useMemo), 2.10 (React.memo on HistoryListItem/DaySection/AppSidebar), 2.11 (navigateToPage batching — verified, no fix needed), 2.12 (lazy-mount three dialogs), 2.19 closed. Tier 3.13-3.18 closed.
 >
-> History of closed items lives in `SESSION-LOG.md` sessions 706-727. Don't reintroduce them here.
+> History of closed items lives in `SESSION-LOG.md` sessions 706-729. Don't reintroduce them here.
 >
-> **Open below: Tier 1.3 TipTap lazy-load; Tier 2.12 lazy-mount three dialogs; Tier 2.6 follow-up BlockListRenderer + BlockTree windowing; three doc-drift cleanups.**
+> **Open below: Tier 1.3 TipTap lazy-load; Tier 2.6 follow-up BlockListRenderer + BlockTree windowing; one doc-drift cleanup (AGENTS.md import-boundary automation).**
 
 ---
 
@@ -42,25 +42,13 @@ The audit's phrasing was "evaluate" rather than "convert" because the existing p
 
 ---
 
-## Tier 2.12 — Lazy-mount `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog`
-
-`src/App.tsx:494, 510, 515` — all three are mounted unconditionally. Their `open` props gate visibility but they're always in the React tree, and `BugReportDialog` pulls `jszip` (via `bug-report-zip.ts:11`) into the entry chunk via the `export-graph-DgPJkOA3.js` 96K chunk.
-
-**Fix.** Convert all three to `React.lazy` with `Suspense`; mount only when the open state flips. Pattern is identical to the 13 secondary views already done in `ViewDispatcher.tsx:48-66`.
-
-**Cost:** S (≤1 day total). **Risk:** low — they're already gated by `open` props, so swapping the wrapper is mechanical. Need a Suspense fallback that doesn't break the "open animation" of each dialog. **Impact:** drops `jszip` (~96K) + dialog content off the entry chunk.
-
-This is the highest-ROI item still in the doc. Schedule when willing to spend an afternoon.
-
----
-
 ## Doc-vs-code drift
 
-- `ARCHITECTURE.md:1024, 1048` says "29 shadcn/ui" — actual count is 37. (Already noted in `design-system-maintainability-2026-05-09.md` history; resolve in either doc but not both.)
-- `ARCHITECTURE.md:2206` cites "REVIEW-LATER.md P-15/P-16" — those IDs don't exist; current ones are `PERF-19/PERF-20`.
 - `AGENTS.md:130-138` documents the layer table as policy but no automated import-boundary check exists in the prek hook list at `AGENTS.md:249`.
 
-**Fix.** Either reconcile the doc to match code (cheap edits) or add the missing automation (`dependency-cruiser` or biome equivalent for the documented `ui/` → `stores/` import boundary). The boundary check is the only non-trivial one of the three.
+**Fix.** Add the missing automation (`dependency-cruiser` or biome equivalent for the documented `ui/` → `stores/` import boundary).
+
+(The two text-only ARCHITECTURE.md fixes — shadcn/ui count and `P-15/P-16` → `PERF-19/PERF-20` — landed in Session 729.)
 
 ---
 
