@@ -68,6 +68,39 @@ describe('SearchInput', () => {
     expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
   })
 
+  it('MAINT-207 (e): fires onClear once on clear-button click (without it onChange still clears)', async () => {
+    // Opt-in `onClear` is the recommended explicit signal — see the
+    // component docstring. Verify it fires alongside `onChange` so a
+    // caller can subscribe to either.
+    const onClear = vi.fn()
+    const onChange = vi.fn()
+
+    function HarnessWithClear(): React.ReactElement {
+      const [value, setValue] = React.useState('hello')
+      return (
+        <SearchInput
+          value={value}
+          placeholder="Search"
+          onChange={(e) => {
+            setValue(e.target.value)
+            onChange(e.target.value)
+          }}
+          onClear={onClear}
+        />
+      )
+    }
+
+    render(<HarnessWithClear />)
+    const user = userEvent.setup()
+    const clear = screen.getByTestId('search-input-clear')
+    await user.click(clear)
+
+    expect(onClear).toHaveBeenCalledTimes(1)
+    // onChange still observes the cleared value (real native dispatch,
+    // not a synthetic event):
+    expect(onChange.mock.calls.map((c) => c[0])).toContain('')
+  })
+
   it('the clear button is type="button" so it does not submit a parent form', () => {
     render(
       <form>

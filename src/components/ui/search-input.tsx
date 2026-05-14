@@ -10,8 +10,16 @@
  *  - Clear button uses `type="button"` so it never submits a parent
  *    form, `aria-label` via `t()` for i18n, and a 44px minimum touch
  *    target on coarse pointers per AGENTS.md mandatory patterns.
- *  - Clearing dispatches a synthetic onChange with `target.value = ''`
- *    so callers that read `e.target.value` keep working unchanged.
+ *  - Clearing emits a real native `input` event on the `<input>` (via
+ *    the React-aware native value setter) so `onChange` callers see
+ *    `e.target.value === ''` without any synthetic-event sleight of
+ *    hand. MAINT-207 (e): callers that need an explicit clear signal
+ *    can opt into `onClear` (preferred — no synthetic event, no
+ *    dependency on the change pipeline). The previous synthetic
+ *    `onChange({ target, currentTarget })` fallback was removed
+ *    because consumers reading `e.bubbles` / `e.preventDefault` would
+ *    have hit `undefined` / a no-op; the native dispatch covers every
+ *    legitimate `onChange` reader.
  */
 
 import { X } from 'lucide-react'
@@ -23,8 +31,21 @@ import { Input } from './input'
 export interface SearchInputProps extends Omit<React.ComponentProps<'input'>, 'onChange'> {
   /** Current value (controlled). The clear button is only rendered when non-empty. */
   value: string
-  /** Change handler — called with a synthetic event whose `target.value` is `""` when cleared. */
+  /**
+   * Change handler. On clear, called with a real React change event
+   * whose `target.value === ''` (dispatched via the native value setter
+   * so the React change pipeline picks it up normally — no synthetic
+   * event surface).
+   */
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  /**
+   * MAINT-207 (e): optional explicit clear signal. Preferred over
+   * reading `e.target.value === ''` inside `onChange` — fires exactly
+   * once per clear-button click, doesn't depend on the change pipeline,
+   * and is safe to call alongside `onChange`. Both fire on clear when
+   * supplied; callers that need only one can ignore the other.
+   */
+  onClear?: () => void
   /** Optional translation key override for the clear button's aria-label. Defaults to `action.clear`. */
   clearAriaLabelKey?: string
   /** Extra className for the outer wrapper (positioning / width). Use `className` for the input itself. */
@@ -36,6 +57,7 @@ const SearchInput = ({
   ref,
   value,
   onChange,
+  onClear,
   className,
   wrapperClassName,
   clearAriaLabelKey = 'action.clear',
@@ -58,20 +80,17 @@ const SearchInput = ({
   const handleClear = React.useCallback(() => {
     const input = inputRef.current
     if (!input) return
-    // Use the native setter so React detects the value change.
+    // Use the native setter so React detects the value change, then
+    // dispatch a real `input` event. This is the React-recommended
+    // pattern for programmatic input value changes (see facebook/react
+    // #11488); the resulting React.ChangeEvent reaches `onChange` via
+    // the normal pipeline.
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
     setter?.call(input, '')
-    const event = new Event('input', { bubbles: true })
-    input.dispatchEvent(event)
-    // React will call onChange via the synthetic handler; also fire an
-    // explicit call so controlled callers that bypass the dispatched
-    // event (e.g. tests with a stubbed input) still see the clear.
-    onChange({
-      target: input,
-      currentTarget: input,
-    } as unknown as React.ChangeEvent<HTMLInputElement>)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    onClear?.()
     input.focus()
-  }, [onChange])
+  }, [onClear])
 
   return (
     <div className={cn('relative', wrapperClassName)} data-slot="search-input">
