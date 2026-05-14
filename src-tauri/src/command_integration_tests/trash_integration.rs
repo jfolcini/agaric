@@ -118,6 +118,122 @@ async fn restore_all_deleted_handles_cascade_deleted_blocks() {
     assert!(chd.deleted_at.is_none(), "child must be restored");
 }
 
+/// MAINT-214 (a): `restore_all_deleted_inner` must refresh the
+/// denormalised `page_id` column synchronously inside its own tx,
+/// mirroring the M6 fix in `restore_block_inner`
+/// (`commands/blocks/crud.rs:1028-1099`). Pre-fix, the column was only
+/// rewritten by the async `RebuildPageIds` materializer task, leaving
+/// an observable staleness window after the bulk-restore tx
+/// committed.
+///
+/// Scenario:
+///
+/// 1. Build a tree under `page_a`: `page_a → leaf`. Initial
+///    `leaf.page_id = page_a`.
+/// 2. Move `leaf` under `page_b` so `leaf.page_id = page_b`.
+/// 3. Soft-delete `leaf` individually.
+/// 4. Shut the materialiser down so the async `RebuildPageIds` task
+///    cannot mask the sync-update behaviour we are testing.
+/// 5. Call `restore_all_deleted_inner`. With the MAINT-214 fix this
+///    synchronously rewrites `leaf.page_id = page_b` inside the
+///    restore tx. Without the fix, the sync path would not touch
+///    page_id at all; with the materialiser blocked there is no
+///    catch-up path.
+///
+/// The mirror precondition (`leaf.page_id = page_b` after the move)
+/// is what makes the assertion meaningful: we are checking that
+/// `restore_all_deleted_inner` recomputes page_id from the current
+/// tree shape rather than leaving whatever was on disk before the
+/// soft-delete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_all_deleted_synchronously_refreshes_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Two pages.
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "Page B".into(), None, None)
+        .await
+        .unwrap();
+
+    // Leaf block under page_a. Initial page_id = page_a.
+    let leaf = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "leaf".into(),
+        Some(page_a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        leaf.page_id.as_deref(),
+        Some(page_a.id.as_str()),
+        "sanity: leaf starts under page_a"
+    );
+
+    // Move leaf to page_b — leaf.page_id is now page_b (sync update
+    // by move_block_inner's M6 path).
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        leaf.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let leaf_page_after_move: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&leaf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        leaf_page_after_move.as_deref(),
+        Some(page_b.id.as_str()),
+        "sanity: leaf.page_id flips to page_b after move"
+    );
+
+    // Soft-delete the leaf individually.
+    delete_block_inner(&pool, DEV, &mat, leaf.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Shut the materialiser down so async RebuildPageIds cannot
+    // catch up — only the sync MAINT-214 fix can produce the
+    // expected post-state.
+    mat.shutdown();
+
+    // Bulk-restore the trash.
+    let resp = restore_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+    assert_eq!(resp.affected_count, 1, "exactly one block restored");
+
+    let leaf_page_after_restore: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&leaf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        leaf_page_after_restore.as_deref(),
+        Some(page_b.id.as_str()),
+        "MAINT-214 (a): restore_all_deleted_inner must synchronously \
+         refresh page_id to the current ancestor (page_b), NOT the \
+         pre-move page_a"
+    );
+}
+
 // ======================================================================
 // purge_all_deleted — happy paths (B-46)
 // ======================================================================

@@ -204,11 +204,9 @@ pub async fn query_by_property(
         //   ?10/?11  value_date_range half-open `[from, to)`
         //       (applied against `b.{col}` so a query on `due_date`
         //       binds the range to the date column directly)
+        // MAINT-229: shared with BLOCK_ROW_RUNTIME_SELECT — alias variant for value/null routing
         let sql = format!(
-            "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                    b.deleted_at,  \
-                    b.todo_state, b.priority, b.due_date, b.scheduled_date, \
-                    b.page_id \
+            "SELECT {cols} \
              FROM blocks b \
              WHERE b.{col} IS NOT NULL \
                AND b.deleted_at IS NULL \
@@ -224,7 +222,10 @@ pub async fn query_by_property(
                AND (?10 IS NULL OR b.{col} >= ?10) \
                AND (?11 IS NULL OR b.{col} < ?11) \
              ORDER BY b.id ASC \
-             LIMIT ?4"
+             LIMIT ?4",
+            cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
+            col = col,
+            sql_op = sql_op,
         );
         // For date columns, use value_date; for text columns, use value_text.
         let filter_value: Option<&str> = match col {
@@ -251,11 +252,9 @@ pub async fn query_by_property(
         //   ?10  block_type equality push-down on `b.block_type`
         //   ?11  value_text_in (JSON array) bound against `bp.value_text`
         //   ?12/?13  value_date_range half-open `[from, to)` against `bp.value_date`
+        // MAINT-229: shared with BLOCK_ROW_RUNTIME_SELECT — alias variant for value/null routing
         let sql = format!(
-            "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                    b.deleted_at,  \
-                    b.todo_state, b.priority, b.due_date, b.scheduled_date, \
-                    b.page_id \
+            "SELECT {cols} \
              FROM block_properties bp \
              JOIN blocks b ON b.id = bp.block_id \
              WHERE bp.key = ?1 \
@@ -273,7 +272,9 @@ pub async fn query_by_property(
                AND (?12 IS NULL OR bp.value_date >= ?12) \
                AND (?13 IS NULL OR bp.value_date < ?13) \
              ORDER BY b.id ASC \
-             LIMIT ?6"
+             LIMIT ?6",
+            cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
+            sql_op = sql_op,
         );
         sqlx::query_as::<_, BlockRow>(&sql)
             .bind(key) // ?1

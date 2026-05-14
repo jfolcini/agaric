@@ -861,5 +861,61 @@ describe('HistoryPanel', () => {
         expect(screen.queryByTestId('block-history-panel-0')).not.toBeInTheDocument()
       })
     })
+
+    // MAINT-219 regression guard — arrow-key navigation must move DOM
+    // focus to the newly-expanded row's `Restore` button (focus follows
+    // state). Before the fix, `↓`/`↑` updated `expandedSeq` but left
+    // focus on the originally-focused row, so a subsequent `Enter`
+    // double-fired: the row's own `handleRowKeyDown` toggled the
+    // originally-focused row's expansion AND the panel handler restored
+    // the visually-expanded (different!) row. Existing tests masked the
+    // bug by focusing the `<ul>` itself rather than a specific row.
+    it('moves DOM focus to the expanded row’s Restore button on ArrowDown', async () => {
+      const user = userEvent.setup()
+      setupKeyboardFixture()
+
+      render(<HistoryPanel blockId="BLOCK001" />)
+
+      const list = await screen.findByTestId('history-panel-list')
+      list.focus()
+
+      // First ArrowDown expands index 0 and focuses its Restore button.
+      await user.keyboard('{ArrowDown}')
+      await waitFor(() => {
+        expect(screen.getByTestId('block-history-panel-0')).toBeInTheDocument()
+      })
+      const firstRestoreBtn = screen.getByTestId('block-history-restore-0')
+      await waitFor(() => {
+        expect(document.activeElement).toBe(firstRestoreBtn)
+      })
+
+      // Second ArrowDown moves expansion AND focus to the next row.
+      await user.keyboard('{ArrowDown}')
+      await waitFor(() => {
+        expect(screen.queryByTestId('block-history-panel-0')).not.toBeInTheDocument()
+        expect(screen.getByTestId('block-history-panel-1')).toBeInTheDocument()
+      })
+      const secondRestoreBtn = screen.getByTestId('block-history-restore-1')
+      await waitFor(() => {
+        expect(document.activeElement).toBe(secondRestoreBtn)
+      })
+
+      // Enter pressed while focus is on the EXPANDED row's button must
+      // restore that row's content exactly once — never the row that
+      // was originally focused before the arrow keys fired.
+      await user.keyboard('{Enter}')
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'BLOCK001',
+          toText: 'middle', // seq=2, index 1 in the fixture
+        })
+      })
+      // Crucially: the ORIGINALLY-focused row (seq=3 / 'newest') is
+      // NOT restored — this was the symptom of the pre-fix bug.
+      const editBlockCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'edit_block')
+      expect(editBlockCalls.every((c) => (c[1] as { toText: string }).toText !== 'newest')).toBe(
+        true,
+      )
+    })
   })
 })

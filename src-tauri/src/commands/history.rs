@@ -60,6 +60,12 @@ pub async fn apply_reverse_in_tx(
             // so already-deleted descendants aren't re-swept; `depth
             // < 100` bounds the walk. Shared CTE lives in
             // `crate::block_descendants`.
+            //
+            // MAINT-214 (b): page_id is invariant under re-delete; the
+            // descendants keep their existing `page_id` and on next
+            // restore the M6/restore-path (`restore_block_inner` or
+            // `OpPayload::RestoreBlock` below) picks them up. No
+            // page_id work is needed here.
             let now = now_rfc3339();
             sqlx::query(concat!(
                 crate::descendants_cte_active!(),
@@ -84,6 +90,70 @@ pub async fn apply_reverse_in_tx(
             ))
             .bind(p.block_id.as_str())
             .bind(&p.deleted_at_ref)
+            .execute(&mut **tx)
+            .await?;
+
+            // MAINT-214 (b): refresh `page_id` for the restored subtree
+            // synchronously, mirroring `restore_block_inner`
+            // (`commands/blocks/crud.rs:1028-1099`) and ultimately
+            // `move_block_inner` (`commands/blocks/move_ops.rs:174-231`).
+            // Without this sync update, callers reading right after
+            // commit can see a stale `page_id` (the moved-then-deleted
+            // descendant case described in `restore_block_inner`).
+            //
+            // Invariant #9: the recursive CTE filters `deleted_at IS
+            // NULL` in both members AND bounds `depth < 100`.
+            let block_id_str = p.block_id.as_str();
+            let parent_id: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT parent_id FROM blocks WHERE id = ?",
+            )
+            .bind(block_id_str)
+            .fetch_one(&mut **tx)
+            .await?;
+            let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
+                     FROM blocks WHERE id = ?",
+                )
+                .bind(pid)
+                .fetch_optional(&mut **tx)
+                .await?
+                .flatten()
+            } else {
+                None
+            };
+            let is_page: bool =
+                sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
+                    .bind(block_id_str)
+                    .fetch_one(&mut **tx)
+                    .await?
+                    == "page";
+            if !is_page {
+                sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+                    .bind(&new_page_id)
+                    .bind(block_id_str)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            let effective_page_id = if is_page {
+                Some(block_id_str.to_string())
+            } else {
+                new_page_id
+            };
+            sqlx::query(
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT b.id, 0 FROM blocks b \
+                     WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+                     UNION ALL \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
+                     JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.deleted_at IS NULL AND d.depth < 100 \
+                 ) \
+                 UPDATE blocks SET page_id = ?2 \
+                 WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+            )
+            .bind(block_id_str)
+            .bind(&effective_page_id)
             .execute(&mut **tx)
             .await?;
         }
@@ -117,6 +187,65 @@ pub async fn apply_reverse_in_tx(
                     p.block_id
                 )));
             }
+
+            // MAINT-214 (b): refresh `page_id` for the moved block and
+            // its descendants synchronously, mirroring `move_block_inner`
+            // (`commands/blocks/move_ops.rs:174-231`). Without this
+            // sync update, callers reading right after commit see a
+            // stale `page_id` for the moved subtree until the async
+            // `RebuildPageIds` materializer task lands.
+            //
+            // Invariant #9: the recursive CTE filters `deleted_at IS
+            // NULL` in both members AND bounds `depth < 100`. Conflict
+            // copies inherit `parent_id` from the original and would
+            // otherwise be reparented under the moved subtree.
+            let block_id_str = p.block_id.as_str();
+            let new_page_id: Option<String> = if let Some(ref pid) = p.new_parent_id {
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
+                     FROM blocks WHERE id = ?",
+                )
+                .bind(pid.as_str())
+                .fetch_optional(&mut **tx)
+                .await?
+                .flatten()
+            } else {
+                None
+            };
+            let is_page: bool =
+                sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
+                    .bind(block_id_str)
+                    .fetch_one(&mut **tx)
+                    .await?
+                    == "page";
+            if !is_page {
+                sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+                    .bind(&new_page_id)
+                    .bind(block_id_str)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            let effective_page_id = if is_page {
+                Some(block_id_str.to_string())
+            } else {
+                new_page_id
+            };
+            sqlx::query(
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT b.id, 0 FROM blocks b \
+                     WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+                     UNION ALL \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
+                     JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.deleted_at IS NULL AND d.depth < 100 \
+                 ) \
+                 UPDATE blocks SET page_id = ?2 \
+                 WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+            )
+            .bind(block_id_str)
+            .bind(&effective_page_id)
+            .execute(&mut **tx)
+            .await?;
         }
         // AddTag and RemoveTag are intentionally idempotent: INSERT OR IGNORE
         // silently handles duplicates, and the DELETE below does not check

@@ -7,6 +7,35 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 730 — REVIEW-LATER quick-grab batch (MAINT-214, -219, -229) (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 3 build (general-purpose, all parallel) |
+| **Items closed** | MAINT-214 (Rust page_id refresh symmetry); MAINT-219 (HistoryPanel keyboard nav focus); MAINT-229 (alias-aware BlockRow runtime SELECT). |
+| **Items modified** | REVIEW-LATER summary count 22 → 19. |
+| **Tests added** | +2 Rust integration tests; +1 vitest. |
+| **Files touched** | 9 (4 Rust + 3 frontend + REVIEW-LATER + SESSION-LOG). |
+
+**Summary:** parallel batch of three independent S-cost items from REVIEW-LATER.
+
+**MAINT-214 (Rust page_id refresh symmetry):** `restore_all_deleted_inner` now refreshes `page_id` per-root synchronously inside the IMMEDIATE tx (mirrors `restore_block_inner`'s M6 pattern). `apply_reverse_in_tx` (history.rs) gained the same refresh on the `OpPayload::RestoreBlock` arm (undoing a delete = restore semantics) and the `OpPayload::MoveBlock` arm (mirror of `move_block_inner`). The `OpPayload::DeleteBlock` arm (re-delete via undo-of-restore) gets a documenting comment — tree shape doesn't change on soft-delete, so no refresh is needed. **Subagent surprise:** the task brief had the RestoreBlock vs DeleteBlock semantics inverted relative to `compute_reverse` — `reverse_delete_block` produces `RestoreBlock`, so the RestoreBlock arm is the restore path. Two new integration tests pin the synchronous refresh (`restore_all_deleted_synchronously_refreshes_page_id` + `undo_move_block_synchronously_refreshes_page_id`).
+
+**MAINT-219 (HistoryPanel keyboard nav focus):** added a parent-owned `restoreButtonRef` that only the row matching `expandedSeq` receives; a `useEffect` keyed on `expandedSeq` focuses the live button, plus a `pendingKeyboardFocusRef` latch that survives the unmount-blur race (the previously-expanded button is destroyed before the next render runs, so naive `document.activeElement.contains` gating short-circuits). Conditional-spread (`{...(isExpanded ? { restoreButtonRef } : {})}`) used at the call site to satisfy `exactOptionalPropertyTypes: true` — orchestrator fix after the subagent left the wider `isExpanded ? ref : undefined` pattern. New test `moves DOM focus to the expanded row's Restore button on ArrowDown` asserts focus tracks `expandedSeq` and that `Enter` after multiple `↓` presses restores the EXPANDED row (not the originally-focused one). All 34 HistoryPanel tests pass.
+
+**MAINT-229 (alias-aware BlockRow runtime SELECT):** added `BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS` constant (11 columns prefixed `b.`) in `pagination/block_row_columns.rs` + a 4th parity test (`runtime_select_with_b_alias_strips_to_runtime_select`) that strips the `b.` prefix via the existing `strip_blocks_alias` helper and asserts equality with `BLOCK_ROW_RUNTIME_SELECT`. Both `list_by_property_inner` branches in `pagination/properties.rs` (reserved-key + non-reserved) now reference the new const via `format!("SELECT {cols} …", cols = …::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS, …)`, matching the existing MAINT-223 wiring pattern. **Note:** the original REVIEW-LATER entry claimed "13-column BlockRow SELECT" — actual count is 11; the subagent matched the real struct.
+
+**Verification:**
+- `cargo nextest run` — 3649 tests pass (1 unrelated flaky `sync_files::run_file_transfer_initiator_breaks_on_cancel_m47` retried successfully on attempt 2).
+- `npx vitest run` — 9752 tests pass.
+- `prek run --all-files` — all hooks pass (cargo fmt auto-fixed Rust formatting after subagents finished; re-staged + re-run clean).
+
+**Process notes:** all three subagents had clean non-overlapping file boundaries (Rust crud/history vs Rust pagination vs frontend HistoryPanel). Subagent C left an `exactOptionalPropertyTypes: true` violation because it ran vitest but not tsc — orchestrator caught + fixed via conditional-spread before commit. Pre-existing `HistoryListItem.tsx` `variant` deprecation warnings (4 sites, predating this batch) intentionally left for a separate cleanup pass.
+
+**Commit plan:** single commit covering the three fixes + REVIEW-LATER prune + Session 730 entry.
+
+---
 ## Session 729 — Doc-drift fixes + Tier 2.12 prune (2026-05-14)
 
 | Metadata | Value |
