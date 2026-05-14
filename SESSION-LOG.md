@@ -7,6 +7,39 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 736 — MAINT-215 + PageBrowser flake fix (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 3 build (general-purpose, parallel) |
+| **Items closed** | MAINT-215 (useDialogOrSheet propagated to 6 form-style dialogs); PageBrowser cursor-pagination flake (was the only vitest failure blocking the release validate gate). |
+| **Items modified** | REVIEW-LATER summary count 17 → 16 + drop MAINT-215 row. |
+| **Tests added** | +6 mobile-vs-desktop responsive-path cases (2 per subagent pair) + 1 useDialogOrSheet `kind='dialog'` case (orchestrator). |
+| **Files touched** | 13 (6 dialogs + 6 tests + 1 PageBrowser test, plus the hook itself was a separate prereq commit). |
+
+**Summary:** 6 form-style dialogs now route through `useDialogOrSheet('dialog')`, picking up a bottom-Sheet on mobile (< 768 px) while keeping the regular Dialog (not AlertDialog) on desktop. Migrations split across 3 parallel subagents on non-overlapping file boundaries:
+- Subagent A: `RenameDialog` (157 → 172) + `WelcomeModal` (216 → 221). Note: `useDialogOrSheet` had to be called BEFORE the `if (bootState !== 'ready') return null` early return to obey Rules of Hooks.
+- Subagent B: `BugReportDialog` (676 → 689) + `PdfViewerDialog` (294 → 299). BugReportDialog's nested per-log preview sub-dialog (line ~595) stays a regular Dialog on every viewport — nesting a Sheet inside a Sheet compounds Radix focus-trap / overlay-stacking edge cases.
+- Subagent C: `QuickCaptureDialog` (164 → 169) + `SpaceManageDialog` (389 → 397). SpaceManageDialog's 5 sub-components under `SpaceManageDialog/` were left untouched per the brief.
+
+**Pattern:** each migrated file calls `useDialogOrSheet('dialog')`, destructures `{ Root, Content, Header, Title, Description, Footer }`, picks `DialogBody` vs `SheetBody` for the scrollable region, and spreads `side: 'bottom'` onto `<Content>` only on the mobile path (matches `ConfirmDialog`'s `contentSideProps` pattern). Controlled `open` / `onOpenChange` semantics untouched.
+
+**PageBrowser flake fix:** changed `expect(screen.getByText('Page 2')).toBeInTheDocument()` to `expect(await screen.findByText('Page 2')).toBeInTheDocument()` plus wrapped the "Load more disappears" assertion in `await waitFor(...)`. The original synchronous read raced the accumulator update on slow CI runners — this was the SOLE vitest failure blocking the 0.1.22 release validate gate. Now 9760/9760 pass.
+
+**Hook prereq (separate commit `bd929d9b`):** added `kind: 'alert' | 'dialog'` discriminant to `useDialogOrSheet`. `ConfirmDialog` keeps its default `'alert'`; the 6 dialogs pass `'dialog'` explicitly. 5 hook tests cover both `kind`s × both viewport states.
+
+**Verification:**
+- 6 dialog test files: 140 pass.
+- PageBrowser: 106 pass.
+- useDialogOrSheet: 5 pass.
+- All 47 prek hooks pass (after one biome auto-format pass).
+
+**Open question for the next CI run:** the in-progress CI runs (25861295024, 25861400267) hit playwright via `_validate.yml`. Expect them to fail on the 34 pre-existing e2e flakes (TEST-E2E-1) until those are addressed separately.
+
+**Commit plan:** single commit for the 6 migrations + flake fix; will re-trigger release after push.
+
+---
 ## Session 735 — e2e error-scenarios fix + release 0.1.22 (2026-05-14)
 
 | Metadata | Value |

@@ -14,6 +14,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { logger } from '@/lib/logger'
 
 vi.mock('@/lib/logger', () => ({
@@ -24,6 +25,14 @@ vi.mock('@/lib/logger', () => ({
     error: vi.fn(),
   },
 }))
+
+// MAINT-215: PdfViewerDialog now picks a Dialog (desktop) or Sheet
+// (mobile < 768 px) shell via useDialogOrSheet. Default to desktop for
+// every pre-existing test; the viewport-switch describe overrides it.
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 // Mock pdfjs-dist before importing the component
 const mockRenderPromise = Promise.resolve()
@@ -71,6 +80,8 @@ describe('PdfViewerDialog', () => {
       promise: Promise.resolve(),
       cancel: vi.fn(),
     })
+    // MAINT-215: reset to desktop so cross-test mobile overrides never leak.
+    mockedUseIsMobile.mockReturnValue(false)
   })
 
   it('renders nothing when not open', () => {
@@ -605,5 +616,45 @@ describe('PdfViewerDialog', () => {
     } finally {
       HTMLCanvasElement.prototype.getContext = originalGetContext
     }
+  })
+
+  // ─── MAINT-215: useDialogOrSheet('dialog') viewport switch ─────────────
+  //
+  // On phones < 768 px the outer shell renders as a bottom Sheet so the
+  // page-navigation controls sit within thumb reach. The pdfjs renderer,
+  // canvas, and keyboard shortcuts are unchanged — assert the dialog body
+  // (filename in the header) renders under both viewports.
+  describe('viewport switch (MAINT-215)', () => {
+    it('renders the PDF viewer body on mobile (Sheet path)', async () => {
+      mockedUseIsMobile.mockReturnValue(true)
+
+      render(
+        <PdfViewerDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          fileUrl="http://example.com/test.pdf"
+          filename="report.pdf"
+        />,
+      )
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByText('report.pdf')).toBeInTheDocument()
+    })
+
+    it('renders the PDF viewer body on desktop (Dialog path)', async () => {
+      mockedUseIsMobile.mockReturnValue(false)
+
+      render(
+        <PdfViewerDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          fileUrl="http://example.com/test.pdf"
+          filename="report.pdf"
+        />,
+      )
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByText('report.pdf')).toBeInTheDocument()
+    })
   })
 })

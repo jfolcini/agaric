@@ -41,22 +41,25 @@
  * Reuses existing primitives — no new dialog primitive, no new store.
  * `useSpaceStore.refreshAvailableSpaces()` is the single refresh seam
  * after every mutation so the SpaceSwitcher re-renders within a tick.
+ *
+ * MAINT-215: on phones < 768 px (`useIsMobile() === true`) the outer
+ * dialog renders as a bottom Sheet so the per-row controls + the
+ * "Create new space" form land within thumb reach. The desktop path
+ * keeps the regular Radix `Dialog` (not `AlertDialog`) so
+ * dismiss-on-outside-click / Escape works without confirmation gating.
+ * Sub-components under `./SpaceManageDialog/` are unaffected by the
+ * swap — they render whatever children they own inside whichever
+ * shell wraps them.
  */
 
 import { Check, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { createSpace, getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
@@ -367,14 +370,19 @@ export function SpaceManageDialog({
     ],
   )
 
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description } = parts
+  // Sheet's Content takes a `side` prop; DialogContent does not.
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+
   return (
     <TooltipProvider>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent data-testid="space-manage-dialog">
-          <DialogHeader>
-            <DialogTitle>{t('space.manageDialogTitle')}</DialogTitle>
-            <DialogDescription>{t('space.manageDialogDescription')}</DialogDescription>
-          </DialogHeader>
+      <Root open={open} onOpenChange={onOpenChange}>
+        <Content data-testid="space-manage-dialog" {...contentSideProps}>
+          <Header>
+            <Title>{t('space.manageDialogTitle')}</Title>
+            <Description>{t('space.manageDialogDescription')}</Description>
+          </Header>
           <DialogBody>
             <SpaceOnboardingHint open={open} availableSpaceCount={availableSpaces.length} />
             <div data-slot="space-manage-list">{rows}</div>
@@ -382,8 +390,8 @@ export function SpaceManageDialog({
               <CreateSpaceForm onCreated={handleRefresh} />
             </div>
           </DialogBody>
-        </DialogContent>
-      </Dialog>
+        </Content>
+      </Root>
     </TooltipProvider>
   )
 }

@@ -1,13 +1,26 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import {
   MAX_RENAME_LENGTH,
   RenameDialog,
   sanitizeRenameInput,
   validateRenameInput,
 } from '../RenameDialog'
+
+vi.mock('../../hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
+const mockedUseIsMobile = vi.mocked(useIsMobile)
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  // Default to the desktop path so existing test bodies keep their semantics.
+  mockedUseIsMobile.mockReturnValue(false)
+})
 
 describe('RenameDialog', () => {
   it('renders nothing when not open', () => {
@@ -183,5 +196,50 @@ describe('RenameDialog', () => {
 
     await user.click(screen.getByRole('button', { name: /save/i }))
     expect(onConfirm).toHaveBeenCalledWith('LivingRoomMac')
+  })
+
+  // ----------------------------------------------------------------------
+  // MAINT-215: dialog mounts under both desktop (Dialog) and mobile (Sheet)
+  // paths via useDialogOrSheet('dialog'). We don't assert on Radix DOM
+  // specifics — just that the title / form / buttons are accessible under
+  // both code paths.
+  // ----------------------------------------------------------------------
+
+  describe('responsive path (MAINT-215)', () => {
+    it('mounts on the mobile path (Sheet) with title, input, and buttons accessible', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+
+      render(
+        <RenameDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          currentName="My Device"
+        />,
+      )
+
+      expect(screen.getByText('Rename device')).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: /device name/i })).toHaveValue('My Device')
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
+    })
+
+    it('mounts on the desktop path (Dialog) with title, input, and buttons accessible', () => {
+      mockedUseIsMobile.mockReturnValue(false)
+
+      render(
+        <RenameDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          currentName="My Device"
+        />,
+      )
+
+      expect(screen.getByText('Rename device')).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: /device name/i })).toHaveValue('My Device')
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
+    })
   })
 })

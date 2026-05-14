@@ -11,22 +11,22 @@
  *  - Disallows empty names.
  *  - Caps length at MAX_RENAME_LENGTH (64) characters.
  * Errors are shown inline via aria-invalid + a text-destructive message.
+ *
+ * MAINT-215: on phones < 768 px (`useIsMobile() === true`) the dialog
+ * renders as a bottom Sheet so the form input + footer buttons sit within
+ * thumb reach. The desktop path keeps the regular Radix `Dialog` (not
+ * `AlertDialog`) so dismiss-on-outside-click / Escape works without
+ * confirmation gating. Both paths share the same controlled `open` /
+ * `onOpenChange` API.
  */
 
 import type React from 'react'
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 
 export const MAX_RENAME_LENGTH = 64
 
@@ -105,53 +105,68 @@ export function RenameDialog({
     onOpenChange(false)
   }
 
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description, Footer } = parts
+
+  // Sheet's Content takes a `side` prop; DialogContent does not.
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+
+  const formBody = (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        handleSave()
+      }}
+    >
+      <Input
+        value={name}
+        onChange={(e) => {
+          // Strip control chars eagerly so paste of binary noise can't
+          // even appear in the field. Trimming is deferred until submit
+          // so users can still type spaces between words.
+          setName(e.target.value.replace(CONTROL_CHARS, ''))
+          if (!touched) setTouched(true)
+        }}
+        onBlur={() => setTouched(true)}
+        placeholder={placeholder ?? t('rename.placeholder')}
+        aria-label={ariaLabel ?? t('device.deviceNameLabel')}
+        aria-invalid={showError ? true : undefined}
+        aria-describedby={showError ? errorId : undefined}
+        maxLength={MAX_RENAME_LENGTH * 2}
+        autoFocus
+      />
+      {showError && errorMessage ? (
+        <p id={errorId} className="rename-error mt-1 text-xs text-destructive" role="alert">
+          {errorMessage}
+        </p>
+      ) : null}
+    </form>
+  )
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={className}>
-        <DialogHeader>
-          <DialogTitle>{title ?? t('rename.title')}</DialogTitle>
-          <DialogDescription>{description ?? t('rename.deviceName')}</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              handleSave()
-            }}
-          >
-            <Input
-              value={name}
-              onChange={(e) => {
-                // Strip control chars eagerly so paste of binary noise can't
-                // even appear in the field. Trimming is deferred until submit
-                // so users can still type spaces between words.
-                setName(e.target.value.replace(CONTROL_CHARS, ''))
-                if (!touched) setTouched(true)
-              }}
-              onBlur={() => setTouched(true)}
-              placeholder={placeholder ?? t('rename.placeholder')}
-              aria-label={ariaLabel ?? t('device.deviceNameLabel')}
-              aria-invalid={showError ? true : undefined}
-              aria-describedby={showError ? errorId : undefined}
-              maxLength={MAX_RENAME_LENGTH * 2}
-              autoFocus
-            />
-            {showError && errorMessage ? (
-              <p id={errorId} className="rename-error mt-1 text-xs text-destructive" role="alert">
-                {errorMessage}
-              </p>
-            ) : null}
-          </form>
-        </DialogBody>
-        <DialogFooter>
+    <Root open={open} onOpenChange={onOpenChange}>
+      <Content className={className} {...contentSideProps}>
+        <Header>
+          <Title>{title ?? t('rename.title')}</Title>
+          <Description>{description ?? t('rename.deviceName')}</Description>
+        </Header>
+        {/*
+          MAINT-215: route the body through DialogBody on desktop so a tall
+          body scrolls and the footer stays pinned. The mobile Sheet path
+          keeps its native flow — SheetContent already constrains height
+          and the form is short enough that adding a SheetBody scroll
+          region would just introduce nested scroll contexts.
+        */}
+        {parts.isMobile ? formBody : <DialogBody>{formBody}</DialogBody>}
+        <Footer>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('rename.cancel')}
           </Button>
           <Button onClick={handleSave} disabled={validationError !== null}>
             {t('rename.save')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Footer>
+      </Content>
+    </Root>
   )
 }
