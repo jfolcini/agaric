@@ -274,8 +274,8 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.undo') }))
 
-      expect(mockUndo).toHaveBeenCalled()
-      expect(mockRun).toHaveBeenCalled()
+      expect(mockUndo).toHaveBeenCalled() // no-args by contract
+      expect(mockRun).toHaveBeenCalled() // no-args by contract
     })
 
     it('triggers redo via editor chain on pointerdown', () => {
@@ -283,16 +283,16 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.redo') }))
 
-      expect(mockRedo).toHaveBeenCalled()
-      expect(mockRun).toHaveBeenCalled()
+      expect(mockRedo).toHaveBeenCalled() // no-args by contract
+      expect(mockRun).toHaveBeenCalled() // no-args by contract
     })
 
     it('toggles blockquote via editor chain on pointerdown', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.blockquote') }))
 
-      expect(mockToggleBlockquote).toHaveBeenCalled()
-      expect(mockRun).toHaveBeenCalled()
+      expect(mockToggleBlockquote).toHaveBeenCalled() // no-args by contract
+      expect(mockRun).toHaveBeenCalled() // no-args by contract
     })
   })
 
@@ -440,7 +440,7 @@ describe('FormattingToolbar', () => {
       fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.internalLink') }))
 
       expect(mockInsertContent).toHaveBeenCalledWith('[[')
-      expect(mockRun).toHaveBeenCalled()
+      expect(mockRun).toHaveBeenCalled() // no-args by contract
       expect(mockResolveBlockLinkFromSelection).not.toHaveBeenCalled()
     })
 
@@ -452,7 +452,7 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={editor} />)
       fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.internalLink') }))
 
-      expect(mockResolveBlockLinkFromSelection).toHaveBeenCalled()
+      expect(mockResolveBlockLinkFromSelection).toHaveBeenCalled() // no-args by contract
       expect(mockInsertContent).not.toHaveBeenCalled()
     })
   })
@@ -853,7 +853,7 @@ describe('FormattingToolbar', () => {
         if (calloutRow) {
           fireEvent.pointerDown(calloutRow)
         }
-        expect(spy).toHaveBeenCalled()
+        expect(spy).toHaveBeenCalledWith(expect.objectContaining({ type: 'insert-callout' }))
         document.removeEventListener('insert-callout', spy)
       } finally {
         restore()
@@ -1011,7 +1011,7 @@ describe('FormattingToolbar', () => {
 
       fireEvent.pointerDown(jsBtn as HTMLElement)
 
-      expect(mockToggleCodeBlock).toHaveBeenCalled()
+      expect(mockToggleCodeBlock).toHaveBeenCalled() // no-args by contract
       expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'javascript' })
     })
 

@@ -311,7 +311,7 @@ describe('GraphView', () => {
     })
 
     // d3-selection: select() is called for the SVG container
-    expect(select).toHaveBeenCalled()
+    expect(select).toHaveBeenCalledWith(expect.any(Element))
 
     // Worker path: forceSimulation is NOT called on the main thread
     expect(forceSimulation).not.toHaveBeenCalled()
@@ -771,7 +771,10 @@ describe('GraphView', () => {
       // Second render: stale cache → serves cached data but refetches in background
       render(<GraphView />)
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalled()
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_all_pages_in_space',
+          expect.objectContaining({ spaceId: expect.any(String) }),
+        )
       })
 
       dateSpy.mockRestore()
@@ -872,7 +875,7 @@ describe('GraphView', () => {
       const mockEvent = { key: 'Enter', preventDefault: vi.fn() }
       handler(mockEvent, { id: 'page-1', label: 'Page One' })
 
-      expect(mockEvent.preventDefault).toHaveBeenCalled()
+      expect(mockEvent.preventDefault).toHaveBeenCalled() // no-args by contract
       expect(navigateToPage).toHaveBeenCalledWith('page-1', 'Page One')
     })
 
@@ -960,7 +963,12 @@ describe('GraphView', () => {
 
       // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
-      expect(zoomInstance.transform).toHaveBeenCalled()
+      // Production calls zoomBehavior.transform(svgSelection.transition()..., zoomIdentity).
+      // zoomIdentity is mocked as { k: 1, x: 0, y: 0 } at module top.
+      expect(zoomInstance.transform).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ k: 1, x: 0, y: 0 }),
+      )
     })
 
     // BUG-18: rebinding graph zoom shortcuts via keyboard-config
@@ -1066,7 +1074,10 @@ describe('GraphView', () => {
 
       // Wait until invoke has been called (fetch started)
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalled()
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_all_pages_in_space',
+          expect.objectContaining({ spaceId: expect.any(String) }),
+        )
       })
 
       // Unmount before data resolves (triggers cleanup setting cancelled=true)
@@ -1257,7 +1268,7 @@ describe('GraphView', () => {
 
       // Main-thread fallback kicks in — forceSimulation gets invoked on rerun
       await waitFor(() => {
-        expect(forceSimulation).toHaveBeenCalled()
+        expect(forceSimulation).toHaveBeenCalledWith(expect.any(Array))
       })
       expect(forceSimulation).toHaveBeenCalledWith(
         expect.arrayContaining([
@@ -1304,7 +1315,7 @@ describe('GraphView', () => {
         expect.anything(),
       )
       await waitFor(() => {
-        expect(forceSimulation).toHaveBeenCalled()
+        expect(forceSimulation).toHaveBeenCalledWith(expect.any(Array))
       })
     })
 
@@ -1335,7 +1346,7 @@ describe('GraphView', () => {
       worker.simulateError('error', { type: 'error', error: new Error('boom'), message: 'boom' })
 
       await waitFor(() => {
-        expect(forceSimulation).toHaveBeenCalled()
+        expect(forceSimulation).toHaveBeenCalledWith(expect.any(Array))
       })
 
       // Exactly one warn for worker failure (deduped).

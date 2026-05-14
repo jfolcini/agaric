@@ -329,7 +329,7 @@ describe('useUndoShortcuts', () => {
     const spy = vi.spyOn(event, 'preventDefault')
     document.dispatchEvent(event)
 
-    expect(spy).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalled() // no-args by contract
 
     unmount()
   })
@@ -346,7 +346,7 @@ describe('useUndoShortcuts', () => {
     const spy = vi.spyOn(event, 'preventDefault')
     document.dispatchEvent(event)
 
-    expect(spy).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalled() // no-args by contract
 
     unmount()
   })
@@ -575,7 +575,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalled()
+      expect(mockLoad).toHaveBeenCalled() // no-args by contract
     })
 
     unmount()
@@ -605,7 +605,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalled()
+      expect(mockLoad).toHaveBeenCalled() // no-args by contract
     })
 
     unmount()
@@ -636,7 +636,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalled()
+      expect(mockLoad).toHaveBeenCalled() // no-args by contract
     })
 
     // replacePage should NOT have been called since getBlock failed
@@ -670,7 +670,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalled()
+      expect(mockLoad).toHaveBeenCalled() // no-args by contract
     })
 
     // Resolve cache should remain empty (getBlock failed, so set() was never called)

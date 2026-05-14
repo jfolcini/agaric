@@ -215,7 +215,9 @@ describe('UnlinkedReferences', () => {
 
     // Wait for eager fetch to complete
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalled()
+      expect(mockedListUnlinked).toHaveBeenCalledWith(
+        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+      )
     })
 
     // Header should be present and collapsed
@@ -621,7 +623,9 @@ describe('UnlinkedReferences', () => {
 
     // Wait for eager fetch to complete
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalled()
+      expect(mockedListUnlinked).toHaveBeenCalledWith(
+        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+      )
     })
 
     // Panel section is present, but renders an EmptyState (no header, no list).
@@ -883,7 +887,9 @@ describe('UnlinkedReferences', () => {
 
     // Wait for eager fetch
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalled()
+      expect(mockedListUnlinked).toHaveBeenCalledWith(
+        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+      )
     })
 
     // Collapsed by default — filter builder must not render.
@@ -965,7 +971,7 @@ describe('UnlinkedReferences', () => {
 
     await waitFor(() => {
       expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: '' })
-      expect(mockedListPropertyKeys).toHaveBeenCalled()
+      expect(mockedListPropertyKeys).toHaveBeenCalled() // no-args by contract
     })
   })
 
@@ -1128,7 +1134,9 @@ describe('UnlinkedReferences', () => {
     })
 
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalled()
+      expect(mockedListUnlinked).toHaveBeenCalledWith(
+        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+      )
     })
 
     // Error surfaces as a toast and the component does not crash.
@@ -1321,7 +1329,7 @@ describe('UnlinkedReferences', () => {
 
     // Wait until the mount-once effect has fired the IPC call.
     await waitFor(() => {
-      expect(mockedListTagsByPrefix).toHaveBeenCalled()
+      expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: '' })
     })
 
     // Unmount before the promise settles — cleanup sets cancelled=true.
