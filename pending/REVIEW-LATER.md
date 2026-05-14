@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-12 open items in the summary table; 20 detail entries (FE-* sub-tables don't appear in the summary).
+11 open items in the summary table; 18 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -45,7 +45,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
-| TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -508,17 +507,6 @@ Items in this section are test-quality improvements identified during a thorough
 
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
-### TEST-4 — Sync daemon tests use 21 fixed sleeps as race-prone "barriers"
-- **Domain:** Sync / Test infrastructure
-- **Location:** `src-tauri/src/sync_daemon/tests.rs` lines 2601, 2607, 2639, 2643, 2702, 2706, 2755, 2770, 2781, 2828, 2847, 2862, 2909, 2919, 3151, 3208, 3281, 3345, 3388, 3395, 3398
-- **What:** Tests use `tokio::time::sleep(Duration::from_millis(50..800))` to wait for daemon state changes. Unlike the materializer (which exposes `flush_background()`, `wait_for_initial_block_count_cache()`, `wait_for_pending_block_count_refreshes()`), the sync daemon and `SyncScheduler` have no equivalent sync-barrier helper, so tests sleep and hope.
-- **Why it matters:** Real flake risk on loaded CI. The 800ms sleeps in particular are pessimistic guesses that could still be too short under load.
-- **Cost:** M — design + implement a `wait_for_state(scheduler, predicate)` polling helper or expose `Notify`-based barriers on `SyncDaemon`.
-- **Risk:** Low — additive helper.
-- **Impact:** Medium — eliminates a category of CI flakes.
-- **Recommendation:** Pattern after the materializer's `flush_background()` API. A polling helper `async fn wait_for(predicate: impl Fn() -> bool, timeout: Duration)` would suffice for most sites.
-- **Status:** Open.
-
 ## PERF — Performance items
 
 ### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (3 sites)
@@ -605,18 +593,6 @@ Or a simpler cap: reject filter lists longer than some reasonable limit (e.g., 1
 
 **Cost:** S (~30 min of user work once the keypair is generated).
 **Status:** DEFERRED — user-only. Agent action is none.
-
-### L-55 — `redact_log` newline split-and-rejoin is O(n²) in the worst case
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/bug_report.rs:772-784` (`redact_log`), `src-tauri/src/commands/bug_report.rs:760-765` (`redact_line`), `src-tauri/src/commands/bug_report.rs:687-721` (`apply_allow_list`)
-- **What:** `redact_log` iterates `split_inclusive('\n')`, calls `redact_line` (which first tries `redact_json_line` and falls back to `apply_allow_list`), then pushes back into `out`. `apply_allow_list` does ≥4 sequential `String::replace` calls (home, device_id, gcal_email, then a `for peer in ctx.peer_device_ids` loop) plus an `EMAIL_REGEX.replace_all` pass — each a linear scan with allocation. For a 2 MB file this is many full-buffer linear scans per line, multiplied by the line count. `MAX_LINE_BYTES` truncation via `cap_line_length` runs *after* the replace, so the replace itself sees the original full-length line.
-- **Why it matters:** A bug report on a workstation with thousands of large stack-trace lines could take seconds. Mitigated by the 2 MB file cap.
-- **Cost:** M — switch to a single-pass replacer (e.g. `aho_corasick` or a hand-written matcher over the static needles).
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Acceptable as-is until profiling shows it is a bottleneck; lower priority than M-31 / L-41. If/when fixed, a single-pass `replace_n` over both needles avoids allocations.
-- **Pass-1 source:** 05/F35
-- **Status:** Open
 
 ### L-61 — `op_log.rs::extract_block_id_from_payload` warns and returns `None` on JSON parse failure (DELIBERATE — no action)
 - **Domain:** Op log

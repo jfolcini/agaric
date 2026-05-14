@@ -124,6 +124,7 @@ blake3 = "1.8.3"
 chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
 regex = "1"
+aho-corasick = "1"
 base64 = "0.22.1"
 specta = { version = "=2.0.0-rc.24", features = ["derive"] }
 specta-typescript = "0.0.11"

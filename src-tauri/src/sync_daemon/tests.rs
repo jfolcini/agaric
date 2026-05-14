@@ -26,6 +26,37 @@ fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+/// TEST-4 — generic polling barrier for `SyncDaemon` / `SyncScheduler` tests.
+///
+/// Repeatedly evaluates `predicate` every 5 ms until it returns `true` or
+/// `timeout` elapses, in which case it panics with `label` for triage.
+///
+/// Use this in place of a `tokio::time::sleep(…)` "barrier" whenever the
+/// test has an observable predicate it can poll (e.g.
+/// `scheduler.failure_count(peer) >= 1`, `daemon.handle.is_finished()`,
+/// `sink.events().iter().any(…)`). Pick `timeout` generously (rule of
+/// thumb: 4× the original sleep) so the converted test still fails fast
+/// on a real hang rather than masking a regression.
+///
+/// If no observable predicate exists for a given sleep, leave the sleep
+/// in place with a `// TEST-4: no observable predicate available` comment
+/// — a blind `|| true` predicate would just hide the same race.
+async fn wait_for<F>(mut predicate: F, timeout: std::time::Duration, label: &'static str)
+where
+    F: FnMut() -> bool,
+{
+    let start = std::time::Instant::now();
+    loop {
+        if predicate() {
+            return;
+        }
+        if start.elapsed() >= timeout {
+            panic!("wait_for({label}) timed out after {:?}", timeout);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
 #[test]
 fn shared_event_sink_forwards_to_inner() {
     let inner = Arc::new(RecordingEventSink::new());
@@ -2253,14 +2284,30 @@ async fn daemon_start_and_shutdown() {
     .await
     .expect("daemon should start successfully");
 
-    // Let the daemon run briefly to ensure the select! loop starts
+    // TEST-4: no observable predicate available — sleep retained.
+    // We just want the spawned daemon task to make a turn in its select!
+    // loop before we issue shutdown. There is no production-side signal
+    // exposing "select! loop entered", and adding one to the production
+    // type just for this test is out of scope (see TEST-4 in
+    // pending/REVIEW-LATER.md).
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Shutdown should exit cleanly
     daemon.shutdown();
 
-    // Give the task time to clean up
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // TEST-4: poll until the spawned task finishes; 4× cap on the
+    // original 200 ms guess so a real hang fails fast.
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        std::time::Duration::from_millis(800),
+        "daemon_start_and_shutdown: handle.is_finished()",
+    )
+    .await;
 
     mat.shutdown();
 }
@@ -2292,11 +2339,27 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
     // Cancel active sync (should not affect daemon lifecycle)
     daemon.cancel_active_sync();
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // cancel_active_sync() is a fire-and-forget atomic store; the
+    // observable "daemon noticed and is still alive" requires a tick
+    // through the select! loop with no production-side signal.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Daemon should still be running — shutdown it cleanly
     daemon.shutdown();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // TEST-4: poll until the spawned task finishes; 4× cap on the
+    // original 200 ms guess.
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        std::time::Duration::from_millis(800),
+        "daemon_cancel_does_not_trigger_shutdown: handle.is_finished()",
+    )
+    .await;
 
     mat.shutdown();
 }
@@ -2355,11 +2418,28 @@ async fn two_daemons_start_on_different_ports() {
     .await
     .expect("daemon 2 should start");
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // Both daemons need a turn in their select! loop after start; no
+    // production-side "loop entered" signal exists.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     d1.shutdown();
     d2.shutdown();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // TEST-4: poll until BOTH daemon tasks finish; 4× cap on 200 ms.
+    wait_for(
+        || {
+            d1.handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+                && d2
+                    .handle
+                    .as_ref()
+                    .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        std::time::Duration::from_millis(800),
+        "two_daemons_start_on_different_ports: both handles finished",
+    )
+    .await;
 
     mat1.shutdown();
     mat2.shutdown();
@@ -2407,6 +2487,11 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     .await
     .unwrap();
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // We need the daemon to (a) enter daemon_loop, (b) let Branch C's
+    // immediate first resync tick fire and find zero peers (no-op), and
+    // (c) sit on the next debounce wait. None of these transitions are
+    // exposed to test code, so we still rely on a fixed wait here.
     // Let startup complete and Branch C's first tick pass (no peers → no-op).
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
@@ -2422,8 +2507,17 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     // Trigger Branch B by notifying a local change.
     scheduler.notify_change();
 
-    // Wait for debounce window (100 ms) + connection attempt + margin.
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    // TEST-4: poll until the unreachable peer accumulates a failure, with a
+    // 4× cap on the original 800 ms guess so a real hang fails fast.
+    {
+        let sched = scheduler.clone();
+        wait_for(
+            move || sched.failure_count("REMOTE_PEER") >= 1,
+            std::time::Duration::from_millis(3200),
+            "branch_b: REMOTE_PEER failure_count >= 1",
+        )
+        .await;
+    }
 
     // Verify the scheduler recorded a failure for REMOTE_PEER
     // (try_sync_with_peer couldn't connect → record_failure was called).
@@ -2434,7 +2528,18 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     );
 
     daemon.shutdown();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // TEST-4: poll until the spawned task finishes; 4× cap on 200 ms.
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        std::time::Duration::from_millis(800),
+        "branch_b: handle.is_finished()",
+    )
+    .await;
     mat.shutdown();
 }
 
@@ -2480,6 +2585,11 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     .await
     .unwrap();
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // Same rationale as the sibling branch_b test above: we need the
+    // daemon to enter its loop and let Branch C's first tick pass on an
+    // empty peer table before we insert peers, and the daemon doesn't
+    // expose that transition to test code.
     // Let startup complete and Branch C's first tick pass (no peers → no-op).
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
@@ -2499,8 +2609,20 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     // Trigger Branch B by notifying a local change.
     scheduler.notify_change();
 
-    // Wait for debounce window (100 ms) + connection attempts + margin.
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    // TEST-4: poll until BOTH unreachable peers accumulate a failure (the
+    // regression guard from L-61). 4× cap on the original 800 ms guess.
+    {
+        let sched = scheduler.clone();
+        wait_for(
+            move || {
+                sched.failure_count("REMOTE_PEER_1") >= 1
+                    && sched.failure_count("REMOTE_PEER_2") >= 1
+            },
+            std::time::Duration::from_millis(3200),
+            "branch_b_l61: both peers failure_count >= 1",
+        )
+        .await;
+    }
 
     let f1 = scheduler.failure_count("REMOTE_PEER_1");
     let f2 = scheduler.failure_count("REMOTE_PEER_2");
@@ -2515,7 +2637,18 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     );
 
     daemon.shutdown();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // TEST-4: poll until the spawned task finishes; 4× cap on 200 ms.
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        std::time::Duration::from_millis(800),
+        "branch_b_l61: handle.is_finished()",
+    )
+    .await;
     mat.shutdown();
 }
 
@@ -2561,8 +2694,17 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     .await
     .unwrap();
 
-    // Wait for the first resync tick to fire + sync attempt.
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    // TEST-4: poll until the first resync tick fires and the unreachable
+    // OVERDUE_PEER accumulates a failure. 4× cap on the original 800 ms guess.
+    {
+        let sched = scheduler.clone();
+        wait_for(
+            move || sched.failure_count("OVERDUE_PEER") >= 1,
+            std::time::Duration::from_millis(3200),
+            "branch_c: OVERDUE_PEER failure_count >= 1",
+        )
+        .await;
+    }
 
     // Check if a sync was attempted (failure recorded since port 1 is unreachable).
     let failure_count = scheduler.failure_count("OVERDUE_PEER");
@@ -2572,7 +2714,18 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     );
 
     daemon.shutdown();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // TEST-4: poll until the spawned task finishes; 4× cap on 200 ms.
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        std::time::Duration::from_millis(800),
+        "branch_c: handle.is_finished()",
+    )
+    .await;
     mat.shutdown();
 }
 
@@ -2803,6 +2956,12 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
     .await
     .unwrap();
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // We want the daemon task to enter daemon_loop init (so this asserts
+    // the "active" path was taken, not the dormant waiter). The daemon
+    // does not surface the dormant→active transition to test code; the
+    // post-shutdown timeout-await below is the actual liveness assertion
+    // for the active path.
     // Give the task a moment to make progress through daemon_loop init.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
@@ -2860,6 +3019,11 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     peer_refs::upsert_peer_ref(&pool, "PEER_NEW").await.unwrap();
     scheduler.notify_change();
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // The dormant→active transition isn't exposed to test code (it
+    // happens inside the dormant waiter and continues into daemon_loop).
+    // The shutdown-then-timeout pattern below is the actual liveness
+    // assertion: a hung dormant task would surface there.
     // Give the task a moment to transition.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
@@ -2934,6 +3098,10 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     .await
     .unwrap();
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // We want the daemon to have transitioned past initial peer-presence
+    // detection into daemon_loop before we delete the peer. That
+    // transition isn't surfaced to test code.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Remove the only peer — daemon must still be alive and shutdown
@@ -2997,6 +3165,9 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
     .await
     .expect("daemon should start even when the app is backgrounded");
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // The "select! loop entered" signal isn't exposed; the post-shutdown
+    // timeout-await is the actual liveness assertion.
     // Let the daemon reach its select! loop.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     daemon.shutdown();
@@ -3041,6 +3212,10 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     .await
     .expect("daemon should start");
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // We need the daemon's select! loop to be running before we toggle
+    // lifecycle state, but the daemon doesn't expose that. The actual
+    // liveness assertion is the post-shutdown timeout-await below.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Simulate a background→foreground transition while the daemon is
@@ -3048,9 +3223,16 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     // re-enter and reset the resync interval; it should NOT terminate
     // the daemon.
     lifecycle.mark_backgrounded();
+    // TEST-4: no observable predicate available — sleep retained.
+    // mark_backgrounded() is a fire-and-forget atomic; the wake notify's
+    // effect on the select! loop isn't surfaced to test code.
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     lifecycle.mark_foreground();
 
+    // TEST-4: no observable predicate available — sleep retained.
+    // Same rationale as the background sleep above — we want both wake
+    // notifies to be processed by the select! loop before we shut down,
+    // but the daemon doesn't expose that.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Daemon must still be alive. shutdown() terminates cleanly.

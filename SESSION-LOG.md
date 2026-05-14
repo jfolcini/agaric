@@ -7,6 +7,42 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 743 — L-55 redact_log single-pass + TEST-4 sync_daemon wait_for + MAINT-168 doc (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 2 build + 2 review (parallel, pipelined) + orchestrator-direct doc note |
+| **Items closed** | L-55, TEST-4 (REVIEW-LATER) |
+| **Items modified** | MAINT-168 (reciprocal doc note; entry stays deferred) |
+| **Tests added** | +2 (backend): `redact_log_single_pass_matches_legacy_output`, plus the new `wait_for` helper itself exercised by 9 migrated call sites |
+| **Files touched** | 5 (Cargo.toml + 4 source files) |
+
+**Summary:** Three small backend items shipped in one batch. **L-55** replaces the O(n²) sequential `String::replace` cascade in `commands/bug_report.rs::redact_log` with a single-pass `aho_corasick::AhoCorasick` matcher hoisted out of the per-line loop. `Redactor` struct holds matcher + parallel `replacements: Vec<&'static str>`; `MatchKind::LeftmostLongest` chosen for the overlap case (peer-ID prefix shared across multiple peers) — strictly safer than the legacy cascade (full vs. partial redaction) for that case, and byte-identical for non-overlapping needles. Legacy `redact_line(line, ctx)` now `#[cfg(test)]`-only after callers migrate to `redact_line_with_redactor`. **TEST-4** adds a generic `async fn wait_for(predicate, timeout, label)` test helper to `sync_daemon/tests.rs` (5 ms poll, panics with label on timeout). 9 of 21 flagged fixed-sleep barriers converted to predicate-driven waits (3 × `scheduler.failure_count(peer) >= 1`, 6 × `daemon.handle.is_finished()`); the other 12 retained-with-comment per the plan's "no blind conversion" rule (each retained sleep has a 1-4 line note explaining why no observable predicate exists). Zero production-code accessors added — `daemon.handle.is_finished()` and `scheduler.failure_count` are pre-existing module-visible accessors. **MAINT-168** added a reciprocal `## MAINT-168 — dual schedulers, no coordination` doc-block to `src-tauri/src/sync_scheduler.rs` matching the existing note in `src/hooks/useSyncTrigger.ts`. The REVIEW-LATER entry stays as a deliberately-deferred design note (the cross-reference IS the deliverable today).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 12 → 11 (TEST-4 + L-55 removed; MAINT-168 stays deferred-with-cross-reference).
+- **Detail entries:** 20 → 18.
+
+**Files touched (this session):**
+- `src-tauri/Cargo.toml` (+1: `aho-corasick = "1"` direct dep)
+- `src-tauri/Cargo.lock` (+1)
+- `src-tauri/src/commands/bug_report.rs` (+213 / −0: `Redactor` + `apply_allow_list` rewrite + `redact_line_with_redactor` + `#[cfg(test)]` gate on legacy + regression test)
+- `src-tauri/src/sync_daemon/tests.rs` (+213 / −47: `wait_for` helper + 9 site migrations + 12 retained-with-comment)
+- `src-tauri/src/sync_scheduler.rs` (+21 / −0: MAINT-168 module doc-block)
+- `pending/REVIEW-LATER.md` (−27: TEST-4 + L-55 detail blocks + summary rows + counts)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3685 / 3685 pass, 4 skipped.
+- `cd src-tauri && cargo nextest run sync_daemon::` — 5/5 iteration flake check, 130/130 each iter.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** L-55 reviewer surfaced a subtle behavioural divergence vs. legacy: AhoCorasick `LeftmostLongest` for shared-prefix peer IDs scrubs MORE PII than the order-dependent legacy `String::replace` cascade (which would partial-redact). The new behaviour is strictly safer — kept as-is. Doc-comments on `Redactor` could optionally call this out (nit deferred). TEST-4 reviewer ran the 5-iteration flake loop independently and confirmed 5/5 clean — that's the strongest signal that the predicate timeouts (4× original) are conservative enough.
+
+**Commit plan:** single commit; pushed.
+
+---
+
 ## Session 742 — scale-benchmarks Phase 1 (interactive_slo gate) + PUB-8 closure (2026-05-14)
 
 | Metadata | Value |

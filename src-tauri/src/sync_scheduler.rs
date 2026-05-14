@@ -3,6 +3,27 @@
 //! Provides per-peer mutual exclusion, exponential backoff on failure,
 //! debounced change notifications, and periodic resync tracking.
 //! Designed to be consumed by a future `SyncDaemon` (REVIEW-LATER #382).
+//!
+//! ## MAINT-168 — dual schedulers, no coordination
+//!
+//! This is the **authoritative** sync scheduler. It owns:
+//! - per-peer mutexes (no concurrent syncs to the same peer),
+//! - per-peer exponential backoff `2s → 4s → … → 60s` (see `MIN_BACKOFF`
+//!   / `MAX_BACKOFF` below),
+//! - jittered retry timing,
+//! - silent rejection of redundant `startSync` IPC calls during a
+//!   peer's backoff window.
+//!
+//! The frontend (`src/hooks/useSyncTrigger.ts`) runs its OWN exponential
+//! backoff (`60s → 600s`) — a coarse "wake the scheduler" hint at a much
+//! slower cadence. The two schedulers do not coordinate: when this scheduler
+//! is mid-backoff, the frontend's `startSync()` call resolves with a quick
+//! no-op, then the frontend's own backoff doubles. That dual-layer is a
+//! deliberate split: this scheduler is best for *per-peer* retry sizing
+//! (it knows which peer failed); the frontend trigger is best for *user-
+//! observable* cadence (it doesn't matter which peer failed). Do not add
+//! cross-layer coordination here without re-reading both files end-to-end
+//! and updating this doc + the matching note in `useSyncTrigger.ts`.
 
 use std::collections::HashMap;
 use std::sync::Arc;

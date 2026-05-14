@@ -19,6 +19,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use aho_corasick::{AhoCorasick, MatchKind};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -664,6 +665,88 @@ fn redact_json_value(value: &mut serde_json::Value, depth: usize, key: Option<&s
     }
 }
 
+/// L-55: pre-built single-pass matcher for the static-needle portion of
+/// [`apply_allow_list`]. Hoisting the [`AhoCorasick`] construction out of
+/// the per-line path turns the legacy O(N × L × K) cascade of
+/// `String::replace` calls (one full-buffer scan + allocation per needle
+/// per line) into a single linear scan per line, where K = home +
+/// device_id + gcal_email + len(peer_device_ids).
+///
+/// The matcher uses [`MatchKind::LeftmostLongest`] so that when one needle
+/// is a substring of another (e.g. overlapping peer IDs) the longest one
+/// wins — matching the user-intuitive "scrub the most-specific identifier"
+/// semantics. For the typical input shapes (a home path, a device ID, an
+/// email, and peer IDs of equal length) no needles overlap and the output
+/// is byte-identical to the legacy cascade.
+///
+/// `replacements[i]` is the marker for `needles[i]`. Both vectors share
+/// the same index space and are built from a single pass over the
+/// [`RedactionContext`].
+struct Redactor {
+    matcher: Option<AhoCorasick>,
+    replacements: Vec<&'static str>,
+}
+
+impl Redactor {
+    /// Build a [`Redactor`] from `ctx`. Empty needles (or a context with
+    /// no needles at all) yield a `None` matcher — callers must handle
+    /// the noop branch so the email-regex pass still runs.
+    fn new(ctx: &RedactionContext<'_>) -> Self {
+        // Capacity: home + device_id + gcal_email + every peer. Empty
+        // strings are filtered out before being added so `unwrap` on the
+        // builder result below cannot panic on empty-needle input.
+        let mut needles: Vec<&str> = Vec::with_capacity(3 + ctx.peer_device_ids.len());
+        let mut replacements: Vec<&'static str> = Vec::with_capacity(3 + ctx.peer_device_ids.len());
+        if let Some(home) = ctx.home {
+            if !home.is_empty() {
+                needles.push(home);
+                replacements.push("~");
+            }
+        }
+        if let Some(id) = ctx.device_id {
+            if !id.is_empty() {
+                needles.push(id);
+                replacements.push("[REDACTED_DEVICE_ID]");
+            }
+        }
+        // H-9a (1): specific GCal account email replaced BEFORE the generic
+        // email regex so the known account keeps its precise tag.
+        if let Some(email) = ctx.gcal_email {
+            if !email.is_empty() {
+                needles.push(email);
+                replacements.push("[REDACTED:GCAL_EMAIL]");
+            }
+        }
+        // H-9a (2): every known peer device ID — the local `device_id` is
+        // already covered above, but cross-device sync logs reference peer IDs
+        // verbatim and must be scrubbed independently.
+        for peer in ctx.peer_device_ids {
+            if !peer.is_empty() {
+                needles.push(peer.as_str());
+                replacements.push("[REDACTED:PEER_DEVICE_ID]");
+            }
+        }
+        let matcher = if needles.is_empty() {
+            None
+        } else {
+            // `LeftmostLongest` ensures overlapping needles favour the
+            // most-specific (longest) match — the secure default.
+            // Builder failure is only possible on internal-state limits
+            // (NFA size); for our small needle set it cannot fail.
+            Some(
+                AhoCorasick::builder()
+                    .match_kind(MatchKind::LeftmostLongest)
+                    .build(&needles)
+                    .expect("Redactor needles are small and well-formed"),
+            )
+        };
+        Self {
+            matcher,
+            replacements,
+        }
+    }
+}
+
 /// H-9a fallback: legacy allow-list scrubs for non-JSON lines.
 ///
 /// Replaces specific known-bad values (`$HOME`, `device_id`, GCal email,
@@ -678,40 +761,33 @@ fn redact_json_value(value: &mut serde_json::Value, depth: usize, key: Option<&s
 /// **NOT** the primary path. The deny-list pipeline (`redact_json_line`)
 /// is the safety contract going forward; this function is preserved as
 /// defense-in-depth so the H-9a guarantees are not lost on legacy input.
-fn apply_allow_list(line: &str, ctx: &RedactionContext<'_>) -> String {
-    let mut out = line.to_string();
-    if let Some(home) = ctx.home {
-        if !home.is_empty() {
-            out = out.replace(home, "~");
-        }
-    }
-    if let Some(id) = ctx.device_id {
-        if !id.is_empty() {
-            out = out.replace(id, "[REDACTED_DEVICE_ID]");
-        }
-    }
-    // H-9a (1): specific GCal account email replaced BEFORE the generic
-    // email regex so the known account keeps its precise tag.
-    if let Some(email) = ctx.gcal_email {
-        if !email.is_empty() {
-            out = out.replace(email, "[REDACTED:GCAL_EMAIL]");
-        }
-    }
-    // H-9a (2): every known peer device ID — the local `device_id` is
-    // already covered above, but cross-device sync logs reference peer IDs
-    // verbatim and must be scrubbed independently.
-    for peer in ctx.peer_device_ids {
-        if !peer.is_empty() {
-            out = out.replace(peer.as_str(), "[REDACTED:PEER_DEVICE_ID]");
-        }
-    }
+///
+/// L-55: takes a pre-built [`Redactor`] so the [`AhoCorasick`] matcher is
+/// constructed once per `redact_log` call rather than once per line.
+fn apply_allow_list(line: &str, redactor: &Redactor) -> String {
+    // H-9a (1)/(2): single-pass static-needle scrub via Aho-Corasick.
+    let after_static = if let Some(matcher) = &redactor.matcher {
+        let mut dst = String::with_capacity(line.len());
+        matcher.replace_all_with(line, &mut dst, |mat, _matched, dst| {
+            // `pattern().as_usize()` is the index into our parallel
+            // `replacements` vector — same order as construction.
+            dst.push_str(redactor.replacements[mat.pattern().as_usize()]);
+            true
+        });
+        dst
+    } else {
+        line.to_string()
+    };
     // H-9a (3): generic email catch-all. Runs LAST so the GCal-specific
     // marker above is preserved verbatim (the specific tag itself does not
     // match the email shape, so it is not re-rewritten by this pass).
-    if EMAIL_REGEX.is_match(&out) {
-        out = EMAIL_REGEX.replace_all(&out, "[EMAIL]").into_owned();
+    if EMAIL_REGEX.is_match(&after_static) {
+        EMAIL_REGEX
+            .replace_all(&after_static, "[EMAIL]")
+            .into_owned()
+    } else {
+        after_static
     }
-    out
 }
 
 /// Apply the per-line length cap from [`MAX_LINE_BYTES`] with UTF-8
@@ -743,13 +819,26 @@ fn cap_line_length(out: String) -> String {
 /// 3. **Length cap:** the result is truncated to [`MAX_LINE_BYTES`] with
 ///    a `…[truncated N chars]` marker on overflow.
 ///
-/// Public signature unchanged from H-9a: callers (`redact_log`, the
-/// in-file unit tests) keep working without edit.
+/// Public signature unchanged from H-9a: in-file unit tests keep
+/// working without edit by going through the convenience wrapper.
+///
+/// L-55: builds a [`Redactor`] per call. The production hot path
+/// ([`redact_log`]) uses [`redact_line_with_redactor`] directly to
+/// amortise the matcher-build cost across all lines in a file.
+#[cfg(test)]
 fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
+    let redactor = Redactor::new(ctx);
+    redact_line_with_redactor(line, &redactor)
+}
+
+/// L-55: per-line redaction against a pre-built [`Redactor`]. Hoisted out
+/// of [`redact_line`] so [`redact_log`] can construct the matcher once
+/// per log file instead of once per line.
+fn redact_line_with_redactor(line: &str, redactor: &Redactor) -> String {
     if let Some(redacted) = redact_json_line(line) {
         return cap_line_length(redacted);
     }
-    cap_line_length(apply_allow_list(line, ctx))
+    cap_line_length(apply_allow_list(line, redactor))
 }
 
 /// Apply line-by-line redaction to an entire log file's contents.
@@ -757,7 +846,12 @@ fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
 /// H-9b: each line is dispatched independently — a bundle can mix JSON
 /// (today's log, after the format switch) and text (older rolled files)
 /// without confusing the pipeline.
+///
+/// L-55: builds the [`Redactor`] once before the loop so the Aho-Corasick
+/// matcher (covering home / device_id / gcal_email / peer IDs) is shared
+/// across every line in the file.
 fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
+    let redactor = Redactor::new(ctx);
     let mut out = String::with_capacity(contents.len());
     for line in contents.split_inclusive('\n') {
         // `split_inclusive` preserves the trailing `\n`; strip it before
@@ -766,7 +860,7 @@ fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
             Some(body) => (body, "\n"),
             None => (line, ""),
         };
-        out.push_str(&redact_line(body, ctx));
+        out.push_str(&redact_line_with_redactor(body, &redactor));
         out.push_str(newline);
     }
     out
@@ -2267,6 +2361,55 @@ mod tests {
             "$HOME scrub on text fallback line: {out}"
         );
         assert!(out.contains("~"), "tilde marker present: {out}");
+    }
+
+    /// L-55 — single-pass Aho-Corasick scrub on the text-fallback path must
+    /// produce byte-identical output to the legacy cascade of
+    /// `String::replace` calls for realistic inputs (home + device_id +
+    /// gcal_email + multiple peers across multiple lines, in mixed order,
+    /// including an overlap case where one peer's prefix is shared with
+    /// another peer's full ID). The expected string below is the
+    /// hand-computed result of the legacy ordering:
+    ///   1. home -> `~`
+    ///   2. device_id -> `[REDACTED_DEVICE_ID]`
+    ///   3. gcal_email -> `[REDACTED:GCAL_EMAIL]`
+    ///   4. each peer_device_id -> `[REDACTED:PEER_DEVICE_ID]`
+    ///   5. generic email regex -> `[EMAIL]`
+    /// The matcher uses `MatchKind::LeftmostLongest`, so when one peer
+    /// (e.g. `01HZQ7-PEER-AAA`) is a substring of another
+    /// (e.g. `01HZQ7-PEER-AAA-LONG`) the longest match wins — this is
+    /// the secure-by-default posture and matches the user-intuitive
+    /// "scrub the most-specific identifier" semantics.
+    #[test]
+    fn redact_log_single_pass_matches_legacy_output() {
+        let peers = vec![
+            "01HZQ7-PEER-AAA".to_string(),
+            "01HZQ7-PEER-AAA-LONG".to_string(),
+            "01HZQ7-PEER-BBB".to_string(),
+        ];
+        let ctx = RedactionContext {
+            home: Some("/home/alice"),
+            device_id: Some("DEV-LOCAL-XYZ"),
+            gcal_email: Some("alice@gmail.com"),
+            peer_device_ids: &peers,
+        };
+        let input = "\
+2025-01-01 INFO [agaric] path=/home/alice/notes.db device=DEV-LOCAL-XYZ\n\
+2025-01-01 INFO [gcal] account=alice@gmail.com synced 5 events\n\
+2025-01-01 DEBUG [sync] peer=01HZQ7-PEER-BBB forwarded to 01HZQ7-PEER-AAA\n\
+2025-01-01 DEBUG [sync] long peer=01HZQ7-PEER-AAA-LONG reachable\n\
+2025-01-01 ERROR upstream=bob@example.org timed out at /home/alice/cache\n";
+        let expected = "\
+2025-01-01 INFO [agaric] path=~/notes.db device=[REDACTED_DEVICE_ID]\n\
+2025-01-01 INFO [gcal] account=[REDACTED:GCAL_EMAIL] synced 5 events\n\
+2025-01-01 DEBUG [sync] peer=[REDACTED:PEER_DEVICE_ID] forwarded to [REDACTED:PEER_DEVICE_ID]\n\
+2025-01-01 DEBUG [sync] long peer=[REDACTED:PEER_DEVICE_ID] reachable\n\
+2025-01-01 ERROR upstream=[EMAIL] timed out at ~/cache\n";
+        let out = redact_log(input, &ctx);
+        assert_eq!(
+            out, expected,
+            "single-pass Aho-Corasick output diverged from hand-computed legacy expectation"
+        );
     }
 
     /// H-9b — field VALUES that LOOK structured but contain a non-safe
