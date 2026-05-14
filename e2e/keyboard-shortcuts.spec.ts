@@ -386,7 +386,7 @@ test.describe('Global shortcuts', () => {
     // owns focus so Alt+← / Alt+→ keep their native word-nav semantics
     // inside the editor. Click the header (non-focusable) to move focus
     // back to <body> before the second shortcut fires.
-    await page.locator('header').click()
+    await page.locator('header').first().click()
 
     // Press Alt+Right to go forward
     await page.keyboard.down('Alt')
@@ -413,7 +413,7 @@ test.describe('Global shortcuts', () => {
     // new (empty) journal page — see the matching comment in the Alt+Right
     // test above. Without this, `isTypingInField()` short-circuits Alt+T
     // so it keeps its native editor semantics.
-    await page.locator('header').click()
+    await page.locator('header').first().click()
 
     // Press Alt+T to go to today
     await page.keyboard.down('Alt')
@@ -432,7 +432,7 @@ test.describe('Global shortcuts', () => {
     // until the listener is live and the sheet opens.
     await expect(async () => {
       // Click on the header to ensure no input/textarea/contenteditable is focused
-      await page.locator('header').click()
+      await page.locator('header').first().click()
 
       // Type ? using keyboard.type which dispatches keydown with key='?'
       await page.keyboard.type('?')
