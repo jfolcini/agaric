@@ -1,4 +1,4 @@
-import { expect, test } from './helpers'
+import { clearConsoleErrors, expect, test } from './helpers'
 
 interface MockErrorWindow extends Window {
   __injectMockError?: (command: string, message: string) => void
@@ -43,6 +43,13 @@ test.describe('Error scenarios', () => {
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__clearMockErrors?.()
     })
+    // These tests deliberately inject backend failures that flow through
+    // logger.error → console.error. The global expectNoConsoleErrors gate
+    // (helpers.ts:114) would otherwise fail every test in this file; the
+    // documented opt-out (helpers.ts:39-42) is to clear the captured-error
+    // buffer here, since the errors are intentional rehearsals of the
+    // production failure path, not regressions.
+    clearConsoleErrors(page)
   })
 
   test('shows error toast when block creation fails', async ({ page }) => {
