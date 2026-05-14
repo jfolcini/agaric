@@ -1,7 +1,7 @@
 /**
  * AlertSection — shared list component for overdue/upcoming alert blocks.
  *
- * Parameterized by variant, title, and optional PriorityBadge display.
+ * Parameterized by variant, title, and optional priority Badge display.
  * Used by OverdueSection (destructive) and UpcomingSection (pending).
  *
  * Extracted to eliminate near-duplication between the two sections (#M-11).
@@ -13,10 +13,9 @@ import { cn } from '@/lib/utils'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
-import { AlertListItem } from './ui/alert-list-item'
-import { PriorityBadge } from './ui/priority-badge'
+import { AlertListRow } from './ui/alert-list-row'
+import { Badge } from './ui/badge'
 import { SectionTitle, type SectionTitleColor } from './ui/section-title'
-import { StatusBadge } from './ui/status-badge'
 
 type AlertVariant = 'destructive' | 'pending'
 
@@ -84,7 +83,7 @@ export function AlertSection({
               ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
               : 0
             return (
-              <AlertListItem
+              <AlertListRow
                 key={`${config.keyPrefix}-${block.id}`}
                 variant={variant}
                 tabIndex={0}
@@ -102,9 +101,20 @@ export function AlertSection({
                 }}
               >
                 {block.todo_state && (
-                  <StatusBadge state={config.badgeState}>{block.todo_state}</StatusBadge>
+                  <Badge
+                    tone="status"
+                    shape="rounded"
+                    size="compact"
+                    statusState={config.badgeState}
+                  >
+                    {block.todo_state}
+                  </Badge>
                 )}
-                {showPriorityBadge && block.priority && <PriorityBadge priority={block.priority} />}
+                {showPriorityBadge && block.priority && (
+                  <Badge tone="priority" shape="rounded" size="sm" priorityLevel={block.priority}>
+                    P{block.priority}
+                  </Badge>
+                )}
                 <span className="min-w-0 flex-1 truncate">
                   {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                 </span>
@@ -116,7 +126,7 @@ export function AlertSection({
                     </span>
                   )}
                 </span>
-              </AlertListItem>
+              </AlertListRow>
             )
           })}
       </ul>

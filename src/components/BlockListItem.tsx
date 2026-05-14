@@ -34,9 +34,9 @@ import { DateChipEditor } from './DateChipEditor'
 import { DependencyIndicator } from './DependencyIndicator'
 import { PageLink } from './PageLink'
 import { renderRichContent } from './RichContentRenderer'
+import { Badge } from './ui/badge'
 import { Calendar } from './ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
-import { PriorityBadge } from './ui/priority-badge'
 import { StatusIcon } from './ui/status-icon'
 
 /** Variant of the priority badge rendering used in the metadata row. */
@@ -188,10 +188,15 @@ function BlockMetadataRowInner({
       )}
 
       {priority != null && priority !== '' && priorityVariant === 'default' && (
-        <PriorityBadge
-          priority={priority}
+        <Badge
+          tone="priority"
+          shape="rounded"
+          size="sm"
+          priorityLevel={priority}
           {...(priorityBadgeClassName !== undefined && { className: priorityBadgeClassName })}
-        />
+        >
+          P{priority}
+        </Badge>
       )}
 
       {dueDate && (
@@ -235,7 +240,7 @@ export interface BlockListItemProps {
   statusIconShowDone?: boolean
   /** Priority string ('1' / '2' / '3' / custom). Omit / null / empty to skip. */
   priority?: string | null
-  /** Priority badge rendering variant. `'default'` uses `PriorityBadge`;
+  /** Priority badge rendering variant. `'default'` uses `Badge tone="priority"`;
    * `'agenda'` uses the legacy `agenda-results-priority` layout. */
   priorityVariant?: PriorityBadgeVariant
   /** Extra classes for the priority badge wrapper. */

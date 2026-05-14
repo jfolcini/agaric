@@ -148,7 +148,7 @@ Every frontend change — new component, bugfix, feature — must build on exist
 
 ### Mandatory patterns
 
-- **CVA variants** for any component with visual variants. Follow the Button/Badge pattern: `cva()` base + variants + `cn()` for merging.
+- **CVA variants** for any component with visual variants. Follow the Button/Badge pattern: `cva()` base + variants + `cn()` for merging. `Badge` is the canonical example: `tone` (`default | secondary | destructive | outline | ghost | link | priority | status`) × `size` (`xs | sm | compact | default | lg`) × `shape` (`pill | rounded`); status/priority colours flow in via `statusState` / `priorityLevel`.
 - **Radix UI** for all interactive overlays (Select, Dialog, Popover, Tooltip, AlertDialog). Never build custom dropdowns, modals, or tooltips from scratch.
 - **`cn()` utility** (`src/lib/utils.ts`) for all className composition. Never concatenate class strings manually.
 - **Semantic color tokens** from `index.css` for status, priority, conflict colors. Never hardcode Tailwind color classes (e.g., `text-red-700`) when a semantic token exists (e.g., `text-status-overdue`).
