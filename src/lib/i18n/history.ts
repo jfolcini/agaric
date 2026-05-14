@@ -219,4 +219,5 @@ export const history: Record<string, string> = {
   'history.restoreConfirmDescription':
     'This will replace the current block content with the version from {{timestamp}}. You can undo this change.',
   'history.diff.empty': 'No changes',
+  'compactionCard.errorBoundary': 'Compaction status unavailable.',
 }

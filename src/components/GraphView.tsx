@@ -23,6 +23,7 @@ import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { logger } from '../lib/logger'
 import { EmptyState } from './EmptyState'
+import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { GraphFilterBar } from './GraphFilterBar'
 import { fetchGraphData, type GraphEdge, type GraphNode } from './GraphView.helpers'
 import { LoadingSkeleton } from './LoadingSkeleton'
@@ -206,18 +207,22 @@ export function GraphView(): React.ReactElement {
         className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
         data-testid="graph-view"
       >
-        {/* Multi-dimension filter bar (UX-205) */}
+        {/* Multi-dimension filter bar (UX-205).
+            Wrapped in FeatureErrorBoundary so a crash in the filter / cytoscape
+            integration doesn't blank the entire GraphView (UX Tier 3). */}
         <div
           className="absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]"
           data-testid="graph-tag-filter"
         >
-          <GraphFilterBar
-            filters={filters}
-            onFiltersChange={setFilters}
-            allTags={tags}
-            totalCount={nodes.length}
-            filteredCount={filteredNodes.length}
-          />
+          <FeatureErrorBoundary name="GraphFilterBar">
+            <GraphFilterBar
+              filters={filters}
+              onFiltersChange={setFilters}
+              allTags={tags}
+              totalCount={nodes.length}
+              filteredCount={filteredNodes.length}
+            />
+          </FeatureErrorBoundary>
         </div>
         {/*
          * UX-244: `position: absolute; inset: 0` is required for the SVG to fill

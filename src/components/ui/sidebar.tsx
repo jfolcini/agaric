@@ -14,36 +14,18 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { useSidebarEdgeSwipe } from '@/components/ui/sidebar/use-sidebar-edge-swipe'
+import { useSidebarKeyboard } from '@/components/ui/sidebar/use-sidebar-keyboard'
+import { useSidebarRailDrag } from '@/components/ui/sidebar/use-sidebar-rail-drag'
+import { type SidebarState, useSidebarState } from '@/components/ui/sidebar/use-sidebar-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
 
-const SIDEBAR_COOKIE_NAME = 'sidebar_state'
-const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH_DEFAULT = 150
-const SIDEBAR_WIDTH_MIN = 120
 const SIDEBAR_WIDTH_MOBILE = 'min(18rem, 85vw)'
 const SIDEBAR_WIDTH_ICON = '3rem'
-const SIDEBAR_WIDTH_ICON_PX = 48 // 3rem at 16px base
-const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebar_width'
-const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
-const SWIPE_EDGE_ZONE = 20 // px from left edge to start tracking
-const SWIPE_MIN_DISTANCE = 50 // px horizontal distance to trigger open
 
-type SidebarContextProps = {
-  state: 'expanded' | 'collapsed'
-  open: boolean
-  setOpen: (open: boolean) => void
-  openMobile: boolean
-  setOpenMobile: (open: boolean) => void
-  isMobile: boolean
-  toggleSidebar: () => void
-  sidebarWidth: number
-  setSidebarWidth: (width: number) => void
-  isResizing: boolean
-  setIsResizing: (resizing: boolean) => void
-}
+type SidebarContextProps = SidebarState
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
 
@@ -71,143 +53,30 @@ const SidebarProvider = ({
   onOpenChange?: (open: boolean) => void
   ref?: React.Ref<HTMLDivElement>
 }) => {
-  const isMobile = useIsMobile()
-  const [openMobile, setOpenMobile] = React.useState(false)
-
-  // Sidebar width state — persisted in localStorage
-  const [sidebarWidth, _setSidebarWidth] = React.useState(() => {
-    try {
-      const stored = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
-      if (stored) {
-        const parsed = Number(stored)
-        if (parsed >= SIDEBAR_WIDTH_MIN) return Math.min(parsed, window.innerWidth * 0.5)
-      }
-    } catch {
-      // localStorage unavailable
-    }
-    return SIDEBAR_WIDTH_DEFAULT
-  })
-  const setSidebarWidth = React.useCallback((width: number) => {
-    const maxWidth = Math.floor(window.innerWidth * 0.5)
-    const clamped = Math.max(SIDEBAR_WIDTH_MIN, Math.min(maxWidth, width))
-    _setSidebarWidth(clamped)
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped))
-    } catch {
-      // localStorage unavailable
-    }
-  }, [])
-
-  const [isResizing, setIsResizing] = React.useState(false)
-
-  // This is the internal state of the sidebar.
-  // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen)
-  const open = openProp ?? _open
-  const setOpen = React.useCallback(
-    (value: boolean | ((value: boolean) => boolean)) => {
-      const openState = typeof value === 'function' ? value(open) : value
-      if (setOpenProp) {
-        setOpenProp(openState)
-      } else {
-        _setOpen(openState)
-      }
-
-      // This sets the cookie to keep the sidebar state.
-      // biome-ignore lint/suspicious/noDocumentCookie: shadcn/ui sidebar state persistence
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
-    },
-    [setOpenProp, open],
-  )
-
-  // Helper to toggle the sidebar.
-  const toggleSidebar = React.useCallback(() => {
-    return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open)
-  }, [isMobile, setOpen])
+  const sidebar = useSidebarState({ defaultOpen, open: openProp, onOpenChange: setOpenProp })
+  const {
+    state,
+    open,
+    setOpen,
+    isMobile,
+    openMobile,
+    setOpenMobile,
+    toggleSidebar,
+    sidebarWidth,
+    setSidebarWidth,
+    isResizing,
+    setIsResizing,
+  } = sidebar
 
   // Adds a keyboard shortcut to toggle the sidebar.
-  React.useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
-        // Skip when user is editing — Ctrl+B is Bold in TipTap
-        const target = event.target as HTMLElement | null
-        if (target) {
-          const tag = target.tagName?.toLowerCase()
-          if (tag === 'input' || tag === 'textarea') return
-          if (target.isContentEditable || target.getAttribute?.('contenteditable') === 'true')
-            return
-        }
-        event.preventDefault()
-        toggleSidebar()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleSidebar])
+  useSidebarKeyboard(toggleSidebar)
 
   // Swipe-from-left-edge gesture to open mobile sidebar (navigation drawer pattern).
-  React.useEffect(() => {
-    if (!isMobile || openMobile) return
-
-    let startX = 0
-    let startY = 0
-    let tracking = false
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length > 1) return
-      const touch = e.touches[0]
-      if (!touch) return
-      if (touch.clientX < SWIPE_EDGE_ZONE) {
-        startX = touch.clientX
-        startY = touch.clientY
-        tracking = true
-      }
-    }
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (!tracking) return
-      const touch = e.touches[0]
-      if (!touch) return
-      const dx = touch.clientX - startX
-      const dy = Math.abs(touch.clientY - startY)
-
-      // Cancel if swipe becomes more vertical than horizontal
-      if (dy > Math.abs(dx)) {
-        tracking = false
-        return
-      }
-
-      if (dx >= SWIPE_MIN_DISTANCE) {
-        tracking = false
-        setOpenMobile(true)
-      }
-    }
-
-    const onTouchEnd = () => {
-      tracking = false
-    }
-
-    document.addEventListener('touchstart', onTouchStart, { passive: true })
-    document.addEventListener('touchmove', onTouchMove, { passive: true })
-    document.addEventListener('touchend', onTouchEnd, { passive: true })
-
-    return () => {
-      document.removeEventListener('touchstart', onTouchStart)
-      document.removeEventListener('touchmove', onTouchMove)
-      document.removeEventListener('touchend', onTouchEnd)
-    }
-  }, [isMobile, openMobile])
-
-  // We add a state so that we can do data-state="expanded" or "collapsed".
-  // This makes it easier to style the sidebar with Tailwind classes.
-  const state = open ? 'expanded' : 'collapsed'
+  useSidebarEdgeSwipe(isMobile, openMobile, setOpenMobile)
 
   // Perf 17: list every captured value — including the `useState` setters
-  // `setOpenMobile` / `setIsResizing` which React guarantees stable. Biome's
-  // useExhaustiveDependencies treats stable setters as "extra", so we suppress
-  // it here; the explicit deps list documents the full closure.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: stable useState setters listed for completeness
+  // `setOpenMobile` / `setIsResizing` which React guarantees stable. The
+  // explicit deps list documents the full closure.
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
       state,
@@ -479,103 +348,14 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
   const { t } = useTranslation()
   const { toggleSidebar, setSidebarWidth, sidebarWidth, setIsResizing, setOpen, open } =
     useSidebar()
-  const dragState = React.useRef({
-    dragging: false,
-    startX: 0,
-    startWidth: 0,
-    moved: false,
-    wasCollapsed: false,
+  const { onPointerDown, onDoubleClick } = useSidebarRailDrag({
+    open,
+    sidebarWidth,
+    setSidebarWidth,
+    setOpen,
+    setIsResizing,
+    toggleSidebar,
   })
-  // FE-H-15: track the active drag's listener handles so an unmount mid-drag
-  // can detach them from `document` (the pointerup handler never fires in that
-  // case, leaving stale listeners attached otherwise).
-  const dragListenersRef = React.useRef<{
-    move: (e: PointerEvent) => void
-    up: (e: PointerEvent) => void
-  } | null>(null)
-
-  const onDoubleClick = React.useCallback(() => {
-    setSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
-    setOpen(true)
-  }, [setSidebarWidth, setOpen])
-
-  const onPointerDown = React.useCallback(
-    (e: React.PointerEvent) => {
-      if (e.button !== 0) return
-      e.preventDefault()
-      const state = dragState.current
-      state.dragging = true
-      state.startX = e.clientX
-      state.wasCollapsed = !open
-      // When collapsed, start from 0 so dragging right opens smoothly
-      state.startWidth = open ? sidebarWidth : 0
-      state.moved = false
-
-      const onPointerMove = (ev: PointerEvent) => {
-        if (!state.dragging) return
-        const delta = ev.clientX - state.startX
-        if (Math.abs(delta) > 2 && !state.moved) {
-          state.moved = true
-          setIsResizing(true)
-          // When dragging from collapsed state, open the sidebar
-          if (state.wasCollapsed) {
-            setOpen(true)
-          }
-        }
-        if (state.moved) {
-          const newWidth = state.startWidth + delta
-          if (newWidth < SIDEBAR_WIDTH_ICON_PX) {
-            // Dragged below icon width — collapse
-            state.dragging = false
-            document.removeEventListener('pointermove', onPointerMove)
-            document.removeEventListener('pointerup', onPointerUp)
-            dragListenersRef.current = null
-            document.documentElement.style.cursor = ''
-            document.body.style.userSelect = ''
-            setIsResizing(false)
-            setOpen(false)
-            return
-          }
-          setSidebarWidth(newWidth)
-        }
-      }
-
-      const onPointerUp = () => {
-        state.dragging = false
-        document.removeEventListener('pointermove', onPointerMove)
-        document.removeEventListener('pointerup', onPointerUp)
-        dragListenersRef.current = null
-        document.documentElement.style.cursor = ''
-        document.body.style.userSelect = ''
-        if (state.moved) {
-          setIsResizing(false)
-        } else {
-          // If we didn't drag, treat as a click → toggle
-          toggleSidebar()
-        }
-      }
-
-      document.addEventListener('pointermove', onPointerMove)
-      document.addEventListener('pointerup', onPointerUp)
-      dragListenersRef.current = { move: onPointerMove, up: onPointerUp }
-      document.documentElement.style.cursor = 'col-resize'
-      document.body.style.userSelect = 'none'
-    },
-    [open, sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing, setOpen],
-  )
-
-  // FE-H-15: if the rail unmounts mid-drag, detach the still-attached
-  // `document` listeners so they do not leak and reference stale state.
-  React.useEffect(() => {
-    return () => {
-      const handles = dragListenersRef.current
-      if (handles) {
-        document.removeEventListener('pointermove', handles.move)
-        document.removeEventListener('pointerup', handles.up)
-        dragListenersRef.current = null
-      }
-    }
-  }, [])
 
   return (
     <button

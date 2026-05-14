@@ -226,4 +226,5 @@ export const pages: Record<string, string> = {
   'pages.outline.empty': 'No headings found',
   'pageTree.toggleNamespace': 'Toggle {{path}} namespace',
   'pageTree.toggleHybrid': 'Toggle {{path}} (hybrid namespace)',
+  'pageProperty.tableErrorBoundary': 'Failed to load properties.',
 }
