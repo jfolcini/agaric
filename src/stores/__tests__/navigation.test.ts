@@ -1162,6 +1162,181 @@ describe('useNavigationStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // Perf-review Tier 2 #11 — `navigateToPage` cross-store batching invariant
+  // ---------------------------------------------------------------------------
+  //
+  // `navigateToPage` mutates up to four stores in a single sync tick
+  // (recent-pages, tabs, navigation × 2 — `setView` + `setSelectedBlockId`).
+  // The 2026-05-09 perf review flagged this as "5 separate subscriber waves
+  // through the React tree per page-click" and asked for a transactional
+  // helper.
+  //
+  // React 19's `useSyncExternalStore` integration coalesces external-store
+  // notifications that land inside the same synchronous tick into ONE render
+  // pass — regardless of how many distinct stores fire. zustand 5 subscribes
+  // each React hook via `useSyncExternalStore`, so the four `set()` calls
+  // inside `navigateToPage` translate into a single React render per
+  // subscriber, not four. The audit's "5 subscriber waves" is accurate at
+  // the JS-notify layer (each store's listener list fires immediately on
+  // `set()`) but does NOT translate to 5 React renders — React batches.
+  //
+  // This test pins that behaviour: a `navigateToPage` call must produce
+  // exactly one render in each of three independent subscribers (one per
+  // affected store). If React's batching ever regresses — or if someone
+  // introduces an awaited tick between the four `set()` calls — this test
+  // will catch it.
+  describe('perf-review #11 — navigateToPage batches cross-store renders', () => {
+    it('a single navigateToPage call produces ≤1 render per subscribed store', async () => {
+      // Local imports — only this perf test needs RTL + React, the rest of
+      // the file is store-only.
+      const { act, render } = await import('@testing-library/react')
+      const { createElement, useRef } = await import('react')
+
+      // Seed BOTH navigation slices to non-default values so the two
+      // `set()` calls inside `navigateToPage` produce visible changes for
+      // the `Object.is` comparator. Without this, `setSelectedBlockId(null)`
+      // would be a no-op (already null) and the nav probe would re-render
+      // for `setView` only, hiding any potential un-batched fan-out
+      // between the two nav writes.
+      useNavigationStore.setState({ currentView: 'pages', selectedBlockId: 'OLD' })
+
+      // Render-count probes, one per store. Each subscribes to a single
+      // slice via zustand's standard hook (which uses
+      // `useSyncExternalStore` under the hood — see zustand 5
+      // esm/react.mjs) so we measure the same fan-out that production
+      // consumers experience.
+      let recentRenders = 0
+      let tabsRenders = 0
+      let navRenders = 0
+
+      function RecentProbe() {
+        useRecentPagesStore((s) => s.recentPages)
+        const r = useRef(0)
+        r.current++
+        recentRenders = r.current
+        return createElement('span', { 'data-testid': 'recent' })
+      }
+
+      function TabsProbe() {
+        useTabsStore((s) => s.tabs)
+        const r = useRef(0)
+        r.current++
+        tabsRenders = r.current
+        return createElement('span', { 'data-testid': 'tabs' })
+      }
+
+      function NavProbe() {
+        // Subscribe to both navigation slices that `navigateToPage` writes
+        // (currentView + selectedBlockId). A single render here means React
+        // coalesced setView's `set()` AND setSelectedBlockId's `set()` —
+        // those are the two intra-store writes that the audit counted
+        // separately (lines :234/253/266 + :235/254/267).
+        useNavigationStore((s) => s.currentView)
+        useNavigationStore((s) => s.selectedBlockId)
+        const r = useRef(0)
+        r.current++
+        navRenders = r.current
+        return createElement('span', { 'data-testid': 'nav' })
+      }
+
+      function Probes() {
+        return createElement(
+          'div',
+          {},
+          createElement(RecentProbe),
+          createElement(TabsProbe),
+          createElement(NavProbe),
+        )
+      }
+
+      render(createElement(Probes))
+
+      const recentBaseline = recentRenders
+      const tabsBaseline = tabsRenders
+      const navBaseline = navRenders
+
+      // Drive a single navigateToPage call inside `act()` so React flushes
+      // its scheduler before we inspect the counters. With React 19's
+      // automatic batching, the four `set()` calls (recent-pages,
+      // tabs, navigation × 2) collapse into one render per subscribed slice.
+      act(() => {
+        useTabsStore.getState().navigateToPage('P1', 'My Page')
+      })
+
+      // Each probe re-renders exactly ONCE. React 19 collapses the four
+      // `set()` calls (recent-pages, tabs, navigation × 2) into a single
+      // render per `useSyncExternalStore` subscription — even though the
+      // nav probe subscribes to TWO slices that both fire inside the same
+      // tick. The audit's "5 subscriber waves" claim is accurate at the
+      // JS-notify layer but does NOT translate to React renders.
+      expect(recentRenders - recentBaseline).toBe(1)
+      expect(tabsRenders - tabsBaseline).toBe(1)
+      expect(navRenders - navBaseline).toBe(1)
+
+      // Belt-and-braces: total renders across the whole tree is exactly
+      // 3 — one per probe component. This pins the outcome of perf-review
+      // #11 ("batching already works"). If a future change reverts to
+      // un-batched fan-out, this would jump to 4-5 and the test would
+      // fail loudly.
+      const totalDelta =
+        recentRenders - recentBaseline + (tabsRenders - tabsBaseline) + (navRenders - navBaseline)
+      expect(totalDelta).toBe(3)
+    })
+
+    it('date-routed navigateToPage batches journal + nav writes into ≤1 render each', async () => {
+      const { act, render } = await import('@testing-library/react')
+      const { createElement, useRef } = await import('react')
+
+      // Start from a view that the date-routed branch will actually change
+      // (it calls `setView('journal')`). `resetStore()` defaults to
+      // 'journal', so without this preflight the nav probe would not
+      // re-render — `Object.is('journal','journal')` short-circuits the
+      // `useSyncExternalStore` notification and we'd measure zero,
+      // confounding the batching test with a no-op-write artefact.
+      useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: 'OLD' })
+
+      let journalRenders = 0
+      let navRenders = 0
+
+      function JournalProbe() {
+        useJournalStore((s) => s.currentDate)
+        useJournalStore((s) => s.mode)
+        const r = useRef(0)
+        r.current++
+        journalRenders = r.current
+        return createElement('span')
+      }
+
+      function NavProbe() {
+        useNavigationStore((s) => s.currentView)
+        useNavigationStore((s) => s.selectedBlockId)
+        const r = useRef(0)
+        r.current++
+        navRenders = r.current
+        return createElement('span')
+      }
+
+      render(createElement('div', {}, createElement(JournalProbe), createElement(NavProbe)))
+
+      const journalBaseline = journalRenders
+      const navBaseline = navRenders
+
+      act(() => {
+        useTabsStore.getState().navigateToPage('DATE', '2026-04-20')
+      })
+
+      // The date-routed branch hits journal.navigateToDate (1 set),
+      // navigation.setView (1 set, page-editor → journal), and
+      // navigation.setSelectedBlockId (1 set, 'OLD' → null), plus
+      // recent-pages.recordVisit (1 set, not subscribed here). React
+      // batches them into exactly one render per probe component, despite
+      // each probe subscribing to two slices on the same store.
+      expect(journalRenders - journalBaseline).toBe(1)
+      expect(navRenders - navBaseline).toBe(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // FEAT-3 Phase 3 — per-space tab partitioning
   // ---------------------------------------------------------------------------
   describe('FEAT-3p3 per-space tabs', () => {

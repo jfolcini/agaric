@@ -12,6 +12,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { FormField } from '@/components/ui/form-field'
 import {
   Select,
   SelectContent,
@@ -122,10 +123,7 @@ export function AppearanceTab(): React.ReactElement {
   return (
     <div className="space-y-6 max-w-md">
       {/* Theme selector */}
-      <div className="space-y-2">
-        <label htmlFor="theme-select" className="text-sm font-medium">
-          {t('settings.themeLabel')}
-        </label>
+      <FormField label={t('settings.themeLabel')} htmlFor="theme-select">
         <Select value={themeToSelect(theme)} onValueChange={handleThemeChange}>
           <SelectTrigger id="theme-select" aria-label={t('settings.themeLabel')}>
             <SelectValue />
@@ -140,13 +138,10 @@ export function AppearanceTab(): React.ReactElement {
             <SelectItem value="one-dark-pro">{t('settings.themeOneDarkPro')}</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </FormField>
 
       {/* Font size selector */}
-      <div className="space-y-2">
-        <label htmlFor="font-size-select" className="text-sm font-medium">
-          {t('settings.fontSizeLabel')}
-        </label>
+      <FormField label={t('settings.fontSizeLabel')} htmlFor="font-size-select">
         <Select value={fontSize} onValueChange={handleFontSizeChange}>
           <SelectTrigger id="font-size-select" aria-label={t('settings.fontSizeLabel')}>
             <SelectValue />
@@ -157,16 +152,13 @@ export function AppearanceTab(): React.ReactElement {
             <SelectItem value="large">{t('settings.fontSizeLarge')}</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </FormField>
 
       {/* Week-start preference (UX-9). Previously a half-shipped feature
           exposed only via the `week-start-preference` localStorage key.
           Surfacing it in Appearance lets users pick Monday / Sunday-
           first weeks without devtools. */}
-      <div className="space-y-2">
-        <label htmlFor="week-start-select" className="text-sm font-medium">
-          {t('settings.weekStartLabel')}
-        </label>
+      <FormField label={t('settings.weekStartLabel')} htmlFor="week-start-select">
         <Select value={String(weekStartsOn)} onValueChange={handleWeekStartChange}>
           <SelectTrigger id="week-start-select" aria-label={t('settings.weekStartLabel')}>
             <SelectValue />
@@ -176,7 +168,7 @@ export function AppearanceTab(): React.ReactElement {
             <SelectItem value="0">{t('settings.weekStartSunday')}</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </FormField>
     </div>
   )
 }

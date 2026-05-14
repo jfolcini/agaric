@@ -49,6 +49,7 @@ export function WeeklyView({
               backlinkCounts={backlinkCounts}
               onNavigateToPage={onNavigateToPage}
               onAddBlock={onAddBlock}
+              lazyMount
             />
           </RescheduleDropZone>
         )

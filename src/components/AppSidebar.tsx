@@ -3,14 +3,18 @@
  *
  * Owns the sticky top space-switcher branding, the primary navigation
  * menu, and the bottom action strip (new page, sync, theme toggle,
- * shortcuts, collapse). All cross-cutting state (current view, sync
- * status, theme, dialogs) remains in the parent (App.tsx) and is
- * passed in as props for now — this batch is a pure JSX move, not a
- * state migration. `CollapseButton` and `syncDotClass` are
+ * shortcuts, collapse). `CollapseButton` and `syncDotClass` are
  * sidebar-internal helpers and live alongside the JSX they support.
  *
- * Subsequent MAINT-124 batches will extract `useAppDialogs()` and
- * `<ViewDispatcher>` from the remaining App.tsx body.
+ * Subscription split (PERF-19 — design-system perf review tier-3 #19):
+ * pure shell-only zustand slices — `syncStore.{state,peers,lastSyncedAt}`,
+ * `spaceStore.{availableSpaces,currentSpaceId}`, and the polling
+ * `useTrashCount` badge — live INSIDE this component, not on App.tsx.
+ * App's prop surface shrinks to the routing/action slices it actually
+ * uses (current view, theme cycle, sync trigger, dialog openers); the
+ * sidebar becomes the leaf subscriber for everything else, which keeps
+ * the `React.memo` shallow-compare gate (Session 717) tight on the
+ * remaining props.
  */
 
 import { ChevronsLeft, Keyboard, Moon, Plus, RefreshCw, Sun, WifiOff } from 'lucide-react'
@@ -19,10 +23,10 @@ import { useTranslation } from 'react-i18next'
 import { THEME_NAME_KEY, type ThemePreference } from '../hooks/useTheme'
 import { formatRelativeTime } from '../lib/format-relative-time'
 import { getShortcutKeys } from '../lib/keyboard-config'
-import type { SpaceRow } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import type { View } from '../stores/navigation'
-import type { PeerInfo, SyncState } from '../stores/sync'
+import { useSpaceStore } from '../stores/space'
+import { type SyncState, useSyncStore } from '../stores/sync'
 import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { NAV_ITEMS } from './nav-items'
 import { SpaceAccentBadge } from './SpaceAccentBadge'
@@ -41,6 +45,7 @@ import {
   SidebarRail,
   useSidebar,
 } from './ui/sidebar'
+import { useTrashCount } from './ViewDispatcher'
 
 /**
  * Compute the CSS class for the sync status dot colour.
@@ -84,41 +89,43 @@ function CollapseButton() {
 export interface AppSidebarProps {
   currentView: View
   onSelectView: (view: Exclude<View, 'page-editor'>) => void
-  trashCount: number
-  syncState: SyncState
-  syncPeers: PeerInfo[]
   syncing: boolean
   isOnline: boolean
-  lastSyncedAt: string | null
   isDark: boolean
   currentTheme: ThemePreference
   onToggleTheme: () => void
   onNewPage: () => void
   onSyncClick: () => void
   onShowShortcuts: () => void
-  availableSpaces: SpaceRow[]
-  currentSpaceId: string | null
 }
 
 function AppSidebarInner({
   currentView,
   onSelectView,
-  trashCount,
-  syncState,
-  syncPeers,
   syncing,
   isOnline,
-  lastSyncedAt,
   isDark,
   currentTheme,
   onToggleTheme,
   onNewPage,
   onSyncClick,
   onShowShortcuts,
-  availableSpaces,
-  currentSpaceId,
 }: AppSidebarProps): ReactElement {
   const { t } = useTranslation()
+  // PERF-19 (tier-3): pushed-down zustand selectors. App.tsx no longer
+  // forwards these as props — the sidebar is the sole consumer of
+  // sync-store status, the space-store roster, and the trash badge
+  // count, so it owns the subscription. App's prop surface drops by 6
+  // (trashCount, syncState, syncPeers, lastSyncedAt, availableSpaces,
+  // currentSpaceId), tightening the `React.memo` shallow-compare gate
+  // (Session 717) and keeping unrelated App-shell rerenders (e.g. a
+  // `currentView` flip) from washing through the sidebar.
+  const syncState = useSyncStore((s) => s.state)
+  const syncPeers = useSyncStore((s) => s.peers)
+  const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
+  const availableSpaces = useSpaceStore((s) => s.availableSpaces)
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const trashCount = useTrashCount()
   return (
     /*
      * "icon" collapses the sidebar to a 48px icon-only rail rather than

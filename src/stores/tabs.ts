@@ -203,6 +203,39 @@ export const useTabsStore = create<TabsStore>()(
       activeTabIndexBySpace: {},
 
       navigateToPage: (pageId: string, title: string, blockId?: string) => {
+        // PERF-REVIEW #11 (2026-05-09): this action chains up to four
+        // cross-store `set()` calls in one sync tick — recent-pages
+        // (`recordVisit`), tabs (`set(spliceTabs(...))`), navigation
+        // (`setView` + `setSelectedBlockId`), and on the date-routed
+        // branch, journal (`navigateToDate`). The audit flagged this as
+        // "5 separate subscriber waves through the React tree per page-
+        // click" and recommended a transactional helper.
+        //
+        // Verification (Session 711): the audit is accurate at the JS
+        // notify layer — each store's listener list DOES fire immediately
+        // on `set()`, so a single `navigateToPage` produces 4-5 listener
+        // wakeups across the affected stores. However, those wakeups do
+        // NOT translate to 4-5 React renders. zustand 5 subscribes each
+        // React hook via `useSyncExternalStore` (see
+        // `node_modules/zustand/esm/react.mjs`), and React 19's scheduler
+        // coalesces all `useSyncExternalStore` notifications that land
+        // in the same synchronous tick into a single render per
+        // subscribed component — regardless of how many distinct stores
+        // fire.
+        //
+        // The render-batching invariant is pinned by
+        // `src/stores/__tests__/navigation.test.ts` →
+        // 'perf-review #11 — navigateToPage batches cross-store renders'.
+        // The test mounts probes subscribed to recent-pages, tabs, and
+        // navigation, drives a single navigateToPage call inside
+        // `act()`, and asserts each probe re-renders exactly once. If
+        // a future change introduces an awaited tick between any two
+        // `set()` calls in this action, that test will fail.
+        //
+        // Conclusion: no transactional helper is needed — React 19
+        // already batches. Item #11 closed as "no fix needed; subscribers
+        // already batch" in `pending/design-system-perf-review-2026-05-09.md`.
+
         // FEAT-9: record every navigateToPage call as a recent-visit. The
         // store dedups by pageId, so repeated visits stay MRU-correct. Note
         // that we record the visit BEFORE the date-routed branch short-

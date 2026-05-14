@@ -73,6 +73,7 @@
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
     "date-fns": "^4.1.0",
+    "highlight.js": "^11.11.1",
     "html5-qrcode": "^2.3.8",
     "i18next": "^26.0.6",
     "jszip": "^3.10.1",

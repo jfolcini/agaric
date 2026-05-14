@@ -608,25 +608,60 @@ describe('JournalPage', () => {
     })
 
     it('renders BlockTree for days with pages in weekly view', async () => {
-      const user = userEvent.setup()
-      const todayStr = formatDate(new Date())
+      // WeeklyView lazy-mounts each day's BlockTree (perf-review Tier 2
+      // item 7) — installed mock fires intersection immediately so the
+      // placeholder→tree swap happens for this test. The shared
+      // test-setup.ts stub is a no-op that never reports intersection,
+      // which would leave the placeholder mounted forever.
+      const AutoIntersectingObserver = class {
+        callback: (entries: IntersectionObserverEntry[]) => void
+        observed: Set<Element> = new Set()
+        constructor(callback: (entries: IntersectionObserverEntry[]) => void) {
+          this.callback = callback
+        }
+        observe(el: Element) {
+          this.observed.add(el)
+          // Fire intersection on next microtask so the component finishes
+          // its initial render before the state flips.
+          queueMicrotask(() => {
+            this.callback([{ target: el, isIntersecting: true } as IntersectionObserverEntry])
+          })
+        }
+        unobserve(el: Element) {
+          this.observed.delete(el)
+        }
+        disconnect() {
+          this.observed.clear()
+        }
+        takeRecords(): IntersectionObserverEntry[] {
+          return []
+        }
+      }
+      vi.stubGlobal('IntersectionObserver', AutoIntersectingObserver)
 
-      mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
+      try {
+        const user = userEvent.setup()
+        const todayStr = formatDate(new Date())
 
-      renderJournal()
+        mockJournalPages([makeDailyPage({ id: 'DP-TODAY', content: todayStr })])
 
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
+        renderJournal()
 
-      const weekTab = screen.getByRole('tab', { name: /weekly view/i })
-      await user.click(weekTab)
+        await waitFor(() => {
+          expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+        })
 
-      await waitFor(() => {
-        const trees = screen.getAllByTestId('block-tree')
-        expect(trees).toHaveLength(1)
-        expect(trees[0]).toHaveAttribute('data-parent-id', 'DP-TODAY')
-      })
+        const weekTab = screen.getByRole('tab', { name: /weekly view/i })
+        await user.click(weekTab)
+
+        await waitFor(() => {
+          const trees = screen.getAllByTestId('block-tree')
+          expect(trees).toHaveLength(1)
+          expect(trees[0]).toHaveAttribute('data-parent-id', 'DP-TODAY')
+        })
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
   })
 

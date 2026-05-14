@@ -15,11 +15,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { CardButton } from '../card-button'
 import { CloseButtonIcon, closeButtonClassName } from '../close-button'
+import { FormField } from '../form-field'
 import { IconButton } from '../icon-button'
 import { Input } from '../input'
 import { Label } from '../label'
 import { ListItem } from '../list-item'
+import { MetricCard } from '../metric-card'
 import { RecentPageChip } from '../recent-page-chip'
+import { SectionGroupHeader } from '../section-group-header'
 import { Spinner } from '../spinner'
 import { ToggleGroup, ToggleGroupItem } from '../toggle-group'
 
@@ -756,6 +759,253 @@ describe('IconButton', () => {
       <IconButton tooltip="Star this page" ariaLabel="Star this page">
         <span aria-hidden="true">★</span>
       </IconButton>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MetricCard — `rounded-lg border bg-muted/30 p-4 text-center` tile used in
+// StatusPanel for sync / queue / dispatch counters. Replaces 5+ inline copies.
+// ---------------------------------------------------------------------------
+
+describe('MetricCard', () => {
+  it('renders the value', () => {
+    render(<MetricCard label="Peers" value={3} />)
+    expect(screen.getByText('3')).toBeInTheDocument()
+  })
+
+  it('renders the label as a <dt> when wrapped in a <dl> (default dl-item mode)', () => {
+    render(
+      <dl>
+        <MetricCard label="Peers" value={3} />
+      </dl>,
+    )
+    expect(screen.getByText('Peers').tagName).toBe('DT')
+    expect(screen.getByText('3').tagName).toBe('DD')
+  })
+
+  it('renders plain <div>s when as="div"', () => {
+    render(<MetricCard label="Peers" value={3} as="div" />)
+    expect(screen.getByText('Peers').tagName).toBe('DIV')
+    expect(screen.getByText('3').tagName).toBe('DIV')
+  })
+
+  it('renders the optional footer node', () => {
+    render(<MetricCard label="Queue" value={5} footer="Peak: 12" />)
+    expect(screen.getByText('Peak: 12')).toBeInTheDocument()
+  })
+
+  it('applies the success tone classes', () => {
+    const { container } = render(<MetricCard label="Done" value={0} tone="success" />)
+    const card = q(container, '[data-slot="metric-card"]')
+    expect(getClasses(card)).toContain('border-status-done')
+  })
+
+  it('applies the warning tone classes', () => {
+    const { container } = render(<MetricCard label="Queue" value={42} tone="warning" />)
+    const card = q(container, '[data-slot="metric-card"]')
+    expect(getClasses(card)).toContain('border-status-pending')
+  })
+
+  it('renders the labelSlot in place of the default label when provided', () => {
+    render(
+      <MetricCard
+        value={3}
+        labelSlot={
+          <dt data-testid="custom-label">
+            <button type="button">Peers</button>
+          </dt>
+        }
+      />,
+    )
+    expect(screen.getByTestId('custom-label')).toBeInTheDocument()
+  })
+
+  it('applies the always-on chrome (rounded, border, bg-muted/30, p-4, text-center)', () => {
+    const { container } = render(<MetricCard label="X" value={1} />)
+    const card = q(container, '[data-slot="metric-card"]')
+    expect(getClasses(card)).toContain('rounded-lg')
+    expect(getClasses(card)).toContain('border')
+    expect(getClasses(card)).toContain('bg-muted/30')
+    expect(getClasses(card)).toContain('p-4')
+    expect(getClasses(card)).toContain('text-center')
+  })
+
+  it('merges custom className', () => {
+    const { container } = render(<MetricCard label="X" value={1} className="status-metric" />)
+    const card = q(container, '[data-slot="metric-card"]')
+    expect(getClasses(card)).toContain('status-metric')
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLDivElement>()
+    render(<MetricCard ref={ref} label="X" value={1} />)
+    expect(ref.current).toBeInstanceOf(HTMLDivElement)
+  })
+
+  it('has no a11y violations (dl-item mode)', async () => {
+    const { container } = render(
+      <dl>
+        <MetricCard label="Peers" value={3} footer="updated 5m ago" />
+      </dl>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SectionGroupHeader — chip-style sub-section header used in DuePanel /
+// DonePanel. Sibling to SectionTitle (kept separate; see component header).
+// ---------------------------------------------------------------------------
+
+describe('SectionGroupHeader', () => {
+  it('renders its children inside a <div>', () => {
+    render(<SectionGroupHeader>Doing</SectionGroupHeader>)
+    const el = screen.getByText('Doing')
+    expect(el).toBeInTheDocument()
+    expect(el.tagName).toBe('DIV')
+  })
+
+  it('emits data-slot="section-group-header"', () => {
+    const { container } = render(<SectionGroupHeader>Doing</SectionGroupHeader>)
+    expect(container.querySelector('[data-slot="section-group-header"]')).toBeInTheDocument()
+  })
+
+  it('applies the chip chrome (uppercase, bg-muted/50, rounded, tracking-wide)', () => {
+    const { container } = render(<SectionGroupHeader>Doing</SectionGroupHeader>)
+    const el = q(container, '[data-slot="section-group-header"]')
+    expect(getClasses(el)).toContain('uppercase')
+    expect(getClasses(el)).toContain('tracking-wide')
+    expect(getClasses(el)).toContain('bg-muted/50')
+    expect(getClasses(el)).toContain('rounded')
+    expect(getClasses(el)).toContain('font-semibold')
+  })
+
+  it('merges custom className', () => {
+    const { container } = render(
+      <SectionGroupHeader className="due-panel-group-header">Doing</SectionGroupHeader>,
+    )
+    const el = q(container, '[data-slot="section-group-header"]')
+    expect(getClasses(el)).toContain('due-panel-group-header')
+    expect(getClasses(el)).toContain('bg-muted/50')
+  })
+
+  it('renders the caller element when asChild is true', () => {
+    render(
+      <SectionGroupHeader asChild>
+        <h3 data-testid="custom-heading">Doing</h3>
+      </SectionGroupHeader>,
+    )
+    const el = screen.getByTestId('custom-heading')
+    expect(el.tagName).toBe('H3')
+    expect(el.className).toContain('bg-muted/50')
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLDivElement>()
+    render(<SectionGroupHeader ref={ref}>Doing</SectionGroupHeader>)
+    expect(ref.current).toBeInstanceOf(HTMLDivElement)
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(<SectionGroupHeader>Doing</SectionGroupHeader>)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FormField — label + control + description/error wrapper for settings tabs.
+// Pairs with the shared `Label` primitive so typography stays consistent.
+// ---------------------------------------------------------------------------
+
+describe('FormField', () => {
+  it('renders the label text', () => {
+    render(
+      <FormField label="Theme" htmlFor="theme-select">
+        <input id="theme-select" />
+      </FormField>,
+    )
+    expect(screen.getByText('Theme')).toBeInTheDocument()
+  })
+
+  it('associates the label with the control via htmlFor', () => {
+    render(
+      <FormField label="Theme" htmlFor="theme-select">
+        <input id="theme-select" data-testid="control" />
+      </FormField>,
+    )
+    const label = screen.getByText('Theme')
+    expect(label).toHaveAttribute('for', 'theme-select')
+    // getByLabelText resolves through the for/id association.
+    expect(screen.getByLabelText('Theme')).toBe(screen.getByTestId('control'))
+  })
+
+  it('renders the children control', () => {
+    render(
+      <FormField label="Theme" htmlFor="t">
+        <input id="t" data-testid="theme-input" />
+      </FormField>,
+    )
+    expect(screen.getByTestId('theme-input')).toBeInTheDocument()
+  })
+
+  it('renders the description when provided and no error', () => {
+    render(
+      <FormField label="Theme" description="Pick a UI theme" htmlFor="t">
+        <input id="t" />
+      </FormField>,
+    )
+    expect(screen.getByText('Pick a UI theme')).toBeInTheDocument()
+  })
+
+  it('renders the error in place of the description when both are provided', () => {
+    render(
+      <FormField label="Theme" description="Pick one" error="Required" htmlFor="t">
+        <input id="t" />
+      </FormField>,
+    )
+    expect(screen.getByText('Required')).toBeInTheDocument()
+    expect(screen.queryByText('Pick one')).not.toBeInTheDocument()
+  })
+
+  it('marks the error message with role="alert"', () => {
+    render(
+      <FormField label="Theme" error="Required" htmlFor="t">
+        <input id="t" />
+      </FormField>,
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Required')
+  })
+
+  it('emits data-slot="form-field"', () => {
+    const { container } = render(
+      <FormField label="Theme" htmlFor="t">
+        <input id="t" />
+      </FormField>,
+    )
+    expect(container.querySelector('[data-slot="form-field"]')).toBeInTheDocument()
+  })
+
+  it('merges custom className on the wrapper', () => {
+    const { container } = render(
+      <FormField label="Theme" htmlFor="t" className="my-field">
+        <input id="t" />
+      </FormField>,
+    )
+    const wrapper = q(container, '[data-slot="form-field"]')
+    expect(getClasses(wrapper)).toContain('my-field')
+    expect(getClasses(wrapper)).toContain('space-y-2')
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <FormField label="Theme" description="Pick one" htmlFor="theme-select">
+        <input id="theme-select" />
+      </FormField>,
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()

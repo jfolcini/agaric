@@ -19,7 +19,21 @@
 > `WhileDragging`); **15** (calendar.tsx classNames + buttonVariants
 > hoist); **16** (overlay base-string hoist on dialog, sheet, popover,
 > select); **17** (Sidebar `useMemo` deps complete); **18** (Breadcrumb
-> inline onClick replaced by event delegation).
+> inline onClick replaced by event delegation); **11**
+> (`navigateToPage` cross-store fan-out — verified React 19 + zustand 5
+>
+> + `useSyncExternalStore` already batches the 4-5 `set()` calls into a
+> single render per subscribed component; no transactional helper
+> needed; invariant pinned by render-count probes in `navigation.test.ts`);
+> **19** (App.tsx zustand-selector audit — pushed `syncStore.{state,
+> peers,lastSyncedAt}`, `spaceStore.{availableSpaces,currentSpaceId}`,
+> and `useTrashCount` directly into AppSidebar; pushed `tabsStore.goBack`
+> into ViewDispatcher; App now subscribes to 4 selectors —
+> `currentView`, `setView`, `navigateToPage`, `pageStack` — of which
+> `setView` and `navigateToPage` are stable action refs (zero re-render
+> cost), leaving only `currentView` + `pageStack` as effective rerender
+> triggers; AppSidebar's prop surface dropped from 16 to 10 props,
+> tightening the existing `React.memo` shallow-compare gate).
 > **Partial:** **4** — inline `onClick`/`onKeyDown` arrows on
 > `BlockListItem` rows replaced via a memoed per-block handler factory
 > in `useBlockNavigation` (`getRowHandlers`) across AgendaResults,
@@ -28,7 +42,16 @@
 > surface is primitivized (BlockListItem renders its own metadata from
 > typed primitive props) — tracked as a follow-up.
 > **Still open:** Tier 1 item 3; the `metadata` half of item 4;
-> Tier 2 remaining items (6, 7, 11, 12); Tier 3 item (19).
+> Tier 2 remaining items (6, 12). Item **7** closed —
+> `DaySection.lazyMount` defers per-day `BlockTree` mounting until the
+> day enters the viewport via a one-shot inline `IntersectionObserver`
+> (`200px 0px` rootMargin, disconnects after first intersection),
+> swapping a 200px placeholder for the heavy
+> `SortableContext`/viewport-observer/batch-attachments/slash-commands/
+> roving-editor subtree only when needed; `WeeklyView` opts in for all
+> 7 days while `DailyView` keeps eager mount; `prefers-reduced-motion`
+> eagerly mounts to avoid the visible swap; a 2-3 visible-day Week view
+> now mounts 2-3 BlockTrees instead of 7.
 >
 > **Tier 2.8 closed** (`useGraphSimulation` split into setup + patch
 > effects; the SVG `g` group, zoom behavior, and ResizeObserver now
@@ -66,10 +89,10 @@ const cache = useResolveStore((s) => s.cache)
 `dist/index.html` emits 93 `modulepreload` tags including `editor-q3nmlp2u.js` (480K), `LinkPreviewTooltip-DQWPFXIe.js` (304K), `highlight-bqqDqH2C.js` (148K), `dnd-_ieDZQYq.js` (56K), `datepicker-DrlFMZhF.js` (76K), `export-graph-DgPJkOA3.js` (96K). Even though `JournalPage` is the only eager view, `BlockTree` → `use-roving-editor.ts` pulls all 28 TipTap extensions into the critical path. The `vite.config.ts:35-36` comment already acknowledges this. (`d3-CHvRSp5e.js` is *not* preloaded — it ships only when `GraphView` mounts.)
 **Fix (in priority order):**
 
-- Lazy-load the TipTap stack — JournalPage's static-render path can use `StaticBlock` until first focus/edit, then dynamic-import the editor and its 28 extensions.
-- Lazy-mount `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog` (currently mounted unconditionally at `src/App.tsx:494, 510, 515`) — drops `export-graph`/jszip out of the critical path.
-- Investigate `LinkPreviewTooltip` (304K) with `ANALYZE=1 npm run build`; sub-deps are unattributed in the present build.
-- Curate `lowlight` languages — currently uses the `common` preset = 37 languages (`src/components/RichContentRenderer.tsx:33`, `src/editor/use-roving-editor.ts:89`). Estimated savings ~70-100 KB.
++ Lazy-load the TipTap stack — JournalPage's static-render path can use `StaticBlock` until first focus/edit, then dynamic-import the editor and its 28 extensions.
++ Lazy-mount `BugReportDialog` / `QuickCaptureDialog` / `NoPeersDialog` (currently mounted unconditionally at `src/App.tsx:494, 510, 515`) — drops `export-graph`/jszip out of the critical path.
++ Investigate `LinkPreviewTooltip` (304K) with `ANALYZE=1 npm run build`; sub-deps are unattributed in the present build.
++ ~~Curate `lowlight` languages — currently uses the `common` preset = 37 languages (`src/components/RichContentRenderer.tsx:33`, `src/editor/use-roving-editor.ts:89`). Estimated savings ~70-100 KB.~~ *(closed — Tier 1.3 sub-point 4)* Both call sites now import a shared `curatedLowlight` instance from `src/lib/lowlight-curated.ts`, which registers 16 hand-picked grammars (`bash`, `css`, `diff`, `dockerfile`, `go`, `javascript`, `json`, `markdown`, `plaintext`, `python`, `rust`, `shell`, `sql`, `typescript`, `xml`, `yaml`) covering the languages users actually write in the app. Dropped `arduino`, `c`, `cpp`, `csharp`, `graphql`, `ini`, `java`, `kotlin`, `less`, `lua`, `makefile`, `objectivec`, `perl`, `php`, `php-template`, `python-repl`, `r`, `ruby`, `scss`, `swift`, `vbnet`, `wasm` from the `common` preset — 21 grammars off the critical path. Unsupported languages fall back to plain text via the existing `try/catch` in `renderHighlightedCode`. Pinned by `src/lib/__tests__/lowlight-curated.test.ts` (exact-set assertion guards against drift back toward `common`).
 
 **4. `BlockListItem.memo` is defeated by inline JSX and inline handlers in every panel.** *(partial — handlers fixed; metadata still inline.)*
 Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions were confirmed at `src/components/AgendaResults.tsx:280, 313, 314`; `src/components/DuePanel.tsx:301, 320, 321`; `src/components/DonePanel.tsx:254, 268, 269`. New element + new function identities every parent render — the memo never hits.
@@ -88,9 +111,9 @@ Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions w
 `src/components/HistoryListView.tsx:78`, `src/components/AgendaResults.tsx:351-378`, `src/components/DonePanel.tsx:248`, `src/components/DuePanel.tsx:292`, and `src/components/BlockListRenderer.tsx:172` all `.map()` every row. BlockTree uses an `IntersectionObserver` placeholder pattern (`SortableBlockWrapper.tsx:80-93`) — paint is skipped offscreen but the React tree stays mounted, so reconciliation walks every row. PageBrowser is the only large list using `@tanstack/react-virtual` (`src/components/PageBrowser.tsx:14, 292`).
 **Fix:** extend the PageBrowser pattern to AgendaResults, History, Done/Due panels. For BlockTree, evaluate replacing the IntersectionObserver scheme with windowing — placeholder mounts already imply correct measured heights. (ConflictList was deleted by PEND-09 Phase 5; no longer relevant.)
 
-**7. WeeklyView mounts one `BlockTree` per day; `DaySection` is not memoized.** *(partial — DaySection now memoized.)*
-`src/components/journal/WeeklyView.tsx:42` maps `entries` to `DaySection`; `DaySection` was wrapped with `React.memo` in Session 710, but each instance still mounts a full `BlockTree` (`:162`) carrying its own `SortableContext`, viewport observer, batch-attachments provider, slash-commands hook, and roving editor. Concurrent fan-out scales with the entry count.
-**Fix:** memoize `DaySection`; consider a single shared `SortableContext` across days, and lazy-mount day BlockTrees on viewport entry.
+**7. ~~WeeklyView mounts one `BlockTree` per day; `DaySection` is not memoized.~~** *(closed)*
+~~`src/components/journal/WeeklyView.tsx:42` maps `entries` to `DaySection`; `DaySection` was wrapped with `React.memo` in Session 710, but each instance still mounts a full `BlockTree` (`:162`) carrying its own `SortableContext`, viewport observer, batch-attachments provider, slash-commands hook, and roving editor. Concurrent fan-out scales with the entry count.~~
+**Resolved:** `DaySection` now accepts an opt-in `lazyMount` prop. When enabled, the heavy `BlockTree` + `PageBlockStoreProvider` subtree is replaced by a `200px` min-height placeholder until a one-shot `IntersectionObserver` (inline in `DaySection.tsx`, `rootMargin: '200px 0px'` matching the existing virtualisation convention) reports entry — the observer disconnects after the first intersection so the tree stays mounted across subsequent quick scrolls (no re-spawn churn). `WeeklyView` opts in for all 7 days; `DailyView` (single-day) keeps the eager default. `prefers-reduced-motion: reduce` is honoured by eagerly mounting (avoids the visible placeholder→tree swap for motion-sensitive users). The existing `useViewportObserver` hook was evaluated and rejected: its contract is "toggle offscreen state for already-mounted blocks" (virtualisation lite), whereas this fix needs "mount once on first viewport entry, stay mounted." Regression coverage: `DaySection.test.tsx` (`lazyMount` describe block) pins (a) eager mount when `lazyMount` is unset, (b) placeholder rendered until `IntersectionObserver` fires, (c) swap to `BlockTree` after intersection, (d) eager mount under `prefers-reduced-motion`, (e) no phantom placeholder when `pageId` is null; `WeeklyView.test.tsx` asserts every DaySection receives `lazyMount`. A 7-day Week view that's only showing 2-3 days in the viewport now mounts only 2-3 BlockTrees instead of 7, cutting concurrent `SortableContext` / viewport observer / batch-attachments / slash-commands / roving-editor fan-out proportionally. Memoization of `DaySection` (Session 710) and the single-shared-`SortableContext` exploration mentioned in the original fix note are out of scope here — the lazy-mount alone delivers the perf win and is the simpler change.
 
 **8. ~~GraphView simulation rebuilt on filter change.~~** *(closed)*
 ~~`src/hooks/useGraphSimulation.ts:108` deps array is `[svgRef, nodes, workerFailed, attachZoom, renderElements, runWorker, runMainThread]`. Filter toggles change `nodes`/`renderElements` identity, causing the entire d3 simulation and SVG selection trees to be torn down and rebuilt rather than patched.~~
@@ -104,9 +127,14 @@ Inline `metadata={<>...</>}` plus inline `onClick`/`onKeyDown` arrow functions w
 HistoryListItem and `journal/DaySection` were wrapped with `React.memo` in Session 710. `ConflictListItem` was deleted by PEND-09 Phase 5 (no longer applicable). `src/components/AppSidebar.tsx:104` is still a plain function export and receives ~10 store-derived props from `App.tsx`; every store change in App cascades into the sidebar tree.
 **Fix:** wrap `AppSidebar` in `React.memo`; also audit which selectors actually need to live in App vs the sidebar.
 
-**11. `tabs.navigateToPage` chains 5 cross-store mutations per click.**
-`src/stores/tabs.ts:212` (`recordVisit`), `:228` (`navigateToDate`), `:234, 253, 266` (`setNavigationView`), `:235, 254, 267` (`setNavigationSelectedBlockId`), `:264` (tabs `set`). Each fans out to its own subscriber set on every page navigation.
-**Fix:** introduce a transactional helper that batches the writes, or rely on React 19 automatic batching by ensuring all writes happen inside a single sync tick.
+**11. ~~`tabs.navigateToPage` chains 5 cross-store mutations per click.~~** *(closed — no fix needed; subscribers already batch.)*
+~~`src/stores/tabs.ts:212` (`recordVisit`), `:228` (`navigateToDate`), `:234, 253, 266` (`setNavigationView`), `:235, 254, 267` (`setNavigationSelectedBlockId`), `:264` (tabs `set`). Each fans out to its own subscriber set on every page navigation.~~
+**Resolved (Session 711):** verified empirically that React 19's automatic batching already coalesces the fan-out into a single render per subscribed component. zustand 5.0.12 subscribes each React hook via `useSyncExternalStore` (`node_modules/zustand/esm/react.mjs:6`), and React 19.2's scheduler collapses all `useSyncExternalStore` notifications that land in the same sync tick into ONE render pass — even when the notifications come from distinct stores. The audit's "5 separate subscriber waves" is accurate at the JS notify layer (each store's listener list does fire immediately on `set()`) but does NOT translate to 5 React renders.
+The invariant is pinned by two new tests in `src/stores/__tests__/navigation.test.ts` (`'perf-review #11 — navigateToPage batches cross-store renders'`):
+
+1. A page-editor `navigateToPage('P1', 'My Page')` produces exactly **one** render in each of three independent probe components (subscribed to `recentPages`, `tabs`, and `navigation` × 2 slices respectively). Total tree-wide renders: 3.
+2. A date-routed `navigateToPage('DATE', '2026-04-20')` produces exactly **one** render each in a journal probe (subscribed to `currentDate` + `mode`) and a navigation probe (subscribed to `currentView` + `selectedBlockId`) — i.e. the two writes inside each store still coalesce into one render.
+If a future change introduces an awaited tick between any of the four `set()` calls in `navigateToPage`, those tests fail. An inline comment block at `src/stores/tabs.ts:205` documents the verification and points at the test for future readers. No transactional helper introduced — Option A (rely on React 19 batching) holds.
 
 **12. `BugReportDialog`, `QuickCaptureDialog`, `NoPeersDialog` mounted unconditionally.**
 `src/App.tsx:494, 510, 515`. Controlled by `open` props but always in the React tree. Pulls `jszip` (via `bug-report-zip.ts:11`) and dialog content into the entry chunk via the `export-graph-DgPJkOA3.js` 96K chunk.
@@ -140,35 +168,50 @@ HistoryListItem and `journal/DaySection` were wrapped with `React.memo` in Sessi
 `src/components/ui/breadcrumb.tsx:270-273` — `.map()` builds an inline arrow per item. Defeats memoization on every render of the popover content.
 **Fix:** extract the click handler to a stable `useCallback` or pass `data-id` and use event delegation.
 
-**19. App.tsx subscribes to ~10 store slices.**
-`src/App.tsx:67-92` — verified count is ~10 zustand selectors plus a few hook composites (the round-1 "~17" estimate counted destructured fields). Any store change cascades into the unmemoized AppSidebar plus the dialogs that mount unconditionally (see #10, #12).
-**Fix:** push selectors down into the components that actually use them; let App subscribe only to the routing/view-shell slices.
+**19. ~~App.tsx subscribes to ~10 store slices.~~** *(closed)*
+~~`src/App.tsx:67-92` — verified count is ~10 zustand selectors plus a few hook composites (the round-1 "~17" estimate counted destructured fields). Any store change cascades into the unmemoized AppSidebar plus the dialogs that mount unconditionally (see #10, #12).~~
+**Resolved:** App.tsx now subscribes to only four zustand selectors —
+`currentView`, `setView` (stable action), `navigateToPage` (stable
+action), and `pageStack` — all genuine routing / view-shell slices.
+Pushed down into `AppSidebar` (the sole consumer): `useSyncStore.{state,
+peers, lastSyncedAt}`, `useSpaceStore.{availableSpaces, currentSpaceId}`,
+and the polling `useTrashCount` hook (now imported from `ViewDispatcher`
+where it is defined). Pushed down into `ViewDispatcher` (the sole
+consumer): `useTabsStore.goBack`. Effective re-render triggers in App
+collapse to `currentView` and `pageStack`; the two action subscriptions
+never change identity. As a side benefit, AppSidebar's prop surface
+shrinks from 16 to 10 props, which tightens the `React.memo`
+shallow-compare gate added in Session 717 (item 10). Tests in
+`src/components/__tests__/AppSidebar.test.tsx` were updated to seed the
+sync store via a `seedSyncStore({…})` helper instead of injecting prop
+overrides; `ViewDispatcher.test.tsx` dropped the `onBack` prop from
+its `defaultProps` builder.
 
 ---
 
 ## Confirmed wins (don't break these)
 
-- **Single roving TipTap editor** — only the focused block hosts `<EditorContent>`; others render `StaticBlock` (`EditableBlock.tsx:247-262`). Matches `ARCHITECTURE.md:627-641`.
-- **React 19 ref-as-prop migration is complete** — zero `forwardRef` in `src/components/ui/` (verified by grep across all 37 primitives).
-- **All 13 secondary views are `React.lazy`** (`src/components/ViewDispatcher.tsx:48-66`); `KeyboardShortcuts` and `WelcomeModal` lazy in `App.tsx:60-65`.
-- **Mermaid + PdfViewerDialog + html5-qrcode lazy/dynamic-imported** — `src/components/RichContentRenderer.tsx:29`, `src/components/StaticBlock.tsx:27`, `src/components/QrScanner.tsx:43`.
-- **Zustand selector discipline enforced** — zero `useStore()` whole-state reads anywhere in `src/`.
-- **lucide-react tree-shake correct** — all 118 import sites use named imports.
-- **DuePanel is the gold-standard memoization example** — `useMemo` at lines 98, 107, 113, 130, 151, 161 with documented FE-H-19 rationale.
-- **manualChunks** in `vite.config.ts:29-92` (editor / highlight / dnd / datepicker / ui-radix / react-vendor / d3) for cache stability.
-- **`BlockTree` action/resolver bags correctly memoized** via `useMemo` at `src/components/BlockTree.tsx:626-673` — descendants using context don't re-render on unrelated state.
-- **Graph simulation runs in a Web Worker** with main-thread fallback (`useGraphSimulation.ts:75-76`).
-- **`useBlockPropertiesBatch` and `BatchAttachmentsProvider`** collapse N per-row IPC calls into one per page (`BlockTree.tsx:357, 701`, MAINT-131 / PEND-35).
-- **`BootGate` uses `useShallow`** for object selector (`BootGate.tsx:13`).
-- **Production builds drop sourcemaps** (`vite.config.ts:133`); `withGlobalTauri: false` (`tauri.conf.json:13`); single-locale i18n (`src/lib/i18n/index.ts:60`).
++ **Single roving TipTap editor** — only the focused block hosts `<EditorContent>`; others render `StaticBlock` (`EditableBlock.tsx:247-262`). Matches `ARCHITECTURE.md:627-641`.
++ **React 19 ref-as-prop migration is complete** — zero `forwardRef` in `src/components/ui/` (verified by grep across all 37 primitives).
++ **All 13 secondary views are `React.lazy`** (`src/components/ViewDispatcher.tsx:48-66`); `KeyboardShortcuts` and `WelcomeModal` lazy in `App.tsx:60-65`.
++ **Mermaid + PdfViewerDialog + html5-qrcode lazy/dynamic-imported** — `src/components/RichContentRenderer.tsx:29`, `src/components/StaticBlock.tsx:27`, `src/components/QrScanner.tsx:43`.
++ **Zustand selector discipline enforced** — zero `useStore()` whole-state reads anywhere in `src/`.
++ **lucide-react tree-shake correct** — all 118 import sites use named imports.
++ **DuePanel is the gold-standard memoization example** — `useMemo` at lines 98, 107, 113, 130, 151, 161 with documented FE-H-19 rationale.
++ **manualChunks** in `vite.config.ts:29-92` (editor / highlight / dnd / datepicker / ui-radix / react-vendor / d3) for cache stability.
++ **`BlockTree` action/resolver bags correctly memoized** via `useMemo` at `src/components/BlockTree.tsx:626-673` — descendants using context don't re-render on unrelated state.
++ **Graph simulation runs in a Web Worker** with main-thread fallback (`useGraphSimulation.ts:75-76`).
++ **`useBlockPropertiesBatch` and `BatchAttachmentsProvider`** collapse N per-row IPC calls into one per page (`BlockTree.tsx:357, 701`, MAINT-131 / PEND-35).
++ **`BootGate` uses `useShallow`** for object selector (`BootGate.tsx:13`).
++ **Production builds drop sourcemaps** (`vite.config.ts:133`); `withGlobalTauri: false` (`tauri.conf.json:13`); single-locale i18n (`src/lib/i18n/index.ts:60`).
 
 ---
 
 ## Doc-vs-code drift to resolve
 
-- `ARCHITECTURE.md:1024, 1048` says "29 shadcn/ui" — actual count is 37 (`pending/design-system-maintainability-2026-05-09.md:35-44` already notes this).
-- `ARCHITECTURE.md:2206` cites "REVIEW-LATER.md P-15/P-16" — those IDs don't exist; current ones are `PERF-19/PERF-20`.
-- `AGENTS.md:130-138` documents the layer table as policy but no automated import-boundary check exists in the prek hook list at `AGENTS.md:249`.
++ `ARCHITECTURE.md:1024, 1048` says "29 shadcn/ui" — actual count is 37 (`pending/design-system-maintainability-2026-05-09.md:35-44` already notes this).
++ `ARCHITECTURE.md:2206` cites "REVIEW-LATER.md P-15/P-16" — those IDs don't exist; current ones are `PERF-19/PERF-20`.
++ `AGENTS.md:130-138` documents the layer table as policy but no automated import-boundary check exists in the prek hook list at `AGENTS.md:249`.
 
 ---
 

@@ -29,10 +29,10 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
-import { common, createLowlight } from 'lowlight'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { curatedLowlight } from '@/lib/lowlight-curated'
 import { AtTagPicker, atTagPickerPluginKey } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker, blockLinkPickerPluginKey } from './extensions/block-link-picker'
@@ -86,7 +86,9 @@ export function shouldSplitOnBlur(markdown: string): boolean {
   return blocks.length > 1
 }
 
-const lowlight = createLowlight(common)
+// Share the curated lowlight instance with `RichContentRenderer` so bundlers
+// only ship one copy of the grammars (see `src/lib/lowlight-curated.ts`).
+const lowlight = curatedLowlight
 
 /** Inline Code with configurable shortcut to toggle inline code. @internal Exported for testing. */
 export const CodeWithShortcut = Code.extend({

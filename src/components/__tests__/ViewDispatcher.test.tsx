@@ -83,7 +83,6 @@ function defaultProps(overrides: Partial<ViewDispatcherProps> = {}): ViewDispatc
     currentView: 'journal',
     activePage: null,
     onPageSelect: vi.fn(),
-    onBack: vi.fn(),
     navigateToPage: vi.fn(),
     ...overrides,
   }
@@ -182,7 +181,6 @@ describe('ViewDispatcher — Suspense fallback', () => {
           currentView="status"
           activePage={null}
           onPageSelect={vi.fn()}
-          onBack={vi.fn()}
           navigateToPage={vi.fn()}
         />,
       )

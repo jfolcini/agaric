@@ -1,4 +1,3 @@
-import { common, createLowlight } from 'lowlight'
 import { AlertTriangle, Info, Lightbulb, StickyNote, XCircle } from 'lucide-react'
 import type React from 'react'
 import { Fragment, lazy, Suspense } from 'react'
@@ -19,6 +18,7 @@ import type {
   TextNode,
 } from '../editor/types'
 import { i18n } from '../lib/i18n'
+import { curatedLowlight } from '../lib/lowlight-curated'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
 import { ScrollArea } from './ui/scroll-area'
@@ -30,7 +30,10 @@ const LazyMermaidDiagram = lazy(() =>
   import('./MermaidDiagram').then((m) => ({ default: m.MermaidDiagram })),
 )
 
-const lowlight = createLowlight(common)
+// `curatedLowlight` is the shared instance (see `src/lib/lowlight-curated.ts`).
+// Aliased locally so the existing `lowlight.highlight(...)` call-sites below
+// keep their concise form and we avoid touching unrelated lines.
+const lowlight = curatedLowlight
 
 /** Render-time context shared across block and inline sub-renderers. */
 interface RenderContext {

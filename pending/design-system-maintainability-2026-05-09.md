@@ -6,12 +6,14 @@
 > and 1e (TagList `pickReadableForeground` helper + `--shadow-accent-stroke`
 > token replacing the two `drop-shadow-[…]` arbitrary classes) all shipped.
 > Phase 2 partial: **2a** (cn() merge order unified across Button / Label /
-> Spinner to the Badge form `cn(variants(...), className)`) and **2b**
+> Spinner to the Badge form `cn(variants(...), className)`), **2b**
 > (`asChild` polymorphism added to `card-button`, `list-item`,
-> `alert-list-item`, `recent-page-chip`, `popover-menu-item`) shipped.
+> `alert-list-item`, `recent-page-chip`, `popover-menu-item`), and **2d**
+> (MetricCard + SectionGroupHeader + FormField extracted; StatusPanel,
+> DuePanel, DonePanel, AppearanceTab migrated; primitive inventory bumped
+> 38 → 41) shipped.
 > **Still open:** 1d (text-[10px] decision needs a design pass), Phase 2
-> items 2c (badge-family consolidation) and 2d (extract MetricCard /
-> SectionGroupHeader / FormField clusters), Phase 3 structural moves.
+> item 2c (badge-family consolidation), Phase 3 structural moves.
 > Tiers remain independent — Tier 1 is mechanical cleanup, Tier 2 is API
 > consolidation that pays back over time, Tier 3 is the bigger structural
 > moves that need more thought before scheduling.
@@ -236,7 +238,7 @@ compatibility shims would cost more than they save.
 render as the right element type for each call site without the
 per-primitive composition workarounds we have today.
 
-### 2d. Extract three duplication clusters
+### 2d. Extract three duplication clusters — **closed**
 
 Each is documented with file:line evidence:
 
@@ -263,6 +265,53 @@ Each is documented with file:line evidence:
   Extract `<FormField label description error>{children}</FormField>`
   in `src/components/ui/form-field.tsx`. Migrate the AppearanceTab
   first as the smallest case study; defer the larger files to Phase 3.
+
+**Done:**
+
+- `MetricCard` (`src/components/ui/metric-card.tsx`) ships with
+  `label` / `value` / `icon` / `tone` (`default` | `warning` |
+  `success`) plus a `labelSlot` escape hatch for the existing
+  tooltip-bound `MetricLabel` in `StatusPanel`, an `as` toggle
+  (`dl-item` default emits `<dd>` / `<dt>` so callers keep description-
+  list semantics; `div` emits plain `<div>`s for non-`<dl>` parents),
+  and an optional `footer` slot for the "Peak: N" sub-line. All 8
+  inline cells in `StatusPanel.tsx` (4 materializer metrics with
+  warning/success tone via `queueHealthClasses`, 4 sync metrics)
+  migrated.
+- `SectionGroupHeader` (`src/components/ui/section-group-header.tsx`)
+  shipped **as a sibling to `SectionTitle`**, not as an extension. The
+  shapes are different in role and styling: `SectionTitle` is an
+  `<h4>` document-heading primitive (`text-xs font-semibold mb-1.5
+  flex items-center gap-1` + colour-token text fill, no background),
+  whereas the call sites consolidated here use a chip-shaped
+  sub-section divider (`px-3 py-1 ... uppercase tracking-wide
+  bg-muted/50 rounded` + larger touch-target on coarse pointers).
+  Folding both into one CVA matrix would create variants that are
+  illegal together (e.g. chip background only makes sense at the
+  larger density). Cleaner as two named primitives. Migrated
+  `DuePanel.tsx:284` (group-state sub-headers — `DOING`/`TODO`/`DONE`/`Other`)
+  and `DonePanel.tsx:245` (per-page group headers — note: `HistoryPanel`
+  was the plan's named second site, but it does not actually contain
+  the inline shape; the real sibling-of-`DuePanel` duplication lives
+  in `DonePanel`, which uses `bg-muted` rather than `bg-muted/50` —
+  the migration passes that as a className override so twMerge picks
+  it up).
+- `FormField` (`src/components/ui/form-field.tsx`) extracted with
+  `label` / `description` / `error` / `htmlFor` / `children`. Uses
+  the shared `Label` primitive so typography stays consistent.
+  `AppearanceTab` migrated (3 inline `<div className="space-y-2">`
+  `<label>` + control blocks → 3 `<FormField>`s). Larger sites
+  (`KeyboardSettingsTab`, `PropertyRowEditor`,
+  `GoogleCalendarSettingsTab`) deliberately deferred to a follow-up
+  as the plan called out.
+- Tests: 33 new specs in `src/components/ui/__tests__/primitives.test.tsx`
+  cover render, slot contracts, variant classes, refs, and axe a11y
+  for all three primitives.
+- Inventory: `ARCHITECTURE.md` bumped 38 → 41 with `metric-card`,
+  `section-group-header`, and `form-field` added (the previous "37"
+  header was already inaccurate vs. its own list of 38; both header
+  and list updated). `AGENTS.md` primitive-example list extended
+  with `FormField`, `MetricCard`, `SectionGroupHeader`.
 
 ### Phase 2 cost / impact / risk
 
