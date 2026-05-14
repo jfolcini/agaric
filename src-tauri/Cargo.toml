@@ -389,10 +389,20 @@ path = "src/bin/agaric-mcp.rs"
 # PEND-15 Phase 0 — read-only audit binary that enumerates cross-space
 # references in a local notes.db. Informs the user's Path A vs Path B
 # gating decision before Phase 1 lands. Standalone (no Tauri app handle).
+#
+# NOTE (session 738): the `required-features = ["diagnostics"]` gate
+# previously here broke the release matrix — `tauri-bundler` scans every
+# `[[bin]]` entry and tries to copy each release binary into the
+# .deb/.rpm bundle regardless of `required-features`, so a feature-gated
+# bin that isn't built leaves a dangling `target/.../release/<name>`
+# path the bundler can't satisfy. Restoring the unconditional build is
+# the minimal fix. The original bundle-size concern (the bin adds
+# ~8 MB to the .deb / AppImage) is real but separate; the proper
+# resolution is to move the diagnostic bins into their own crate so
+# they sit outside the main `[[bin]]` scan entirely.
 [[bin]]
 name = "audit_cross_space_refs"
 path = "src/bin/audit_cross_space_refs.rs"
-required-features = ["diagnostics"]
 
 # PEND-09 Phase 2 day-4 — read-only diagnostic that prints a histogram of
 # the user's `op_log` table (count + percentage per op_type) and compares
@@ -401,10 +411,12 @@ required-features = ["diagnostics"]
 # Session 698 for the multi-day chain. The binary opens the DB with
 # `SqliteConnectOptions::read_only(true)` so it can never accidentally
 # write to the user's data — safe to run on a live DB.
+#
+# Bundle-size gating intentionally removed — see the note above on
+# `audit_cross_space_refs`.
 [[bin]]
 name = "op_log_histogram"
 path = "src/bin/op_log_histogram.rs"
-required-features = ["diagnostics"]
 
 # PEND-09 Phase 3 day-10 — `parity_report` bin deleted alongside the
 # `merge_parity_log` table (migration `0057`).  The bin's reason for

@@ -91,6 +91,23 @@ language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
 
+# Layer-boundary guard — UI primitives in `src/components/ui/` must be
+# stateless. They are atomic building blocks (AGENTS.md "Component
+# hierarchy") and must never reach into zustand stores: any feature
+# requiring app state belongs in `src/components/` (shared) or higher
+# layers. Catches the drift class where someone wires a primitive
+# directly to `useNavigationStore` etc. — the next reviewer would
+# otherwise have to spot the violation by eye on every PR.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "no-ui-store-imports"
+name = "ui primitives must not import zustand stores"
+entry = "bash -c 'if grep -rnE \"from ['\\''\\\"](\\@/stores|\\.\\./stores|\\.\\./\\.\\./stores)\" src/components/ui/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=__tests__; then echo \"ERROR: src/components/ui/ primitives must be stateless — move state-dependent logic up to src/components/ (shared) or src/hooks/. See AGENTS.md \\\"Component hierarchy\\\".\"; exit 1; fi'"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx"]
+
 # Legacy React API guard — block re-introduction of APIs we migrated away from
 # (MAINT-48 React 19, MAINT-49 TypeScript 6, follow-up MutableRefObject removal).
 # Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are
