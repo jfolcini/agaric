@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-16 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
+17 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -49,6 +49,7 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
+| TEST-E2E-1 | TEST | 34 pre-existing e2e failures cluster in `agenda-advanced.spec.ts` (26 — DuePanel never reaches visible state), `features-coverage.spec.ts` (3 — journal view modes), `keyboard-shortcuts.spec.ts` (3 — Alt+Left/Right/T), `settings.spec.ts` (1 — Keyboard tab shortcut list), `templates.spec.ts` (1 — `/template` slash command). Verified pre-existing by reverting Phase 3a + re-running one agenda test (still failed). `ci.yml` has no playwright step so these have been quietly broken on local-only runs. Likely culprits: DuePanel mount timing under the journal view (data-testid not appearing within 5s); journal view-mode switching (Daily → Weekly transitions); Alt+Left/Right keyboard shortcuts. Needs a dedicated agenda/journal-page e2e investigation session. | M-L | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `FormattingToolbar` (16), `GraphView` (8), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently. `BlockContextMenu` (19, only 9 are bare on `props.onClose`, already complies), `useBlockKeyboardHandlers` (10), `HeadingLevelSelector` (7) audited & confirmed legitimate (all no-arg spies, comment-annotated). `BlockPropertyEditor` (7) audited & all 7 tightened to `toHaveBeenCalledWith(...)`. | M | — |
 
 ### Quick wins (S-cost, ready to grab)
