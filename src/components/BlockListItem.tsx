@@ -61,6 +61,21 @@ export interface BlockListItemProps {
   onReschedule?: (blockId: string, newDate: string) => void
   /** Whether this item is focused via keyboard navigation. */
   isFocused?: boolean
+  /**
+   * Optional inline `style` (perf-review Tier 2 #6, 2026-05-14) —
+   * `@tanstack/react-virtual` consumers (AgendaResults, HistoryListView,
+   * DonePanel, DuePanel) need to apply `position: absolute` +
+   * `transform: translateY(...)` directly on the row's `<li>` so each
+   * virtual row keeps a single listitem-roled element (wrapping
+   * `BlockListItem` in another `<li>` would emit invalid nested-`<li>`
+   * HTML; wrapping in a `<div>` would lose the listitem role queried by
+   * tests via `getAllByRole('listitem')`).
+   */
+  style?: React.CSSProperties
+  /** Optional `ref` forwarded to the `<li>` so the virtualizer can call `measureElement`. */
+  liRef?: (node: HTMLLIElement | null) => void
+  /** Forwarded `data-index` so the virtualizer can identify the row when measuring. */
+  dataIndex?: number
 }
 
 function BlockListItemInner({
@@ -81,6 +96,9 @@ function BlockListItemInner({
   blockId,
   onReschedule,
   isFocused,
+  style,
+  liRef,
+  dataIndex,
 }: BlockListItemProps): React.ReactElement {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
@@ -121,6 +139,9 @@ function BlockListItemInner({
 
   return (
     <li
+      ref={liRef}
+      style={style}
+      data-index={dataIndex}
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors',
         // Touch: ensure 44px minimum height so embedded pills (priority, date chip)

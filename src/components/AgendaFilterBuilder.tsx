@@ -11,6 +11,7 @@ import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
@@ -337,7 +338,19 @@ export function AgendaFilterBuilder({
 
               return (
                 <li key={filter.dimension} className="contents">
-                  <div className="flex items-center gap-0 rounded-full bg-muted text-xs">
+                  {/* UX review Tier 1 item 7 — chip visual chrome aligned
+                      with the shared `FilterPill` primitive by adopting
+                      `Badge variant="secondary"`. The two-button structure
+                      (click-to-edit body + click-to-remove X) is preserved
+                      because FilterPill is remove-only; the visual style
+                      now matches the other filter surfaces. */}
+                  <Badge
+                    variant="secondary"
+                    data-slot="filter-pill"
+                    className="filter-pill shrink-0 gap-0 p-0 text-xs"
+                    role="group"
+                    aria-label={t('agendaFilter.editFilter', { label: pillLabel })}
+                  >
                     <EditFilterPopover
                       filter={filter}
                       onUpdate={(values) => handleUpdate(idx, values)}
@@ -345,7 +358,7 @@ export function AgendaFilterBuilder({
                     >
                       <button
                         type="button"
-                        className="flex items-center gap-1 rounded-l-full px-2 py-1 hover:bg-accent cursor-pointer"
+                        className="flex items-center gap-1 rounded-l-full px-2 py-0.5 hover:bg-accent cursor-pointer focus-ring-visible"
                         title={pillLabel}
                         aria-label={t('agendaFilter.editFilter', {
                           label: pillLabel,
@@ -363,15 +376,15 @@ export function AgendaFilterBuilder({
                     </EditFilterPopover>
                     <button
                       type="button"
-                      className="rounded-r-full px-1.5 py-1 text-muted-foreground hover:text-foreground hover:bg-accent"
+                      className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
                       onClick={() => handleRemove(idx)}
                       aria-label={t('agendaFilter.removeFilterLabel', {
                         label: isProperty ? pillLabel : dimensionLabel(filter.dimension),
                       })}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3 w-3 [@media(pointer:coarse)]:size-5" />
                     </button>
-                  </div>
+                  </Badge>
                 </li>
               )
             })}

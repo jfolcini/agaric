@@ -7,7 +7,12 @@
 > style standardized on `Card`/`CardHeader`/`CardTitle` —
 > AgentAccessSettingsTab + GoogleCalendarSettingsTab +
 > KeyboardSettingsTab + settings/HelpTab migrated, DataSettingsTab
-> already on the pattern), item 9 (3 `return null` empty-state guards →
+> already on the pattern), item 7 (filter-chip visual consistency —
+> SearchPanel chip bar migrated to `FilterPill`; AgendaFilterBuilder
+> chip adopts `Badge variant="secondary"` matching FilterPill's chrome
+> while preserving click-to-edit popover; HistoryFilterBar and
+> DuePanelFilters intentionally skipped — see item-7 entry below for
+> rationale), item 9 (3 `return null` empty-state guards →
 > `<EmptyState compact>` in DonePanel + LinkedReferences +
 > UnlinkedReferences), item 10 (LoadingSkeleton accepts `loading` prop
 > with `role="status" aria-busy`; StatusPanel + PageBrowser + TagList +
@@ -33,7 +38,7 @@
 > block extended to cover `--ring`, every `--alert-*`, `--op-*`,
 > `--date-*`, `--conflict-*`, `--task-*`, `--block-ref`, `--highlight`,
 > and `--sync-*` family (both light and dark themes).
-> **Still open:** Tier 1 items 4, 5, 7, 8, 11 + every Tier 2 entry +
+> **Still open:** Tier 1 items 4, 5, 8, 11 + every Tier 2 entry +
 > component-decomposition backlog + FeatureErrorBoundary in-view
 > sections + list rendering primitive zoo.
 
@@ -70,9 +75,65 @@ The verified state of the system is **strong on tokens and primitives, weaker on
 `AgentAccessSettingsTab.tsx:264` and `GoogleCalendarSettingsTab.tsx:404` use `<h2 text-base font-medium>`; `KeyboardSettingsTab.tsx:139` uses `<h3 text-lg font-semibold>`; `DataSettingsTab.tsx:166-296` uses `Card`/`CardHeader`/`CardTitle`; `settings/HelpTab.tsx:23` uses `<h3 text-sm font-medium>`. Five tabs, four styles, two heading levels.
 **Fix:** standardize on the `Card` pattern (DataSettingsTab) and rewrite the four others.
 
-**7. Filter UI fragmented across multiple surfaces.**
+**7. Filter UI fragmented across multiple surfaces.** *(closed —
+filter-chip visual contract aligned across the four surfaces; see
+status of each below)*
 Only `BacklinkFilterBuilder` and `GraphFilterBar` use the shared `FilterPill` / `FilterPillRow`. `HistoryFilterBar`, `DuePanelFilters`, `SearchPanel` chip bar, `AgendaFilterBuilder` all roll their own. Users moving between Search / Agenda / History see different filter UX every time. (ConflictList was deleted by PEND-09 Phase 5.)
 **Fix:** standardize on `FilterPill` + `FilterPillRow` + a shared `AddFilterPopover`; migrate the divergent ones in priority order.
+
+**Resolution.** Two surfaces migrated, two surfaces audited and
+intentionally left in place because they don't carry a removable-chip
+contract — collapsing them onto `FilterPill` would have been a
+misfit, not a consolidation:
+
+- **`SearchPanel` chip bar** — migrated. The two ad-hoc
+  `<Badge variant="secondary">` + X-button chips (page filter, tag
+  filters) are now `FilterPill` instances; `Badge` and the `X` import
+  were dropped from the file. Behaviour identical (label text, aria
+  labels, remove handler all preserved), visual chrome now matches
+  `BacklinkFilterBuilder` / `GraphFilterBar` / `FilterPillRow`. The
+  73-test SearchPanel suite passes without touching assertions because
+  `FilterPill` renders the label as plain Badge text and exposes the
+  remove button via the same `aria-label` the tests already match on.
+- **`AgendaFilterBuilder` chip** — visual chrome migrated, edit
+  affordance preserved. The chip carries a *two-action* contract
+  (click body → edit popover; click X → remove) that `FilterPill`
+  can't express because the primitive's body isn't interactive and
+  the task brief forbids modifying `ui/filter-pill.tsx`. Instead the
+  bespoke `<div className="… rounded-full bg-muted">` wrapper was
+  replaced with the `Badge variant="secondary"` shell (with
+  `data-slot="filter-pill"` and `role="group"`) that `FilterPill`
+  itself uses, so the visual chrome (background, padding, X target
+  sizing, coarse-pointer 44 px hit area, `active:scale-95`) is now
+  identical. The 51-test `AgendaFilterBuilder` suite passes unchanged.
+- **`HistoryFilterBar`** — intentionally skipped. The "active filter"
+  here *is* a `<Select>` dropdown value, not a removable chip;
+  Session 712's compact migration deliberately collapsed the
+  filter list into the Select trigger + an inline `✕` icon-button
+  that clears it. Forcing a `FilterPill` next to the Select would
+  duplicate the Select's state in two visual places; replacing the
+  Select with a button-that-opens-a-popover-then-renders-a-chip is
+  a regression to the pre-Session-712 multi-row layout. No chip
+  contract to align here — the current dropdown IS the filter UI.
+- **`DuePanelFilters`** — intentionally skipped. The four buttons
+  (All / Due / Scheduled / Properties) are a mutually-exclusive
+  *segmented toggle group* (`aria-pressed`, not `onRemove`); users
+  switch between them, they don't add/remove them. `FilterPill`
+  encodes a remove-affordance the toggles don't have. (A future
+  cleanup might extract a shared `SegmentedToggle` primitive; that
+  is a separate ticket, not a `FilterPill` migration.)
+
+**`AddFilterPopover` decision: not extracted.** The three existing
+"add filter" flows (`BacklinkFilterBuilder` via inline
+`AddFilterRow`, `GraphFilterBar`'s single-step `<Select>` popover,
+`AgendaFilterBuilder`'s two-step pick-dimension → pick-values
+popover with `DIMENSION_GROUPS` headings + `EditFilterPopover`
+re-use) differ enough that a shared primitive collapses to either
+`<Popover>{trigger}{content}</Popover>` (which is what Radix
+`Popover` already is — no value-add) or a leaky generic that
+constrains each surface. The audit's "shared `AddFilterPopover`"
+call is satisfied by every surface already composing the same
+Radix `Popover` + `Button` primitives. No new component created.
 
 **8. Icon-only buttons without `Tooltip` on three high-traffic surfaces.**
 `GraphView.tsx:249-272` (zoom controls), `PageHeader.tsx:498-507` (star), `HistoryFilterBar.tsx:118-160` (legend/clear) — all icon-only `<Button size="icon">` with `aria-label` but **zero** `Tooltip` wraps. UX.md:765 lists tooltips as mandatory on icon-only buttons.

@@ -9,9 +9,10 @@
  * fetching, filtering, and passing down blocks.
  */
 
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertCircle } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -171,6 +172,13 @@ export function AgendaResults({
 
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null)
+  // perf-review Tier 2 #6 (2026-05-14) — scroll container ref for the
+  // virtualizer. Distinct from `listRef` (the keyboard-nav container
+  // that holds the result-count `role="status"` and the
+  // `LoadMoreButton`); the virtualizer needs to scroll the inner
+  // flat-row container, while keyboard arrow keys still target the
+  // outer `listRef`.
+  const scrollParentRef = useRef<HTMLDivElement>(null)
 
   // Sort once for the flat (no-group) display path. The grouping helpers
   // (groupByDate / groupByPriority / groupByState / groupByPage) all re-sort
@@ -224,13 +232,110 @@ export function AgendaResults({
     setFocusedIndex(0)
   }, [blocks, sortBy, groupBy, setFocusedIndex])
 
-  // Scroll focused item into view
+  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14) ─────────────
+  // Map group labels to i18n keys for known groups. Hoisted above the
+  // virtual-row builder so both the keyboard-driven scroll-into-view
+  // effect and the grouped render path consume the same source.
+  const GROUP_I18N: Record<string, string> = useMemo(
+    () => ({
+      Overdue: 'agenda.overdue',
+      Today: 'agenda.today',
+      Tomorrow: 'agenda.tomorrow',
+      'No date': 'agenda.noDate',
+      'No page': 'agenda.noPage',
+    }),
+    [],
+  )
+
+  // Build the flat row list consumed by the virtualizer. When grouped,
+  // a `group-header` row is interspersed before each group's items so
+  // the virtualizer treats headers and items as siblings and can skip
+  // the entire offscreen tree. The `flatItemIndex` field threads each
+  // item row back to the `flatItems` array so keyboard-nav focus
+  // mapping (`focusedIndex` indexes `flatItems`) stays correct.
+  type VirtualRow =
+    | {
+        kind: 'group-header'
+        key: string
+        label: string
+        count: number
+        className: string | undefined
+      }
+    | { kind: 'item'; key: string; block: BlockRow; flatItemIndex: number }
+
+  const virtualRows = useMemo<VirtualRow[]>(() => {
+    if (!groups) {
+      return sortedBlocks.map((block, idx) => ({
+        kind: 'item' as const,
+        key: block.id,
+        block,
+        flatItemIndex: idx,
+      }))
+    }
+    const rows: VirtualRow[] = []
+    let flatIdx = 0
+    for (const group of groups) {
+      const i18nKey = GROUP_I18N[group.label]
+      const displayLabel = i18nKey ? t(i18nKey) : group.label
+      rows.push({
+        kind: 'group-header',
+        key: `header:${group.label}`,
+        label: displayLabel,
+        count: group.blocks.length,
+        className: group.className,
+      })
+      for (const block of group.blocks) {
+        rows.push({
+          kind: 'item',
+          key: block.id,
+          block,
+          flatItemIndex: flatIdx++,
+        })
+      }
+    }
+    return rows
+  }, [groups, sortedBlocks, GROUP_I18N, t])
+
+  // PEND-30 L-5 style: stable estimateSize identity so option-identity
+  // changes don't trigger a re-measure when `virtualRows` is unchanged.
+  // Header rows are ~36px (`px-3 py-1` + sm text); item rows render a
+  // `BlockListItem` whose default touch min-height is 44px, but with
+  // metadata + breadcrumb gap the typical observed height is ~56px.
+  // `measureElement` corrects to actual height after first paint.
+  const estimateSize = useCallback(
+    (index: number) => {
+      const row = virtualRows[index]
+      if (row?.kind === 'group-header') return 36
+      return 56
+    },
+    [virtualRows],
+  )
+
+  const virtualizer = useVirtualizer({
+    count: virtualRows.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize,
+    overscan: 5,
+    getItemKey: (index) => virtualRows[index]?.key ?? index,
+  })
+
+  // Scroll focused item into view via the virtualizer. `focusedIndex`
+  // indexes `flatItems` (the items-only array used by keyboard nav);
+  // map it to the virtual-row index so headers don't shift the count.
+  const flatToVirtualIndex = useMemo(() => {
+    const map: number[] = []
+    virtualRows.forEach((row, idx) => {
+      if (row.kind === 'item') map[row.flatItemIndex] = idx
+    })
+    return map
+  }, [virtualRows])
+
   useEffect(() => {
-    if (!listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-block-list-item]')
-    const el = items[focusedIndex] as HTMLElement | undefined
-    el?.scrollIntoView?.({ block: 'nearest' })
-  }, [focusedIndex])
+    if (focusedIndex < 0) return
+    const idx = flatToVirtualIndex[focusedIndex]
+    if (idx == null) return
+    virtualizer.scrollToIndex(idx, { align: 'auto' })
+  }, [focusedIndex, virtualizer, flatToVirtualIndex])
 
   // ── Loading state (initial load, no blocks yet) ────────────────────
   if (loading && blocks.length === 0) {
@@ -271,7 +376,11 @@ export function AgendaResults({
   // ── Results list ───────────────────────────────────────────────────
 
   /** Render a single agenda item (shared between flat and grouped modes). */
-  function renderItem(block: BlockRow, currentFlatIndex: number) {
+  function renderItem(
+    block: BlockRow,
+    currentFlatIndex: number,
+    virtualRow: { key: React.Key; index: number; start: number },
+  ) {
     // Tier 1.4 (perf-review 2026-05-09): stable per-block handlers from the
     // `useBlockNavigation` factory so `BlockListItem.memo` is not defeated by
     // fresh inline-arrow identities every render. NOTE: the inline `metadata`
@@ -281,7 +390,16 @@ export function AgendaResults({
     const rowHandlers = getRowHandlers(block)
     return (
       <BlockListItem
-        key={block.id}
+        key={virtualRow.key}
+        liRef={virtualizer.measureElement}
+        dataIndex={virtualRow.index}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          transform: `translateY(${virtualRow.start}px)`,
+        }}
         content={block.content}
         metadata={
           <>
@@ -323,16 +441,8 @@ export function AgendaResults({
     )
   }
 
-  // Map group labels to i18n keys for known groups
-  const GROUP_I18N: Record<string, string> = {
-    Overdue: 'agenda.overdue',
-    Today: 'agenda.today',
-    Tomorrow: 'agenda.tomorrow',
-    'No date': 'agenda.noDate',
-    'No page': 'agenda.noPage',
-  }
-
-  let flatIndex = 0
+  const virtualItems = virtualizer.getVirtualItems()
+  const totalSize = virtualizer.getTotalSize()
 
   return (
     <BatchPropertiesProvider blockIds={allBlockIds} invalidationKey={batchInvalidationKey}>
@@ -353,35 +463,76 @@ export function AgendaResults({
             : t('agenda.resultCount', { count: blocks.length })}
         </div>
 
-        {groups ? (
-          groups.map((group) => {
-            const i18nKey = GROUP_I18N[group.label]
-            const displayLabel = i18nKey ? t(i18nKey) : group.label
-            return (
-              <div key={group.label} className="agenda-group mb-3">
-                <h3
-                  className={cn(
-                    'agenda-group-header text-sm font-semibold uppercase tracking-wide px-3 py-1',
-                    group.className ?? 'text-muted-foreground',
-                  )}
-                  data-testid="agenda-group-header"
-                >
-                  {displayLabel}
-                  <span className="ml-1.5 text-muted-foreground font-normal">
-                    ({group.blocks.length})
-                  </span>
-                </h3>
-                <ul className="agenda-results-list space-y-2" aria-label={displayLabel}>
-                  {group.blocks.map((block) => renderItem(block, flatIndex++))}
-                </ul>
-              </div>
-            )
-          })
-        ) : (
-          <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
-            {sortedBlocks.map((block) => renderItem(block, flatIndex++))}
+        {/* Virtualized list (perf-review Tier 2 #6, 2026-05-14).
+            Headers + items are interleaved as flat virtual rows so the
+            virtualizer can drop offscreen subtrees entirely; this
+            replaces the previous nested `groups.map(group => group.blocks.map(item))`
+            tree-walk.
+
+            `BlockListItem` renders an `<li>` directly, so each virtual
+            row uses `<li>` (item rows) or `<li role="presentation">`
+            (group-header rows) under a single `<ul>` parent. This
+            keeps the listitem axe rule happy in both flat and grouped
+            modes without re-wrapping `BlockListItem` in an extra `<li>`
+            (which would also have failed the rule for nested `<li>`s). */}
+        <div
+          ref={scrollParentRef}
+          className="agenda-results-scroll max-h-[calc(100dvh-260px)] overflow-auto"
+        >
+          <ul
+            className="agenda-results-list relative m-0 p-0 list-none"
+            aria-label={t('agenda.agendaResults')}
+            style={{ height: `${totalSize}px` }}
+          >
+            {virtualItems.map((virtualRow) => {
+              const row = virtualRows[virtualRow.index]
+              if (!row) return null
+              const rowStyle: React.CSSProperties = {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+              }
+              if (row.kind === 'group-header') {
+                return (
+                  // Group headers ride a `<li>` so they're a valid
+                  // child of the surrounding `<ul>` (axe's `list` rule
+                  // rejects non-`<li>` children, and `role="presentation"`
+                  // on the `<li>` would also fail because it strips
+                  // the listitem role — see the inline `<h3>` below
+                  // which is what screen readers should land on).
+                  <li
+                    key={virtualRow.key}
+                    data-index={virtualRow.index}
+                    ref={virtualizer.measureElement}
+                    style={rowStyle}
+                    className="agenda-group"
+                  >
+                    <h3
+                      className={cn(
+                        'agenda-group-header text-sm font-semibold uppercase tracking-wide px-3 py-1',
+                        row.className ?? 'text-muted-foreground',
+                      )}
+                      data-testid="agenda-group-header"
+                    >
+                      {row.label}
+                      <span className="ml-1.5 text-muted-foreground font-normal">
+                        ({row.count})
+                      </span>
+                    </h3>
+                  </li>
+                )
+              }
+              // `BlockListItem` IS a `<li>`. Pass the virtualizer's
+              // positioning style + ref + data-index through `liRef` /
+              // `style` / `dataIndex` so the row is a direct child of
+              // the `<ul>` (no nested-`<li>` HTML violation, exactly
+              // one listitem-roled element per row).
+              return renderItem(row.block, row.flatItemIndex, virtualRow)
+            })}
           </ul>
-        )}
+        </div>
 
         {/* Load more */}
         <LoadMoreButton

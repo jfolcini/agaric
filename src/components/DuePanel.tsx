@@ -10,9 +10,10 @@
  * components (OverdueSection, UpcomingSection, DuePanelFilters).
  */
 
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { Repeat } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
@@ -182,6 +183,84 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     },
   )
 
+  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14) ─────────────
+  // The grouped-blocks section is flattened into a single row list of
+  // `{ kind: 'group-header' | 'item', ... }` so the virtualizer can
+  // drop offscreen groups in their entirety instead of mounting every
+  // sub-list. Overdue / Upcoming / projected entries stay
+  // un-virtualized — they're rendered outside the virtualizer and
+  // their item counts are small (overdue/upcoming caps at PAGINATION,
+  // projected is bounded by repeat-projection horizon). The grouped
+  // section is the only `.map((g) => g.items.map((b) => ...))` chain
+  // that the audit flagged (line 292).
+  // `flatItemIndex` indexes the grouped-blocks portion of `flatItems`
+  // (= `grouped.flatMap(g => g.items)`); the projected portion sits at
+  // tail indices and is keyboard-navigable via its own `<li>` markup
+  // below, so this map only needs to cover the grouped portion.
+  type VirtualRow =
+    | { kind: 'group-header'; key: string; label: string }
+    | {
+        kind: 'item'
+        key: string
+        block: (typeof grouped)[number]['items'][number]
+        flatItemIndex: number
+      }
+
+  const virtualRows = useMemo<VirtualRow[]>(() => {
+    const rows: VirtualRow[] = []
+    let flatIdx = 0
+    for (const group of grouped) {
+      rows.push({
+        kind: 'group-header',
+        key: `header:${group.label}`,
+        label: group.label,
+      })
+      for (const block of group.items) {
+        rows.push({
+          kind: 'item',
+          key: block.id,
+          block,
+          flatItemIndex: flatIdx++,
+        })
+      }
+    }
+    return rows
+  }, [grouped])
+
+  const scrollParentRef = useRef<HTMLDivElement>(null)
+
+  const estimateSize = useCallback(
+    (index: number) => {
+      const row = virtualRows[index]
+      if (row?.kind === 'group-header') return 32
+      return 44
+    },
+    [virtualRows],
+  )
+
+  const virtualizer = useVirtualizer({
+    count: virtualRows.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize,
+    overscan: 5,
+    getItemKey: (index) => virtualRows[index]?.key ?? index,
+  })
+
+  const flatToVirtualIndex = useMemo(() => {
+    const map: number[] = []
+    virtualRows.forEach((row, idx) => {
+      if (row.kind === 'item') map[row.flatItemIndex] = idx
+    })
+    return map
+  }, [virtualRows])
+
+  useEffect(() => {
+    if (focusedIndex < 0) return
+    const idx = flatToVirtualIndex[focusedIndex]
+    if (idx == null) return
+    virtualizer.scrollToIndex(idx, { align: 'auto' })
+  }, [focusedIndex, virtualizer, flatToVirtualIndex])
+
   // UX-152: Don't render when ALL sources are empty (not loading).
   // When a source filter is active, always keep the panel visible so the
   // user can switch back to "All" — otherwise the filter pills vanish.
@@ -248,7 +327,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           }
         >
           {() => {
-            let flatIndex = 0
+            // Projected entries sit after grouped blocks in the
+            // keyboard-nav `flatItems` array (see `flatItems` memo
+            // above). The grouped portion now lives inside the
+            // virtualizer (which tracks its own `flatItemIndex` per
+            // row); the projected `<li>` markup below picks up where
+            // grouped left off.
+            const groupedCount = grouped.reduce((sum, g) => sum + g.items.length, 0)
+            let flatIndex = groupedCount
             return (
               // biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container
               <div
@@ -278,30 +364,55 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                   />
                 )}
 
-                {/* Grouped blocks */}
-                {grouped.map((group) => (
-                  <div key={group.label} className="due-panel-group">
-                    {/* Group sub-header (not collapsible) */}
-                    <SectionGroupHeader className="due-panel-group-header">
-                      {group.label}
-                    </SectionGroupHeader>
-
+                {/* Grouped blocks (virtualized — perf-review Tier 2 #6).
+                    A single `<ul>` parent holds both group-header `<li>`s
+                    and item `<li>`s (the latter rendered by
+                    `BlockListItem`). Flat-list virtualization lets the
+                    windowing skip offscreen groups entirely instead of
+                    mounting every sub-list. */}
+                {virtualRows.length > 0 && (
+                  <div
+                    ref={scrollParentRef}
+                    className="due-panel-scroll max-h-[calc(100dvh-260px)] overflow-auto"
+                  >
                     <ul
-                      className="due-panel-blocks ml-2 space-y-1"
-                      aria-label={`${group.label} items`}
+                      className="due-panel-blocks relative m-0 p-0 list-none"
+                      style={{ height: `${virtualizer.getTotalSize()}px` }}
                     >
-                      {group.items.map((block) => {
-                        const currentFlatIndex = flatIndex++
-                        // Tier 1.4 (perf-review 2026-05-09): stable per-block
-                        // handlers from `getRowHandlers` so `BlockListItem.memo`
-                        // is not defeated by fresh inline-arrow identities. The
-                        // inline `metadata` JSX still allocates a new element
-                        // per render — primitivizing `BlockListItem`'s prop
-                        // shape is a separate follow-up.
+                      {virtualizer.getVirtualItems().map((virtualRow) => {
+                        const row = virtualRows[virtualRow.index]
+                        if (!row) return null
+                        const rowStyle: React.CSSProperties = {
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${virtualRow.start}px)`,
+                        }
+                        if (row.kind === 'group-header') {
+                          return (
+                            <li
+                              key={virtualRow.key}
+                              data-index={virtualRow.index}
+                              ref={virtualizer.measureElement}
+                              style={rowStyle}
+                              className="due-panel-group-header-row"
+                            >
+                              <SectionGroupHeader className="due-panel-group-header">
+                                {row.label}
+                              </SectionGroupHeader>
+                            </li>
+                          )
+                        }
+                        // Tier 1.4: stable per-block handlers.
+                        const block = row.block
                         const rowHandlers = getRowHandlers(block)
                         return (
                           <BlockListItem
-                            key={block.id}
+                            key={virtualRow.key}
+                            liRef={virtualizer.measureElement}
+                            dataIndex={virtualRow.index}
+                            style={rowStyle}
                             blockId={block.id}
                             content={block.content}
                             contentMaxLength={120}
@@ -321,19 +432,19 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                                 : ''
                             }
                             breadcrumbArrow={t('duePanel.breadcrumbArrow')}
-                            className="due-panel-item hover:bg-muted/50 active:bg-muted/70"
+                            className="due-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2"
                             contentClassName="due-panel-item-text"
                             breadcrumbClassName="due-panel-breadcrumb"
                             testId="due-panel-item"
                             onClick={rowHandlers.onClick}
                             onKeyDown={rowHandlers.onKeyDown}
-                            isFocused={focusedIndex === currentFlatIndex}
+                            isFocused={focusedIndex === row.flatItemIndex}
                           />
                         )
                       })}
                     </ul>
                   </div>
-                ))}
+                )}
 
                 {/* Projected future occurrences from repeating tasks.
                     UX-274: each `<li>` is part of the keyboard-nav flat-items

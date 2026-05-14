@@ -39,6 +39,30 @@ vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
+// perf-review Tier 2 #6 (2026-05-14) — mirror the PageBrowser mock so
+// jsdom's zero-height scroll container doesn't collapse the virtual
+// list to zero rows. Returning every row keeps every existing
+// `getByTestId('history-item-N')` / `getAllByRole('row')` assertion
+// working without per-test changes.
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
+    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
+    let start = 0
+    const items = sizes.map((size, index) => {
+      const item = { index, key: index, start, size, end: start + size }
+      start += size
+      return item
+    })
+    return {
+      getVirtualItems: () => items,
+      getTotalSize: () => start,
+      scrollToIndex: vi.fn(),
+      scrollToOffset: vi.fn(),
+      measureElement: vi.fn(),
+    }
+  },
+}))
+
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
