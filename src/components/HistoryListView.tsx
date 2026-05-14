@@ -7,8 +7,9 @@
  * Extracted from `HistoryView` (MAINT-128).
  */
 
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { entryKey, NON_REVERSIBLE_OPS } from '../hooks/useHistorySelection'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
@@ -63,6 +64,30 @@ export function HistoryListView({
     prevLengthRef.current = entries.length
   }, [entries.length, t])
 
+  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14) ─────────────
+  // The outer `listRef` (provided by the parent) doubles as the
+  // virtualizer's scroll element so the existing keyboard-nav focus
+  // scroll-into-view contract still works.
+  // HistoryListItem renders an op-summary row plus an optional inline
+  // diff section that swells the row height when expanded. Estimated
+  // collapsed height (~80px = p-4 + 2 lines) is a starting point;
+  // `measureElement` corrects to actual height after first paint, so
+  // expanded rows do not push subsequent rows out of view.
+  const estimateSize = useCallback(() => 80, [])
+  const virtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => listRef.current,
+    estimateSize,
+    overscan: 5,
+    getItemKey: (index) => {
+      const entry = entries[index]
+      return entry ? entryKey(entry) : index
+    },
+  })
+
+  const virtualItems = virtualizer.getVirtualItems()
+  const totalSize = virtualizer.getTotalSize()
+
   return (
     <>
       {entries.length > 0 && (
@@ -70,31 +95,46 @@ export function HistoryListView({
         <div
           ref={listRef}
           tabIndex={-1}
-          className="history-list space-y-2 p-0 m-0 focus:outline-none"
+          className="history-list p-0 m-0 focus:outline-none overflow-auto max-h-[calc(100dvh-220px)]"
           role="grid"
           aria-label={t('history.entriesLabel')}
           aria-multiselectable="true"
         >
-          {entries.map((entry, index) => {
-            const key = entryKey(entry)
-            return (
-              <HistoryListItem
-                key={key}
-                entry={entry}
-                index={index}
-                isSelected={selectedIds.has(key)}
-                isFocused={focusedIndex === index}
-                isNonReversible={NON_REVERSIBLE_OPS.has(entry.op_type)}
-                isExpanded={expandedKeys.has(key)}
-                isLoadingDiff={loadingDiffs.has(key)}
-                diffSpans={diffCache.get(key)}
-                onRowClick={onRowClick}
-                onToggleSelection={onToggleSelection}
-                onToggleDiff={onToggleDiff}
-                onRestoreToHere={onRestoreToHere}
-              />
-            )
-          })}
+          {/* Total-size spacer so the scrollbar reflects the full list
+              even though only the windowed slice is mounted. */}
+          <div style={{ height: `${totalSize}px`, width: '100%', position: 'relative' }}>
+            {virtualItems.map((virtualRow) => {
+              const entry = entries[virtualRow.index]
+              if (!entry) return null
+              const key = entryKey(entry)
+              return (
+                <HistoryListItem
+                  key={virtualRow.key}
+                  rowRef={virtualizer.measureElement}
+                  dataIndex={virtualRow.index}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                  entry={entry}
+                  index={virtualRow.index}
+                  isSelected={selectedIds.has(key)}
+                  isFocused={focusedIndex === virtualRow.index}
+                  isNonReversible={NON_REVERSIBLE_OPS.has(entry.op_type)}
+                  isExpanded={expandedKeys.has(key)}
+                  isLoadingDiff={loadingDiffs.has(key)}
+                  diffSpans={diffCache.get(key)}
+                  onRowClick={onRowClick}
+                  onToggleSelection={onToggleSelection}
+                  onToggleDiff={onToggleDiff}
+                  onRestoreToHere={onRestoreToHere}
+                />
+              )
+            })}
+          </div>
         </div>
       )}
 

@@ -7,6 +7,34 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 721 — Perf 2.6 virtualization sweep + UX 1.7 FilterPill consolidation (2026-05-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-14 |
+| **Subagents** | 2 build (general-purpose) in parallel |
+| **Items closed** | design-system-perf-review Tier 2 item 6 (4 list views virtualized); design-system-ux-review Tier 1 item 7 (FilterPill consolidation on 2 sites). |
+| **Items modified** | design-system-perf-review status note updated; design-system-ux-review status note updated. |
+| **Tests added** | 0 net (virtualizer mocks added so existing assertions keep working). |
+| **Files touched** | 14 (6 production + 4 test + 2 plan-file status notes + 2 primitive prop additions to BlockListItem + HistoryListItem) |
+
+**Summary:** two parallel subagents closed Perf 2.6 + UX 1.7. **Perf 2.6** — extended PageBrowser's `@tanstack/react-virtual` pattern to AgendaResults, HistoryListView, DonePanel, DuePanel. Used the flat-row approach for DonePanel + DuePanel: a `useMemo`'d `VirtualRow[]` of `{kind: 'group-header'} | {kind: 'item'}` lets `estimateSize: (i) => isHeader ? 32 : item-h` virtualize header + item rows uniformly. `measureElement` corrects to actual heights after first paint. BlockListItem and HistoryListItem each gained optional `style` / `ref` / `dataIndex` props so virtualizer can apply absolute positioning + measureElement ref + data-index directly on the existing root, avoiding nested-`<li>` HTML or broken axe `list`/`listitem` rules. Keyboard-nav `focusedIndex` continues to index the pre-existing `flatItems` (items-only) array; a `flatToVirtualIndex` lookup maps each `focusedIndex` back to the virtual-row index for `virtualizer.scrollToIndex(idx, { align: 'auto' })`. Test files gained the same `vi.mock('@tanstack/react-virtual', …)` shim that PageBrowser.test uses so jsdom (which reports zero element height) doesn't drop all rows.
+
+**UX 1.7** — `SearchPanel` filter chips (page + tag) migrated from ad-hoc `<Badge variant="secondary">` + X to `<FilterPill>`. `AgendaFilterBuilder`'s chip chrome aligned with `FilterPill`'s data-slot + role="group" structure but kept its two-action contract (click body → edit popover, click X → remove) because that's richer than `FilterPill`'s remove-only contract. Two surfaces intentionally NOT migrated with rationale documented in plan: `HistoryFilterBar` (the Select dropdown IS the filter UI — no removable chip contract), `DuePanelFilters` (the four buttons are a segmented toggle with `aria-pressed`, not removable chips — a future `SegmentedToggle` primitive would be a separate ticket). `AddFilterPopover` decision: not extracted — the three existing add-filter flows (`BacklinkFilterBuilder` inline, `GraphFilterBar` Select, `AgendaFilterBuilder` two-step) differ substantially; a shared abstraction either collapses to `<Popover>` (which Radix already is) or leaks generic constraints.
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 9721 tests pass.
+- `prek run --all-files` — all hooks pass.
+
+**Files touched (this session):**
+- Production: `src/components/AgendaResults.tsx`, `HistoryListView.tsx`, `DonePanel.tsx`, `DuePanel.tsx` (virtualization), `BlockListItem.tsx`, `HistoryListItem.tsx` (style/ref/dataIndex pass-through), `SearchPanel.tsx`, `AgendaFilterBuilder.tsx` (FilterPill).
+- Tests: `AgendaResults.test.tsx`, `HistoryView.test.tsx`, `DonePanel.test.tsx`, `DuePanel.test.tsx` (virtualizer mock).
+- Docs: `pending/design-system-perf-review-2026-05-09.md`, `pending/design-system-ux-review-2026-05-09.md`.
+
+**Commit plan:** single commit covering 2-stream batch + Session 721 entry.
+
+---
 ## Session 720 — Perf Tier 1.3.4/2.7/2.11/3.19 + Maintain 2d (2026-05-14)
 
 | Metadata | Value |

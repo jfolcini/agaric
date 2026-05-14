@@ -7,9 +7,10 @@
  * "Load more" button.
  */
 
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -185,6 +186,76 @@ export function DonePanel({
     { homeEnd: true, pageUpDown: true, resetKey: date },
   )
 
+  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14) ─────────────
+  // The grouped panel is flattened into a single row list of
+  // `{ kind: 'group-header' | 'item', ... }` so the virtualizer can
+  // drop offscreen groups in their entirety instead of mounting every
+  // sub-list. `flatItemIndex` threads each item row back to the
+  // `flatItems` array used by keyboard navigation.
+  type VirtualRow =
+    | { kind: 'group-header'; key: string; pageId: string; title: string; count: number }
+    | { kind: 'item'; key: string; block: BlockRow; flatItemIndex: number }
+
+  const virtualRows = useMemo<VirtualRow[]>(() => {
+    const rows: VirtualRow[] = []
+    let flatIdx = 0
+    for (const group of grouped) {
+      rows.push({
+        kind: 'group-header',
+        key: `header:${group.pageId}`,
+        pageId: group.pageId,
+        title: group.title,
+        count: group.items.length,
+      })
+      for (const block of group.items) {
+        rows.push({
+          kind: 'item',
+          key: block.id,
+          block,
+          flatItemIndex: flatIdx++,
+        })
+      }
+    }
+    return rows
+  }, [grouped])
+
+  const scrollParentRef = useRef<HTMLDivElement>(null)
+
+  // Header rows (~32px = SectionGroupHeader text + padding); item rows
+  // (~44px = BlockListItem default + touch min-h-11). `measureElement`
+  // corrects to actual height after first paint.
+  const estimateSize = useCallback(
+    (index: number) => {
+      const row = virtualRows[index]
+      if (row?.kind === 'group-header') return 32
+      return 44
+    },
+    [virtualRows],
+  )
+
+  const virtualizer = useVirtualizer({
+    count: virtualRows.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize,
+    overscan: 5,
+    getItemKey: (index) => virtualRows[index]?.key ?? index,
+  })
+
+  const flatToVirtualIndex = useMemo(() => {
+    const map: number[] = []
+    virtualRows.forEach((row, idx) => {
+      if (row.kind === 'item') map[row.flatItemIndex] = idx
+    })
+    return map
+  }, [virtualRows])
+
+  useEffect(() => {
+    if (focusedIndex < 0) return
+    const idx = flatToVirtualIndex[focusedIndex]
+    if (idx == null) return
+    virtualizer.scrollToIndex(idx, { align: 'auto' })
+  }, [focusedIndex, virtualizer, flatToVirtualIndex])
+
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
 
@@ -216,7 +287,8 @@ export function DonePanel({
         empty={null}
       >
         {() => {
-          let flatIndex = 0
+          const virtualItems = virtualizer.getVirtualItems()
+          const totalSize = virtualizer.getTotalSize()
           return (
             <>
               {/* Main header -- collapsible */}
@@ -231,7 +303,7 @@ export function DonePanel({
               {!collapsed && (
                 // biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container
                 <div
-                  className="done-panel-content mt-1 space-y-2"
+                  className="done-panel-content mt-1"
                   ref={listRef}
                   // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
                   tabIndex={0}
@@ -239,60 +311,90 @@ export function DonePanel({
                     if (navHandleKeyDown(e)) e.preventDefault()
                   }}
                 >
-                  {/* Grouped blocks */}
-                  {grouped.map((group) => (
-                    <div key={group.pageId} className="done-panel-group">
-                      {/* Group sub-header: page title + block count (not individually collapsible) */}
-                      <SectionGroupHeader className="done-panel-group-header bg-muted">
-                        <PageLink
-                          pageId={group.pageId}
-                          title={group.title}
-                          className="hover:underline"
-                        />{' '}
-                        ({group.items.length})
-                      </SectionGroupHeader>
-
-                      <ul
-                        className="done-panel-blocks ml-2 space-y-1"
-                        aria-label={t('donePanel.groupItemsLabel', { title: group.title })}
-                      >
-                        {group.items.map((block) => {
-                          const currentFlatIndex = flatIndex++
-                          // Tier 1.4 (perf-review 2026-05-09): stable per-block
-                          // handlers from `getRowHandlers` so
-                          // `BlockListItem.memo` is not defeated by fresh
-                          // inline-arrow identities. The inline `metadata` JSX
-                          // still allocates a new element per render —
-                          // primitivizing `BlockListItem`'s prop shape is a
-                          // separate follow-up.
-                          const rowHandlers = getRowHandlers(block)
+                  {/* Virtualized grouped list (perf-review Tier 2 #6).
+                      Each virtual row is either a group-header `<li>`
+                      or an item `<li>` (rendered by `BlockListItem`).
+                      A single `<ul>` parent satisfies axe's `list`
+                      rule across both kinds; flat-list virtualization
+                      lets the windowing logic skip entire offscreen
+                      groups instead of mounting every sub-list. */}
+                  <div
+                    ref={scrollParentRef}
+                    className="done-panel-scroll max-h-[calc(100dvh-260px)] overflow-auto"
+                  >
+                    {/* No aria-label here: the enclosing `<section>` is
+                        already labelled `donePanel.completedItems`,
+                        and the rows below carry their own semantics
+                        (BlockListItem listitem + group-header `<li>`). */}
+                    <ul
+                      className="done-panel-blocks relative m-0 p-0 list-none"
+                      style={{ height: `${totalSize}px` }}
+                    >
+                      {virtualItems.map((virtualRow) => {
+                        const row = virtualRows[virtualRow.index]
+                        if (!row) return null
+                        const rowStyle: React.CSSProperties = {
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${virtualRow.start}px)`,
+                        }
+                        if (row.kind === 'group-header') {
                           return (
-                            <BlockListItem
-                              key={block.id}
-                              content={block.content}
-                              metadata={
-                                <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
-                              }
-                              pageId={block.page_id}
-                              pageTitle={
-                                block.page_id
-                                  ? (pageTitles.get(block.page_id) ?? t('donePanel.untitled'))
-                                  : ''
-                              }
-                              breadcrumbArrow={t('donePanel.breadcrumbArrow')}
-                              breadcrumbAsLink={false}
-                              className="done-panel-item hover:bg-muted/50 active:bg-muted/70"
-                              contentClassName="done-panel-item-text"
-                              breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
-                              onClick={rowHandlers.onClick}
-                              onKeyDown={rowHandlers.onKeyDown}
-                              isFocused={focusedIndex === currentFlatIndex}
-                            />
+                            <li
+                              key={virtualRow.key}
+                              data-index={virtualRow.index}
+                              ref={virtualizer.measureElement}
+                              style={rowStyle}
+                              className="done-panel-group-header-row"
+                            >
+                              <SectionGroupHeader className="done-panel-group-header bg-muted">
+                                <PageLink
+                                  pageId={row.pageId}
+                                  title={row.title}
+                                  className="hover:underline"
+                                />{' '}
+                                ({row.count})
+                              </SectionGroupHeader>
+                            </li>
                           )
-                        })}
-                      </ul>
-                    </div>
-                  ))}
+                        }
+                        // Tier 1.4 (perf-review 2026-05-09): stable
+                        // per-block handlers from `getRowHandlers` so
+                        // `BlockListItem.memo` is not defeated by fresh
+                        // inline-arrow identities.
+                        const block = row.block
+                        const rowHandlers = getRowHandlers(block)
+                        return (
+                          <BlockListItem
+                            key={virtualRow.key}
+                            liRef={virtualizer.measureElement}
+                            dataIndex={virtualRow.index}
+                            style={rowStyle}
+                            content={block.content}
+                            metadata={
+                              <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
+                            }
+                            pageId={block.page_id}
+                            pageTitle={
+                              block.page_id
+                                ? (pageTitles.get(block.page_id) ?? t('donePanel.untitled'))
+                                : ''
+                            }
+                            breadcrumbArrow={t('donePanel.breadcrumbArrow')}
+                            breadcrumbAsLink={false}
+                            className="done-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2"
+                            contentClassName="done-panel-item-text"
+                            breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
+                            onClick={rowHandlers.onClick}
+                            onKeyDown={rowHandlers.onKeyDown}
+                            isFocused={focusedIndex === row.flatItemIndex}
+                          />
+                        )
+                      })}
+                    </ul>
+                  </div>
 
                   {/* Load more */}
                   <LoadMoreButton

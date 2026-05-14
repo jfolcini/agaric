@@ -20,16 +20,16 @@
  */
 
 import type { TFunction } from 'i18next'
-import { Search, X } from 'lucide-react'
+import { Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
+import { FilterPill } from '@/components/ui/filter-pill'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -435,32 +435,26 @@ export function SearchPanel(): React.ReactElement {
         role="group"
         aria-label={t('search.filtersActive')}
       >
+        {/* UX review Tier 1 item 7 — filter chips migrated to the shared
+            `FilterPill` primitive (was: ad-hoc `<Badge>` + X button).
+            Wraps the badge text in a `data-search-chip-text` span so the
+            existing `getByText('in: …')` assertions keep matching after
+            the wrap. */}
         {filterPageId && filterPageTitle && (
-          <Badge variant="secondary" className="gap-1">
-            {t('search.inPage', { name: filterPageTitle })}
-            <button
-              type="button"
-              onClick={() => dispatchFilter({ type: 'clear-page-filter' })}
-              className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5"
-              aria-label={t('search.removePageFilter')}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
+          <FilterPill
+            label={t('search.inPage', { name: filterPageTitle })}
+            removeAriaLabel={t('search.removePageFilter')}
+            onRemove={() => dispatchFilter({ type: 'clear-page-filter' })}
+          />
         )}
 
         {filterTagNames.map((name, index) => (
-          <Badge key={filterTagIds[index]} variant="secondary" className="gap-1">
-            #{name}
-            <button
-              type="button"
-              onClick={() => dispatchFilter({ type: 'remove-tag-filter', index })}
-              className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]"
-              aria-label={t('search.removeTagFilter', { name })}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
+          <FilterPill
+            key={filterTagIds[index]}
+            label={`#${name}`}
+            removeAriaLabel={t('search.removeTagFilter', { name })}
+            onRemove={() => dispatchFilter({ type: 'remove-tag-filter', index })}
+          />
         ))}
 
         <SearchablePopover<BlockRow>

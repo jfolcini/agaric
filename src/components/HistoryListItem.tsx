@@ -207,6 +207,18 @@ export interface HistoryListItemProps {
   onToggleSelection: (index: number) => void
   onToggleDiff: (entry: HistoryEntry) => void
   onRestoreToHere: (entry: HistoryEntry) => void
+  /**
+   * Optional inline `style` (perf-review Tier 2 #6, 2026-05-14) —
+   * `@tanstack/react-virtual` consumers in `HistoryListView` apply
+   * `position: absolute` + `transform: translateY(...)` so each
+   * virtualized row keeps its single `<div role="row">` element without
+   * a wrapper that would break the grid row/cell ARIA chain.
+   */
+  style?: React.CSSProperties
+  /** Optional ref forwarded to the row `<div>` for the virtualizer's `measureElement`. */
+  rowRef?: (node: HTMLDivElement | null) => void
+  /** Forwarded `data-index` so the virtualizer can identify the row when measuring. */
+  dataIndex?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -226,12 +238,18 @@ function HistoryListItemInner({
   onToggleSelection,
   onToggleDiff,
   onRestoreToHere,
+  style,
+  rowRef,
+  dataIndex,
 }: HistoryListItemProps): React.ReactElement {
   const { t } = useTranslation()
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: ARIA grid row for history list — no semantic HTML equivalent for nested-action rows
     <div
+      ref={rowRef}
+      style={style}
+      data-index={dataIndex}
       data-history-item
       data-testid={`history-item-${index}`}
       role="row"
