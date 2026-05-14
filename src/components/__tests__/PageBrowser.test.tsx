@@ -228,12 +228,17 @@ describe('PageBrowser', () => {
       })
     })
 
-    // Both pages should be rendered (accumulated)
+    // Both pages should be rendered (accumulated). Use `findByText` for
+    // BOTH so the second mocked IPC resolves before the assertion; the
+    // earlier `getByText('Page 2')` synchronous check raced the
+    // accumulator update and flaked on slow CI runners.
     expect(await screen.findByText('Page 1')).toBeInTheDocument()
-    expect(screen.getByText('Page 2')).toBeInTheDocument()
+    expect(await screen.findByText('Page 2')).toBeInTheDocument()
 
     // Load More should disappear after last page
-    expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
+    })
   })
 
   it('fires onPageSelect callback when a page is clicked', async () => {

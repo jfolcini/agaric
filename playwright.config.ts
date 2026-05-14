@@ -5,7 +5,10 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env['CI'],
   retries: process.env['CI'] ? 2 : 0,
-  ...(process.env['CI'] ? { workers: 1 } : {}),
+  // Single worker everywhere: parallel runs flake on shared dev-server
+  // state (Radix popovers, suggestion items, TipTap focus) — CI already
+  // ran with `workers: 1`; aligning local matches the green CI envelope.
+  workers: 1,
   reporter: 'list',
   expect: {
     timeout: 8000,

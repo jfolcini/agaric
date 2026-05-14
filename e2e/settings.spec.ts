@@ -59,8 +59,10 @@ test.describe('Settings panel', () => {
     await expect(page.locator('[data-testid="settings-panel-keyboard"]')).toBeVisible()
     await expect(page.locator('[data-testid="keyboard-settings-tab"]')).toBeVisible()
 
-    // Should show the title and at least one kbd element (shortcut key)
-    await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible()
+    // Should show the title and at least one kbd element (shortcut key).
+    // `CardTitle` is a `<div>` (not a `<h2>`/`<h3>` — the card primitive
+    // uses a styled div), so use a content locator instead of role=heading.
+    await expect(page.getByText('Keyboard Shortcuts', { exact: true })).toBeVisible()
     await expect(page.locator('kbd').first()).toBeVisible()
   })
 

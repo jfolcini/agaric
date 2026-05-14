@@ -1,13 +1,13 @@
 /**
  * Tests for useDialogOrSheet — the Dialog/Sheet swap hook used by
- * ConfirmDialog (and any other responsive overlay).
+ * ConfirmDialog (kind='alert', default) and the 6 form-style dialogs
+ * migrated under MAINT-215 (kind='dialog').
  *
  * Validates:
- *  - Desktop path (`useIsMobile() === false`) returns the AlertDialog set.
- *  - Mobile path (`useIsMobile() === true`) returns the Sheet set.
- *  - The discriminator `isMobile` matches the underlying primitive set.
- *  - Both paths expose the same compatible part shape
- *    (`Root`, `Content`, `Header`, `Title`, `Description`, `Footer`).
+ *  - Desktop+alert returns the AlertDialog set.
+ *  - Desktop+dialog returns the Dialog set.
+ *  - Mobile (both kinds) returns the Sheet set.
+ *  - `kind` discriminant on the returned object matches the input.
  */
 
 import { renderHook } from '@testing-library/react'
@@ -21,6 +21,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Sheet,
   SheetContent,
@@ -48,12 +56,13 @@ afterEach(() => {
 })
 
 describe('useDialogOrSheet', () => {
-  it('returns AlertDialog primitives on desktop', () => {
+  it('returns AlertDialog primitives on desktop with the default kind', () => {
     mockedUseIsMobile.mockReturnValue(false)
 
     const { result } = renderHook(() => useDialogOrSheet())
 
     expect(result.current.isMobile).toBe(false)
+    expect(result.current.kind).toBe('alert')
     expect(result.current.Root).toBe(AlertDialog)
     expect(result.current.Content).toBe(AlertDialogContent)
     expect(result.current.Header).toBe(AlertDialogHeader)
@@ -62,29 +71,73 @@ describe('useDialogOrSheet', () => {
     expect(result.current.Footer).toBe(AlertDialogFooter)
   })
 
-  it('returns Sheet primitives on mobile', () => {
-    mockedUseIsMobile.mockReturnValue(true)
+  it('returns AlertDialog primitives on desktop when kind="alert"', () => {
+    mockedUseIsMobile.mockReturnValue(false)
 
-    const { result } = renderHook(() => useDialogOrSheet())
+    const { result } = renderHook(() => useDialogOrSheet('alert'))
 
-    expect(result.current.isMobile).toBe(true)
-    expect(result.current.Root).toBe(Sheet)
-    expect(result.current.Content).toBe(SheetContent)
-    expect(result.current.Header).toBe(SheetHeader)
-    expect(result.current.Title).toBe(SheetTitle)
-    expect(result.current.Description).toBe(SheetDescription)
-    expect(result.current.Footer).toBe(SheetFooter)
+    expect(result.current.kind).toBe('alert')
+    expect(result.current.Root).toBe(AlertDialog)
   })
 
-  it('exposes the same part keys on both paths', () => {
-    const expectedKeys = ['isMobile', 'Root', 'Content', 'Header', 'Title', 'Description', 'Footer']
+  it('returns Dialog primitives on desktop when kind="dialog" (MAINT-215)', () => {
+    mockedUseIsMobile.mockReturnValue(false)
+
+    const { result } = renderHook(() => useDialogOrSheet('dialog'))
+
+    expect(result.current.isMobile).toBe(false)
+    expect(result.current.kind).toBe('dialog')
+    expect(result.current.Root).toBe(Dialog)
+    expect(result.current.Content).toBe(DialogContent)
+    expect(result.current.Header).toBe(DialogHeader)
+    expect(result.current.Title).toBe(DialogTitle)
+    expect(result.current.Description).toBe(DialogDescription)
+    expect(result.current.Footer).toBe(DialogFooter)
+  })
+
+  it('returns Sheet primitives on mobile regardless of kind', () => {
+    mockedUseIsMobile.mockReturnValue(true)
+
+    for (const kind of ['alert', 'dialog'] as const) {
+      const { result } = renderHook(() => useDialogOrSheet(kind))
+
+      expect(result.current.isMobile).toBe(true)
+      expect(result.current.kind).toBe(kind)
+      expect(result.current.Root).toBe(Sheet)
+      expect(result.current.Content).toBe(SheetContent)
+      expect(result.current.Header).toBe(SheetHeader)
+      expect(result.current.Title).toBe(SheetTitle)
+      expect(result.current.Description).toBe(SheetDescription)
+      expect(result.current.Footer).toBe(SheetFooter)
+    }
+  })
+
+  it('exposes the same part keys on every path', () => {
+    const expectedKeys = [
+      'isMobile',
+      'kind',
+      'Root',
+      'Content',
+      'Header',
+      'Title',
+      'Description',
+      'Footer',
+    ]
 
     mockedUseIsMobile.mockReturnValue(false)
-    const desktop = renderHook(() => useDialogOrSheet()).result.current
-    expect(Object.keys(desktop).sort()).toEqual([...expectedKeys].sort())
+    expect(Object.keys(renderHook(() => useDialogOrSheet('alert')).result.current).sort()).toEqual(
+      [...expectedKeys].sort(),
+    )
+    expect(Object.keys(renderHook(() => useDialogOrSheet('dialog')).result.current).sort()).toEqual(
+      [...expectedKeys].sort(),
+    )
 
     mockedUseIsMobile.mockReturnValue(true)
-    const mobile = renderHook(() => useDialogOrSheet()).result.current
-    expect(Object.keys(mobile).sort()).toEqual([...expectedKeys].sort())
+    expect(Object.keys(renderHook(() => useDialogOrSheet('alert')).result.current).sort()).toEqual(
+      [...expectedKeys].sort(),
+    )
+    expect(Object.keys(renderHook(() => useDialogOrSheet('dialog')).result.current).sort()).toEqual(
+      [...expectedKeys].sort(),
+    )
   })
 })

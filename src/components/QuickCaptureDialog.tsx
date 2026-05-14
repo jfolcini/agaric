@@ -24,22 +24,22 @@
  * the component itself doesn't gate on platform — App.tsx mounts it
  * unconditionally and the dialog only opens when the global shortcut
  * fires (which is itself a no-op on mobile per `registerGlobalShortcut`).
+ *
+ * MAINT-215: on phones < 768 px (`useIsMobile() === true`) the dialog
+ * renders as a bottom Sheet so the textarea + Capture / Cancel buttons
+ * sit within thumb reach. The desktop path keeps the regular Radix
+ * `Dialog` (not `AlertDialog`) so dismiss-on-outside-click / Escape
+ * works without confirmation gating. Both paths share the same
+ * controlled `open` / `onOpenChange` API.
  */
 
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { quickCaptureBlock } from '@/lib/tauri'
@@ -106,13 +106,18 @@ export function QuickCaptureDialog({
     }
   }
 
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description, Footer } = parts
+  // Sheet's Content takes a `side` prop; DialogContent does not.
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="quick-capture-dialog">
-        <DialogHeader>
-          <DialogTitle>{t('quickCapture.dialogTitle')}</DialogTitle>
-          <DialogDescription>{t('settings.quickCapture.description')}</DialogDescription>
-        </DialogHeader>
+    <Root open={open} onOpenChange={onOpenChange}>
+      <Content data-testid="quick-capture-dialog" {...contentSideProps}>
+        <Header>
+          <Title>{t('quickCapture.dialogTitle')}</Title>
+          <Description>{t('settings.quickCapture.description')}</Description>
+        </Header>
         <DialogBody>
           <form
             onSubmit={(e) => {
@@ -139,7 +144,7 @@ export function QuickCaptureDialog({
             />
           </form>
         </DialogBody>
-        <DialogFooter>
+        <Footer>
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
@@ -157,8 +162,8 @@ export function QuickCaptureDialog({
           >
             {t('quickCapture.saveButton')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Footer>
+      </Content>
+    </Root>
   )
 }

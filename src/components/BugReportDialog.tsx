@@ -44,9 +44,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { buildGitHubIssueUrl, formatReportBody } from '@/lib/bug-report'
 import { bugReportZipFilename, buildReportZip } from '@/lib/bug-report-zip'
@@ -354,17 +356,25 @@ export function BugReportDialog({
   const logsSectionId = 'bug-report-logs-list'
   const previewSectionId = 'bug-report-preview'
 
+  // MAINT-215: on phones < 768 px render as a bottom Sheet (form-style
+  // surface; user can dismiss without consequence so `'dialog'` kind →
+  // regular Dialog parts on desktop, not AlertDialog).
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description, Footer } = parts
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+  const Body = parts.isMobile ? SheetBody : DialogBody
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Root open={open} onOpenChange={onOpenChange}>
       {/* The Dialog primitive bakes in flex flex-col + pinned header/footer + a
           scrollable DialogBody slot. See pending/dialog-responsiveness-primitive-2026-05-13.md. */}
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{t('bugReport.title')}</DialogTitle>
-          <DialogDescription>{t('bugReport.description')}</DialogDescription>
-        </DialogHeader>
+      <Content className="max-w-2xl" {...contentSideProps}>
+        <Header>
+          <Title>{t('bugReport.title')}</Title>
+          <Description>{t('bugReport.description')}</Description>
+        </Header>
 
-        <DialogBody data-testid="bug-report-body">
+        <Body data-testid="bug-report-body">
           {/* Form */}
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -530,9 +540,9 @@ export function BugReportDialog({
               </span>
             </Label>
           </div>
-        </DialogBody>
+        </Body>
 
-        <DialogFooter>
+        <Footer>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('bugReport.cancel')}
           </Button>
@@ -576,10 +586,13 @@ export function BugReportDialog({
             {submitting ? <Spinner /> : null}
             {includeLogs ? t('bugReport.openGitHubIssue') : t('bugReport.openIssue')}
           </Button>
-        </DialogFooter>
+        </Footer>
 
         {/* UX-277: per-log preview sub-dialog. Radix portals this to
-            document.body so it stacks correctly above the parent dialog. */}
+            document.body so it stacks correctly above the parent dialog.
+            Kept as a regular Dialog primitive across viewports — nesting a
+            Sheet inside a Sheet would compound the focus-trap and
+            overlay-stacking edge cases the parent migration is avoiding. */}
         <Dialog open={previewOpen} onOpenChange={handlePreviewOpenChange}>
           <DialogContent
             className="max-w-2xl"
@@ -670,7 +683,7 @@ export function BugReportDialog({
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </DialogContent>
-    </Dialog>
+      </Content>
+    </Root>
   )
 }

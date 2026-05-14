@@ -17,9 +17,19 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { writeText } from '@/lib/clipboard'
 import { t } from '../../lib/i18n'
 import { BugReportDialog } from '../BugReportDialog'
+
+// MAINT-215: useDialogOrSheet branches on useIsMobile. Default to the
+// desktop (Dialog) path so the pre-existing test bodies keep their
+// semantics; the dedicated viewport-switch describe at the bottom
+// overrides this.
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
@@ -73,6 +83,8 @@ beforeEach(() => {
   // Re-arm the wrapper mock — `vi.clearAllMocks()` clears the default
   // resolution installed at module load.
   mockedWriteText.mockResolvedValue(undefined)
+  // MAINT-215: reset to desktop so cross-test mobile overrides never leak.
+  mockedUseIsMobile.mockReturnValue(false)
 })
 
 describe('BugReportDialog', () => {
@@ -909,5 +921,39 @@ describe('BugReportDialog', () => {
       t('bugReport.fieldDescriptionLabel'),
     ) as HTMLTextAreaElement
     expect(descInput.value).toBe('stack trace here')
+  })
+
+  // ─── MAINT-215: useDialogOrSheet('dialog') viewport switch ─────────────
+  //
+  // On phones < 768 px the outer shell renders as a bottom Sheet so the
+  // footer actions sit within thumb reach. The form body, IPC wiring, and
+  // confirm checkbox are identical on both paths — assert the dialog mounts
+  // and the form fields are reachable under both viewports.
+  describe('viewport switch (MAINT-215)', () => {
+    it('renders form body on mobile (Sheet path)', async () => {
+      mockedUseIsMobile.mockReturnValue(true)
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldDescriptionLabel'))).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }),
+      ).toBeInTheDocument()
+    })
+
+    it('renders form body on desktop (Dialog path)', async () => {
+      mockedUseIsMobile.mockReturnValue(false)
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldDescriptionLabel'))).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }),
+      ).toBeInTheDocument()
+    })
   })
 })

@@ -25,6 +25,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import type { SpaceRow } from '@/lib/tauri'
@@ -40,7 +41,15 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+// MAINT-215: the dialog swaps to a bottom Sheet via `useDialogOrSheet`
+// when `useIsMobile()` is true. Mock the hook so each test can pin the
+// viewport-state boolean.
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 const PERSONAL: SpaceRow = { id: 'SPACE_PERSON_AAAA', name: 'Personal', accent_color: null }
 const WORK: SpaceRow = { id: 'SPACE_WORK_ZZZZZZ', name: 'Work', accent_color: null }
@@ -95,6 +104,8 @@ function setupDefaultIpcMocks() {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // Default to the desktop path so existing test bodies keep their semantics.
+  mockedUseIsMobile.mockReturnValue(false)
   useSpaceStore.setState({
     currentSpaceId: PERSONAL.id,
     availableSpaces: [PERSONAL, WORK],
@@ -959,5 +970,30 @@ describe('SpaceManageDialog', () => {
       },
       { timeout: 5000 },
     )
+  })
+
+  // MAINT-215: the dialog mounts under both the desktop Dialog path and
+  // the mobile Sheet path. Assert on body content (the dialog title +
+  // the per-space row inputs) being visible rather than the Dialog /
+  // Sheet DOM specifics so the test stays decoupled from the underlying
+  // primitive.
+  describe('mobile / desktop responsive surfaces (MAINT-215)', () => {
+    it('renders the dialog header and per-space rows on the mobile Sheet path', async () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+      expect(await screen.findByText(t('space.manageDialogTitle'))).toBeInTheDocument()
+      expect(screen.getByDisplayValue(PERSONAL.name)).toBeInTheDocument()
+      expect(screen.getByDisplayValue(WORK.name)).toBeInTheDocument()
+    })
+
+    it('renders the dialog header and per-space rows on the desktop Dialog path', async () => {
+      mockedUseIsMobile.mockReturnValue(false)
+      render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+      expect(await screen.findByText(t('space.manageDialogTitle'))).toBeInTheDocument()
+      expect(screen.getByDisplayValue(PERSONAL.name)).toBeInTheDocument()
+      expect(screen.getByDisplayValue(WORK.name)).toBeInTheDocument()
+    })
   })
 })

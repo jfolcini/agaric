@@ -18,16 +18,27 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { t } from '../../lib/i18n'
 import { useSpaceStore } from '../../stores/space'
 import { QuickCaptureDialog } from '../QuickCaptureDialog'
 
+// MAINT-215: the dialog swaps to a bottom Sheet via `useDialogOrSheet`
+// when `useIsMobile()` is true. Mock the hook so each test can pin the
+// viewport-state boolean.
+vi.mock('../../hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Default to the desktop path so existing test bodies keep their semantics.
+  mockedUseIsMobile.mockReturnValue(false)
   // FEAT-3p5: QuickCaptureDialog reads `currentSpaceId` from
   // `useSpaceStore` and passes it through `quickCaptureBlock`. Seed
   // a fixed space so the IPC arg shape is deterministic.
@@ -183,5 +194,27 @@ describe('QuickCaptureDialog', () => {
     const textarea = screen.getByTestId('quick-capture-textarea')
     expect(textarea).toHaveAttribute('aria-label', t('quickCapture.captureInputLabel'))
     expect(textarea.getAttribute('aria-label')).not.toBe(t('quickCapture.dialogTitle'))
+  })
+
+  // MAINT-215: the dialog mounts under both the desktop Dialog path and
+  // the mobile Sheet path. Assert on body content (the capture textarea)
+  // being visible rather than the Dialog / Sheet DOM specifics so the
+  // test stays decoupled from the underlying primitive.
+  describe('mobile / desktop responsive surfaces (MAINT-215)', () => {
+    it('renders the capture textarea on the mobile Sheet path', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+
+      expect(screen.getByTestId('quick-capture-textarea')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(t('quickCapture.placeholder'))).toBeInTheDocument()
+    })
+
+    it('renders the capture textarea on the desktop Dialog path', () => {
+      mockedUseIsMobile.mockReturnValue(false)
+      render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+
+      expect(screen.getByTestId('quick-capture-textarea')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(t('quickCapture.placeholder'))).toBeInTheDocument()
+    })
   })
 })
