@@ -60,6 +60,12 @@ flat_map_option = "warn"
 # `cargo nextest run` does not. Local devs can still run the test
 # manually: `cargo build --bin agaric-mcp && cargo nextest run --features ci-smoke -E 'test(stub_binary)'`.
 ci-smoke = []
+# Opt-in feature that builds the `audit_cross_space_refs` and `op_log_histogram`
+# diagnostic bins. Off by default so `cargo tauri build` does not ship them in
+# the .deb/.rpm/AppImage — they are read-only DB inspection tools for
+# developers, not user-facing. Build locally with
+# `cargo build --release --features diagnostics --bin <name>` when needed.
+diagnostics = []
 # MAINT-111 spike: opt-in evaluation of the official Rust MCP SDK
 # (`rmcp`) as a possible replacement for the hand-rolled JSON-RPC 2.0
 # framing in `mcp/server.rs`. **Off by default** — the production build
@@ -386,6 +392,7 @@ path = "src/bin/agaric-mcp.rs"
 [[bin]]
 name = "audit_cross_space_refs"
 path = "src/bin/audit_cross_space_refs.rs"
+required-features = ["diagnostics"]
 
 # PEND-09 Phase 2 day-4 — read-only diagnostic that prints a histogram of
 # the user's `op_log` table (count + percentage per op_type) and compares
@@ -397,6 +404,7 @@ path = "src/bin/audit_cross_space_refs.rs"
 [[bin]]
 name = "op_log_histogram"
 path = "src/bin/op_log_histogram.rs"
+required-features = ["diagnostics"]
 
 # PEND-09 Phase 3 day-10 — `parity_report` bin deleted alongside the
 # `merge_parity_log` table (migration `0057`).  The bin's reason for
