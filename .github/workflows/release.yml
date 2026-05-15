@@ -212,9 +212,8 @@ jobs:
           # same `target/<triple>/release/` output directory, even on
           # native-target builds where it is a no-op.
           CARGO_BUILD_TARGET: ${{ matrix.target }}
-          # PUB-5: Uncomment once signing keys are generated and pubkey is set in tauri.conf.json
-          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS code signing + notarization is intentionally NOT wired.
           # The maintainer has opted out of Apple Developer Program membership
           # (paid, recurring) for this open-source project. With no APPLE_*
