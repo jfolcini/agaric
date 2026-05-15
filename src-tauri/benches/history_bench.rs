@@ -88,10 +88,7 @@ fn ts_for(seq: i64) -> String {
 /// All ops use `BENCH_DEVICE` so the most-recent-50 selector in callers
 /// can use the `[last_seq - 49 ..= last_seq]` range without scanning the
 /// op_log.
-async fn seed_single_page_history(
-    pool: &SqlitePool,
-    total_ops: usize,
-) -> (String, String, i64) {
+async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (String, String, i64) {
     assert!(
         total_ops >= 52,
         "seed_single_page_history needs >=52 ops (2 creates + 50-op revert window)"
@@ -162,9 +159,8 @@ async fn seed_single_page_history(
     let remaining = (total_ops as i64) - seq;
     for j in 0..remaining {
         seq += 1;
-        let edit_json = format!(
-            r#"{{"block_id":"{block_id}","to_text":"edit-{j}","prev_edit":null}}"#
-        );
+        let edit_json =
+            format!(r#"{{"block_id":"{block_id}","to_text":"edit-{j}","prev_edit":null}}"#);
         sqlx::query(
             "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
              VALUES (?, ?, 'fakehash', 'edit_block', ?, ?)",
@@ -206,8 +202,7 @@ fn bench_list_page_history(c: &mut Criterion) {
     for &total_ops in &SWEEP_SIZES {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
-        let pool =
-            rt.block_on(fresh_pool(&dir, &format!("hist_list_{total_ops}")));
+        let pool = rt.block_on(fresh_pool(&dir, &format!("hist_list_{total_ops}")));
         let (page_id, _block_id, _last_seq) =
             rt.block_on(seed_single_page_history(&pool, total_ops));
 
@@ -256,8 +251,7 @@ fn bench_revert_ops_50op(c: &mut Criterion) {
     for &total_ops in &SWEEP_SIZES {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
-        let pool =
-            rt.block_on(fresh_pool(&dir, &format!("hist_revert_{total_ops}")));
+        let pool = rt.block_on(fresh_pool(&dir, &format!("hist_revert_{total_ops}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
         let (_page_id, _block_id, last_seq) =
             rt.block_on(seed_single_page_history(&pool, total_ops));
@@ -307,8 +301,7 @@ fn bench_undo_page_op(c: &mut Criterion) {
     for &total_ops in &SWEEP_SIZES {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
-        let pool =
-            rt.block_on(fresh_pool(&dir, &format!("hist_undo_{total_ops}")));
+        let pool = rt.block_on(fresh_pool(&dir, &format!("hist_undo_{total_ops}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
         let (page_id, _block_id, _last_seq) =
             rt.block_on(seed_single_page_history(&pool, total_ops));
@@ -322,15 +315,9 @@ fn bench_undo_page_op(c: &mut Criterion) {
                     let materializer_ref = &materializer;
                     let page_id = page_id.clone();
                     async move {
-                        undo_page_op_inner(
-                            &pool,
-                            BENCH_DEVICE,
-                            materializer_ref,
-                            page_id,
-                            0,
-                        )
-                        .await
-                        .unwrap()
+                        undo_page_op_inner(&pool, BENCH_DEVICE, materializer_ref, page_id, 0)
+                            .await
+                            .unwrap()
                     }
                 })
             },
@@ -358,8 +345,7 @@ fn bench_redo_page_op(c: &mut Criterion) {
     for &total_ops in &SWEEP_SIZES {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
-        let pool =
-            rt.block_on(fresh_pool(&dir, &format!("hist_redo_{total_ops}")));
+        let pool = rt.block_on(fresh_pool(&dir, &format!("hist_redo_{total_ops}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
         let (page_id, _block_id, _last_seq) =
             rt.block_on(seed_single_page_history(&pool, total_ops));
@@ -374,15 +360,10 @@ fn bench_redo_page_op(c: &mut Criterion) {
                     let page_id = page_id.clone();
                     async move {
                         // Undo most recent op so there's something to redo.
-                        let undo_result = undo_page_op_inner(
-                            &pool,
-                            BENCH_DEVICE,
-                            materializer_ref,
-                            page_id,
-                            0,
-                        )
-                        .await
-                        .unwrap();
+                        let undo_result =
+                            undo_page_op_inner(&pool, BENCH_DEVICE, materializer_ref, page_id, 0)
+                                .await
+                                .unwrap();
 
                         // Redo by reversing the undo op.
                         redo_page_op_inner(

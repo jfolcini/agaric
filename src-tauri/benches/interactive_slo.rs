@@ -406,10 +406,7 @@ fn slo_history_ts_for(seq: i64) -> String {
 /// two copies in sync if either side changes. Layout: seq=1 page create,
 /// seq=2 child create, seq=3..=total_ops edit_block ops against that
 /// child. Returns `(page_id, child_block_id, last_seq)`.
-async fn seed_single_page_history(
-    pool: &SqlitePool,
-    total_ops: usize,
-) -> (String, String, i64) {
+async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (String, String, i64) {
     assert!(
         total_ops >= 52,
         "seed_single_page_history needs >=52 ops (2 creates + 50-op revert window)"
@@ -475,9 +472,8 @@ async fn seed_single_page_history(
     let remaining = (total_ops as i64) - seq;
     for j in 0..remaining {
         seq += 1;
-        let edit_json = format!(
-            r#"{{"block_id":"{block_id}","to_text":"edit-{j}","prev_edit":null}}"#
-        );
+        let edit_json =
+            format!(r#"{{"block_id":"{block_id}","to_text":"edit-{j}","prev_edit":null}}"#);
         sqlx::query(
             "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
              VALUES (?, ?, 'fakehash', 'edit_block', ?, ?)",
@@ -945,8 +941,7 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_revert_ops"));
     let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-    let (_page_id, _block_id, last_seq) =
-        rt.block_on(seed_single_page_history(&pool, TOTAL_OPS));
+    let (_page_id, _block_id, last_seq) = rt.block_on(seed_single_page_history(&pool, TOTAL_OPS));
 
     // Most-recent-50 ops = [last_seq - 49 .. last_seq], all edit_block
     // against the same child (see `seed_single_page_history` doc).
