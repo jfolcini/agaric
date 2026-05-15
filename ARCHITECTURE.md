@@ -2392,6 +2392,13 @@ SQLite WAL mode with 2-writer + 4-reader pool.
 responsive for typical use (<10K blocks). Graph and projected-agenda queries are the known
 scaling bottlenecks; see REVIEW-LATER.md PERF-19/PERF-20 for mitigation plans.
 
+**Measured.** All 100K numbers above are pre-session-742 one-off measurements. Sessions 742
+(Phase 1 of the scale-benchmarks plan — `src-tauri/benches/interactive_slo.rs`) and 744
+(Phase 2 — `history_bench.rs`, extended `graph_bench.rs`, `agenda_expansion_bench.rs`)
+landed Criterion-driven regression gates so future drift surfaces in CI rather than as
+one-off remeasures. `list_page_links` and `list_projected_agenda` are gated at the
+aspirational 200 ms budget behind `SLO_INCLUDE_PROBLEM=1` until their follow-up plans ship.
+
 **Write path:** `create_block` involves 6 SQL queries + blake3 hash + materializer dispatch.
 Tag inheritance contributes ~3-5ms. Lazy hash computation was rejected (breaks sync protocol
 integrity — `verify_op_record` checks hashes upfront).
