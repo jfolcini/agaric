@@ -2747,3 +2747,375 @@ describe('quick_capture_block', () => {
     expect(createOp).toBeDefined()
   })
 })
+
+// ---------------------------------------------------------------------------
+// MAINT-226 — scope-filter parity across every scope-aware mock handler.
+//
+// Each backend command listed in `src-tauri/src/commands/*.rs` whose
+// signature includes `scope: SpaceScope` MUST be honoured by the matching
+// mock handler in `src/lib/tauri-mock/handlers.ts`. Without these
+// assertions, a future handler edit that silently drops the scope arg
+// would regress browser-dev / vitest space-scoping with no failure.
+//
+// Setup: create a single "foreign" page in `SPACE_OTHER` with one
+// content block. The seed canonical pages all live in `SPACE_PERSONAL`,
+// so invoking each handler with `scope = { kind: 'active', space_id:
+// 'SPACE_PERSONAL' }` should EXCLUDE the foreign block; invoking with
+// `scope = { kind: 'global' }` (or omitting scope, which the mock
+// treats as global) should INCLUDE it.
+// ---------------------------------------------------------------------------
+
+describe('MAINT-226 — scope-filter parity', () => {
+  const SPACE_OTHER = 'SPACE_OTHER_TEST'
+
+  /** Seed a foreign-space page + content block referencing PAGE_GETTING_STARTED. */
+  function seedForeignPage(): void {
+    // Create the page directly via create_page_in_space (handles space stamp)
+    invoke('create_page_in_space', {
+      parentId: null,
+      content: 'Foreign Page',
+      spaceId: SPACE_OTHER,
+    })
+    // We can't predict the ULID returned, so re-fetch via list_blocks and
+    // grab the most-recently-added page with content === 'Foreign Page'.
+  }
+
+  /** Insert a foreign-space page + a child block under it, returning ids. */
+  function seedForeignFixture(opts: {
+    /** Link target to embed in foreign content (for backlink-style tests). */
+    linkTarget?: string
+    /** Block content (overrides default 'foreign block content'). */
+    content?: string
+    /** Apply task-style fields (todo_state/due/scheduled) for agenda tests. */
+    asTask?: { todo_state?: string; due_date?: string; scheduled_date?: string }
+    /** Optional tag id to associate with the foreign block. */
+    tagId?: string
+  }): { pageId: string; blockId: string } {
+    seedForeignPage()
+    // Find the just-created foreign page (it carries `space = SPACE_OTHER`).
+    const allPages = invoke('list_blocks', { blockType: 'page' }) as {
+      items: Record<string, unknown>[]
+    }
+    const foreignPage = allPages.items.find((p) => p['content'] === 'Foreign Page')
+    if (!foreignPage) throw new Error('foreign page seed failed')
+    const pageId = foreignPage['id'] as string
+    // Build content — embed the link target if requested so `get_backlinks` /
+    // `list_backlinks_grouped` / `count_backlinks_batch` / etc. pick it up.
+    const content =
+      opts.content ?? `foreign block ${opts.linkTarget ? `[[${opts.linkTarget}]]` : ''}`
+    const child = invoke('create_block', {
+      blockType: 'content',
+      content,
+      parentId: pageId,
+    }) as Record<string, unknown>
+    const blockId = child['id'] as string
+    // Apply task fields if requested.
+    if (opts.asTask) {
+      if (opts.asTask.todo_state !== undefined) {
+        invoke('set_todo_state', { blockId, state: opts.asTask.todo_state })
+      }
+      if (opts.asTask.due_date !== undefined) {
+        invoke('set_due_date', { blockId, date: opts.asTask.due_date })
+      }
+      if (opts.asTask.scheduled_date !== undefined) {
+        invoke('set_scheduled_date', { blockId, date: opts.asTask.scheduled_date })
+      }
+    }
+    if (opts.tagId) {
+      invoke('add_tag', { blockId, tagId: opts.tagId })
+    }
+    return { pageId, blockId }
+  }
+
+  // -------------------------------------------------------------------------
+  // batch_resolve (backend: batch_resolve) — drops foreign-page metadata.
+  // -------------------------------------------------------------------------
+  it('batch_resolve filters foreign-space ids under active scope', () => {
+    const { pageId: foreignPageId } = seedForeignFixture({})
+    const ids = [SEED_IDS.PAGE_GETTING_STARTED, foreignPageId]
+    const globalResult = invoke('batch_resolve', { ids }) as Array<Record<string, unknown>>
+    expect(globalResult.map((r) => r['id'])).toEqual(
+      expect.arrayContaining([SEED_IDS.PAGE_GETTING_STARTED, foreignPageId]),
+    )
+    const activeResult = invoke('batch_resolve', {
+      ids,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as Array<Record<string, unknown>>
+    const activeIds = activeResult.map((r) => r['id'])
+    expect(activeIds).toContain(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(activeIds).not.toContain(foreignPageId)
+  })
+
+  // -------------------------------------------------------------------------
+  // get_backlinks (backend: get_backlinks) — drops foreign source blocks.
+  // -------------------------------------------------------------------------
+  it('get_backlinks filters foreign-space sources under active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({
+      linkTarget: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const activeResult = invoke('get_backlinks', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Array<Record<string, unknown>> }
+    expect(activeResult.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+    // Sanity: global scope still sees it.
+    const globalResult = invoke('get_backlinks', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      scope: { kind: 'global' },
+    }) as { items: Array<Record<string, unknown>> }
+    expect(globalResult.items.map((b) => b['id'])).toContain(foreignBlockId)
+  })
+
+  // -------------------------------------------------------------------------
+  // query_backlinks_filtered (backend: query_backlinks_filtered)
+  // -------------------------------------------------------------------------
+  it('query_backlinks_filtered honours active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({
+      linkTarget: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const result = invoke('query_backlinks_filtered', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      filters: null,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Array<Record<string, unknown>> }
+    expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+  })
+
+  // -------------------------------------------------------------------------
+  // list_backlinks_grouped (backend: list_backlinks_grouped)
+  // -------------------------------------------------------------------------
+  it('list_backlinks_grouped honours active scope', () => {
+    const { pageId: foreignPageId, blockId: foreignBlockId } = seedForeignFixture({
+      linkTarget: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const result = invoke('list_backlinks_grouped', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { groups: Array<{ page_id: string; blocks: Array<Record<string, unknown>> }> }
+    const allBlockIds = result.groups.flatMap((g) => g.blocks.map((b) => b['id']))
+    expect(allBlockIds).not.toContain(foreignBlockId)
+    // The foreign source page itself should not appear as a group key either.
+    expect(result.groups.map((g) => g.page_id)).not.toContain(foreignPageId)
+  })
+
+  // -------------------------------------------------------------------------
+  // list_unlinked_references (backend: list_unlinked_references)
+  // -------------------------------------------------------------------------
+  it('list_unlinked_references honours active scope', () => {
+    // Foreign-space block mentioning "Quick Notes" without a [[link]].
+    const { blockId: foreignBlockId } = seedForeignFixture({
+      content: 'See Quick Notes about this',
+    })
+    const result = invoke('list_unlinked_references', {
+      pageId: SEED_IDS.PAGE_QUICK_NOTES,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { groups: Array<{ blocks: Array<Record<string, unknown>> }> }
+    const ids = result.groups.flatMap((g) => g.blocks.map((b) => b['id']))
+    expect(ids).not.toContain(foreignBlockId)
+  })
+
+  // -------------------------------------------------------------------------
+  // query_by_property (backend: query_by_property)
+  // -------------------------------------------------------------------------
+  it('query_by_property honours active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({
+      asTask: { todo_state: 'TODO' },
+    })
+    const result = invoke('query_by_property', {
+      key: 'todo_state',
+      valueText: 'TODO',
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Array<Record<string, unknown>> }
+    expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+  })
+
+  // -------------------------------------------------------------------------
+  // query_by_tags (backend: query_by_tags)
+  // -------------------------------------------------------------------------
+  it('query_by_tags honours active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({ tagId: SEED_IDS.TAG_WORK })
+    const result = invoke('query_by_tags', {
+      tagIds: [SEED_IDS.TAG_WORK],
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Array<Record<string, unknown>> }
+    expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+  })
+
+  // -------------------------------------------------------------------------
+  // filtered_blocks_query (backend: filtered_blocks_query)
+  // -------------------------------------------------------------------------
+  it('filtered_blocks_query honours active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({
+      asTask: { todo_state: 'TODO' },
+    })
+    const result = invoke('filtered_blocks_query', {
+      propertyFilters: [{ key: 'todo_state', valueText: 'TODO' }],
+      tagFilters: null,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Array<Record<string, unknown>> }
+    expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+  })
+
+  // -------------------------------------------------------------------------
+  // list_unfinished_tasks (backend: list_unfinished_tasks)
+  // -------------------------------------------------------------------------
+  it('list_unfinished_tasks honours active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({
+      asTask: { todo_state: 'TODO', due_date: '2026-04-10' },
+    })
+    const result = invoke('list_unfinished_tasks', {
+      beforeDate: '2026-04-15',
+      todoStates: ['TODO'],
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as
+      | { items: Array<Record<string, unknown>> }
+      | Promise<{
+          items: Array<Record<string, unknown>>
+        }>
+    // The mock returns a Promise — resolve before asserting.
+    return Promise.resolve(result).then((r) => {
+      expect(r.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // list_undated_tasks (backend: list_undated_tasks)
+  // -------------------------------------------------------------------------
+  it('list_undated_tasks honours active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({
+      asTask: { todo_state: 'TODO' },
+    })
+    const result = invoke('list_undated_tasks', {
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Array<Record<string, unknown>> }
+    expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+  })
+
+  // -------------------------------------------------------------------------
+  // count_agenda_batch (backend: count_agenda_batch)
+  // -------------------------------------------------------------------------
+  it('count_agenda_batch honours active scope', () => {
+    seedForeignFixture({ asTask: { todo_state: 'TODO', due_date: '2026-04-20' } })
+    const globalResult = invoke('count_agenda_batch', {
+      dates: ['2026-04-20'],
+      scope: { kind: 'global' },
+    }) as Record<string, number>
+    const activeResult = invoke('count_agenda_batch', {
+      dates: ['2026-04-20'],
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as Record<string, number>
+    // The foreign block raises the global count above the active count.
+    expect(globalResult['2026-04-20'] ?? 0).toBeGreaterThan(activeResult['2026-04-20'] ?? 0)
+  })
+
+  // -------------------------------------------------------------------------
+  // count_agenda_batch_by_source (backend: count_agenda_batch_by_source)
+  // -------------------------------------------------------------------------
+  it('count_agenda_batch_by_source honours active scope', () => {
+    seedForeignFixture({ asTask: { todo_state: 'TODO', due_date: '2026-04-21' } })
+    const globalResult = invoke('count_agenda_batch_by_source', {
+      dates: ['2026-04-21'],
+      scope: { kind: 'global' },
+    }) as Record<string, Record<string, number>>
+    const activeResult = invoke('count_agenda_batch_by_source', {
+      dates: ['2026-04-21'],
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as Record<string, Record<string, number>>
+    const globalDueCount = globalResult['2026-04-21']?.['column:due_date'] ?? 0
+    const activeDueCount = activeResult['2026-04-21']?.['column:due_date'] ?? 0
+    expect(globalDueCount).toBeGreaterThan(activeDueCount)
+  })
+
+  // -------------------------------------------------------------------------
+  // list_page_history (backend: list_page_history)
+  // -------------------------------------------------------------------------
+  it('list_page_history honours active scope', () => {
+    const { blockId: foreignBlockId } = seedForeignFixture({})
+    const result = invoke('list_page_history', {
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Array<Record<string, unknown>> }
+    // The foreign create_block op should be filtered out — none of the
+    // returned op payloads should reference the foreign block.
+    const referencingForeign = result.items.filter((o) => {
+      const p = JSON.parse(o['payload'] as string) as Record<string, unknown>
+      return p['block_id'] === foreignBlockId
+    })
+    expect(referencingForeign).toHaveLength(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // list_page_links (backend: list_page_links)
+  // -------------------------------------------------------------------------
+  it('list_page_links honours active scope', () => {
+    const { pageId: foreignPageId } = seedForeignFixture({
+      linkTarget: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const result = invoke('list_page_links', {
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as Array<{ source_id: string; target_id: string }>
+    // No edges from the foreign page should appear under the active scope.
+    expect(result.map((e) => e.source_id)).not.toContain(foreignPageId)
+    expect(result.map((e) => e.target_id)).not.toContain(foreignPageId)
+  })
+
+  // -------------------------------------------------------------------------
+  // create_block (backend: create_block) — write-path: under active scope,
+  // a newly-created page is stamped with `space = ?spaceId` so subsequent
+  // scope-filtered queries treat it as a member of that space.
+  // -------------------------------------------------------------------------
+  it('create_block stamps the active-space ref on new pages', () => {
+    const newPage = invoke('create_block', {
+      blockType: 'page',
+      content: 'Scoped New Page',
+      parentId: null,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as Record<string, unknown>
+    // The new page should resolve via the alias / batch_resolve under
+    // SPACE_PERSONAL — proves the space property was stamped.
+    const resolved = invoke('batch_resolve', {
+      ids: [newPage['id'] as string],
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as Array<Record<string, unknown>>
+    expect(resolved.map((r) => r['id'])).toContain(newPage['id'])
+    // And NOT under a different space.
+    const wrongSpace = invoke('batch_resolve', {
+      ids: [newPage['id'] as string],
+      scope: { kind: 'active', space_id: SPACE_OTHER },
+    }) as Array<Record<string, unknown>>
+    expect(wrongSpace.map((r) => r['id'])).not.toContain(newPage['id'])
+  })
+
+  // -------------------------------------------------------------------------
+  // Sanity: count_backlinks_batch / resolve_page_by_alias /
+  // list_page_aliases_by_prefix already filtered prior to MAINT-226. We
+  // include a single re-verification here so a future regression that
+  // breaks ALL three is still caught by this single audit block.
+  // -------------------------------------------------------------------------
+  it('count_backlinks_batch / resolve_page_by_alias retain their active-scope filters', () => {
+    // Set up an alias on the foreign page.
+    const { pageId: foreignPageId, blockId: foreignBlockId } = seedForeignFixture({
+      linkTarget: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    invoke('set_page_aliases', { pageId: foreignPageId, aliases: ['foreign-alias'] })
+    const counts = invoke('count_backlinks_batch', {
+      pageIds: [SEED_IDS.PAGE_GETTING_STARTED],
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as Record<string, number>
+    const countsGlobal = invoke('count_backlinks_batch', {
+      pageIds: [SEED_IDS.PAGE_GETTING_STARTED],
+      scope: { kind: 'global' },
+    }) as Record<string, number>
+    // Foreign backlink is excluded under active.
+    expect(countsGlobal[SEED_IDS.PAGE_GETTING_STARTED]).toBeGreaterThan(
+      counts[SEED_IDS.PAGE_GETTING_STARTED] ?? 0,
+    )
+    // Alias resolution under active scope returns null (foreign alias).
+    const resolved = invoke('resolve_page_by_alias', {
+      alias: 'foreign-alias',
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    })
+    expect(resolved).toBeNull()
+    // Reference the foreign block to keep the linter happy (unused-var).
+    void foreignBlockId
+  })
+})

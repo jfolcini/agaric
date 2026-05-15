@@ -234,14 +234,24 @@ export const HANDLERS: Record<string, Handler> = {
     return ids
   },
 
-  list_undated_tasks: () => {
-    const items = [...blocks.values()].filter(
-      (b) =>
-        b['todo_state'] !== null &&
-        b['due_date'] === null &&
-        b['scheduled_date'] === null &&
-        !b['deleted_at'],
-    )
+  list_undated_tasks: (args) => {
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // `list_undated_tasks_inner`).
+    const a = (args ?? {}) as Record<string, unknown>
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const items = [...blocks.values()].filter((b) => {
+      if (b['deleted_at']) return false
+      if (b['todo_state'] === null) return false
+      if (b['due_date'] !== null) return false
+      if (b['scheduled_date'] !== null) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
+      return true
+    })
     return { items, next_cursor: null, has_more: false }
   },
 
@@ -249,6 +259,14 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const id = fakeId()
     const parentId = (a['parentId'] as string) ?? null
+    // PEND-35 / MAINT-226 — `scope: SpaceScope` mirrors the backend
+    // `create_block_inner_with_space` semantics: when `kind === 'active'`
+    // and the new block is a page, the page is stamped with
+    // `space = ?space_id` so subsequent space-filtered queries (backlink
+    // counts, alias resolution, etc.) recognise it as belonging to that
+    // space. Global scope skips the stamp (legacy unscoped behaviour).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     // Compute position: if not provided, append after existing siblings
     let position = a['position'] as number | undefined
     if (position == null) {
@@ -257,12 +275,13 @@ export const HANDLERS: Record<string, Handler> = {
       )
       position = siblings.length
     }
+    const blockType = a['blockType'] as string
     const row = {
       id,
-      block_type: a['blockType'] as string,
+      block_type: blockType,
       content: (a['content'] as string) ?? null,
       parent_id: parentId,
-      page_id: (a['blockType'] as string) === 'page' ? id : parentId,
+      page_id: blockType === 'page' ? id : parentId,
       position,
       deleted_at: null,
       todo_state: null,
@@ -271,6 +290,22 @@ export const HANDLERS: Record<string, Handler> = {
       scheduled_date: null,
     }
     blocks.set(id, row)
+    // Stamp the `space` ref property on new pages so the rest of the
+    // scope-aware mock handlers (`count_backlinks_batch`,
+    // `resolve_page_by_alias`, etc.) treat the page as living in the
+    // active space — same invariant as `create_page_in_space`.
+    if (blockType === 'page' && spaceId !== null) {
+      if (!properties.has(id)) properties.set(id, new Map())
+      properties.get(id)?.set('space', {
+        block_id: id,
+        key: 'space',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: spaceId,
+        value_bool: null,
+      })
+    }
     pushOp('create_block', {
       block_id: id,
       content: row.content,
@@ -644,9 +679,22 @@ export const HANDLERS: Record<string, Handler> = {
   batch_resolve: (args) => {
     const a = args as Record<string, unknown>
     const ids = a['ids'] as string[]
+    // MAINT-226 — honour `scope: SpaceScope`. Active scope drops blocks
+    // whose owning page (`page_id`, or the block's own id if it IS a
+    // page) is not stamped with `space = ?spaceId`, mirroring the
+    // backend's `batch_resolve_inner` space-filter. Global passes
+    // everything through (legacy cross-space behaviour).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     return ids
       .map((id) => blocks.get(id))
       .filter(Boolean)
+      .filter((b) => {
+        if (spaceId === null) return true
+        const ownerId = (b?.['page_id'] as string | null) ?? (b?.['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        return ownerSpace === spaceId
+      })
       .map((b) => ({
         id: b?.['id'] as string,
         title: (b?.['content'] as string | null) ?? null,
@@ -719,10 +767,21 @@ export const HANDLERS: Record<string, Handler> = {
   get_backlinks: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
+    // MAINT-226 — honour `scope: SpaceScope` the same way the backend's
+    // `get_backlinks_inner` does. Active scope drops source blocks whose
+    // owning page (`page_id`, or own id if itself a page) lives in a
+    // different space. Global is unfiltered (legacy cross-space view).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     // Scan all blocks for [[ULID]] tokens matching the target
     const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
     const backlinkItems = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       const content = (b['content'] as string) ?? ''
       for (const m of content.matchAll(LINK_RE)) {
         if (m[1] === targetId) return true
@@ -742,14 +801,39 @@ export const HANDLERS: Record<string, Handler> = {
     return { items: [], next_cursor: null, has_more: false, total_count: null }
   },
 
-  list_page_history: () => {
-    const items = [...opLog].reverse().map((o) => ({
-      device_id: o.device_id,
-      seq: o.seq,
-      op_type: o.op_type,
-      payload: o.payload,
-      created_at: o.created_at,
-    }))
+  list_page_history: (args) => {
+    // MAINT-226 — honour `scope: SpaceScope`. The backend's
+    // `list_page_history_inner` filters cross-space ops via
+    // `ol.block_id IN (SELECT block_id FROM block_properties
+    // WHERE key='space' AND value_ref=?)` — i.e., the op's payload
+    // block_id must itself carry a `space` property. Only page blocks
+    // carry that property, so this effectively scopes to page-level ops.
+    // Global is unfiltered.
+    const a = (args ?? {}) as Record<string, unknown>
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const items = [...opLog]
+      .reverse()
+      .filter((o) => {
+        if (spaceId === null) return true
+        let payloadObj: Record<string, unknown>
+        try {
+          payloadObj = JSON.parse(o.payload) as Record<string, unknown>
+        } catch {
+          return true
+        }
+        const blockId = payloadObj['block_id'] as string | undefined
+        if (!blockId) return true
+        const blockSpace = properties.get(blockId)?.get('space')?.['value_ref'] ?? null
+        return blockSpace === spaceId
+      })
+      .map((o) => ({
+        device_id: o.device_id,
+        seq: o.seq,
+        op_type: o.op_type,
+        payload: o.payload,
+        created_at: o.created_at,
+      }))
     return { items, next_cursor: null, has_more: false }
   },
 
@@ -851,11 +935,22 @@ export const HANDLERS: Record<string, Handler> = {
     const beforeDate = a['beforeDate'] as string
     const todoStates = a['todoStates'] as string[]
     const limit = (a['limit'] as number | null) ?? 200
-    const spaceId = (a['spaceId'] as string | null) ?? null
+    // MAINT-226 — honour `scope: SpaceScope`. The previous mock read
+    // `a['spaceId']`, which was the legacy IPC arg shape; the backend
+    // now takes `scope: SpaceScope`, so callers in `tauri.ts` pass
+    // `toSpaceScope(spaceId)` and the literal `spaceId` arg is no
+    // longer present. Active scope: drop blocks whose owning page does
+    // not carry `space = ?spaceId`. Global: unfiltered.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
     const items = Array.from(blocks.values()).filter((b) => {
       if (b['deleted_at']) return false
-      if (spaceId && b['page_id'] !== spaceId && b['id'] !== spaceId) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       if (!todoStates.includes((b['todo_state'] as string) ?? '')) return false
       const date = b['due_date'] ?? b['scheduled_date']
       if (!date || date >= beforeDate) return false
@@ -881,6 +976,11 @@ export const HANDLERS: Record<string, Handler> = {
     const key = a['key'] as string
     const valueText = (a['valueText'] as string | null) ?? null
     const valueDate = (a['valueDate'] as string | null) ?? null
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // `query_by_property_inner`). Active scope drops rows whose owning
+    // page is not stamped with `space = ?spaceId`. Global passes through.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     // PEND-35 Tier 1.5 / Tier 3.4 — push-down filters bundled into
     // `extraFilters` on the IPC boundary. Mirror the backend
     // semantics so FE tests can observe the filter going through.
@@ -922,6 +1022,13 @@ export const HANDLERS: Record<string, Handler> = {
     // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
+      // MAINT-226 — active-space scoping: drop rows whose owning page
+      // doesn't carry the active space ref.
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       // Push-down filters short-circuit before the property lookup so
       // the mock matches the SQL evaluation order.
       if (excludeParentId !== null && b['parent_id'] === excludeParentId) return false
@@ -970,6 +1077,9 @@ export const HANDLERS: Record<string, Handler> = {
     // PEND-35 Tier 3.4 — `blockType` push-down: restrict to a single
     // block_type. `null` / `undefined` keeps the unfiltered behaviour.
     const blockType = (a['blockType'] as string | null) ?? null
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors `query_by_tags_inner`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
     // Resolve prefixes to tag IDs by matching tag block content
     const resolvedFromPrefix: string[] = []
@@ -991,6 +1101,11 @@ export const HANDLERS: Record<string, Handler> = {
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (blockType !== null && b['block_type'] !== blockType) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       const tags = blockTags.get(b['id'] as string)
       if (!tags || tags.size === 0) return false
       if (allTagIds.length === 0) return false
@@ -1014,6 +1129,9 @@ export const HANDLERS: Record<string, Handler> = {
     const propertyFilters = (a['propertyFilters'] as Record<string, unknown>[] | null) ?? []
     const tagFilters = (a['tagFilters'] as Record<string, unknown> | null) ?? null
     const blockType = (a['blockType'] as string | null) ?? null
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors `filtered_blocks_query_inner`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
     const ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
       todo_state: 'text',
@@ -1124,6 +1242,11 @@ export const HANDLERS: Record<string, Handler> = {
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (blockType !== null && b['block_type'] !== blockType) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       for (const pf of propertyFilters) {
         if (!propertyFilterMatches(b, pf)) return false
       }
@@ -1384,11 +1507,20 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
     const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // `query_backlinks_filtered_inner`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
     // Scan all blocks for [[ULID]] tokens matching the target
     const LINK_RE_F = /\[\[([0-9A-Z]{26})\]\]/g
     let backlinkItems = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       const content = (b['content'] as string) ?? ''
       for (const m of content.matchAll(LINK_RE_F)) {
         if (m[1] === targetId) return true
@@ -1570,26 +1702,45 @@ export const HANDLERS: Record<string, Handler> = {
   count_agenda_batch: (args) => {
     const a = args as Record<string, unknown>
     const dates = a['dates'] as string[]
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // `count_agenda_batch_inner`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const result: Record<string, number> = {}
     for (const dateStr of dates) {
-      const count = [...blocks.values()].filter(
-        (b) =>
-          !(b['deleted_at'] as string | null) &&
-          (b['due_date'] === dateStr || b['scheduled_date'] === dateStr),
-      ).length
+      const count = [...blocks.values()].filter((b) => {
+        if (b['deleted_at'] as string | null) return false
+        if (b['due_date'] !== dateStr && b['scheduled_date'] !== dateStr) return false
+        if (spaceId !== null) {
+          const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+          const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+          if (ownerSpace !== spaceId) return false
+        }
+        return true
+      }).length
       result[dateStr] = count
     }
     return result
   },
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: MAINT-226 — scope filter added to a nested per-date / per-source / per-block loop. Splitting helpers would obscure the SQL→TS correspondence with `count_agenda_batch_by_source_inner`.
   count_agenda_batch_by_source: (args) => {
     const a = args as Record<string, unknown>
     const dates = a['dates'] as string[]
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // `count_agenda_batch_by_source_inner`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const result: Record<string, Record<string, number>> = {}
     for (const dateStr of dates) {
       const sources: Record<string, number> = {}
       for (const b of blocks.values()) {
         if (b['deleted_at'] as string | null) continue
+        if (spaceId !== null) {
+          const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+          const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+          if (ownerSpace !== spaceId) continue
+        }
         if (b['due_date'] === dateStr) {
           sources['column:due_date'] = (sources['column:due_date'] ?? 0) + 1
         }
@@ -1667,9 +1818,18 @@ export const HANDLERS: Record<string, Handler> = {
   list_backlinks_grouped: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // `list_backlinks_grouped_inner`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const LINK_RE_G = /\[\[([0-9A-Z]{26})\]\]/g
     const backlinkItems = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       const content = (b['content'] as string) ?? ''
       for (const m of content.matchAll(LINK_RE_G)) {
         if (m[1] === targetId) return true
@@ -1704,6 +1864,10 @@ export const HANDLERS: Record<string, Handler> = {
   list_unlinked_references: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // `list_unlinked_references_inner`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const page = blocks.get(pageId)
     if (!page)
       return {
@@ -1731,6 +1895,11 @@ export const HANDLERS: Record<string, Handler> = {
       if (b['deleted_at']) return false
       if (b['id'] === pageId) return false
       if (b['parent_id'] === pageId) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
       const content = (b['content'] as string) ?? ''
       if (!matchesSearchFolded(content, pageTitle)) return false
       // Exclude if it already has a [[link]] to this page
@@ -2115,6 +2284,9 @@ export const HANDLERS: Record<string, Handler> = {
   // Projected agenda (repeating tasks)
   // ---------------------------------------------------------------------------
 
+  // MAINT-226 — stub returns empty so scope is a no-op today. If this
+  // becomes a real handler, mirror `list_projected_agenda_inner`'s
+  // `SpaceScope` filter (see `src-tauri/src/commands/agenda.rs` ~L175).
   list_projected_agenda: returnEmptyPage,
 
   // ---------------------------------------------------------------------------
@@ -2155,6 +2327,14 @@ export const HANDLERS: Record<string, Handler> = {
     // model — see seed.ts).
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
+    // MAINT-226 — honour `scope: SpaceScope` (mirrors `list_page_links_inner`).
+    // Both endpoints of an edge must live in the active space; global is
+    // unfiltered. Matches the backend's `b1.space = ?` AND `b2.space = ?`
+    // join predicate.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const pageSpace = (pid: string): string | null =>
+      (properties.get(pid)?.get('space')?.['value_ref'] as string | null) ?? null
     const LINK_RE_PL = /\[\[([0-9A-Z]{26})\]\]/g
     const linkSet = new Set<string>()
     const pageLinks: Array<{ source_id: string; target_id: string }> = []
@@ -2165,6 +2345,8 @@ export const HANDLERS: Record<string, Handler> = {
       // Only consider blocks whose parent is a page
       const parentBlock = blocks.get(parentId)
       if (!parentBlock || parentBlock['block_type'] !== 'page') continue
+      // Active-scope filter on source page.
+      if (spaceId !== null && pageSpace(parentId) !== spaceId) continue
       const content = (b['content'] as string) ?? ''
       for (const m of content.matchAll(LINK_RE_PL)) {
         const targetPageId = m[1] as string
@@ -2172,6 +2354,9 @@ export const HANDLERS: Record<string, Handler> = {
         const targetBlock = blocks.get(targetPageId)
         if (!targetBlock || targetBlock['block_type'] !== 'page' || targetBlock['deleted_at'])
           continue
+        // MAINT-226 — active-scope filter on target page (mirrors the
+        // backend's `b2.space = ?` predicate).
+        if (spaceId !== null && pageSpace(targetPageId) !== spaceId) continue
         // PEND-35 Tier 4.5 — apply target-side tag filter.
         if (tagFilter) {
           const targetTags = blockTags.get(targetPageId)
