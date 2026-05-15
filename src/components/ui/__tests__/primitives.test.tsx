@@ -653,7 +653,7 @@ describe('ToggleGroup', () => {
 })
 
 // ---------------------------------------------------------------------------
-// IconButton — UX.md mandates a tooltip on every icon-only button. The
+// IconButton — docs/UX.md mandates a tooltip on every icon-only button. The
 // `tooltip` + `ariaLabel` props are typed as mandatory `string`s so a
 // consumer cannot omit either; these tests cover the runtime contract.
 // ---------------------------------------------------------------------------

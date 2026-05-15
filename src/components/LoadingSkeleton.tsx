@@ -5,7 +5,7 @@
  * Used across list views (PageBrowser, TagList, etc.)
  * to show a consistent loading state.
  *
- * Per UX.md, loading containers should expose `role="status"` and
+ * Per docs/UX.md, loading containers should expose `role="status"` and
  * `aria-busy="true"` so assistive tech announces the loading state.
  * When the `loading` prop is set, the primitive wraps its output in an
  * a11y-compliant `<div role="status" aria-busy="true" aria-label="…">`

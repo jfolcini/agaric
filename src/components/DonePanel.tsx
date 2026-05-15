@@ -260,7 +260,7 @@ export function DonePanel({
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
 
   // UX-130 / UX empty-state mandate: render an EmptyState explaining
-  // *why* the panel is empty rather than returning null. AGENTS.md/UX.md
+  // *why* the panel is empty rather than returning null. AGENTS.md/docs/UX.md
   // ban silent `return null` for empty panels.
   if (!loading && blocks.length === 0) {
     return (

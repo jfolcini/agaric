@@ -255,7 +255,7 @@ describe('SuggestionList', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // -- MAINT-186: Touch target spec matches UX.md "Touch Target Sizing" --------
+  // -- MAINT-186: Touch target spec matches docs/UX.md "Touch Target Sizing" --------
 
   it('list items declare both [@media(pointer:coarse)]:min-h-[44px] and touch-target classes (MAINT-186)', async () => {
     const command = vi.fn()

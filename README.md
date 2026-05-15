@@ -32,7 +32,7 @@ The default view is a **daily journal** — one page per day, created automatica
 - **Month** — calendar grid with content indicator dots, click a day to switch to daily view, configurable week start
 - **Agenda** — tasks grouped by date (Overdue / Today / Tomorrow / future) with stackable filters across eight dimensions (status, priority, due date, scheduled date, completed date, created date, tag, property), sort and group controls, projected recurring task occurrences
 
-> See [UX.md](UX.md) for detailed interaction patterns of the journal modes, space switcher, and agenda dashboard.
+> See [docs/UX.md](docs/UX.md) for UI patterns and conventions, and [docs/UI-MAP.md](docs/UI-MAP.md) for the surface tree and shared glossary.
 
 ### Spaces
 

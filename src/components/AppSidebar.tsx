@@ -131,7 +131,7 @@ function AppSidebarInner({
      * "icon" collapses the sidebar to a 48px icon-only rail rather than
      * fully off-canvas. Chosen over "offcanvas" so that on desktop the
      * primary nav stays one click away (vs. requiring a swipe/click to
-     * re-open). See UX.md § Mobile Sidebar.
+     * re-open). See docs/UX.md § Mobile Sidebar.
      */
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 pb-2">

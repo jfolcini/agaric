@@ -7,7 +7,7 @@
  *
  * Honours `prefers-reduced-motion: reduce` — the global CSS rule covers
  * CSS animations, but this JS-driven RAF loop has to opt out manually
- * (per UX.md §"JS-driven animations ignore global reduced-motion CSS").
+ * (per docs/UX.md §"JS-driven animations ignore global reduced-motion CSS").
  * When the user prefers reduced motion we skip the loop entirely: a
  * continuous edge-scroll is exactly the kind of unexpected sustained
  * motion that preference is meant to suppress, and forcing a single jump
