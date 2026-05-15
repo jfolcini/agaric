@@ -1,10 +1,16 @@
 # Scale benchmarks — 100K pages, sub-200ms interactive budget — 2026-05-14
 
-> **Status:** **draft plan.** Audits existing Criterion coverage in
-> `src-tauri/benches/` against the product goal "scale to 100K pages with
-> sub-200ms response on any interactive command" and proposes the missing
-> benches, latency-assertion gates, and fixes for the two commands already
-> known to bust the budget at 100K.
+> **Status:** Phases 1 + 2 shipped (sessions 742 + 744). **Open below:**
+> Phase 3 — carve `list_page_links` materialization and
+> `list_projected_agenda` SQL pushdown each into their own follow-up plan
+> files. Both Problem commands now have 100K-scale benches + the
+> aspirational 200 ms SLO row in `interactive_slo.rs` gated behind
+> `SLO_INCLUDE_PROBLEM=1`; the next session that picks one of them carves
+> its own plan file and removes its `#[ignore]`/env-gate line as it lands.
+>
+> Sessions 706+ wrote the initial Phase-1 latency gate; sessions 742+744
+> covered Phases 1 and 2 in full. The rest of this file describes the
+> Phase 3+ work that remains.
 
 ## Verdict on the 200ms target
 

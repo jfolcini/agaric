@@ -1,64 +1,35 @@
 /**
- * GoogleCalendarSettingsTab — Settings tab for the FEAT-5 Google Calendar
- * daily-agenda digest push surface.
- *
- * Pushes Agaric's daily agenda into a dedicated, Agaric-owned Google
- * Calendar ("Agaric Agenda"). Currently opt-in and labeled experimental
- * per REVIEW-LATER FEAT-5f.
- *
- * Sections (top to bottom):
- *   1. Experimental warning badge.
- *   2. Account — Connect button (disconnected) or email + disconnect
- *      (connected).
- *   3. Window size — numeric input, range [7, 90], debounced 500 ms.
- *   4. Privacy mode — Switch: full / minimal (hide agenda content).
- *   5. Status — last push (relative), last error, push-lease holder.
- *   6. Actions — Force full resync + Disconnect (with AlertDialog
- *      presenting two options: delete calendar / keep calendar).
- *
- * The backend exposes five Tauri commands consumed here (defined by
- * FEAT-5e in `src-tauri/src/commands/gcal.rs`):
- *   - `get_gcal_status` → GcalStatus
- *   - `set_gcal_window_days(n)` → persist the window size
- *   - `set_gcal_privacy_mode(mode)` → persist 'full' | 'minimal'
- *   - `force_gcal_resync` → reconcile every date in the window
- *   - `disconnect_gcal(deleteCalendar)` → clear tokens + optionally
- *     delete the Agaric Agenda calendar
- *
- * Plus `begin_gcal_oauth` (exposed by FEAT-5b's OAuth wiring) — used by
- * the Connect button.
- *
- * Listens to four Tauri events emitted by the push connector and
- * surfaces them as toasts:
- *   - `gcal:reauth_required` → reauth toast
- *   - `gcal:push_disabled` → re-fetch status + disabled toast
- *   - `gcal:keyring_unavailable` → keyring toast
- *   - `gcal:calendar_recreated` → recreated toast
- *
- * Every IPC call has an error-path fallback per AGENTS.md §Testing
- * Conventions — the component logs via `logger.error` / `logger.warn`,
- * shows a toast, and keeps rendering (no crash on IPC rejection).
+ * GoogleCalendarSettingsTab — orchestrator for the FEAT-5 Google
+ * Calendar daily-agenda digest push surface (opt-in, experimental per
+ * REVIEW-LATER FEAT-5f). Phase 3b split: rendering lives in
+ * `./GoogleCalendarSettingsTab/{OAuthStatusSection,SettingsForm,
+ * SyncStatusSection}.tsx`; this file keeps every IPC call, the 60 s
+ * status poll, the four Tauri event subscriptions, the window-days
+ * debounce, and the disconnect-dialog wiring. Backend commands defined
+ * in `src-tauri/src/commands/gcal.rs`. Tauri events: `gcal:reauth_required`,
+ * `gcal:push_disabled` (also re-fetches), `gcal:keyring_unavailable`,
+ * `gcal:calendar_recreated`. Every IPC has an error-path fallback per
+ * AGENTS.md §Testing Conventions — log, toast, keep rendering.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
-import { Switch } from '@/components/ui/switch'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import type { GcalStatus } from '@/lib/bindings'
-import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { ConfirmDialog } from './ConfirmDialog'
+import { connectErrorMessage } from './GoogleCalendarSettingsTab/connectErrorMessage'
+import { OAuthStatusSection } from './GoogleCalendarSettingsTab/OAuthStatusSection'
+import { SettingsForm } from './GoogleCalendarSettingsTab/SettingsForm'
+import { SyncStatusSection } from './GoogleCalendarSettingsTab/SyncStatusSection'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
 const STATUS_POLL_INTERVAL_MS = 60_000
@@ -78,6 +49,19 @@ function clampWindow(n: number): number {
   return Math.floor(n)
 }
 
+// Disconnected fallback rendered when `status` is null after a failed
+// initial load — lets JSX skip a null-branch on every property read.
+const DISCONNECTED_FALLBACK_STATUS: GcalStatus = {
+  connected: false,
+  account_email: null,
+  calendar_id: null,
+  window_days: 30,
+  privacy_mode: 'full',
+  last_push_at: null,
+  last_error: null,
+  push_lease: { held_by_this_device: false, device_id: null, expires_at: null },
+}
+
 export function GoogleCalendarSettingsTab(): React.ReactElement {
   const { t } = useTranslation()
   const [status, setStatus] = useState<GcalStatus | null>(null)
@@ -88,14 +72,11 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
   // Separate input state so the user can edit freely before debounce flushes.
   const [windowInput, setWindowInput] = useState<string>('')
   const windowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Force a re-render every 60 s so the "last push" relative-time label
-  // refreshes without each mount re-fetching unnecessarily.
+  // 60 s tick: re-renders so the "last push" relative-time label refreshes.
   const [, setTick] = useState<number>(0)
 
-  // MAINT-120: load gcal status via the shared useIpcCommand hook. The
-  // success path also keeps `windowInput` synced when the server-side value
-  // changes (and the user isn't mid-edit on a different value); on error
-  // we surface an inline status banner via `setStatusError`.
+  // MAINT-120: load status. Keeps `windowInput` synced with the server
+  // value unless the user is mid-edit; on error sets the inline banner.
   const { execute: executeLoadStatus } = useIpcCommand<void, GcalStatus>({
     call: () => invoke<GcalStatus>('get_gcal_status'),
     module: 'GoogleCalendarSettingsTab',
@@ -125,8 +106,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     void loadStatus()
   }, [loadStatus])
 
-  // Periodic 60 s poll so the panel stays fresh while the user is viewing
-  // it (last push timestamp, lease ownership, error banner).
+  // Periodic 60 s poll keeps the panel fresh while open.
   useEffect(() => {
     const id = window.setInterval(() => {
       void loadStatus()
@@ -135,13 +115,10 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     return () => window.clearInterval(id)
   }, [loadStatus])
 
-  // Subscribe to the four connector events. Each one is fire-and-forget
-  // metadata — we surface a toast and, for push-disabled, re-fetch the
-  // status so the UI reflects the new (connected=false) state.
+  // Connector events → toasts; `push_disabled` also re-fetches status.
   useEffect(() => {
     let cancelled = false
     const unlistens: Array<() => void> = []
-
     const register = async (name: string, handler: () => void): Promise<void> => {
       try {
         const unlisten = await listen(name, () => {
@@ -156,7 +133,6 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         logger.warn('GoogleCalendarSettingsTab', `failed to subscribe to ${name}`, undefined, err)
       }
     }
-
     void Promise.all([
       register(EVENT_REAUTH, () => {
         notify.error(t('gcal.reauthRequired'))
@@ -172,7 +148,6 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         notify.info(t('gcal.calendarRecreated'))
       }),
     ])
-
     return () => {
       cancelled = true
       for (const fn of unlistens) {
@@ -185,8 +160,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     }
   }, [loadStatus, t])
 
-  // Cancel any pending debounce on unmount — avoids a fire-after-unmount
-  // IPC call that would log a phantom error.
+  // Cancel pending debounce on unmount (avoid fire-after-unmount IPC).
   useEffect(() => {
     return () => {
       if (windowTimerRef.current) {
@@ -196,9 +170,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     }
   }, [])
 
-  // MAINT-120: persist the window-days setting. Optimistic update keeps
-  // both the input and status in sync; on rejection we toast and refetch
-  // so the UI doesn't drift from the server-side value.
+  // MAINT-120: persist window-days. Optimistic; on rejection toast + refetch.
   const { execute: executeSetWindowDays } = useIpcCommand<{ n: number }, void>({
     call: ({ n }) => invoke('set_gcal_window_days', { n }),
     module: 'GoogleCalendarSettingsTab',
@@ -248,30 +220,26 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
   )
 
   const handleWindowBlur = useCallback(() => {
-    // Cancel any pending debounce and flush immediately with the clamped
-    // value so the stored value is always valid after blur.
+    // Flush any pending debounce immediately with the clamped value.
     if (windowTimerRef.current) {
       clearTimeout(windowTimerRef.current)
       windowTimerRef.current = null
     }
     const parsed = Number.parseInt(windowInput, 10)
     const clamped = clampWindow(Number.isFinite(parsed) ? parsed : (status?.window_days ?? 30))
-    // UX-4: notify the user when their typed value was clamped to the valid
-    // range. Silent clamping (e.g. typing 100 and getting 90 with no
-    // feedback) is a documented anti-pattern.
+    // UX-4: surface a notice when the typed value was clamped; silent
+    // clamping is a documented anti-pattern.
     if (Number.isFinite(parsed) && (parsed < WINDOW_MIN || parsed > WINDOW_MAX)) {
       notify.info(t('settings.valueClamped', { min: WINDOW_MIN, max: WINDOW_MAX }))
     }
     if (status && clamped === status.window_days) {
-      // No-op: just sync the input in case the user typed out-of-range.
       setWindowInput(String(clamped))
       return
     }
     void persistWindowDays(clamped)
   }, [persistWindowDays, status, windowInput, t])
 
-  // MAINT-120: privacy-mode toggle. Optimistic flip; on rejection we
-  // restore the captured `previous` snapshot so the Switch reverts.
+  // MAINT-120: privacy toggle. Optimistic; revert from `previous` on reject.
   const { execute: executeSetPrivacy } = useIpcCommand<
     { mode: 'full' | 'minimal'; previous: GcalStatus | null },
     void
@@ -302,12 +270,8 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     [executeSetPrivacy, status],
   )
 
-  // MAINT-120: kick off Google OAuth flow. On success refetch so the
-  // panel reflects the new connected state once the round-trip completes.
-  //
-  // PEND-gcal-oauth: the IPC takes 30s+ in the happy path (the user has
-  // to consent in the browser), so we expose `loading` from the hook to
-  // gate the button's disabled / aria-busy / spinner / label.
+  // MAINT-120 / PEND-gcal-oauth: kick off Google OAuth. IPC takes 30s+
+  // in the happy path, so `loading` from the hook gates the button.
   const { execute: executeBeginOauth, loading: oauthInFlight } = useIpcCommand<void, void>({
     call: () => invoke('begin_gcal_oauth'),
     module: 'GoogleCalendarSettingsTab',
@@ -324,9 +288,8 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     await executeBeginOauth()
   }, [executeBeginOauth])
 
-  // MAINT-120: force a full resync. `isResyncing` is tracked outside the
-  // hook because it gates aria-busy + spinner on the action button while
-  // the IPC is in flight.
+  // MAINT-120: force resync. `isResyncing` lives outside the hook to
+  // gate aria-busy + spinner on the action button.
   const { execute: executeForceResync } = useIpcCommand<void, void>({
     call: () => invoke('force_gcal_resync'),
     module: 'GoogleCalendarSettingsTab',
@@ -346,8 +309,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     setIsResyncing(false)
   }, [executeForceResync])
 
-  // MAINT-120: disconnect (with optional calendar deletion). The success
-  // toast picks one of two messages based on the `deleteCalendar` arg.
+  // MAINT-120: disconnect. Success toast picks one of two messages.
   const { execute: executeDisconnect } = useIpcCommand<{ deleteCalendar: boolean }, void>({
     call: ({ deleteCalendar }) => invoke('disconnect_gcal', { deleteCalendar }),
     module: 'GoogleCalendarSettingsTab',
@@ -380,16 +342,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     )
   }
 
-  const effectiveStatus: GcalStatus = status ?? {
-    connected: false,
-    account_email: null,
-    calendar_id: null,
-    window_days: 30,
-    privacy_mode: 'full',
-    last_push_at: null,
-    last_error: null,
-    push_lease: { held_by_this_device: false, device_id: null, expires_at: null },
-  }
+  const effectiveStatus: GcalStatus = status ?? DISCONNECTED_FALLBACK_STATUS
 
   return (
     <div className="gcal-settings-tab space-y-4 max-w-xl">
@@ -420,121 +373,26 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
             </p>
           )}
 
-          {/* Account section */}
-          <div className="space-y-2">
-            <Label muted={false}>{t('gcal.accountLabel')}</Label>
-            {effectiveStatus.connected && effectiveStatus.account_email !== null ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-4">
-                  <code
-                    className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono break-all"
-                    data-testid="gcal-account-email"
-                  >
-                    {effectiveStatus.account_email}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDisconnectOpen(true)}
-                    aria-label={t('gcal.disconnect.button')}
-                  >
-                    {t('gcal.disconnect.button')}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">{t('gcal.pushingToCalendar')}</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => void handleConnect()}
-                  aria-label={t('gcal.connectButton')}
-                  aria-busy={oauthInFlight}
-                  disabled={oauthInFlight}
-                  data-testid="gcal-connect-button"
-                >
-                  {oauthInFlight && <Spinner size="sm" />}
-                  {oauthInFlight ? t('gcal.connecting') : t('gcal.connectButton')}
-                </Button>
-                <p className="text-xs text-muted-foreground">{t('gcal.connectHelp')}</p>
-              </div>
-            )}
-          </div>
+          <OAuthStatusSection
+            connected={effectiveStatus.connected}
+            accountEmail={effectiveStatus.account_email}
+            oauthInFlight={oauthInFlight}
+            onConnect={() => void handleConnect()}
+            onRequestDisconnect={() => setDisconnectOpen(true)}
+          />
 
-          {/* Window size */}
-          <div className="space-y-2">
-            <Label htmlFor="gcal-window-days" muted={false}>
-              {t('gcal.windowLabel')}
-            </Label>
-            <Input
-              id="gcal-window-days"
-              type="number"
-              min={WINDOW_MIN}
-              max={WINDOW_MAX}
-              step={1}
-              value={windowInput}
-              onChange={handleWindowChange}
-              onBlur={handleWindowBlur}
-              aria-label={t('gcal.windowLabel')}
-              className="max-w-[8rem]"
-              disabled={!effectiveStatus.connected}
-              data-testid="gcal-window-input"
-            />
-            <p className="text-xs text-muted-foreground">{t('gcal.windowHelp')}</p>
-          </div>
+          <SettingsForm
+            connected={effectiveStatus.connected}
+            windowInput={windowInput}
+            windowMin={WINDOW_MIN}
+            windowMax={WINDOW_MAX}
+            privacyMode={effectiveStatus.privacy_mode}
+            onWindowChange={handleWindowChange}
+            onWindowBlur={handleWindowBlur}
+            onPrivacyToggle={handlePrivacyToggle}
+          />
 
-          {/* Privacy mode */}
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <Label htmlFor="gcal-privacy-toggle" muted={false}>
-                {t('gcal.privacyLabel')}
-              </Label>
-              <p className="text-xs text-muted-foreground mt-1">{t('gcal.privacyHelp')}</p>
-            </div>
-            <Switch
-              id="gcal-privacy-toggle"
-              checked={effectiveStatus.privacy_mode === 'minimal'}
-              onCheckedChange={handlePrivacyToggle}
-              aria-label={t('gcal.privacyLabel')}
-              disabled={!effectiveStatus.connected}
-            />
-          </div>
-
-          {/* Status panel */}
-          <div className="space-y-2" data-testid="gcal-status-panel">
-            <Label muted={false}>{t('gcal.statusLabel')}</Label>
-            <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground">{t('gcal.lastPushLabel')}</span>
-                <span className="tabular-nums" data-testid="gcal-last-push">
-                  {effectiveStatus.last_push_at !== null
-                    ? formatRelativeTime(effectiveStatus.last_push_at, t)
-                    : t('gcal.neverPushed')}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground">{t('gcal.leaseLabel')}</span>
-                <LeaseIndicator
-                  connected={effectiveStatus.connected}
-                  lease={effectiveStatus.push_lease}
-                  thisDeviceLabel={t('gcal.leaseThisDevice')}
-                  otherDeviceLabel={t('gcal.leaseOtherDevice', {
-                    deviceId: effectiveStatus.push_lease.device_id ?? '—',
-                  })}
-                  noLeaseLabel={t('gcal.leaseNone')}
-                />
-              </div>
-              {effectiveStatus.last_error !== null && (
-                <p
-                  className="text-destructive text-sm pt-1 break-words"
-                  data-testid="gcal-last-error"
-                >
-                  {effectiveStatus.last_error}
-                </p>
-              )}
-            </div>
-          </div>
+          <SyncStatusSection status={effectiveStatus} />
 
           {/* Actions */}
           <div className="flex flex-wrap gap-2">
@@ -564,10 +422,8 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         </CardContent>
       </Card>
 
-      {/* Disconnect dialog — Cancel + Keep Calendar (outline) + Delete
-          Calendar (destructive). Migrated to the unified ConfirmDialog
-          (UX-review-2026-05-09 item 11) using its `secondaryAction`
-          escape hatch for the dual-action footer. */}
+      {/* Disconnect dialog — Cancel + Keep Calendar + Delete Calendar via
+          ConfirmDialog's `secondaryAction` (UX-review-2026-05-09 item 11). */}
       <ConfirmDialog
         open={disconnectOpen}
         onOpenChange={setDisconnectOpen}
@@ -588,92 +444,5 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         actionTestId="gcal-disconnect-delete"
       />
     </div>
-  )
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// connectErrorMessage — map an `AppError` payload from `begin_gcal_oauth`
-// onto a user-facing toast string. The backend serializes errors as
-// `{ kind: 'validation', message: 'oauth.<key>: …' }` (see
-// `src-tauri/src/error.rs` and `src-tauri/src/gcal_push/oauth.rs:451`).
-// Pattern-match the prefix so an unrecognised payload falls back to the
-// generic `gcal.connectFailed` rather than leaking the raw key.
-// ────────────────────────────────────────────────────────────────────────
-
-interface AppErrorPayload {
-  kind: string
-  message: string
-}
-
-function isAppErrorPayload(value: unknown): value is AppErrorPayload {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'kind' in value &&
-    'message' in value &&
-    typeof (value as Record<string, unknown>)['kind'] === 'string' &&
-    typeof (value as Record<string, unknown>)['message'] === 'string'
-  )
-}
-
-function connectErrorMessage(err: unknown, t: (key: string) => string): string {
-  if (!isAppErrorPayload(err)) {
-    return t('gcal.connectFailed')
-  }
-  // Validation messages from the OAuth path are dotted keys like
-  // `oauth.timeout` or `oauth.exchange_failed: 400 Bad Request`. Match
-  // the leading key; anything else collapses to the generic notify.
-  const msg = err.message
-  if (msg.startsWith('oauth.timeout')) return t('gcal.connect.timeout')
-  if (msg.startsWith('oauth.invalid_state')) return t('gcal.connect.invalidState')
-  if (msg.startsWith('oauth.exchange_failed')) return t('gcal.connect.exchangeFailed')
-  if (msg.startsWith('oauth.client_misconfigured') || msg.startsWith('oauth.open_browser_failed')) {
-    return t('gcal.connect.clientMisconfigured')
-  }
-  return t('gcal.connectFailed')
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// LeaseIndicator — presentational: shows which device currently holds
-// the push lease. Extracted so the main component stays readable; kept
-// in the same file because it is only meaningful inside the status panel.
-// ────────────────────────────────────────────────────────────────────────
-
-interface LeaseIndicatorProps {
-  connected: boolean
-  lease: GcalStatus['push_lease']
-  thisDeviceLabel: string
-  otherDeviceLabel: string
-  noLeaseLabel: string
-}
-
-function LeaseIndicator({
-  connected,
-  lease,
-  thisDeviceLabel,
-  otherDeviceLabel,
-  noLeaseLabel,
-}: LeaseIndicatorProps): React.ReactElement {
-  if (!connected || (lease.device_id === null && !lease.held_by_this_device)) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-        <Info className="size-3.5" aria-hidden="true" />
-        <span data-testid="gcal-lease-none">{noLeaseLabel}</span>
-      </span>
-    )
-  }
-  if (lease.held_by_this_device) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-status-done-foreground">
-        <CheckCircle2 className="size-3.5" aria-hidden="true" />
-        <span data-testid="gcal-lease-this-device">{thisDeviceLabel}</span>
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-      <AlertCircle className="size-3.5" aria-hidden="true" />
-      <span data-testid="gcal-lease-other-device">{otherDeviceLabel}</span>
-    </span>
   )
 }

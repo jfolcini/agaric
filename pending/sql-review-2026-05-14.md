@@ -1,11 +1,15 @@
 # SQL review — full-app audit + remediation plan — 2026-05-14
 
-> **Status:** **draft plan.** Synthesises a multi-agent SQL/sqlx review covering
-> every production touchpoint in `src-tauri/src/`. Findings were collected by
-> seven scoped review agents (read paths, write commands, op_log/dag/reverse,
-> caches, materializer, sync/snapshot, schema/migrations) and then verified
-> for hallucinations on the highest-impact claims. Three claims were
-> downgraded after verification (see §6); the rest hold.
+> **Status:** Phases 1 + 2 shipped (sessions 740 + 741). **Open below:**
+> Phase 3 (B-3 reverse-op batching), Phase 4 (H-2 `page_link_cache`
+> materialization + COALESCE-removal backfill + M-2 incremental cache
+> rebuilds), Phase 5 (M-6 compaction tx split + M-8 snapshot streaming).
+> Single open §1 BLOCKER (B-3); §2 H-1/H-2/H-3 unchanged; §3 down to 5
+> M-class items (M-1, M-3, M-4 shipped).
+>
+> The original audit body (the multi-agent SQL/sqlx review summary) is
+> retained below for context — every finding still labelled "Open" maps
+> to a phase in §7.
 
 ## TL;DR — verified by-the-numbers
 

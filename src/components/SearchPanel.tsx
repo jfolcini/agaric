@@ -17,24 +17,25 @@
  *  - `usePopoverEntity.ts` factors the page- and tag-popover state
  *    machines (4 useStates each) behind one parameterised hook.
  *  - `useAliasResolution.ts` owns the `[[alias]]` resolution effect.
+ *
+ * PEND-30 Phase 3b — JSX presentation lifted into siblings under
+ * `./SearchPanel/`:
+ *  - `SearchHeader.tsx` owns the input form + activity indicators.
+ *  - `SearchFilters.tsx` owns the filter chip bar + popovers.
+ *  - `SearchResultList.tsx` owns the listbox of result rows.
+ *  - `SearchStatusRegion.tsx` owns the aria-live status announcer.
  */
 
-import type { TFunction } from 'i18next'
 import { Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
-import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
-import { FilterPill } from '@/components/ui/filter-pill'
-import { SearchInput } from '@/components/ui/search-input'
-import { Spinner } from '@/components/ui/spinner'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
-import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -54,52 +55,23 @@ import {
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { EmptyState } from './EmptyState'
-import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
-import { SearchablePopover } from './SearchablePopover'
+import { SearchFilters } from './SearchPanel/SearchFilters'
+import { SearchHeader } from './SearchPanel/SearchHeader'
 import {
-  hasActiveFilters,
   INITIAL_SEARCH_FILTER_STATE,
   searchFilterReducer,
 } from './SearchPanel/searchFilterReducer'
+import { SearchResultList } from './SearchPanel/SearchResultList'
+import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
 import { usePopoverEntity } from './SearchPanel/usePopoverEntity'
-import { ViewHeader } from './ViewHeader'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
   return /[\u4E00-\u9FFF\u3400-\u4DBF\u3000-\u303F\u30A0-\u30FF\u3040-\u309F\uAC00-\uD7AF]/.test(
     text,
   )
-}
-
-/**
- * UX-335 — Compute the live-region status text for the search results
- * count. Extracted from SearchPanel JSX to keep the component under
- * Biome's cognitive-complexity ceiling. Returns `null` when the region
- * should stay empty (pre-search / loading).
- */
-function getSearchStatusText(
-  args: {
-    searched: boolean
-    searchLoading: boolean
-    error: string | null
-    cleared: boolean
-    resultCount: number
-  },
-  t: TFunction,
-): string | null {
-  const { searched, searchLoading, error, cleared, resultCount } = args
-  if (searched && !searchLoading && !error && resultCount > 0) {
-    return t('search.resultsCount', { count: resultCount })
-  }
-  if (searched && !searchLoading && !error && resultCount === 0) {
-    return t('search.statusNoResults')
-  }
-  if (cleared && !searchLoading) {
-    return t('search.statusCleared')
-  }
-  return null
 }
 
 export function SearchPanel(): React.ReactElement {
@@ -127,8 +99,7 @@ export function SearchPanel(): React.ReactElement {
 
   // PEND-30 D-3 — applied-filter state moved to a typed reducer.
   const [filterState, dispatchFilter] = useReducer(searchFilterReducer, INITIAL_SEARCH_FILTER_STATE)
-  const { filterPageId, filterPageTitle, filterTagIds, filterTagNames } = filterState
-  const hasFilters = hasActiveFilters(filterState)
+  const { filterPageId, filterTagIds } = filterState
 
   // PEND-30 D-3 / limit-clamp-followup row `SearchPanel.tsx:138` —
   // page picker: scoped to the current space. Mirrors the
@@ -378,39 +349,16 @@ export function SearchPanel(): React.ReactElement {
 
   return (
     <div className="search-panel space-y-4">
-      <ViewHeader>
-        {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
-        <form
-          onSubmit={handleSubmit}
-          role="search"
-          className="search-panel-header flex flex-col sm:flex-row sm:items-center gap-2"
-        >
-          <SearchInput
-            ref={searchInputRef}
-            value={query}
-            onChange={handleInputChange}
-            placeholder={t('search.searchPlaceholder')}
-            aria-label={t('search.searchLabel')}
-            className="flex-1"
-            autoFocus
-          />
-          <Button type="submit" variant="outline" disabled={!query.trim()}>
-            {t('search.searchButton')}
-          </Button>
-          {searchLoading ? (
-            <span
-              className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              data-testid="search-fetching-indicator"
-            >
-              <Spinner /> {t('search.searching')}
-            </span>
-          ) : typing ? (
-            <span className="text-xs text-muted-foreground" data-testid="search-typing-indicator">
-              {t('search.typing')}
-            </span>
-          ) : null}
-        </form>
-      </ViewHeader>
+      {/* PEND-30 Phase 3b — input form lifted into `SearchHeader`. */}
+      <SearchHeader
+        inputRef={searchInputRef}
+        query={query}
+        onInputChange={handleInputChange}
+        onSubmit={handleSubmit}
+        searchLoading={searchLoading}
+        typing={typing}
+        t={t}
+      />
 
       {/* UX-269 — CJK limitation notice sits directly below the input so
           CJK users see it before scanning results. */}
@@ -424,82 +372,16 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* Filter chip bar */}
-      {/* biome-ignore lint/a11y/useSemanticElements: fieldset is for forms, not filter chip groups */}
-      <div
-        className={cn(
-          'flex flex-wrap items-center gap-2',
-          hasFilters && 'rounded-lg border border-primary/30 bg-primary/5 p-2',
-        )}
-        data-testid="filter-chip-bar"
-        role="group"
-        aria-label={t('search.filtersActive')}
-      >
-        {/* UX review Tier 1 item 7 — filter chips migrated to the shared
-            `FilterPill` primitive (was: ad-hoc `<Badge>` + X button).
-            Wraps the badge text in a `data-search-chip-text` span so the
-            existing `getByText('in: …')` assertions keep matching after
-            the wrap. */}
-        {filterPageId && filterPageTitle && (
-          <FilterPill
-            label={t('search.inPage', { name: filterPageTitle })}
-            removeAriaLabel={t('search.removePageFilter')}
-            onRemove={() => dispatchFilter({ type: 'clear-page-filter' })}
-          />
-        )}
-
-        {filterTagNames.map((name, index) => (
-          <FilterPill
-            key={filterTagIds[index]}
-            label={`#${name}`}
-            removeAriaLabel={t('search.removeTagFilter', { name })}
-            onRemove={() => dispatchFilter({ type: 'remove-tag-filter', index })}
-          />
-        ))}
-
-        <SearchablePopover<BlockRow>
-          open={pagePopover.open}
-          onOpenChange={pagePopover.setOpen}
-          items={pagePopover.suggestions}
-          isLoading={pagePopover.loading}
-          onSelect={handleSelectPage}
-          renderItem={(page) => page.content ?? 'Untitled'}
-          keyExtractor={(page) => page.id}
-          searchValue={pagePopover.query}
-          onSearchChange={pagePopover.setQuery}
-          searchPlaceholder={t('search.searchPages')}
-          emptyMessage={t('search.noPagesFound')}
-          triggerLabel={t('search.addPage')}
-          triggerDisabled={filterPageId !== null}
-          triggerDisabledReason={t('search.addPageDisabledReason')}
-        />
-
-        <SearchablePopover<TagCacheRow>
-          open={tagPopover.open}
-          onOpenChange={tagPopover.setOpen}
-          items={tagPopover.suggestions}
-          isLoading={tagPopover.loading}
-          onSelect={handleSelectTag}
-          renderItem={(tag) => `#${tag.name}`}
-          keyExtractor={(tag) => tag.tag_id}
-          searchValue={tagPopover.query}
-          onSearchChange={tagPopover.setQuery}
-          searchPlaceholder={t('search.searchTags')}
-          emptyMessage={t('search.noTagsFound')}
-          triggerLabel={t('search.addTag')}
-          isItemDisabled={(tag) => filterTagIds.includes(tag.tag_id)}
-        />
-
-        {hasFilters && (
-          <button
-            type="button"
-            onClick={() => dispatchFilter({ type: 'clear-all' })}
-            className="text-xs text-muted-foreground hover:text-foreground underline ml-1 rounded-sm focus-ring-visible"
-          >
-            {t('search.clearAll')}
-          </button>
-        )}
-      </div>
+      {/* PEND-30 Phase 3b — chip bar lifted into `SearchFilters`. */}
+      <SearchFilters
+        filterState={filterState}
+        dispatchFilter={dispatchFilter}
+        pagePopover={pagePopover}
+        tagPopover={tagPopover}
+        onSelectPage={handleSelectPage}
+        onSelectTag={handleSelectTag}
+        t={t}
+      />
 
       {query.trim().length > 0 && query.trim().length < 3 && (
         <div className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground">
@@ -528,29 +410,15 @@ export function SearchPanel(): React.ReactElement {
         <LoadingSkeleton count={2} height="h-12" className="search-loading" />
       )}
 
-      {/* UX-269 — Status region: announces results-count changes to SR
-          users and renders the visible count. Sits ABOVE the listbox as
-          a separate sibling (NOT wrapping it) so interactive options
-          aren't re-announced on every result-set change.
-
-          UX-335 — also announce zero-result and search-cleared states so
-          the live region is never silent after a state change that
-          matters to SR users. Pre-search and loading states stay silent
-          intentionally (no relevant change to announce). */}
-      <div role="status" aria-live="polite" aria-atomic="true" data-testid="search-results-status">
-        {(() => {
-          const statusText = getSearchStatusText(
-            { searched, searchLoading, error, cleared, resultCount: results.length },
-            t,
-          )
-          if (!statusText) return null
-          return (
-            <span className="text-xs text-muted-foreground" data-testid="search-results-count">
-              {statusText}
-            </span>
-          )
-        })()}
-      </div>
+      {/* PEND-30 Phase 3b — status region lifted into `SearchStatusRegion`. */}
+      <SearchStatusRegion
+        searched={searched}
+        searchLoading={searchLoading}
+        error={error}
+        cleared={cleared}
+        resultCount={results.length}
+        t={t}
+      />
 
       {searched && !searchLoading && results.length === 0 && !error && !aliasMatch && (
         <EmptyState icon={Search} message={t('search.noResultsFound')} />
@@ -572,47 +440,16 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {results.length > 0 && (
-        <div
-          className="search-results space-y-3 list-none m-0 p-0"
-          data-testid="search-results"
-          role="listbox"
-          tabIndex={0}
-          aria-label={t('search.resultsListLabel')}
-          onKeyDown={(e) => {
-            if (handleListKeyDown(e)) e.preventDefault()
-          }}
-          aria-activedescendant={
-            results[focusedIndex] ? `search-result-${results[focusedIndex].id}` : undefined
-          }
-        >
-          {results.map((block, index) => (
-            <div
-              key={block.id}
-              id={`search-result-${block.id}`}
-              role="option"
-              aria-selected={index === focusedIndex}
-              tabIndex={-1}
-              className={cn(index === focusedIndex && 'bg-accent rounded-lg')}
-            >
-              <ResultCard
-                block={block}
-                onClick={() => handleResultClick(block)}
-                disabled={loadingResultId === block.id}
-                showSpinner={loadingResultId === block.id}
-                contentClassName="line-clamp-2"
-              >
-                {block.page_id && pageTitles.get(block.page_id) && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    in:{' '}
-                    <PageLink pageId={block.page_id} title={pageTitles.get(block.page_id) ?? ''} />
-                  </p>
-                )}
-              </ResultCard>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* PEND-30 Phase 3b — listbox lifted into `SearchResultList`. */}
+      <SearchResultList
+        results={results}
+        focusedIndex={focusedIndex}
+        onKeyDown={handleListKeyDown}
+        onResultClick={handleResultClick}
+        loadingResultId={loadingResultId}
+        pageTitles={pageTitles}
+        t={t}
+      />
 
       <LoadMoreButton
         hasMore={hasMore}

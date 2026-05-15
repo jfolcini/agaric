@@ -1,53 +1,44 @@
 /**
  * BugReportDialog — in-app bug-report surface (FEAT-5).
  *
- * Three-section dialog:
- *   1. Form — title, description, "include diagnostic logs" switch (default
- *      OFF), nested "redact file paths and device ID" switch (default ON,
- *      visible only when logs-on).
- *   2. Preview — scrollable, read-only Markdown body + list of log files
- *      that will be packaged in the ZIP. When logs are ON an inline hint
- *      under the list names the zip and reminds the user they will need
- *      to drag it into the GitHub issue manually.
- *   3. Footer — Cancel / Copy report / [Download zip] / Open GitHub issue.
- *      The "Download zip" button is rendered only when logs are ON. The
- *      "Open GitHub issue" button is disabled until the user ticks the
- *      "I've reviewed what will be shared" checkbox.
+ * Three-section dialog: a form (title, description, include-logs +
+ * redact switches), a read-only Markdown preview + list of log files,
+ * and a footer with Cancel / Copy report / [Download zip] / Open GitHub
+ * issue. "Download zip" only renders when logs are ON; "Open GitHub
+ * issue" is gated on the confirmation checkbox.
  *
  * Flow (PEND-bug-report-zip-affordance):
- *   - logs ON:  user clicks "Download zip" (readLogsForReport → buildReportZip
- *               → downloadBlob → success toast naming the file), then clicks
- *               "Open GitHub issue" (openUrl). Dialog stays open so the user
- *               can re-download if the OS save dialog is dismissed.
+ *   - logs ON:  user clicks "Download zip" (readLogsForReport →
+ *               buildReportZip → downloadBlob → success toast naming the
+ *               file), then clicks "Open GitHub issue" (openUrl). The
+ *               dialog stays open so the user can re-download if the OS
+ *               save dialog is dismissed.
  *   - logs OFF: user clicks "Open in GitHub" (openUrl), dialog closes.
  *   - On IPC/JSZip failure: notify.error + logger.warn; dialog stays open.
  *
  * Errors are never swallowed silently — every `.catch` routes through
  * `logger.warn` per AGENTS.md's "no silent catch" rule.
+ *
+ * MAINT-Phase-3b: this file is the orchestrator only. The form, the
+ * diagnostics list + preview sub-dialog, and the footer buttons live in
+ * `src/components/BugReportDialog/{BugReportForm,DiagnosticsCollector,
+ * SubmitSection}.tsx`. All state, IPC wiring, and side effects stay
+ * here so the focus-trap behaviour and Tauri-command shapes are
+ * unchanged.
  */
 
-import { Eye } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { BugReportForm } from '@/components/BugReportDialog/BugReportForm'
+import { DiagnosticsCollector } from '@/components/BugReportDialog/DiagnosticsCollector'
+import { SubmitSection } from '@/components/BugReportDialog/SubmitSection'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
+import { DialogBody } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
-import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { buildGitHubIssueUrl, formatReportBody } from '@/lib/bug-report'
@@ -60,10 +51,6 @@ import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
 import type { BugReport, LogFileEntry } from '@/lib/tauri'
 import { collectBugReportMetadata, readLogsForReport } from '@/lib/tauri'
-import { cn } from '@/lib/utils'
-
-/** Maximum chars rendered in the per-log preview sub-dialog. */
-const PREVIEW_MAX_CHARS = 500
 
 interface BugReportDialogProps {
   open: boolean
@@ -96,23 +83,18 @@ export function BugReportDialog({
   const [loadingLogs, setLoadingLogs] = useState<boolean>(false)
   const [submitting, setSubmitting] = useState<boolean>(false)
 
-  // Per-log preview sub-dialog state. UX-277: lets the user inspect log
-  // contents before the report leaves the device. Falls back to a fresh
+  // UX-277: per-log preview sub-dialog state. Falls back to a fresh
   // `readLogsForReport(redact)` call per click so loading + error UX is
-  // observable; H-9c (`bug_report_preview` IPC) will eventually replace
-  // this with a server-rendered redacted bundle.
+  // observable; H-9c will eventually replace this with a server-rendered
+  // redacted bundle. UX-12: `showFullLog` toggles the truncated preview.
   const [previewOpen, setPreviewOpen] = useState<boolean>(false)
   const [previewFilename, setPreviewFilename] = useState<string | null>(null)
   const [previewContents, setPreviewContents] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState<boolean>(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
-  // UX-12: lets the user expand the truncated log preview to the full
-  // contents inline instead of having to copy the report just to see
-  // what was elided.
   const [showFullLog, setShowFullLog] = useState<boolean>(false)
 
-  // MAINT-120: collect metadata via the shared useIpcCommand hook. Mirrors
-  // the original Promise.then().catch().finally() shape — the
+  // MAINT-120: collect metadata via the shared useIpcCommand hook. The
   // `setLoadingMetadata` flag stays external because it's tied to the
   // open/close lifecycle rather than the IPC itself.
   const { execute: executeCollectMetadata } = useIpcCommand<void, BugReport>({
@@ -198,9 +180,8 @@ export function BugReportDialog({
     })
   }, [title, body, t])
 
-  // MAINT-120: copy the formatted report body to the clipboard. The
-  // navigator-availability guard stays in the wrapper because it short-
-  // circuits BEFORE the IPC call.
+  // MAINT-120: copy the formatted report body. The navigator-availability
+  // guard stays in the wrapper because it short-circuits BEFORE the IPC.
   const { execute: executeCopy } = useIpcCommand<void, void>({
     call: () => writeText(body),
     module: MODULE,
@@ -222,10 +203,8 @@ export function BugReportDialog({
     await executeCopy()
   }, [executeCopy, t])
 
-  // MAINT-120: build + download the diagnostic-logs ZIP. `call` chains the
-  // three sequential IPC + browser calls so a failure in any one routes
-  // through the hook's logger.warn + notify.error path. Returns `true` on
-  // success so `handleSubmit` can branch on it (vs. `undefined` on error).
+  // MAINT-120: build + download the diagnostic-logs ZIP. Returns `true`
+  // on success so callers can branch on it (vs `undefined` on error).
   const { execute: executeBuildZip } = useIpcCommand<
     { redact: boolean; metadata: BugReport },
     true
@@ -245,11 +224,10 @@ export function BugReportDialog({
     },
   })
 
-  // PEND-bug-report-zip-affordance: dedicated handler for the new
-  // "Download zip" footer button. Runs steps 1-3 from the old combined
-  // flow (readLogsForReport → buildReportZip → downloadBlob) and shows a
-  // success toast that names the saved file. The dialog stays open so
-  // the user can then click "Open GitHub issue" and drag the file in.
+  // PEND-bug-report-zip-affordance: "Download zip" footer handler.
+  // readLogsForReport → buildReportZip → downloadBlob, then a toast
+  // naming the saved file. The dialog stays open so the user can then
+  // click "Open GitHub issue" and drag the file in.
   const handleDownloadZip = useCallback(async () => {
     if (submitting) return
     if (metadata == null) return
@@ -267,15 +245,13 @@ export function BugReportDialog({
     if (submitting) return
     setSubmitting(true)
     try {
-      // PEND-bug-report-zip-affordance: with the footer split, the zip
-      // is now downloaded via the separate "Download zip" button before
-      // this handler ever runs. handleSubmit only opens the GitHub URL.
+      // PEND-bug-report-zip-affordance: handleSubmit only opens the GitHub
+      // URL — the zip download happens via the dedicated footer button.
       // MAINT-177: openUrl resolves false when the Tauri shell errored AND
-      // window.open was popup-blocked / returned null. In that case neither
-      // path actually opened a tab, so we must NOT claim success — surface an
-      // error toast, copy the issue URL to the clipboard as a manual escape
-      // hatch, and leave the dialog open so the user can retry or copy the
-      // body via the existing Copy button.
+      // window.open was popup-blocked / null. In that case neither path
+      // actually opened a tab, so we must NOT claim success — surface an
+      // error toast, copy the issue URL as a manual escape hatch, and
+      // leave the dialog open so the user can retry.
       const opened = await openUrl(issueUrl)
       if (!opened) {
         let copied = false
@@ -293,11 +269,9 @@ export function BugReportDialog({
         return
       }
       notify.success(t('bugReport.submitted'))
-      // PEND-bug-report-zip-affordance: when logs are ON, keep the
-      // dialog open after opening the GitHub tab so the user can copy
-      // the saved zip path or re-trigger Download zip if they dismissed
-      // the OS save dialog by accident. With logs OFF there is no
-      // follow-up step, so close as before.
+      // PEND-bug-report-zip-affordance: with logs ON, stay open so the
+      // user can re-trigger Download zip if needed. With logs OFF there
+      // is no follow-up step, so close.
       if (!includeLogs) {
         onOpenChange(false)
       }
@@ -306,9 +280,9 @@ export function BugReportDialog({
     }
   }, [submitting, includeLogs, issueUrl, onOpenChange, t])
 
-  // MAINT-120: re-fetch logs and surface the contents of one entry inline
-  // for preview. `setPreviewLoading` toggles outside the hook because it
-  // gates aria-busy on the sub-dialog.
+  // MAINT-120: re-fetch logs and surface one entry inline for preview.
+  // `setPreviewLoading` toggles outside the hook because it gates
+  // aria-busy on the sub-dialog.
   const { execute: executePreview } = useIpcCommand<{ filename: string; redact: boolean }, string>({
     call: async ({ filename, redact: r }) => {
       const entries = await readLogsForReport(r)
@@ -353,12 +327,10 @@ export function BugReportDialog({
     }
   }, [])
 
-  const logsSectionId = 'bug-report-logs-list'
   const previewSectionId = 'bug-report-preview'
 
-  // MAINT-215: on phones < 768 px render as a bottom Sheet (form-style
-  // surface; user can dismiss without consequence so `'dialog'` kind →
-  // regular Dialog parts on desktop, not AlertDialog).
+  // MAINT-215: on phones < 768 px render as a bottom Sheet — `'dialog'`
+  // kind keeps regular Dialog parts on desktop.
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
   const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
@@ -366,8 +338,8 @@ export function BugReportDialog({
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      {/* The Dialog primitive bakes in flex flex-col + pinned header/footer + a
-          scrollable DialogBody slot. See pending/dialog-responsiveness-primitive-2026-05-13.md. */}
+      {/* PEND-28b: Dialog primitive bakes in flex flex-col + pinned
+          header/footer + a scrollable DialogBody slot. */}
       <Content className="max-w-2xl" {...contentSideProps}>
         <Header>
           <Title>{t('bugReport.title')}</Title>
@@ -376,71 +348,16 @@ export function BugReportDialog({
 
         <Body data-testid="bug-report-body">
           {/* Form */}
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="bug-report-title" muted={false}>
-                {t('bugReport.fieldTitleLabel')}
-              </Label>
-              <Input
-                id="bug-report-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder={t('bugReport.fieldTitlePlaceholder')}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="bug-report-description" muted={false}>
-                {t('bugReport.fieldDescriptionLabel')}
-              </Label>
-              <Textarea
-                id="bug-report-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={t('bugReport.fieldDescriptionPlaceholder')}
-                rows={5}
-              />
-            </div>
-
-            <div className="flex items-start gap-3">
-              <Switch
-                id="bug-report-include-logs"
-                checked={includeLogs}
-                onCheckedChange={setIncludeLogs}
-                aria-label={t('bugReport.includeLogsLabel')}
-              />
-              <div className="space-y-0.5">
-                <Label htmlFor="bug-report-include-logs" muted={false}>
-                  {t('bugReport.includeLogsLabel')}
-                </Label>
-                <p className="text-xs text-muted-foreground">{t('bugReport.includeLogsHint')}</p>
-              </div>
-            </div>
-
-            {/* UX-383: Redact is a sibling row at the same indent as Include
-                  logs (not nested under it) so it's always visible. When
-                  Include logs is OFF the underlying Switch is disabled —
-                  Radix forwards `disabled` to the native disabled
-                  attribute and the Switch primitive applies
-                  `disabled:opacity-50 disabled:cursor-not-allowed`. We
-                  additionally mute the label + hint so the dependency on
-                  Include logs is obvious at a glance. */}
-            <div className="flex items-start gap-3">
-              <Switch
-                id="bug-report-redact"
-                checked={redact}
-                onCheckedChange={setRedact}
-                disabled={!includeLogs}
-                aria-label={t('bugReport.redactLabel')}
-              />
-              <div className={cn('space-y-0.5', !includeLogs && 'opacity-50')}>
-                <Label htmlFor="bug-report-redact" muted={false}>
-                  {t('bugReport.redactLabel')}
-                </Label>
-                <p className="text-xs text-muted-foreground">{t('bugReport.redactHint')}</p>
-              </div>
-            </div>
-          </div>
+          <BugReportForm
+            title={title}
+            description={description}
+            includeLogs={includeLogs}
+            redact={redact}
+            onTitleChange={setTitle}
+            onDescriptionChange={setDescription}
+            onIncludeLogsChange={setIncludeLogs}
+            onRedactChange={setRedact}
+          />
 
           {/* Preview */}
           <div className="space-y-1.5">
@@ -459,60 +376,24 @@ export function BugReportDialog({
             </ScrollArea>
           </div>
 
-          {/* Logs list (only when logs ON) */}
-          {includeLogs && (
-            <div className="space-y-1.5">
-              <Label htmlFor={logsSectionId} muted={false}>
-                {t('bugReport.logsListTitle')}
-              </Label>
-              <ScrollArea
-                className="max-h-32 rounded-md border bg-muted/30"
-                viewportClassName="p-3"
-              >
-                <ul
-                  id={logsSectionId}
-                  data-testid="bug-report-logs-list"
-                  className="text-xs space-y-1"
-                >
-                  {loadingLogs && (
-                    <li className="flex items-center gap-2 text-muted-foreground">
-                      <Spinner />
-                    </li>
-                  )}
-                  {!loadingLogs && logs.length === 0 && (
-                    <li className="text-muted-foreground italic">{t('bugReport.logsListEmpty')}</li>
-                  )}
-                  {!loadingLogs &&
-                    logs.map((entry) => (
-                      <li key={entry.name} className="flex items-center justify-between gap-3">
-                        <span className="font-mono break-all flex-1 min-w-0">{entry.name}</span>
-                        <span className="text-muted-foreground shrink-0">
-                          {t('bugReport.logsSize', { size: entry.contents.length })}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={t('bugReport.previewLabel', { filename: entry.name })}
-                          onClick={() => {
-                            void handleOpenPreview(entry.name)
-                          }}
-                        >
-                          <Eye />
-                        </Button>
-                      </li>
-                    ))}
-                </ul>
-              </ScrollArea>
-              {/* PEND-bug-report-zip-affordance: inline hint that names
-                    the zip and tells the user they'll have to drag it
-                    into the GitHub issue manually. The footer's
-                    "Download zip" + "Open GitHub issue" split matches
-                    this wording. */}
-              <p className="text-xs text-muted-foreground" data-testid="bug-report-zip-hint">
-                {t('bugReport.zipDownloadHint', { fileName: zipFileName })}
-              </p>
-            </div>
-          )}
+          {/* Diagnostics: logs list + zip hint + per-log preview sub-dialog. */}
+          <DiagnosticsCollector
+            includeLogs={includeLogs}
+            logs={logs}
+            loadingLogs={loadingLogs}
+            zipFileName={zipFileName}
+            onOpenPreview={(filename) => {
+              void handleOpenPreview(filename)
+            }}
+            previewOpen={previewOpen}
+            previewFilename={previewFilename}
+            previewContents={previewContents}
+            previewLoading={previewLoading}
+            previewError={previewError}
+            showFullLog={showFullLog}
+            onPreviewOpenChange={handlePreviewOpenChange}
+            onToggleShowFullLog={() => setShowFullLog((s) => !s)}
+          />
 
           {/* Confirmation */}
           <div className="flex items-center gap-2">
@@ -522,15 +403,13 @@ export function BugReportDialog({
               onCheckedChange={(v) => {
                 if (typeof v === 'boolean') setConfirmed(v)
               }}
-              // UX-12: aria-required surfaces the required state to assistive
-              // tech without bloating the visible label / accessible name.
+              // UX-12: aria-required surfaces the required state to AT.
               aria-required="true"
             />
             <Label htmlFor="bug-report-confirm" muted={false}>
               {t('bugReport.confirmCheckbox')}
-              {/* UX-12: visual asterisk marker. aria-hidden so it doesn't
-                    clutter the accessible name — aria-required on the
-                    checkbox already announces the required state. */}
+              {/* UX-12: visual asterisk; aria-hidden because the checkbox
+                  itself announces the required state via aria-required. */}
               <span
                 aria-hidden="true"
                 className="ml-1 text-destructive"
@@ -543,146 +422,26 @@ export function BugReportDialog({
         </Body>
 
         <Footer>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('bugReport.cancel')}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
+          <SubmitSection
+            includeLogs={includeLogs}
+            confirmed={confirmed}
+            submitting={submitting}
+            loadingMetadata={loadingMetadata}
+            loadingLogs={loadingLogs}
+            metadataReady={metadata != null}
+            bodyLength={body.length}
+            onCancel={() => onOpenChange(false)}
+            onCopy={() => {
               void handleCopy()
             }}
-            disabled={loadingMetadata || body.length === 0}
-          >
-            {t('bugReport.copy')}
-          </Button>
-          {/* PEND-bug-report-zip-affordance: split the old "Open in
-              GitHub" button into two explicit actions when logs are ON.
-              The local file save and the browser navigation are now two
-              distinct clicks, so the user can redo a step if the OS
-              save dialog is dismissed, and the dialog no longer
-              auto-closes mid-task. */}
-          {includeLogs && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                void handleDownloadZip()
-              }}
-              disabled={submitting || loadingMetadata || loadingLogs || metadata == null}
-              aria-label={t('bugReport.downloadZip')}
-              data-testid="bug-report-download-zip"
-            >
-              {submitting ? <Spinner /> : null}
-              {t('bugReport.downloadZip')}
-            </Button>
-          )}
-          <Button
-            onClick={() => {
+            onDownloadZip={() => {
+              void handleDownloadZip()
+            }}
+            onSubmit={() => {
               void handleSubmit()
             }}
-            disabled={!confirmed || submitting || loadingMetadata || body.length === 0}
-            aria-label={includeLogs ? t('bugReport.openGitHubIssue') : t('bugReport.openIssue')}
-            data-testid="bug-report-open-github"
-          >
-            {submitting ? <Spinner /> : null}
-            {includeLogs ? t('bugReport.openGitHubIssue') : t('bugReport.openIssue')}
-          </Button>
+          />
         </Footer>
-
-        {/* UX-277: per-log preview sub-dialog. Radix portals this to
-            document.body so it stacks correctly above the parent dialog.
-            Kept as a regular Dialog primitive across viewports — nesting a
-            Sheet inside a Sheet would compound the focus-trap and
-            overlay-stacking edge cases the parent migration is avoiding. */}
-        <Dialog open={previewOpen} onOpenChange={handlePreviewOpenChange}>
-          <DialogContent
-            className="max-w-2xl"
-            data-testid="bug-report-log-preview"
-            aria-busy={previewLoading}
-          >
-            <DialogHeader>
-              <DialogTitle>{t('bugReport.previewTitle')}</DialogTitle>
-              {previewFilename != null && (
-                <DialogDescription className="font-mono break-all">
-                  {previewFilename}
-                </DialogDescription>
-              )}
-            </DialogHeader>
-
-            {previewLoading && (
-              <div
-                role="status"
-                aria-live="polite"
-                className="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <Spinner />
-                <span>{t('bugReport.previewLoading')}</span>
-              </div>
-            )}
-
-            {!previewLoading && previewError != null && (
-              <p role="alert" className="text-sm text-destructive">
-                {previewError}
-              </p>
-            )}
-
-            {!previewLoading && previewError == null && previewContents != null && (
-              <div className="space-y-2">
-                <ScrollArea
-                  className={cn('max-h-96 rounded-md border bg-muted/30')}
-                  viewportClassName="p-3"
-                >
-                  <pre
-                    data-testid="bug-report-log-preview-content"
-                    className="text-xs leading-5 whitespace-pre-wrap break-words font-mono"
-                  >
-                    {showFullLog ? previewContents : previewContents.slice(0, PREVIEW_MAX_CHARS)}
-                  </pre>
-                </ScrollArea>
-                {previewContents.length > PREVIEW_MAX_CHARS && (
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {showFullLog
-                        ? null
-                        : t('bugReport.previewTruncated', {
-                            shown: PREVIEW_MAX_CHARS,
-                            total: previewContents.length,
-                          })}
-                    </p>
-                    {/* UX-12: View-full / collapse affordance so the
-                        truncation notice isn't a dead end. */}
-                    <Button
-                      variant="link"
-                      size="sm"
-                      onClick={() => setShowFullLog((s) => !s)}
-                      data-testid="bug-report-log-preview-toggle"
-                    >
-                      {showFullLog ? t('bugReport.collapseLog') : t('bugReport.viewFullLog')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  handlePreviewOpenChange(false)
-                }}
-                // PEND-23 L7: explicit autoFocus on the close button so
-                // the nested log-preview dialog lands focus on a known,
-                // dismissable target (rather than relying on Radix
-                // default focus-trap discovery, which previously left
-                // focus on the body when the preview opened in a
-                // truncated state).
-                autoFocus
-                data-testid="bug-report-log-preview-close"
-              >
-                {t('bugReport.cancel')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </Content>
     </Root>
   )

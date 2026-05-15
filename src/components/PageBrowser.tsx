@@ -44,6 +44,12 @@ import { ViewHeader } from './ViewHeader'
 const HEADER_ROW_HEIGHT = 36
 const PAGE_ROW_HEIGHT = 44
 
+/// Bottom-of-list proximity in CSS pixels at which the auto-load
+/// pixel-trigger fires. Picked to give ~5-7 rows of headroom at the
+/// 44px PAGE_ROW_HEIGHT so the next page lands before the user hits
+/// the LoadMoreButton fallback.
+const INFINITE_SCROLL_BOTTOM_THRESHOLD_PX = 300
+
 interface PageBrowserProps {
   /** Called when a page is selected. */
   onPageSelect?: (pageId: string, title?: string) => void
@@ -397,11 +403,17 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   }, [filterText, sortOption])
 
   // PageBrowser pagination UX (2026-05-14) — auto-load near the
-  // bottom. When the last *visible* virtual item is within ~5 rows
-  // of the end of the loaded set AND there are more pages AND we're
-  // not already fetching, fire `loadMore()` so the user doesn't have
-  // to find the button. The existing `<LoadMoreButton>` stays
-  // rendered as the a11y / no-JS / reduced-motion fallback.
+  // bottom. The index-based trigger (last *visible* virtual item
+  // within ~5 rows of the end) works in flat view. In tree view a
+  // single `tree-page` row can wrap hundreds of expanded descendant
+  // nodes, so `lastVisibleIndex` may stay pinned at a low index as
+  // the user scrolls through that one tree's descendants — the
+  // pixel-based trigger below catches that case. Both triggers
+  // short-circuit on `!hasMore || loading` so concurrent firings
+  // collapse to one `loadMore()` call (which `usePaginatedQuery`
+  // additionally guards on `nextCursor && !loading`). The
+  // `<LoadMoreButton>` stays rendered as the a11y / no-JS /
+  // reduced-motion fallback.
   const virtualItems = virtualizer.getVirtualItems()
   const lastVisibleIndex = virtualItems.at(-1)?.index
   useEffect(() => {
@@ -411,6 +423,36 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       loadMore()
     }
   }, [lastVisibleIndex, hasMore, loading, loadMore, virtualItemCount])
+
+  // Pixel-based bottom-proximity trigger — fires when the viewport's
+  // bottom edge is within `INFINITE_SCROLL_BOTTOM_THRESHOLD_PX` of
+  // the scroll container's full height. Complements the index-based
+  // trigger above for tree view (one expanded tree-page row may
+  // exceed the viewport vertically; the index-based check never
+  // advances past that row even as the user scrolls inside it).
+  const hasMoreRef = useRef(hasMore)
+  const loadingRef = useRef(loading)
+  const loadMoreRef = useRef(loadMore)
+  hasMoreRef.current = hasMore
+  loadingRef.current = loading
+  loadMoreRef.current = loadMore
+  useEffect(() => {
+    const el = listRef.current
+    if (el == null) return
+    function handleScroll() {
+      if (!hasMoreRef.current || loadingRef.current) return
+      if (el == null) return
+      const remaining = el.scrollHeight - (el.scrollTop + el.clientHeight)
+      if (remaining <= INFINITE_SCROLL_BOTTOM_THRESHOLD_PX) {
+        loadMoreRef.current()
+      }
+    }
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
+    // Empty deps + refs above: listener attaches once per mount, and
+    // the refs always carry the latest hasMore/loading/loadMore.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Document-level keydown: skip if user is typing in input/select/textarea
   useEffect(() => {

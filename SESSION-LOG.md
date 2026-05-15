@@ -7,6 +7,63 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 745 — Design-system Phase 3b (5 of 6 files) + PageBrowser infinite-scroll + pending cleanup (2026-05-15)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-15 |
+| **Subagents** | 6 build (parallel), all killed mid-task by session suspension — 5 had landed enough work to ship; the 6th (FormattingToolbar) was reverted |
+| **Items closed** | design-system-maintainability Phase 3b — 5 of 6 files. PageBrowser pixel-based infinite-scroll trigger. |
+| **Items modified** | sql-review-2026-05-14.md + scale-benchmarks-100k-2026-05-14.md status banners; README index updated to include sql-review row + reflect partial-shipped state. |
+| **Tests added** | 5 frontend test files for the new sub-components / extracted hooks. Full vitest suite 9859 / 9859 pass. |
+| **Files touched** | 14+ component / hook files + plan/index/log updates |
+
+**Summary:** Resumed from a session suspension that killed all 6 Phase-3b subagents mid-final-test-run. After audit, 5 of the 6 had produced consistent state — the 6th (FormattingToolbar) had built its subdir but never wired it into the orchestrator. Reverted that subdir; the remaining 5 landed:
+
+- **HistoryListItem.tsx** 645 → 228 LOC (extracted `BlockHistoryItem.tsx` 15.1K + `HistoryItemCore.tsx` 6.8K).
+- **GoogleCalendarSettingsTab.tsx** 637 → 448 LOC (extracted `OAuthStatusSection`, `SettingsForm`, `SyncStatusSection` + `connectErrorMessage` helper). One follow-up `privacyMode` prop-type tightening from `'full'|'minimal'` to `string` because the upstream Tauri binding is `string`.
+- **BugReportDialog.tsx** 627 → 448 LOC (extracted `BugReportForm`, `DiagnosticsCollector`, `SubmitSection`).
+- **PageHeader.tsx** 592 → 494 LOC (extracted 2 hooks: `usePageAliases`, `usePageTemplateMeta` — sub-component extraction wasn't the right shape for this already-decomposed file).
+- **SearchPanel.tsx** 590 → 462 LOC (extracted `SearchFilters`, `SearchHeader`, `SearchResultList`, `SearchStatusRegion`).
+
+Two test-mock type errors in the new hook tests (`usePageAliases.test.ts`, `usePageTemplateMeta.test.ts`) fixed in-place — the subagent's `mockResolvedValue(undefined)` didn't match the real `setPageAliases` / `setProperty` return types.
+
+**Plus:** PageBrowser already had an index-based auto-load trigger (within 5 rows of bottom). It misfires in tree view because one expanded tree-page row can wrap many descendants — the index never advances as the user scrolls inside it. Added a complementary pixel-based scroll listener (`INFINITE_SCROLL_BOTTOM_THRESHOLD_PX = 300`) that fires `loadMore()` when `scrollTop + clientHeight >= scrollHeight - 300px`. Both triggers short-circuit on `!hasMore || loading` so concurrent firings collapse to one `loadMore()` call. PageBrowser tests pass (106 / 106). The `<LoadMoreButton>` stays as the a11y / no-JS fallback.
+
+**Pending cleanup:** sql-review-2026-05-14.md and scale-benchmarks-100k-2026-05-14.md had stale "draft plan" status banners; updated to reflect Phases 1+2 shipped. README index gained a missing sql-review row and an updated scale-benchmarks status. design-system-maintainability-2026-05-09.md rewritten to document Phase 3b's 5/6 outcome and flag FormattingToolbar as the lone open item.
+
+**FormattingToolbar status:** still 624 LOC. Subagent's killed-mid-task state had built `MarkGroup.tsx`, `StateGroup.tsx`, `ActionGroup.tsx`, `shared.tsx` but never wired the orchestrator. The plan file now records this explicitly. Pick it up as a focused single-file session.
+
+**REVIEW-LATER impact:** none.
+
+**Files touched (this session):**
+- `src/components/PageBrowser.tsx` (+ infinite-scroll listener + new constant)
+- `src/components/HistoryListItem.tsx` (− 417 LOC, orchestrator only)
+- `src/components/HistoryListItem/BlockHistoryItem.tsx`, `HistoryItemCore.tsx` (new) + matching __tests__
+- `src/components/GoogleCalendarSettingsTab.tsx` (− 189 LOC, orchestrator only)
+- `src/components/GoogleCalendarSettingsTab/{OAuthStatusSection,SettingsForm,SyncStatusSection,connectErrorMessage}.{ts,tsx}` (new) + matching __tests__
+- `src/components/BugReportDialog.tsx` (− 179 LOC, orchestrator only)
+- `src/components/BugReportDialog/{BugReportForm,DiagnosticsCollector,SubmitSection}.tsx` (new) + matching __tests__
+- `src/components/PageHeader.tsx` (− 98 LOC)
+- `src/hooks/usePageAliases.ts`, `usePageTemplateMeta.ts` (new) + matching __tests__
+- `src/components/SearchPanel.tsx` (− 128 LOC, orchestrator only)
+- `src/components/SearchPanel/{SearchFilters,SearchHeader,SearchResultList,SearchStatusRegion}.tsx` (new)
+- `pending/design-system-maintainability-2026-05-09.md` (Phase 3b outcome documented)
+- `pending/scale-benchmarks-100k-2026-05-14.md`, `pending/sql-review-2026-05-14.md` (status banners updated)
+- `pending/README.md` (sql-review row added; scale-benchmarks status refreshed)
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean (3 errors found post-suspend, all fixed inline).
+- `npx vitest run` — 9859 / 9859 pass.
+- `npx vitest run src/components/__tests__/PageBrowser.test.tsx` — 106 / 106 pass.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** Subagent suspension surfaced a real lesson — when a parallel-batch subagent is killed mid-final-step, leftover state needs orchestrator audit (per-file LOC, missing wiring, type errors in subagent-written tests) before the work can be considered shipped. The FormattingToolbar revert was a clean call because the orchestrator file was untouched; the rest had landed enough state to be consistent. Test-mock signature drift is a recurring class — subagents that author new tests against typed Tauri commands need to mock the actual return type, not `undefined`.
+
+**Commit plan:** single commit; push after.
+
+---
+
 ## Session 744 — scale-benchmarks Phase 2 (history + graph 100K + agenda expansion) (2026-05-15)
 
 | Metadata | Value |

@@ -19,17 +19,15 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useBlockTags } from '../hooks/useBlockTags'
+import { usePageAliases } from '../hooks/usePageAliases'
+import { usePageTemplateMeta } from '../hooks/usePageTemplateMeta'
 import { useStarredPages } from '../hooks/useStarredPages'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import {
   deleteBlock,
-  deleteProperty,
   editBlock,
   exportPageMarkdown,
   getBlock,
-  getPageAliases,
-  getProperties,
-  setPageAliases,
   setProperty,
 } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -159,96 +157,37 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const handlePageUndo = createUndoRedoHandler('undo')
   const handlePageRedo = createUndoRedoHandler('redo')
 
-  // --- Template state ---
-  const [isTemplate, setIsTemplate] = useState(false)
-  const [isJournalTemplate, setIsJournalTemplate] = useState(false)
+  // --- Kebab + delete-dialog + property-expand state ---
   const [kebabOpen, setKebabOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
-  // FEAT-3 Phase 2 — "Move to space" needs two bits of metadata that
-  // aren't derivable from props: whether the current page is itself a
-  // space block (moving spaces into spaces is nonsensical), and which
-  // space currently owns it (so the destination list can exclude it).
-  // Both come from the page's property set, loaded once and refreshed
-  // when the page changes.
-  const [isSpaceBlock, setIsSpaceBlock] = useState(false)
-  const [pageSpaceId, setPageSpaceId] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!pageId) return
-    getProperties(pageId)
-      .then((props) => {
-        setIsTemplate(props.some((p) => p.key === 'template' && p.value_text === 'true'))
-        setIsJournalTemplate(
-          props.some((p) => p.key === 'journal-template' && p.value_text === 'true'),
-        )
-        setIsSpaceBlock(props.some((p) => p.key === 'is_space' && p.value_text === 'true'))
-        const spaceProp = props.find((p) => p.key === 'space')
-        setPageSpaceId(spaceProp?.value_ref ?? null)
-      })
-      .catch((err: unknown) => {
-        logger.warn(
-          'PageHeader',
-          'Failed to load template properties',
-          {
-            pageId,
-          },
-          err,
-        )
-      })
-  }, [pageId])
-
-  const createTemplateToggle =
-    (
-      key: string,
-      currentState: boolean,
-      setState: (v: boolean) => void,
-      removedKey: string,
-      savedKey: string,
-      failedKey: string,
-    ) =>
-    async () => {
-      try {
-        if (currentState) {
-          await deleteProperty(pageId, key)
-          setState(false)
-          notify.success(t(removedKey))
-        } else {
-          await setProperty({ blockId: pageId, key, valueText: 'true' })
-          setState(true)
-          notify.success(t(savedKey))
-        }
-      } catch (err) {
-        logger.error(
-          'PageHeader',
-          'Failed to toggle template property',
-          {
-            pageId,
-            key,
-          },
-          err,
-        )
-        notify.error(t(failedKey))
-      }
-      setKebabOpen(false)
-    }
-
-  const handleToggleTemplate = createTemplateToggle(
-    'template',
+  // --- Template + space metadata (extracted to `usePageTemplateMeta`) ---
+  // The hook loads the four property-derived bits the kebab menu needs
+  // and owns the template-toggle handlers; `closeKebab` is the
+  // post-action hook used to dismiss the menu after a toggle resolves.
+  const closeKebab = useCallback(() => setKebabOpen(false), [])
+  const {
     isTemplate,
-    setIsTemplate,
-    'pageHeader.templateRemoved',
-    'pageHeader.templateSaved',
-    'pageHeader.templateFailed',
-  )
-  const handleToggleJournalTemplate = createTemplateToggle(
-    'journal-template',
     isJournalTemplate,
-    setIsJournalTemplate,
-    'pageHeader.journalTemplateRemoved',
-    'pageHeader.journalTemplateSaved',
-    'pageHeader.journalTemplateFailed',
-  )
+    isSpaceBlock,
+    pageSpaceId,
+    setPageSpaceId,
+    handleToggleTemplate,
+    handleToggleJournalTemplate,
+  } = usePageTemplateMeta(pageId, t, closeKebab)
+
+  // --- Alias state (extracted to `usePageAliases`) ---
+  const {
+    aliases,
+    editingAliases,
+    aliasInput,
+    setAliasInput,
+    startEditing: startEditingAliases,
+    stopEditing: stopEditingAliases,
+    handleAddAlias,
+    handleRemoveAlias,
+  } = usePageAliases(pageId, t)
 
   const handleExport = useCallback(async () => {
     try {
@@ -307,9 +246,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   }, [pageId, onBack, t])
 
   const handleKebabAddAlias = useCallback(() => {
-    setEditingAliases(true)
+    startEditingAliases()
     setKebabOpen(false)
-  }, [])
+  }, [startEditingAliases])
 
   const handleKebabAddTag = useCallback(() => {
     tagPickerForcedRef.current = true
@@ -355,24 +294,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         announce(t('announce.pageMoveFailed'))
       }
     },
-    [availableSpaces, pageId, pageStore, t],
+    [availableSpaces, pageId, pageStore, setPageSpaceId, t],
   )
-
-  // --- Alias state ---
-  const [aliases, setAliases] = useState<string[]>([])
-  const [editingAliases, setEditingAliases] = useState(false)
-  const [aliasInput, setAliasInput] = useState('')
-
-  // Fetch aliases on mount / page change
-  useEffect(() => {
-    if (!pageId) return
-    getPageAliases(pageId)
-      .then((result) => setAliases(Array.isArray(result) ? result : []))
-      .catch((err: unknown) => {
-        logger.error('PageHeader', 'Failed to load page aliases', { pageId }, err)
-        notify.error(t('pageHeader.loadAliasesFailed'))
-      })
-  }, [pageId, t])
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)
   useEffect(() => {
@@ -444,34 +367,6 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     setTagQuery('')
     setShowTagPicker(false)
   }, [tagQuery, handleCreateTag])
-
-  const handleAddAlias = useCallback(() => {
-    if (aliasInput.trim()) {
-      const next = [...aliases, aliasInput.trim()]
-      setAliases(next)
-      announce(t('announce.aliasAdded'))
-      setPageAliases(pageId, next).catch((err: unknown) => {
-        logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
-        notify.error(t('pageHeader.aliasUpdateFailed'))
-        announce(t('announce.aliasFailed'))
-      })
-      setAliasInput('')
-    }
-  }, [aliasInput, aliases, pageId, t])
-
-  const handleRemoveAlias = useCallback(
-    (alias: string) => {
-      const next = aliases.filter((a) => a !== alias)
-      setAliases(next)
-      announce(t('announce.aliasRemoved'))
-      setPageAliases(pageId, next).catch((err: unknown) => {
-        logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
-        notify.error(t('pageHeader.aliasUpdateFailed'))
-        announce(t('announce.aliasFailed'))
-      })
-    },
-    [aliases, pageId, t],
-  )
 
   return (
     <>
@@ -553,8 +448,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             onAliasInputChange={setAliasInput}
             onAddAlias={handleAddAlias}
             onRemoveAlias={handleRemoveAlias}
-            onStartEditing={() => setEditingAliases(true)}
-            onStopEditing={() => setEditingAliases(false)}
+            onStartEditing={startEditingAliases}
+            onStopEditing={stopEditingAliases}
           />
 
           {/* Tag badges row */}

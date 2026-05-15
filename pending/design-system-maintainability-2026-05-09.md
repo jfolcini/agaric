@@ -1,29 +1,32 @@
 # Design-system maintainability — remaining open work
 
-> **Status:** Phases 1 + 2 + 3a fully shipped. **Open below: 3b LOC triage for 6 feature files (opportunistic).**
+> **Status:** Phases 1 + 2 + 3a + 3b mostly shipped. **Open below: only
+> FormattingToolbar.tsx remains at 624 LOC — its parallel-batch subagent
+> in session 745 was killed before wiring the extracted sub-components
+> into the orchestrator. Pick it up as a focused single-file session.**
 >
-> History of closed items lives in `SESSION-LOG.md` sessions 709-734. Don't reintroduce them here.
+> History of closed items lives in `SESSION-LOG.md` sessions 709-734 + 745.
 
 ---
 
 ## Phase 3b — Triage the remaining ≥590-line feature files
 
-Three of the original nine flagged files were closed across earlier sessions (`sidebar.tsx`, `BlockTree.tsx`, `RichContentRenderer.tsx`). Six remain on the list — each is opportunistic, **not** a blocking initiative:
+Three of the original nine flagged files were closed in earlier sessions (`sidebar.tsx`, `BlockTree.tsx`, `RichContentRenderer.tsx`). Five of the six Phase-3b files landed in session 745:
 
-| File | Lines | Likely seams |
-| --- | --- | --- |
-| `src/components/HistoryListItem.tsx` | 645 | per-op renderers (create/edit/move/tag) extractable |
-| `src/components/GoogleCalendarSettingsTab.tsx` | 637 | extract OAuth state + sync-status + form into siblings |
-| `src/components/BugReportDialog.tsx` | 627 | form sections + diagnostics collection |
-| `src/components/FormattingToolbar.tsx` | 624 | mark/state/action groups |
-| `src/components/PageHeader.tsx` | 592 | already orchestrates 4 named subcomponents; check if more pull out |
-| `src/components/SearchPanel.tsx` | 590 | filters + result list + ranking |
+| File | Before | After | Outcome |
+| --- | --- | --- | --- |
+| `HistoryListItem.tsx` | 645 | 228 | 2 siblings extracted (`BlockHistoryItem`, `HistoryItemCore`); 15 new tests |
+| `GoogleCalendarSettingsTab.tsx` | 637 | 448 | 3 siblings extracted (`OAuthStatusSection`, `SettingsForm`, `SyncStatusSection`) + `connectErrorMessage` helper |
+| `BugReportDialog.tsx` | 627 | 448 | 3 siblings extracted (`BugReportForm`, `DiagnosticsCollector`, `SubmitSection`) |
+| `PageHeader.tsx` | 592 | 494 | 2 hooks extracted (`usePageAliases`, `usePageTemplateMeta`) |
+| `SearchPanel.tsx` | 590 | 462 | 4 siblings extracted (`SearchFilters`, `SearchHeader`, `SearchResultList`, `SearchStatusRegion`) |
+| `FormattingToolbar.tsx` | 624 | **624 (still)** | **OPEN — subagent killed mid-orchestrator rewrite; subdir reverted.** |
 
-**Change:** each is a separate ticket. Don't bundle them. `PropertyRowEditor.tsx` (573 lines) already absorbed the FormField extraction from 2d — no further work scheduled.
+**Remaining:** `FormattingToolbar.tsx` — extract mark/state/action groups. The earlier killed subagent created `MarkGroup.tsx`, `StateGroup.tsx`, `ActionGroup.tsx`, and a `shared.tsx` for context types but never wired them into the orchestrator. Approach: a focused single-file session that (a) re-extracts the three groups, (b) rewrites the orchestrator body to render them in toolbar order, (c) preserves all 75 audited assertions from session 739. Cost remains S-M.
 
 **Note on prioritisation:** size alone is a weak signal. Filter by "are we actively editing it?" before scheduling. A 645-LOC file that's been untouched for six months and has clear test coverage may be cheaper to leave alone than a 400-LOC file that's churning every week.
 
-**Cost:** per-file, S-M. **Impact:** gradual code-health. **Risk:** per-file low.
+**Cost:** remaining one file — S-M. **Impact:** gradual code-health. **Risk:** low.
 
 ---
 
