@@ -33,7 +33,7 @@
 //!
 //! | File | Why excluded |
 //! |---|---|
-//! | `commands/pages.rs` (alias-prefix lookup) | `b.id IN (...)` instead of `COALESCE(b.page_id, b.id) IN (...)` — page rows match by their own id, not their owning page. |
+//! | `commands/pages.rs` (alias-prefix lookup) | `b.id IN (...)` instead of `b.page_id IN (...)` — page rows match by their own id, not their owning page. |
 //! | `pagination/history.rs` (op-log filter) | `json_extract(ol.payload, '$.block_id') IN (...)` — operates on the op-log payload, not a `blocks` row. |
 //! | `fts/search.rs` (dynamic SQL) | No `?N IS NULL OR` guard — the filter is conditionally appended only when `space_id.is_some()`, so the inline shape is fundamentally different. |
 //!
@@ -60,7 +60,7 @@
 /// `sqlx::query!` / `sqlx::query_as!` reject `concat!()` /
 /// `include_str!()` composition (see the module doc above).
 #[cfg(test)]
-pub(crate) const SPACE_FILTER_CANONICAL: &str = "(?N IS NULL OR COALESCE(b.page_id, b.id) IN (\n    SELECT bp.block_id FROM block_properties bp\n    WHERE bp.key = 'space' AND bp.value_ref = ?N))";
+pub(crate) const SPACE_FILTER_CANONICAL: &str = "(?N IS NULL OR b.page_id IN (\n    SELECT bp.block_id FROM block_properties bp\n    WHERE bp.key = 'space' AND bp.value_ref = ?N))";
 
 #[cfg(test)]
 mod tests {
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn space_filter_canonical_normalises_to_self() {
         let canonical_norm = normalize(SPACE_FILTER_CANONICAL);
-        let alternate = "(?2 IS NULL OR COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?2))";
+        let alternate = "(?2 IS NULL OR b.page_id IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?2))";
         assert_eq!(
             canonical_norm,
             normalize(alternate),
@@ -197,7 +197,7 @@ mod tests {
         // continuations used in plain (non-raw) Rust string-literal
         // SQL (e.g. `commands/agenda.rs:119` style: `… bp \⏎     WHERE …`).
         let pattern_re = Regex::new(
-            r"(?s)\(\s*\?\d*[\s\\]+IS[\s\\]+NULL[\s\\]+OR[\s\\]+COALESCE\([\s\\]*b\.page_id[\s\\]*,[\s\\]*b\.id[\s\\]*\)[\s\\]+IN[\s\\]+\([\s\\]*SELECT[\s\\]+bp\w*\.block_id[\s\\]+FROM[\s\\]+block_properties[\s\\]+bp\w*[\s\\]+WHERE[\s\\]+bp\w*\.key[\s\\]*=[\s\\]*'space'[\s\\]+AND[\s\\]+bp\w*\.value_ref[\s\\]*=[\s\\]*\?\d*[\s\\]*\)[\s\\]*\)"
+            r"(?s)\(\s*\?\d*[\s\\]+IS[\s\\]+NULL[\s\\]+OR[\s\\]+b\.page_id[\s\\]+IN[\s\\]+\([\s\\]*SELECT[\s\\]+bp\w*\.block_id[\s\\]+FROM[\s\\]+block_properties[\s\\]+bp\w*[\s\\]+WHERE[\s\\]+bp\w*\.key[\s\\]*=[\s\\]*'space'[\s\\]+AND[\s\\]+bp\w*\.value_ref[\s\\]*=[\s\\]*\?\d*[\s\\]*\)[\s\\]*\)"
         ).expect("space-filter pattern regex must compile");
 
         let canonical_norm = normalize(SPACE_FILTER_CANONICAL);
@@ -258,7 +258,7 @@ mod tests {
              matches across the listed production source files, found \
              {total_hits}. Either a site was added/removed, or the \
              allowlist above is missing a file. Audit `grep -rn \
-             \"COALESCE(b.page_id, b.id) IN\" src-tauri/src/` and \
+             \"b.page_id IN (SELECT bp.block_id\" src-tauri/src/` and \
              reconcile.",
         );
     }

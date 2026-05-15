@@ -398,10 +398,7 @@ pub async fn revert_ops_inner(
     let records = reverse::get_op_records_batch(pool, &ops).await?;
     let reverse_payloads = reverse::compute_reverse_batch(pool, &records).await?;
     let mut reverses: Vec<(OpRef, OpPayload, String, String)> = Vec::with_capacity(ops.len());
-    for ((op_ref, reverse_payload), record) in ops
-        .iter()
-        .zip(reverse_payloads.into_iter())
-        .zip(records.iter())
+    for ((op_ref, reverse_payload), record) in ops.iter().zip(reverse_payloads).zip(records.iter())
     {
         reverses.push((
             op_ref.clone(),

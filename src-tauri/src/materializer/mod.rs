@@ -65,6 +65,12 @@ pub enum MaterializeTask {
     /// delete / restore / purge and from `apply_snapshot` / boot-time
     /// "table is empty" fallback.
     RebuildBlockTagRefsCache,
+    /// SQL-review §H-2: full-vault recompute of `page_link_cache`
+    /// (the page-level roll-up of `block_links`). Fires on delete /
+    /// restore / purge and from `apply_snapshot` / boot-time "table
+    /// is empty" fallback. Per-content-edit invalidation rolls up
+    /// inside the [`ReindexBlockLinks`] handler.
+    RebuildPageLinkCache,
     Barrier(Arc<tokio::sync::Notify>),
 }
 

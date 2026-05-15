@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 /// List blocks that have a `todo_state` but no `due_date` and no `scheduled_date`.
 ///
 /// When `space_id` is `Some`, only blocks whose owning page
-/// (`COALESCE(b.page_id, b.id)`) carries `space = ?space_id` are returned.
+/// (`b.page_id`) carries `space = ?space_id` are returned.
 /// `None` keeps the pre-FEAT-3 behaviour (no filter). See
 /// [`crate::space_filter_clause`] for the shared SQL fragment definition.
 pub async fn list_undated_tasks(
@@ -38,7 +38,7 @@ pub async fn list_undated_tasks(
            AND b.scheduled_date IS NULL
            AND b.deleted_at IS NULL
            AND (?1 IS NULL OR b.id > ?2)
-           AND (?4 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?4 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?4))
          ORDER BY b.id ASC

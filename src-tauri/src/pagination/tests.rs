@@ -26,6 +26,8 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 }
 
 /// Insert a block with optional parent and position.
+///
+/// SQL-review §5.3 — stamps `page_id` per post-migration-0066 invariant.
 async fn insert_block(
     pool: &SqlitePool,
     id: &str,
@@ -34,15 +36,21 @@ async fn insert_block(
     parent_id: Option<&str>,
     position: Option<i64>,
 ) {
+    let page_id: Option<String> = if block_type == "page" {
+        Some(id.to_string())
+    } else {
+        Some(parent_id.unwrap_or(id).to_string())
+    };
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(block_type)
     .bind(content)
     .bind(parent_id)
     .bind(position)
+    .bind(page_id)
     .execute(pool)
     .await
     .unwrap();
@@ -4704,4 +4712,195 @@ async fn test_list_unfinished_tasks_empty() {
         .await
         .unwrap();
     assert!(res.items.is_empty());
+}
+
+// ====================================================================
+// SQL-review §5.3 — migration 0066 (COALESCE-removal backfill)
+// ====================================================================
+//
+// NOTE: the plan body named this migration 0065; H-2 claimed 0065 first
+// (`0065_page_link_cache.sql`), so §5.3 bumped to 0066.
+
+#[tokio::test]
+async fn blocks_page_id_for_pages_post_migration_0066() {
+    let (pool, _dir) = test_pool().await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', ?, NULL, 1, NULL)",
+    )
+    .bind("LEGACY_PAGE_NULL")
+    .bind("legacy")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE blocks SET page_id = id WHERE block_type = 'page' AND page_id IS NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let null_pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND page_id IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        null_pages, 0,
+        "migration 0066: no page block may have NULL page_id"
+    );
+
+    let backfilled: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'LEGACY_PAGE_NULL'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(backfilled.as_deref(), Some("LEGACY_PAGE_NULL"));
+}
+
+#[tokio::test]
+async fn space_filter_does_not_scan_blocks_post_section_5_3() {
+    let (pool, _dir) = test_pool().await;
+
+    let plans: &[(&str, &str)] = &[
+        (
+            "list_backlinks-shape",
+            "EXPLAIN QUERY PLAN \
+             SELECT b.id, b.page_id \
+             FROM block_links bl \
+             JOIN blocks b ON b.id = bl.source_id \
+             WHERE bl.target_id = ?1 AND b.deleted_at IS NULL \
+               AND (?2 IS NULL OR b.page_id IN ( \
+                    SELECT bp.block_id FROM block_properties bp \
+                    WHERE bp.key = 'space' AND bp.value_ref = ?2))",
+        ),
+        (
+            "list_by_type-shape",
+            "EXPLAIN QUERY PLAN \
+             SELECT b.id, b.page_id \
+             FROM blocks b \
+             WHERE block_type = ?1 AND deleted_at IS NULL \
+               AND (?2 IS NULL OR b.page_id IN ( \
+                    SELECT bp.block_id FROM block_properties bp \
+                    WHERE bp.key = 'space' AND bp.value_ref = ?2))",
+        ),
+    ];
+
+    for (label, sql) in plans {
+        let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sql)
+            .bind("PLACEHOLDER_1")
+            .bind(Some("PLACEHOLDER_2"))
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("EXPLAIN QUERY PLAN ({label}) failed: {e}"));
+
+        let plan_text = plan_rows
+            .iter()
+            .map(|(_, _, _, detail)| detail.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let bad = plan_text.lines().any(|line| {
+            let trimmed = line.trim_start();
+            (trimmed.starts_with("SCAN b ")
+                || trimmed == "SCAN b"
+                || trimmed.starts_with("SCAN blocks ")
+                || trimmed == "SCAN blocks")
+                && !line.contains("USING")
+        });
+        assert!(
+            !bad,
+            "post-§5.3 space-filter SQL ({label}) must not fall back to a \
+             full SCAN of `blocks`. Got plan:\n{plan_text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn space_filter_pre_and_post_section_5_3_match() {
+    let (pool, _dir) = test_pool().await;
+
+    const SPACE_X: &str = "SPACE_XX";
+    const PAGE_IN_X: &str = "PAGE_IN_XX";
+    const PAGE_NO_SPACE: &str = "PAGE_NO_SPACE";
+    const CHILD_IN_X: &str = "CHILD_IN_XX";
+    const CHILD_OUT: &str = "CHILD_OUT_XX";
+
+    insert_block(&pool, SPACE_X, "page", "X", None, Some(1)).await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+    )
+    .bind(SPACE_X)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    insert_block(&pool, PAGE_IN_X, "page", "In X", None, Some(2)).await;
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
+        .bind(PAGE_IN_X)
+        .bind(SPACE_X)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    insert_block(&pool, PAGE_NO_SPACE, "page", "Orphan", None, Some(3)).await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'content', 'in', ?, 1, ?)",
+    )
+    .bind(CHILD_IN_X)
+    .bind(PAGE_IN_X)
+    .bind(PAGE_IN_X)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'content', 'out', ?, 1, ?)",
+    )
+    .bind(CHILD_OUT)
+    .bind(PAGE_NO_SPACE)
+    .bind(PAGE_NO_SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let post: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks b \
+         WHERE deleted_at IS NULL \
+           AND b.page_id IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?1) \
+         ORDER BY id ASC",
+    )
+    .bind(SPACE_X)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let pre: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks b \
+         WHERE deleted_at IS NULL \
+           AND COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?1) \
+         ORDER BY id ASC",
+    )
+    .bind(SPACE_X)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        post, pre,
+        "post-§5.3 `b.page_id IN (...)` must match the pre-migration \
+         `COALESCE(b.page_id, b.id) IN (...)` id set (correctness guard)."
+    );
+    assert!(post.iter().any(|id| id == PAGE_IN_X));
+    assert!(post.iter().any(|id| id == CHILD_IN_X));
+    assert!(!post.iter().any(|id| id == PAGE_NO_SPACE));
+    assert!(!post.iter().any(|id| id == CHILD_OUT));
 }

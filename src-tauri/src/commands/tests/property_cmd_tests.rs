@@ -972,12 +972,14 @@ async fn batch_resolve_omits_nonexistent_ids() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_resolve_null_content_returns_none_title() {
     let (pool, _dir) = test_pool().await;
+    // SQL-review §5.3 — stamp `page_id = id` for the post-0066 filter.
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, ?, NULL, NULL, 0)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, NULL, NULL, 0, ?)",
     )
     .bind("BR_NULL")
     .bind("content")
+    .bind("BR_NULL")
     .execute(&pool)
     .await
     .unwrap();

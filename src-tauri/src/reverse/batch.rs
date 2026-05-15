@@ -1,3 +1,15 @@
+// B-3 batch builder uses `i as i64` / `i as usize` to round-trip its
+// per-op input-position index between Rust `usize` (Vec index) and
+// SQLite `INTEGER`. Batch sizes are bounded by the caller (50-op undo
+// is the documented upper bound) so the casts cannot wrap, truncate,
+// or lose sign in practice — annotate at module scope instead of every
+// site.
+#![allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+
 //! Batched reverse-op computation — SQL-review B-3.
 //!
 //! `compute_reverse` (the single-op entry point in `super`) runs three
@@ -209,7 +221,9 @@ async fn fetch_prior_text_batch(
             qb.push(" UNION ALL SELECT ");
         }
         qb.push_bind(i as i64);
-        qb.push(" AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ");
+        qb.push(
+            " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
+        );
         qb.push_bind(bid_upper);
         qb.push(" AND op_type IN ('edit_block','create_block') AND (created_at < ");
         qb.push_bind(ops[op_idx].created_at.clone());
@@ -252,7 +266,9 @@ async fn fetch_prior_position_batch(
             qb.push(" UNION ALL SELECT ");
         }
         qb.push_bind(i as i64);
-        qb.push(" AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ");
+        qb.push(
+            " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
+        );
         qb.push_bind(bid_upper);
         qb.push(" AND op_type IN ('move_block','create_block') AND (created_at < ");
         qb.push_bind(ops[op_idx].created_at.clone());

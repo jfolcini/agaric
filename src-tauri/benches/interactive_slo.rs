@@ -997,20 +997,25 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 // ===========================================================================
 
 /// `list_page_links` — graph-view roll-up. **Currently ~1.3 s at 100K**
-/// (3-JOIN superlinearity, see §25 *Problem* row).
-///
-/// TODO(scale-benchmarks-100k-2026-05-14.md Phase 3): drop the
-/// `problem_skipped` gate once the materialised `page_link_cache`
-/// (or recursive-CTE rewrite) lands.
+/// (3-JOIN superlinearity, see §25 *Problem* row); SQL-review §H-2
+/// (migration 0065 `page_link_cache` + the per-`ReindexBlockLinks`
+/// rollup in `cache::page_links::reindex_page_link_cache_for_block`)
+/// brought it under budget, so the `SLO_INCLUDE_PROBLEM` env-gate has
+/// been removed.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
-    if problem_skipped("list_page_links @ 100K") {
-        return;
-    }
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_page_links"));
     rt.block_on(seed_pages_with_links(&pool, FIXTURE_SIZE));
+    // SQL-review §H-2: the fixture seeds `block_links` directly,
+    // bypassing the materializer's per-`ReindexBlockLinks` rollup. Run
+    // a single `rebuild_page_link_cache` so the read path can hit the
+    // cache (the production hot path is populated incrementally; this
+    // wholesale rebuild is the same code FULL_CACHE_REBUILD_TASKS runs
+    // on delete/restore/purge, just hoisted to fixture time).
+    rt.block_on(agaric_lib::cache::rebuild_page_link_cache(&pool))
+        .unwrap();
 
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);

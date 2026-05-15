@@ -156,7 +156,7 @@ async fn count_blocks_by_type(
     let count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM blocks b
            WHERE block_type = ?1 AND deleted_at IS NULL
-             AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (
+             AND (?2 IS NULL OR b.page_id IN (
                  SELECT bp.block_id FROM block_properties bp
                  WHERE bp.key = 'space' AND bp.value_ref = ?2
              ))"#,
@@ -240,7 +240,7 @@ pub async fn get_active_block_inner(
 /// bind parameter — no dynamic SQL construction.
 ///
 /// FEAT-3 Phase 7 — `space_id` is required (not optional). Targets whose
-/// `COALESCE(b.page_id, b.id)` does not carry `space = ?space_id` are
+/// `b.page_id` does not carry `space = ?space_id` are
 /// dropped from the result. This is the policy enforcement point for
 /// "no live links between spaces, ever": foreign-space chips fall into
 /// the "unknown id" branch in the frontend and render as broken-link
@@ -272,7 +272,7 @@ pub async fn batch_resolve_inner(
     let space_filter = scope.as_filter_param();
 
     // FEAT-3 Phase 7: scope to the current space using the canonical
-    // `COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp
+    // `b.page_id IN (SELECT bp.block_id FROM block_properties bp
     // WHERE bp.key = 'space' AND bp.value_ref = ?)` filter (matches the pattern
     // shipped in `pagination/{hierarchy,trash}.rs` and `fts/search.rs`).
     // The `?2 IS NULL OR …` shape lets cross-space callers
@@ -294,7 +294,7 @@ pub async fn batch_resolve_inner(
              (CASE WHEN b.deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS "deleted: bool"
            FROM blocks b
            WHERE b.id IN (SELECT value FROM json_each(?1))
-             AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (
+             AND (?2 IS NULL OR b.page_id IN (
                  SELECT bp.block_id
                  FROM block_properties bp
                  WHERE bp.key = 'space' AND bp.value_ref = ?2
@@ -605,7 +605,7 @@ pub async fn get_blocks(
 ///
 /// The space-filter shape mirrors `pagination::list_trash` (and the
 /// `space_filter_clause` family in `pagination/{hierarchy,trash}.rs`):
-/// `COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM
+/// `b.page_id IN (SELECT bp.block_id FROM
 /// block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?1)`.
 /// A soft-deleted block retains its `page_id` column value so the
 /// filter applies identically to live and deleted blocks.
@@ -623,7 +623,7 @@ pub async fn count_trash_inner(pool: &SqlitePool, space_id: &str) -> Result<i64,
     let count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM blocks b
            WHERE b.deleted_at IS NOT NULL
-             AND COALESCE(b.page_id, b.id) IN (
+             AND b.page_id IN (
                  SELECT bp.block_id FROM block_properties bp
                  WHERE bp.key = 'space' AND bp.value_ref = ?1
              )"#,
@@ -703,27 +703,30 @@ mod tests {
     }
 
     /// Insert a live (non-deleted) page block at the top level (no parent).
+    /// `page_id = id` matches the invariant migration 0066 backfilled and
+    /// every production page-create path now upholds.
     async fn insert_live_page(pool: &SqlitePool, id: &str) {
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-             VALUES (?, 'page', 'live', NULL, 1)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'live', NULL, 1, ?)",
         )
+        .bind(id)
         .bind(id)
         .execute(pool)
         .await
         .unwrap();
     }
 
-    /// Insert a soft-deleted page block at the top level. `page_id` is left
-    /// NULL — `COALESCE(page_id, id) = id` so the space lookup resolves via
-    /// the block's own `space` property.
+    /// Insert a soft-deleted page block at the top level. `page_id = id`
+    /// per the §5.3 backfill in migration 0066.
     async fn insert_deleted_page(pool: &SqlitePool, id: &str, deleted_at: &str) {
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES (?, 'page', 'trash', NULL, 1, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at, page_id) \
+             VALUES (?, 'page', 'trash', NULL, 1, ?, ?)",
         )
         .bind(id)
         .bind(deleted_at)
+        .bind(id)
         .execute(pool)
         .await
         .unwrap();

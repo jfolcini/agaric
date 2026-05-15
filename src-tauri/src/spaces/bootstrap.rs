@@ -736,7 +736,7 @@ pub async fn migrate_orphan_tags_to_space(
                    ON b.id = r.source_id
                   AND b.deleted_at IS NULL
                INNER JOIN block_properties p
-                   ON p.block_id = COALESCE(b.page_id, b.id)
+                   ON p.block_id = b.page_id
                   AND p.key = 'space'
                   AND p.value_ref IS NOT NULL
                WHERE r.tag_id = ?
@@ -957,7 +957,7 @@ mod tests {
     async fn orphan_tag_assigned_via_content_block_page_id() {
         // The referencing block is a `content` block (not a `page`), so
         // the space property lives on its parent page. The query must
-        // resolve via `COALESCE(b.page_id, b.id)`.
+        // resolve via `b.page_id`.
         let (pool, _tmp) = fresh_pool().await;
         let tag_id = BlockId::new().to_string();
         let page_id = BlockId::new().to_string();

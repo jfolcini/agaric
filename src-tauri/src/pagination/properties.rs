@@ -160,7 +160,7 @@ pub async fn query_by_property(
     };
 
     // FEAT-3p4 — both branches gain the `(?N IS NULL OR
-    // COALESCE(b.page_id, b.id) IN (...))` space-filter clause. The
+    // b.page_id IN (...))` space-filter clause. The
     // literal mirrors `crate::space_filter_clause!` — kept inline
     // because both branches are dynamic SQL (the `{sql_op}`
     // interpolation precludes the `query_as!` macro). The `b.` alias is
@@ -212,7 +212,7 @@ pub async fn query_by_property(
                AND b.deleted_at IS NULL \
                AND (?1 IS NULL OR b.{col} {sql_op} ?1) \
                AND (?2 IS NULL OR b.id > ?3) \
-               AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+               AND (?5 IS NULL OR b.page_id IN ( \
                     SELECT bp.block_id FROM block_properties bp \
                     WHERE bp.key = 'space' AND bp.value_ref = ?5)) \
                AND (?6 IS NULL OR b.parent_id IS NOT ?6) \
@@ -262,7 +262,7 @@ pub async fn query_by_property(
                AND (?2 IS NULL OR bp.value_text {sql_op} ?2) \
                AND (?3 IS NULL OR bp.value_date {sql_op} ?3) \
                AND (?4 IS NULL OR b.id > ?5) \
-               AND (?7 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+               AND (?7 IS NULL OR b.page_id IN ( \
                     SELECT bp_sp.block_id FROM block_properties bp_sp \
                     WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?7)) \
                AND (?8 IS NULL OR b.parent_id IS NOT ?8) \

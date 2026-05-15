@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id AS \"id!\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = COALESCE(b.page_id, b.id) AND bp.key = 'space') AS \"space?\"\n           FROM blocks b\n           WHERE b.deleted_at IS NULL",
+  "query": "SELECT b.id AS \"id!\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = b.page_id AND bp.key = 'space') AS \"space?\"\n           FROM blocks b\n           WHERE b.deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       true
     ]
   },
-  "hash": "cf8a9e5fd97f2163bf5893740f0d87812d46cd4fb0d05d768a4aff804c67361d"
+  "hash": "44b3333382c3ae92ac837b22fe6dcc9fabe5e2ff309d1a8adb0c31c329f1b371"
 }

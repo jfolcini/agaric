@@ -1618,6 +1618,17 @@ async fn batch_resolve_returns_matching_blocks() {
     )
     .await
     .unwrap();
+    // SQL-review §5.3 — `create_block_in_tx` only stamps `page_id =
+    // self.id` for `block_type = 'page'`. Tag/content blocks at the top
+    // level get `page_id = NULL`; the pre-§5.3 COALESCE fallback resolved
+    // to `b.id`. Stamp `page_id = id` so the post-migration filter
+    // (`b.page_id IN (...)`) finds the tag block.
+    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        .bind(&b2.id)
+        .bind(&b2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
     // FEAT-3 Phase 7: batch_resolve_inner filters by space; assign both
     // blocks to the synthetic test space so the membership filter keeps
     // them in scope.
@@ -1654,14 +1665,37 @@ async fn batch_resolve_marks_deleted_block() {
     )
     .await
     .unwrap();
-    // Content block has no page_id (top-level), so COALESCE(page_id, id) = id —
-    // assign the synthetic space directly to keep it in scope.
+    // SQL-review §5.3 — top-level content block has page_id=NULL.
+    // Stamp page_id=id for the post-0066 space filter to resolve.
+    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        .bind(&block.id)
+        .bind(&block.id)
+        .execute(&pool)
+        .await
+        .unwrap();
     assign_to_test_space(&pool, &block.id).await;
 
     delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
+
+    // SQL-review §5.3 — the materializer's background
+    // `cache::rebuild_page_ids` runs during `settle` and resets
+    // `page_id` to NULL for any block with no ancestor page (a
+    // top-level orphan content block is exactly that shape — no
+    // parent, not itself a page). Re-stamp `page_id = id` after the
+    // settle so the post-0066 space filter (`b.page_id IN (...)`)
+    // resolves through the direct space-property write we did pre-
+    // delete. Production never hits this shape (content blocks never
+    // get direct space properties), so the work-around lives only in
+    // the test fixture.
+    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        .bind(&block.id)
+        .bind(&block.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let resolved = batch_resolve_inner(
         &pool,

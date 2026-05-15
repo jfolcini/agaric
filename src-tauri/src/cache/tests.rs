@@ -3946,3 +3946,186 @@ async fn page_id_split_chunked_rebuild_handles_large_input() {
         "split and single-pool rebuilds must produce identical (id, page_id) rows"
     );
 }
+
+// ====================================================================
+// page_link_cache (SQL-review §H-2)
+// ====================================================================
+
+async fn seed_page_link_fixture(
+    pool: &SqlitePool,
+    page_a: &str,
+    page_b: &str,
+    edges: i64,
+) -> Vec<String> {
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'Page A')")
+        .bind(page_a)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'Page B')")
+        .bind(page_b)
+        .execute(pool)
+        .await
+        .unwrap();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let mut children: Vec<String> = Vec::with_capacity(edges as usize);
+    for i in 0..edges {
+        let child_id = format!("C{i:025}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, ?)",
+        )
+        .bind(&child_id)
+        .bind(format!("link [[{page_b}]]"))
+        .bind(page_a)
+        .bind(i + 1)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&child_id)
+            .bind(page_b)
+            .execute(pool)
+            .await
+            .unwrap();
+        children.push(child_id);
+    }
+    children
+}
+
+#[tokio::test]
+async fn page_link_cache_full_rebuild_rolls_up_edges() {
+    let (pool, _dir) = test_pool().await;
+    seed_page_link_fixture(
+        &pool,
+        "PA000000000000000000000000",
+        "PB000000000000000000000000",
+        5,
+    )
+    .await;
+    rebuild_page_link_cache(&pool).await.unwrap();
+    let rows: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT source_page_id, target_page_id, edge_count FROM page_link_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(
+            "PA000000000000000000000000".to_string(),
+            "PB000000000000000000000000".to_string(),
+            5,
+        )],
+        "rebuild must roll up 5 block_links rows into one cache row with edge_count=5"
+    );
+}
+
+#[tokio::test]
+async fn reindex_page_link_cache_for_block_inserts_pair() {
+    let (pool, _dir) = test_pool().await;
+    let children = seed_page_link_fixture(
+        &pool,
+        "PA000000000000000000000000",
+        "PB000000000000000000000000",
+        3,
+    )
+    .await;
+    reindex_page_link_cache_for_block(&pool, &children[0])
+        .await
+        .unwrap();
+    let row: (String, String, i64) =
+        sqlx::query_as("SELECT source_page_id, target_page_id, edge_count FROM page_link_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        row,
+        (
+            "PA000000000000000000000000".to_string(),
+            "PB000000000000000000000000".to_string(),
+            3,
+        ),
+        "per-block reindex must roll up every block_links row sharing the source page"
+    );
+}
+
+#[tokio::test]
+async fn reindex_page_link_cache_for_block_drops_zero_count_row() {
+    let (pool, _dir) = test_pool().await;
+    let children = seed_page_link_fixture(
+        &pool,
+        "PA000000000000000000000000",
+        "PB000000000000000000000000",
+        1,
+    )
+    .await;
+    let child = &children[0];
+    reindex_page_link_cache_for_block(&pool, child)
+        .await
+        .unwrap();
+    let pre = count_rows(&pool, "page_link_cache").await;
+    assert_eq!(pre, 1, "baseline: cache must hold one row before delete");
+
+    sqlx::query("DELETE FROM block_links WHERE source_id = ?")
+        .bind(child)
+        .execute(&pool)
+        .await
+        .unwrap();
+    reindex_page_link_cache_for_block(&pool, child)
+        .await
+        .unwrap();
+    let post = count_rows(&pool, "page_link_cache").await;
+    assert_eq!(post, 0, "edge_count == 0 must DELETE the cache row");
+}
+
+#[tokio::test]
+async fn page_link_cache_read_path_matches_legacy_query() {
+    let (pool, _dir) = test_pool().await;
+    let _children = seed_page_link_fixture(
+        &pool,
+        "PA000000000000000000000000",
+        "PB000000000000000000000000",
+        4,
+    )
+    .await;
+    rebuild_page_link_cache(&pool).await.unwrap();
+
+    let new_rows =
+        crate::commands::list_page_links_inner(&pool, &crate::space::SpaceScope::Global, None)
+            .await
+            .unwrap();
+
+    let legacy_rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT
+             COALESCE(sb.parent_id, bl.source_id) AS source_id,
+             bl.target_id AS target_id,
+             COUNT(*) AS ref_count
+         FROM block_links bl
+         JOIN blocks tb ON tb.id = bl.target_id
+             AND tb.block_type = 'page'
+             AND tb.deleted_at IS NULL
+         JOIN blocks sb ON sb.id = bl.source_id
+             AND sb.deleted_at IS NULL
+         LEFT JOIN blocks pb ON pb.id = sb.parent_id
+             AND pb.deleted_at IS NULL
+             AND pb.block_type = 'page'
+         WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
+             AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
+         GROUP BY 1, 2
+         ORDER BY 1, 2",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        new_rows.len(),
+        legacy_rows.len(),
+        "cache-backed read must return the same row count as the legacy rollup"
+    );
+    for (got, want) in new_rows.iter().zip(legacy_rows.iter()) {
+        assert_eq!(got.source_id.as_str(), want.0, "source_id parity");
+        assert_eq!(got.target_id.as_str(), want.1, "target_id parity");
+        assert_eq!(got.ref_count, want.2, "ref_count parity");
+    }
+}

@@ -60,7 +60,7 @@ pub async fn list_children(
            AND (?2 IS NULL OR (
                 position > ?3
                 OR (position = ?3 AND id > ?4)))
-           AND (?6 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?6 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?6))
          ORDER BY position ASC, id ASC
@@ -118,7 +118,7 @@ pub async fn list_by_type(
          FROM blocks b
          WHERE block_type = ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR id > ?3)
-           AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?5 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?5))
          ORDER BY id ASC

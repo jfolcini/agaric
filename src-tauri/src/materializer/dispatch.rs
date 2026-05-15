@@ -63,7 +63,7 @@ fn sender_or_closed(
 /// upstream column/table. Keeping the array in this loose order keeps
 /// the test assertions stable; the dedup + eventual consistency
 /// combine to make the discrepancy invisible to users in practice.
-pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
+pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildTagsCache,
     MaterializeTask::RebuildPagesCache,
     MaterializeTask::RebuildAgendaCache,
@@ -75,6 +75,13 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
     // full recompute picks that up on the same queue drain as the
     // other caches.
     MaterializeTask::RebuildBlockTagRefsCache,
+    // SQL-review §H-2: the page-level link roll-up cache feeds
+    // `list_page_links_inner`. Soft-delete / restore / purge cascades
+    // can drop or re-introduce page edges (every block under the
+    // deleted subtree had its `block_links` rows removed by the CASCADE
+    // FK from migration 0061), so the per-page roll-up must run on the
+    // same drain.
+    MaterializeTask::RebuildPageLinkCache,
 ];
 
 impl Materializer {
@@ -473,6 +480,7 @@ mod tests {
             MaterializeTask::RebuildProjectedAgendaCache => "RebuildProjectedAgendaCache".into(),
             MaterializeTask::RebuildPageIds => "RebuildPageIds".into(),
             MaterializeTask::RebuildBlockTagRefsCache => "RebuildBlockTagRefsCache".into(),
+            MaterializeTask::RebuildPageLinkCache => "RebuildPageLinkCache".into(),
             MaterializeTask::Barrier(_) => "Barrier".into(),
         }
     }

@@ -11,7 +11,7 @@ use crate::error::AppError;
 /// `date` must be in `YYYY-MM-DD` format.
 ///
 /// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
-/// whose owning page (`COALESCE(b.page_id, b.id)`) carries `space = ?space_id`.
+/// whose owning page (`b.page_id`) carries `space = ?space_id`.
 /// `None` keeps the pre-FEAT-3 behaviour (no filter). See
 /// [`crate::space_filter_clause`] for the shared SQL fragment definition.
 pub async fn list_agenda(
@@ -44,7 +44,7 @@ pub async fn list_agenda(
          WHERE ac.date = ?1 AND b.deleted_at IS NULL
            AND (?2 IS NULL OR ac.source = ?2)
            AND (?3 IS NULL OR b.id > ?4)
-           AND (?6 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?6 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?6))
          ORDER BY b.id ASC
@@ -114,7 +114,7 @@ pub async fn list_agenda_range(
            AND b.deleted_at IS NULL
            AND (?3 IS NULL OR ac.source = ?3)
            AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))
-           AND (?8 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?8 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?8))
          ORDER BY ac.date ASC, b.id ASC

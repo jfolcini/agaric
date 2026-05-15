@@ -1,11 +1,10 @@
 # SQL review — full-app audit + remediation plan — 2026-05-14
 
-> **Status:** Phases 1 + 2 + 3 shipped (sessions 740 + 741 + 745). **Open
-> below:** Phase 4 (H-2 `page_link_cache` materialization + COALESCE-removal
-> backfill + M-2 incremental cache rebuilds), Phase 5 (M-6 compaction tx
-> split + M-8 snapshot streaming). §1 BLOCKERs all shipped; §2 H-1/H-2/H-3
-> unchanged; §3 down to 5 M-class items (M-1, M-3, M-4 shipped — B-3 just
-> closed in §1).
+> **Status:** Phases 1 + 2 + 3 + 4 shipped (sessions 740 + 741 + 745 + 745).
+> **Open below:** Phase 5 (M-6 compaction tx split + M-8 snapshot streaming).
+> §1 BLOCKERs all shipped; §2 H-2 / H-3 shipped (H-1 page_link_cache via the
+> new `page_link_cache` table); §3 down to 4 M-class items (M-1, M-2, M-3,
+> M-4 shipped — Phase 4 closed everything except snapshot work).
 >
 > The original audit body (the multi-agent SQL/sqlx review summary) is
 > retained below for context — every finding still labelled "Open" maps
@@ -294,10 +293,18 @@ The cross-cut "audit top-10 write loops for json_each conversion"
 remains open as a Phase 3.5 follow-up if Phase 4 + Phase 5 don't subsume
 it.
 
-**Phase 4 — Cache structural changes (L + L, ~2 weeks).**
-H-2 (`page_link_cache` materialisation — separate plan) + the
-COALESCE-removal backfill (theme §5.3) + M-2 (incremental rebuilds for
-pages/tags/block_tag_refs). Largest impact on the 100K interactive SLO.
+**Phase 4 — Cache structural changes.** ✅ SHIPPED session 745. Three
+parallel subagents landed: H-2 added `page_link_cache` materialization
+(migration 0065 + new `src/cache/page_links.rs` + materializer
+`RebuildPageLinkCache` task + `list_page_links_inner` rewrite + SLO-gate
+removal). M-2 converted `rebuild_pages_cache`, `rebuild_tags_cache`,
+`rebuild_block_tag_refs_cache` from `DELETE *; INSERT SELECT` to
+sort-merge incremental upgrades mirroring `rebuild_agenda_cache`
+(M-19b's pattern). COALESCE backfill landed migration 0066 forcing
+`page_id = id` for page blocks + removed `COALESCE(b.page_id, b.id)`
+at every flagged read site. Test fixtures that previously relied on
+NULL `page_id` got explicit `page_id = id` plumbing (3 fixture helpers
+in `commands/blocks/queries.rs` + `fts/tests.rs`).
 
 **Phase 5 — Snapshot streaming + non-idempotent compaction fix (L+M, ~1
 week).** M-6 (compaction tx split) + M-8 (streaming snapshot restore).

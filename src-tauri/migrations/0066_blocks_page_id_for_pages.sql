@@ -1,0 +1,62 @@
+-- SQL-review 2026-05-14 §5.3: COALESCE-removal backfill for `blocks.page_id`.
+--
+-- ## Rationale
+--
+-- Every paginated read in the space-filter family wraps the page-id
+-- lookup in `COALESCE(b.page_id, b.id)`. The COALESCE existed to handle
+-- two row shapes uniformly:
+--
+--   * non-page blocks: `page_id` = the owning page's id (set by Rust at
+--     write time in `commands/blocks/crud.rs::create_block_in_tx` and
+--     re-derived by `cache/page_id.rs::rebuild_page_ids`).
+--   * page blocks: historically `page_id` could be NULL (the page IS
+--     its own owning page; the column was left NULL and the read sites
+--     fell back to `b.id` via COALESCE).
+--
+-- The cost: SQLite's planner cannot prove that `COALESCE(b.page_id,
+-- b.id)` returns one of two indexed values (`idx_blocks_page_id`), so
+-- every read site degraded to a full `blocks` scan when the space
+-- filter was applied. H-1 / H-3 in the SQL review identified this as
+-- the dominant cost on every paginated read.
+--
+-- The fix is upstream: backfill `page_id = id` for every page block so
+-- the column is never NULL for pages, then drop the COALESCE wrapping
+-- at every read site so the planner uses `idx_blocks_page_id` directly.
+--
+-- Write-time invariant is already enforced in Rust at
+-- `commands/blocks/crud.rs::create_block_in_tx` (line ~226: `if
+-- block_type == "page" { Some(block_id.as_str().to_string()) }`) and
+-- via `cache/page_id.rs::rebuild_page_ids_impl`'s recursive CTE (page
+-- rows match the depth-0 base case with `cur_type = 'page'` and so
+-- yield `page_id = id`). The materializer's SQL-only fallback
+-- (`materializer/handlers.rs::apply_create_block_sql_only`) does NOT
+-- stamp page_id directly — it relies on the background rebuild — so
+-- this backfill is the safety net for any rows that survived the
+-- pre-rebuild window with NULL page_id.
+--
+-- ## No CHECK constraint
+--
+-- Adding a `CHECK (block_type != 'page' OR page_id = id)` constraint
+-- would require a full table rebuild under SQLite (no ALTER TABLE ADD
+-- CONSTRAINT). The invariant is already enforced upstream in Rust at
+-- write time; the rebuild cost is not justified for an invariant
+-- that's not currently violated in steady state.
+--
+-- ## Migration safety
+--
+-- Pure UPDATE — no schema change, no table rewrite. The blocks table
+-- has no UPDATE triggers (verified by grepping `CREATE TRIGGER ... ON
+-- blocks` across the migration history; only the op_log family carries
+-- triggers, which is why migration 0064 needed the H-13 bypass
+-- sentinel). The UPDATE writes the same value the rebuild path
+-- produces, so subsequent `rebuild_page_ids` runs are idempotent on
+-- the affected rows.
+--
+-- Expected runtime: <1s at 100K page blocks (single column UPDATE on a
+-- bounded subset). The WHERE clause filters out rows already satisfying
+-- the invariant so the UPDATE only touches the historical-NULL set.
+
+UPDATE blocks
+   SET page_id = id
+ WHERE block_type = 'page'
+   AND page_id IS NULL;

@@ -23,15 +23,24 @@ async fn insert_block(
     parent_id: Option<&str>,
     position: Option<i64>,
 ) {
+    // `page_id = id` for page blocks per the §5.3 invariant (migration
+    // 0066); content blocks inherit page_id from their parent at write
+    // time in production, but this test fixture inlines the safe default.
+    let page_id = if block_type == "page" {
+        Some(id)
+    } else {
+        parent_id
+    };
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(block_type)
     .bind(content)
     .bind(parent_id)
     .bind(position)
+    .bind(page_id)
     .execute(pool)
     .await
     .unwrap();

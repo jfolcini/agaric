@@ -104,6 +104,8 @@ pub(crate) enum RetryKind {
     RebuildPageIds,
     /// Mirror of [`MaterializeTask::RebuildBlockTagRefsCache`].
     RebuildBlockTagRefsCache,
+    /// Mirror of [`MaterializeTask::RebuildPageLinkCache`] (SQL-review §H-2).
+    RebuildPageLinkCache,
     // --- Foreground apply-op (PEND-24 H1) ---
     /// Mirror of a failed [`MaterializeTask::ApplyOp`] task whose
     /// foreground retry budget was exhausted. Identifies the op by
@@ -137,6 +139,7 @@ impl RetryKind {
             Self::RebuildTagInheritanceCache => Cow::Borrowed("RebuildTagInheritanceCache"),
             Self::RebuildPageIds => Cow::Borrowed("RebuildPageIds"),
             Self::RebuildBlockTagRefsCache => Cow::Borrowed("RebuildBlockTagRefsCache"),
+            Self::RebuildPageLinkCache => Cow::Borrowed("RebuildPageLinkCache"),
             Self::ApplyOp { device_id, seq } => Cow::Owned(format!("ApplyOp:{seq}:{device_id}")),
         }
     }
@@ -154,6 +157,7 @@ impl RetryKind {
             "RebuildTagInheritanceCache" => return Some(Self::RebuildTagInheritanceCache),
             "RebuildPageIds" => return Some(Self::RebuildPageIds),
             "RebuildBlockTagRefsCache" => return Some(Self::RebuildBlockTagRefsCache),
+            "RebuildPageLinkCache" => return Some(Self::RebuildPageLinkCache),
             _ => {}
         }
         // Composite-key path: PEND-24 H1 apply-op failures encoded as
@@ -185,6 +189,7 @@ impl RetryKind {
                 | Self::RebuildTagInheritanceCache
                 | Self::RebuildPageIds
                 | Self::RebuildBlockTagRefsCache
+                | Self::RebuildPageLinkCache
         )
     }
 
@@ -218,6 +223,7 @@ impl RetryKind {
             Self::RebuildTagInheritanceCache => Some(MaterializeTask::RebuildTagInheritanceCache),
             Self::RebuildPageIds => Some(MaterializeTask::RebuildPageIds),
             Self::RebuildBlockTagRefsCache => Some(MaterializeTask::RebuildBlockTagRefsCache),
+            Self::RebuildPageLinkCache => Some(MaterializeTask::RebuildPageLinkCache),
             // ApplyOp requires `OpRecord` lookup from `op_log`.
             Self::ApplyOp { .. } => None,
         }
@@ -279,6 +285,9 @@ impl RetryKind {
                 Self::RebuildBlockTagRefsCache,
                 GLOBAL_TASK_SENTINEL.to_string(),
             )),
+            MaterializeTask::RebuildPageLinkCache => {
+                Some((Self::RebuildPageLinkCache, GLOBAL_TASK_SENTINEL.to_string()))
+            }
             MaterializeTask::ApplyOp(record) => Some((
                 Self::ApplyOp {
                     device_id: record.device_id.clone(),

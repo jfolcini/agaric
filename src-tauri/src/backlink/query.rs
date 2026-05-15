@@ -46,7 +46,7 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 /// `eval_backlink_query_grouped`. (L-95)
 ///
 /// `space_id` (FEAT-3p4) — when `Some`, the base-set query restricts
-/// source blocks to those whose owning page (`COALESCE(b.page_id, b.id)`)
+/// source blocks to those whose owning page (`b.page_id`)
 /// carries `space = ?space_id`. Applying the filter at the base-set
 /// step means `total_count` and `filtered_count` reflect the
 /// post-space-filter universe. `None` is the unscoped (pre-FEAT-3)
@@ -87,7 +87,7 @@ pub async fn eval_backlink_query(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))",
     )
@@ -204,7 +204,7 @@ async fn eval_created_sort_keyset(
                  JOIN blocks b ON b.id = bl.source_id \
                  WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
                    AND b.deleted_at IS NULL \
-                   AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                   AND (?2 IS NULL OR b.page_id IN ( \
                         SELECT bp.block_id FROM block_properties bp \
                         WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
                    AND b.id IN (SELECT value FROM json_each(?3))",
@@ -255,7 +255,7 @@ async fn eval_created_sort_keyset(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
            AND (?3 IS NULL OR b.id {cursor_cmp} ?4) \
@@ -356,7 +356,7 @@ async fn eval_property_sort_materialised(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
            AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",

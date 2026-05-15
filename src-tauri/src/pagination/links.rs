@@ -9,7 +9,7 @@ use crate::error::AppError;
 /// Uses index `idx_block_links_target(target_id)`.
 ///
 /// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
-/// source blocks whose owning page (`COALESCE(b.page_id, b.id)`)
+/// source blocks whose owning page (`b.page_id`)
 /// carries `space = ?space_id`. `None` keeps the pre-FEAT-3 behaviour
 /// (no filter). See [`crate::space_filter_clause`] for the shared SQL
 /// fragment definition.
@@ -49,7 +49,7 @@ pub async fn list_backlinks(
          JOIN blocks b ON b.id = bl.source_id
          WHERE bl.target_id = ?1 AND b.deleted_at IS NULL
            AND (?2 IS NULL OR b.id > ?3)
-           AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?5 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?5))
          ORDER BY b.id ASC

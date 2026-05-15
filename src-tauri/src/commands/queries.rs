@@ -394,7 +394,7 @@ pub async fn count_backlinks_batch_inner(
     // PEND-35 Tier 1.6 — `?2` carries the active space id (or NULL for
     // [`SpaceScope::Global`]). The shape mirrors
     // `crate::backlink::query::eval_backlink_query`:
-    //   `(?N IS NULL OR COALESCE(b.page_id, b.id) IN (
+    //   `(?N IS NULL OR b.page_id IN (
     //        SELECT bp.block_id FROM block_properties bp
     //        WHERE bp.key = 'space' AND bp.value_ref = ?N))`
     // — applied to the SOURCE block (`b`) so a backlink whose source
@@ -404,7 +404,7 @@ pub async fn count_backlinks_batch_inner(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
          GROUP BY bl.target_id";
@@ -780,7 +780,7 @@ pub async fn filtered_blocks_query_inner(
          FROM blocks b \
          WHERE b.deleted_at IS NULL \
            AND (?1 IS NULL OR b.id > ?2) \
-           AND (?4 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?4 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?4)) \
            AND (?5 IS NULL OR b.block_type = ?5)",

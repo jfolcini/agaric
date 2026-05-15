@@ -126,7 +126,7 @@ pub(crate) async fn validate_block_in_space(
         "SELECT bp.value_ref \
          FROM blocks b \
          LEFT JOIN block_properties bp \
-           ON bp.block_id = COALESCE(b.page_id, b.id) \
+           ON bp.block_id = b.page_id \
           AND bp.key = 'space' \
          WHERE b.id = ?",
     )

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks b\n         WHERE parent_id IS ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR (\n                position > ?3\n                OR (position = ?3 AND id > ?4)))\n           AND (?6 IS NULL OR COALESCE(b.page_id, b.id) IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?6))\n         ORDER BY position ASC, id ASC\n         LIMIT ?5",
+  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id, ac.date as \"ac_date: String\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date >= ?1 AND ac.date <= ?2\n           AND b.deleted_at IS NULL\n           AND (?3 IS NULL OR ac.source = ?3)\n           AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))\n           AND (?8 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?8))\n         ORDER BY ac.date ASC, b.id ASC\n         LIMIT ?7",
   "describe": {
     "columns": [
       {
@@ -57,10 +57,15 @@
         "name": "page_id",
         "ordinal": 10,
         "type_info": "Text"
+      },
+      {
+        "name": "ac_date: String",
+        "ordinal": 11,
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 8
     },
     "nullable": [
       false,
@@ -73,8 +78,9 @@
       true,
       true,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "b81e15430b8b87038511d31ff1f81cfe2c4c08dd015fee97fb5f7bf83e7a92ca"
+  "hash": "1d48209ad0f1532f51ea0001f9625984c8372f66f7e526542fc0c825326809ae"
 }

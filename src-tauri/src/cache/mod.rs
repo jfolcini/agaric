@@ -15,6 +15,7 @@ mod agenda;
 mod block_links;
 mod block_tag_refs;
 mod page_id;
+mod page_links;
 mod pages;
 mod projected_agenda;
 mod tags;
@@ -141,6 +142,9 @@ pub use block_tag_refs::{
     reindex_block_tag_refs_split,
 };
 pub use page_id::{rebuild_page_ids, rebuild_page_ids_split};
+pub use page_links::{
+    rebuild_page_link_cache, rebuild_page_link_cache_split, reindex_page_link_cache_for_block,
+};
 pub use pages::{rebuild_pages_cache, rebuild_pages_cache_split};
 pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split};
 pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split};
@@ -194,5 +198,6 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_pages_cache(pool).await?;
     rebuild_agenda_cache(pool).await?;
     rebuild_projected_agenda_cache(pool).await?;
+    rebuild_page_link_cache(pool).await?;
     Ok(())
 }

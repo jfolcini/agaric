@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR ac.source = ?2)\n           AND (?3 IS NULL OR b.id > ?4)\n           AND (?6 IS NULL OR COALESCE(b.page_id, b.id) IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?6))\n         ORDER BY b.id ASC\n         LIMIT ?5",
+  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks b\n         WHERE b.deleted_at IS NOT NULL\n           AND (\n                b.parent_id IS NULL\n                OR NOT EXISTS (\n                    SELECT 1 FROM blocks p\n                    WHERE p.id = b.parent_id AND p.deleted_at = b.deleted_at\n                )\n           )\n           AND (?1 IS NULL OR (\n                b.deleted_at < ?2 OR (b.deleted_at = ?2 AND b.id > ?3)))\n           AND (?5 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY b.deleted_at DESC, b.id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -60,7 +60,7 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 5
     },
     "nullable": [
       false,
@@ -76,5 +76,5 @@
       true
     ]
   },
-  "hash": "e50e39be73afe20f40343c175152ddd3bfc501e7a261e0ec44d09b14e41d4d52"
+  "hash": "35203cbb68489e97331e69b39da230c858714d425033835c23949ff1070a66f0"
 }

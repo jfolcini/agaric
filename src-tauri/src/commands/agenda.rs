@@ -50,7 +50,7 @@ pub async fn count_agenda_batch_inner(
     // The literal mirrors `crate::space_filter_clause!` — kept inline
     // here because `sqlx::query!` requires a string literal and does
     // not accept `concat!()`. Resolves the agenda-cached block to its
-    // owning page via `COALESCE(b.page_id, b.id)` and intersects
+    // owning page via `b.page_id` and intersects
     // against `block_properties(key = 'space').value_ref`.
     let dates_json = serde_json::to_string(&dates)?;
     let space_filter = scope.as_filter_param();
@@ -60,7 +60,7 @@ pub async fn count_agenda_batch_inner(
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date IN (SELECT value FROM json_each(?1))
            AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?2 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))
          GROUP BY ac.date"#,
@@ -112,14 +112,14 @@ pub async fn count_agenda_batch_by_source_inner(
     // The literal mirrors `crate::space_filter_clause!` — kept inline
     // here because this is dynamic SQL (`sqlx::query_as`) which cannot
     // reuse the macro form. Resolves the agenda-cached block to its
-    // owning page via `COALESCE(b.page_id, b.id)` and intersects
+    // owning page via `b.page_id` and intersects
     // against `block_properties(key = 'space').value_ref`.
     let sql = "SELECT ac.date, ac.source, COUNT(*) as cnt \
          FROM agenda_cache ac \
          JOIN blocks b ON b.id = ac.block_id \
          WHERE ac.date IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
          GROUP BY ac.date, ac.source";
@@ -251,7 +251,7 @@ pub async fn list_projected_agenda_inner(
         // FEAT-3p4 — ?7 (space_id) drives the shared space-filter clause.
         // Mirrors `crate::space_filter_clause!` — kept inline because this
         // query uses dynamic-typed `query_as`. Resolves the cached block
-        // to its owning page via `COALESCE(b.page_id, b.id)` and
+        // to its owning page via `b.page_id` and
         // intersects against `block_properties(key = 'space').value_ref`.
         "SELECT pac.block_id, pac.projected_date, pac.source,
                 b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -269,7 +269,7 @@ pub async fn list_projected_agenda_inner(
            )
            AND (?3 IS NULL OR (pac.projected_date > ?4
                OR (pac.projected_date = ?4 AND pac.block_id > ?5)))
-           AND (?7 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?7 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?7))
          ORDER BY pac.projected_date ASC, pac.block_id ASC
@@ -404,7 +404,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // Mirrors `crate::space_filter_clause!` — kept inline because
     // `sqlx::query_as!` requires a string literal directly. Resolves
     // the repeating block to its owning page via
-    // `COALESCE(b.page_id, b.id)` and intersects against
+    // `b.page_id` and intersects against
     // `block_properties(key = 'space').value_ref`.
     let rows = sqlx::query_as!(
         RepeatingBlockRow,
@@ -429,7 +429,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
                SELECT 1 FROM block_properties tp
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
            )
-           AND (?1 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?1 IS NULL OR b.page_id IN (
                 SELECT bp_sp.block_id FROM block_properties bp_sp
                 WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?1))"#,
         space_id, // ?1

@@ -2375,6 +2375,7 @@ mod tests {
     ///   3. gcal_email -> `[REDACTED:GCAL_EMAIL]`
     ///   4. each peer_device_id -> `[REDACTED:PEER_DEVICE_ID]`
     ///   5. generic email regex -> `[EMAIL]`
+    ///
     /// The matcher uses `MatchKind::LeftmostLongest`, so when one peer
     /// (e.g. `01HZQ7-PEER-AAA`) is a substring of another
     /// (e.g. `01HZQ7-PEER-AAA-LONG`) the longest match wins — this is

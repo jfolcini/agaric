@@ -1869,9 +1869,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     // set_property reverse finds something to roll back to. Each
     // attachment block carries an `add_attachment` whose paired
     // `delete_attachment` we will later target.
-    let blocks: Vec<&str> = vec![
-        "B3_BLK1", "B3_BLK2", "B3_BLK3", "B3_BLK4", "B3_BLK5",
-    ];
+    let blocks: Vec<&str> = vec!["B3_BLK1", "B3_BLK2", "B3_BLK3", "B3_BLK4", "B3_BLK5"];
     let mut ts = 0u64;
     let next_ts = |ts: &mut u64| -> String {
         *ts += 1;
@@ -2013,11 +2011,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     // -- legacy oracle: per-op loop ----------------------------------
     let mut legacy: Vec<OpPayload> = Vec::with_capacity(op_refs.len());
     for r in &op_refs {
-        legacy.push(
-            compute_reverse(&pool, &r.device_id, r.seq)
-                .await
-                .unwrap(),
-        );
+        legacy.push(compute_reverse(&pool, &r.device_id, r.seq).await.unwrap());
     }
 
     // -- batched candidate ------------------------------------------

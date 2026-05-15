@@ -2473,13 +2473,19 @@ async fn list_undated_tasks_disjointness_feat3p4() {
 /// given due_date, so `list_projected_agenda_inner`'s on-the-fly
 /// fallback picks it up. Caller is responsible for seeding the space
 /// block + the `space` ref property if the test needs space scoping.
+///
+/// SQL-review §5.3 — stamps `page_id = id` so the post-migration-0066
+/// space filter (`b.page_id IN (...)`) resolves through the direct
+/// space-property write the caller does afterwards. Pre-§5.3 the
+/// COALESCE wrapper fell back to `b.id` implicitly.
 async fn seed_repeating_task(pool: &sqlx::SqlitePool, id: &str, due_date: &str) {
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, due_date, todo_state) \
-         VALUES (?, 'content', 'repeating task', ?, 'TODO')",
+        "INSERT INTO blocks (id, block_type, content, due_date, todo_state, page_id) \
+         VALUES (?, 'content', 'repeating task', ?, 'TODO', ?)",
     )
     .bind(id)
     .bind(due_date)
+    .bind(id)
     .execute(pool)
     .await
     .unwrap();

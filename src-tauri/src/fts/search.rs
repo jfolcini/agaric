@@ -331,7 +331,7 @@ pub async fn search_fts(
     };
 
     // FEAT-3 Phase 2 — optional space-id filter. Resolves content blocks
-    // to their owning page via `COALESCE(b.page_id, b.id)` and intersects
+    // to their owning page via `b.page_id` and intersects
     // against `block_properties(key = 'space').value_ref`. Mirrors the
     // `crate::space_filter_clause!` macro used by the pagination helpers
     // — kept inline here because the dynamic-SQL shape of this query
@@ -340,7 +340,7 @@ pub async fn search_fts(
     let space_param_idx = if space_id.is_some() {
         let idx = next_param;
         sql.push_str(&format!(
-            "\n           AND COALESCE(b.page_id, b.id) IN (\
+            "\n           AND b.page_id IN (\
              SELECT bp.block_id FROM block_properties bp \
              WHERE bp.key = 'space' AND bp.value_ref = ?{idx})"
         ));

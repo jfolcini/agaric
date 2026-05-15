@@ -43,6 +43,10 @@ pub async fn test_pool() -> (SqlitePool, TempDir) {
 }
 
 /// Insert a block directly into the blocks table (bypasses command layer).
+///
+/// SQL-review §5.3 — stamps `page_id` per the post-migration-0066
+/// invariant: pages → self, non-pages → parent or self. Matches the
+/// production `create_block_in_tx` cascade.
 pub async fn insert_block(
     pool: &SqlitePool,
     id: &str,
@@ -51,15 +55,21 @@ pub async fn insert_block(
     parent_id: Option<&str>,
     position: Option<i64>,
 ) {
+    let page_id: Option<String> = if block_type == "page" {
+        Some(id.to_string())
+    } else {
+        Some(parent_id.unwrap_or(id).to_string())
+    };
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(block_type)
     .bind(content)
     .bind(parent_id)
     .bind(position)
+    .bind(page_id)
     .execute(pool)
     .await
     .unwrap();
@@ -70,10 +80,13 @@ pub async fn insert_block(
 /// exist before any `assign_to_test_space` call lands. Tests that need
 /// the full Personal/Work seed should call `bootstrap_spaces` instead.
 pub async fn ensure_test_space(pool: &SqlitePool) {
+    // SQL-review §5.3 — stamp `page_id = id` to match the
+    // post-migration-0066 invariant.
     sqlx::query(
-        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, 'page', 'TestSpace', NULL, NULL)",
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'TestSpace', NULL, NULL, ?)",
     )
+    .bind(TEST_SPACE_ID)
     .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
@@ -115,10 +128,12 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
 /// [`TEST_SPACE_B_ID`] block. Idempotent. Used by cross-space tests
 /// that need two distinct spaces in the same fixture.
 pub async fn ensure_test_space_b(pool: &SqlitePool) {
+    // SQL-review §5.3 — see `ensure_test_space`.
     sqlx::query(
-        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, 'page', 'TestSpaceB', NULL, NULL)",
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'TestSpaceB', NULL, NULL, ?)",
     )
+    .bind(TEST_SPACE_B_ID)
     .bind(TEST_SPACE_B_ID)
     .execute(pool)
     .await
@@ -149,6 +164,16 @@ pub async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) 
 /// `TEST_SPACE_B_ID` still work).
 pub async fn assign_all_to_test_space(pool: &SqlitePool) {
     ensure_test_space(pool).await;
+    // SQL-review §5.3 — first stamp `page_id = id` on every block that
+    // still has NULL page_id (e.g. top-level non-page blocks created
+    // via `create_block_inner`, which leaves `page_id = NULL` for
+    // `block_type != 'page'`). The post-migration `b.page_id IN (...)`
+    // filter needs a non-NULL page_id; pre-§5.3 the COALESCE fallback
+    // resolved to `b.id` implicitly.
+    sqlx::query("UPDATE blocks SET page_id = id WHERE page_id IS NULL")
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO block_properties (block_id, key, value_ref) \
          SELECT b.id, 'space', ? FROM blocks b \

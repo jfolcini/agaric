@@ -62,7 +62,7 @@ pub async fn list_trash(
            )
            AND (?1 IS NULL OR (
                 b.deleted_at < ?2 OR (b.deleted_at = ?2 AND b.id > ?3)))
-           AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
+           AND (?5 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?5))
          ORDER BY b.deleted_at DESC, b.id ASC

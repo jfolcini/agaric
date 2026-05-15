@@ -12,7 +12,7 @@ use crate::sql_utils::escape_like;
 /// Evaluate a boolean tag expression and return a paginated set of blocks.
 ///
 /// `space_id` (FEAT-3p4) — when `Some`, the final projection restricts
-/// results to blocks whose owning page (`COALESCE(b.page_id, b.id)`)
+/// results to blocks whose owning page (`b.page_id`)
 /// carries `space = ?space_id`. `None` is the unscoped (pre-FEAT-3)
 /// behaviour. The space filter is applied at the projection step (after
 /// the tag resolver) so the tag expression continues to operate on the
@@ -79,7 +79,7 @@ pub async fn eval_tag_query(
     //
     // FEAT-3p4 — the trailing `(? IS NULL OR COALESCE(...))` clause
     // mirrors `crate::space_filter_clause!`. Resolves the candidate
-    // block to its owning page via `COALESCE(b.page_id, b.id)` and
+    // block to its owning page via `b.page_id` and
     // intersects against `block_properties(key = 'space').value_ref`
     // when `space_id` is `Some`. The single `?` is bound after the
     // ID-list placeholders below.
@@ -92,7 +92,7 @@ pub async fn eval_tag_query(
          FROM blocks b \
          WHERE id IN ({placeholders}) \
            AND deleted_at IS NULL \
-           AND (? IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (? IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?)) \
            AND (? IS NULL OR b.block_type = ?) \

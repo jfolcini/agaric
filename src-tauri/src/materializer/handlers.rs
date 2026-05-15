@@ -1912,11 +1912,25 @@ pub(super) async fn handle_background_task(
             .await
         }
         MaterializeTask::ReindexBlockLinks { ref block_id } => {
+            // SQL-review §H-2: after the per-block `block_links` diff is
+            // written, roll up to the page-level `page_link_cache` so
+            // `list_page_links_inner` can read from a precomputed
+            // `(source_page, target_page, edge_count)` table instead of
+            // the 3-JOIN superlinear query. The rollup uses the same
+            // `pool` (single-pool variant) so the cache write sees the
+            // post-diff `block_links` state; in the split-pool variant
+            // both steps share `write_pool` for the same reason.
             dispatch_split_or_single(
                 pool,
                 read_pool,
-                |w, r| cache::reindex_block_links_split(w, r, block_id),
-                |p| cache::reindex_block_links(p, block_id),
+                |w, r| async move {
+                    cache::reindex_block_links_split(w, r, block_id).await?;
+                    cache::reindex_page_link_cache_for_block(w, block_id).await
+                },
+                |p| async move {
+                    cache::reindex_block_links(p, block_id).await?;
+                    cache::reindex_page_link_cache_for_block(p, block_id).await
+                },
             )
             .await
         }
@@ -2011,6 +2025,15 @@ pub(super) async fn handle_background_task(
                 read_pool,
                 cache::rebuild_page_ids_split,
                 cache::rebuild_page_ids,
+            )
+            .await
+        }
+        MaterializeTask::RebuildPageLinkCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_page_link_cache_split,
+                cache::rebuild_page_link_cache,
             )
             .await
         }

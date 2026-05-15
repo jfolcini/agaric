@@ -351,7 +351,7 @@ async fn audit_a4(
     let space_rows = sqlx::query!(
         r#"SELECT b.id AS "id!",
               (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = COALESCE(b.page_id, b.id) AND bp.key = 'space') AS "space?"
+               WHERE bp.block_id = b.page_id AND bp.key = 'space') AS "space?"
            FROM blocks b
            WHERE b.deleted_at IS NULL"#
     )

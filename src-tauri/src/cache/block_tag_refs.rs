@@ -227,91 +227,210 @@ pub async fn reindex_block_tag_refs_split(
 }
 
 // ---------------------------------------------------------------------------
-// rebuild_block_tag_refs_cache — full recompute
+// rebuild_block_tag_refs_cache — incremental sort-merge (M-2)
 // ---------------------------------------------------------------------------
 
-/// Full recompute of `block_tag_refs`.
-///
-/// Scans every non-deleted, non-conflict block's content, extracts
-/// `#[ULID]` tokens, filters to candidates that are real tag blocks,
-/// then DELETE + chunked INSERT replaces the whole table atomically.
-///
-/// Intended for: migration backfill, snapshot restore, explicit "rebuild
-/// caches" actions. Per-block content edits go through
-/// [`reindex_block_tag_refs`] instead.
-pub async fn rebuild_block_tag_refs_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("block_tag_refs", || rebuild_block_tag_refs_cache_impl(pool)).await
-}
+// DELETE binds 2 cols per row (source_id, tag_id) → `MAX_SQL_PARAMS / 2 = 499`.
+// INSERT binds 2 cols per row → same 499. (REBUILD_CHUNK above is already 499.)
+const DELETE_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 
-async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    // Read phase (inside the same tx so we observe a consistent snapshot
-    // across the DELETE and the INSERTs).
-    let mut tx = pool.begin().await?;
-
+/// Compute the desired set of `(source_id, tag_id)` pairs from the live
+/// database. Returns a `Vec` sorted by `(source_id, tag_id)` so the
+/// sort-merge diff can walk it alongside the current cache stream
+/// (which the SQL `ORDER BY` sorts identically).
+///
+/// Streams `(id, content)` rows (M-19a) so the peak working set is
+/// `O(actual ref count + tag-id set)` rather than `O(total content bytes)`.
+async fn compute_desired_pairs(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<Vec<(String, String)>, AppError> {
     let tag_ids: HashSet<String> = sqlx::query_scalar!(
         "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL"
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?
     .into_iter()
     .collect();
 
-    // M-19a: stream `(id, content)` rows instead of materialising every
-    // non-deleted/non-conflict block's content into a `Vec<SourceRow>`.
-    // The peak Rust-heap working set drops from
-    // `~content-bytes-per-block × block-count` (≈100 MB on a 100 K-block
-    // vault with ~1 KB content) to one row's content at a time. The
-    // `(source, tag)` HashSet is bounded by the actual ref count, which
-    // is much smaller than total content bytes; it remains because
-    // deduplication of repeated `#[ULID]` tokens within a single block
-    // still needs cross-row state.
     let re = super::tag_ref_re();
-    let mut rows: HashSet<(String, String)> = HashSet::new();
+    let mut pairs: HashSet<(String, String)> = HashSet::new();
     {
         let mut stream = sqlx::query!(
             "SELECT id, content FROM blocks \
              WHERE deleted_at IS NULL AND content IS NOT NULL"
         )
-        .fetch(&mut *tx);
+        .fetch(&mut *conn);
         while let Some(row) = stream.try_next().await? {
             let content = row.content.as_deref().unwrap_or("");
             for cap in re.captures_iter(content) {
                 let tag_id = cap[1].to_string();
                 if tag_ids.contains(&tag_id) {
-                    rows.insert((row.id.clone(), tag_id));
+                    pairs.insert((row.id.clone(), tag_id));
                 }
             }
         }
     }
 
-    sqlx::query!("DELETE FROM block_tag_refs")
-        .execute(&mut *tx)
-        .await?;
+    let mut sorted: Vec<(String, String)> = pairs.into_iter().collect();
+    sorted.sort();
+    Ok(sorted)
+}
 
-    let mut inserted: u64 = 0;
-    let rows_vec: Vec<(String, String)> = rows.into_iter().collect();
-    for chunk in rows_vec.chunks(REBUILD_CHUNK) {
+/// Apply a `block_tag_refs` diff inside an open transaction in chunks
+/// bounded by [`MAX_SQL_PARAMS`].
+///
+/// `delete_rows` and `insert_rows` are caller-owned and may be empty.
+/// DELETEs run before INSERTs (defensive — the PK is `(source_id,
+/// tag_id)` and the diff never emits the same pair on both sides, so
+/// ordering is not strictly required, but matches the apply-style of
+/// the agenda / pages / tags caches).
+///
+/// `INSERT OR IGNORE` matches the pre-M-2 split-variant shape (the
+/// single-pool variant used plain `INSERT`, but our diff filter
+/// guarantees no PK collision so the two forms are equivalent here).
+async fn apply_block_tag_refs_diff(
+    conn: &mut sqlx::SqliteConnection,
+    delete_rows: &[(String, String)],
+    insert_rows: &[(String, String)],
+) -> Result<(), AppError> {
+    for chunk in delete_rows.chunks(DELETE_CHUNK) {
         let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
         let sql = format!(
-            "INSERT INTO block_tag_refs (source_id, tag_id) VALUES {}",
+            "DELETE FROM block_tag_refs WHERE (source_id, tag_id) IN ({})",
             placeholders.join(", ")
         );
         let mut q = sqlx::query(&sql);
         for (source, tag) in chunk {
             q = q.bind(source).bind(tag);
         }
-        let res = q.execute(&mut *tx).await?;
-        inserted += res.rows_affected();
+        q.execute(&mut *conn).await?;
+    }
+
+    for chunk in insert_rows.chunks(REBUILD_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
+        let sql = format!(
+            "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for (source, tag) in chunk {
+            q = q.bind(source).bind(tag);
+        }
+        q.execute(&mut *conn).await?;
+    }
+
+    Ok(())
+}
+
+/// Stream-walk the desired and current `block_tag_refs` pairs in
+/// lockstep against the current cache stream:
+///   - PK in NEW not in OLD → INSERT.
+///   - PK in OLD not in NEW → DELETE.
+///   - PK in both → no-op (the table has no non-PK columns to update).
+///
+/// Both inputs share the sort key `(source_id, tag_id)`. Diff rows are
+/// accumulated into `Vec`s and flushed at end-of-stream as one chunked
+/// DELETE + chunked INSERT pair.
+async fn diff_against_current(
+    desired_sorted: &[(String, String)],
+    current_conn: &mut sqlx::SqliteConnection,
+    write_conn: &mut sqlx::SqliteConnection,
+) -> Result<u64, AppError> {
+    let mut current_stream = sqlx::query_as::<_, (String, String)>(
+        "SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id ASC, tag_id ASC",
+    )
+    .fetch(current_conn);
+
+    let mut deletes: Vec<(String, String)> = Vec::new();
+    let mut inserts: Vec<(String, String)> = Vec::new();
+    let mut changed: u64 = 0;
+
+    let mut d_iter = desired_sorted.iter();
+    let mut next_desired: Option<&(String, String)> = d_iter.next();
+    let mut next_current: Option<(String, String)> = current_stream.try_next().await?;
+
+    loop {
+        match (next_desired, &next_current) {
+            (None, None) => break,
+            (Some(d), None) => {
+                inserts.push(d.clone());
+                changed += 1;
+                next_desired = d_iter.next();
+            }
+            (None, Some(c)) => {
+                deletes.push(c.clone());
+                changed += 1;
+                next_current = current_stream.try_next().await?;
+            }
+            (Some(d), Some(c)) => match d.cmp(c) {
+                std::cmp::Ordering::Less => {
+                    inserts.push(d.clone());
+                    changed += 1;
+                    next_desired = d_iter.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    deletes.push(c.clone());
+                    changed += 1;
+                    next_current = current_stream.try_next().await?;
+                }
+                std::cmp::Ordering::Equal => {
+                    next_desired = d_iter.next();
+                    next_current = current_stream.try_next().await?;
+                }
+            },
+        }
+    }
+
+    drop(current_stream);
+
+    if !deletes.is_empty() || !inserts.is_empty() {
+        apply_block_tag_refs_diff(write_conn, &deletes, &inserts).await?;
+    }
+
+    Ok(changed)
+}
+
+/// Incremental rebuild of `block_tag_refs` (M-2 — was full DELETE +
+/// INSERT pre-refactor).
+///
+/// Scans every non-deleted, non-conflict block's content, extracts
+/// `#[ULID]` tokens, filters to candidates that are real tag blocks,
+/// sorts the result, then sort-merge diffs against the current cache
+/// and applies only the changed rows.
+///
+/// Intended for: migration backfill, snapshot restore, explicit "rebuild
+/// caches" actions. Per-block content edits still go through
+/// [`reindex_block_tag_refs`] instead.
+pub async fn rebuild_block_tag_refs_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    super::rebuild_with_timing("block_tag_refs", || rebuild_block_tag_refs_cache_impl(pool)).await
+}
+
+async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    // Two readers (desired-pairs computation + current cache stream)
+    // plus a writer tx. Distinct connections required so the streams'
+    // mutable borrows don't conflict. Snapshot consistency across the
+    // three is not required: same stale-while-revalidate semantics as
+    // `rebuild_agenda_cache_impl` (M-19b).
+    let mut desired_conn = pool.acquire().await?;
+    let mut current_conn = pool.acquire().await?;
+    let mut tx = pool.begin().await?;
+
+    let desired_sorted = compute_desired_pairs(&mut desired_conn).await?;
+    let changed = diff_against_current(&desired_sorted, &mut current_conn, &mut tx).await?;
+
+    if changed == 0 {
+        return Ok(0);
     }
 
     tx.commit().await?;
-    Ok(inserted)
+    Ok(changed)
 }
 
-/// Read/write split variant of [`rebuild_block_tag_refs_cache`].
+/// Read/write split variant of [`rebuild_block_tag_refs_cache`] (M-2).
 ///
-/// Read phase (tag IDs + block content) runs against `read_pool`; the
-/// final DELETE + chunked INSERT transaction runs on `write_pool`.
+/// Desired-pairs computation and the current-cache stream both read
+/// from `read_pool`; the final chunked DELETE + INSERT transaction runs
+/// on `write_pool`.
 pub async fn rebuild_block_tag_refs_cache_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
@@ -326,60 +445,19 @@ async fn rebuild_block_tag_refs_cache_split_impl(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    // Read phase — from read_pool.
-    let tag_ids: HashSet<String> = sqlx::query_scalar!(
-        "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL"
-    )
-    .fetch_all(read_pool)
-    .await?
-    .into_iter()
-    .collect();
-
-    // M-19a: stream `(id, content)` rows from `read_pool` instead of
-    // materialising every block's content. See `rebuild_block_tag_refs_cache_impl`
-    // above for the full rationale.
-    let re = super::tag_ref_re();
-    let mut rows: HashSet<(String, String)> = HashSet::new();
-    {
-        let mut stream = sqlx::query!(
-            "SELECT id, content FROM blocks \
-             WHERE deleted_at IS NULL AND content IS NOT NULL"
-        )
-        .fetch(read_pool);
-        while let Some(row) = stream.try_next().await? {
-            let content = row.content.as_deref().unwrap_or("");
-            for cap in re.captures_iter(content) {
-                let tag_id = cap[1].to_string();
-                if tag_ids.contains(&tag_id) {
-                    rows.insert((row.id.clone(), tag_id));
-                }
-            }
-        }
-    }
-
-    // Write phase — DELETE + chunked INSERT on write_pool.
+    let mut desired_conn = read_pool.acquire().await?;
+    let mut current_conn = read_pool.acquire().await?;
     let mut tx = write_pool.begin().await?;
-    sqlx::query!("DELETE FROM block_tag_refs")
-        .execute(&mut *tx)
-        .await?;
 
-    let mut inserted: u64 = 0;
-    let rows_vec: Vec<(String, String)> = rows.into_iter().collect();
-    for chunk in rows_vec.chunks(REBUILD_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
-        let sql = format!(
-            "INSERT INTO block_tag_refs (source_id, tag_id) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut q = sqlx::query(&sql);
-        for (source, tag) in chunk {
-            q = q.bind(source).bind(tag);
-        }
-        let res = q.execute(&mut *tx).await?;
-        inserted += res.rows_affected();
+    let desired_sorted = compute_desired_pairs(&mut desired_conn).await?;
+    let changed = diff_against_current(&desired_sorted, &mut current_conn, &mut tx).await?;
+
+    if changed == 0 {
+        return Ok(0);
     }
+
     tx.commit().await?;
-    Ok(inserted)
+    Ok(changed)
 }
 
 // ---------------------------------------------------------------------------
@@ -572,6 +650,134 @@ mod tests {
         assert_eq!(
             pairs, expected,
             "row set must contain exactly the healthy source's reference"
+        );
+    }
+
+    // ----- M-2 tests --------------------------------------------------------
+
+    /// Seed 100 source blocks each referencing one tag → rebuild →
+    /// mutate (some add new refs, some remove refs, some keep refs) →
+    /// rebuild → assert cache reflects new source state and that only
+    /// the diff is touched.
+    #[tokio::test]
+    async fn rebuild_block_tag_refs_incremental_parity_m2() {
+        let (pool, _dir) = test_pool().await;
+
+        // 5 real tag blocks.
+        let tag_a = ulid_like("TAGAA", 0);
+        let tag_b = ulid_like("TAGBB", 0);
+        let tag_c = ulid_like("TAGCC", 0);
+        let tag_d = ulid_like("TAGDD", 0);
+        let tag_e = ulid_like("TAGEE", 0);
+        for tag in [&tag_a, &tag_b, &tag_c, &tag_d, &tag_e] {
+            insert_block(&pool, tag, "tag", "tag-name").await;
+        }
+
+        // 100 source blocks each referencing tag_a.
+        let mut sources: Vec<String> = Vec::with_capacity(100);
+        for i in 0..100 {
+            let src = ulid_like("BLKM2", i);
+            insert_block(&pool, &src, "content", &format!("note {i} #[{tag_a}]")).await;
+            sources.push(src);
+        }
+
+        // Baseline rebuild.
+        let first = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        assert_eq!(first, 100, "baseline inserts 100 rows");
+        let baseline = fetch_all_pairs(&pool).await;
+        assert_eq!(baseline.len(), 100, "baseline cache has 100 pairs");
+
+        // Mutate the source data:
+        //   A) sources[0..10] gain an additional ref to tag_b.
+        //      → 10 new rows (existing rows unchanged).
+        //   B) sources[10..20] gain refs to tag_c AND tag_d.
+        //      → 20 new rows.
+        //   C) sources[20..25] lose tag_a (content rewritten without
+        //      the `#[ULID]` token) → 5 deletes.
+        //   D) 5 brand-new source blocks added (each referencing tag_e).
+        //      → 5 new rows.
+        for (i, src) in sources.iter().enumerate().take(10) {
+            let content = format!("note {i} #[{tag_a}] #[{tag_b}]");
+            sqlx::query!("UPDATE blocks SET content = ? WHERE id = ?", content, src,)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for (i, src) in sources.iter().enumerate().take(20).skip(10) {
+            let content = format!("note {i} #[{tag_a}] #[{tag_c}] #[{tag_d}]");
+            sqlx::query!("UPDATE blocks SET content = ? WHERE id = ?", content, src,)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for (i, src) in sources.iter().enumerate().take(25).skip(20) {
+            let content = format!("note {i} (no refs anymore)");
+            sqlx::query!("UPDATE blocks SET content = ? WHERE id = ?", content, src,)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let mut new_sources: Vec<String> = Vec::with_capacity(5);
+        for i in 0..5 {
+            let src = ulid_like("NEWM2", i);
+            insert_block(&pool, &src, "content", &format!("new {i} #[{tag_e}]")).await;
+            new_sources.push(src);
+        }
+
+        // Incremental rebuild:
+        //   inserts: 10 (A) + 20 (B) + 5 (D) = 35
+        //   deletes: 5 (C — sources 20..25 lose tag_a)
+        //   total logical changes: 40
+        let touched = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        assert_eq!(touched, 40, "diff = 35 inserts + 5 deletes");
+
+        // Build the expected set straight from the mutated source data.
+        let mut expected: HashSet<(String, String)> = HashSet::new();
+        for (i, src) in sources.iter().enumerate() {
+            if (20..25).contains(&i) {
+                continue; // tag_a removed, no other refs.
+            }
+            expected.insert((src.clone(), tag_a.clone()));
+            if i < 10 {
+                expected.insert((src.clone(), tag_b.clone()));
+            }
+            if (10..20).contains(&i) {
+                expected.insert((src.clone(), tag_c.clone()));
+                expected.insert((src.clone(), tag_d.clone()));
+            }
+        }
+        for src in &new_sources {
+            expected.insert((src.clone(), tag_e.clone()));
+        }
+
+        let actual = fetch_all_pairs(&pool).await;
+        assert_eq!(
+            actual, expected,
+            "cache must reflect mutated source state exactly"
+        );
+    }
+
+    /// Rebuild on unchanged source produces zero diff ops.
+    #[tokio::test]
+    async fn rebuild_block_tag_refs_idempotent_m2() {
+        let (pool, _dir) = test_pool().await;
+
+        let tag = ulid_like("TAGID", 0);
+        insert_block(&pool, &tag, "tag", "t").await;
+        for i in 0..30 {
+            let src = ulid_like("IDEMS", i);
+            insert_block(&pool, &src, "content", &format!("#[{tag}]")).await;
+        }
+
+        let first = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        assert_eq!(first, 30, "baseline inserts 30 rows");
+
+        let second = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+        assert_eq!(second, 0, "idempotent rebuild must produce zero diff ops");
+        assert_eq!(
+            fetch_all_pairs(&pool).await.len(),
+            30,
+            "row count preserved on idempotent rebuild"
         );
     }
 }

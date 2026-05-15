@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM blocks b\n           WHERE block_type = ?1 AND deleted_at IS NULL\n             AND (?2 IS NULL OR b.page_id IN (\n                 SELECT bp.block_id FROM block_properties bp\n                 WHERE bp.key = 'space' AND bp.value_ref = ?2\n             ))",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "663102190a73c235fcbab833357278b26c7b610d401679c2f09e72978a932c2a"
+}

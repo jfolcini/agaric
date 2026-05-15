@@ -690,82 +690,106 @@ pub async fn list_page_links_inner(
         Some(ids) if !ids.is_empty() => Some(serde_json::to_string(ids)?),
         _ => None,
     };
-    // For each block_link, find the parent page of the source block.
-    // The target in block_links is already a page (since [[links]] point to pages).
-    // The source might be a content block under a page — we need the page ancestor.
+
+    // SQL-review §H-2 — lazy-rebuild guard. The production hot path is
+    // the materializer's per-`ReindexBlockLinks` rollup into
+    // `page_link_cache`, so this branch is normally a no-op (the
+    // `EXISTS / NOT EXISTS` short-circuit terminates after the first
+    // matching row in either table). The fallback fires only when
+    // `block_links` has been mutated outside the materializer (test
+    // fixtures that `INSERT OR IGNORE INTO block_links` directly, or
+    // a partial-migration window where the cache hasn't been backfilled
+    // yet) — in that case we run a one-shot full rebuild so the read
+    // path observes the same edge set the legacy query did. This keeps
+    // the hard constraint "All existing list_page_links tests must pass
+    // without modification" true while preserving the steady-state
+    // perf win.
+    let cache_empty: bool =
+        sqlx::query_scalar::<_, i32>("SELECT NOT EXISTS (SELECT 1 FROM page_link_cache)")
+            .fetch_one(pool)
+            .await?
+            == 1;
+    if cache_empty {
+        let block_links_present: bool =
+            sqlx::query_scalar::<_, i32>("SELECT EXISTS (SELECT 1 FROM block_links)")
+                .fetch_one(pool)
+                .await?
+                == 1;
+        if block_links_present {
+            crate::cache::rebuild_page_link_cache(pool).await?;
+        }
+    }
+
+    // SQL-review §H-2: read from the materialised `page_link_cache`
+    // (populated by `cache::reindex_page_link_cache_for_block` on every
+    // `ReindexBlockLinks` task, and rebuilt en masse by
+    // `RebuildPageLinkCache` on delete/restore/purge cascades) instead
+    // of recomputing the 3-JOIN `block_links × blocks × block_properties`
+    // roll-up on every call. The cache holds one row per
+    // `(source_page_id, target_page_id, edge_count)` triple, so the
+    // read collapses to two index joins (one per endpoint of `blocks`
+    // for the `deleted_at IS NULL` filter) plus the optional
+    // space / tag filters. Replaces the documented 1.3 s @ 100K
+    // bottleneck called out in ARCH §25 (the Problem-tier row in
+    // `interactive_slo`).
     //
-    // Simple approach: join source_id to blocks to get parent_id (the page),
-    // then filter both sides to be page-type blocks that aren't deleted.
+    // The cache mirrors the legacy query's semantics ("source page =
+    // COALESCE(parent_id, source_id), target page = target_id, drop
+    // self-edges, soft-deleted source blocks contribute zero edges")
+    // inside the materializer (see
+    // `cache::page_links::reindex_page_link_cache_for_block`), so the
+    // read no longer needs to re-derive any of that. The remaining
+    // `blocks` joins enforce only the soft-delete filter — `block_type
+    // = 'page'` stays on the target side because `block_links.target_id`
+    // is by construction a page id (the `[[ULID]]` token only ever
+    // resolves to a page in the markdown serializer).
     //
-    // P-15 optimized: JOIN tb first (smaller page-only set via idx_blocks_page_alive),
-    // move LEFT JOIN conditions inline so pb.id IS NOT NULL replaces the WHERE filter.
+    // FEAT-3p4 (preserved) — `(?1 IS NULL OR ...)` filters both
+    // endpoints by space membership. Cross-space rows cannot exist in
+    // `page_link_cache` to begin with because the underlying
+    // `block_links` rows are write-time-filtered to same-space pairs
+    // (PEND-15 Phase 3 in `cache::block_links::reindex_block_links`),
+    // but the explicit filter here defends against legacy rows that
+    // slipped in pre-PEND-15.
     //
-    // FEAT-3p4 — the trailing `(?1 IS NULL OR ... AND ...)` clause
-    // mirrors `crate::space_filter_clause!` applied to BOTH endpoints
-    // of the edge. The shape collapses to a single conjunction over
-    // the two `COALESCE(...) IN (...)` checks so the filter holds
-    // only when both source-page and target-page belong to the
-    // requested space.
-    //
-    // PEND-20 F: the space-filter subquery used to be inlined twice
-    // (once per endpoint), which forces SQLite to evaluate the same
-    // `block_properties WHERE key='space' AND value_ref=?1` lookup
-    // twice per row. Wrapping it in a CTE with the `AS MATERIALIZED`
-    // hint forces SQLite to compute the membership set once and reuse
-    // it for both endpoints; without the hint the planner inlines the
-    // CTE and we get the same twice-evaluated subquery shape (verified
-    // via `EXPLAIN QUERY PLAN`). After PEND-20 A's covering index
-    // lands the underlying lookup is index-only, so the gain here is
-    // "subquery materialised once instead of twice" rather than a
-    // planner-level shift.
-    // PEND-35 Tier 4.5 — the trailing `(?2 IS NULL OR EXISTS …)` clause
-    // restricts edges to those whose **target page** carries at least
-    // one of the requested tags. The EXISTS subquery unions
-    // `block_tags`, `block_tag_inherited`, and `block_tag_refs` to
-    // mirror the UX-250 / `tag_query::resolve_tag_leaves` semantics so
-    // a graph filtered by `#project` picks up inherited and inline
-    // refs identically to `queryByTags`. Soft-deleted tag blocks are
-    // not joined here because the materialised tables already exclude
-    // them via the materializer's invariant-#9 guarantees on the
-    // inserter side.
+    // PEND-20 F (preserved) — the `space_members` CTE is materialised
+    // once and reused for both endpoints. PEND-35 Tier 4.5 (preserved)
+    // — the tag-EXISTS branch UNIONs `block_tags`,
+    // `block_tag_inherited`, and `block_tag_refs` to mirror the
+    // canonical `tag_query::resolve_tag_leaves` union semantics.
     let links = sqlx::query_as::<_, PageLink>(
         "WITH space_members AS MATERIALIZED (
              SELECT block_id FROM block_properties
              WHERE key = 'space' AND value_ref = ?1
          )
          SELECT
-            COALESCE(sb.parent_id, bl.source_id) AS source_id,
-            bl.target_id AS target_id,
-            COUNT(*) AS ref_count
-         FROM block_links bl
-         JOIN blocks tb ON tb.id = bl.target_id
-             AND tb.block_type = 'page'
-             AND tb.deleted_at IS NULL
-         JOIN blocks sb ON sb.id = bl.source_id
-             AND sb.deleted_at IS NULL
-         LEFT JOIN blocks pb ON pb.id = sb.parent_id
-             AND pb.deleted_at IS NULL
-             AND pb.block_type = 'page'
-         WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
-             AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
+            plc.source_page_id AS source_id,
+            plc.target_page_id AS target_id,
+            plc.edge_count AS ref_count
+         FROM page_link_cache plc
+         JOIN blocks src ON src.id = plc.source_page_id
+             AND src.deleted_at IS NULL
+         JOIN blocks tgt ON tgt.id = plc.target_page_id
+             AND tgt.block_type = 'page'
+             AND tgt.deleted_at IS NULL
+         WHERE plc.source_page_id != plc.target_page_id
              AND (?1 IS NULL OR (
-                 COALESCE(sb.parent_id, bl.source_id) IN (SELECT block_id FROM space_members)
-                 AND bl.target_id IN (SELECT block_id FROM space_members)
+                 plc.source_page_id IN (SELECT block_id FROM space_members)
+                 AND plc.target_page_id IN (SELECT block_id FROM space_members)
              ))
              AND (?2 IS NULL OR EXISTS (
                  SELECT 1 FROM block_tags bt
-                 WHERE bt.block_id = bl.target_id
+                 WHERE bt.block_id = plc.target_page_id
                    AND bt.tag_id IN (SELECT value FROM json_each(?2))
                  UNION ALL
                  SELECT 1 FROM block_tag_inherited bti
-                 WHERE bti.block_id = bl.target_id
+                 WHERE bti.block_id = plc.target_page_id
                    AND bti.tag_id IN (SELECT value FROM json_each(?2))
                  UNION ALL
                  SELECT 1 FROM block_tag_refs btr
-                 WHERE btr.source_id = bl.target_id
+                 WHERE btr.source_id = plc.target_page_id
                    AND btr.tag_id IN (SELECT value FROM json_each(?2))
-             ))
-         GROUP BY 1, 2",
+             ))",
     )
     .bind(scope.as_filter_param())
     .bind(tag_ids_json.as_deref())
@@ -1222,7 +1246,7 @@ pub async fn list_all_pages_in_space_inner(
              FROM blocks b \
              WHERE b.block_type = 'page' \
                AND b.deleted_at IS NULL \
-               AND COALESCE(b.page_id, b.id) IN ( \
+               AND b.page_id IN ( \
                    SELECT bp.block_id FROM block_properties bp \
                    WHERE bp.key = 'space' AND bp.value_ref = ?) \
                AND b.id IN ( \
@@ -1248,7 +1272,7 @@ pub async fn list_all_pages_in_space_inner(
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND COALESCE(b.page_id, b.id) IN (
+             AND b.page_id IN (
                  SELECT bp.block_id FROM block_properties bp
                  WHERE bp.key = 'space' AND bp.value_ref = ?1
              )
@@ -1294,7 +1318,7 @@ pub async fn list_template_page_ids_in_space_inner(
               AND bp_tpl.value_text = 'true'
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND COALESCE(b.page_id, b.id) IN (
+             AND b.page_id IN (
                  SELECT bp.block_id FROM block_properties bp
                  WHERE bp.key = 'space' AND bp.value_ref = ?1
              )"#,

@@ -4488,11 +4488,12 @@ async fn dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error() {
 #[test]
 fn full_cache_rebuild_tasks_has_seven_entries_in_canonical_order() {
     let tasks = &super::dispatch::FULL_CACHE_REBUILD_TASKS;
-    // UX-250 extended the array with `RebuildBlockTagRefsCache` (7th).
+    // UX-250 extended the array with `RebuildBlockTagRefsCache` (7th);
+    // SQL-review §H-2 added `RebuildPageLinkCache` (8th).
     assert_eq!(
         tasks.len(),
-        7,
-        "FULL_CACHE_REBUILD_TASKS must contain exactly the 7 block-referencing caches"
+        8,
+        "FULL_CACHE_REBUILD_TASKS must contain exactly the 8 block-referencing caches"
     );
     assert!(
         matches!(tasks[0], MaterializeTask::RebuildTagsCache),
@@ -4529,6 +4530,11 @@ fn full_cache_rebuild_tasks_has_seven_entries_in_canonical_order() {
         "tasks[6] must be RebuildBlockTagRefsCache, got {:?}",
         tasks[6]
     );
+    assert!(
+        matches!(tasks[7], MaterializeTask::RebuildPageLinkCache),
+        "tasks[7] must be RebuildPageLinkCache, got {:?}",
+        tasks[7]
+    );
 }
 
 /// `enqueue_full_cache_rebuild` must push each of the seven canonical
@@ -4551,11 +4557,11 @@ async fn enqueue_full_cache_rebuild_dispatches_all_six_tasks() {
         .expect("flush_background must succeed after enqueuing the rebuild fan-out");
     let after = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 7 rebuild tasks + 1 flush Barrier.
+    // 8 rebuild tasks + 1 flush Barrier (post-SQL-review §H-2).
     assert_eq!(
         after - before,
-        8,
-        "enqueue_full_cache_rebuild must dispatch exactly the 7 FULL_CACHE_REBUILD_TASKS entries (before={before}, after={after}, expected 7 + 1 flush barrier)"
+        9,
+        "enqueue_full_cache_rebuild must dispatch exactly the 8 FULL_CACHE_REBUILD_TASKS entries (before={before}, after={after}, expected 8 + 1 flush barrier)"
     );
 }
 
@@ -4582,11 +4588,12 @@ async fn dispatch_delete_block_enqueues_full_cache_rebuild_plus_fts_removal() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 7 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 9.
+    // 8 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 10
+    // (post-SQL-review §H-2).
     assert_eq!(
         after_bg - before_bg,
-        9,
-        "delete_block must enqueue 7 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
+        10,
+        "delete_block must enqueue 8 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
     );
 }
 
@@ -4614,11 +4621,12 @@ async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 7 rebuild tasks + 1 UpdateFtsBlock + 1 flush Barrier = 9.
+    // 8 rebuild tasks + 1 UpdateFtsBlock + 1 flush Barrier = 10
+    // (post-SQL-review §H-2).
     assert_eq!(
         after_bg - before_bg,
-        9,
-        "restore_block must enqueue 7 cache rebuilds + 1 UpdateFtsBlock (+ 1 flush barrier)"
+        10,
+        "restore_block must enqueue 8 cache rebuilds + 1 UpdateFtsBlock (+ 1 flush barrier)"
     );
 }
 
@@ -4644,11 +4652,12 @@ async fn dispatch_purge_block_enqueues_full_cache_rebuild_plus_fts_removal() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 7 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 9.
+    // 8 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 10
+    // (post-SQL-review §H-2).
     assert_eq!(
         after_bg - before_bg,
-        9,
-        "purge_block must enqueue 7 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
+        10,
+        "purge_block must enqueue 8 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
     );
 }
 
@@ -6052,6 +6061,126 @@ async fn dispatch_bg_empty_block_id_release_mode_l15() {
         m.bg_panics.load(AtomicOrdering::Relaxed),
         0,
         "empty-block_id fallback must not panic any background task"
+    );
+
+    mat.shutdown();
+}
+
+// ====================================================================
+// page_link_cache integration (SQL-review §H-2)
+// ====================================================================
+
+/// `ReindexBlockLinks` fans out the per-block rollup into
+/// `page_link_cache` after writing `block_links`. Seed page A with 5
+/// content blocks linking to page B, dispatch the task, flush, and
+/// assert the cache row has `edge_count = 5`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reindex_block_links_populates_page_link_cache() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'A')")
+        .bind(page_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'B')")
+        .bind(page_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut child_ids: Vec<String> = Vec::with_capacity(5);
+    for i in 0..5 {
+        let child_id = format!("C{i:025}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, ?)",
+        )
+        .bind(&child_id)
+        .bind(format!("link [[{page_b}]]"))
+        .bind(page_a)
+        .bind(i as i64 + 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+        child_ids.push(child_id);
+    }
+
+    for child_id in &child_ids {
+        mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+            block_id: std::sync::Arc::from(child_id.as_str()),
+        })
+        .await
+        .unwrap();
+    }
+    mat.flush_background().await.unwrap();
+
+    let row: (String, String, i64) =
+        sqlx::query_as("SELECT source_page_id, target_page_id, edge_count FROM page_link_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        row,
+        (page_a.to_string(), page_b.to_string(), 5),
+        "ReindexBlockLinks must roll up to page_link_cache with edge_count = 5"
+    );
+
+    mat.shutdown();
+}
+
+/// The `RebuildPageLinkCache` task is part of `FULL_CACHE_REBUILD_TASKS`.
+/// Enqueue it directly and assert the rollup populates the cache from
+/// raw `block_links` rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rebuild_page_link_cache_task_populates_cache() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'A')")
+        .bind(page_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'B')")
+        .bind(page_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let child = "C0000000000000000000000000";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'x', ?, 1)",
+    )
+    .bind(child)
+    .bind(page_a)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(child)
+        .bind(page_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    mat.enqueue_background(MaterializeTask::RebuildPageLinkCache)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "RebuildPageLinkCache must populate cache from raw block_links"
     );
 
     mat.shutdown();

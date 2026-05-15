@@ -67,7 +67,7 @@ pub async fn eval_backlink_query_grouped(
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))",
     )
@@ -131,7 +131,7 @@ pub async fn eval_backlink_query_grouped(
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
            AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",
@@ -415,7 +415,7 @@ pub async fn eval_unlinked_references(
     //
     //    FEAT-3p4 — the `(?3 IS NULL OR COALESCE(...))` clause mirrors
     //    `crate::space_filter_clause!`. Resolves the FTS-matched block
-    //    to its owning page via `COALESCE(b.page_id, b.id)` and
+    //    to its owning page via `b.page_id` and
     //    intersects against `block_properties(key = 'space').value_ref`
     //    when `space_id` is `Some`. Kept inline (not via the macro)
     //    because the FTS SQL is built with `format!` to splice in
@@ -432,7 +432,7 @@ pub async fn eval_unlinked_references(
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
            ) \
-           AND (?3 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+           AND (?3 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?3)) \
          ORDER BY fb.block_id \

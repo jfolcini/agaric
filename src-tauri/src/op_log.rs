@@ -1837,6 +1837,58 @@ mod tests {
         );
     }
 
+    /// SQL-review H-2 / migration 0065: the `page_link_cache` table and
+    /// its companion `idx_page_link_cache_target` secondary index must
+    /// exist after migrations run. This pins the schema contract that
+    /// `commands::pages::list_page_links_inner` and
+    /// `cache::page_links::{reindex_page_link_cache_for_block,
+    /// rebuild_page_link_cache}` rely on. Mirrors the
+    /// `op_log_block_id_indexes_post_migration_0048` shape.
+    #[tokio::test]
+    async fn page_link_cache_table_post_migration_0065() {
+        let (pool, _dir) = test_pool().await;
+
+        let table_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'table' AND name = 'page_link_cache'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            table_count, 1,
+            "migration 0065 must create the `page_link_cache` table"
+        );
+
+        // The PK is the implicit covering index on
+        // `(source_page_id, target_page_id)` — SQLite emits the autoindex
+        // under a `sqlite_autoindex_page_link_cache_*` name, so we
+        // assert via `pragma_index_list` rather than a literal name.
+        let pk_indexes = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM pragma_index_list('page_link_cache') \
+             WHERE origin = 'pk' AND \"unique\" = 1"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            pk_indexes, 1,
+            "page_link_cache must have a unique PK covering index on (source_page_id, target_page_id)"
+        );
+
+        let target_idx_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_page_link_cache_target'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            target_idx_count, 1,
+            "migration 0065 must create `idx_page_link_cache_target` for reverse-edge lookups"
+        );
+    }
+
     /// SQL-review B-4 / migration 0064: the native `attachment_id`
     /// column and its partial index `idx_op_log_attachment_id` must
     /// exist after migrations run. This pins the schema contract that
