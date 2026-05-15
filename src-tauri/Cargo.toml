@@ -344,6 +344,10 @@ name = "agenda_bench"
 harness = false
 
 [[bench]]
+name = "agenda_expansion_bench"
+harness = false
+
+[[bench]]
 name = "property_bench"
 harness = false
 
@@ -369,6 +373,14 @@ harness = false
 
 [[bench]]
 name = "property_def_bench"
+harness = false
+
+# Phase 2 §B.1 of `pending/scale-benchmarks-100k-2026-05-14.md` — history +
+# undo/redo at scale ([1K, 10K, 100K] ops on a single page). The 50-op
+# revert at 100K is the budget point that feeds the matching row in
+# `interactive_slo.rs` (200 ms gate).
+[[bench]]
+name = "history_bench"
 harness = false
 
 # Phase 1 of `pending/scale-benchmarks-100k-2026-05-14.md` — latency-gate

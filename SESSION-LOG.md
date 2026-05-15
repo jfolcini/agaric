@@ -7,6 +7,47 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 744 — scale-benchmarks Phase 2 (history + graph 100K + agenda expansion) (2026-05-15)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-15 |
+| **Subagents** | 3 build + 3 review (parallel, pipelined) |
+| **Items closed** | scale-benchmarks Phase 2 (`pending/scale-benchmarks-100k-2026-05-14.md`) |
+| **Items modified** | — |
+| **Tests added** | +8 bench targets (4 in history_bench.rs + 1 in graph_bench.rs + 1 in agenda_expansion_bench.rs + 1 SLO row in interactive_slo.rs) |
+| **Files touched** | 2 new bench files + 2 modified + Cargo.toml + 2 plan/audit files |
+
+**Summary:** Landed Phase 2 of the 100K-scale-benchmarks plan — three new/extended bench files covering hot paths the existing tree didn't exercise at 100K. New `history_bench.rs` (414 LOC, 4 bench fns: `list_page_history`, `revert_ops_50op`, `undo_page_op`, `redo_page_op`, sweeping `[1K, 10K, 100K]` ops on a single page). Extended `graph_bench.rs::bench_list_page_links` sweep from `[100, 1K, 10K]` to include `100K` (1-line edit; seeder was already parametric). New `agenda_expansion_bench.rs` (158 LOC) exercising `list_projected_agenda_inner` with `[100, 1K, 10K]` repeating rules — the m in O(n×m) that ARCH §25 documents as the `~620 ms@100K` bottleneck shape. Added a `bench_revert_ops_50op_at_100k` SLO row to `interactive_slo.rs` at the plan's 200 ms budget so 50-op reverts at 100K can't silently regress. Each new bench follows the inline-duplicate seeder convention established by Phase 1 (Cargo's `[[bench]]` layout makes shared helpers awkward across files).
+
+Also confirmed: **0.1.23 release completed successfully** with a signed `agaric-0.1.23-android-aarch64.apk` — your PUB-8 keystore wiring works end-to-end.
+
+**Plan closure on `pending/scale-benchmarks-100k-2026-05-14.md`:** Phase 2 marked ✅ SHIPPED with a 1-paragraph summary. Phases 3 (Problem-command fixes) remain — they carve into their own plan files once the benches show pre/post deltas.
+
+**REVIEW-LATER impact:** none.
+
+**Files touched (this session):**
+- `src-tauri/benches/history_bench.rs` (new, +414 LOC)
+- `src-tauri/benches/agenda_expansion_bench.rs` (new, +158 LOC)
+- `src-tauri/benches/graph_bench.rs` (+1 / −1: sweep extended to 100K)
+- `src-tauri/benches/interactive_slo.rs` (+202 / −1: revert_ops SLO row + 2 helpers)
+- `src-tauri/Cargo.toml` (+12: 2 new `[[bench]]` entries)
+- `pending/scale-benchmarks-100k-2026-05-14.md` (Phase 2 marked SHIPPED)
+
+**Verification:**
+- `cargo bench --bench history_bench --no-run` — compiles clean.
+- `cargo bench --bench graph_bench --no-run` — compiles clean.
+- `cargo bench --bench agenda_expansion_bench --no-run` — compiles clean.
+- `cargo bench --bench interactive_slo --no-run` — compiles clean.
+- `cd src-tauri && cargo nextest run` — 3685 / 3685 pass, 4 skipped.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** The 3-subagent split worked cleanly because only `history_bench` needed to touch `interactive_slo.rs` (the SLO row); the other two were pure additions. Reviewers caught two nits — both stylistic parity with existing benches, skipped per "don't gold-plate".
+
+**Commit plan:** single commit; pushed.
+
+---
+
 ## Session 743 — L-55 redact_log single-pass + TEST-4 sync_daemon wait_for + MAINT-168 doc (2026-05-14)
 
 | Metadata | Value |

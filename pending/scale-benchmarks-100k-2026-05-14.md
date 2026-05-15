@@ -136,7 +136,16 @@ stale. Trivial; bundle with whichever bench-add commit lands first.
    fixes land. Sample size pinned to 10 per the runtime budget; `[[bench]]`
    entry added to `src-tauri/Cargo.toml`. CI wiring is **out of scope for
    Phase 1** and is owned by the user.
-2. **Phase 2 — Cover the gaps (M, ~1.5 days).** Add `history_bench.rs`,
+2. **Phase 2 — Cover the gaps (M, ~1.5 days).** ✅ SHIPPED session 744.
+   `history_bench.rs` (4 bench fns sweeping `[1K, 10K, 100K]` ops on a
+   single page), `graph_bench.rs` sweep extended to 100K, and new
+   `agenda_expansion_bench.rs` exercising `list_projected_agenda_inner`
+   with `[100, 1K, 10K]` repeating rules — the m in O(n×m). A new
+   `bench_revert_ops_50op_at_100k` SLO row landed in `interactive_slo.rs`
+   at the plan's 200 ms budget so 50-op reverts at 100K can't silently
+   regress. Pure bench harness, no product code touched.
+
+   Original Phase 2 plan body kept for reference:
    extend `graph_bench.rs` to 100K, add `agenda_expansion_bench.rs`. No new
    product code; pure bench harness. Each new bench gets a row in
    `interactive_slo.rs` so it cannot regress silently.

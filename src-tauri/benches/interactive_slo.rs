@@ -53,10 +53,11 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use agaric_lib::commands::{
     batch_resolve_inner, count_agenda_batch_inner, count_backlinks_batch_inner, create_block_inner,
     export_page_markdown_inner, get_block_inner, get_properties_inner, list_blocks_inner,
-    list_page_links_inner, list_projected_agenda_inner,
+    list_page_links_inner, list_projected_agenda_inner, revert_ops_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
+use agaric_lib::op::OpRef;
 use agaric_lib::space::{SpaceId, SpaceScope};
 
 use sqlx::SqlitePool;
@@ -80,6 +81,11 @@ const SAMPLE_SIZE: usize = 10;
 /// Space ULID used by every bench that exercises a space-scoped command.
 /// Mirrors the `TEST_SPACE_ID` constant in `commands_bench.rs`.
 const SLO_SPACE_ID: &str = "01SLOSPACE0000000000000001";
+
+/// Device id used by `bench_revert_ops_50op_at_100k` — paired with
+/// `seed_single_page_history` so the most-recent-50 op selector can
+/// build `OpRef`s without querying the op_log.
+const HISTORY_BENCH_DEVICE: &str = "bench-device";
 
 // ---------------------------------------------------------------------------
 // Accumulator type
@@ -378,6 +384,125 @@ async fn seed_backlinks_for_batch(pool: &SqlitePool, n: usize) {
             .unwrap();
     }
     tx.commit().await.unwrap();
+}
+
+/// Build a deterministic, valid RFC-3339 timestamp from a seq counter.
+/// Mirrors the safe `% 24` variant in `history_bench.rs::ts_for` (the
+/// flat seeder in `undo_redo.rs` overflows hours past 86400 ops; this
+/// stays valid through 100K).
+fn slo_history_ts_for(seq: i64) -> String {
+    format!(
+        "2025-01-15T{:02}:{:02}:{:02}.{:03}Z",
+        (seq / 3600) % 24,
+        (seq / 60) % 60,
+        seq % 60,
+        seq % 1000
+    )
+}
+
+/// Seed a single page with exactly `total_ops` ops in its history.
+/// Duplicated verbatim from `history_bench.rs::seed_single_page_history`
+/// per the inline-helper convention this file already uses; keep the
+/// two copies in sync if either side changes. Layout: seq=1 page create,
+/// seq=2 child create, seq=3..=total_ops edit_block ops against that
+/// child. Returns `(page_id, child_block_id, last_seq)`.
+async fn seed_single_page_history(
+    pool: &SqlitePool,
+    total_ops: usize,
+) -> (String, String, i64) {
+    assert!(
+        total_ops >= 52,
+        "seed_single_page_history needs >=52 ops (2 creates + 50-op revert window)"
+    );
+
+    let page_id = format!("PAGE{:020}", 0);
+    let block_id = format!("BLK{:020}", 0);
+    let mut seq: i64 = 0;
+
+    let mut tx = pool.begin().await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) \
+         VALUES (?, 'page', 'Bench Page', 1)",
+    )
+    .bind(&page_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    seq += 1;
+    let page_create_json = format!(
+        r#"{{"block_id":"{page_id}","block_type":"page","parent_id":null,"position":1,"content":"Bench Page"}}"#
+    );
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+    )
+    .bind(HISTORY_BENCH_DEVICE)
+    .bind(seq)
+    .bind(&page_create_json)
+    .bind(slo_history_ts_for(seq))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'initial', ?, 1)",
+    )
+    .bind(&block_id)
+    .bind(&page_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    seq += 1;
+    let child_create_json = format!(
+        r#"{{"block_id":"{block_id}","block_type":"content","parent_id":"{page_id}","position":1,"content":"initial"}}"#
+    );
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+    )
+    .bind(HISTORY_BENCH_DEVICE)
+    .bind(seq)
+    .bind(&child_create_json)
+    .bind(slo_history_ts_for(seq))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    let remaining = (total_ops as i64) - seq;
+    for j in 0..remaining {
+        seq += 1;
+        let edit_json = format!(
+            r#"{{"block_id":"{block_id}","to_text":"edit-{j}","prev_edit":null}}"#
+        );
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES (?, ?, 'fakehash', 'edit_block', ?, ?)",
+        )
+        .bind(HISTORY_BENCH_DEVICE)
+        .bind(seq)
+        .bind(&edit_json)
+        .bind(slo_history_ts_for(seq))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+
+    if remaining > 0 {
+        sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+            .bind(format!("edit-{}", remaining - 1))
+            .bind(&block_id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+
+    tx.commit().await.unwrap();
+    assert_eq!(seq, total_ops as i64);
+    (page_id, block_id, seq)
 }
 
 // ---------------------------------------------------------------------------
@@ -798,6 +923,80 @@ fn bench_create_block(c: &mut Criterion) {
     assert_under_budget("create_block @ 100K", &acc, BUDGET_MS);
 }
 
+/// `revert_ops_inner` — 50-op batch revert against a single page with
+/// 100K total ops in its history. Budget: 200 ms.
+///
+/// Phase 2 §B.1 gate for `history_bench::bench_revert_ops_50op`. The
+/// 200 ms ceiling is the same SLO every interactive command answers to;
+/// `revert` is bulk-write but user-initiated (Cmd+Z over a selection
+/// translates to this command), so it sits in the interactive tier.
+///
+/// `revert_ops_inner` mutates state (appends 50 reverse ops), so each
+/// iteration grows the op log; the cost-per-revert is dominated by the
+/// per-op `compute_reverse` walk + the recursive-CTE op-log read, both
+/// of which scale with the size of the log not with the per-revert
+/// mutation. The mean-of-`sample_size(10)` measurement is therefore a
+/// faithful "50-op revert at 100K" number — within sample noise.
+fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+    const TOTAL_OPS: usize = 100_000;
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_revert_ops"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let (_page_id, _block_id, last_seq) =
+        rt.block_on(seed_single_page_history(&pool, TOTAL_OPS));
+
+    // Most-recent-50 ops = [last_seq - 49 .. last_seq], all edit_block
+    // against the same child (see `seed_single_page_history` doc).
+    let ops: Vec<OpRef> = (0..50)
+        .map(|i| OpRef {
+            device_id: HISTORY_BENCH_DEVICE.to_string(),
+            seq: last_seq - i,
+        })
+        .collect();
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    {
+        let pool_outer = pool.clone();
+        group.bench_function("revert_ops_50op_at_100k", move |b| {
+            let acc = acc_for_bench.clone();
+            let pool = pool_outer.clone();
+            let ops = ops.clone();
+            let materializer_ref = &materializer;
+            b.to_async(&rt).iter_custom(move |iters| {
+                let pool = pool.clone();
+                let ops = ops.clone();
+                let acc = acc.clone();
+                async move {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        let _ = revert_ops_inner(
+                            &pool,
+                            HISTORY_BENCH_DEVICE,
+                            materializer_ref,
+                            ops.clone(),
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    let elapsed = start.elapsed();
+                    acc.record(elapsed, iters);
+                    elapsed
+                }
+            })
+        });
+    }
+    group.finish();
+
+    assert_under_budget("revert_ops (50op) @ 100K", &acc, BUDGET_MS);
+}
+
 // ===========================================================================
 // Problem tier — aspirational budgets, gated behind SLO_INCLUDE_PROBLEM
 // ===========================================================================
@@ -911,6 +1110,7 @@ criterion_group!(
     bench_count_agenda_batch,
     bench_count_backlinks_batch,
     bench_export_page_markdown,
+    bench_revert_ops_50op_at_100k,
     bench_create_block,
 );
 

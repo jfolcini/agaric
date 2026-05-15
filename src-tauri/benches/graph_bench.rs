@@ -91,7 +91,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_page_links");
 
-    for n_pages in [100, 1_000, 10_000] {
+    for n_pages in [100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("graph_{n_pages}")));
         rt.block_on(seed_pages_with_links(&pool, n_pages));
