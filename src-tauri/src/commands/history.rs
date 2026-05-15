@@ -379,19 +379,35 @@ pub async fn revert_ops_inner(
     }
 
     // Phase 1: Validate all ops are reversible by computing their reverse payloads.
-    // This uses read-only access — no mutations yet.
-    let mut reverses = Vec::with_capacity(ops.len());
-    for op_ref in &ops {
-        let reverse_payload = reverse::compute_reverse(pool, &op_ref.device_id, op_ref.seq).await?;
-        // Fetch created_at for sorting AND op_type for the UndoResult response
-        // I-Core-8: wrap to typed read-pool — caller is in write context
-        let record =
-            op_log::get_op_by_seq(&ReadPool(pool.clone()), &op_ref.device_id, op_ref.seq).await?;
+    //
+    // SQL-review B-3: previously this was a 3 × N per-op loop —
+    // `compute_reverse` (`get_op_by_seq` + `find_prior_*`) plus a second
+    // `get_op_by_seq` to source `created_at`/`op_type` for the
+    // `UndoResult`. A 50-op undo fanned out to 150 sequential queries.
+    //
+    // The batched path collapses that to:
+    //   1. one UNION-ALL `op_log` lookup for every input `OpRef`
+    //      (`get_op_records_batch`),
+    //   2. one UNION-ALL prior-context fetch per op-type present in
+    //      the batch (`compute_reverse_batch` — at most 5 queries for
+    //      the five context-bearing op-types).
+    //
+    // The reads run against the bare pool BEFORE the IMMEDIATE write
+    // transaction below — same snapshot semantics as before (see
+    // `restore_page_to_op_inner` for the wider rationale).
+    let records = reverse::get_op_records_batch(pool, &ops).await?;
+    let reverse_payloads = reverse::compute_reverse_batch(pool, &records).await?;
+    let mut reverses: Vec<(OpRef, OpPayload, String, String)> = Vec::with_capacity(ops.len());
+    for ((op_ref, reverse_payload), record) in ops
+        .iter()
+        .zip(reverse_payloads.into_iter())
+        .zip(records.iter())
+    {
         reverses.push((
             op_ref.clone(),
             reverse_payload,
-            record.created_at,
-            record.op_type,
+            record.created_at.clone(),
+            record.op_type.clone(),
         ));
     }
 

@@ -1,11 +1,11 @@
 # SQL review — full-app audit + remediation plan — 2026-05-14
 
-> **Status:** Phases 1 + 2 shipped (sessions 740 + 741). **Open below:**
-> Phase 3 (B-3 reverse-op batching), Phase 4 (H-2 `page_link_cache`
-> materialization + COALESCE-removal backfill + M-2 incremental cache
-> rebuilds), Phase 5 (M-6 compaction tx split + M-8 snapshot streaming).
-> Single open §1 BLOCKER (B-3); §2 H-1/H-2/H-3 unchanged; §3 down to 5
-> M-class items (M-1, M-3, M-4 shipped).
+> **Status:** Phases 1 + 2 + 3 shipped (sessions 740 + 741 + 745). **Open
+> below:** Phase 4 (H-2 `page_link_cache` materialization + COALESCE-removal
+> backfill + M-2 incremental cache rebuilds), Phase 5 (M-6 compaction tx
+> split + M-8 snapshot streaming). §1 BLOCKERs all shipped; §2 H-1/H-2/H-3
+> unchanged; §3 down to 5 M-class items (M-1, M-3, M-4 shipped — B-3 just
+> closed in §1).
 >
 > The original audit body (the multi-agent SQL/sqlx review summary) is
 > retained below for context — every finding still labelled "Open" maps
@@ -280,10 +280,19 @@ FTS task themselves; 61 test/integration call sites updated), B-4 (new
 `op_log.attachment_id` column via migration 0064, mirroring the 0030
 `block_id` pattern; reverse-attachment query swapped to the native column).
 
-**Phase 3 — Reverse-op + write-loop batching (M+M, ~4 days).**
-B-3 (revert_ops batching) + the cross-cut "audit top-10 write loops for
-json_each conversion". Needs `scale-benchmarks-100k-2026-05-14.md`
-Phase 1's gate landed first so we can measure pre/post.
+**Phase 3 — Reverse-op + write-loop batching.** ✅ SHIPPED session 745.
+B-3 collapsed `revert_ops_inner`'s 3N-per-undo pattern into at-most-6
+queries total (1 batched op-record fetch + up to 5 per-op-type
+prior-context fetches via UNION-ALL). New `compute_reverse_batch` +
+`get_op_records_batch` in `src-tauri/src/reverse/batch.rs` (573 LOC).
+Parity test `compute_reverse_batch_matches_per_op_loop` seeds 20 mixed
+ops across edit_block / move_block / set_property / add_attachment /
+delete_attachment and asserts byte-identical output against the single-op
+oracle. Single-op `compute_reverse` retained for
+`undo_page_op_inner` / `redo_page_op_inner` / `compute_edit_diff_inner`.
+The cross-cut "audit top-10 write loops for json_each conversion"
+remains open as a Phase 3.5 follow-up if Phase 4 + Phase 5 don't subsume
+it.
 
 **Phase 4 — Cache structural changes (L + L, ~2 weeks).**
 H-2 (`page_link_cache` materialisation — separate plan) + the

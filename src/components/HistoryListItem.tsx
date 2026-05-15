@@ -27,15 +27,15 @@ import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { HistoryItemCore } from './HistoryListItem/HistoryItemCore'
 
-// Re-export public surface from the extracted siblings so consumers can
-// keep importing from `./HistoryListItem`.
-export { HistoryItemCore, opIcon } from './HistoryListItem/HistoryItemCore'
-export type { HistoryItemCoreProps } from './HistoryListItem/HistoryItemCore'
-export { BlockHistoryItem } from './HistoryListItem/BlockHistoryItem'
 export type {
   BlockHistoryDiffMode,
   BlockHistoryItemProps,
 } from './HistoryListItem/BlockHistoryItem'
+export { BlockHistoryItem } from './HistoryListItem/BlockHistoryItem'
+export type { HistoryItemCoreProps } from './HistoryListItem/HistoryItemCore'
+// Re-export public surface from the extracted siblings so consumers can
+// keep importing from `./HistoryListItem`.
+export { HistoryItemCore, opIcon } from './HistoryListItem/HistoryItemCore'
 
 // ---------------------------------------------------------------------------
 // Props

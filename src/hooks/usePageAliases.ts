@@ -47,10 +47,7 @@ export interface UsePageAliasesReturn {
  * in `useTranslation` itself, which would force every renderHook test
  * to wrap with `I18nextProvider`).
  */
-export function usePageAliases(
-  pageId: string,
-  t: (key: string) => string,
-): UsePageAliasesReturn {
+export function usePageAliases(pageId: string, t: (key: string) => string): UsePageAliasesReturn {
   const [aliases, setAliases] = useState<string[]>([])
   const [editingAliases, setEditingAliases] = useState(false)
   const [aliasInput, setAliasInput] = useState('')

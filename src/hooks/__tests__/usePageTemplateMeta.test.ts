@@ -95,9 +95,7 @@ describe('usePageTemplateMeta — initial load', () => {
 
   it('defaults to false / null when properties are missing', async () => {
     mockedGet.mockResolvedValueOnce(makeProps([]))
-    const { result } = renderHook(() =>
-      usePageTemplateMeta('page-1', t, vi.fn()),
-    )
+    const { result } = renderHook(() => usePageTemplateMeta('page-1', t, vi.fn()))
 
     await waitFor(() => {
       expect(mockedGet).toHaveBeenCalled()
@@ -116,13 +114,9 @@ describe('usePageTemplateMeta — initial load', () => {
 
 describe('usePageTemplateMeta — toggle handlers', () => {
   it('handleToggleTemplate deletes the property when currently set', async () => {
-    mockedGet.mockResolvedValueOnce(
-      makeProps([{ key: 'template', value_text: 'true' }]),
-    )
+    mockedGet.mockResolvedValueOnce(makeProps([{ key: 'template', value_text: 'true' }]))
     const onAfterToggle = vi.fn()
-    const { result } = renderHook(() =>
-      usePageTemplateMeta('page-1', t, onAfterToggle),
-    )
+    const { result } = renderHook(() => usePageTemplateMeta('page-1', t, onAfterToggle))
 
     await waitFor(() => {
       expect(result.current.isTemplate).toBe(true)
@@ -140,9 +134,7 @@ describe('usePageTemplateMeta — toggle handlers', () => {
 
   it('handleToggleTemplate sets the property when currently unset', async () => {
     const onAfterToggle = vi.fn()
-    const { result } = renderHook(() =>
-      usePageTemplateMeta('page-1', t, onAfterToggle),
-    )
+    const { result } = renderHook(() => usePageTemplateMeta('page-1', t, onAfterToggle))
 
     await waitFor(() => {
       expect(mockedGet).toHaveBeenCalled()
@@ -164,9 +156,7 @@ describe('usePageTemplateMeta — toggle handlers', () => {
 
   it('handleToggleJournalTemplate uses the `journal-template` key', async () => {
     const onAfterToggle = vi.fn()
-    const { result } = renderHook(() =>
-      usePageTemplateMeta('page-1', t, onAfterToggle),
-    )
+    const { result } = renderHook(() => usePageTemplateMeta('page-1', t, onAfterToggle))
 
     await waitFor(() => {
       expect(mockedGet).toHaveBeenCalled()
@@ -187,9 +177,7 @@ describe('usePageTemplateMeta — toggle handlers', () => {
   it('still invokes `onAfterToggle` when the IPC fails', async () => {
     mockedSet.mockRejectedValueOnce(new Error('IPC down'))
     const onAfterToggle = vi.fn()
-    const { result } = renderHook(() =>
-      usePageTemplateMeta('page-1', t, onAfterToggle),
-    )
+    const { result } = renderHook(() => usePageTemplateMeta('page-1', t, onAfterToggle))
 
     await waitFor(() => {
       expect(mockedGet).toHaveBeenCalled()
@@ -209,9 +197,7 @@ describe('usePageTemplateMeta — toggle handlers', () => {
 
 describe('usePageTemplateMeta — setPageSpaceId', () => {
   it('exposes a setter that updates `pageSpaceId`', async () => {
-    const { result } = renderHook(() =>
-      usePageTemplateMeta('page-1', t, vi.fn()),
-    )
+    const { result } = renderHook(() => usePageTemplateMeta('page-1', t, vi.fn()))
 
     await waitFor(() => {
       expect(mockedGet).toHaveBeenCalled()

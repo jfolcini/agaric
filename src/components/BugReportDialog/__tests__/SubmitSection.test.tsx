@@ -59,9 +59,7 @@ describe('SubmitSection', () => {
     unmount()
 
     renderSection({ includeLogs: true })
-    expect(
-      screen.getByRole('button', { name: t('bugReport.openGitHubIssue') }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('bugReport.openGitHubIssue') })).toBeInTheDocument()
   })
 
   it('invokes onCancel when Cancel is clicked', async () => {

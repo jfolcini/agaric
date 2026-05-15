@@ -61,11 +61,7 @@ export function SubmitSection({
       <Button variant="outline" onClick={onCancel}>
         {t('bugReport.cancel')}
       </Button>
-      <Button
-        variant="outline"
-        onClick={onCopy}
-        disabled={loadingMetadata || bodyLength === 0}
-      >
+      <Button variant="outline" onClick={onCopy} disabled={loadingMetadata || bodyLength === 0}>
         {t('bugReport.copy')}
       </Button>
       {/* PEND-bug-report-zip-affordance: split the old "Open in

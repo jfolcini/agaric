@@ -58,12 +58,9 @@ import { EmptyState } from './EmptyState'
 import { ResultCard } from './ResultCard'
 import { SearchFilters } from './SearchPanel/SearchFilters'
 import { SearchHeader } from './SearchPanel/SearchHeader'
-import {
-  INITIAL_SEARCH_FILTER_STATE,
-  searchFilterReducer,
-} from './SearchPanel/searchFilterReducer'
 import { SearchResultList } from './SearchPanel/SearchResultList'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
+import { INITIAL_SEARCH_FILTER_STATE, searchFilterReducer } from './SearchPanel/searchFilterReducer'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
 import { usePopoverEntity } from './SearchPanel/usePopoverEntity'
 

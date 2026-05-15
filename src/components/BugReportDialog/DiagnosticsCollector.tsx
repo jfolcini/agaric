@@ -91,11 +91,7 @@ export function DiagnosticsCollector({
             {t('bugReport.logsListTitle')}
           </Label>
           <ScrollArea className="max-h-32 rounded-md border bg-muted/30" viewportClassName="p-3">
-            <ul
-              id={logsSectionId}
-              data-testid="bug-report-logs-list"
-              className="text-xs space-y-1"
-            >
+            <ul id={logsSectionId} data-testid="bug-report-logs-list" className="text-xs space-y-1">
               {loadingLogs && (
                 <li className="flex items-center gap-2 text-muted-foreground">
                   <Spinner />

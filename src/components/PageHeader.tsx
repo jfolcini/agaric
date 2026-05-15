@@ -23,13 +23,7 @@ import { usePageAliases } from '../hooks/usePageAliases'
 import { usePageTemplateMeta } from '../hooks/usePageTemplateMeta'
 import { useStarredPages } from '../hooks/useStarredPages'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
-import {
-  deleteBlock,
-  editBlock,
-  exportPageMarkdown,
-  getBlock,
-  setProperty,
-} from '../lib/tauri'
+import { deleteBlock, editBlock, exportPageMarkdown, getBlock, setProperty } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'

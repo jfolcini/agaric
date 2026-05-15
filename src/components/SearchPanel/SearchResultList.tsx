@@ -77,8 +77,7 @@ export function SearchResultList({
           >
             {block.page_id && pageTitles.get(block.page_id) && (
               <p className="text-xs text-muted-foreground mt-1">
-                in:{' '}
-                <PageLink pageId={block.page_id} title={pageTitles.get(block.page_id) ?? ''} />
+                in: <PageLink pageId={block.page_id} title={pageTitles.get(block.page_id) ?? ''} />
               </p>
             )}
           </ResultCard>

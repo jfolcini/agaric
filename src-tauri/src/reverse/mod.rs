@@ -1,10 +1,12 @@
 //! Reverse (inverse) op computation for the undo engine.
 
 mod attachment_ops;
+mod batch;
 mod block_ops;
 mod property_ops;
 mod tag_ops;
 
+pub(crate) use batch::{compute_reverse_batch, get_op_records_batch};
 pub(crate) use block_ops::find_prior_text;
 
 use sqlx::SqlitePool;

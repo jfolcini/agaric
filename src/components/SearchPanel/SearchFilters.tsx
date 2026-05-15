@@ -16,9 +16,9 @@ import { FilterPill } from '@/components/ui/filter-pill'
 import { cn } from '@/lib/utils'
 import type { BlockRow, TagCacheRow } from '../../lib/tauri'
 import { SearchablePopover } from '../SearchablePopover'
-import type { PopoverEntityState } from './usePopoverEntity'
 import type { SearchFilterAction, SearchFilterState } from './searchFilterReducer'
 import { hasActiveFilters } from './searchFilterReducer'
+import type { PopoverEntityState } from './usePopoverEntity'
 
 export interface SearchFiltersProps {
   filterState: SearchFilterState

@@ -66,17 +66,13 @@ describe('HistoryItemCore', () => {
   })
 
   it('renders raw-content preview for non-property ops', () => {
-    renderCore(
-      <HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'Hello world' })} />,
-    )
+    renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'Hello world' })} />)
     expect(screen.getByText(/Hello world/)).toBeInTheDocument()
   })
 
   it('renders property-payload preview with key and value', () => {
     renderCore(
-      <HistoryItemCore
-        entry={makeEntry(1, 'set_property', { key: 'priority', value: 'high' })}
-      />,
+      <HistoryItemCore entry={makeEntry(1, 'set_property', { key: 'priority', value: 'high' })} />,
     )
     // `formatPropertyName` title-cases the key (`priority` → `Priority`)
     // and the value is rendered as a separate text node in the same

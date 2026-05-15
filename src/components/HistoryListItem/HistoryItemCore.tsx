@@ -25,7 +25,7 @@ import {
   Tag,
   Trash2,
 } from 'lucide-react'
-import * as React from 'react'
+import type * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'

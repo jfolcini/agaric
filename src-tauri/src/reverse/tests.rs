@@ -1840,3 +1840,200 @@ async fn revert_ops_appends_reverse_op_without_mutating_original() {
         rec.seq
     );
 }
+
+// ======================================================================
+// SQL-review B-3 — parity: batched vs. per-op reverse computation
+// ======================================================================
+
+/// Pin the batched `compute_reverse_batch` output byte-for-byte against
+/// the legacy `for op in ops { compute_reverse(...) }` loop. The batch
+/// path is a pure read-path optimisation — any divergence is a
+/// correctness regression in the undo engine.
+///
+/// Seeds a 20-op mixed batch covering edit_block, move_block,
+/// set_property, and add_attachment plus the support history each
+/// reverse needs to find prior context. Then asserts:
+///   * `compute_reverse_batch(pool, &records).await == legacy`
+///   * `legacy` is produced by the per-op `compute_reverse` loop.
+#[tokio::test]
+async fn compute_reverse_batch_matches_per_op_loop() {
+    use crate::reverse::{compute_reverse_batch, get_op_records_batch};
+
+    let (pool, _dir) = test_pool().await;
+
+    // -- seed support history (5 distinct blocks + 5 attachments) ----
+    //
+    // Each block carries a create + an edit + a move so the
+    // edit_block / move_block reverse lookups find prior context.
+    // Each property block carries a `priority=low` seed so the
+    // set_property reverse finds something to roll back to. Each
+    // attachment block carries an `add_attachment` whose paired
+    // `delete_attachment` we will later target.
+    let blocks: Vec<&str> = vec![
+        "B3_BLK1", "B3_BLK2", "B3_BLK3", "B3_BLK4", "B3_BLK5",
+    ];
+    let mut ts = 0u64;
+    let next_ts = |ts: &mut u64| -> String {
+        *ts += 1;
+        format!("2025-01-15T12:{:02}:00.000Z", *ts)
+    };
+
+    for bid in &blocks {
+        append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(bid),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::test_id("B3_ROOT")),
+                position: Some(1),
+                content: format!("{bid} v0"),
+            }),
+            &next_ts(&mut ts),
+        )
+        .await;
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id(bid),
+                key: "priority".into(),
+                value_text: Some("low".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            &next_ts(&mut ts),
+        )
+        .await;
+    }
+
+    // -- 20-op mixed batch -------------------------------------------
+    //
+    // Distribution (4 each):
+    //   * 4 × edit_block  — change content
+    //   * 4 × move_block  — reparent under "B3_NEW_PARENT"
+    //   * 4 × set_property — bump priority to "high"
+    //   * 4 × add_attachment — net-new attachment per block
+    //   * 4 × delete_attachment — soft-delete each just-added attachment
+    let mut op_refs: Vec<crate::op::OpRef> = Vec::new();
+
+    for bid in &blocks[..4] {
+        let rec = append_op(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id(bid),
+                to_text: format!("{bid} v1"),
+                prev_edit: None,
+            }),
+            &next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(crate::op::OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+    for bid in &blocks[..4] {
+        let rec = append_op(
+            &pool,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id(bid),
+                new_parent_id: Some(BlockId::test_id("B3_NEW_PARENT")),
+                new_position: 9,
+            }),
+            &next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(crate::op::OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+    for bid in &blocks[..4] {
+        let rec = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id(bid),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            &next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(crate::op::OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+    // 4 × add_attachment — record so we can target the matching delete.
+    let mut att_ids: Vec<String> = Vec::new();
+    for (i, bid) in blocks[..4].iter().enumerate() {
+        let att_id = format!("B3_ATT_{i:02}");
+        let rec = append_op(
+            &pool,
+            OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+                attachment_id: BlockId::test_id(&att_id),
+                block_id: BlockId::test_id(bid),
+                mime_type: "image/png".into(),
+                filename: format!("{att_id}.png"),
+                size_bytes: 1024,
+                fs_path: format!("/tmp/{att_id}.png"),
+            }),
+            &next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(crate::op::OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+        att_ids.push(att_id);
+    }
+    for att_id in &att_ids {
+        let rec = append_op(
+            &pool,
+            OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+                attachment_id: BlockId::test_id(att_id),
+                fs_path: format!("/tmp/{att_id}.png"),
+            }),
+            &next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(crate::op::OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+
+    assert_eq!(op_refs.len(), 20, "test should batch exactly 20 ops");
+
+    // -- legacy oracle: per-op loop ----------------------------------
+    let mut legacy: Vec<OpPayload> = Vec::with_capacity(op_refs.len());
+    for r in &op_refs {
+        legacy.push(
+            compute_reverse(&pool, &r.device_id, r.seq)
+                .await
+                .unwrap(),
+        );
+    }
+
+    // -- batched candidate ------------------------------------------
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let batched = compute_reverse_batch(&pool, &records).await.unwrap();
+
+    // -- assert byte-identical ---------------------------------------
+    assert_eq!(
+        batched.len(),
+        legacy.len(),
+        "batched output length must match legacy"
+    );
+    for (i, (b, l)) in batched.iter().zip(legacy.iter()).enumerate() {
+        assert_eq!(
+            b, l,
+            "B-3 parity violation at idx {i}: batched={b:?} vs legacy={l:?}"
+        );
+    }
+}
