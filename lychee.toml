@@ -24,6 +24,14 @@ accept = [
     "504",
 ]
 
+# Retry network-level failures (TCP resets, DNS hiccups, timeouts) before
+# failing the hook. The `accept` list only matches HTTP status codes — it
+# doesn't cover pre-HTTP socket errors like "connection reset by peer",
+# which broke validate run 25922288914 on a Tauri docs URL. Five retries
+# with exponential backoff is enough to ride out the typical edge flake.
+max_retries = 5
+retry_wait_time = 2
+
 # Skip the request if the URL matches any of these patterns.
 exclude = [
     # Future publish target — agaric-app GitHub org doesn't exist yet (PUB-5).
