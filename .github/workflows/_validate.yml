@@ -27,6 +27,7 @@ jobs:
           # gitleaks (run via prek) inspects git history, so we need the
           # full commit graph rather than the default shallow checkout.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install system dependencies
         run: |

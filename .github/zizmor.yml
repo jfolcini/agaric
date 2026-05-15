@@ -1,95 +1,89 @@
 # zizmor configuration — security audit for GitHub Actions workflows.
 # https://docs.zizmor.sh/configuration/
 #
-# This file is a BASELINE: it suppresses every finding zizmor reported
-# the day the hook was first wired into prek.toml. The hook will catch
-# *new* findings introduced after that point. Existing findings are
-# tracked as MAINT items in REVIEW-LATER.md and should be triaged off
-# the baseline over time — fix the underlying issue (or document why
-# it's safe in the threat-model sense), then drop the matching entry
-# from this file.
+# This file is a BASELINE: it suppresses every finding zizmor reports
+# today so the hook only catches *new* findings going forward. Existing
+# findings are tracked as MAINT items in REVIEW-LATER.md and should be
+# triaged off the baseline over time — fix the underlying issue (or
+# document why it's safe in the threat-model sense), then drop the
+# matching entry from this file.
 #
-# Counts at baseline creation:
-#   - 63 total locations across 5 rule(s)
-#   - artipacked: 7
-#   - cache-poisoning: 14
-#   - excessive-permissions: 1
-#   - template-injection: 6
-#   - unpinned-uses: 35
+# Triage progress (closed entries appear elsewhere, not here):
+#   - template-injection × 6 — defused by MAINT-114 (release-tag.yml
+#     fold routed inputs.version through env: + $INPUT_VERSION).
+#   - artipacked × 6 — fixed by MAINT-193 (added `persist-credentials:
+#     false` to non-pushing checkouts; the bump-version checkout in
+#     release.yml keeps `persist-credentials: true` explicitly to drive
+#     the tag push, see inline comment there).
+#   - excessive-permissions × 1 — fixed by MAINT-193 (workflow-level
+#     `contents: write` in release.yml tightened to `read`; per-job
+#     `contents: write` scoped to bump-version, build-and-release,
+#     android-build-and-release).
 #
 # Threat-model context (AGENTS.md): Agaric is single-user, no cloud,
-# no adversarial peers. The MAINT-114 fold of `release-tag.yml` into
-# `release.yml`'s `bump-version` job (workflow_dispatch entrypoint)
-# defused the 6 original `template-injection` findings on
-# `${{ inputs.version }}` by routing the input through `env:` and
-# referencing it as `$INPUT_VERSION` in the run script — the
-# mitigation is cheap and removes the entries entirely instead of
-# baselining them.
+# no adversarial peers.
 
 rules:
-  artipacked:
-    ignore:
-      - _validate.yml:25
-      - ci.yml:181
-      - ci.yml:51
-      - release.yml:37
-      - release.yml:99
-      - release.yml:149
-      - release.yml:391
   cache-poisoning:
     ignore:
-      - ci.yml:189
-      - ci.yml:208
-      - ci.yml:209
+      - ci.yml:192
+      - ci.yml:193
+      - ci.yml:211
+      - ci.yml:212
+      - ci.yml:213
       - ci.yml:3
-      - ci.yml:77
-      - ci.yml:82
+      - ci.yml:78
+      - ci.yml:79
       - ci.yml:83
+      - ci.yml:84
+      - ci.yml:85
+      - release.yml:169
+      - release.yml:170
+      - release.yml:200
+      - release.yml:201
+      - release.yml:202
       - release.yml:3
-      - release.yml:51
-      - release.yml:157
-      - release.yml:188
-      - release.yml:189
-      - release.yml:399
-      - release.yml:423
-      - release.yml:424
-  excessive-permissions:
-    ignore:
-      - release.yml:20
+      - release.yml:415
+      - release.yml:416
+      - release.yml:439
+      - release.yml:440
+      - release.yml:441
+      - release.yml:57
+      - release.yml:58
   unpinned-uses:
     ignore:
-      - _validate.yml:124
+      - _validate.yml:125
       - _validate.yml:25
-      - _validate.yml:43
-      - _validate.yml:46
-      - _validate.yml:54
-      - _validate.yml:68
-      - ci.yml:152
-      - ci.yml:161
-      - ci.yml:170
-      - ci.yml:181
-      - ci.yml:184
-      - ci.yml:189
-      - ci.yml:194
-      - ci.yml:200
-      - ci.yml:208
-      - ci.yml:283
+      - _validate.yml:44
+      - _validate.yml:47
+      - _validate.yml:55
+      - _validate.yml:69
+      - ci.yml:154
+      - ci.yml:163
+      - ci.yml:172
+      - ci.yml:183
+      - ci.yml:188
+      - ci.yml:193
+      - ci.yml:198
+      - ci.yml:204
+      - ci.yml:212
+      - ci.yml:287
       - ci.yml:51
-      - ci.yml:74
-      - ci.yml:77
-      - ci.yml:82
-      - release.yml:38
-      - release.yml:49
-      - release.yml:51
-      - release.yml:99
-      - release.yml:149
-      - release.yml:152
-      - release.yml:157
-      - release.yml:188
-      - release.yml:197
-      - release.yml:391
-      - release.yml:394
-      - release.yml:399
-      - release.yml:409
-      - release.yml:415
-      - release.yml:423
+      - ci.yml:76
+      - ci.yml:79
+      - ci.yml:84
+      - release.yml:106
+      - release.yml:160
+      - release.yml:165
+      - release.yml:170
+      - release.yml:201
+      - release.yml:210
+      - release.yml:40
+      - release.yml:406
+      - release.yml:411
+      - release.yml:416
+      - release.yml:426
+      - release.yml:432
+      - release.yml:440
+      - release.yml:56
+      - release.yml:58
