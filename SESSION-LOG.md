@@ -7,6 +7,40 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 749 — MAINT-111 M1 (rmcp tools/list adapter) (2026-05-15)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-15 |
+| **Subagents** | 1 build + 1 tech review |
+| **Items closed** | — (MAINT-111 M1 milestone landed; M2+M3 remain) |
+| **Items modified** | MAINT-111 (status + cost updated to reflect M1 landed) |
+| **Files touched** | 4 (3 source + 1 REVIEW-LATER + 1 SESSION-LOG) |
+
+**Summary:** Landed MAINT-111 Milestone 1. Renamed the spike's `RmcpSearchAdapter` to `RmcpReadOnlyAdapter` and dropped the single-tool filter so it advertises every RO tool through `ServerHandler::list_tools`. Added a parity test that drives a real `rmcp` client over `tokio::io::duplex` against a production `ReadOnlyTools` registry and asserts byte-for-byte equivalence (name + description + `inputSchema` camelCase wire field) with the hand-rolled `mcp::server::handle_tools_list`. Production code path is unchanged — the rmcp adapter sits behind the existing `mcp_rmcp_spike` Cargo feature; M2 expands `call_tool` and M3 flips production over.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 13 → 13 (MAINT-111 stays open until M3 lands; row updated with M1-landed status + remaining-cost downward)
+
+**Files touched (this session):**
+- `src-tauri/src/mcp/rmcp_spike.rs` (rename + filter drop + parity test + M2 TODO comment on `call_tool` guard)
+- `src-tauri/src/mcp/rmcp_spike.md` (M1 status block)
+- `src-tauri/src/mcp/server.rs` (`handle_tools_list` raised to `pub(crate)` so the parity test can call it; comment noting M3-scheduled removal)
+- `pending/REVIEW-LATER.md` (MAINT-111 status updated; M1 marked landed)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run -- mcp` — 261 / 261 pass (default build unchanged).
+- `cd src-tauri && cargo nextest run --features mcp_rmcp_spike -- mcp::rmcp_spike` — 4 / 4 pass (including new parity test).
+- `cd src-tauri && cargo clippy --tests -- -D warnings` — clean.
+- `cd src-tauri && cargo clippy --tests --features mcp_rmcp_spike -- -D warnings` — clean.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** The reviewer flagged a cosmetic note on positional `zip` between rmcp and hand-rolled outputs — would mis-attribute a future drift to the wrong index. Left as-is since both sides preserve insertion order today; a name-keyed lookup would localise drift better but isn't a correctness gain. The MCP spec wire field `inputSchema` (camelCase) was already pinned by `#[serde(rename = "inputSchema")]` on `ToolDescription`, so no spec drift to fix.
+
+**Commit plan:** single commit; push deferred.
+
+---
+
 ## Session 748 — MAINT-128 PropertyRowEditor decomposition (2026-05-15)
 
 | Metadata | Value |

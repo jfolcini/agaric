@@ -307,7 +307,13 @@ fn handle_initialize(state: &mut ConnectionState, params: &Value) -> Result<Valu
     }))
 }
 
-fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, String)> {
+// MAINT-111 M1: `RmcpReadOnlyAdapter::list_tools` in `rmcp_spike.rs`
+// is a parity-tested rmcp equivalent of this function; this
+// hand-rolled helper is scheduled for removal in MAINT-111 M3 once
+// `tools/list` is routed through rmcp in production.
+// `pub(crate)` so the spike's parity test can drive both paths from
+// the same registry handle.
+pub(crate) fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, String)> {
     let tools = registry.list_tools();
     let serialised = serde_json::to_value(&tools).map_err(|e| {
         (

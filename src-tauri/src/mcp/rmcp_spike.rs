@@ -5,6 +5,20 @@
 //! (`cargo build`) does not link `rmcp` and runs the hand-rolled
 //! `mcp/server.rs` framing for every tool call.
 //!
+//! ## MAINT-111 M1 status — LANDED
+//!
+//! M1 expanded the adapter from a single-tool filter
+//! (`RmcpSearchAdapter`) to a full read-only adapter
+//! (`RmcpReadOnlyAdapter`) that advertises every tool the underlying
+//! [`ToolRegistry`] returns. A parity test
+//! (`rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte`)
+//! drives a real `ReadOnlyTools` registry through both paths — the
+//! hand-rolled `super::server::handle_tools_list` and rmcp's
+//! `ListToolsResult` — and asserts that every `tools[]` entry matches
+//! field-by-field (`name`, `description`, `inputSchema`).
+//! `call_tool` still rejects every non-search tool name and is
+//! expanded in M2.
+//!
 //! The spike answers the four MAINT-111 questions with code:
 //!
 //! 1. *How much of `mcp/server.rs` would collapse?* The adapter below
@@ -17,7 +31,7 @@
 //!
 //! 2. *Can `rmcp`'s tool model adapt to the existing `ToolRegistry`
 //!    trait without breaking activity-feed / `ActorContext` /
-//!    `LAST_APPEND`?* Yes — the [`RmcpSearchAdapter::call_tool`]
+//!    `LAST_APPEND`?* Yes — the [`RmcpReadOnlyAdapter::call_tool`]
 //!    implementation re-creates the same task-local-scoped wrapper
 //!    that `mcp/server.rs::handle_tools_call` uses (ACTOR scope +
 //!    LAST_APPEND scope + `emit_tool_completion` on completion).
@@ -43,8 +57,11 @@
 //!   migration. `rmcp` only takes over the per-connection JSON-RPC
 //!   loop.
 //! - It does NOT replace the existing [`super::server::serve`] for
-//!   any tool other than `search`. The hand-rolled path is still the
-//!   production code path; this module is purely additive.
+//!   any tool. The hand-rolled path is still the production code
+//!   path; this module is purely additive. M1 brings `tools/list`
+//!   parity for the full RO registry; M2 will extend `call_tool` to
+//!   dispatch every RO tool through the adapter; M3 deletes the
+//!   hand-rolled framing.
 //! - It does NOT migrate any RW tool. Read-write tools have richer
 //!   side-effects (op-log appends, activity-feed errors, materializer
 //!   trigger) that the spike does not need to demonstrate to answer
@@ -78,19 +95,27 @@ use super::actor::{Actor, ActorContext, ACTOR};
 use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
 
-/// Wire-format name of the only tool the spike exposes through
-/// `rmcp`. Matches `super::registry::TOOL_SEARCH` exactly so a real
-/// `ReadOnlyTools` registry can be plugged in later without renaming.
+/// Wire-format name of the only tool the spike currently dispatches
+/// through `rmcp::call_tool` (M1 still gates `call_tool` to this single
+/// name; M2 expands it to every RO tool). Matches
+/// `super::registry::TOOL_SEARCH` exactly so a real `ReadOnlyTools`
+/// registry can be plugged in without renaming.
 pub const SEARCH_TOOL_NAME: &str = "search";
 
-/// Spike-only adapter that exposes a single registry tool through
-/// `rmcp`'s [`ServerHandler`] trait. Every other tool name is
-/// rejected with `method not found` so it is unambiguous which path
-/// served a given request when both adapters are running side-by-side.
+/// Spike adapter that exposes the read-only registry through `rmcp`'s
+/// [`ServerHandler`] trait.
+///
+/// As of MAINT-111 M1, `list_tools` forwards every entry the
+/// [`ToolRegistry`] returns (the previous single-tool filter is gone),
+/// proving byte-for-byte parity with
+/// `super::server::handle_tools_list` for the full RO surface. The
+/// `call_tool` body still rejects every name other than
+/// [`SEARCH_TOOL_NAME`] — M2 lifts that restriction and routes every
+/// `tools/call` through this adapter.
 ///
 /// `R` is the existing [`ToolRegistry`] trait — the spike pins down
 /// that the adapter does NOT need a parallel registration model.
-pub struct RmcpSearchAdapter<R: ToolRegistry> {
+pub struct RmcpReadOnlyAdapter<R: ToolRegistry> {
     registry: Arc<R>,
     activity_ctx: ActivityContext,
     /// Stable per-connection ULID, mirroring
@@ -100,7 +125,7 @@ pub struct RmcpSearchAdapter<R: ToolRegistry> {
     session_id: String,
 }
 
-impl<R: ToolRegistry> RmcpSearchAdapter<R> {
+impl<R: ToolRegistry> RmcpReadOnlyAdapter<R> {
     /// Build an adapter around an existing registry handle and the
     /// FEAT-4d activity context. Mirrors the
     /// [`super::server::ConnectionState`] construction, minus the
@@ -114,7 +139,7 @@ impl<R: ToolRegistry> RmcpSearchAdapter<R> {
     }
 }
 
-impl<R: ToolRegistry> ServerHandler for RmcpSearchAdapter<R> {
+impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
     fn get_info(&self) -> ServerInfo {
         // `ServerInfo` (= `InitializeResult`) is `#[non_exhaustive]` —
         // construct it through the documented builder methods. The
@@ -127,8 +152,10 @@ impl<R: ToolRegistry> ServerHandler for RmcpSearchAdapter<R> {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "MAINT-111 spike — exposes only the `search` tool through rmcp; \
-                 the production build still uses the hand-rolled mcp/server.rs.",
+                "MAINT-111 spike — advertises the full read-only tool list \
+                 through rmcp (M1). `tools/call` still routes only `search` \
+                 (M2 will extend). Production build still uses the hand-rolled \
+                 mcp/server.rs framing.",
             )
     }
 
@@ -137,15 +164,22 @@ impl<R: ToolRegistry> ServerHandler for RmcpSearchAdapter<R> {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        // Forward the registry's existing descriptions — proves the
-        // `ToolDescription` shape (name + description + JSON-Schema
-        // input_schema) maps onto rmcp's `Tool` 1:1 with no extra
-        // model-translation layer. Filter to the single advertised
-        // tool so tests can pin the spike's surface area precisely.
-        let descs = self.registry.list_tools();
-        let tools: Vec<Tool> = descs
+        // MAINT-111 M1: forward every registry description unfiltered.
+        // The previous single-tool filter (`name == SEARCH_TOOL_NAME`)
+        // is gone — parity with `super::server::handle_tools_list` is
+        // asserted byte-for-byte by
+        // `tests::rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte`.
+        //
+        // `ToolDescription::input_schema` is a `serde_json::Value`;
+        // rmcp's `Tool::new` takes an `Arc<JsonObject>`. Coerce via
+        // `Value::as_object().cloned()` and fall back to an empty
+        // object on the (unreachable in practice) non-object schema
+        // case — the registry always emits a `{"type":"object",...}`
+        // schema.
+        let tools: Vec<Tool> = self
+            .registry
+            .list_tools()
             .into_iter()
-            .filter(|d| d.name == SEARCH_TOOL_NAME)
             .map(|d| {
                 let schema_obj = d.input_schema.as_object().cloned().unwrap_or_default();
                 Tool::new(
@@ -165,9 +199,19 @@ impl<R: ToolRegistry> ServerHandler for RmcpSearchAdapter<R> {
     ) -> Result<CallToolResult, ErrorData> {
         let name = request.name.to_string();
         if name != SEARCH_TOOL_NAME {
-            // Surfaces as JSON-RPC `-32601 Method not found` over the
-            // wire — the spike exposes only `search`. Real migrations
-            // would dispatch on the registry's full match arms here.
+            // MAINT-111 M2 TODO: drop this filter so every tool name
+            // returned by `list_tools` is also dispatchable through
+            // rmcp. The activity/actor/LAST_APPEND wrapper below is
+            // already registry-generic (it reads `&name` rather than
+            // hard-coding `SEARCH_TOOL_NAME`); only the early-return
+            // guard and the two trailing `SEARCH_TOOL_NAME` literals
+            // in the activity emission block need to become `&name`.
+            //
+            // Surfaces today as JSON-RPC `-32601 Method not found`
+            // over the wire — M1 keeps the spike's `call_tool`
+            // surface area intentionally narrow (only `search`) so
+            // the parity test for `tools/list` is the only behaviour
+            // change in this milestone.
             return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
         }
 
@@ -373,7 +417,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(ActivityRing::new())),
             Arc::new(RecordingEmitter::new()),
         );
-        let adapter = RmcpSearchAdapter::new(registry, activity_ctx);
+        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
         let info = adapter.get_info();
         assert!(
             info.capabilities.tools.is_some(),
@@ -414,7 +458,7 @@ mod tests {
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
 
-        let adapter = RmcpSearchAdapter::new(registry, activity_ctx);
+        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
 
         // 4 KiB duplex pipe — large enough for handshake + one tool
         // call without back-pressure stalls.
@@ -530,7 +574,7 @@ mod tests {
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
-        let adapter = RmcpSearchAdapter::new(registry, activity_ctx);
+        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
 
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
@@ -563,5 +607,165 @@ mod tests {
         // the activity-emission branch.
         assert!(ring.lock().unwrap().entries().is_empty());
         assert!(emitter.entries().is_empty());
+    }
+
+    /// MAINT-111 M1 parity gate. Builds the production
+    /// [`crate::mcp::tools_ro::ReadOnlyTools`] registry against a
+    /// temp-dir SQLite pool, drives `tools/list` through both paths
+    /// — the hand-rolled `super::server::handle_tools_list` and the
+    /// new `RmcpReadOnlyAdapter` over rmcp's wire framing — and
+    /// asserts that every advertised tool matches field-by-field:
+    /// `name`, `description`, and `inputSchema`.
+    ///
+    /// The hand-rolled path returns `{ "tools": [<ToolDescription>...] }`
+    /// where `ToolDescription` already serialises `input_schema` as
+    /// `inputSchema` (camelCase, via `#[serde(rename = "inputSchema")]`
+    /// on the struct field). rmcp's `Tool` model uses `inputSchema`
+    /// in its JSON wire form too. The two therefore agree on the
+    /// MCP-spec field name — no drift to surface here.
+    ///
+    /// If a future rmcp bump or registry change introduces a drift,
+    /// this test pinpoints exactly which field on which tool diverged.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte() {
+        use crate::db::init_pool;
+        use crate::materializer::Materializer;
+        use crate::mcp::tools_ro::ReadOnlyTools;
+        use tempfile::TempDir;
+
+        // Build a real ReadOnlyTools registry against a tempdir DB.
+        // `list_tools` is static metadata (no DB access), but
+        // `ReadOnlyTools::new` requires a valid pool, so wire one up.
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+        let materializer = Materializer::new(pool.clone());
+        let registry = Arc::new(ReadOnlyTools::new(
+            pool.clone(),
+            pool,
+            materializer,
+            "test-mcp-dev".to_string(),
+        ));
+
+        // -- Hand-rolled path -------------------------------------
+        // Call the production `handle_tools_list` directly. Returns
+        // the inner JSON-RPC `result` value (i.e. `{ "tools": [...] }`).
+        let hand_rolled = crate::mcp::server::handle_tools_list(registry.as_ref())
+            .expect("hand-rolled tools/list must succeed for ReadOnlyTools");
+        let hand_rolled_tools = hand_rolled
+            .get("tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .expect("hand-rolled response carries a `tools` array");
+        assert!(
+            !hand_rolled_tools.is_empty(),
+            "ReadOnlyTools must advertise at least one tool — parity test is otherwise vacuous",
+        );
+
+        // -- rmcp adapter path ------------------------------------
+        // Drive a real rmcp client/server pair over an in-memory
+        // duplex — same pattern as the search round-trip test.
+        let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
+        let emitter = Arc::new(RecordingEmitter::new());
+        let activity_ctx = ActivityContext::new(ring, emitter);
+        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
+
+        let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+        let server_task = tokio::spawn(async move {
+            let server = adapter.serve(server_io).await.expect("server handshake");
+            let _ = server.waiting().await;
+        });
+        let client = make_test_client_info()
+            .serve(client_io)
+            .await
+            .expect("client handshake");
+
+        let rmcp_tools = client
+            .list_all_tools()
+            .await
+            .expect("rmcp tools/list round-trip");
+
+        let _ = client.cancel().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
+
+        // -- Cardinality parity -----------------------------------
+        assert_eq!(
+            rmcp_tools.len(),
+            hand_rolled_tools.len(),
+            "tools/list cardinality must match between rmcp adapter and hand-rolled path; \
+             rmcp={} hand_rolled={}",
+            rmcp_tools.len(),
+            hand_rolled_tools.len(),
+        );
+
+        // -- Field-by-field parity --------------------------------
+        // Compare in declaration order — `ReadOnlyTools::list_tools`
+        // returns a stable order (`list_tool_descriptions`'s vec
+        // literal), and rmcp preserves that order through framing.
+        for (idx, (rmcp_tool, hand_tool)) in
+            rmcp_tools.iter().zip(hand_rolled_tools.iter()).enumerate()
+        {
+            // Tool name (`name`) — must be identical.
+            let hand_name = hand_tool
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!("hand-rolled tools[{idx}] is missing `name`: {hand_tool}")
+                });
+            assert_eq!(
+                rmcp_tool.name.as_ref(),
+                hand_name,
+                "tools[{idx}].name drift: rmcp={:?} hand_rolled={:?}",
+                rmcp_tool.name,
+                hand_name,
+            );
+
+            // Tool description (`description`) — must be identical.
+            let hand_desc = hand_tool
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!("hand-rolled tools[{idx}] is missing `description`: {hand_tool}")
+                });
+            let rmcp_desc = rmcp_tool
+                .description
+                .as_deref()
+                .expect("rmcp tool must carry a description");
+            assert_eq!(
+                rmcp_desc, hand_desc,
+                "tools[{idx}].description drift on `{hand_name}`: \
+                 rmcp={rmcp_desc:?} hand_rolled={hand_desc:?}",
+            );
+
+            // Input schema (`inputSchema`) — must be identical.
+            //
+            // MCP spec wire-form is `inputSchema` (camelCase). The
+            // hand-rolled `ToolDescription` carries
+            // `#[serde(rename = "inputSchema")]` so the snake_case
+            // Rust field name does NOT leak onto the wire. rmcp
+            // exposes the schema as `tool.input_schema:
+            // Arc<JsonObject>` on the Rust side, but serialises it
+            // as `inputSchema` over JSON-RPC. The two paths therefore
+            // converge on the same wire field name — no drift to
+            // surface in M1.
+            let hand_schema = hand_tool
+                .get("inputSchema")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "hand-rolled tools[{idx}] is missing `inputSchema` (camelCase wire \
+                         field per MCP spec): {hand_tool}"
+                    )
+                })
+                .clone();
+            // `Tool::input_schema` is `Arc<JsonObject>`; lift it
+            // into a `serde_json::Value` so the equality check is
+            // structural rather than pointer-equal.
+            let rmcp_schema = Value::Object((*rmcp_tool.input_schema).clone());
+            assert_eq!(
+                rmcp_schema, hand_schema,
+                "tools[{idx}].inputSchema drift on `{hand_name}`: \
+                 rmcp={rmcp_schema} hand_rolled={hand_schema}",
+            );
+        }
     }
 }

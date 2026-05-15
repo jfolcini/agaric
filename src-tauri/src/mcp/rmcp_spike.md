@@ -1,12 +1,33 @@
 # MAINT-111 spike — `rmcp` vs hand-rolled JSON-RPC dispatch
 
-> **Verdict: GO (modest scope)** — `rmcp 1.6` cleanly adapts onto the
-> existing `ToolRegistry` trait without owning the registry; the
-> activity-feed, `ActorContext`, and `LAST_APPEND` integration points
-> survive intact; ~250 LOC of pure framing/dispatch in `server.rs`
-> would collapse. The accept loop, lifecycle gate, and per-connection
-> bookkeeping stay agaric-specific. Recommended next step: convert
-> MAINT-111 from "spike" into a concrete 3-milestone migration ticket.
+> **Verdict: M1 LANDED** — `RmcpReadOnlyAdapter` now advertises every
+> tool the `ReadOnlyTools` registry exposes via rmcp's `tools/list`,
+> with a byte-for-byte parity test against the hand-rolled
+> `super::server::handle_tools_list`. Default build is unchanged;
+> production traffic still flows through the hand-rolled framing in
+> `mcp/server.rs`. M2 will route `tools/call` through the same
+> adapter; M3 deletes the hand-rolled framing.
+
+## M1 changelog
+
+- Renamed `RmcpSearchAdapter` → `RmcpReadOnlyAdapter`.
+- Dropped the `name == SEARCH_TOOL_NAME` filter in
+  `RmcpReadOnlyAdapter::list_tools` — the adapter now forwards every
+  `ToolDescription` the registry returns.
+- Added
+  `tests::rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte`,
+  a parity test that builds a real `ReadOnlyTools` registry and asserts
+  rmcp's `tools/list` wire shape matches `handle_tools_list` field-by-field
+  (`name`, `description`, `inputSchema`) for every advertised tool.
+- Exposed `handle_tools_list` as `pub(crate)` and annotated it with an
+  M3-removal comment.
+- Kept `call_tool`'s `SEARCH_TOOL_NAME` early-return; commented the
+  M2-expansion contract in-line so the next milestone has a precise
+  pointer.
+- **Spec-conformance check:** the MCP spec wire-form field is
+  `inputSchema` (camelCase). The hand-rolled `ToolDescription` already
+  serialises via `#[serde(rename = "inputSchema")]`, so both paths
+  emit camelCase — **no drift surfaced in M1**.
 
 This file documents the MAINT-111 spike. It is co-located with
 `rmcp_spike.rs` so the prototype, the test, and the assessment travel
@@ -135,17 +156,22 @@ Three milestones, each independently shippable behind the
 `mcp_rmcp_spike` feature flag (or a successor `mcp_rmcp` flag once
 the spike feature graduates):
 
-### Milestone 1 — route `tools/list` through `rmcp` (S, ~4h)
+### Milestone 1 — route `tools/list` through `rmcp` (S, ~4h) — **LANDED**
 
-- Replace `RmcpSearchAdapter` (the spike's single-tool filter) with a
-  full `RmcpReadOnlyAdapter` that maps every `ToolDescription` from
-  `tools_ro::list_tool_descriptions` into `Tool`.
-- Drop `handle_tools_list` from `server.rs`.
-- Risk: tool-schema serialisation parity — the spike already proved
-  that `ToolDescription.input_schema` (a `serde_json::Value`) maps
-  cleanly into `Tool::new`'s `Arc<JsonObject>`; verify
-  byte-for-byte via the existing `tool_descriptions` insta snapshots
-  in `tools_ro/snapshots/`.
+- ✅ Replaced `RmcpSearchAdapter` (the spike's single-tool filter) with
+  `RmcpReadOnlyAdapter` that maps every `ToolDescription` returned by
+  the underlying `ToolRegistry` (production `ReadOnlyTools` or the
+  in-test mock) into rmcp's `Tool`.
+- ✅ Parity test
+  (`rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte`)
+  drives both paths off a real `ReadOnlyTools` registry built against
+  a tempdir DB; asserts cardinality + `name` + `description` +
+  `inputSchema` parity on every advertised tool.
+- ⏸ `handle_tools_list` stays in `server.rs` until M3 (the function is
+  now `pub(crate)` so the parity test can call it directly, annotated
+  with an "M3 removal" comment).
+- ✅ Spec-conformance check: both paths emit the camelCase
+  `inputSchema` wire field — no drift surfaced.
 
 ### Milestone 2 — route `tools/call` through `rmcp` (M, ~6h)
 
