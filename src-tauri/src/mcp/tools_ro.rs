@@ -922,6 +922,15 @@ mod tests_m82 {
             .and_then(|v| v.as_str())
             .expect("response must include an `id`")
             .to_string();
+        // Drain twice: the first flush catches the create dispatch, the
+        // second catches any Phase-4 cache-rebuild fanout
+        // (RebuildPageLinkCache / RebuildPageIds) the first dispatch
+        // queued. Without the second drain, those rebuilders can hold the
+        // writer lock when the second `call_tool` opens its
+        // BEGIN IMMEDIATE, causing the lookup branch to wait through the
+        // 5s busy_timeout and the whole test to drift to ~30s/retry —
+        // surfaced as a 1-in-3 flake during the M-6 hygiene sweep.
+        mat_split.flush_background().await.unwrap();
         mat_split.flush_background().await.unwrap();
 
         // Second call finds the same page via the lookup branch — no

@@ -1623,17 +1623,24 @@ async fn batch_resolve_returns_matching_blocks() {
     // level get `page_id = NULL`; the pre-§5.3 COALESCE fallback resolved
     // to `b.id`. Stamp `page_id = id` so the post-migration filter
     // (`b.page_id IN (...)`) finds the tag block.
+    // FEAT-3 Phase 7: batch_resolve_inner filters by space; assign both
+    // blocks to the synthetic test space so the membership filter keeps
+    // them in scope.
+    assign_to_test_space(&pool, &b1.id).await;
+    assign_to_test_space(&pool, &b2.id).await;
+    // Drain create-time background dispatches BEFORE the post-stamp page_id
+    // re-UPDATE below — without this, `RebuildPageIds` (one of the §5.3
+    // FULL_CACHE_REBUILD_TASKS) races with the explicit `page_id = id`
+    // stamp above and the rebuilder can overwrite b2.page_id back to NULL
+    // (canonical for tag blocks), dropping the tag from the resolve set.
+    // Surfaced as a 1-in-3 flake during the M-6 hygiene sweep.
+    settle(&mat).await;
     sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
         .bind(&b2.id)
         .bind(&b2.id)
         .execute(&pool)
         .await
         .unwrap();
-    // FEAT-3 Phase 7: batch_resolve_inner filters by space; assign both
-    // blocks to the synthetic test space so the membership filter keeps
-    // them in scope.
-    assign_to_test_space(&pool, &b1.id).await;
-    assign_to_test_space(&pool, &b2.id).await;
 
     let resolved = batch_resolve_inner(
         &pool,
