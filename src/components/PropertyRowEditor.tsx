@@ -1,77 +1,37 @@
 /**
  * PropertyRowEditor — renders a single property row with typed input.
  *
- * Supports text, number, date, select, and ref value types with inline editing.
- * For select properties, includes a popover to manage the set of allowed
- * options (add / remove / save). For ref properties, includes a page picker
- * popover to search and select a linked page.
+ * Supports text, number, date, select, boolean, and ref value types with
+ * inline editing. For select properties, includes a popover to manage the
+ * set of allowed options (add / remove / save). For ref properties, includes
+ * a page picker popover to search and select a linked page.
  *
- * Extracted from PagePropertyTable for reuse.
+ * The shared state (`localValue`, the date hook, the select-options popover
+ * state, the ref-picker state, and the various callbacks) lives in
+ * {@link usePropertyRowEditor}; this file is the orchestrator that dispatches
+ * on `def.value_type` and renders the row layout (label + editor slot +
+ * trailing affordances + delete button).
+ *
+ * Decomposition history: MAINT-128 — split out of a 575-LOC monolith.
  */
 
-import { ArrowDown, ArrowUp, FileSearch, Lock, Pencil, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Spinner } from '@/components/ui/spinner'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { matchesSearchFolded } from '@/lib/fold-for-search'
-import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
-import { useDateInput } from '../hooks/useDateInput'
-import { setPriorityLevels } from '../lib/priority-levels'
-import type { PageHeading, PropertyDefinition, PropertyRow } from '../lib/tauri'
-import { listAllPagesInSpace, setProperty, updatePropertyDefOptions } from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
-import { EmptyState } from './EmptyState'
-
-/**
- * Extract the canonical string value for the current property, picking the
- * first non-null typed slot. Lifted out of the component body so the main
- * function stays under Biome's cognitive-complexity budget.
- */
-function readCurrentValue(prop: PropertyRow): string {
-  if (prop.value_ref != null) return prop.value_ref
-  if (prop.value_text != null) return prop.value_text
-  if (prop.value_num != null) return String(prop.value_num)
-  if (prop.value_date != null) return prop.value_date
-  return ''
-}
-
-/**
- * Parse the JSON-encoded `options` field from a select-type property def.
- * Returns an empty array on missing / malformed JSON / non-array payloads.
- */
-function parseSelectOptions(def: PropertyDefinition | undefined): string[] {
-  if (def?.value_type !== 'select' || !def.options) return []
-  try {
-    const parsed = JSON.parse(def.options)
-    return Array.isArray(parsed) ? parsed : []
-  } catch (err) {
-    logger.warn(
-      'PropertyRowEditor',
-      'failed to parse select options JSON',
-      { key: def.key, options: def.options },
-      err,
-    )
-    return []
-  }
-}
+import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
+import { BooleanEditor } from './PropertyRowEditor/BooleanEditor'
+import { DateEditor } from './PropertyRowEditor/DateEditor'
+import { NumberEditor } from './PropertyRowEditor/NumberEditor'
+import { RefEditor } from './PropertyRowEditor/RefEditor'
+import { SelectEditor, SelectOptionsAffordance } from './PropertyRowEditor/SelectEditor'
+import { TextEditor } from './PropertyRowEditor/TextEditor'
+import {
+  type UsePropertyRowEditorReturn,
+  usePropertyRowEditor,
+} from './PropertyRowEditor/usePropertyRowEditor'
 
 export interface PropertyRowEditorProps {
   blockId: string
@@ -90,7 +50,6 @@ export interface PropertyRowEditorProps {
   onCreateNewPage?: ((title: string) => void | Promise<void>) | undefined
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: orchestrates 5 property types (text/number/date/ref/select) with per-type editors, validation, and three popovers; splitting the JSX into sub-components would push state + callbacks through prop chains for marginal benefit. Score 28 vs default 25.
 export function PropertyRowEditor({
   blockId,
   prop,
@@ -102,223 +61,16 @@ export function PropertyRowEditor({
   onCreateNewPage,
 }: PropertyRowEditorProps) {
   const { t } = useTranslation()
-  const valueType = def?.value_type ?? 'text'
-  const resolveTitle = useResolveStore((s) => s.resolveTitle)
-  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-
-  const currentValue = readCurrentValue(prop)
-
-  const [localValue, setLocalValue] = useState(currentValue)
-
-  // Sync localValue when prop changes externally
-  useEffect(() => {
-    setLocalValue(currentValue)
-  }, [currentValue])
-
-  // Date input hook (M-29) — always called, values used only for date type
-  const dateSave = useCallback(
-    (isoDate: string) => {
-      if (isoDate !== currentValue) onSave(isoDate)
-    },
-    [currentValue, onSave],
-  )
-  const {
-    dateInput,
-    datePreview,
-    handleChange: handleDateChange,
-    handleBlur: handleDateBlur,
-  } = useDateInput({
-    initialValue: currentValue,
-    onSave: valueType === 'date' ? dateSave : undefined,
+  const bag = usePropertyRowEditor({
+    blockId,
+    prop,
+    def,
+    onSave,
+    onDefUpdated,
+    onRefSaved,
+    onCreateNewPage,
   })
-
-  const handleBlur = useCallback(() => {
-    if (valueType === 'date') {
-      handleDateBlur()
-      return
-    }
-    if (localValue !== currentValue) {
-      onSave(localValue)
-    }
-  }, [localValue, currentValue, onSave, valueType, handleDateBlur])
-
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (valueType === 'date') {
-        handleDateChange(e)
-      } else {
-        setLocalValue(e.target.value)
-      }
-    },
-    [valueType, handleDateChange],
-  )
-
-  const handleSelectChange = useCallback(
-    (val: string) => {
-      const resolved = val === '__none__' ? '' : val
-      setLocalValue(resolved)
-      onSave(resolved)
-    },
-    [onSave],
-  )
-
-  const selectOptions = parseSelectOptions(def)
-
-  // --- Edit select options popover state ---
-  const [editOptionsOpen, setEditOptionsOpen] = useState(false)
-  const [editingOptions, setEditingOptions] = useState<string[]>([])
-  const [newOptionInput, setNewOptionInput] = useState('')
-
-  const handleOpenEditOptions = useCallback(() => {
-    setEditingOptions([...selectOptions])
-    setNewOptionInput('')
-    setEditOptionsOpen(true)
-  }, [selectOptions])
-
-  const handleRemoveOption = useCallback((opt: string) => {
-    setEditingOptions((prev) => prev.filter((o) => o !== opt))
-  }, [])
-
-  const handleMoveOption = useCallback((opt: string, direction: 'up' | 'down') => {
-    setEditingOptions((prev) => {
-      const idx = prev.indexOf(opt)
-      if (idx === -1) return prev
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1
-      if (targetIdx < 0 || targetIdx >= prev.length) return prev
-      const next = [...prev]
-      const tmp = next[idx] as string
-      next[idx] = next[targetIdx] as string
-      next[targetIdx] = tmp
-      return next
-    })
-  }, [])
-
-  const handleAddOption = useCallback(() => {
-    const trimmed = newOptionInput.trim()
-    if (!trimmed) return
-    setEditingOptions((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]))
-    setNewOptionInput('')
-  }, [newOptionInput])
-
-  const newOptionTrimmed = newOptionInput.trim()
-  const canAddOption = newOptionTrimmed.length > 0
-
-  const handleSaveOptions = useCallback(async () => {
-    if (!def) return
-    try {
-      const updatedDef = await updatePropertyDefOptions(def.key, JSON.stringify(editingOptions))
-      onDefUpdated?.(updatedDef)
-      setEditOptionsOpen(false)
-      // UX-201b: keep the priority-levels cache in sync when editing the
-      // `priority` definition from the block-level editor.
-      if (def.key === 'priority') {
-        const levels = editingOptions.filter((v) => typeof v === 'string' && v.trim() !== '')
-        if (levels.length > 0) setPriorityLevels(levels)
-      }
-    } catch (err) {
-      logger.error(
-        'PropertyRowEditor',
-        'Failed to update select options',
-        {
-          key: def?.key ?? '',
-        },
-        err,
-      )
-      notify.error(t('pageProperty.updateOptionsFailed'))
-    }
-  }, [def, editingOptions, onDefUpdated, t])
-
-  // --- Ref picker popover state ---
-  const [refPickerOpen, setRefPickerOpen] = useState(false)
-  const [refPages, setRefPages] = useState<PageHeading[]>([])
-  const [refSearch, setRefSearch] = useState('')
-  /** UX-272 sub-fix 8 — id of the page currently being saved, or null. */
-  const [savingRefPageId, setSavingRefPageId] = useState<string | null>(null)
-
-  const handleOpenRefPicker = useCallback(() => {
-    setRefSearch('')
-    // MAINT-181: the `<Popover>` above is controlled via `refPickerOpen`
-    // but `<PopoverTrigger asChild>` makes Radix call `onOpenChange(true)`
-    // on the trigger button's click before this handler runs, so the
-    // popover is already open when we get here. The fix is twofold:
-    // (1) reaffirm `setRefPickerOpen(true)` only after a successful
-    // load so the open state is stable on success (also clears any
-    // half-mounted state from a prior fast-rejection); (2) on rejection
-    // close the popover explicitly so the user doesn't stare at an
-    // empty "Select page" list with no indication that the load failed.
-    // The toast + `logger.error` on the catch path remains the only
-    // failure surface the user sees.
-    // FEAT-3 Phase 4 — `listAllPagesInSpace` requires `spaceId`.  The
-    // `?? ''` fallback is intentional pre-bootstrap behaviour: empty
-    // string forces a no-match SQL filter rather than a runtime null
-    // deref.  `listAllPagesInSpace` has no clamp (the ref picker filters
-    // client-side), so any workspace size shows up correctly here.
-    listAllPagesInSpace(currentSpaceId ?? '')
-      .then((pages) => {
-        setRefPages(pages)
-        setRefPickerOpen(true)
-      })
-      .catch((err: unknown) => {
-        logger.error('PropertyRowEditor', 'Failed to load pages for ref picker', undefined, err)
-        notify.error(t('pageProperty.loadPagesFailed'))
-        setRefPages([])
-        setRefPickerOpen(false)
-      })
-  }, [t, currentSpaceId])
-
-  const filteredRefPages = useMemo(() => {
-    if (!refSearch) return refPages
-    // UX-248 — Unicode-aware fold.
-    return refPages.filter((p) => matchesSearchFolded(p.content || '', refSearch))
-  }, [refPages, refSearch])
-
-  const handleSelectRefPage = useCallback(
-    async (page: PageHeading) => {
-      // UX-272 sub-fix 8 — show a Spinner gated on the same Promise as the
-      // save so it never sticks if the IPC call rejects.
-      setSavingRefPageId(page.id)
-      try {
-        await setProperty({ blockId, key: prop.key, valueRef: page.id })
-        onRefSaved?.()
-        setRefPickerOpen(false)
-      } catch (err) {
-        logger.error(
-          'PropertyRowEditor',
-          'Failed to save ref property',
-          {
-            blockId,
-            key: prop.key,
-          },
-          err,
-        )
-        notify.error(t('pageProperty.saveFailed'))
-      } finally {
-        setSavingRefPageId(null)
-      }
-    },
-    [blockId, prop.key, onRefSaved, t],
-  )
-
-  const handleCreateNewPage = useCallback(async () => {
-    if (!onCreateNewPage) return
-    const title = refSearch.trim()
-    if (!title) return
-    try {
-      await onCreateNewPage(title)
-      setRefPickerOpen(false)
-    } catch (err) {
-      logger.error(
-        'PropertyRowEditor',
-        'Failed to create page from ref picker',
-        { blockId, key: prop.key, title },
-        err,
-      )
-      notify.error(t('pageProperty.saveFailed'))
-    }
-  }, [onCreateNewPage, refSearch, blockId, prop.key, t])
-
-  const refDisplayTitle =
-    valueType === 'ref' && prop.value_ref ? resolveTitle(prop.value_ref) : null
+  const valueLabel = t('pageProperty.valueLabel', { key: prop.key })
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
@@ -326,238 +78,20 @@ export function PropertyRowEditor({
         {formatPropertyName(prop.key)}
       </Badge>
       <div className="flex-1">
-        {valueType === 'ref' ? (
-          <Popover open={refPickerOpen} onOpenChange={setRefPickerOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-full justify-start text-xs font-normal"
-                onClick={handleOpenRefPicker}
-                aria-label={t('pageProperty.valueLabel', { key: prop.key })}
-              >
-                {refDisplayTitle || (
-                  <span className="text-muted-foreground">{t('block.searchPages')}</span>
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              className="w-56 space-y-1 p-2 max-w-[calc(100vw-2rem)]"
-              aria-label={t('block.refPickerLabel')}
-            >
-              <Input
-                className="h-7 text-xs"
-                placeholder={t('block.searchPages')}
-                value={refSearch}
-                onChange={(e) => setRefSearch(e.target.value)}
-                aria-label={t('block.searchPages')}
-                autoFocus
-              />
-              <ScrollArea className="max-h-48">
-                <div className="flex flex-col gap-0.5" aria-busy={savingRefPageId !== null}>
-                  {filteredRefPages.length === 0 ? (
-                    <EmptyState
-                      icon={FileSearch}
-                      message={t('properties.refPickerEmptyTitle')}
-                      description={t('properties.refPickerEmptyDescription')}
-                      compact
-                      action={
-                        onCreateNewPage && refSearch.trim() ? (
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            className="mt-2 gap-1 text-muted-foreground"
-                            onClick={handleCreateNewPage}
-                            data-testid="ref-picker-create-page"
-                          >
-                            <Plus className="h-3 w-3" />
-                            {t('properties.createNewPageAction', { name: refSearch.trim() })}
-                          </Button>
-                        ) : undefined
-                      }
-                    />
-                  ) : (
-                    filteredRefPages.map((page) => {
-                      const saving = savingRefPageId === page.id
-                      return (
-                        <button
-                          key={page.id}
-                          type="button"
-                          className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent truncate flex items-center gap-1.5 disabled:opacity-60"
-                          onClick={() => handleSelectRefPage(page)}
-                          disabled={savingRefPageId !== null}
-                          aria-busy={saving}
-                        >
-                          {saving && (
-                            <Spinner size="sm" aria-label={t('properties.savingRefValue')} />
-                          )}
-                          <span className="truncate">{page.content || t('block.untitled')}</span>
-                        </button>
-                      )
-                    })
-                  )}
-                </div>
-              </ScrollArea>
-            </PopoverContent>
-          </Popover>
-        ) : valueType === 'boolean' ? (
-          <Checkbox
-            checked={prop.value_bool === null ? 'indeterminate' : prop.value_bool === 1}
-            onCheckedChange={(checked) => {
-              onSave(checked === true ? 'true' : 'false')
-            }}
-            aria-label={t('property.booleanToggle', { key: prop.key })}
-          />
-        ) : valueType === 'select' ? (
-          <Select value={localValue || '__none__'} onValueChange={handleSelectChange}>
-            <SelectTrigger
-              className="w-full"
-              aria-label={t('pageProperty.valueLabel', { key: prop.key })}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t('pageProperty.emptyOption')}</SelectItem>
-              {selectOptions.map((opt) => (
-                <SelectItem key={opt} value={opt}>
-                  {opt}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <>
-            <Input
-              className="h-7 text-xs"
-              type={valueType === 'number' ? 'number' : 'text'}
-              value={valueType === 'date' ? dateInput : localValue}
-              placeholder={valueType === 'date' ? t('property.datePlaceholder') : undefined}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              }}
-              aria-label={t('pageProperty.valueLabel', { key: prop.key })}
-            />
-            {valueType === 'date' && datePreview && (
-              <p className="text-xs text-muted-foreground mt-0.5">{datePreview}</p>
-            )}
-          </>
-        )}
+        <EditorSlot
+          bag={bag}
+          prop={prop}
+          onSave={onSave}
+          valueLabel={valueLabel}
+          hasCreateNewPage={onCreateNewPage != null}
+        />
       </div>
-      {valueType === 'select' && LOCKED_PROPERTY_OPTIONS.has(prop.key) && (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground"
-                data-testid={`locked-options-${prop.key}`}
-              >
-                <Lock className="h-3 w-3" aria-hidden="true" />
-                {t('propertiesView.optionsLocked')}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
-      {valueType === 'select' && !LOCKED_PROPERTY_OPTIONS.has(prop.key) && (
-        <Popover open={editOptionsOpen} onOpenChange={setEditOptionsOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="shrink-0 text-muted-foreground"
-              onClick={handleOpenEditOptions}
-              aria-label={t('pageProperty.editOptionsLabel', { key: prop.key })}
-            >
-              <Pencil className="h-3 w-3" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            className="w-56 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
-            aria-label={t('pageProperty.editOptionsLabel', { key: prop.key })}
-          >
-            <div
-              className="flex items-center justify-between"
-              data-testid={`options-editor-header-${prop.key}`}
-            >
-              <span className="text-xs font-medium text-muted-foreground">
-                {t('pageProperty.editOptionsLabel', { key: prop.key })}
-              </span>
-              <Badge variant="outline" className="text-xs" data-testid="options-count-badge">
-                {t('properties.optionsCount', { count: editingOptions.length })}
-              </Badge>
-            </div>
-            <ScrollArea className="max-h-32">
-              <div className="space-y-1">
-                {editingOptions.map((opt, idx) => (
-                  <div
-                    key={opt}
-                    className="flex items-center justify-between gap-1 rounded px-1 py-0.5 text-sm hover:bg-accent"
-                  >
-                    <span className="truncate flex-1">{opt}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="shrink-0 text-muted-foreground"
-                      onClick={() => handleMoveOption(opt, 'up')}
-                      disabled={idx === 0}
-                      aria-label={t('properties.moveOptionUp', { option: opt })}
-                    >
-                      <ArrowUp className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="shrink-0 text-muted-foreground"
-                      onClick={() => handleMoveOption(opt, 'down')}
-                      disabled={idx === editingOptions.length - 1}
-                      aria-label={t('properties.moveOptionDown', { option: opt })}
-                    >
-                      <ArrowDown className="h-3 w-3" />
-                    </Button>
-                    <button
-                      type="button"
-                      className="shrink-0 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                      onClick={() => handleRemoveOption(opt)}
-                      aria-label={t('pageProperty.removeOptionLabel', { option: opt })}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-            <div className="flex gap-1">
-              <Input
-                className="h-7 flex-1 text-xs"
-                placeholder={t('pageProperty.newOptionPlaceholder')}
-                value={newOptionInput}
-                onChange={(e) => setNewOptionInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    handleAddOption()
-                  }
-                }}
-                aria-label={t('pageProperty.newOptionLabel')}
-              />
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={handleAddOption}
-                disabled={!canAddOption}
-                aria-label={t('pageProperty.addOptionLabel')}
-              >
-                <Plus className="h-3 w-3" />
-              </Button>
-            </div>
-            <Button size="sm" className="w-full" onClick={handleSaveOptions}>
-              {t('pageProperty.saveOptionsButton')}
-            </Button>
-          </PopoverContent>
-        </Popover>
+      {bag.valueType === 'select' && (
+        <SelectOptionsAffordance
+          propKey={prop.key}
+          locked={LOCKED_PROPERTY_OPTIONS.has(prop.key)}
+          state={bag.selectOptions}
+        />
       )}
       {onDelete && (
         <Button
@@ -572,4 +106,36 @@ export function PropertyRowEditor({
       )}
     </div>
   )
+}
+
+interface EditorSlotProps {
+  bag: UsePropertyRowEditorReturn
+  prop: PropertyRow
+  onSave: (rawValue: string) => void
+  valueLabel: string
+  hasCreateNewPage: boolean
+}
+
+function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage }: EditorSlotProps) {
+  switch (bag.valueType) {
+    case 'ref':
+      return (
+        <RefEditor
+          prop={prop}
+          state={bag.refPicker}
+          ariaLabel={valueLabel}
+          hasCreateNewPage={hasCreateNewPage}
+        />
+      )
+    case 'boolean':
+      return <BooleanEditor prop={prop} onSave={onSave} />
+    case 'select':
+      return <SelectEditor state={bag.select} ariaLabel={valueLabel} />
+    case 'number':
+      return <NumberEditor state={bag.textLike} ariaLabel={valueLabel} />
+    case 'date':
+      return <DateEditor state={bag.date} ariaLabel={valueLabel} />
+    default:
+      return <TextEditor state={bag.textLike} ariaLabel={valueLabel} />
+  }
 }
