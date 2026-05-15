@@ -402,7 +402,7 @@ export function PropertyRowEditor({
           </Popover>
         ) : valueType === 'boolean' ? (
           <Checkbox
-            checked={prop.value_bool === 1}
+            checked={prop.value_bool === null ? 'indeterminate' : prop.value_bool === 1}
             onCheckedChange={(checked) => {
               onSave(checked === true ? 'true' : 'false')
             }}

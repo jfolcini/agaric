@@ -1110,12 +1110,20 @@ pub async fn compute_block_vs_current_diff_inner(
     //    `<`); the inclusive bound is what makes this snap to the
     //    state PRODUCED by `historical_seq` rather than the state
     //    immediately before it.
+    //
+    // MAINT-218: ORDER BY `created_at DESC, seq DESC` (not `seq DESC`
+    // alone) to mirror `find_prior_text`'s cross-device tie-break. The
+    // op_log PK is (device_id, seq); seq alone is not globally unique,
+    // so when two devices have ops at the same seq value for the same
+    // block, sorting by seq alone leaves the LIMIT 1 winner undefined.
+    // Sorting by `created_at` first picks the latest wall-clock op,
+    // matching the user's mental model of "most recent change".
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND op_type IN ('edit_block', 'create_block') \
            AND seq <= ?2 \
-         ORDER BY seq DESC \
+         ORDER BY created_at DESC, seq DESC \
          LIMIT 1",
         block_id_upper,
         historical_seq,

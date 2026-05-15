@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-16 open items in the summary table; 18 detail entries (FE-* sub-tables don't appear in the summary).
+18 open items in the summary table; 17 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -36,32 +36,22 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-194 | MAINT | `useBlockKeyboard` listener-attach perf — re-do MAINT-185 correctly (post-revert). Original ref-bag pattern broke listener stale-element invariant; need to memoize callbacks at call site OR add explicit `editor.view.dom.parentElement` watcher. | M | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 59 remaining GitHub Actions findings after closing `template-injection` × 6 (MAINT-114), `artipacked` × 6 (added `persist-credentials: false`), `excessive-permissions` × 1 (per-job perms in `release.yml`). Remaining: `unpinned-uses` × 35 (policy decision — SHA pinning via Renovate) + `cache-poisoning` × 24 (design call on tag-build caching). | M | — |
 | MAINT-196 | MAINT | Projected-agenda projection path drift: `list_projected_agenda_inner` cached path emits 112 entries for a `.+1w` block over a 390-day window vs 110 from `list_projected_agenda_on_the_fly` — a real 2-entry divergence on the dot-plus completion-based mode. Surfaced by the PEND-05 parity test (now `#[ignore]`d in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`); A/B/C/E blocks are in parity. The deeper fix is to refactor the projection logic into a single function called by both paths, eliminating the drift surface entirely. Re-enable the parity test once the refactor lands. | M | — |
-| MAINT-198 | MAINT | `PropertyRowEditor` boolean cell renders unchecked for both `value_bool === null` ("no value") and `value_bool === 0` ("false"). PEND-14's plan endorsed this conflation, but Radix Checkbox supports `checked="indeterminate"` which would distinguish the two. Reverses the plan's open-question #1 decision; do not land without a fresh user signal. | S | User signal (reverses PEND-14 plan decision) |
-| MAINT-91 | MAINT | `oauth2` v5.0 still pins `reqwest ^0.12` while the repo pins `reqwest 0.13.2` (rustls everywhere). Drop the `reqwest` feature on the `oauth2` dependency and write a custom `AsyncHttpClient` adapter over reqwest 0.13. Adapter requires re-typing `OAuthClient::http_client` and `classify_refresh_error`'s generic error parameter. Revisit when `oauth2` tracks `reqwest 0.13`, or as a standalone refactor. Cited in `src-tauri/Cargo.toml:158-166` (oauth2 declaration) and `:137` (FEAT-5c / MAINT-91 reqwest pin block). Deferred from PEND-25 M2 (Rust perf review, session 661); the deeper duplicate-`reqwest 0.12` pull is the perf concern that justifies the refactor. | M | — |
 | MAINT-208 | MAINT | PEND-25 M1 deferred — three deferrable `block_on` calls in `src-tauri/src/lib.rs:637, 741, 1083` (link cleanup, space migration, gcal migration) at startup. Per the PEND-25 plan body, only act if Android boot profile shows >100 ms cumulative cost; on desktop the headroom is irrelevant. Profile `adb shell am start -W` with `tracing::info!` instrumentation before refactoring; if confirmed, defer to a post-window-show task. Conditional. | M (4-7h) | Android boot profile data |
 | MAINT-209 | MAINT | PEND-25 L15 + L16 deferred — gcal connector channel + agenda fetch hygiene. (L15) `mpsc::UnboundedSender<DirtyEvent>` in `src-tauri/src/gcal_push/connector.rs:255` is unbounded; defensive bounded channel + `try_send` only matters if a fast producer overruns the consumer (no observed instance today). (L16) `connector.rs:486, 589-595` makes per-date agenda fetches in a loop instead of one `list_projected_agenda_inner(min_date, max_date)` call; only matters when the gcal push window grows beyond a handful of days. Both are speculative — only pursue if profiling shows a concrete need. | S-M (~3h together) | Profiling data showing gcal contention |
-| MAINT-212 | MAINT | `MAX_RETAINED = 10` in `src/stores/recent-pages.ts` was sized for the pre-PEND-32 grid layout (which wrapped to 2 rows beyond ~7 chips). Now that the strip scrolls horizontally on a single fixed-height row, the cap could be raised (15-20) to retain longer history without hurting layout. Independent UX call; pursue when the user wants longer recents. | trivial | UX call on retention depth |
-| MAINT-213 | MAINT | PEND-24 M4 follow-up — frontend distinct UX for 401/403 (sign-in card) vs 404/410 (gone) vs 5xx (transient/retry). Today the backend short-circuits on every non-2xx and returns minimal metadata; only `auth_required` is persisted. Adding a `not_found` boolean to `LinkMetadata` (+ migration + `link_metadata` table column + serde default-false on existing rows) would let the frontend distinguish "signed-out" from "page is gone" from "server flaked". File when the link card UI rework wants the distinction. | S-M (Rust column + frontend chrome) | Frontend rework that wants the distinction |
-| MAINT-218 | MAINT | PEND-17 Part B `compute_block_vs_current_diff_inner` ignores `device_id` (multi-device correctness edge case). The `op_log` table PK is `(device_id, seq)` and `seq` alone is not globally unique. The new query in `src-tauri/src/commands/history.rs:837-859` filters by `seq <= ?2` only, so when two devices have ops at the same seq value for the same block, the `ORDER BY seq DESC LIMIT 1` tie-break is undefined. Single-device users unaffected (rare in practice). The companion `find_prior_text` (`reverse/block_ops.rs:107-131`) sorts by `created_at DESC, seq DESC` for cross-device correctness — mirror that pattern OR accept `(device_id, seq)` together. Same edge case surfaces in `expandedSeq: number \| null` keyed only by `seq` in `src/components/HistoryPanel.tsx:50`. | S | Multi-device user reports needed |
-| ~~MAINT-220~~ | ~~MAINT~~ | ~~PEND-17 Part B non-restorable rows in `BlockHistoryItem` lack the `Lock` icon + "Non-reversible" tooltip that the legacy `HistoryListItem` provides for the same case in the multi-block grid view. After the redesign, non-restorable rows just look like restorable ones that don't respond to clicks — no visible explanation. Re-add the lock affordance + tooltip from the legacy path (`HistoryListItem.tsx:330-344`) so users understand why the row is inert.~~ **CLOSED session 679** — Lock icon + i18n-driven "Non-reversible action" label rendered alongside the row content in the non-restorable branch of `BlockHistoryItem` (`HistoryListItem.tsx:540-562`); `Tooltip` shows the existing `history.nonReversibleTooltip` translation. 2 vitest cases assert the affordance is present on `create_block` rows and absent on `edit_block` rows. Reused i18n keys, no new translations needed. | trivial | — |
-| MAINT-228 | MAINT | `resolve_block_space` (PEND-15 Phase 2 helper, session 679) returns `None` for content blocks whose owning page has been soft-deleted or marked `is_conflict=1`. The helper's SQL adds an outer `JOIN blocks tgt … AND tgt.is_conflict = 0 AND tgt.deleted_at IS NULL` so the property-holding block must also be live. **This deviates from the canonical inlined space-filter pattern at the 19 production sites** (cf. `space_filter_canonical.rs` — those only filter the calling query's `b` row, not the property-holder, so they would return the soft-deleted page's space rather than `None`). The helper has no callers yet (Phase 2 enforcement wiring is gated on the user's Path A/B decision), so the divergence is not yet observable at runtime. **Reconsider when Phase 2 sub-tasks wire `resolve_block_space` into entry points** (`set_property` ref-type validation, `edit_block` content-scan, etc.). Two options at that point: (a) keep the JOIN — orphaned content blocks have `None` space, treated as "not in any space" by enforcement (more aggressive); (b) drop the JOIN — orphaned blocks resolve to their soft-deleted page's space, treated as if the page were still live (more lenient, matches the canonical inlined pattern). The choice affects whether ref-property writes to soft-deleted blocks pass cross-space validation. Cost: trivial (1-line SQL change + 2 test assertions adjusted). | trivial | — |
-| MAINT-226 | MAINT | `src/lib/tauri-mock/handlers.ts` mock-handler space-scope gap. Pre-existing condition (NOT introduced by PEND-18 Phase 3) — surfaced by Phase 3's UX reviewer. 14 of 15 mock handlers (`list_undated_tasks`, `query_by_property`, `query_by_tags`, `get_backlinks`, `batch_resolve`, `count_agenda_batch`, `count_agenda_batch_by_source`, `query_backlinks_filtered`, `list_backlinks_grouped`, `list_unlinked_references`, `list_projected_agenda`, `list_page_links`, `list_page_history`, `create_block`) ignore the space-scope arg entirely (legacy `spaceId: string \| null` pre-Phase-3, new `scope: SpaceScope` post-Phase-3). Only `list_page_aliases_by_prefix` correctly filters by space (PEND-34 Q3 + Phase 3 update). Impact: browser-dev (vite dev without Tauri) and any vitest tests routing through the tauri-mock layer (rather than `vi.mocked(invoke)`) won't catch space-scoping bugs. The wire-format test layer (`src/lib/__tests__/tauri.test.ts`'s 37 assertions) DOES verify the wrapper passes the correct `scope` shape, so production behavior is fully tested. Fix: extend each mock handler with the `scope` extraction + filtering pattern from `list_page_aliases_by_prefix` (line 1241-1253). Cost: M (touch 14 handlers + add per-handler tests). Defer until a concrete browser-dev or e2e bug surfaces — current frontend test architecture (mocking `invoke()` directly per-component) makes this gap low-risk. | M | — |
+| MAINT-213 | MAINT | PEND-24 M4 follow-up — frontend distinct UX for 401/403 (sign-in card) vs 404/410 (gone) vs 5xx (transient/retry). Today the backend short-circuits on every non-2xx and returns minimal metadata; only `auth_required` is persisted. Adding a `not_found` boolean to `LinkMetadata` (+ migration + `link_metadata` table column + serde default-false on existing rows) would let the frontend distinguish "signed-out" from "page is gone" from "server flaked". | S-M (Rust column + frontend chrome) | — |
+| MAINT-226 | MAINT | `src/lib/tauri-mock/handlers.ts` mock-handler space-scope gap. 14 of 15 mock handlers ignore the space-scope arg. Only `list_page_aliases_by_prefix` correctly filters by space. Browser-dev (vite without Tauri) + vitest tests routing through tauri-mock won't catch space-scoping bugs. Fix: extend each handler with the `scope` extraction pattern from `list_page_aliases_by_prefix:1241-1253`. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
-| PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
-| PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 
 ### Quick wins (S-cost, ready to grab)
 
 These can be tackled in a single session with low risk — listed for prioritization convenience (canonical entries remain in the per-section detail blocks below):
 
 - **MAINT-192** — 2 AGENTS.md additions (picker-debouncing convention; `INTERNAL_PROPERTY_KEYS` reference) — gated on user approval to edit AGENTS.md
-- **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
 
 > **`PERF-19` and `PERF-20` are NOT quick-grab items** despite their summary-table presence — read their detail entries: both end with `**Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix`. They are listed only so the loops aren't reinvented as "fixes" later. Skip them in batch-picking.
 
-> **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
-> PUB-5 is ACTIONABLE; PUB-3 remains DEFERRED on the employer-IP decision. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
+> **Desktop code signing remains out of scope.** macOS + Windows bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. See `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
 
 ---
 
@@ -448,29 +438,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Medium — invisible-but-real correctness bug, plus enabling the safety-net test prevents future drift.
 - **Status:** Open. Filed during PEND-05 close (session 654).
 
-### MAINT-198 — `PropertyRowEditor` boolean cell could use `indeterminate` for `value_bool === null`
-
-- **Domain:** Frontend / Properties
-- **Location:** `src/components/PropertyRowEditor.tsx:401-416` (`prop.value_bool === 1`)
-- **What:** Today the boolean checkbox renders unchecked when `prop.value_bool` is `null` (no value set yet) AND when it is `0` (explicitly false). The PEND-14 plan's open-question #1 endorsed this conflation ("absence of the property row = absence of value, distinct from `false`"), but Radix Checkbox supports `checked="indeterminate"` which would visually distinguish "not yet set" from "set to false". The current behavior silently commits the row to `false` on first toggle.
-- **Why it matters:** UX clarity for unset booleans. Low-impact for the current property surface (where boolean props are typically toggled deliberately), but matters more if the boolean type ever ships with import/migration paths that produce null values.
-- **Cost:** S — change `checked={prop.value_bool === 1}` to `checked={prop.value_bool === null ? 'indeterminate' : prop.value_bool === 1}` and add a test for the indeterminate render. May also need a primitive update to ensure the indeterminate visual is well-defined.
-- **Risk:** Low — purely additive UX clarity. Reverses the plan's open-question #1 decision; needs explicit user nod before landing.
-- **Impact:** Low.
-- **Status:** Open. Filed during PEND-14 close (session 657). Reverses the plan's deliberate decision; do not land without a fresh user signal.
-
-### MAINT-91 — `oauth2` v5 still pins `reqwest 0.12`; need adapter over reqwest 0.13
-
-- **Domain:** Backend / dependency hygiene
-- **Locations:** `src-tauri/Cargo.toml:158-166` (oauth2 declaration), `:137` (FEAT-5c / MAINT-91 reqwest pin block).
-- **What:** `oauth2 v5.0` pins `reqwest ^0.12` via its built-in `reqwest` feature, while the rest of the repo pins `reqwest 0.13.2` (rustls everywhere). This drags a duplicate `reqwest 0.12` slice into the dep graph. The repo selects `rustls-tls` so both reqwest slices use the same TLS stack at link time, but the duplicate compile cost + binary size is real.
-- **Why it matters:** Single-TLS-stack posture is preserved (good), but every `cargo build` recompiles two `reqwest` slices and the resulting binary carries both. Not a correctness issue.
-- **Fix:** Drop the `reqwest` feature on the `oauth2` dep and write a custom `AsyncHttpClient` adapter over `reqwest 0.13`. Adapter requires re-typing `OAuthClient::http_client` and `classify_refresh_error`'s generic error parameter.
-- **Cost:** M.
-- **Risk:** Medium — touches `commands/oauth.rs` + `gcal_oauth/*` end-to-end; the type-parameter expansion ripples.
-- **Impact:** Medium (perf — single reqwest slice instead of two; smaller binary).
-- **Status:** Open. FEAT-5c declined to take it on (out of scope). Re-evaluate when `oauth2` tracks `reqwest 0.13`, or as a standalone refactor. Surfaced as PEND-25 M2 (session 661 confirmed it's still open as MAINT-91).
-
 ### MAINT-208 — PEND-25 M1: defer 3 `block_on` startup calls (Android boot perf)
 
 - **Domain:** Backend / startup performance (Android-conditional)
@@ -495,18 +462,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low (defensive changes).
 - **Impact:** Low today; medium if gcal push usage grows.
 - **Status:** Open, speculative. Surface concrete profiling data showing gcal contention before pursuing. Filed from PEND-25 (session 661).
-
-### MAINT-212 — `RecentPagesStrip` `MAX_RETAINED` cap can be raised post-PEND-32
-
-- **Domain:** Frontend / UX
-- **Location:** `src/stores/recent-pages.ts` (`MAX_RETAINED = 10`)
-- **What:** The cap was sized for the pre-PEND-32 grid layout, where >7 chips wrapped to a second row. PEND-32 makes the strip a single fixed-height scrollable row, so longer history (15-20 entries) no longer hurts layout. The right number depends on user retention preference, not engineering constraints.
-- **Why it matters:** Retains a longer "places I just was" trail without UI penalty.
-- **Fix:** Bump the constant; one-line change. Verify `RecentPagesStrip` test still passes.
-- **Cost:** trivial.
-- **Risk:** Low.
-- **Impact:** Medium (longer history) — depends on user signal.
-- **Status:** Open, gated on UX call. Filed from PEND-32 plan + UX reviewer (this session).
 
 ## TEST — Backend test improvements
 
@@ -567,39 +522,6 @@ Or a simpler cap: reject filter lists longer than some reasonable limit (e.g., 1
 
 ---
 
-
-### PUB-3 — Employer IP clearance before public release
-
-**Problem:** Most employment agreements in AR/US/EU include IP-assignment clauses that cover work done on company devices, on company time, or in the employer's line of business. (Note: the corporate-email-in-history concern that PUB-2 originally tracked is no longer present — `git log --all --format='%ae' | sort -u` returns only the personal email — but the underlying IP-clearance question stands independently.) Even for a side project unrelated to the employer's business, publishing substantial software without checking the employment contract carries legal risk that a coding agent cannot assess.
-
-**Options:**
-1. **Review the employment contract** (and any IP-assignment addenda signed during onboarding) for clauses covering personal projects. Common concerns: "on company time", "using company equipment", "related to the employer's business", "during the term of employment".
-2. **Request written clearance** from the employer (in writing, e.g., email to HR/legal) before publishing. Keep the response filed.
-3. **Consult a lawyer** if any clause is ambiguous, especially the "related to employer's business" language. Note-taking / productivity / developer tooling can be a grey area for some employers.
-4. **Defer publishing** until clearance is obtained.
-
-**Not an agent task.** No file should be modified based on this item. Agents must never publish, push to remote, or change repo visibility without the user explicitly stating "PUB-3 is cleared".
-
-**Cost:** S (user's time; not an implementation task)
-**Decision:** Defer — user-only legal task. Agent does nothing and does not revisit this item during routine sweeps. Will be marked cleared (and the item removed) only when the user explicitly states "PUB-3 is cleared".
-**Status:** DEFERRED — user task, not agent-actionable.
-
-### PUB-5 — Tauri updater endpoint URL pinned; keypair + secrets remain user-only
-
-**Status:** the endpoint URL in `src-tauri/tauri.conf.json` points at `https://github.com/jfolcini/agaric/releases/latest/download/latest.json`. The remaining work is purely user-side and cannot be agent-actioned:
-
-1. **Generate the Minisign keypair** (`cargo tauri signer generate -w ~/.tauri/agaric.key`). Back up the private key offline — losing it means future updaters can't verify against the deployed pubkey, breaking the auto-update chain for installed users.
-2. **Paste the public key** into `tauri.conf.json` `updater.pubkey`.
-3. **Add two GH Actions secrets** at `Settings → Secrets and variables → Actions`:
-   - `TAURI_SIGNING_PRIVATE_KEY` — contents of the generated `.key` file
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the passphrase used at generation time
-4. **Uncomment** the two `TAURI_SIGNING_PRIVATE_KEY*` env lines in `release.yml:138-140` (under the `# PUB-5: Uncomment …` comment). The agent intentionally left these commented because uncommenting before the secrets exist + pubkey is set causes tauri-action to attempt signing with empty inputs.
-5. **Tag a release** to verify: tauri-action will produce `*.sig` files alongside each bundle (`.dmg.sig`, `.AppImage.sig`, `.msi.sig`, etc.), which the in-app updater fetches and verifies against the embedded pubkey.
-
-**Alternative (skip the updater):** remove the `updater` block from `tauri.conf.json` and the `tauri-plugin-updater` dependency from `src-tauri/Cargo.toml`. Users would update by manually downloading new releases.
-
-**Cost:** S (~30 min of user work once the keypair is generated).
-**Status:** DEFERRED — user-only. Agent action is none.
 
 ### L-61 — `op_log.rs::extract_block_id_from_payload` warns and returns `None` on JSON parse failure (DELIBERATE — no action)
 - **Domain:** Op log

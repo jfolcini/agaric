@@ -356,6 +356,98 @@ async fn compute_block_vs_current_diff_returns_not_found_for_soft_deleted_block(
     );
 }
 
+/// MAINT-218: When two devices have `edit_block` ops at the same `seq`
+/// value for the same block, `compute_block_vs_current_diff_inner` must
+/// pick the latest-`created_at` op (cross-device tie-break) rather than
+/// leaving the `LIMIT 1` winner undefined.
+///
+/// Without the fix (`ORDER BY seq DESC` alone), SQLite tie-breaks ties
+/// by insertion-order / rowid, so the *older* op (dev1, inserted first)
+/// wins — which doesn't match the user's mental model of "most recent
+/// change".  With the fix (`ORDER BY created_at DESC, seq DESC`), the
+/// newer op (dev2) always wins regardless of insertion order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_picks_latest_created_at_on_seq_tie() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "current text".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Synthetic op_log rows: two `edit_block` ops on the same block, same
+    // `seq` value (the op_log PK is `(device_id, seq)`, so duplicates
+    // across devices are valid), with deliberately divergent
+    // `created_at` to force the tie-break path.
+    //
+    // dev1 inserted first (smaller rowid, *earlier* wall-clock time);
+    // dev2 inserted second (larger rowid, *later* wall-clock time).
+    // The query target is `seq <= 5` which matches both.
+    let block_id_upper = created.id.as_str().to_string();
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+    )
+    .bind("dev1")
+    .bind(5_i64)
+    .bind("hash-dev1")
+    .bind("edit_block")
+    .bind(format!(
+        r#"{{"block_id":"{block_id_upper}","to_text":"from dev1 (older)"}}"#
+    ))
+    .bind("2100-01-01T00:00:00.100Z")
+    .bind(&block_id_upper)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+    )
+    .bind("dev2")
+    .bind(5_i64)
+    .bind("hash-dev2")
+    .bind("edit_block")
+    .bind(format!(
+        r#"{{"block_id":"{block_id_upper}","to_text":"from dev2 (newer)"}}"#
+    ))
+    .bind("2100-01-01T00:00:00.500Z")
+    .bind(&block_id_upper)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Reconstruct the historical-side text from the diff spans (Delete +
+    // Equal). With the fix, this must be dev2's text — proving the
+    // ORDER BY `created_at DESC, seq DESC` tie-break picked the newer
+    // op even though dev1 was inserted first.
+    let spans = compute_block_vs_current_diff_inner(&pool, block_id_upper, 5)
+        .await
+        .unwrap();
+    use crate::word_diff::DiffTag;
+    let historical: String = spans
+        .iter()
+        .filter(|s| s.tag != DiffTag::Insert)
+        .map(|s| s.value.as_str())
+        .collect();
+    assert_eq!(
+        historical, "from dev2 (newer)",
+        "tie-break on seq must pick the later-created_at op (dev2's text), \
+         not the earlier-inserted op (dev1's text). spans: {spans:?}"
+    );
+}
+
 // ======================================================================
 // find_undo_group_inner (PEND-35 Tier 4.4)
 // ======================================================================

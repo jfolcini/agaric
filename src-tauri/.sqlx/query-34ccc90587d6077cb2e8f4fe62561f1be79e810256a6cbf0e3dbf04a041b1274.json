@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND op_type IN ('edit_block', 'create_block') AND seq <= ?2 ORDER BY seq DESC LIMIT 1",
+  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND op_type IN ('edit_block', 'create_block') AND seq <= ?2 ORDER BY created_at DESC, seq DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "037aa8b314042ee035ac7034760644dd4f66f33fc26d151146c3c8cf672fb880"
+  "hash": "34ccc90587d6077cb2e8f4fe62561f1be79e810256a6cbf0e3dbf04a041b1274"
 }

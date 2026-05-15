@@ -794,7 +794,7 @@ describe('PropertyRowEditor accessibility', () => {
 // edits through onSave with a 'true' / 'false' string (which the parent's
 // buildPropertyParams maps to value_bool).
 describe('PropertyRowEditor boolean type', () => {
-  it('renders a checkbox unchecked when value_bool is null', () => {
+  it('renders a checkbox indeterminate when value_bool is null (no value set)', () => {
     render(
       <PropertyRowEditor
         blockId="BLOCK_1"
@@ -808,6 +808,22 @@ describe('PropertyRowEditor boolean type', () => {
       name: t('property.booleanToggle', { key: 'archived' }),
     })
     expect(checkbox).toBeInTheDocument()
+    expect(checkbox).toHaveAttribute('data-state', 'indeterminate')
+  })
+
+  it('renders a checkbox unchecked when value_bool is 0 (explicit false)', () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('archived', { value_bool: 0 })}
+        def={makeDef('archived', 'boolean')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: t('property.booleanToggle', { key: 'archived' }),
+    })
     expect(checkbox).toHaveAttribute('data-state', 'unchecked')
   })
 
