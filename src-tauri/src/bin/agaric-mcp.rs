@@ -1,6 +1,6 @@
 //! `agaric-mcp` — stdio ↔ socket bridge for external MCP agents.
 //!
-//! MCP clients (Claude Desktop, Claude Code, Cursor, Continue, Devin …)
+//! MCP clients (Claude Desktop, Claude Code, Cursor, Continue, …)
 //! spawn their "server" as a stdio subprocess. Agaric runs its actual MCP
 //! server inside the main Tauri process on a Unix-domain socket (Linux /
 //! macOS) or a Windows named pipe, so this stub bridges the two: it reads

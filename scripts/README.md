@@ -18,7 +18,7 @@ Manual-run smoke harness. Exercises every v1 MCP read tool (9 of them)
 against a running `cargo tauri dev` build of Agaric and asserts each
 response matches a minimal inline JSON Schema. The harness is deliberately
 run through the same Python MCP SDK that real agents (Claude Desktop,
-Cursor, Continue, Devin, …) use, so it validates wire compat end-to-end
+Cursor, Continue, …) use, so it validates wire compat end-to-end
 rather than just Rust-side parity.
 
 ### Prerequisites

@@ -99,7 +99,7 @@ export const settings: Record<string, string> = {
   'settings.tabAgentAccess': 'Agent access',
   'agentAccess.title': 'Agent access',
   'agentAccess.description':
-    'Allow local agents (Claude Desktop, Cursor, Continue, Devin, …) to connect over local sockets. Two independent servers are available: a read-only socket for search / query tools, and a read-write socket for create / edit / tag / delete tools. Each toggle is off by default.',
+    'Allow local agents (Claude Desktop, Cursor, Continue, …) to connect over local sockets. Two independent servers are available: a read-only socket for search / query tools, and a read-write socket for create / edit / tag / delete tools. Each toggle is off by default.',
   'agentAccess.loadFailed': 'Failed to load MCP status',
   'agentAccess.roToggleLabel': 'Read-only access',
   'agentAccess.roToggleDescription':
