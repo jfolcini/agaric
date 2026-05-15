@@ -9,19 +9,12 @@
 | ID | Title | Cost | Status |
 | --- | --- | --- | --- |
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
-| PEND-38 | Import progress streaming (`Channel<T>` Tier 3) | L restructure + S emission | deferred — needs `import_markdown` parse/apply split with per-block savepoints before channel work has UX value |
-| agenda-sort-sql-pushdown-2026-05-13 | Agenda sort/group SQL pushdown (original H4) | M | deferred — JS sort on ≤200 items is sub-ms; SQL ORDER BY requires compound-cursor reshape |
-| tauri-2.11-migration-2026-05-13 | Dependabot bump 2.10.3 → 2.11.1 — `tauri-specta::collect_commands!` symbol scheme broke between 2.10 and 2.11. | S–M | **blocked** on upstream `tauri-specta` RC matching tauri 2.11 macro layout |
 | search-dialog-replace-view-2026-05-14 | Replace the full-takeover Search view with a Cmd+K-style dialog (drops view-replace context loss + ~700 lines of UI) | M-L (2-3 days) | **DRAFT — needs more discussion**; 8 open questions flagged inline |
-| sql-review-2026-05-14 | Open: Phase 3 (B-3 reverse-op batching, M), Phase 4 (H-2 `page_link_cache` materialization + COALESCE-removal backfill + M-2 incremental cache rebuilds, L), Phase 5 (M-6 compaction tx split + M-8 snapshot streaming, L). | M + L + L | partial-shipped (Phases 1+2 done in sessions 740+741) |
-| design-system-maintainability-2026-05-09 | Open: Phase 3b LOC triage for 6 feature files (HistoryListItem, GoogleCalendarSettingsTab, BugReportDialog, FormattingToolbar, PageHeader, SearchPanel) — opportunistic, not blocking. | M | partial-shipped, plan stays for follow-up |
 | design-system-perf-review-2026-05-09 | Open: Tier 1.3 (lazy-load the TipTap stack from JournalPage's static path); Tier 2.6 follow-up (windowing for BlockListRenderer + BlockTree); one doc-drift item (AGENTS.md import-boundary automation). | M-L | partial-shipped, plan stays for follow-up |
 
+Single-task plans live in `REVIEW-LATER.md` instead of as standalone files. Session 745's cleanup moved five (PEND-38 import progress, agenda-sort-sql-pushdown tombstone, design-system-maintainability's lone FormattingToolbar item, sql-review's deferred M-8 snapshot streaming, and the tauri-2.11 dependabot bump) over per the "0/1 tasks → consolidate" rule.
+
 ## Recommended order
-
-**Mid-tier** — useful but more invasive:
-
-- PEND-38 (import progress) — gated on import-pipeline restructure; pursue when imports become a UX paper-cut or when someone is touching `import_markdown` for unrelated reasons
 
 **Spaces enforcement bundle status:**
 
