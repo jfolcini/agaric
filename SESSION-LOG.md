@@ -7,6 +7,55 @@
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
+## Session 746 — MAINT-196 projection unify + MAINT-213 link-metadata not_found (2026-05-15)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-15 |
+| **Subagents** | 2 build (parallel) + 3 review (1 tech each on MAINT-196 / MAINT-213 + 1 UX on MAINT-213) |
+| **Items closed** | MAINT-196, MAINT-213 |
+| **Items modified** | — |
+| **Tests added** | +1 backend parity test re-enabled, +1 backend not_found round-trip, +1 backend 410 path, +1 frontend not-found render |
+| **Files touched** | 20 (12 backend / 7 frontend / 1 REVIEW-LATER) |
+
+**Summary:** Closed two REVIEW-LATER items in a single parallel batch. MAINT-196 collapsed the projected-agenda recurrence math into one shared `recurrence::project_block_dates` helper so the cache rebuild and the on-the-fly fallback can no longer drift; the `.+1w` 112-vs-110 parity test (`projected_agenda_cached_equals_on_the_fly`) is re-enabled and green. MAINT-213 added a `not_found` boolean to `LinkMetadata` (migration 0067) plus 404/410 classification on the HTTP path, so the frontend renders a distinct "(not found)" state in `LinkPreviewTooltip` separate from the existing `auth_required` reauth-card UX.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 18 → 16 (−2)
+- **Previously resolved:** 1177+ → 1179+ across N → N+1 sessions
+
+**Files touched (this session):**
+- `src-tauri/src/recurrence/projection.rs` (new, +174)
+- `src-tauri/src/recurrence/mod.rs` (re-export)
+- `src-tauri/src/cache/projected_agenda.rs` (refactor + `_with_today` variant)
+- `src-tauri/src/cache/mod.rs` (test re-export)
+- `src-tauri/src/commands/agenda.rs` (refactor + PEND-24 M3 warn restored at callsite)
+- `src-tauri/src/commands/tests/agenda_cmd_tests.rs` (parity test re-enabled, calls `_with_today`)
+- `src-tauri/migrations/0067_link_metadata_not_found.sql` (new)
+- `src-tauri/src/link_metadata/mod.rs` (`not_found` field + classification)
+- `src-tauri/src/link_metadata/tests.rs` (new 410 + round-trip tests)
+- `src-tauri/src/commands/link_metadata.rs` (test fixtures)
+- `src/components/LinkPreviewTooltip.tsx` (distinct not-found render)
+- `src/components/__tests__/LinkPreviewTooltip.test.tsx` (new test case)
+- `src/lib/bindings.ts` (specta regen — `not_found?: boolean`)
+- `src/lib/tauri.ts` (interface)
+- `src/lib/tauri-mock/handlers.ts` (mock fixture)
+- `src/lib/__tests__/{tauri,tauri-mock}.test.ts`, `src/hooks/__tests__/{useLinkMetadata,useLinkPreview}.test.ts(x)` (fixture updates)
+- `pending/REVIEW-LATER.md` (both rows + detail sections removed; count 18 → 16)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run --no-fail-fast` — 3706 tests run, 3706 passed, 3 skipped (1 flake on `run_file_transfer_initiator_breaks_on_cancel_m47`, passed on retry).
+- `npx vitest run` — 9859 of 9861 passed (2 environmental flakes in `BacklinkFilterBuilder.test.tsx`; both targeted reruns pass cleanly).
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** Subagent A (MAINT-196) and B (MAINT-213) raced on `pending/REVIEW-LATER.md`; both saved their summary-count decrement, but A's row-removal didn't persist past B's edit. Orchestrator cleaned up the residual MAINT-196 row + adjusted the count from 17 → 16. The MAINT-196 tech review caught a real regression: the PEND-24 M3 `tracing::warn!` on malformed source-date strings was lost when the per-source parse moved into the shared helper. Orchestrator restored the warn at the on-the-fly callsite (validate-and-discard pattern, ~15 lines) so the ops-log signal stays observable.
+
+**Lessons learned (for future sessions):** When two parallel subagents both touch a shared markdown index, the orchestrator's "re-read immediately before write" rule applies on the orchestrator side too — verify the file state after both subagents land. When a pure refactor moves callsite-specific side effects (logging, tracing, telemetry) into a shared helper, the contract change can silently drop them; reviewers should flag this as a class of finding, and orchestrators should keep callsite-emitted observability outside the helper.
+
+**Commit plan:** single commit; push deferred to maintainer.
+
+---
+
 ## Session 745 — Design-system Phase 3b (5 of 6 files) + PageBrowser infinite-scroll + pending cleanup (2026-05-15)
 
 | Metadata | Value |

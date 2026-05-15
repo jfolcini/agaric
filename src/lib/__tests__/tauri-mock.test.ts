@@ -2426,6 +2426,7 @@ describe('LinkMetadata commands', () => {
       favicon_url: null,
       description: null,
       auth_required: false,
+      not_found: false,
     })
     expect(typeof result['fetched_at']).toBe('string')
   })
@@ -2441,6 +2442,7 @@ describe('LinkMetadata commands', () => {
       favicon_url: null,
       description: null,
       auth_required: false,
+      not_found: false,
     })
     expect(typeof result['fetched_at']).toBe('string')
   })

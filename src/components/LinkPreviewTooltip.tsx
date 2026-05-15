@@ -67,8 +67,21 @@ export function LinkPreviewTooltip({
 
   if (!url || !anchorRect) return null
 
-  const showFavicon = metadata?.favicon_url && !imgError && !metadata.auth_required
-  const title = metadata?.auth_required ? null : metadata?.title
+  // MAINT-213: distinguish three terminal "no useful metadata" states
+  // so the tooltip can render appropriate UX:
+  //   * auth_required (401/403) — backend will surface the sign-in
+  //     card elsewhere; tooltip just shows the bare URL + Globe.
+  //   * not_found (404/410) — terminal, the page is gone. Same Globe,
+  //     same URL, plus a muted "(not found)" tag so the user knows
+  //     it's not a transient retry case.
+  //   * transient (5xx / other) — both flags false but title is null;
+  //     same fallback as a never-fetched URL.
+  // Favicon is suppressed in all three cases (don't load a favicon for
+  // a page that 404s, and don't surface a sign-in page's icon).
+  const isAuthRequired = metadata?.auth_required === true
+  const isNotFound = metadata?.not_found === true
+  const showFavicon = metadata?.favicon_url && !imgError && !isAuthRequired && !isNotFound
+  const title = isAuthRequired || isNotFound ? null : metadata?.title
 
   return (
     <div
@@ -110,6 +123,14 @@ export function LinkPreviewTooltip({
             ) : (
               <span className="truncate text-xs text-muted-foreground">{url}</span>
             )}
+            {isNotFound ? (
+              <span
+                data-testid="link-preview-not-found-tag"
+                className="shrink-0 text-xs italic text-muted-foreground"
+              >
+                (not found)
+              </span>
+            ) : null}
           </>
         )}
       </div>

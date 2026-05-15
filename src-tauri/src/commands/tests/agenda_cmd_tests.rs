@@ -2956,7 +2956,6 @@ async fn count_agenda_batch_by_source_disjointness_feat3p4() {
 // `commands::mod` (see MAINT-164), so no production-code visibility lift
 // is required for this test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "MAINT-196: detected real .+1w drift between cached and on-the-fly paths; re-enable once the projection refactor lands"]
 async fn projected_agenda_cached_equals_on_the_fly() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -3206,23 +3205,36 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     .unwrap();
     settle(&mat).await;
 
-    // 1. Rebuild the cache directly (bypasses the materializer multi-thread
-    //    queue — see PEND-05 plan, Open Question #2).
-    crate::cache::rebuild_projected_agenda_cache(&pool)
+    // 1. Rebuild the cache with a pinned `today` (MAINT-196). Without
+    //    this, the cache rebuild reads `chrono::Local::now()` and the
+    //    fixture's 2050 dates fall outside the cache's 365-day horizon
+    //    anchored at the device's wall clock — so the cache-or-fallback
+    //    branch in `list_projected_agenda_inner` would silently fall
+    //    through to on-the-fly and the test would be comparing two
+    //    on-the-fly runs (with different `today` values). The
+    //    `_with_today` variant mirrors `list_projected_agenda_inner_with_today`
+    //    (MAINT-164).
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
         .await
         .unwrap();
 
-    // 2. Page through the cached path collecting all results. Range
-    //    [2050-04-06, 2051-05-01] is ~390 days, intentionally past the
-    //    cache's 365-day horizon so any horizon-drift between paths
-    //    surfaces.
+    // 2. Page through the cached path collecting all results. The range
+    //    end matches the cache's 365-day horizon from `pinned_today` so
+    //    the cache contains every entry the on-the-fly path will emit
+    //    for the same range — parity is then a head-to-head comparison
+    //    on the shared `recurrence::project_block_dates` helper rather
+    //    than on horizon-boundary handling.
+    let range_start = pinned_today;
+    let range_end = pinned_today + chrono::Duration::days(365);
+    let range_end_str = range_end.format("%Y-%m-%d").to_string();
     let mut cached_results = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
         let page = list_projected_agenda_inner(
             &pool,
             "2050-04-06".into(),
-            "2051-05-01".into(),
+            range_end_str.clone(),
             cursor.clone(),
             Some(500),
             &SpaceScope::Global,
@@ -3242,11 +3254,10 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         .await
         .unwrap();
 
-    // 4. Call the on-the-fly path directly with a pinned `today` so the
-    //    `.+` / `++` mode anchors are deterministic.
-    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
-    let range_start = pinned_today;
-    let range_end = chrono::NaiveDate::from_ymd_opt(2051, 5, 1).unwrap();
+    // 4. Call the on-the-fly path directly with the same pinned `today`
+    //    and matching range so `.+` / `++` mode anchors plus
+    //    `[range_start, range_end]` clipping are byte-for-byte identical
+    //    to the cache rebuild.
     let on_the_fly_results = list_projected_agenda_on_the_fly(
         &pool,
         range_start,
@@ -3265,15 +3276,17 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     //    cache rebuild and the on-the-fly projector.
     //
     // First-run discovery (recorded as MAINT-196): Block D (`.+1w`
-    // completion-based mode) emits 112 entries via the cached path but
-    // only 110 via on-the-fly across the 390-day window — a 2-entry
-    // drift in the dot-plus projection logic. Blocks A/B/C/E are in
-    // parity (10 / 6 / 6 / 106 each). Until MAINT-196 lands the deeper
-    // refactor that unifies the two projection paths, this test is
-    // `#[ignore]`d so CI stays green; re-enable it once the refactor
-    // ships. The fixture + assertion are already correct — the test is
-    // the safety net PEND-05 promised, just temporarily silenced.
-    let _ = (&a, &b, &c, &d, &e); // suppress unused-binding warnings while ignored
+    // completion-based mode) emitted 112 entries via the cached path
+    // but only 110 via on-the-fly across the original 390-day window —
+    // a 2-entry drift in the dot-plus projection logic. The root cause
+    // was duplicated per-block recurrence math: the cache clipped to
+    // `today..horizon` while the on-the-fly path clipped to
+    // `range_start..range_end`, and `today` was `Local::now()` in the
+    // cache vs the pinned fixture date in on-the-fly. MAINT-196
+    // consolidated both into `recurrence::project_block_dates` so the
+    // clip / mode / pre-emit semantics are now a single function the
+    // two paths share — the drift surface is gone.
+    let _ = (&a, &b, &c, &d, &e); // keep block bindings live for fixture readability
     assert_eq!(
         cached_results.len(),
         on_the_fly_results.len(),

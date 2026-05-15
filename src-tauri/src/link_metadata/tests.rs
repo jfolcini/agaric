@@ -509,6 +509,7 @@ async fn upsert_and_get_cached_round_trip() {
         description: Some("An example page".to_string()),
         fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
         auth_required: false,
+        not_found: false,
     };
 
     upsert(&pool, &meta).await.unwrap();
@@ -539,6 +540,7 @@ async fn upsert_and_get_cached_round_trip() {
         "fetched_at should match"
     );
     assert!(!cached.auth_required, "auth_required should be false");
+    assert!(!cached.not_found, "not_found should be false");
 }
 
 #[tokio::test]
@@ -563,6 +565,7 @@ async fn upsert_replaces_existing_entry() {
         description: None,
         fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
         auth_required: false,
+        not_found: false,
     };
     upsert(&pool, &meta1).await.unwrap();
 
@@ -573,6 +576,7 @@ async fn upsert_replaces_existing_entry() {
         description: Some("Updated description".to_string()),
         fetched_at: "2025-01-16T12:00:00.000Z".to_string(),
         auth_required: true,
+        not_found: false,
     };
     upsert(&pool, &meta2).await.unwrap();
 
@@ -606,6 +610,7 @@ async fn cleanup_stale_removes_old_non_auth_entries() {
         description: None,
         fetched_at: old_ts,
         auth_required: false,
+        not_found: false,
     };
     upsert(&pool, &old_meta).await.unwrap();
 
@@ -617,6 +622,7 @@ async fn cleanup_stale_removes_old_non_auth_entries() {
         description: None,
         fetched_at: now_rfc3339(),
         auth_required: false,
+        not_found: false,
     };
     upsert(&pool, &fresh_meta).await.unwrap();
 
@@ -630,6 +636,7 @@ async fn cleanup_stale_removes_old_non_auth_entries() {
         description: None,
         fetched_at: old_auth_ts,
         auth_required: true,
+        not_found: false,
     };
     upsert(&pool, &old_auth).await.unwrap();
 
@@ -660,6 +667,7 @@ async fn clear_auth_flag_resets_flag() {
         description: None,
         fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
         auth_required: true,
+        not_found: false,
     };
     upsert(&pool, &meta).await.unwrap();
 
@@ -693,6 +701,7 @@ async fn upsert_with_auth_required_true() {
         description: None,
         fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
         auth_required: true,
+        not_found: false,
     };
     upsert(&pool, &meta).await.unwrap();
 
@@ -999,6 +1008,13 @@ async fn fetch_metadata_404_returns_minimal_metadata_without_parsing_body() {
         !meta.auth_required,
         "404 must not set auth_required (only 401/403 do)"
     );
+    // MAINT-213: 404 must set `not_found` so the frontend can render
+    // the terminal "(not found)" presentation distinct from auth /
+    // transient.
+    assert!(
+        meta.not_found,
+        "404 must set not_found so the frontend renders the 'gone' UX"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1028,6 +1044,12 @@ async fn fetch_metadata_401_marks_auth_required_without_parsing_body() {
         meta.auth_required,
         "401 must set auth_required so the reauth card surfaces"
     );
+    // MAINT-213: 401 is sign-in, NOT gone — the two flags are
+    // mutually exclusive at the wire level.
+    assert!(
+        !meta.not_found,
+        "401 must NOT set not_found (auth-required and not-found are disjoint)"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1054,6 +1076,12 @@ async fn fetch_metadata_500_returns_minimal_metadata() {
     assert!(
         !meta.auth_required,
         "5xx must not set auth_required (only 401/403 do)"
+    );
+    // MAINT-213: 5xx is the "transient" bucket — both flags must be
+    // false so the frontend can infer "retry later".
+    assert!(
+        !meta.not_found,
+        "5xx must not set not_found — that bucket is reserved for terminal 404/410"
     );
 }
 
@@ -1085,4 +1113,78 @@ async fn fetch_metadata_200_still_parses_body() {
 
     assert_eq!(meta.title.as_deref(), Some("Real Page"));
     assert_eq!(meta.description.as_deref(), Some("Real description"));
+    // MAINT-213: a successful 2xx fetch must leave `not_found` false
+    // — the flag is reserved for the wire-level 404/410 short-circuit.
+    assert!(
+        !meta.not_found,
+        "200 must not set not_found (only 404/410 do)"
+    );
+}
+
+// ======================================================================
+// MAINT-213 — 410 Gone classification + cache round-trip
+//
+// The 404 path is already exercised by
+// `fetch_metadata_404_returns_minimal_metadata_without_parsing_body`
+// above; here we add coverage for 410 (the other "terminal gone"
+// status) and for the cache round-trip so the flag survives a
+// persist/restore cycle.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_metadata_410_sets_not_found_flag() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/gone"))
+        .respond_with(
+            ResponseTemplate::new(410)
+                .set_body_string("<html><head><title>Gone</title></head></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/gone", server.uri());
+    let meta = fetch_metadata(&url)
+        .await
+        .expect("fetch_metadata must not error on 410");
+
+    assert!(
+        meta.not_found,
+        "410 Gone must set not_found alongside 404 (both are terminal-gone statuses)"
+    );
+    assert!(
+        !meta.auth_required,
+        "410 must not set auth_required (only 401/403 do)"
+    );
+    assert_eq!(meta.title, None, "410 body title must NOT be parsed");
+}
+
+#[tokio::test]
+async fn upsert_and_get_cached_round_trip_preserves_not_found() {
+    let (pool, _dir) = test_pool().await;
+
+    let meta = LinkMetadata {
+        url: "https://gone.example.com".to_string(),
+        title: None,
+        favicon_url: None,
+        description: None,
+        fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
+        auth_required: false,
+        not_found: true,
+    };
+    upsert(&pool, &meta).await.unwrap();
+
+    let cached = get_cached(&pool, "https://gone.example.com")
+        .await
+        .unwrap()
+        .expect("should find cached not-found row");
+
+    assert!(
+        cached.not_found,
+        "not_found flag must round-trip through the DB"
+    );
+    assert!(!cached.auth_required);
 }

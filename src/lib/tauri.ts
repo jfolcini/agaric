@@ -1736,6 +1736,14 @@ export interface LinkMetadata {
   description: string | null
   fetched_at: string
   auth_required: boolean
+  /**
+   * MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+   * fetch saw a terminal "gone" status (HTTP 404 or 410). Distinct
+   * from `auth_required` (401/403, sign-in card) and from transient
+   * 5xx (both flags `false` plus `title === null`). Optional so a
+   * legacy serialized blob without the field still deserializes.
+   */
+  not_found?: boolean
 }
 
 /** Fetch and cache link metadata (triggers HTTP fetch if not cached). */

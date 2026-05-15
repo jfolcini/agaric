@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-18 open items in the summary table; 17 detail entries (FE-* sub-tables don't appear in the summary).
+16 open items in the summary table; 16 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -35,10 +35,8 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-194 | MAINT | `useBlockKeyboard` listener-attach perf — re-do MAINT-185 correctly (post-revert). Original ref-bag pattern broke listener stale-element invariant; need to memoize callbacks at call site OR add explicit `editor.view.dom.parentElement` watcher. | M | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 59 remaining GitHub Actions findings after closing `template-injection` × 6 (MAINT-114), `artipacked` × 6 (added `persist-credentials: false`), `excessive-permissions` × 1 (per-job perms in `release.yml`). Remaining: `unpinned-uses` × 35 (policy decision — SHA pinning via Renovate) + `cache-poisoning` × 24 (design call on tag-build caching). | M | — |
-| MAINT-196 | MAINT | Projected-agenda projection path drift: `list_projected_agenda_inner` cached path emits 112 entries for a `.+1w` block over a 390-day window vs 110 from `list_projected_agenda_on_the_fly` — a real 2-entry divergence on the dot-plus completion-based mode. Surfaced by the PEND-05 parity test (now `#[ignore]`d in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`); A/B/C/E blocks are in parity. The deeper fix is to refactor the projection logic into a single function called by both paths, eliminating the drift surface entirely. Re-enable the parity test once the refactor lands. | M | — |
 | MAINT-208 | MAINT | PEND-25 M1 deferred — three deferrable `block_on` calls in `src-tauri/src/lib.rs:637, 741, 1083` (link cleanup, space migration, gcal migration) at startup. Per the PEND-25 plan body, only act if Android boot profile shows >100 ms cumulative cost; on desktop the headroom is irrelevant. Profile `adb shell am start -W` with `tracing::info!` instrumentation before refactoring; if confirmed, defer to a post-window-show task. Conditional. | M (4-7h) | Android boot profile data |
 | MAINT-209 | MAINT | PEND-25 L15 + L16 deferred — gcal connector channel + agenda fetch hygiene. (L15) `mpsc::UnboundedSender<DirtyEvent>` in `src-tauri/src/gcal_push/connector.rs:255` is unbounded; defensive bounded channel + `try_send` only matters if a fast producer overruns the consumer (no observed instance today). (L16) `connector.rs:486, 589-595` makes per-date agenda fetches in a loop instead of one `list_projected_agenda_inner(min_date, max_date)` call; only matters when the gcal push window grows beyond a handful of days. Both are speculative — only pursue if profiling shows a concrete need. | S-M (~3h together) | Profiling data showing gcal contention |
-| MAINT-213 | MAINT | PEND-24 M4 follow-up — frontend distinct UX for 401/403 (sign-in card) vs 404/410 (gone) vs 5xx (transient/retry). Today the backend short-circuits on every non-2xx and returns minimal metadata; only `auth_required` is persisted. Adding a `not_found` boolean to `LinkMetadata` (+ migration + `link_metadata` table column + serde default-false on existing rows) would let the frontend distinguish "signed-out" from "page is gone" from "server flaked". | S-M (Rust column + frontend chrome) | — |
 | MAINT-226 | MAINT | `src/lib/tauri-mock/handlers.ts` mock-handler space-scope gap. 14 of 15 mock handlers ignore the space-scope arg. Only `list_page_aliases_by_prefix` correctly filters by space. Browser-dev (vite without Tauri) + vitest tests routing through tauri-mock won't catch space-scoping bugs. Fix: extend each handler with the `scope` extraction pattern from `list_page_aliases_by_prefix:1241-1253`. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
@@ -426,17 +424,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
   - (b) Adopt the ref-bag pattern from MAINT-185 BUT add an explicit `useEffect` that watches `editor.view.dom.parentElement` (via a ref-callback re-attach trigger) and re-binds the listener when the parent element changes.
   - (c) Use a tree-level event listener on `document` and dispatch by `editor.isFocused` instead of binding to the editor's parent. (Cleanest, but requires careful focus-state tracking.)
 - **Status:** Open. Filed by the e8b0ac2 revert.
-
-### MAINT-196 — Projected-agenda projection-path drift between cached + on-the-fly
-
-- **Domain:** Backend / Agenda
-- **Location:** `src-tauri/src/cache/projected_agenda.rs:rebuild_projected_agenda_cache` vs `src-tauri/src/commands/agenda.rs:list_projected_agenda_on_the_fly`
-- **What:** PEND-05's parity test (`agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`, currently `#[ignore]`d on this exact MAINT-196) caught a real divergence on the `.+1w` (completion-based weekly) repeat mode: the cached path emits 112 entries for a single `.+1w` block over a 390-day window, while the on-the-fly path emits 110 — a 2-entry drift. Blocks A (daily + count), B (weekly + until), C (+3d + count), and E (`++1w` skip-past-today) are all in parity; only the `.+` mode diverges.
-- **Why it matters:** Users see different agendas depending on whether the cache is warm or cold for `.+`-recurring tasks. Invisible bug class — would hide for months otherwise.
-- **Cost:** M — refactor the projection logic (`shift_date_once` + the per-mode windowing) into a single function called by both paths so the drift surface is eliminated. Once unified, re-enable the parity test by removing the `#[ignore]` attribute on `projected_agenda_cached_equals_on_the_fly`.
-- **Risk:** Medium — projection logic is hot-path; refactor needs careful nextest coverage on every existing repeat-mode test.
-- **Impact:** Medium — invisible-but-real correctness bug, plus enabling the safety-net test prevents future drift.
-- **Status:** Open. Filed during PEND-05 close (session 654).
 
 ### MAINT-208 — PEND-25 M1: defer 3 `block_on` startup calls (Android boot perf)
 

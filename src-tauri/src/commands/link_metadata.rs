@@ -135,6 +135,7 @@ mod tests {
             description: Some("Cached description".to_string()),
             fetched_at: now.clone(),
             auth_required: false,
+            not_found: false,
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
@@ -174,6 +175,7 @@ mod tests {
             description: None,
             fetched_at: now.clone(),
             auth_required: true,
+            not_found: false,
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
@@ -224,6 +226,7 @@ mod tests {
             description: None,
             fetched_at: eight_days_ago,
             auth_required: false,
+            not_found: false,
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
@@ -251,6 +254,7 @@ mod tests {
             description: None,
             fetched_at: now.clone(),
             auth_required: false,
+            not_found: false,
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
@@ -290,6 +294,7 @@ mod tests {
             description: None,
             fetched_at: now.clone(),
             auth_required: false,
+            not_found: false,
         };
         link_metadata::upsert(&pools.write, &meta).await.unwrap();
 
@@ -325,6 +330,7 @@ mod tests {
             description: None,
             fetched_at: now.clone(),
             auth_required: false,
+            not_found: false,
         };
         link_metadata::upsert(&pools.write, &meta).await.unwrap();
 
@@ -401,6 +407,7 @@ mod tests {
             description: Some("A cached page".to_string()),
             fetched_at: "2025-06-01T10:00:00.000Z".to_string(),
             auth_required: false,
+            not_found: false,
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 

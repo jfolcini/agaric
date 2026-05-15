@@ -520,23 +520,20 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         };
 
     for block in &rows {
-        // Get the repeat rule (pre-fetched via JOIN)
-        let rule = match &block.repeat_rule {
-            Some(r) if !r.is_empty() => r.clone(),
+        // Get the repeat rule (pre-fetched via JOIN). Empty / missing
+        // rules are skipped here; the shared projector also no-ops on
+        // empty rules but we elide the call entirely for clarity.
+        let rule = match block.repeat_rule.as_deref() {
+            Some(r) if !r.is_empty() => r,
             _ => continue,
         };
-
-        // Get end conditions (pre-fetched via LEFT JOINs)
-        let repeat_until = block.repeat_until.clone();
-        let repeat_count = block.repeat_count;
-        let repeat_seq = block.repeat_seq;
 
         // PEND-24 M3 — surface DB-level corruption: write-time validation
         // (`set_property_in_tx`'s `is_valid_iso_date`) should make this
         // unreachable. A miss means either the DB was hand-edited or a
         // sync-protocol bug let through a bad value; either way we warn
         // before falling through, so the silent skip is observable.
-        let until_date = match repeat_until.as_deref() {
+        let until_date = match block.repeat_until.as_deref() {
             Some(d) => match chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
                 Ok(parsed) => Some(parsed),
                 Err(_) => {
@@ -556,151 +553,66 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         // repeat_count and repeat_seq are non-negative f64 (whole numbers)
         // from SQLite.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let remaining = match (repeat_count, repeat_seq) {
+        let remaining = match (block.repeat_count, block.repeat_seq) {
             (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
             (Some(count), None) => Some(count as usize),
             (Some(_), Some(_)) => Some(0usize), // already exhausted
             _ => None,                          // no limit
         };
 
-        // Parse mode and interval from rule
-        let trimmed = rule.trim().to_lowercase();
-        let (mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
-            ("dot_plus", rest)
-        } else if let Some(rest) = trimmed.strip_prefix("++") {
-            ("plus_plus", rest)
-        } else {
-            ("default", trimmed.as_str())
-        };
-
-        // `today` is now a parameter (MAINT-164) so tests can pin it.
-
-        // Project for each date source (due_date, scheduled_date)
-        let sources: Vec<(&str, &str)> = [
-            block.due_date.as_deref().map(|d| ("due_date", d)),
-            block
-                .scheduled_date
-                .as_deref()
-                .map(|d| ("scheduled_date", d)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        for (source_name, date_str) in sources {
-            let Ok(base) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
-                // PEND-24 M3 — write-time validation
-                // (`set_property_in_tx`'s `is_valid_iso_date`) should make
-                // this unreachable. Surface the corruption instead of
-                // skipping silently.
+        // MAINT-196 — recurrence math lives in the shared
+        // `recurrence::project_block_dates` helper so the cache rebuild
+        // and the on-the-fly path cannot drift. The closure below is
+        // the on-the-fly-specific concern: cursor predicate + size-cap
+        // + BTreeMap insert via `try_insert`. The helper handles
+        // mode/interval parsing, `plus_plus` catch-up + pre-emit,
+        // `until_date` / `remaining` end conditions, the 10 000-iter
+        // safety bound, and `[range_start, range_end]` clipping.
+        //
+        // PEND-24 M3: emit the malformed-date warn at the callsite
+        // before handing the validated source strings to the helper.
+        // The helper itself silently skips on parse failure; doing the
+        // validation here preserves the original ops-log signal
+        // (the cache-rebuild path never had this warn — it stays silent
+        // there, matching pre-MAINT-196 behaviour).
+        let validate_source = |date: Option<&str>, source: &'static str| -> Option<String> {
+            let s = date?;
+            if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {
+                Some(s.to_string())
+            } else {
                 tracing::warn!(
                     block_id = %block.id,
-                    source = source_name,
-                    date_str,
+                    source,
+                    date_str = s,
                     "agenda projection: skipping block with malformed date"
                 );
-                continue;
-            };
-
-            // Determine starting point based on mode
-            let mut current = match mode {
-                "dot_plus" => {
-                    // .+ mode: shift from today (completion-based)
-                    today
-                }
-                "plus_plus" => {
-                    // ++ mode: advance from original date until > today
-                    let mut c = base;
-                    for _ in 0..10_000 {
-                        c = match crate::recurrence::shift_date_once(c, interval) {
-                            Some(d) => d,
-                            None => break,
-                        };
-                        if c > today {
-                            break;
-                        }
-                    }
-                    // c is now the first future cadence date;
-                    // we need to include it, so go back one step
-                    // by setting current = base and fast-forwarding
-                    // Actually: set current so that first shift_date_once
-                    // in the loop produces c. We can't easily reverse,
-                    // so pre-add c if in range, then continue from c.
-                    c
-                }
-                _ => base, // Default: shift from original date
-            };
-
-            let mut projected_count = 0usize;
-            let max_remaining = remaining.unwrap_or(usize::MAX);
-
-            // For ++ mode, the caught-up date itself is the first projection.
-            // The main loop shifts before checking, so it would skip `current`.
-            // Pre-add it if it falls within the requested range.
-            if mode == "plus_plus"
-                && projected_count < max_remaining
-                && current >= range_start
-                && current <= range_end
-            {
-                let past_until = until_date.is_some_and(|until| current > until);
-                if !past_until {
-                    try_insert(
-                        &mut entries_map,
-                        ActiveProjectedAgendaEntry {
-                            block: block.to_active_block_row(),
-                            projected_date: current.format("%Y-%m-%d").to_string(),
-                            source: source_name.to_string(),
-                        },
-                    );
-                    // `projected_count` tracks generated (in-range)
-                    // occurrences so `max_remaining` matches the original
-                    // semantics regardless of whether the cursor / size-cap
-                    // filtered the entry out of `entries_map`.
-                    projected_count += 1;
-                }
+                None
             }
-
-            // Safety limit to prevent infinite loops
-            for _ in 0..10_000 {
-                if projected_count >= max_remaining {
-                    break;
-                }
-
-                current = match crate::recurrence::shift_date_once(current, interval) {
-                    Some(d) => d,
-                    None => break,
-                };
-
-                // Check until-date end condition
-                if let Some(until) = until_date {
-                    if current > until {
-                        break;
-                    }
-                }
-
-                // Past end of range
-                if current > range_end {
-                    break;
-                }
-
-                // Within range — try to insert. `try_insert` enforces the
-                // (date, id) > cursor predicate and the `limit + 1` size
-                // cap; `projected_count` still increments so the outer
-                // `max_remaining` check stays unchanged from the previous
-                // post-hoc `retain` / `truncate` formulation.
-                if current >= range_start {
-                    try_insert(
-                        &mut entries_map,
-                        ActiveProjectedAgendaEntry {
-                            block: block.to_active_block_row(),
-                            projected_date: current.format("%Y-%m-%d").to_string(),
-                            source: source_name.to_string(),
-                        },
-                    );
-                    projected_count += 1;
-                }
-            }
-        }
+        };
+        let due_date_valid = validate_source(block.due_date.as_deref(), "due_date");
+        let scheduled_date_valid =
+            validate_source(block.scheduled_date.as_deref(), "scheduled_date");
+        let block_row = block.to_active_block_row();
+        crate::recurrence::project_block_dates(
+            due_date_valid.as_deref(),
+            scheduled_date_valid.as_deref(),
+            rule,
+            until_date,
+            remaining,
+            today,
+            range_start,
+            range_end,
+            |projected, source_name| {
+                try_insert(
+                    &mut entries_map,
+                    ActiveProjectedAgendaEntry {
+                        block: block_row.clone(),
+                        projected_date: projected.format("%Y-%m-%d").to_string(),
+                        source: source_name.to_string(),
+                    },
+                );
+            },
+        );
     }
 
     // BTreeMap iteration order is the (date, id, source) lex order — the

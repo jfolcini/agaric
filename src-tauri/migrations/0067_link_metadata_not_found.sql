@@ -1,0 +1,15 @@
+-- MAINT-213 (PEND-24 M4 follow-up) — distinguish "page gone" from
+-- "sign-in required" and "transient 5xx" at the cache layer.
+--
+-- Before this column, `fetch_metadata` short-circuited on every non-2xx
+-- (M4 bug fix) but only persisted `auth_required = (status == 401 || 403)`.
+-- The frontend therefore had to treat 404/410 the same as 5xx — both
+-- collapsed to "no title, no favicon, no auth flag", with no way to
+-- show a distinct "(not found)" presentation vs. "transient — retry".
+--
+-- Adding `not_found INTEGER NOT NULL DEFAULT 0` lets the backend record
+-- `(status == 404 || status == 410)` and lets the frontend render a
+-- terminal "gone" state visually distinct from the auth-required and
+-- transient-failure states. The DEFAULT 0 keeps existing rows valid
+-- (they will be re-marked correctly on the next refetch).
+ALTER TABLE link_metadata ADD COLUMN not_found INTEGER NOT NULL DEFAULT 0;

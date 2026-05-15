@@ -40,6 +40,18 @@ pub struct LinkMetadata {
     pub description: Option<String>,
     pub fetched_at: String,
     pub auth_required: bool,
+    /// MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+    /// fetch saw a terminal "this resource is gone" status (HTTP 404 or
+    /// 410). Distinct from `auth_required` (401/403, transient
+    /// sign-in) and from "transient" (5xx — both flags false plus
+    /// `title.is_none()`). The frontend uses this to render a "(not
+    /// found)" tag and suppress the favicon.
+    ///
+    /// `#[serde(default)]` so any legacy serialized blob — e.g. a
+    /// cached snapshot deserialized before this field existed — keeps
+    /// deserializing cleanly as `false`.
+    #[serde(default)]
+    pub not_found: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,12 +97,14 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
 
     // PEND-24 M4 — short-circuit on non-2xx so 4xx/5xx HTML error pages
     // (e.g. a 404 with `<title>Page not found</title>`) don't get parsed
-    // and cached as the target page's metadata. `auth_required` still
-    // tracks 401/403 so the existing reauth-card UX keeps working.
-    // `not_found` is intentionally NOT a stored field yet — when a
-    // frontend follow-up wants to distinguish 404 from 5xx, it can
-    // reach for the schema migration; until then the bug fix is the
-    // early return.
+    // and cached as the target page's metadata.
+    //
+    // MAINT-213: classify the non-2xx into three terminal categories so
+    // the frontend can render distinct UX:
+    //   * `auth_required` (401/403): sign-in card / reauth flow
+    //   * `not_found` (404/410): terminal "page is gone" presentation
+    //   * neither flag, `title.is_none()`: transient (5xx / other) —
+    //     the frontend infers "may retry later"
     if !response.status().is_success() {
         return Ok(LinkMetadata {
             url: final_url,
@@ -99,6 +113,7 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
             description: None,
             fetched_at: now_rfc3339(),
             auth_required: status == 401 || status == 403,
+            not_found: status == 404 || status == 410,
         });
     }
 
@@ -116,7 +131,11 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
         && !mime_type.contains("text/xhtml")
         && !mime_type.contains("application/xhtml")
     {
-        // Not HTML — return minimal metadata with no parsed fields
+        // Not HTML — return minimal metadata with no parsed fields.
+        // This branch is only reachable when the status is 2xx (the
+        // non-2xx short-circuit above already returned), so the
+        // `auth_required` / `not_found` guards are defensive — they
+        // will always be `false` here.
         return Ok(LinkMetadata {
             url: url.to_string(),
             title: None,
@@ -124,6 +143,7 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
             description: None,
             fetched_at: now_rfc3339(),
             auth_required: status == 401 || status == 403,
+            not_found: status == 404 || status == 410,
         });
     }
 
@@ -146,6 +166,10 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
         description,
         fetched_at: now_rfc3339(),
         auth_required,
+        // 2xx by construction (non-2xx short-circuited above) — the
+        // "soft 404" / login-page detection lives entirely in
+        // `auth_required` via `detect_auth_required`.
+        not_found: false,
     })
 }
 
@@ -200,7 +224,7 @@ async fn read_body_limited(
 /// Retrieve cached metadata for a URL.
 pub async fn get_cached(pool: &SqlitePool, url: &str) -> Result<Option<LinkMetadata>, AppError> {
     let row = sqlx::query_as::<_, LinkMetadataRow>(
-        "SELECT url, title, favicon_url, description, fetched_at, auth_required \
+        "SELECT url, title, favicon_url, description, fetched_at, auth_required, not_found \
          FROM link_metadata WHERE url = ?",
     )
     .bind(url)
@@ -212,11 +236,12 @@ pub async fn get_cached(pool: &SqlitePool, url: &str) -> Result<Option<LinkMetad
 
 /// Insert or replace cached metadata for a URL.
 pub async fn upsert(pool: &SqlitePool, meta: &LinkMetadata) -> Result<(), AppError> {
-    let auth_flag: i32 = if meta.auth_required { 1 } else { 0 };
+    let auth_flag: i32 = i32::from(meta.auth_required);
+    let not_found_flag: i32 = i32::from(meta.not_found);
     sqlx::query(
         "INSERT OR REPLACE INTO link_metadata \
-         (url, title, favicon_url, description, fetched_at, auth_required) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+         (url, title, favicon_url, description, fetched_at, auth_required, not_found) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&meta.url)
     .bind(&meta.title)
@@ -224,6 +249,7 @@ pub async fn upsert(pool: &SqlitePool, meta: &LinkMetadata) -> Result<(), AppErr
     .bind(&meta.description)
     .bind(&meta.fetched_at)
     .bind(auth_flag)
+    .bind(not_found_flag)
     .execute(pool)
     .await?;
 
@@ -269,6 +295,7 @@ struct LinkMetadataRow {
     description: Option<String>,
     fetched_at: String,
     auth_required: i32,
+    not_found: i32,
 }
 
 impl From<LinkMetadataRow> for LinkMetadata {
@@ -280,6 +307,7 @@ impl From<LinkMetadataRow> for LinkMetadata {
             description: row.description,
             fetched_at: row.fetched_at,
             auth_required: row.auth_required != 0,
+            not_found: row.not_found != 0,
         }
     }
 }

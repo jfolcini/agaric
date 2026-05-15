@@ -500,6 +500,19 @@ export const commands = {
 	description: string | null,
 	fetched_at: string,
 	auth_required: boolean,
+	/**
+	 *  MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
+	 *  410). Distinct from `auth_required` (401/403, transient
+	 *  sign-in) and from "transient" (5xx — both flags false plus
+	 *  `title.is_none()`). The frontend uses this to render a "(not
+	 *  found)" tag and suppress the favicon.
+	 *
+	 *  `#[serde(default)]` so any legacy serialized blob — e.g. a
+	 *  cached snapshot deserialized before this field existed — keeps
+	 *  deserializing cleanly as `false`.
+	 */
+	not_found?: boolean,
 } | null, AppErrorSchema>(__TAURI_INVOKE("get_link_metadata", { url })),
 	/**
 	 *  Tauri command: gather bug-report metadata (app version, OS, arch,
@@ -1127,6 +1140,19 @@ export type LinkMetadata = {
 	description: string | null,
 	fetched_at: string,
 	auth_required: boolean,
+	/**
+	 *  MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
+	 *  410). Distinct from `auth_required` (401/403, transient
+	 *  sign-in) and from "transient" (5xx — both flags false plus
+	 *  `title.is_none()`). The frontend uses this to render a "(not
+	 *  found)" tag and suppress the favicon.
+	 *
+	 *  `#[serde(default)]` so any legacy serialized blob — e.g. a
+	 *  cached snapshot deserialized before this field existed — keeps
+	 *  deserializing cleanly as `false`.
+	 */
+	not_found?: boolean,
 };
 
 // One log file's name + contents returned by [`read_logs_for_report`].

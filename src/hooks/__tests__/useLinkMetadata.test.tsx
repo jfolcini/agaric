@@ -32,6 +32,7 @@ describe('useLinkMetadata.fetch', () => {
       description: 'An example domain',
       fetched_at: '2026-01-01T00:00:00Z',
       auth_required: false,
+      not_found: false,
     }
     mockedInvoke.mockResolvedValueOnce(meta)
 

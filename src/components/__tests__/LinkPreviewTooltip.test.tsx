@@ -45,6 +45,7 @@ const SAMPLE_METADATA: LinkMetadata = {
   description: 'An example site',
   fetched_at: '2024-01-01T00:00:00Z',
   auth_required: false,
+  not_found: false,
 }
 
 const SAMPLE_RECT = new DOMRect(50, 100, 150, 20)
@@ -201,6 +202,48 @@ describe('LinkPreviewTooltip', () => {
     // Should show URL, not the title
     expect(tooltip).toHaveTextContent('https://private.example.com')
     // Should have Globe icon (no favicon for auth_required)
+    expect(tooltip.querySelector('img')).toBeNull()
+    expect(tooltip.querySelector('svg')).toBeInTheDocument()
+    // auth_required must NOT trigger the not-found tag (those two
+    // states are visually distinct — MAINT-213).
+    expect(screen.queryByTestId('link-preview-not-found-tag')).toBeNull()
+  })
+
+  // MAINT-213: 404/410 must produce a visually distinct presentation
+  // from auth_required (sign-in) and from transient 5xx. The tooltip
+  // shows the same Globe icon + URL but appends a muted "(not found)"
+  // tag so the user knows the page is terminally gone.
+  it('renders distinct (not found) tag when metadata.not_found is true', () => {
+    mockUseLinkPreview.mockReturnValue({
+      url: 'https://gone.example.com',
+      metadata: {
+        ...SAMPLE_METADATA,
+        url: 'https://gone.example.com',
+        // Even if a title leaked through (e.g. cached from before the
+        // M4 short-circuit), the not_found flag must take precedence
+        // and the title must NOT be rendered.
+        title: 'Stale Cached Title',
+        favicon_url: 'https://gone.example.com/favicon.ico',
+        not_found: true,
+      },
+      anchorRect: SAMPLE_RECT,
+      isLoading: false,
+    })
+
+    render(<LinkPreviewTooltip container={makeContainer()} />)
+
+    const tooltip = screen.getByTestId('link-preview-tooltip')
+
+    // The "(not found)" tag is the distinguishing UX.
+    const notFoundTag = screen.getByTestId('link-preview-not-found-tag')
+    expect(notFoundTag).toBeInTheDocument()
+    expect(notFoundTag).toHaveTextContent('(not found)')
+
+    // URL is shown (in lieu of the title).
+    expect(tooltip).toHaveTextContent('https://gone.example.com')
+    // Stale cached title must NOT leak through.
+    expect(tooltip).not.toHaveTextContent('Stale Cached Title')
+    // Favicon must NOT be loaded for a 404'd page — Globe icon only.
     expect(tooltip.querySelector('img')).toBeNull()
     expect(tooltip.querySelector('svg')).toBeInTheDocument()
   })

@@ -91,14 +91,32 @@ struct CacheRepeatingRow {
 /// documentation path was chosen per the AGENTS.md "Architectural Stability"
 /// guidance.
 pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    let today = chrono::Local::now().date_naive();
+    rebuild_projected_agenda_cache_with_today(pool, today).await
+}
+
+/// MAINT-196 — pinned-today variant of [`rebuild_projected_agenda_cache`].
+///
+/// Production code calls the wrapper above (which reads `chrono::Local::now()`).
+/// Tests call this variant with a pinned `today` so the cache rebuild and
+/// the on-the-fly fallback can be compared without per-run drift driven
+/// by the wall clock. Mirrors `list_projected_agenda_inner_with_today`
+/// (MAINT-164) — same rationale: production picks up the device clock,
+/// tests inject a deterministic reference date.
+pub(crate) async fn rebuild_projected_agenda_cache_with_today(
+    pool: &SqlitePool,
+    today: chrono::NaiveDate,
+) -> Result<(), AppError> {
     super::rebuild_with_timing("projected_agenda", || {
-        rebuild_projected_agenda_cache_impl(pool)
+        rebuild_projected_agenda_cache_impl(pool, today)
     })
     .await
 }
 
-async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    let today = chrono::Local::now().date_naive();
+async fn rebuild_projected_agenda_cache_impl(
+    pool: &SqlitePool,
+    today: chrono::NaiveDate,
+) -> Result<u64, AppError> {
     // Pre-compute projections for the next 365 days only. Queries beyond this
     // horizon fall back to on-the-fly computation (which is slower but correct).
     // 365 days is sufficient for weekly/monthly calendar views — the primary
@@ -235,34 +253,33 @@ async fn flush_projection_chunk(
 /// split-pool rebuilds.
 ///
 /// Appends the `(block_id, projected_date, source)` entries for a single
-/// repeating block to the caller-owned `out` buffer.  The recurrence
+/// repeating block to the caller-owned `out` buffer. The recurrence
 /// semantics (`dot_plus` / `plus_plus` / default modes, `repeat-until` /
 /// `repeat-count` / `repeat-seq` end conditions, the 10 000-iteration
-/// safety bound) are unchanged from the pre-M-19 `compute_projection_entries`
-/// — the function was factored per-block so the rebuild path can
-/// chunk-flush at block boundaries without buffering every projection
-/// up-front (peak Rust-heap drops from `O(blocks × horizon)` to
-/// `O(CHUNK_SIZE + max-per-block)`).
+/// safety bound) are owned by [`crate::recurrence::project_block_dates`]
+/// (MAINT-196) so the cache rebuild and the on-the-fly fallback see
+/// **identical** recurrence math — this function is now a thin adapter
+/// that wires the shared helper's `emit` closure into the chunk-flush
+/// buffer.
 ///
-/// Both rebuild paths must produce **identical** entries for identical
-/// inputs; keeping the recurrence logic in one helper removes the risk
-/// of the two paths drifting (M-17 invariant #7).
+/// The cache passes `range_start = today, range_end = horizon` so the
+/// emit-range exactly matches the pre-MAINT-196 `today..horizon` clip
+/// the cache previously applied. Both rebuild paths must produce
+/// identical entries for identical inputs (M-17 invariant #7 + the
+/// MAINT-196 parity test in `agenda_cmd_tests`).
 fn project_block_into(
     block: &CacheRepeatingRow,
     today: chrono::NaiveDate,
     horizon: chrono::NaiveDate,
     out: &mut Vec<(String, String, String)>,
 ) {
-    let rule = match &block.repeat_rule {
-        Some(r) if !r.is_empty() => r.clone(),
+    let rule = match block.repeat_rule.as_deref() {
+        Some(r) if !r.is_empty() => r,
         _ => return,
     };
 
-    let repeat_until = block.repeat_until.clone();
-    let repeat_count = block.repeat_count;
-    let repeat_seq = block.repeat_seq;
-
-    let until_date = repeat_until
+    let until_date = block
+        .repeat_until
         .as_deref()
         .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
 
@@ -270,110 +287,31 @@ fn project_block_into(
     // repeat_count and repeat_seq are non-negative f64 (whole numbers)
     // from SQLite.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let remaining = match (repeat_count, repeat_seq) {
+    let remaining = match (block.repeat_count, block.repeat_seq) {
         (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
         (Some(count), None) => Some(count as usize),
         (Some(_), Some(_)) => Some(0usize),
         _ => None,
     };
 
-    // Parse mode and interval from rule
-    let trimmed = rule.trim().to_lowercase();
-    let (mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
-        ("dot_plus", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("++") {
-        ("plus_plus", rest)
-    } else {
-        ("default", trimmed.as_str())
-    };
-
-    // Project for each date source (due_date, scheduled_date)
-    let sources: Vec<(&str, &str)> = [
-        block.due_date.as_deref().map(|d| ("due_date", d)),
-        block
-            .scheduled_date
-            .as_deref()
-            .map(|d| ("scheduled_date", d)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    for (source_name, date_str) in sources {
-        let Ok(base) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
-            continue;
-        };
-
-        // Determine starting point based on mode
-        let mut current = match mode {
-            "dot_plus" => today,
-            "plus_plus" => {
-                let mut c = base;
-                for _ in 0..10_000 {
-                    c = match crate::recurrence::shift_date_once(c, interval) {
-                        Some(d) => d,
-                        None => break,
-                    };
-                    if c > today {
-                        break;
-                    }
-                }
-                c
-            }
-            _ => base,
-        };
-
-        let mut projected_count = 0usize;
-        let max_remaining = remaining.unwrap_or(usize::MAX);
-
-        // For ++ mode, pre-add the caught-up date itself.
-        if mode == "plus_plus"
-            && projected_count < max_remaining
-            && current >= today
-            && current <= horizon
-        {
-            let skip = until_date.is_some_and(|until| current > until);
-            if !skip {
-                out.push((
-                    block.id.clone(),
-                    current.format("%Y-%m-%d").to_string(),
-                    source_name.to_string(),
-                ));
-                projected_count += 1;
-            }
-        }
-
-        // Safety limit to prevent infinite loops
-        for _ in 0..10_000 {
-            if projected_count >= max_remaining {
-                break;
-            }
-
-            current = match crate::recurrence::shift_date_once(current, interval) {
-                Some(d) => d,
-                None => break,
-            };
-
-            if let Some(until) = until_date {
-                if current > until {
-                    break;
-                }
-            }
-
-            if current > horizon {
-                break;
-            }
-
-            if current >= today {
-                out.push((
-                    block.id.clone(),
-                    current.format("%Y-%m-%d").to_string(),
-                    source_name.to_string(),
-                ));
-                projected_count += 1;
-            }
-        }
-    }
+    let block_id = &block.id;
+    crate::recurrence::project_block_dates(
+        block.due_date.as_deref(),
+        block.scheduled_date.as_deref(),
+        rule,
+        until_date,
+        remaining,
+        today,
+        today,
+        horizon,
+        |projected, source_name| {
+            out.push((
+                block_id.clone(),
+                projected.format("%Y-%m-%d").to_string(),
+                source_name.to_string(),
+            ));
+        },
+    );
 }
 
 /// Read/write split variant of [`rebuild_projected_agenda_cache`] (M-17).

@@ -46,6 +46,7 @@ const SAMPLE_METADATA: LinkMetadata = {
   description: 'An example site',
   fetched_at: '2024-01-01T00:00:00Z',
   auth_required: false,
+  not_found: false,
 }
 
 /** Create a container DOM element. */

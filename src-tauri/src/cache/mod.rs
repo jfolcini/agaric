@@ -147,6 +147,9 @@ pub use page_links::{
 };
 pub use pages::{rebuild_pages_cache, rebuild_pages_cache_split};
 pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split};
+// MAINT-196 — pinned-today variant for the on-the-fly / cached parity test.
+#[cfg(test)]
+pub(crate) use projected_agenda::rebuild_projected_agenda_cache_with_today;
 pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split};
 
 // ---------------------------------------------------------------------------

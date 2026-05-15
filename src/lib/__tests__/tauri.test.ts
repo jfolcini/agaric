@@ -3247,6 +3247,7 @@ describe('fetchLinkMetadata', () => {
       description: 'An example site',
       fetched_at: '2025-01-15T00:00:00Z',
       auth_required: false,
+      not_found: false,
     }
     mockedInvoke.mockResolvedValueOnce(expected)
 
@@ -3273,6 +3274,7 @@ describe('getLinkMetadata', () => {
       description: null,
       fetched_at: '2025-01-15T00:00:00Z',
       auth_required: false,
+      not_found: false,
     }
     mockedInvoke.mockResolvedValueOnce(expected)
 

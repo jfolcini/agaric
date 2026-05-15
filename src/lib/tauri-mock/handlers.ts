@@ -2254,6 +2254,7 @@ export const HANDLERS: Record<string, Handler> = {
       description: null,
       fetched_at: new Date().toISOString(),
       auth_required: false,
+      not_found: false,
     }
   },
 
@@ -2266,6 +2267,7 @@ export const HANDLERS: Record<string, Handler> = {
       description: null,
       fetched_at: new Date().toISOString(),
       auth_required: false,
+      not_found: false,
     }
   },
 
