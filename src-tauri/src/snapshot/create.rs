@@ -372,7 +372,17 @@ pub async fn compact_op_log(
     // into the 5s busy_timeout (the wrapper command already uses the
     // logged variant for the recount tx — this is the matching inner
     // delete).
-    let mut tx = crate::db::begin_immediate_logged(pool, "compact_op_log_phase3").await?;
+    //
+    // SQL-review M-6: the snapshot create (INSERT + UPDATE-to-complete) and
+    // the op_log purge run in SEPARATE transactions so a failure in the
+    // purge leaves the snapshot complete-and-usable instead of rolling
+    // back both. Previously both lived in one tx and any crash in the
+    // DELETE path threw away the snapshot, forcing the next boot to
+    // re-encode the same byte payload — retry-thrashing on transient
+    // disk errors. The seq bound (`up_to_seqs` from Phase 1) is captured
+    // before TX 1 commits, so concurrent writers between TX 1 and TX 2
+    // cannot cause the purge to delete new-after-snapshot ops.
+    let mut tx = crate::db::begin_immediate_logged(pool, "compact_op_log_phase3_snapshot").await?;
 
     // Step 1: INSERT with status='pending'
     sqlx::query(
@@ -391,6 +401,14 @@ pub async fn compact_op_log(
         .bind(&snapshot_id)
         .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
+    // Snapshot is durable on disk. From here on, a crash leaves the
+    // snapshot intact — the next compaction call will re-run the purge
+    // against the same `up_to_seqs` bound and the duplicate-DELETE is a
+    // no-op (already-deleted rows return 0 rows_affected).
+
+    let mut tx = crate::db::begin_immediate_logged(pool, "compact_op_log_phase3_purge").await?;
 
     // Purge old ops: bounded by BOTH the time cutoff AND the snapshot
     // frontier.  The seq guard ensures that ops written after the Phase 1
@@ -422,7 +440,9 @@ pub async fn compact_op_log(
     // sentinel row to every other connection in the pool.
     crate::op_log::disable_op_log_mutation_bypass(&mut tx).await?;
 
-    // Cleanup old snapshots (inlined to stay within this transaction)
+    // Cleanup old snapshots — kept in the same tx as the op_log purge so
+    // the two derived-state deletes commit together. If this tx fails the
+    // snapshot itself remains intact in `log_snapshots` from TX 1.
     let keep: i64 = 3;
     sqlx::query(
         "DELETE FROM log_snapshots WHERE status = 'pending' \

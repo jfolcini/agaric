@@ -446,6 +446,32 @@ pub async fn set_todo_state_batch_inner(
         .map(|id| id.to_ascii_uppercase())
         .collect();
 
+    // SQL-review M-7: this batch path skips the timestamp + recurrence
+    // side-effects that the single-row `set_todo_state_inner` performs.
+    // If any block in the batch carries a `repeat` property, emit a
+    // `tracing::warn!` so callers expecting per-block recurrence advance
+    // notice that this is the batched path. The check is a single
+    // SELECT that probes for `key = 'repeat'` across the batch's blocks
+    // — cheaper than the per-block-read pre-commit shape.
+    let repeat_carriers = sqlx::query_scalar::<_, String>(
+        "SELECT block_id FROM block_properties \
+         WHERE key = 'repeat' AND block_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(serde_json::to_string(&block_ids)?)
+    .fetch_all(pool)
+    .await?;
+    if !repeat_carriers.is_empty() {
+        tracing::warn!(
+            target: "agaric::set_todo_state_batch",
+            repeat_carrier_count = repeat_carriers.len(),
+            example_block_id = %repeat_carriers.first().map_or("", String::as_str),
+            "set_todo_state_batch_inner skips per-block recurrence advance + \
+             completion-timestamp side-effects that the single-row path runs; \
+             {} block(s) in this batch carry `repeat` and will NOT roll forward",
+            repeat_carriers.len(),
+        );
+    }
+
     // One IMMEDIATE tx covers every per-block write (op_log + blocks
     // column). Either every state change commits or none of them.
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state_batch").await?;

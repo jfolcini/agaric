@@ -3768,14 +3768,17 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
 /// then run `compact_op_log` and assert:
 ///
 ///   - the call returns `Err(...)`,
-///   - no row exists in `log_snapshots` (the `INSERT … 'pending'` was
-///     rolled back; no orphaned 'pending' row leaks),
-///   - every `op_log` row is intact (the `DELETE` was rolled back).
+///   - **the snapshot row exists with `status = 'complete'`** — per SQL-review
+///     M-6, the snapshot create commits in TX 1 before the op_log purge
+///     runs in TX 2 so a purge crash leaves the snapshot durable instead
+///     of forcing the next boot to re-encode the same byte payload,
+///   - every `op_log` row is intact (the `DELETE` was rolled back when
+///     TX 2 aborted).
 ///
-/// A future refactor that splits compaction's tx — for example, committing
-/// the snapshot insert before the per-device deletes — would silently break
-/// atomicity, leaving either a 'pending' snapshot row stranded or ops
-/// already deleted with no snapshot. This test catches it.
+/// Pre-M-6 this test asserted "no snapshot row exists" — both INSERT and
+/// DELETE ran inside the same tx so any DELETE abort wiped the snapshot.
+/// M-6 split the txs to stop that retry-thrash; the test now guards the
+/// new contract: snapshot durable, op_log intact.
 #[tokio::test]
 async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
     let (pool, _dir) = test_pool().await;
@@ -3821,26 +3824,42 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
         "L-109: compaction must fail when DELETE FROM op_log aborts; got {result:?}"
     );
 
-    // Snapshot row must NOT exist — the INSERT into log_snapshots was rolled
-    // back along with the failed DELETE.
-    let snaps_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    // Snapshot row MUST exist with status='complete' — TX 1 committed the
+    // snapshot before TX 2 attempted the DELETE; the injected DELETE abort
+    // only rolled back TX 2 (op_log purge + old-snapshot cleanup), leaving
+    // the snapshot durable. This is the M-6 contract: don't retry-thrash
+    // by throwing away a perfectly-good snapshot just because the purge
+    // hit a transient disk error.
+    let complete_snaps: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
-        snaps_after, 0,
-        "L-109: log_snapshots must be empty after a rolled-back compaction; \
-         a leaked 'pending' or 'complete' row indicates the tx is no longer atomic"
+        complete_snaps, 1,
+        "M-6: exactly one 'complete' snapshot must remain after a rolled-back \
+         purge — the snapshot tx committed before the purge tx attempted DELETE"
+    );
+    let pending_snaps: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        pending_snaps, 0,
+        "M-6: no 'pending' snapshot row may leak — TX 1 always flips to \
+         'complete' before committing"
     );
 
-    // Op log must be intact — DELETE was aborted and the whole tx rolled back.
+    // Op log must be intact — TX 2's DELETE was aborted by the injected trigger.
     let ops_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
         ops_after, ops_before,
-        "L-109: op_log row count must be unchanged after a rolled-back compaction"
+        "M-6: op_log row count must be unchanged after a rolled-back purge — \
+         TX 2's DELETE was aborted along with the whole purge tx"
     );
 
     // Drop the injected trigger so any other tests sharing the pool are

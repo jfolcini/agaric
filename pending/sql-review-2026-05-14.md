@@ -1,10 +1,12 @@
 # SQL review — full-app audit + remediation plan — 2026-05-14
 
-> **Status:** Phases 1 + 2 + 3 + 4 shipped (sessions 740 + 741 + 745 + 745).
-> **Open below:** Phase 5 (M-6 compaction tx split + M-8 snapshot streaming).
-> §1 BLOCKERs all shipped; §2 H-2 / H-3 shipped (H-1 page_link_cache via the
-> new `page_link_cache` table); §3 down to 4 M-class items (M-1, M-2, M-3,
-> M-4 shipped — Phase 4 closed everything except snapshot work).
+> **Status:** Phases 1-5 all shipped EXCEPT M-8 streaming snapshot restore,
+> which the plan body itself flags as deferred-until-Android-profiling. The
+> M-6 compaction tx split (Phase 5) closed in session 745 alongside the
+> shipped M-7 batch-recurrence warn. §1 BLOCKERs all shipped; §2 H-2 / H-3
+> closed; §3 down to M-2 / M-5 / M-8 (one each shipped this session, one
+> declined as too-invasive for a static-SQL refactor, one deferred). This
+> plan is effectively closed — only M-8's Android dependency remains.
 >
 > The original audit body (the multi-agent SQL/sqlx review summary) is
 > retained below for context — every finding still labelled "Open" maps
@@ -306,9 +308,20 @@ at every flagged read site. Test fixtures that previously relied on
 NULL `page_id` got explicit `page_id = id` plumbing (3 fixture helpers
 in `commands/blocks/queries.rs` + `fts/tests.rs`).
 
-**Phase 5 — Snapshot streaming + non-idempotent compaction fix (L+M, ~1
-week).** M-6 (compaction tx split) + M-8 (streaming snapshot restore).
-Gated on Android profiling for M-8 cost/benefit.
+**Phase 5 — Snapshot streaming + non-idempotent compaction fix.** Partially
+shipped session 745. M-6 (compaction tx split) landed: the snapshot create
+(INSERT + UPDATE-to-complete) now runs in TX 1 and the op_log purge + old
+snapshot cleanup runs in TX 2. A purge crash leaves the snapshot durable
+instead of forcing the next boot to re-encode the same byte payload — the
+documented retry-thrash is closed. The pre-existing `compact_op_log_rolls_
+back_on_injected_delete_failure_l109` test rewritten to guard the new
+contract (snapshot survives, op_log unchanged). **M-7 (batch-recurrence
+warn)** also landed in the same session — `set_todo_state_batch_inner`
+now probes for `repeat` properties on the batch and `tracing::warn!`s
+with the carrier count so callers expecting per-block recurrence advance
+notice the divergence from the single-row path. **M-8 (streaming snapshot
+restore)** stays deferred per the plan body — Android-only memory win,
+gated on profiling data showing the parsed-struct peak on a 24 MB heap.
 
 ## §8 — Cost / Impact / Risk
 
