@@ -37,6 +37,19 @@ ignore = [
     { id = "RUSTSEC-2025-0098", reason = "Tauri transitive dep: unic-ucd-version" },
     { id = "RUSTSEC-2025-0100", reason = "Tauri transitive dep: unic-ucd-ident" },
     { id = "RUSTSEC-2024-0436", reason = "Tauri transitive dep: paste (via serde_with, specta)" },
+    { id = "RUSTSEC-2024-0429", reason = "Tauri GTK3 transitive dep: glib 0.18.5 unsound (sibling of GTK3 binding accept-list above)" },
+    # Loro transitive unmaintained crate (atomic-polyfill via heapless → postcard → loro)
+    { id = "RUSTSEC-2023-0089", reason = "Loro transitive dep: atomic-polyfill (via heapless → postcard)" },
+    # sqlx transitive: rsa Marvin Attack timing side-channel via sqlx-mysql. Agaric
+    # configures sqlx with default-features = false and only the sqlite/runtime-tokio/
+    # macros/migrate features — the mysql driver is never invoked at runtime, but
+    # sqlx 0.8.6 still pulls sqlx-mysql at compile time (it gates the driver enable
+    # behind a Cargo feature, not behind dep pruning). The vulnerable RSA code path
+    # only executes during MySQL auth handshake, which this app never reaches.
+    { id = "RUSTSEC-2023-0071", reason = "sqlx-mysql transitive — Agaric is SQLite-only; the rsa Marvin Attack code path is in MySQL auth handshake which is never invoked" },
+    # rand: deprecated `rand::thread_rng` is unsound on freshly-spawned threads.
+    # Transitive via Tauri / Loro stack; Agaric's own code uses `rand::rngs::OsRng`.
+    { id = "RUSTSEC-2026-0097", reason = "Transitive (Tauri/Loro stack); Agaric's own code uses OsRng, the deprecated thread_rng path is not exercised" },
 ]
 
 # ── Licenses ────────────────────────────────────────────────────────────────
