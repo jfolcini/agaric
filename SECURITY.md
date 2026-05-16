@@ -73,3 +73,66 @@ The repository already runs the following on every push to `main` and on every r
 - **`unsafe_code = "deny"`** in `src-tauri/Cargo.toml` — new `unsafe { … }` blocks fail CI before they land.
 
 A report that points at an issue already covered by one of the above is still useful — it usually means a config gap. Please mention which tool(s) you ran when filing.
+
+## Threat-model reference (for maintainers)
+
+The sections below are the canonical reference for triaging advisories and reviewing security-sensitive changes. The framing here lets a fresh contributor decide "is this finding something we already accepted, something we mitigate elsewhere, or something we need to fix?" without re-deriving the threat model each time.
+
+### Trust anchors
+
+Anything compromised below would bypass the rest of the policy. We trust:
+
+- **The maintainer's machine.** Code is signed and tags are cut from a developer workstation. A compromise here ships malware to every user; no in-repo control mitigates this.
+- **Anthropic / Claude Code.** Used as an authoring assistant. Outputs are reviewed before commit, but a malicious patch landing through this path would still be a maintainer-machine compromise (above).
+- **GitHub.** Hosts source, releases, Actions runners, and the advisory database used by Dependabot / CodeQL. A GitHub-side compromise would defeat SHA-pinned actions and the release pipeline.
+- **The npm registry and crates.io.** Dependency tarballs are fetched from these registries. Sigstore provenance (`npm audit signatures`) covers packages that publish it; the rest are trusted on registry integrity alone. A registry-side compromise would defeat lockfile hashes only if the original publish was malicious.
+- **Direct dependency maintainers.** Especially Tauri, rustls, Loro, TipTap, SQLite, and the keyring crate. A malicious release would land via Dependabot and reach users at the next tag; lockfile pinning slows but does not prevent this.
+
+### Untrusted inputs
+
+These are the bytes that cross into Agaric from outside the trust boundary. Each one needs to survive whatever decoder receives it without granting code execution or data exfiltration:
+
+- **Synced peer payloads (LAN).** Pairing is TLS + mTLS with TOFU pinning, but there is no application-layer authentication of peer messages beyond device identity. Per the threat model, peers are the user's own devices — we do not harden the protocol against adversarial peers (see Out-of-scope).
+- **Loro CRDT bytes.** Op-log entries from a paired peer are decoded by the `loro` crate. Decoder panics on hostile input are not treated as security issues (peers are trusted) but are welcome as regular bug reports.
+- **User-pasted text and clipboard.** Rendered through the TipTap editor and the custom markdown serializer; sanitisation lives in the editor extensions and `dompurify` (via mermaid).
+- **File imports (Markdown, OPML, JSON exports).** Parsed by frontend importers; treated as user-supplied content, not adversarial.
+- **OAuth tokens (Google Calendar today).** PKCE flow via `tauri-plugin-oauth`; tokens are stored encrypted at rest in the OS keychain via the `keyring` crate (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows — see `src-tauri/Cargo.toml` keyring feature list).
+- **WebView content.** Constrained by the Tauri CSP (`default-src 'self'`, see `src-tauri/tauri.conf.json`) and the per-window capability allowlist ([`src-tauri/capabilities/default.json`](src-tauri/capabilities/default.json)).
+
+### Accepted risks
+
+Each accepted finding lives in exactly one canonical file. Do not duplicate the lists here — update the source and the rationale travels with it.
+
+- **npm advisories** — [`.nsprc`](.nsprc). Every entry carries an `expiresOn` 90 days out, forcing periodic re-triage. Current waivers cluster around dev-only transitive deps (`lodash` via `depcheck`, `vite` dev-server CVEs, `fast-uri` via `better-npm-audit`) and mermaid-family advisories that the single-user threat model neutralises (no adversarial input).
+- **Cargo advisories** — [`src-tauri/deny.toml`](src-tauri/deny.toml) `[advisories].ignore`. Almost every entry is a Tauri-transitive GTK3 / unic / paste / proc-macro-error binding that has no upstream maintainer but cannot be removed without dropping Linux support. Add an entry only with a `reason =` that names the upstream blocker.
+- **Zizmor workflow findings** — [`.github/zizmor.yml`](.github/zizmor.yml). Currently only `cache-poisoning` is baselined, justified by the AGENTS.md "single-user, no adversarial peers" framing — a poisoned Actions cache would only affect the maintainer's own builds. `unpinned-uses` is enforced (no baseline entries); every action is pinned to a 40-char SHA and bumped weekly by Dependabot.
+
+### Mitigations
+
+Each item below names the file or tool that enforces it. If you change one, update the corresponding control here.
+
+- **Tauri CSP** — `default-src 'self'; script-src 'self'; …` declared in `src-tauri/tauri.conf.json`. Blocks inline scripts and arbitrary outbound fetches from the WebView.
+- **Tauri capabilities** — per-window allowlist in [`src-tauri/capabilities/default.json`](src-tauri/capabilities/default.json). Frontend can only invoke the listed plugin permissions; adding a new capability requires editing this file.
+- **Lockfiles + `--locked` everywhere** — `package-lock.json` and `src-tauri/Cargo.lock` are committed. CI installs run with `--locked` (see `cargo install --locked` invocations in `.github/workflows/_validate.yml`, `ci.yml`, `release.yml`); `npm ci` is used in place of `npm install` in CI.
+- **SHA-pinned GitHub Actions** — every `uses:` reference in `.github/workflows/` is pinned to a 40-char commit SHA with a `# vX` comment. [`.github/dependabot.yml`](.github/dependabot.yml) bumps these weekly.
+- **`cargo audit` + `cargo deny check`** — one prek hook (`cargo-deny`, see `prek.toml`) and a CI step in `.github/workflows/_validate.yml`. `cargo-deny` covers RustSec advisories, license policy, banned crates (`openssl` family), and the source allowlist (crates.io only).
+- **`npm audit signatures`** — Sigstore provenance verification in `.github/workflows/_validate.yml`. Warn-only today; tightens as more of the npm ecosystem publishes attestations.
+- **`better-npm-audit` against `.nsprc`** — `npm-audit` prek hook (`prek.toml`) fails on any advisory not listed in `.nsprc`. The 90-day `expiresOn` ensures waivers do not become permanent.
+- **`gitleaks` + `detect-private-key`** — `prek.toml` blocks committed secrets and stray PEM blocks.
+- **`unsafe_code = "deny"`** — crate-wide lint in `src-tauri/Cargo.toml`. New `unsafe { … }` blocks fail CI.
+- **`zizmor`** — workflow-security linter; baseline in `.github/zizmor.yml`, see Accepted risks above.
+- **CodeQL** — default JS/TS + Rust queries on every push to `main`.
+- **IPC error sanitisation** — `tauri-command-sanitize` prek hook (`scripts/check-tauri-command-sanitize.mjs`) requires every IPC error path to route through `sanitize_internal_error` so internal error payloads never reach the frontend.
+
+### Out of scope
+
+The following are explicitly outside this threat model. Reports that fit these categories will be closed; designs that would require us to address them must first propose updating this document.
+
+- Multi-tenant deployments. Agaric has no concept of "other users" — every paired device belongs to the same person.
+- Network-exposed servers. There is no maintainer-operated backend; the sync daemon binds to the LAN only.
+- Mobile MDM, secure-enclave attestation, or jailbreak detection.
+- Anonymity properties of the LAN sync protocol (who is paired with whom, traffic-analysis resistance).
+- Adversarial-peer hardening. See AGENTS.md § Threat Model and the In-scope / Out-of-scope sections above.
+- DoS / rate-limiting on local-only listeners (sync daemon, OAuth callback, MCP socket).
+
+**If a future change shifts any of these into scope** — for example a server-mode build, a multi-user feature, or a public deployment — this document must be revisited *before* the change lands. The trust anchors, untrusted-input list, and mitigation set above all assume the local-first, single-user framing.

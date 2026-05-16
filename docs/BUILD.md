@@ -78,7 +78,7 @@ The browser fallback covers most frontend work — every Tauri IPC is mocked via
 For Rust-only edits, a continuously-running `cargo check` tightens the loop further than ad-hoc invocations:
 
 ```sh
-cargo install bacon
+cargo install bacon --locked
 bacon                       # default: cargo check, re-runs on save
 ```
 

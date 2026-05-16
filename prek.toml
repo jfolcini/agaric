@@ -409,6 +409,26 @@ language = "system"
 pass_filenames = false
 files = "^src-tauri/Cargo\\.(toml|lock)$"
 
+# cargo-audit accept-list sync (PEND-40 #11). `cargo audit` (run as a
+# warn-only step in `_validate.yml`) does NOT consult `deny.toml`, so
+# every advisory already triaged in `deny.toml`'s `[advisories].ignore`
+# re-surfaces in the CI log. The sync script projects those entries
+# into `src-tauri/.cargo/audit.toml` (where cargo-audit actually
+# reads from). This hook re-runs the script on every change to
+# `deny.toml` or `audit.toml` and fails if the working copy of
+# audit.toml is out of sync — telling the author to run
+# `node scripts/sync-audit-from-deny.mjs`. `deny.toml` stays the
+# single source of truth; `audit.toml` is generated.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "audit-toml-in-sync"
+name = "audit.toml in sync with deny.toml"
+entry = "node scripts/sync-audit-from-deny.mjs --check"
+language = "system"
+pass_filenames = false
+files = "^src-tauri/(deny\\.toml|\\.cargo/audit\\.toml)$"
+
 # Rust: cargo-machete (unused dependency detection)
 [[repos]]
 repo = "local"

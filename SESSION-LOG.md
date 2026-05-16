@@ -2,10 +2,53 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 750 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 751 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 751 — PEND-40 wrap (SLSA provenance + threat-model doc + audit/deny sync + sweeps) (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | 3 build (parallel, orchestrator-reviewed) |
+| **Items closed** | PEND-40 (plan deleted; all 5 stretch items shipped or closed as no-op) |
+| **Items modified** | — |
+| **Tests added** | — (CI/docs/tooling; verified via prek hooks) |
+| **Files touched** | 8 |
+
+**Summary:** Wrapped PEND-40 by shipping all 5 stretch items in one batch. **#5 SLSA provenance** — `actions/attest-build-provenance@v3` SHA-pinned and wired into `release.yml` for desktop bundles (Linux/Windows/macOS, platform-gated) and the Android APK (sign step split into sign / attest / upload so the attestation lands BEFORE `gh release upload`); per-job `id-token: write` + `attestations: write` permissions. **#8 `--locked` sweep** — repo-wide grep found one regression in my own PEND-37 BUILD.md edit (`cargo install bacon` lacked `--locked`); fixed. All other `cargo install` calls in CI/scripts/docs were already `--locked`. **#9 cosign verify** — closes as no-op per the plan's skip-criterion: every binary install routes through apt, `cargo install --locked` (crates.io is itself signed), or `taiki-e/install-action` (verifies its own downloads); no `curl|sh` or `binstall` paths to harden. **#10 threat-model doc** — appended a "Threat-model reference (for maintainers)" section to `SECURITY.md` covering trust anchors / untrusted inputs / accepted risks / mitigations / out-of-scope; each entry points to canonical sources (`.nsprc`, `deny.toml`, `.github/zizmor.yml`) rather than duplicating them. **#11 unify accept-lists** — added `scripts/sync-audit-from-deny.mjs` (parses `deny.toml`'s 18 `[advisories].ignore` entries, emits `src-tauri/.cargo/audit.toml` in cargo-audit's string-array format) plus a local prek hook `audit-toml-in-sync` that fails when the two files drift. CI `cargo audit` log went from 1 vuln + 22 warnings to 1 vuln + 4 warnings — the residual 5 are *new* advisories not yet in `deny.toml` (see Process notes below).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (this batch touched only `pending/` plans + workflow/doc files, not REVIEW-LATER).
+
+**Files touched (this session):**
+- `.github/workflows/release.yml` (+83 / -7 — SLSA attest steps for desktop + Android, sign/attest/upload split).
+- `SECURITY.md` (+63 / -0 — threat-model reference section).
+- `docs/BUILD.md` (+1 / -1 — `--locked` on bacon install).
+- `prek.toml` (+20 / -0 — `audit-toml-in-sync` local hook).
+- `scripts/sync-audit-from-deny.mjs` (NEW, 119 lines, executable).
+- `src-tauri/.cargo/audit.toml` (NEW, generated, 30 lines).
+- `pending/PEND-40-supply-chain-followups.md` (deleted per "delete on completion").
+- `pending/README.md` (-1 line — drop PEND-40 row).
+
+**Verification:**
+- `node scripts/sync-audit-from-deny.mjs --check` — passes (in sync).
+- `cd src-tauri && cargo audit --no-fetch` — 18 deny.toml entries silenced; 5 residual surfaced (RUSTSEC-2023-0071, -2023-0089, -2024-0429, -2026-0097, plus a yanked `constant_time_eq 0.4.3`).
+- `zizmor .github/workflows/release.yml` — 0 findings (5 ignored, 16 suppressed from baseline; no new entries needed).
+- `prek run --all-files` — all hooks pass (commit gate).
+
+**Process notes:** #11's sync surfaced 5 advisories that have appeared since `deny.toml` was last triaged — left to the maintainer's next triage pass:
+- **RUSTSEC-2023-0071** (`rsa 0.9.10`, medium 5.9 — Marvin Attack via sqlx-mysql). True vulnerability with no fix; needs a deny.toml accept comment OR an attempt to drop `sqlx`'s `mysql` feature if it's not actually used.
+- **RUSTSEC-2023-0089** (`atomic-polyfill` via loro), **RUSTSEC-2024-0429** (`glib 0.18.5` unsound — sibling of the existing GTK3 accept-list), **RUSTSEC-2026-0097** (`rand` unsound, freshly published 2026-04-09) — all probably routine deny.toml additions.
+- **Yanked `constant_time_eq 0.4.3`** (via blake3) — `cargo update -p constant_time_eq` away.
+
+Subagent A also flagged a plan deviation worth noting: cargo-audit silently ignores `<crate>/audit.toml`; the canonical path is `<crate>/.cargo/audit.toml`. The PEND-40 plan named the wrong path; the script writes to the path cargo-audit actually consults. Doc header captures this for future readers.
+
+**Commit plan:** single commit; push deferred.
+
+---
+
 ## Session 750 — PEND-37 wrap (mold L1 + L4/L5 dev-loop docs) (2026-05-16)
 
 | Metadata | Value |
