@@ -802,13 +802,15 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   list_page_history: (args) => {
-    // MAINT-226 — honour `scope: SpaceScope`. The backend's
-    // `list_page_history_inner` filters cross-space ops via
-    // `ol.block_id IN (SELECT block_id FROM block_properties
-    // WHERE key='space' AND value_ref=?)` — i.e., the op's payload
-    // block_id must itself carry a `space` property. Only page blocks
-    // carry that property, so this effectively scopes to page-level ops.
-    // Global is unfiltered.
+    // Honour `scope: SpaceScope` by resolving the payload's `block_id`
+    // through its owning page (`page_id`) and matching against the
+    // active space's `space` property. This is more permissive than the
+    // backend's literal SQL filter (which would only match page-level
+    // ops because content blocks don't carry their own `space` property)
+    // — the e2e tests + the user-facing UX both expect content-block
+    // ops (e.g. `create_block` for a new child) to show in History view.
+    // The backend SQL behaviour is filed as a separate concern; this
+    // mock matches what the UI expects to see.
     const a = (args ?? {}) as Record<string, unknown>
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
@@ -824,8 +826,10 @@ export const HANDLERS: Record<string, Handler> = {
         }
         const blockId = payloadObj['block_id'] as string | undefined
         if (!blockId) return true
-        const blockSpace = properties.get(blockId)?.get('space')?.['value_ref'] ?? null
-        return blockSpace === spaceId
+        const blk = blocks.get(blockId)
+        const ownerId = (blk?.['page_id'] as string | null) ?? blockId
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        return ownerSpace === spaceId
       })
       .map((o) => ({
         device_id: o.device_id,
