@@ -105,6 +105,15 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 | Linting | Biome (no ESLint/Prettier) |
 | Testing | Vitest + vitest-axe + fast-check (frontend), cargo-nextest + insta + Criterion (backend), Playwright (E2E) |
 
+## System requirements
+
+| OS | Minimum |
+| --- | --- |
+| **Windows** | Windows 10 version 1803 (April 2018 Update) or later. WebView2 is installed automatically by the bundled installer; older Windows (7, 8, 8.1) is not supported because Microsoft does not ship WebView2 for it. |
+| **macOS** | macOS 11 Big Sur or later (Apple Silicon native; Intel via Rosetta-free SDK build). |
+| **Linux** | glibc 2.31+ (Ubuntu 20.04+ / Debian 11+ / Fedora 33+); `libwebkit2gtk-4.1` runtime. The AppImage bundles GTK; the `.deb` declares the WebKit dep. |
+| **Android** | Android 11 (API 30) and above. |
+
 ## Development
 
 See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting. See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the architecture deep-dive.

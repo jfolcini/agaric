@@ -93,3 +93,5 @@ ue = "ue"
 # non-bug.
 unparseable = "unparseable"
 contextful = "contextful"
+# macOS 11 codename "Big Sur" — typos otherwise flags `Sur` → `Sure`.
+Sur = "Sur"
