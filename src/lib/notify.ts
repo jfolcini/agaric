@@ -58,6 +58,37 @@ function notifyDefault(message: NotifyMessage, ...rest: OptionalOpts): string | 
   return toast(String(message), ...rest)
 }
 
+/**
+ * `notify.retry(message, onRetry, opts?)` — standard helper for the
+ * "error with a Retry action" pattern (sync loops, network blips,
+ * upload retries). Wraps `notify.error` with an `action` shaped the
+ * same way across every call site:
+ *
+ *   notify.retry('Sync failed', () => syncNow())
+ *   notify.retry(err, () => syncNow(), { id: 'sync-retry' })
+ *
+ * The `id` is auto-set to `'retry'` when the caller omits one so
+ * repeated identical errors collapse into a single toast (sonner
+ * dedupes by `id`). Pass an explicit `id` to scope dedup more
+ * narrowly (e.g., one per failing endpoint).
+ *
+ * `label` defaults to `'Retry'`; pass `opts.action.label` to override
+ * (callers can route through `t('common.retry')` etc.).
+ */
+function notifyRetry(
+  messageOrError: string | number | Error,
+  onRetry: () => void,
+  opts?: Omit<ExternalToast, 'action'> & { action?: { label?: string } },
+): string | number {
+  const { action: actionOverride, id, ...rest } = opts ?? {}
+  const label = actionOverride?.label ?? 'Retry'
+  return methods.error(messageOrError, {
+    id: id ?? 'retry',
+    action: { label, onClick: onRetry },
+    ...rest,
+  })
+}
+
 interface NotifyMethods {
   success: (message: NotifyMessage, ...rest: OptionalOpts) => string | number
   error: typeof notifyError
@@ -68,6 +99,12 @@ interface NotifyMethods {
   promise: typeof toast.promise
   custom: typeof toast.custom
   dismiss: typeof toast.dismiss
+  /**
+   * Convenience for the "error + Retry action" pattern. See `notifyRetry`
+   * above for the full contract; opt out of auto-dedup by passing an
+   * explicit `id`.
+   */
+  retry: typeof notifyRetry
 }
 
 // Lazy delegates for `promise` / `custom` / `dismiss` — per-test
@@ -75,6 +112,12 @@ interface NotifyMethods {
 // methods, and capturing `.bind(toast)` at module load fails with
 // "Cannot read properties of undefined". The lazy form reads from the
 // live `toast` import every call, so partial mocks are tolerated.
+//
+// Deduplication note: sonner natively dedupes by the `id` field on
+// `ExternalToast`. To collapse repeated errors (e.g., sync-loop noise)
+// pass a stable `id` in the opts: `notify.error('Sync failed', { id:
+// 'sync-error' })`. The `notify.retry(...)` helper below auto-sets a
+// generic `id` so the common retry pattern dedupes by default.
 const methods: NotifyMethods = {
   success: (message, ...rest) => toast.success(String(message), ...rest),
   error: notifyError,
@@ -85,6 +128,7 @@ const methods: NotifyMethods = {
   promise: (...args) => toast.promise(...args),
   custom: (...args) => toast.custom(...args),
   dismiss: (...args) => toast.dismiss(...args),
+  retry: notifyRetry,
 }
 
 /**

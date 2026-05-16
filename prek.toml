@@ -189,6 +189,26 @@ language = "system"
 pass_filenames = false
 types = ["markdown"]
 
+# doc-vs-code drift detector (ui-improvements 2026-05-16 §Maintenance /
+# tooling). Complements `md-link-targets`: this hook scans inline-code
+# spans + markdown link targets in narrative docs for `src/…`,
+# `src-tauri/…`, `scripts/…`, `e2e/…`, `docs/…`, `pending/…`, or
+# `.github/…` repo-rooted paths and fails when the cited path is missing
+# from the tracked tree. Catches the case where a doc cites a file that
+# has been renamed, refactored away, or moved without a sweep.
+# `docs/session-log/*` (archive of past state) and `pending/*` (forward-
+# looking plans) are excluded; gitignored build-output paths are skipped
+# in the script.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "doc-vs-code-paths"
+name = "doc citations point at tracked code"
+entry = "node scripts/check-doc-code-paths.mjs"
+language = "system"
+pass_filenames = false
+types = ["markdown"]
+
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include
 # at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
 # this, accessibility regressions slip through component additions

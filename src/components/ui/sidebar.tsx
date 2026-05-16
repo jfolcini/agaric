@@ -131,6 +131,13 @@ const SidebarProvider = ({
             tells touch users a sidebar lives behind the left edge.
             `pointer:coarse` only — desktop layout unaffected. Hidden when
             the sidebar is already open on mobile.
+
+            Pointer-coarse vs width-breakpoint (`max-sm:`) divergence is
+            intentional — see `docs/UI-MAP.md` § "Mobile / a11y posture"
+            (and `docs/UX.md` § Touch & responsive) for the rule.
+            Touch-primary affordances (this swipe hint) use
+            `[@media(pointer:coarse)]`; inline indicators that compete with
+            content for space use `max-sm:`.
           */}
           {isMobile && !openMobile && (
             <div
