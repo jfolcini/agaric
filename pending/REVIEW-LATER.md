@@ -17,10 +17,11 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-13 open items in the summary table; 13 detail entries (FE-* sub-tables don't appear in the summary).
+14 open items in the summary table; 14 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
+| PERF-21 | PERF | `batch_resolve_100k` SLO regression — measured ~12 ms vs 5 ms budget (~2.4× miss) on the `interactive_slo` Criterion bench. Last touched the path: `perf(sql): SQL-review Phase 4` (page_link_cache + incremental rebuilds, commit `4a4128fd`) and `perf(bench): scale-benchmarks Phase 2` (commit `5a3fe0b5`). Bisect needed. Likely culprit: the FK-CASCADE refactor / `resolve_block_space` helper / new `space` join-clause in the resolve path. Repro: `cargo bench --bench interactive_slo` in `src-tauri/`. Either fix the regression or move `batch_resolve` to the `SLO_INCLUDE_PROBLEM` problem tier with a written reason. | M | — |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — foundation (per-space `gcal_space_config` table + per-space keychain key + legacy single-space migration) in place; remaining work threads `space_id` through oauth/lease/connector/commands, branches the push loop by space, ships per-space Settings accordion, and (when FEAT-11 lands) prefixes OS notifications with the space name | M | — (M3 sub-task blocked on FEAT-11) |
 | PEND-38 | FEAT | Import progress streaming over `Channel<T>` (PEND-06 Tier 3) — DEFERRED. Needs the import pipeline restructured before per-block progress channel has UX value (today `import_markdown` parses + applies the whole file in one tx, so the only progress signal is start / done). Pursue when imports become a UX paper-cut OR someone is already touching `import_markdown` for an unrelated reason. | L restructure + S emission | Import pipeline restructure |
 | AGENDA-SQL | PERF | Agenda sort/group SQL pushdown — DEFERRED. Move `sortAgendaBlocks` + `groupBy*` from `src/lib/agenda-sort.ts` (sort sites at lines 30, 108, 175, 230, 242, 265, 325, 331, 339, 354) into a backend `ORDER BY (effective_date, state_rank, priority_rank)`. The current JS sort is sub-ms on the ≤200-item per-page set, so the SQL pushdown is a maintainability / consistency win, not a perf win. Cost driven by the compound-cursor reshape this requires (paginate-by-multi-column is non-trivial). Filed as a tombstone so a future contributor doesn't re-derive the blocker. Original sql-audit H4 item, separated from the audit doc when the audit was retired. | M | Decision to invest in compound-cursor reshape |
@@ -441,6 +442,32 @@ Items in this section are test-quality improvements identified during a thorough
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
 ## PERF — Performance items
+
+### PERF-21 — `batch_resolve_100k` SLO regression (~2.4× over budget)
+
+**Problem:** the `interactive_slo` Criterion bench panics on `batch_resolve_100k`:
+
+```text
+interactive_slo: batch_resolve @ 100K = 11.94 ms > budget 5 ms (regression — see docs/ARCHITECTURE.md §25)
+```
+
+Measured ~12 ms isolated (Playwright not running); ~13 ms under load. Budget is 5 ms.
+
+**Path:** `src-tauri/src/commands/blocks/queries.rs::batch_resolve_inner`. Repros via `cd src-tauri && cargo bench --bench interactive_slo`.
+
+**Likely culprits (bisect needed):**
+
+- Commit `4a4128fd perf(sql): SQL-review Phase 4` — added `page_link_cache` with incremental rebuilds + COALESCE-removal backfill on `blocks.page_id`. Changed the join shape across multiple read paths.
+- Commit `5a3fe0b5 perf(bench): scale-benchmarks Phase 2` — modified the bench fixture (`seed_blocks_bulk`, FIXTURE_SIZE, `assign_all_to_slo_space`). Could be measuring more work, not necessarily real regression.
+- The `resolve_block_space` helper added under PEND-15 Phase 2 has no callers in `batch_resolve_inner` today but the surrounding space-scope refactor may have changed the join plan.
+
+**Fix:** bisect between `a3f8c9e3` (bench landed, presumably passing) and `4962abf4` (current). Either restore the original perf or move `batch_resolve` to the `SLO_INCLUDE_PROBLEM` problem tier with a written reason. Don't just bump the budget without documenting why.
+
+**Status:** Filed during session 750 (docs restructure release). Doc-only release shipped despite the failure since the regression predates the doc work. **Open.**
+
+**Cost:** M (bisect + fix; the path is small enough that the fix should be quick once located).
+**Risk:** Low (bench-only; doesn't affect correctness; the SLO is a guardrail not a hard requirement).
+**Impact:** Medium (the SLO bench is the CI gate against perf drift; one false-positive failure means the gate is not effective today).
 
 ### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (3 sites)
 
