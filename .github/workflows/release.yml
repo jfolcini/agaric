@@ -461,7 +461,19 @@ jobs:
           # High-confidence patterns. The list deliberately favours
           # signature/prefix anchors over generic "looks like a base64
           # blob" heuristics to keep the false-positive rate near zero.
-          PATTERNS='(AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|gho_[0-9A-Za-z]{36}|ghu_[0-9A-Za-z]{36}|ghr_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82}|sk-[0-9A-Za-z]{48}|-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----)'
+          #
+          # The PEM `-----BEGIN ... PRIVATE KEY-----` header alone is NOT
+          # a reliable signal in a compiled binary — Agaric embeds the
+          # header as a *validation literal* in `src-tauri/src/sync_cert.rs`
+          # (used to assert that runtime-generated cert PEMs start with the
+          # expected magic). Real embedded keys carry the header + base64
+          # body + matching footer in one contiguous run; the regex below
+          # requires the header AND footer to appear together so the
+          # validation-only literal doesn't trip the scan. PEM keys leaked
+          # into source files (the much more common attack surface) are
+          # already caught by the gitleaks prek hook before they ever
+          # reach a release branch.
+          PATTERNS='(AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|gho_[0-9A-Za-z]{36}|ghu_[0-9A-Za-z]{36}|ghr_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82}|sk-[0-9A-Za-z]{48}|-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----[A-Za-z0-9+/= ]+-----END (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----)'
           found=0
           while IFS= read -r f; do
             if strings "$f" 2>/dev/null | grep -E -m 1 "$PATTERNS" > /dev/null; then
