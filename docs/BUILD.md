@@ -1,0 +1,204 @@
+<!-- markdownlint-disable MD060 -->
+# Build & Release
+
+Everything you need to build, test, and release Agaric. Self-contained.
+
+## TL;DR
+
+```bash
+npm ci                                   # frontend deps
+cp src-tauri/.env.example src-tauri/.env # sqlx DATABASE_URL
+node scripts/prepare-external-bins.mjs --placeholder-only  # sidecar placeholder
+cargo tauri dev                          # run the app
+prek run --all-files                     # run every CI gate locally
+```
+
+Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run` (backend), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
+
+## After-clone setup
+
+Three steps before `cargo tauri dev` works on a fresh clone:
+
+1. `npm ci` — frontend deps.
+2. `cp src-tauri/.env.example src-tauri/.env` — sqlx reads `DATABASE_URL` from here at compile time (offline mode uses `.sqlx/` cache, but the env file must exist).
+3. `node scripts/prepare-external-bins.mjs --placeholder-only` — creates a placeholder `agaric-mcp` sidecar binary so the Tauri builder doesn't error on the first build. The real sidecar is produced later by `cargo build --bin agaric-mcp`; this is just for the chicken-and-egg first compile.
+
+## Prerequisites by platform
+
+### Linux
+
+Install what CI installs (`.github/workflows/_validate.yml` is authoritative):
+
+```bash
+sudo apt install -y \
+  libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+  librsvg2-dev libappindicator3-dev patchelf \
+  build-essential curl wget file
+```
+
+Plus Rust (`rustup default stable`), Node (LTS), and Tauri's CLI: `cargo install tauri-cli --locked`.
+
+### Windows
+
+WebView2 runtime ships with Windows 11. On older builds, install it from Microsoft. Visual Studio Build Tools provide the MSVC toolchain. See [Tauri's Windows prereqs](https://v2.tauri.app/start/prerequisites/) for the canonical list.
+
+### macOS
+
+Xcode Command Line Tools (`xcode-select --install`). The rest installs via `brew install rustup node`. WebView is system-provided.
+
+### Android
+
+- Android SDK (cmdline-tools, platform-tools, build-tools).
+- Android NDK r27 (any 27.x patch; CI pins a specific build but local can float).
+- JDK 17.
+- Rust targets: `rustup target add aarch64-linux-android x86_64-linux-android` (32-bit ABIs are intentionally not supported).
+
+Set `ANDROID_HOME` / `ANDROID_NDK_HOME` per Tauri's [Android setup](https://v2.tauri.app/start/prerequisites/#android).
+
+## Development
+
+```bash
+cargo tauri dev              # full app with hot reload
+npm run dev                  # browser-only fallback (uses tauri-mock for IPC)
+cargo tauri android dev --target x86_64   # Android emulator
+```
+
+The browser-only fallback is useful for UI work — every Tauri IPC is mocked via `src/lib/tauri-mock/`. Some space-scoping and sync flows are stubbed there; for those, run the full app.
+
+## Testing
+
+```bash
+npx vitest run                                   # frontend
+cd src-tauri && cargo nextest run                # backend
+npx playwright test                              # e2e (chromium)
+cargo bench --bench interactive_slo              # perf SLOs at 100K blocks
+```
+
+- **Frontend** tests use Vitest + jsdom + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
+- **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.
+- **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`.
+- **Bench gates**: `interactive_slo` enforces the product SLO of ≤200 ms p95 for interactive commands at 100K blocks. Per-command budgets live in the bench itself.
+
+## Pre-commit & CI
+
+```bash
+prek run --all-files     # every hook (slow; the full gate)
+prek run                 # only staged-file hooks (pre-commit)
+```
+
+The `prek.toml` file is the single source of truth for hooks. CI invokes the same `_validate.yml` reusable workflow that mirrors `prek run --all-files`, so a green local prek implies a green CI validate job.
+
+Pre-commit vs pre-push split: fast hooks (biome, type-check, vitest, lychee, …) run on commit; compile-heavy hooks (`cargo nextest`, `cargo sqlx prepare --check`, `playwright`) run on push. The split is deliberate — commits stay fast, push catches everything.
+
+## Production builds
+
+```bash
+cargo tauri build                              # current platform
+cargo tauri build --target x86_64-apple-darwin # explicit target
+cargo tauri android build                      # Android APK/AAB
+```
+
+Bundles land under `src-tauri/target/release/bundle/`. The exact filenames carry the current version from `tauri.conf.json`; cross-check there if you need to script asset upload.
+
+**No cross-compilation.** Each platform builds natively because of the native webview. Linux artifacts produced on Linux, macOS on macOS, etc.
+
+**AppImage icon fix (Linux):** the AppImage bundle's icon mapping is brittle. After `cargo tauri build`, run `scripts/fix-appimage-icons.sh` to repair `.DirIcon` so file managers display the icon. Set `FIX_APPIMAGE_STRICT=1` to fail the build on a missing icon (CI does this).
+
+## Releasing
+
+Single canonical entry point:
+
+```bash
+scripts/bump-version.sh <new-version> --commit --tag --push
+```
+
+The script updates every version manifest in lockstep (Cargo.toml, package.json, tauri.conf.json, Android Gradle, …), commits, tags, and pushes. The pushed tag triggers `.github/workflows/release.yml`.
+
+Alternatively, dispatch the release workflow directly:
+
+```bash
+gh workflow run release.yml -f version=<new-version>
+```
+
+This runs the same `bump-version.sh` inside CI, then proceeds to the build matrix.
+
+### What `release.yml` does on tag push
+
+1. **`verify-version`** — fail-fast if the tag's version doesn't match the manifests.
+2. **`_validate`** — same gate as CI.
+3. **Build matrix** — Linux + Windows + macOS (x86_64 + aarch64).
+4. **Android** — APK + AAB if release-signing secrets are present.
+5. **GH Release** — upload bundles, attach Minisign updater signature.
+
+### If a release tag fails at `verify-version`
+
+The manifests are out of sync. To recover:
+
+```bash
+git tag -d <bad-tag>                          # local
+git push --delete origin <bad-tag>            # remote
+scripts/bump-version.sh <correct-version> --commit --tag --push
+```
+
+## Android signing
+
+The Android release pipeline signs APKs and AABs with a keystore stored in GitHub Secrets. Local builds produce unsigned debug APKs by default.
+
+**Generate a keystore (one-time):**
+
+```bash
+keytool -genkeypair -v -storetype PKCS12 \
+  -keystore agaric-release.keystore \
+  -alias agaric-release -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Set four GitHub Secrets:
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w 0 < agaric-release.keystore` |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | the alias (`agaric-release` above) |
+| `ANDROID_KEY_PASSWORD` | the key password (often same as keystore password) |
+
+**Critical:** back up the keystore. Losing it means losing the ability to publish updates for the existing app ID.
+
+Sign a local release APK:
+
+```bash
+$ANDROID_HOME/build-tools/<latest>/apksigner sign \
+  --ks agaric-release.keystore \
+  --ks-key-alias agaric-release \
+  --out signed.apk unsigned.apk
+```
+
+## Signing posture
+
+- **Updater signing**: enabled. Minisign-signed update manifests via `TAURI_SIGNING_PRIVATE_KEY` (CI secret). The desktop bundles ship with the matching public key.
+- **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (right-click → *Open*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the README install section.
+- **Linux** `.deb` / `.AppImage`: intentionally not signed.
+
+## sqlx compile-time queries
+
+```bash
+cd src-tauri && cargo sqlx prepare -- --tests
+```
+
+Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the `.sqlx/` cache changes alongside the Rust changes; CI fails on stale cache (`sqlx-prepare-check` prek hook).
+
+## TypeScript bindings (specta)
+
+```bash
+cd src-tauri && cargo test -- specta_tests --ignored
+```
+
+Run after touching any `#[tauri::command]` signature or any `specta::Type` derive. Commit the regenerated `src/lib/bindings.ts` alongside the Rust change. CI fails on drift (`tauri-bindings-parity` prek hook).
+
+## Troubleshooting
+
+- **Android: stale database crashes on launch.** Wipe and re-install: `adb shell pm clear com.agaric.app`.
+- **Android: release APK won't install.** Likely a signing mismatch — uninstall the previous build first (signatures from different keystores conflict).
+- **Rust compilation errors after SQL changes.** Run `cargo sqlx prepare -- --tests` and commit the cache.
+- **TypeScript errors after Rust type changes.** Run `cargo test -- specta_tests --ignored` and commit `src/lib/bindings.ts`.
+- **WebView not found (Linux).** `libwebkit2gtk-4.1-dev` must be installed; older `4.0` won't work.
+- **Slow first build.** Cold compile of the Tauri + sqlx + Loro stack takes minutes. Subsequent incremental builds are seconds.

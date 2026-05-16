@@ -107,7 +107,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 
 ## Development
 
-See **[BUILD.md](BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting. See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the architecture deep-dive.
+See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting. See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the architecture deep-dive.
 
 ### Quick Start
 
@@ -139,7 +139,7 @@ No cross-compilation — each desktop platform must be built on that platform. A
 
 ### Android
 
-Both debug and release APKs build and run successfully. Release APKs are 24 MB (vs 402 MB debug) thanks to R8/ProGuard minification. Requires Android SDK, NDK 27, and JDK 17. See [BUILD.md](BUILD.md#android-builds) for signing and emulator setup.
+Both debug and release APKs build and run successfully. Release APKs are 24 MB (vs 402 MB debug) thanks to R8/ProGuard minification. Requires Android SDK, NDK 27, and JDK 17. See [docs/BUILD.md](docs/BUILD.md#android-builds) for signing and emulator setup.
 
 ### Using Agaric with MCP clients
 
@@ -178,7 +178,7 @@ src-tauri/                   # Rust backend
   tauri.conf.json            #   Tauri configuration
 e2e/                         # Playwright E2E tests (29 spec files)
 public/                      # Static assets (agaric.svg icon)
-BUILD.md                     # Complete build guide
+docs/BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions
 ARCHITECTURE.md              # Architecture deep-dive
 docs/FEATURE-MAP.md               # Complete feature inventory

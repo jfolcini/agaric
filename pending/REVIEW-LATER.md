@@ -46,7 +46,7 @@ These can be tackled in a single session with low risk — listed for prioritiza
 
 > **`PERF-19` and `PERF-20` are NOT quick-grab items** despite their summary-table presence — read their detail entries: both end with `**Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix`. They are listed only so the loops aren't reinvented as "fixes" later. Skip them in batch-picking.
 
-> **Desktop code signing remains out of scope.** macOS + Windows bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. See `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
+> **Desktop code signing remains out of scope.** macOS + Windows bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. See `docs/BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
 
 ---
 

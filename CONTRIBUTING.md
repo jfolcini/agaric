@@ -5,7 +5,7 @@ Thanks for your interest in contributing. Agaric is a local-first block-based no
 ## Before you start
 
 - Read [**AGENTS.md**](AGENTS.md) — repository invariants, architectural guarantees, coupled-dependency rules, code style, and mandatory testing conventions. These are strict; PRs that violate them will be asked to re-work.
-- Read [**BUILD.md**](BUILD.md) — how to build on Linux / macOS / Windows / Android, required toolchain versions, and common troubleshooting steps.
+- Read [**docs/BUILD.md**](docs/BUILD.md) — how to build on Linux / macOS / Windows / Android, required toolchain versions, and common troubleshooting steps.
 - Skim [**docs/FEATURE-MAP.md**](docs/FEATURE-MAP.md) and [**ARCHITECTURE.md**](ARCHITECTURE.md) if you want a guided tour of the feature surface before picking something to change.
 - Check the [issue tracker](https://github.com/jfolcini/agaric/issues) for items that are already known and triaged.
 - Abide by the [**Code of Conduct**](CODE_OF_CONDUCT.md).
@@ -13,7 +13,7 @@ Thanks for your interest in contributing. Agaric is a local-first block-based no
 ## Development workflow
 
 ```bash
-# One-time setup is documented in BUILD.md.
+# One-time setup is documented in docs/BUILD.md.
 
 cargo tauri dev              # Dev mode with hot reload
 npm run test                 # Vitest (frontend)
