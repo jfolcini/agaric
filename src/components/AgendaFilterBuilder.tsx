@@ -345,7 +345,7 @@ export function AgendaFilterBuilder({
                       because FilterPill is remove-only; the visual style
                       now matches the other filter surfaces. */}
                   <Badge
-                    variant="secondary"
+                    tone="secondary"
                     data-slot="filter-pill"
                     className="filter-pill shrink-0 gap-0 p-0 text-xs"
                     role="group"

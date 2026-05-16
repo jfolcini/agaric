@@ -684,11 +684,11 @@ pub fn run() {
             // `CleanupOrphanedAttachments` background task can locate
             // the `attachments/` subtree.
             //
-            // TODO: schedule `cleanup_orphaned_attachments` at boot
-            // and/or after compaction. Currently the only entry point
-            // is `MaterializeTask::CleanupOrphanedAttachments`, which
-            // is not yet enqueued from any production path; the GC
-            // function is implemented but dormant until a scheduler
+            // MAINT-229: schedule `cleanup_orphaned_attachments` at
+            // boot and/or after compaction. Currently the only entry
+            // point is `MaterializeTask::CleanupOrphanedAttachments`,
+            // which is not yet enqueued from any production path; the
+            // GC function is implemented but dormant until a scheduler
             // hooks it.
             materializer.set_app_data_dir(app_data_dir.clone());
 

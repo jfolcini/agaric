@@ -54,7 +54,7 @@ export function BatchActionToolbar({
       aria-describedby={!suppressRangeSelectHint ? 'batch-range-select-hint' : undefined}
       className={cn('flex items-center gap-2 rounded-lg border bg-muted/50 p-2', className)}
     >
-      <Badge variant="secondary">{t('batch.selectedCount', { count: selectedCount })}</Badge>
+      <Badge tone="secondary">{t('batch.selectedCount', { count: selectedCount })}</Badge>
       {children}
       {!suppressRangeSelectHint && (
         <span

@@ -31,7 +31,7 @@ export function TrashBatchRestoreDialog({
       description={t('trash.batchRestoreConfirmDescription', { count: selectedCount })}
       cancelLabel={t('trash.noButton')}
       actionLabel={t('trash.restoreButton')}
-      onAction={onConfirm}
+      onConfirm={onConfirm}
       className="trash-batch-restore-confirm"
       contentTestId="trash-batch-restore-confirm"
       actionTestId="trash-batch-restore-yes"

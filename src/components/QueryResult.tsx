@@ -49,7 +49,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
 
   if (parsed.type !== 'unknown') {
     pills.push(
-      <Badge key="type" variant="default">
+      <Badge key="type" tone="default">
         {parsed.type}
       </Badge>,
     )
@@ -58,7 +58,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
   for (const [key, value] of Object.entries(parsed.params)) {
     if (key === 'type') continue
     pills.push(
-      <Badge key={`param-${key}`} variant="secondary">
+      <Badge key={`param-${key}`} tone="secondary">
         {key}: {value}
       </Badge>,
     )
@@ -67,7 +67,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
   for (const pf of parsed.propertyFilters) {
     const opSymbol = OPERATOR_SYMBOLS[pf.operator ?? 'eq'] ?? '='
     pills.push(
-      <Badge key={`prop-${pf.key}`} variant="secondary">
+      <Badge key={`prop-${pf.key}`} tone="secondary">
         {pf.key} {opSymbol} {pf.value}
       </Badge>,
     )
@@ -75,7 +75,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
 
   for (const tag of parsed.tagFilters) {
     pills.push(
-      <Badge key={`tag-${tag}`} variant="secondary">
+      <Badge key={`tag-${tag}`} tone="secondary">
         tag: {tag}
       </Badge>,
     )

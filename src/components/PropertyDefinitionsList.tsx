@@ -255,7 +255,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
               {filteredDefs.map((def) => (
                 <ListItem key={def.key}>
                   <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
-                  <Badge variant="secondary">{def.value_type}</Badge>
+                  <Badge tone="secondary">{def.value_type}</Badge>
                   {def.value_type === 'select' && LOCKED_PROPERTY_OPTIONS.has(def.key) && (
                     <TooltipProvider>
                       <Tooltip>
@@ -347,7 +347,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                   )}
                   <div className="flex-1" />
                   {NON_DELETABLE_PROPERTIES.has(def.key) ? (
-                    <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
+                    <Badge tone="outline" className="shrink-0 text-xs text-muted-foreground">
                       {t('propertiesView.builtIn')}
                     </Badge>
                   ) : (
@@ -387,7 +387,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         description={t('propertiesView.deleteDesc')}
         cancelLabel={t('action.cancel')}
         actionLabel={t('action.delete')}
-        onAction={handleConfirmDelete}
+        onConfirm={handleConfirmDelete}
       />
     </div>
   )

@@ -28,8 +28,8 @@ export function TrashPurgeDialog({
       description={t('trash.permanentlyDeleteDescription')}
       cancelLabel={t('trash.noButton')}
       actionLabel={t('trash.yesDeleteButton')}
-      actionVariant="destructive"
-      onAction={() => {
+      variant="destructive"
+      onConfirm={() => {
         if (blockId) onConfirm(blockId)
       }}
       className="trash-purge-confirm"

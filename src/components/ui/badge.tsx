@@ -86,8 +86,6 @@ const STATUS_STATE_CLASSES = {
 export type BadgeStatusState = keyof typeof STATUS_STATE_CLASSES
 
 type BadgeOwnProps = VariantProps<typeof badgeVariants> & {
-  /** @deprecated use `tone` instead — kept as a 1:1 alias for migration. */
-  variant?: VariantProps<typeof badgeVariants>['tone']
   /** Priority key when `tone='priority'` (e.g. `'1'`, `'A'`). */
   priorityLevel?: string | null
   /** Status state when `tone='status'`. */
@@ -103,7 +101,6 @@ const Badge = ({
   ref,
   className,
   tone,
-  variant,
   size,
   shape,
   priorityLevel,
@@ -113,9 +110,7 @@ const Badge = ({
   ...props
 }: BadgeProps) => {
   const Comp = asChild ? Slot.Root : 'span'
-  // Resolve the active tone, preferring the new `tone` prop but falling
-  // back to the legacy `variant` alias so old call sites keep working.
-  const resolvedTone = tone ?? variant ?? 'default'
+  const resolvedTone = tone ?? 'default'
 
   // Append tone-specific colour classes that the CVA recipe deliberately
   // omits (so `priority`/`status` callers don't have to wire up colours).

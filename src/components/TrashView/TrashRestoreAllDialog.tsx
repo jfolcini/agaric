@@ -28,7 +28,7 @@ export function TrashRestoreAllDialog({
       description={t('trash.restoreAllDescription')}
       cancelLabel={t('trash.noButton')}
       actionLabel={t('trash.restoreButton')}
-      onAction={onConfirm}
+      onConfirm={onConfirm}
       className="trash-restore-all-confirm"
     />
   )

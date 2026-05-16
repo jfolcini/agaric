@@ -74,7 +74,7 @@ export function PropertyRowEditor({
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
-      <Badge variant="outline" className="shrink-0 font-mono text-xs">
+      <Badge tone="outline" className="shrink-0 font-mono text-xs">
         {formatPropertyName(prop.key)}
       </Badge>
       <div className="flex-1">

@@ -124,10 +124,10 @@ pub async fn apply_remote(
                      (this build speaks {LORO_SYNC_PROTOCOL_VERSION})",
                 )));
             }
-            // TODO: verify peer's `from_vv` is reachable
-            // from our current `oplog_vv()`; if not, return a
-            // "request-snapshot-fallback" signal instead of
-            // forwarding the Loro import error.  See module docstring.
+            // MAINT-228: verify peer's `from_vv` is reachable from our
+            // current `oplog_vv()`; if not, return a
+            // "request-snapshot-fallback" signal instead of forwarding
+            // the Loro import error.  See module docstring.
             (space_id, bytes)
         }
     };

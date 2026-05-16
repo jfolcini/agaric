@@ -39,7 +39,7 @@ export function PageTagSection({
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {appliedTags.map((tag) => (
-        <Badge key={tag.id} variant="secondary" className="gap-1">
+        <Badge key={tag.id} tone="secondary" className="gap-1">
           {tag.name}
           <button
             type="button"

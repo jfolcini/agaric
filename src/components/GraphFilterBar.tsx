@@ -452,7 +452,7 @@ export function GraphFilterBar({
       })}
 
       {!hasFilters && (
-        <Badge variant="outline" className="text-xs text-muted-foreground">
+        <Badge tone="outline" className="text-xs text-muted-foreground">
           {t('graph.filter.noFilters')}
         </Badge>
       )}

@@ -238,7 +238,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     data-testid={`tag-item-${tag.name || 'Unnamed'}`}
                   >
                     <Badge
-                      variant={color ? undefined : 'secondary'}
+                      tone={color ? undefined : 'secondary'}
                       className={cn('truncate max-w-[150px]', color && 'border-transparent')}
                       style={
                         color
@@ -360,7 +360,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         description={`This will delete the tag \u201c${deleteTarget?.name}\u201d. This action cannot be undone. ${t('tags.deleteWarning')}`}
         cancelLabel="Cancel"
         actionLabel="Delete"
-        onAction={handleConfirmDelete}
+        onConfirm={handleConfirmDelete}
       />
     </div>
   )

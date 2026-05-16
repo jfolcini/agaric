@@ -33,7 +33,7 @@ export function PageAliasSection({
     <div className="flex flex-wrap items-center gap-1.5 px-1">
       {aliases.length > 0 && <span className="font-medium">{t('pageHeader.aliases')}</span>}
       {aliases.map((alias) => (
-        <Badge key={alias} variant="secondary" className="gap-1">
+        <Badge key={alias} tone="secondary" className="gap-1">
           {alias}
           {editingAliases && (
             <button

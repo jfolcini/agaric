@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-14 open items in the summary table; 14 detail entries (FE-* sub-tables don't appear in the summary).
+20 open items in the summary table; 20 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -38,6 +38,9 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-209 | MAINT | PEND-25 L15 + L16 deferred — gcal connector channel + agenda fetch hygiene. (L15) `mpsc::UnboundedSender<DirtyEvent>` in `src-tauri/src/gcal_push/connector.rs:255` is unbounded; defensive bounded channel + `try_send` only matters if a fast producer overruns the consumer (no observed instance today). (L16) `connector.rs:486, 589-595` makes per-date agenda fetches in a loop instead of one `list_projected_agenda_inner(min_date, max_date)` call; only matters when the gcal push window grows beyond a handful of days. Both are speculative — only pursue if profiling shows a concrete need. | S-M (~3h together) | Profiling data showing gcal contention |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
+| MAINT-227 | MAINT | gcal OAuth — migrate browser-open from `tauri-plugin-shell::open` (deprecated) to `tauri-plugin-opener`. Site: `src-tauri/src/commands/gcal.rs:550-557`, currently behind `#[allow(deprecated)]`. The new plugin lands when we next bump Tauri plugins; the surface is a 1-line callback swap. | S | `tauri-plugin-opener` dep added |
+| MAINT-228 | MAINT | Loro sync — when applying an `Update` from a peer, verify the peer's `from_vv` is reachable from our current `oplog_vv()`. If unreachable, respond with a `request-snapshot-fallback` signal instead of letting `import_with_changed_blocks` surface a confusing Loro decode error. Site: `src-tauri/src/sync_protocol/loro_sync.rs:127`; design rationale in the module docstring. Today divergence manifests as an opaque import failure; the fallback path is the cleaner recovery shape. | M | — |
+| MAINT-229 | MAINT | `cleanup_orphaned_attachments` is implemented and dispatchable as `MaterializeTask::CleanupOrphanedAttachments` but no production path enqueues it — the GC is dormant. Need a scheduler hook: at boot (after migrations land + app_data_dir is set) and/or after compaction. Site: `src-tauri/src/lib.rs:687`. Without this, orphan-attachment storage grows monotonically across the lifetime of the install. | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 

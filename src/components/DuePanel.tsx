@@ -485,7 +485,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             <span className="text-xs font-mono opacity-60">
                               {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
                             </span>
-                            <Badge variant="outline" className="text-xs font-normal">
+                            <Badge tone="outline" className="text-xs font-normal">
                               <Repeat className="h-3 w-3 mr-1" />
                               {t('duePanel.projectedBadge')}
                             </Badge>

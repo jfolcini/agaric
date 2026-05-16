@@ -548,7 +548,7 @@ pub async fn begin_gcal_oauth(
         &token_store.inner().0,
         move |url| {
             use tauri_plugin_shell::ShellExt;
-            // TODO: migrate to `tauri-plugin-opener` once that dep lands.
+            // MAINT-227: migrate to `tauri-plugin-opener` once the dep lands.
             #[allow(deprecated)]
             app_for_open
                 .shell()

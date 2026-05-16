@@ -12,13 +12,10 @@ import { useTranslation } from 'react-i18next'
 import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
 
 import { Badge } from '@/components/ui/badge'
-import { StatusIcon } from '@/components/ui/status-icon'
-import { formatCompactDate, getTodayString } from '@/lib/date-utils'
-import { cn } from '@/lib/utils'
+import { getTodayString } from '@/lib/date-utils'
 import { useBlockNavigation } from '../../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../../lib/block-events'
 import { logger } from '../../lib/logger'
-import { priorityColor } from '../../lib/priority-color'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, listUnfinishedTasks, paginationLimit } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
@@ -285,7 +282,7 @@ export function UnfinishedTasks({
     <section aria-label={t('unfinished.sectionLabel')} data-testid="unfinished-tasks">
       <CollapsiblePanelHeader isCollapsed={collapsed} onToggle={handleToggle}>
         {t('unfinished.title')}
-        <Badge variant="secondary" className="ml-2">
+        <Badge tone="secondary" className="ml-2">
           {blocks.length}
         </Badge>
       </CollapsiblePanelHeader>
@@ -302,7 +299,7 @@ export function UnfinishedTasks({
                   className="py-1"
                 >
                   <span className="text-xs uppercase tracking-wide">{t(group.i18nKey)}</span>
-                  <Badge variant="outline" className="ml-1.5 text-xs">
+                  <Badge tone="outline" className="ml-1.5 text-xs">
                     {group.blocks.length}
                   </Badge>
                 </CollapsiblePanelHeader>
@@ -314,33 +311,11 @@ export function UnfinishedTasks({
                         key={block.id}
                         blockId={block.id}
                         content={block.content}
-                        metadata={
-                          <>
-                            <StatusIcon state={block.todo_state} showDone={false} />
-                            {block.priority && (
-                              <span
-                                className={cn(
-                                  'inline-flex items-center justify-center rounded px-2 py-0.5 text-xs font-bold',
-                                  priorityColor(block.priority),
-                                )}
-                              >
-                                P{block.priority}
-                              </span>
-                            )}
-                            {(block.due_date ?? block.scheduled_date) && (
-                              <span
-                                className={cn(
-                                  'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                                  'bg-destructive/10 text-destructive',
-                                )}
-                              >
-                                {formatCompactDate(
-                                  (block.due_date ?? block.scheduled_date) as string,
-                                )}
-                              </span>
-                            )}
-                          </>
-                        }
+                        statusIconState={block.todo_state}
+                        statusIconShowDone={false}
+                        priority={block.priority}
+                        priorityVariant="agenda"
+                        dueDate={block.due_date ?? block.scheduled_date}
                         pageId={block.page_id}
                         pageTitle={pageTitles.get(block.page_id ?? '') ?? t('unfinished.untitled')}
                         breadcrumbArrow={t('unfinished.breadcrumbArrow')}

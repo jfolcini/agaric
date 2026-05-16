@@ -351,7 +351,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
           <CardTitle className="flex items-center gap-2 text-base">
             {t('gcal.title')}
             <Badge
-              variant="outline"
+              tone="outline"
               className="border-alert-warning-border bg-alert-warning text-alert-warning-foreground"
             >
               {t('gcal.experimentalBadge')}

@@ -219,7 +219,7 @@ export function KeyboardShortcuts({
                             </small>
                           )}
                           {shortcut.isCustom && (
-                            <Badge variant="secondary" className="ml-1 text-xs">
+                            <Badge tone="secondary" className="ml-1 text-xs">
                               {t('keyboard.settings.customized')}
                             </Badge>
                           )}

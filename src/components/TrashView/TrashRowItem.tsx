@@ -86,12 +86,12 @@ export function TrashRowItem({
           data-testid="trash-item-checkbox"
           tabIndex={-1}
         />
-        <Badge variant="secondary" className="trash-item-type shrink-0">
+        <Badge tone="secondary" className="trash-item-type shrink-0">
           {block.block_type}
         </Badge>
         {descendantCount > 0 && (
           <Badge
-            variant="outline"
+            tone="outline"
             className="trash-item-batch-count shrink-0 whitespace-nowrap"
             data-testid="trash-descendant-badge"
           >

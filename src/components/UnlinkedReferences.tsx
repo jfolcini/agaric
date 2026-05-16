@@ -362,7 +362,7 @@ export function UnlinkedReferences({
         </CollapsiblePanelHeader>
         {!collapsed && filters.length > 0 && (
           <Badge
-            variant="secondary"
+            tone="secondary"
             className="unlinked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-xs"
             aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
           >
@@ -406,7 +406,7 @@ export function UnlinkedReferences({
               <>
                 {/* Linked-vs-Unlinked distinction badge (UX-271) */}
                 <div className="unlinked-references-link-type-badge flex justify-end px-2 pb-1">
-                  <Badge variant="outline" className="text-muted-foreground">
+                  <Badge tone="outline" className="text-muted-foreground">
                     {t('references.unlinkedBadge')}
                   </Badge>
                 </div>

@@ -127,8 +127,8 @@ export function CompactionCard(): React.ReactElement {
                 })}
                 cancelLabel={t('compaction.cancel')}
                 actionLabel={t('compaction.compactButton')}
-                actionVariant="destructive"
-                onAction={handleCompact}
+                variant="destructive"
+                onConfirm={handleCompact}
                 loading={compacting}
               />
             </>

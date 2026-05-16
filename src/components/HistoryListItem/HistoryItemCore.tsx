@@ -117,7 +117,7 @@ export function HistoryItemCore({
         {/* Op type badge */}
         <div className="flex items-center gap-2">
           <Badge
-            variant="outline"
+            tone="outline"
             className={cn(
               'history-item-type shrink-0 border-transparent',
               opBadgeClasses(entry.op_type),

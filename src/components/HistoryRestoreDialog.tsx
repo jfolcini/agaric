@@ -73,8 +73,8 @@ export function HistoryRestoreDialog({
       description={t('history.restoreToDescription')}
       cancelLabel={t('history.cancelButton')}
       actionLabel={t('history.restoreButton')}
-      actionVariant="destructive"
-      onAction={handleAction}
+      variant="destructive"
+      onConfirm={handleAction}
       loading={restoring}
     />
   )

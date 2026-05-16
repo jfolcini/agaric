@@ -35,13 +35,6 @@ describe('Badge', () => {
     expect(badge.className).toContain('bg-secondary')
   })
 
-  it('accepts the legacy `variant` prop as an alias for `tone`', () => {
-    render(<Badge variant="secondary">Tag</Badge>)
-    const badge = screen.getByText('Tag')
-    expect(badge.className).toContain('bg-secondary')
-    expect(badge).toHaveAttribute('data-variant', 'secondary')
-  })
-
   it('merges custom className', () => {
     render(<Badge className="my-class">Custom</Badge>)
     const badge = screen.getByText('Custom')

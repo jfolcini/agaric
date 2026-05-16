@@ -66,7 +66,7 @@ export function BacklinkGroupRenderer({
       {linkType && (
         <div className="flex justify-end px-2 pb-1">
           <Badge
-            variant="outline"
+            tone="outline"
             className="linked-references-link-type-badge text-xs font-normal text-muted-foreground"
           >
             {linkType === 'linked' ? t('references.linkedBadge') : t('references.unlinkedBadge')}
@@ -94,7 +94,7 @@ export function BacklinkGroupRenderer({
             onClick={() => handleBlockClick(block)}
             onKeyDown={(e) => handleBlockKeyDown(e, block)}
           >
-            <Badge variant="secondary" className="linked-reference-item-type shrink-0">
+            <Badge tone="secondary" className="linked-reference-item-type shrink-0">
               {block.block_type}
             </Badge>
             <span className="linked-reference-item-text text-sm flex-1 truncate">

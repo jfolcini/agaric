@@ -117,7 +117,7 @@ export function McpStatusSection({
               {t(toggleLabelKey)}
             </Label>
             {isRw && effectiveStatus.enabled && (
-              <Badge variant="destructive" data-testid="mcp-rw-warning-badge">
+              <Badge tone="destructive" data-testid="mcp-rw-warning-badge">
                 {t('agentAccess.rwEnabledWarning')}
               </Badge>
             )}
@@ -190,8 +190,8 @@ export function McpStatusSection({
         title={t(confirmDisconnectTitleKey)}
         description={t(confirmDisconnectDescriptionKey)}
         actionLabel={t(confirmDisconnectActionKey)}
-        actionVariant="destructive"
-        onAction={() => {
+        variant="destructive"
+        onConfirm={() => {
           setConfirmOpen(false)
           onDisconnect()
         }}

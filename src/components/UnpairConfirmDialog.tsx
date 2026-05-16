@@ -34,8 +34,8 @@ export function UnpairConfirmDialog({
       })}
       cancelLabel={t('action.cancel')}
       actionLabel={t('device.unpairConfirmAction')}
-      actionVariant="destructive"
-      onAction={onConfirm}
+      variant="destructive"
+      onConfirm={onConfirm}
       className={className}
     />
   )

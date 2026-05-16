@@ -104,7 +104,7 @@ export function PeerListItem({
           )}
           <p className="text-xs text-muted-foreground">Last: {formatLastSynced(peer.synced_at)}</p>
           {peer.reset_count > 0 && (
-            <Badge variant="outline" className="mt-0.5 text-xs">
+            <Badge tone="outline" className="mt-0.5 text-xs">
               {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
             </Badge>
           )}

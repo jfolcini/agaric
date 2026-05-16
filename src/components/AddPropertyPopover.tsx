@@ -159,7 +159,7 @@ export function AddPropertyPopover({
               onClick={() => handleAddFromDef(def)}
             >
               <span className="flex-1 text-left">{formatPropertyName(def.key)}</span>
-              <Badge variant="outline" className="font-mono text-xs">
+              <Badge tone="outline" className="font-mono text-xs">
                 {def.value_type}
               </Badge>
             </Button>

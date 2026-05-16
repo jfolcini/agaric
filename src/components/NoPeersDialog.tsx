@@ -60,7 +60,7 @@ export function NoPeersDialog({
       description={t('sync.noPeersBody')}
       cancelLabel={t('sync.noPeersCancel')}
       actionLabel={t('sync.noPeersCta')}
-      onAction={onOpenSettings}
+      onConfirm={onOpenSettings}
       contentTestId="no-peers-dialog"
       cancelTestId="no-peers-dialog-cancel"
       actionTestId="no-peers-dialog-open-settings"

@@ -391,7 +391,7 @@ export function PropertyRow({
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
       <Badge
-        variant="outline"
+        tone="outline"
         className={
           Icon
             ? 'shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1'

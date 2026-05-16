@@ -225,7 +225,7 @@ export function TemplatesView(): React.ReactElement {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Badge variant="secondary" className="shrink-0 text-xs">
+                            <Badge tone="secondary" className="shrink-0 text-xs">
                               {t('templates.journalIndicator')}
                             </Badge>
                           </TooltipTrigger>
@@ -272,7 +272,7 @@ export function TemplatesView(): React.ReactElement {
         }}
         title={t('templates.removeConfirmTitle')}
         description={t('templates.removeConfirmDesc', { name: pendingRemoval?.name ?? '' })}
-        onAction={() => {
+        onConfirm={() => {
           if (pendingRemoval) {
             handleRemoveTemplate(pendingRemoval.id, pendingRemoval.name)
             setPendingRemoval(null)

@@ -77,7 +77,7 @@ export function ResultCard({
         </span>
         {showSpinner && <Spinner className="shrink-0 text-muted-foreground" />}
         {(block.block_type === 'tag' || block.block_type === 'page') && (
-          <Badge variant="secondary">{block.block_type}</Badge>
+          <Badge tone="secondary">{block.block_type}</Badge>
         )}
       </div>
       {children}

@@ -481,7 +481,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         description={t('pageHeader.deletePageDescription')}
         cancelLabel={t('pageHeader.cancel')}
         actionLabel={t('pageHeader.deletePage')}
-        onAction={handleDeletePage}
+        onConfirm={handleDeletePage}
       />
     </>
   )

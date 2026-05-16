@@ -237,7 +237,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         description={t('property.deleteConfirmDesc')}
         cancelLabel={t('action.cancel')}
         actionLabel={t('action.delete')}
-        onAction={handleConfirmDelete}
+        onConfirm={handleConfirmDelete}
       />
     </div>
   )

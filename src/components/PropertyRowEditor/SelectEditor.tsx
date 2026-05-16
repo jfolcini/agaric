@@ -121,7 +121,7 @@ function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverProps) {
           <span className="text-xs font-medium text-muted-foreground">
             {t('pageProperty.editOptionsLabel', { key: propKey })}
           </span>
-          <Badge variant="outline" className="text-xs" data-testid="options-count-badge">
+          <Badge tone="outline" className="text-xs" data-testid="options-count-badge">
             {t('properties.optionsCount', { count: options.length })}
           </Badge>
         </div>

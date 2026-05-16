@@ -222,7 +222,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                             <span className="inline-flex flex-wrap items-center gap-1">
                               {renderKeys(shortcut.keys)}
                               {shortcut.isCustom && (
-                                <Badge variant="secondary" className="ml-1">
+                                <Badge tone="secondary" className="ml-1">
                                   {t('keyboard.settings.customized')}
                                 </Badge>
                               )}
@@ -305,8 +305,8 @@ export function KeyboardSettingsTab(): React.ReactElement {
         title={t('keyboard.settings.resetAllTitle')}
         description={t('keyboard.settings.resetAllConfirm')}
         actionLabel={t('keyboard.settings.resetAllButton')}
-        actionVariant="destructive"
-        onAction={handleResetAll}
+        variant="destructive"
+        onConfirm={handleResetAll}
       />
     </div>
   )

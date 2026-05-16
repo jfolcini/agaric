@@ -149,31 +149,6 @@ describe('BlockListItem', () => {
     expect(screen.getByText('Hello world task')).toBeInTheDocument()
   })
 
-  // 2. Renders metadata slot before content
-  it('renders metadata slot before content', () => {
-    render(
-      <ul>
-        <BlockListItem
-          {...defaultProps({
-            metadata: <span data-testid="custom-icon">ICON</span>,
-          })}
-        />
-      </ul>,
-    )
-
-    expect(screen.getByTestId('custom-icon')).toBeInTheDocument()
-    expect(screen.getByText('ICON')).toBeInTheDocument()
-
-    // Verify order: metadata appears before content
-    const li = screen.getByRole('listitem')
-    const icon = screen.getByTestId('custom-icon')
-    const contentSpan = screen.getByText('Test block content')
-    const allChildren = [...li.childNodes]
-    const iconIdx = allChildren.indexOf(icon)
-    const contentIdx = allChildren.indexOf(contentSpan)
-    expect(iconIdx).toBeLessThan(contentIdx)
-  })
-
   // 3. Renders breadcrumb with PageLink when breadcrumbAsLink=true (default)
   it('renders breadcrumb with PageLink by default', () => {
     render(
@@ -441,7 +416,7 @@ describe('BlockListItem', () => {
       <ul>
         <BlockListItem
           {...defaultProps({
-            metadata: <span>ICON</span>,
+            statusIconState: 'TODO',
             pageId: 'P1',
             pageTitle: 'Test Page',
           })}
@@ -451,27 +426,6 @@ describe('BlockListItem', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
-  })
-
-  // 16. Multiple metadata nodes render in order
-  it('renders multiple metadata nodes', () => {
-    render(
-      <ul>
-        <BlockListItem
-          {...defaultProps({
-            metadata: (
-              <>
-                <span data-testid="icon-1">A</span>
-                <span data-testid="icon-2">B</span>
-              </>
-            ),
-          })}
-        />
-      </ul>,
-    )
-
-    expect(screen.getByTestId('icon-1')).toBeInTheDocument()
-    expect(screen.getByTestId('icon-2')).toBeInTheDocument()
   })
 
   // 17. Default breadcrumb arrow is "→"
@@ -828,7 +782,7 @@ describe('BlockListItem — a11y reschedule', () => {
         <BlockListItem
           {...defaultProps({
             blockId: 'block-1',
-            metadata: <span>ICON</span>,
+            statusIconState: 'TODO',
             pageId: 'P1',
             pageTitle: 'Test Page',
           })}

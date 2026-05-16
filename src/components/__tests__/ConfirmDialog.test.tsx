@@ -41,7 +41,7 @@ describe('ConfirmDialog', () => {
     description: 'This will do something important.',
     cancelLabel: 'Cancel',
     actionLabel: 'Confirm',
-    onAction: vi.fn(),
+    onConfirm: vi.fn(),
   }
 
   it('renders title, description, and buttons', () => {
@@ -53,15 +53,15 @@ describe('ConfirmDialog', () => {
     expect(screen.getByRole('button', { name: /Confirm/ })).toBeInTheDocument()
   })
 
-  it('fires onAction when action button is clicked', async () => {
+  it('fires onConfirm when action button is clicked', async () => {
     const user = userEvent.setup()
-    const onAction = vi.fn()
+    const onConfirm = vi.fn()
 
-    render(<ConfirmDialog {...defaultProps} onAction={onAction} />)
+    render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />)
 
     await user.click(screen.getByRole('button', { name: /Confirm/ }))
 
-    expect(onAction).toHaveBeenCalledTimes(1)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
   })
 
   it('fires onOpenChange when cancel button is clicked', async () => {
@@ -115,7 +115,7 @@ describe('ConfirmDialog', () => {
         onOpenChange={vi.fn()}
         title="Test"
         description="Desc"
-        onAction={vi.fn()}
+        onConfirm={vi.fn()}
       />,
     )
 
@@ -186,14 +186,14 @@ describe('ConfirmDialog', () => {
 
   it('Enter key triggers the action when dialog is open', async () => {
     const user = userEvent.setup()
-    const onAction = vi.fn()
+    const onConfirm = vi.fn()
 
-    render(<ConfirmDialog {...defaultProps} onAction={onAction} />)
+    render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />)
 
     // Action button is auto-focused, so pressing Enter should trigger it
     await user.keyboard('{Enter}')
 
-    expect(onAction).toHaveBeenCalledTimes(1)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
   })
 
   it('Escape key closes the dialog', async () => {
@@ -263,7 +263,7 @@ describe('ConfirmDialog', () => {
 
   describe('destructive variant (UX-259)', () => {
     it('focuses the Cancel button on open (not the Action button)', () => {
-      render(<ConfirmDialog {...defaultProps} actionVariant="destructive" />)
+      render(<ConfirmDialog {...defaultProps} variant="destructive" />)
 
       const actionBtn = screen.getByRole('button', { name: /Confirm/ })
       const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
@@ -272,16 +272,16 @@ describe('ConfirmDialog', () => {
       expect(actionBtn).not.toHaveFocus()
     })
 
-    it('reflex Enter on open closes the dialog WITHOUT firing onAction', async () => {
+    it('reflex Enter on open closes the dialog WITHOUT firing onConfirm', async () => {
       const user = userEvent.setup()
-      const onAction = vi.fn()
+      const onConfirm = vi.fn()
       const onOpenChange = vi.fn()
 
       render(
         <ConfirmDialog
           {...defaultProps}
-          actionVariant="destructive"
-          onAction={onAction}
+          variant="destructive"
+          onConfirm={onConfirm}
           onOpenChange={onOpenChange}
         />,
       )
@@ -289,36 +289,36 @@ describe('ConfirmDialog', () => {
       // Cancel is auto-focused for destructive — Enter activates Cancel, not Action.
       await user.keyboard('{Enter}')
 
-      expect(onAction).not.toHaveBeenCalled()
+      expect(onConfirm).not.toHaveBeenCalled()
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
 
-    it('clicking action button still fires onAction (destructive variant)', async () => {
+    it('clicking action button still fires onConfirm (destructive variant)', async () => {
       const user = userEvent.setup()
-      const onAction = vi.fn()
+      const onConfirm = vi.fn()
 
-      render(<ConfirmDialog {...defaultProps} actionVariant="destructive" onAction={onAction} />)
+      render(<ConfirmDialog {...defaultProps} variant="destructive" onConfirm={onConfirm} />)
 
       await user.click(screen.getByRole('button', { name: /Confirm/ }))
-      expect(onAction).toHaveBeenCalledTimes(1)
+      expect(onConfirm).toHaveBeenCalledTimes(1)
     })
 
     it('non-destructive variant retains action-button focus and immediate Enter confirm', async () => {
       const user = userEvent.setup()
-      const onAction = vi.fn()
+      const onConfirm = vi.fn()
 
       // Default variant — no actionVariant set.
-      render(<ConfirmDialog {...defaultProps} onAction={onAction} />)
+      render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />)
 
       const actionBtn = screen.getByRole('button', { name: /Confirm/ })
       expect(actionBtn).toHaveFocus()
 
       await user.keyboard('{Enter}')
-      expect(onAction).toHaveBeenCalledTimes(1)
+      expect(onConfirm).toHaveBeenCalledTimes(1)
     })
 
     it('has no a11y violations in destructive variant', async () => {
-      const { container } = render(<ConfirmDialog {...defaultProps} actionVariant="destructive" />)
+      const { container } = render(<ConfirmDialog {...defaultProps} variant="destructive" />)
 
       await waitFor(async () => {
         const results = await axe(container)
@@ -337,7 +337,7 @@ describe('ConfirmDialog', () => {
       description: 'This will do something important.',
       cancelLabel: 'Cancel',
       actionLabel: 'Confirm',
-      onAction: vi.fn(),
+      onConfirm: vi.fn(),
     }
 
     beforeEach(() => {
@@ -369,16 +369,16 @@ describe('ConfirmDialog', () => {
       expect(screen.getByRole('button', { name: /Confirm/ })).toBeInTheDocument()
     })
 
-    it('fires onAction and closes when action button is clicked', async () => {
+    it('fires onConfirm and closes when action button is clicked', async () => {
       const user = userEvent.setup()
-      const onAction = vi.fn()
+      const onConfirm = vi.fn()
       const onOpenChange = vi.fn()
 
-      render(<ConfirmDialog {...defaultProps} onAction={onAction} onOpenChange={onOpenChange} />)
+      render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} onOpenChange={onOpenChange} />)
 
       await user.click(screen.getByRole('button', { name: /Confirm/ }))
 
-      expect(onAction).toHaveBeenCalledTimes(1)
+      expect(onConfirm).toHaveBeenCalledTimes(1)
       // Sheet has no auto-close primitive — ConfirmDialog must close it.
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
@@ -468,16 +468,16 @@ describe('ConfirmDialog', () => {
       })
     })
 
-    it('destructive variant focuses Cancel and reflex Enter dismisses without firing onAction', async () => {
+    it('destructive variant focuses Cancel and reflex Enter dismisses without firing onConfirm', async () => {
       const user = userEvent.setup()
-      const onAction = vi.fn()
+      const onConfirm = vi.fn()
       const onOpenChange = vi.fn()
 
       render(
         <ConfirmDialog
           {...defaultProps}
-          actionVariant="destructive"
-          onAction={onAction}
+          variant="destructive"
+          onConfirm={onConfirm}
           onOpenChange={onOpenChange}
         />,
       )
@@ -487,32 +487,32 @@ describe('ConfirmDialog', () => {
 
       await user.keyboard('{Enter}')
 
-      expect(onAction).not.toHaveBeenCalled()
+      expect(onConfirm).not.toHaveBeenCalled()
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
 
-    it('destructive action click still fires onAction and closes', async () => {
+    it('destructive action click still fires onConfirm and closes', async () => {
       const user = userEvent.setup()
-      const onAction = vi.fn()
+      const onConfirm = vi.fn()
       const onOpenChange = vi.fn()
 
       render(
         <ConfirmDialog
           {...defaultProps}
-          actionVariant="destructive"
-          onAction={onAction}
+          variant="destructive"
+          onConfirm={onConfirm}
           onOpenChange={onOpenChange}
         />,
       )
 
       await user.click(screen.getByRole('button', { name: /Confirm/ }))
 
-      expect(onAction).toHaveBeenCalledTimes(1)
+      expect(onConfirm).toHaveBeenCalledTimes(1)
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
 
     it('has no a11y violations in destructive variant on mobile', async () => {
-      const { container } = render(<ConfirmDialog {...defaultProps} actionVariant="destructive" />)
+      const { container } = render(<ConfirmDialog {...defaultProps} variant="destructive" />)
 
       await waitFor(async () => {
         const results = await axe(container)

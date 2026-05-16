@@ -9,13 +9,6 @@
  * (`statusIconState`, `priority`, `dueDate`, `dependencyBlockId`,
  * `showCompletedIcon`) so that `React.memo` shallow-compare can hit
  * across parent re-renders.
- *
- * The legacy `metadata?: ReactNode` slot is retained as a deprecated
- * escape hatch for one-off content (e.g. `UnfinishedTasks` composing a
- * due/scheduled pill) that can't be modeled as primitives. Inline JSX
- * passed through `metadata` always allocates a fresh React element per
- * render and therefore defeats `BlockListItem.memo`; prefer the
- * primitive props for all new callsites (perf-review Tier 1.4).
  */
 
 import { AlertCircle, CalendarDays, CheckCircle2 } from 'lucide-react'
@@ -220,15 +213,6 @@ export interface BlockListItemProps {
   contentMaxLength?: number
   /** Fallback text when content is null/empty. Defaults to the localized "(empty)" string. */
   emptyContentFallback?: string
-  /**
-   * @deprecated Escape hatch for callers that need one-off metadata JSX
-   * (e.g. `UnfinishedTasks`'s combined due-or-scheduled pill). Prefer the
-   * typed primitive props below — passing inline JSX here allocates a
-   * fresh React element every parent render and defeats
-   * `BlockListItem.memo`'s shallow compare (perf-review Tier 1.4).
-   */
-  metadata?: React.ReactNode
-
   // ── Typed metadata primitives (perf-review Tier 1.4 metadata half) ──
 
   /**
@@ -310,7 +294,6 @@ function BlockListItemInner({
   content,
   contentMaxLength: _contentMaxLength = 120,
   emptyContentFallback,
-  metadata,
   statusIconState,
   statusIconShowDone,
   priority,
@@ -421,9 +404,6 @@ function BlockListItemInner({
         completedIconClassName={completedIconClassName}
         dependencyBlockId={dependencyBlockId}
       />
-
-      {/* Deprecated escape-hatch metadata slot — see `metadata` prop docs. */}
-      {metadata}
 
       {/* Block content — full content by default; callers opt into line-clamp
           via contentClassName="line-clamp-2" when a truncated preview is needed

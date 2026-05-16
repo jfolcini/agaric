@@ -37,7 +37,7 @@ export function FilterPill({
   return (
     <Badge
       data-slot="filter-pill"
-      variant="secondary"
+      tone="secondary"
       className={cn('filter-pill shrink-0 gap-1 text-xs', className)}
       role="group"
       aria-label={groupAriaLabel ?? label}

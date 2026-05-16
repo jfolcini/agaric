@@ -40,8 +40,8 @@ export function TrashEmptyDialog({
       description={description}
       cancelLabel={t('trash.noButton')}
       actionLabel={t('trash.yesDeleteButton')}
-      actionVariant="destructive"
-      onAction={onConfirm}
+      variant="destructive"
+      onConfirm={onConfirm}
       className="trash-empty-confirm"
     />
   )

@@ -12,7 +12,7 @@
  *  - Legacy fallback: pre-resolved `title` / `description` / `actionLabel`
  *    / `cancelLabel` still work (explicit string overrides the key when
  *    both are set).
- *  - Async-aware: `onConfirm` (or legacy `onAction`) may return
+ *  - Async-aware: `onConfirm` may return
  *    `Promise<void>`. The dialog disables both buttons + shows a spinner
  *    on the confirm button while pending, closes via `onOpenChange(false)`
  *    on resolve, and stays open on rejection so the caller's toast / log
@@ -96,12 +96,6 @@ export interface ConfirmDialogProps {
   // ─── Visual + behavior ────────────────────────────────────────────────
   /** Styles the confirm button. `'destructive'` also flips initial focus to Cancel (UX-259). */
   variant?: 'default' | 'destructive'
-  /**
-   * @deprecated Use `variant` instead. Kept for backwards compatibility
-   * with the pre-merge ConfirmDialog API; when both are set, `variant`
-   * wins.
-   */
-  actionVariant?: 'default' | 'destructive'
 
   /**
    * Async-aware confirm handler. Promise rejections keep the dialog open;
@@ -109,11 +103,6 @@ export interface ConfirmDialogProps {
    * close the dialog immediately after invocation.
    */
   onConfirm?: ConfirmHandler
-  /**
-   * @deprecated Use `onConfirm` instead. Kept for backwards compatibility.
-   * When both are set, `onConfirm` wins.
-   */
-  onAction?: ConfirmHandler
 
   /** Optional explicit cancel hook fired before the dialog closes. */
   onCancel?: () => void
@@ -153,9 +142,7 @@ export function ConfirmDialog({
   actionLabel,
   cancelLabel,
   variant,
-  actionVariant,
   onConfirm,
-  onAction,
   onCancel,
   loading = false,
   secondaryAction,
@@ -179,10 +166,10 @@ export function ConfirmDialog({
   const resolvedCancelLabel = cancelLabel ?? (cancelKey ? t(cancelKey) : t('dialog.cancel'))
   const resolvedActionLabel = actionLabel ?? (confirmKey ? t(confirmKey) : t('dialog.confirm'))
 
-  // ─── Resolve variant + handler (new prop wins over legacy alias) ──────
-  const effectiveVariant = variant ?? actionVariant ?? 'default'
+  // ─── Resolve variant + handler ────────────────────────────────────────
+  const effectiveVariant = variant ?? 'default'
   const isDestructive = effectiveVariant === 'destructive'
-  const effectiveOnConfirm: ConfirmHandler = onConfirm ?? onAction ?? (() => {})
+  const effectiveOnConfirm: ConfirmHandler = onConfirm ?? (() => {})
 
   const isPending = pending || loading
 

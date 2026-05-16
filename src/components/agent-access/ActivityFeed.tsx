@@ -286,7 +286,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                         className="activity-row flex items-start gap-3 p-3 text-sm"
                         data-testid="mcp-activity-row"
                       >
-                        <Badge variant="outline" className="font-mono text-xs shrink-0">
+                        <Badge tone="outline" className="font-mono text-xs shrink-0">
                           {entry.toolName}
                         </Badge>
                         <span
@@ -361,8 +361,8 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
           count: pendingSessionRevert?.ops.length ?? 0,
         })}
         actionLabel={t('agentAccess.revertSession.confirmAction')}
-        actionVariant="destructive"
-        onAction={() => void confirmRevertSession()}
+        variant="destructive"
+        onConfirm={() => void confirmRevertSession()}
       />
     </div>
   )

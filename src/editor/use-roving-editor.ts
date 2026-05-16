@@ -189,9 +189,9 @@ export interface RovingEditorOptions {
   onPropertySelect?: (item: PickerItem) => void
   /** Return blocks matching query (for (( picker). */
   searchBlockRefs?: (query: string) => PickerItem[] | Promise<PickerItem[]>
-  /** @deprecated PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
-  /** @deprecated PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
