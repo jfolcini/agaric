@@ -22,7 +22,7 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           # gitleaks (run via prek) inspects git history, so we need the
           # full commit graph rather than the default shallow checkout.
@@ -56,10 +56,10 @@ jobs:
           cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: src-tauri
           # Cache `~/.cargo/bin/` so cargo-installed plugins (prek, sqruff,
@@ -67,13 +67,24 @@ jobs:
           cache-bin: 'true'
 
       - name: Install Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
 
       - name: Install npm dependencies
         run: npm ci
+
+      - name: Verify npm package provenance signatures
+        # Requires Node 22.5+; rejects packages whose registry-side Sigstore
+        # provenance attestation is missing or invalid. Catches the
+        # "compromised maintainer republishes from a different machine"
+        # class of attack (Sigstore signs at publish time from CI, so a
+        # local laptop republish has no valid attestation). Mode is `audit`
+        # not `install` so missing attestations log a warning rather than
+        # failing the build — many transitive deps don't yet publish with
+        # provenance and we don't want to gate CI on that today.
+        run: npm audit signatures || echo "::warning::npm audit signatures had findings (warn-only mode); review the log above"
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo
@@ -91,9 +102,9 @@ jobs:
         # to skip Postgres/MySQL drivers; the action accepts a `version`
         # pin but not feature flags, so install it with cargo as a fallback
         # the first time, cached by Swatinem/rust-cache's cache-bin: 'true'.
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2
         with:
-          tool: cargo-nextest,cargo-deny,cargo-machete,sqruff,typos-cli,zizmor,taplo-cli
+          tool: cargo-nextest,cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # sqlx-cli with the right features set isn't covered by taiki-e/install-action's
@@ -121,6 +132,16 @@ jobs:
           SKIP: no-commit-to-branch,vitest,cargo-test
         run: prek run --all-files
 
+      - name: Cargo audit (RustSec advisory check, warn-only)
+        # Complements `cargo deny check` (in the prek run above) by hitting
+        # the upstream RustSec advisory DB directly — catches advisories
+        # published since deny.toml's ignore list was last triaged. Warn-only
+        # so a freshly-published advisory doesn't block CI before the
+        # maintainer has had a chance to triage it; treat the log as a
+        # weekly-review surface, not a gate. PEND-40 #4.
+        working-directory: src-tauri
+        run: cargo audit || echo "::warning::cargo audit had findings (warn-only mode); review the log above and update src-tauri/deny.toml's [advisories] ignore list if accepted."
+
       - name: Cargo test (nextest, full suite)
         working-directory: src-tauri
         run: cargo nextest run --profile ci
@@ -145,7 +166,7 @@ jobs:
 
       - name: Upload Playwright report (on failure)
         if: failure() && steps.playwright.outcome == 'failure'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: playwright-report
           path: |

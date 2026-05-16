@@ -1,0 +1,27 @@
+version: 2
+
+# Dependabot is responsible for keeping our SHA-pinned action references
+# fresh. Workflows pin actions to a 40-char commit SHA + a `# vX` comment
+# (PEND-37/security baseline 2026-05-16). Dependabot opens weekly PRs that
+# bump the SHA and update the comment when a new release tag lands.
+#
+# Without this file, SHA-pinning becomes "pin once and forget", which is
+# almost worse than tag-floating — security fixes never reach us.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(actions)
+    labels:
+      - dependencies
+      - github-actions
+
+  # npm + cargo are deferred to the supply-chain-hardening follow-up plan
+  # (PEND-XX). Reason: bumping ~700 npm + ~500 cargo transitive deps weekly
+  # creates a PR firehose that needs grouping/triage rules before it's
+  # actionable. github-actions is small enough (~9 refs) to land standalone.
