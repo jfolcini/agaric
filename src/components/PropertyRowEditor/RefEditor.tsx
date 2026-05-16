@@ -5,7 +5,7 @@
  * the popover hosts a search input + a scrollable list of pages with a
  * Spinner gated on the per-page save promise (UX-272 sub-fix 8). When the
  * `onCreateNewPage` callback is wired and the search has content, the empty
- * state offers a "Create new page" affordance (UX-272 sub-fix 1).
+ * state offers a `t('properties.createNewPageAction', { name })` affordance (UX-272 sub-fix 1).
  */
 
 import { FileSearch, Plus } from 'lucide-react'

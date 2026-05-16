@@ -1,7 +1,7 @@
 /**
  * TrashEmptyDialog — confirms permanently purging every trashed block
- * (the "Empty trash" header action). Sibling extracted from
- * TrashView.tsx for MAINT-128.
+ * (the `t('trash.emptyTrashButton')` header action). Sibling extracted
+ * from TrashView.tsx for MAINT-128.
  */
 
 import type React from 'react'

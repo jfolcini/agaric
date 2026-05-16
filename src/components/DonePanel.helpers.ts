@@ -19,7 +19,7 @@ export interface DoneBlockGroup {
 // (empty content) and B-74 (parent_id match) filters now live in SQL
 // via `query_by_property`'s `content_non_empty` and
 // `exclude_parent_id` parameters, so cursor pagination /
-// `total_count` / "Load more" stay consistent under filtering.
+// `total_count` / t('donePanel.loadMore') stay consistent under filtering.
 
 /**
  * Collect the unique, non-null `page_id`s from a list of blocks. Preserves

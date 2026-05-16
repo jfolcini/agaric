@@ -58,9 +58,9 @@ export interface BlockHistoryItemProps {
   index: number
   /** Whether the row is expanded. Owned by the parent so keyboard nav can drive it. */
   isExpanded: boolean
-  /** Loading state for the "Just this change" diff (single-step). */
+  /** Loading state for the t('history.diffMode.justThisChange') diff (single-step). */
   isLoadingDiff: boolean
-  /** "Just this change" diff spans (op vs. immediately previous version). */
+  /** t('history.diffMode.justThisChange') diff spans (op vs. immediately previous version). */
   diffSpans: DiffSpan[] | undefined
   /** Click on the whole row toggles expansion (only on restorable rows). */
   onExpandToggle: (entry: HistoryEntry, opening: boolean) => void

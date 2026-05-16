@@ -24,7 +24,7 @@ interface SwipeState {
  * - Swipe left > 80 px → reveals a delete button behind the content
  * - Swipe left > 200 px → auto-confirms deletion (and `thresholdCrossed`
  *   flips to `true` mid-drag so callers can render a progressive cue —
- *   colour change + "Release to delete" label — before the gesture
+ *   colour change + `t('block.swipe.releaseToDelete')` label — before the gesture
  *   actually fires; UX-304).
  * - Vertical scroll > 10 px cancels the gesture (avoids scroll conflicts)
  */

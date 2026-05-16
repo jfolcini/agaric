@@ -1,7 +1,7 @@
 /**
  * TrashPurgeDialog — confirms permanently deleting a single trashed
- * block (the per-row "Purge" flow). Sibling extracted from
- * TrashView.tsx for MAINT-128.
+ * block (the per-row `t('trash.purgeButton')` flow). Sibling extracted
+ * from TrashView.tsx for MAINT-128.
  */
 
 import type React from 'react'

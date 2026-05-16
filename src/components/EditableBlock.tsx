@@ -163,7 +163,7 @@ function EditableBlockInner({
   }, [isFocused])
 
   // Auto-mount the roving editor when focus is set externally (e.g. via
-  // PageEditor's "Add block" button or Enter-to-create) without going
+  // PageEditor's t('action.addBlock') button or Enter-to-create) without going
   // through handleFocus.  Flushes the previous block's changes first to
   // prevent data loss — same unmount-save logic as handleFocus (H-11).
   useEffect(() => {

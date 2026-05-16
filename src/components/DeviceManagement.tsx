@@ -4,9 +4,9 @@
  * Embeddable in Settings / Status area. Shows:
  *  - Local device ID
  *  - List of paired peers (with last-synced time, reset count)
- *  - "Pair New Device" button (opens PairingDialog)
- *  - "Sync Now" per peer
- *  - "Unpair" per peer with confirmation
+ *  - `t('device.pairNewDeviceButton')` button (opens PairingDialog)
+ *  - `t('device.syncNowButton')` per peer
+ *  - `t('device.unpairButton')` per peer with confirmation
  *
  * Follows StatusPanel.tsx layout patterns.
  */

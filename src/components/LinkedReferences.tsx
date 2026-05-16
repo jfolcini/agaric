@@ -3,7 +3,7 @@
  *
  * Renders at the bottom of PageEditor. Groups backlinks by the page they originate
  * from, with collapsible headers for both the section and individual groups.
- * Uses cursor-based pagination with "Load more" button.
+ * Uses cursor-based pagination with a `t('references.loadMore')` button.
  */
 
 import { Link } from 'lucide-react'

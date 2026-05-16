@@ -157,4 +157,20 @@ export const shortcuts: Record<string, string> = {
   'keyboard.switchSpace7': 'Switch to space 7',
   'keyboard.switchSpace8': 'Switch to space 8',
   'keyboard.switchSpace9': 'Switch to space 9',
+  // Quick capture (FEAT-12) — announced in the help panel so the global
+  // hotkey is discoverable. The actual binding is sourced at runtime
+  // from `loadQuickCaptureShortcut()` (platform-specific default, user
+  // overridable in Settings → General).
+  'keyboard.category.quickCapture': 'Quick Capture',
+  'keyboard.quickCapture.openDialog': 'Open quick capture (system-wide)',
+  // Deep links — `agaric://…` URLs the OS routes back into the app.
+  // Listed in the help sheet so power users discover the scheme.
+  'keyboard.section.deepLinks': 'Deep Links',
+  'keyboard.deepLinks.description':
+    'Open Agaric from anywhere — paste these URLs into your browser, terminal, or any link surface.',
+  'keyboard.deepLinks.pathHeader': 'URL',
+  'keyboard.deepLinks.actionHeader': 'Opens',
+  'keyboard.deepLinks.block': 'Jump to a specific block by ULID',
+  'keyboard.deepLinks.page': 'Jump to a specific page by ULID',
+  'keyboard.deepLinks.settings': 'Open a Settings tab (e.g. keyboard, sync)',
 }

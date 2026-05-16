@@ -45,7 +45,7 @@ export interface PageHeaderMenuProps {
   onDeleteRequest: () => void
   onOpenInNewTab?: (() => void) | undefined
   /**
-   * FEAT-3 Phase 2 — "Move to space" support.
+   * FEAT-3 Phase 2 — `t('space.moveTo')` support.
    *
    * `isSpaceBlock` — hide the menu entry when the page itself is a
    *   space block (spaces cannot be moved into other spaces).
@@ -81,12 +81,12 @@ export function PageHeaderMenu({
   onMoveToSpace,
 }: PageHeaderMenuProps) {
   const { t } = useTranslation()
-  // FEAT-7 item 7: hide the "Open in new tab" affordance on mobile — the
+  // FEAT-7 item 7: hide the `t('tabs.openInNewTab')` affordance on mobile — the
   // hoisted TabBar is itself desktop-only, so the item would otherwise be
   // semantically misleading (the new tab is invisible on mobile).
   const isMobile = useIsMobile()
 
-  // FEAT-3 Phase 2 — the "Move to space" entry expands inline (no nested
+  // FEAT-3 Phase 2 — the `t('space.moveTo')` entry expands inline (no nested
   // Radix popover) to keep focus management simple and the a11y tree
   // flat. The sub-menu is keyboard-navigable via normal Tab order.
   const [moveSubmenuOpen, setMoveSubmenuOpen] = useState(false)

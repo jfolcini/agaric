@@ -15,7 +15,7 @@
  * The hook itself is unchanged — its empty-peers short-circuit stays in
  * place as defense-in-depth so a code path that bypasses the dialog
  * (a future hotkey, deep-link, etc.) still won't toast spurious
- * "Sync complete".
+ * `t('device.syncComplete')` toasts.
  *
  * Built on top of `ConfirmDialog` (Radix AlertDialog) — same a11y guarantees
  * (focus trap, ESC to dismiss, ARIA title/description) as every other
@@ -33,7 +33,7 @@ interface NoPeersDialogProps {
   /** Open-state controller (closes via Cancel / ESC / overlay click). */
   onOpenChange: (open: boolean) => void
   /**
-   * Invoked when the user clicks the primary "Open sync settings" CTA.
+   * Invoked when the user clicks the primary `t('sync.noPeersCta')` CTA.
    * The parent is responsible for closing the dialog and navigating to
    * Settings → Sync — this component is a pure UI affordance with no
    * navigation knowledge of its own.

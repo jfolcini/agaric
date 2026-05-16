@@ -2,7 +2,7 @@
  * PagePropertyTable — collapsible property table for a page.
  *
  * Rendered below tags in PageHeader. Shows page properties with
- * typed inputs based on property definitions, and an "Add property"
+ * typed inputs based on property definitions, and a `t('pageProperty.addPropertyButton')`
  * popover for adding new properties from existing definitions or
  * creating new definitions.
  */

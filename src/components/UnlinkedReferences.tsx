@@ -2,7 +2,7 @@
  * UnlinkedReferences — shows blocks that mention the page title text
  * without a [[link]], grouped by source page.
  *
- * Collapsed by default. Each block result has a "Link it" button that
+ * Collapsed by default. Each block result has a `t('unlinkedRefs.linkIt')` button that
  * converts the first plain-text mention into a [[pageId]] link.
  */
 

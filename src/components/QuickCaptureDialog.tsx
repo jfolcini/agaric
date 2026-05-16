@@ -1,7 +1,8 @@
 /**
  * QuickCaptureDialog — FEAT-12 quick-capture modal.
  *
- * A small Dialog with a single textarea + "Capture" / "Cancel" buttons.
+ * A small Dialog with a single textarea + `t('quickCapture.saveButton')` /
+ * `t('rename.cancel')` buttons.
  * Triggered by the user-configured global hotkey (registered at app
  * startup via `registerGlobalShortcut`). On submit, dispatches
  * `quickCaptureBlock(content)` against today's journal page and closes
@@ -17,7 +18,7 @@
  *    multi-line capture). Escape dismisses via Radix's built-in
  *    onOpenChange; we don't bind it explicitly.
  *  - Empty / whitespace-only submissions are blocked by the disabled
- *    "Capture" button; submitting an empty textarea via Cmd+Enter is a
+ *    `t('quickCapture.saveButton')` button; submitting an empty textarea via Cmd+Enter is a
  *    no-op (matches the disabled-button semantics).
  *
  * Desktop-only by virtue of its trigger being the global shortcut, but

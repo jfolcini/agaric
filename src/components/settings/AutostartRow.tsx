@@ -1,5 +1,5 @@
 /**
- * AutostartRow — "Launch on login" toggle inside the General settings tab (FEAT-13).
+ * AutostartRow — `t('settings.autostart.label')` toggle inside the General settings tab (FEAT-13).
  *
  * Three-state: `null` (loading or unavailable → row hidden), `true`
  * (toggle on), `false` (toggle off).  The unavailable case folds into

@@ -2,7 +2,7 @@
  * CompactionCard — collapsible card showing op log compaction stats.
  *
  * Self-contained component that fetches compaction status on mount
- * and provides a "Compact Now" button to trigger manual compaction.
+ * and provides a `t('compaction.compactNow')` button to trigger manual compaction.
  * Shown at the top of the HistoryView.
  */
 

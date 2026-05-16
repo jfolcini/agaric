@@ -3,8 +3,8 @@
  *
  * Renders inside a shadcn Popover (managed by FormattingToolbar):
  *  - URL input (auto-focused unless the popover was opened with a selection,
- *    placeholder "https://...")
- *  - "Apply" + optional "Remove" button (when editing an existing link)
+ *    placeholder `t('linkEdit.urlPlaceholder')`)
+ *  - `t('linkEdit.apply')` + optional `t('linkEdit.remove')` button (when editing an existing link)
  *  - Enter applies, Escape cancels
  *  - URLs without a protocol scheme get `https://` prepended automatically
  */

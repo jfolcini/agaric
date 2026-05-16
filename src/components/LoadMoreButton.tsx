@@ -6,7 +6,7 @@
  * UnlinkedReferences, AgendaResults, PageBrowser, DonePanel, DuePanel.
  *
  * When both `loadedCount` and `totalCount` are provided, renders a
- * secondary progress line below the button ("Loaded X of Y") so users
+ * secondary progress line below the button via `t('loadMore.progress')` so users
  * can gauge the remaining result set (UX-218).
  */
 

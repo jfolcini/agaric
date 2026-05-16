@@ -4,11 +4,13 @@
  * Renders the session-header `<li>` that sits above the first-seen
  * (newest-first) activity row of a session that has ≥ 2 undoable ops.
  * The header carries:
- *   - a short pluralized count label ("5 agent actions") for sighted
- *     users;
- *   - a "Revert session" button whose `aria-label` + tooltip carry the
- *     full verb ("Revert this agent session (5 actions)") for screen
- *     readers.
+ *   - a short pluralized count label via
+ *     `t('agentAccess.revertSession.headerLabel', { count })` for
+ *     sighted users;
+ *   - a `t('agentAccess.revertSession.button')` button whose `aria-label`
+ *     + tooltip carry the full verb (via
+ *     `t('agentAccess.revertSession.buttonAriaLabel', { count })`) for
+ *     screen readers.
  *
  * Extracted from AgentAccessSettingsTab.tsx for testability — the
  * confirm-dialog flow + state lives in ActivityFeed.tsx, this

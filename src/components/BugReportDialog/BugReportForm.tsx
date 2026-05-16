@@ -2,8 +2,9 @@
  * BugReportForm — form-section sub-component for {@link BugReportDialog}
  * (MAINT-Phase-3b decomposition of the 627-LOC monolith).
  *
- * Owns the title input, description textarea, the "Include diagnostic logs"
- * switch, and the sibling "Redact" switch (UX-383). All state lives in the
+ * Owns the title input, description textarea, the
+ * `t('bugReport.includeLogsLabel')` switch, and the sibling
+ * `t('bugReport.redactLabel')` switch (UX-383). All state lives in the
  * parent orchestrator — this component is a controlled presentation layer
  * so the existing IPC + redaction logic in `BugReportDialog.tsx` (and
  * `src-tauri/src/commands/bug_report.rs`) stays untouched.

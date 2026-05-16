@@ -38,8 +38,9 @@ export interface BacklinkGroupRendererProps {
   resolveBlockStatus: (id: string) => 'active' | 'deleted'
   resolveTagName: (id: string) => string
   /**
-   * UX-271: Marks the section as showing "Linked" (`[[ref]]`) or "Unlinked"
-   * (mention without link) backlinks. When provided, a small badge is
+   * UX-271: Marks the section as showing `t('references.linkedBadge')`
+   * (`[[ref]]`) or `t('references.unlinkedBadge')` (mention without link)
+   * backlinks. When provided, a small badge is
    * rendered above the group list so users can tell the two sections apart
    * at a glance. Optional to keep this component reusable.
    */

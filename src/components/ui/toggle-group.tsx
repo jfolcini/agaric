@@ -7,7 +7,8 @@
  * by default; pass `type="multiple"` for multi-select.
  *
  * Used by the per-block history panel (PEND-17 Part B) for the
- * "Just this change" / "Compared to current" diff-mode switcher.
+ * t('history.diffMode.justThisChange') / t('history.diffMode.comparedToCurrent')
+ * diff-mode switcher.
  */
 
 'use client'

@@ -167,7 +167,7 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
         // (`allowedPrefixes: [' ', '\u00A0', '\n']` — see `at-tag-picker.ts`).
         // Inserting a bare `@` mid-text would therefore type the glyph
         // without triggering the picker, which is surprising for a button
-        // labelled "Insert tag". Prepend a space when the previous char
+        // labelled via t('toolbar.insertTag'). Prepend a space when the previous char
         // isn't already a valid prefix so clicking the button reliably
         // opens the picker regardless of caret position.
         const { from } = editor.state.selection

@@ -2,7 +2,7 @@
  * BacklinkFilterBuilder -- pill-based filter builder for backlink queries.
  *
  * Controlled component: parent owns `filters` and `sort` state.
- * Renders active filters as removable pills and provides an "Add filter" flow.
+ * Renders active filters as removable pills and provides an `t('backlink.addFilterLabel')` flow.
  *
  * Filter pills are rendered by `FilterPillRow`; sort controls by
  * `FilterSortControls`. Both were extracted for testability (#651-R4).

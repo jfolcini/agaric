@@ -4,7 +4,7 @@
  * Features:
  *  - Debounced search (300ms) on input change
  *  - Immediate search on form submit (Enter / button click)
- *  - Cursor-based pagination ("Load more") via usePaginatedQuery
+ *  - Cursor-based pagination (`t('search.loadMoreButton')`) via usePaginatedQuery
  *  - CJK limitation notice (p3-t6)
  *
  * Opened via Ctrl+F (see `App.tsx` global handler around line 712, the
@@ -85,7 +85,7 @@ export function SearchPanel(): React.ReactElement {
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searched, setSearched] = useState(false)
   // UX-335 — `cleared` is true iff the user emptied the search input AFTER a
-  // search had been performed. Used to surface a "Search cleared"
+  // search had been performed. Used to surface a `t('search.statusCleared')`
   // announcement in the aria-live status region (separate from pre-search).
   const [cleared, setCleared] = useState(false)
   const [typing, setTyping] = useState(false)
@@ -235,7 +235,7 @@ export function SearchPanel(): React.ReactElement {
     if (!value.trim()) {
       // UX-335 — if a search had been performed (or we were already in the
       // cleared state and somehow re-emptied), keep `cleared` set so the
-      // aria-live region announces "Search cleared".
+      // aria-live region announces `t('search.statusCleared')`.
       setCleared((prev) => prev || searched)
       setDebouncedQuery('')
       setItems([])

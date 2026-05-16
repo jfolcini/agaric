@@ -2,7 +2,7 @@
  * AgendaFilterBuilder -- pill-based filter builder for the agenda view.
  *
  * Controlled component: parent owns `filters` state.
- * Renders active filters as removable chips and provides an "Add filter"
+ * Renders active filters as removable chips and provides a `t('agendaFilter.addFilter')`
  * popover flow: pick a dimension, then pick values via checkboxes or text
  * input.  Chips are editable via click (opens an inline popover).
  */
@@ -159,8 +159,10 @@ function AddFilterPopover({
           // scheduledDate, completedDate vs createdDate) is discoverable
           // without opening the dimension and trying its values.
           //
-          // UX-323 — visually group the 8 dimensions under "Task metadata" /
-          // "Dates" / "Organisation" headings so users can scan by family
+          // UX-323 — visually group the 8 dimensions under
+          // `t('agendaFilter.group.taskMetadata')` /
+          // `t('agendaFilter.group.dates')` /
+          // `t('agendaFilter.group.organisation')` headings so users can scan by family
           // before reading individual labels. Group definitions live in
           // DIMENSION_GROUPS (filter-dimension-metadata.ts).
           <TooltipProvider>

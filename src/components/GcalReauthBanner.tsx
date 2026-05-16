@@ -13,7 +13,7 @@
  * user kept using the app expecting calendar sync, got nothing, and
  * had no idea why. This component closes that loop: it subscribes
  * once at the shell level and renders a compact, non-dismissable
- * top-of-app banner with a "Reconnect" CTA that triggers the existing
+ * top-of-app banner with a `t('gcal.reauth.reconnect')` CTA that triggers the existing
  * `begin_gcal_oauth` IPC (the same entry point the Settings → Google
  * Calendar tab uses).
  *

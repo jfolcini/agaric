@@ -5,7 +5,7 @@
  * Features:
  * - Loads PDF via pdfjs-dist getDocument()
  * - Renders pages as <canvas> elements in a scrollable container
- * - Page count indicator ("Page 1 / 5")
+ * - Page count indicator via `t('pdfViewer.pageIndicator')`
  * - Prev/Next page navigation
  * - Cleans up PDF document on close
  */

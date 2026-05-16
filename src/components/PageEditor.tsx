@@ -1,7 +1,7 @@
 /**
  * PageEditor — page-level wrapper around BlockTree.
  *
- * Provides editable title, back navigation, and an "Add block" button.
+ * Provides editable title, back navigation, and a `t('action.addBlock')` button.
  * Loads children of the given pageId via BlockTree's parentId prop.
  */
 

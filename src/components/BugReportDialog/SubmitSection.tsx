@@ -7,8 +7,9 @@
  *
  *   Cancel | Copy report | [Download zip] | Open GitHub issue
  *
- * The "Download zip" button is rendered only when `includeLogs` is ON, and
- * the primary "Open GitHub issue" button is disabled until the confirmation
+ * The `t('bugReport.downloadZip')` button is rendered only when `includeLogs`
+ * is ON, and the primary `t('bugReport.openGitHubIssue')` button is disabled
+ * until the confirmation
  * checkbox upstream is ticked AND metadata has resolved. All handlers come
  * from the orchestrator so the `openUrl` / `buildReportZip` IPC shapes stay
  * untouched.
@@ -20,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 
 export interface SubmitSectionProps {
-  /** Mirrors the parent's "include diagnostic logs" switch. */
+  /** Mirrors the parent's `t('bugReport.includeLogsLabel')` switch. */
   includeLogs: boolean
   /** Mirrors the parent's confirmation checkbox. */
   confirmed: boolean

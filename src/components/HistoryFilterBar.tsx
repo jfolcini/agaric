@@ -3,7 +3,7 @@
  *
  * Extracted from HistoryView for testability.
  *
- * FEAT-3 Phase 8 — also hosts the "All spaces" toggle. The toggle is
+ * FEAT-3 Phase 8 — also hosts the `t('history.allSpacesToggle')` toggle. The toggle is
  * controlled (state owned by HistoryView, *not* persisted) so every
  * History session starts current-space-only by design.
  */
@@ -61,7 +61,7 @@ export interface HistoryFilterBarProps {
   opTypeFilter: string | null
   onFilterChange: (filter: string | null) => void
   /**
-   * FEAT-3 Phase 8 — controlled "All spaces" toggle. Optional: when
+   * FEAT-3 Phase 8 — controlled `t('history.allSpacesToggle')` toggle. Optional: when
    * BOTH `showAllSpaces` and `onShowAllSpacesChange` are provided the
    * toggle renders; otherwise it is hidden. The per-page consumer
    * (`HistoryPanel`) omits both because per-page mode already
@@ -69,7 +69,7 @@ export interface HistoryFilterBarProps {
    * the FEAT-3p8 SQL ignores `space_id` for non-`"__all__"` page IDs.
    */
   showAllSpaces?: boolean
-  /** Callback when the user flips the "All spaces" switch. */
+  /** Callback when the user flips the `t('history.allSpacesToggle')` switch. */
   onShowAllSpacesChange?: (next: boolean) => void
 }
 

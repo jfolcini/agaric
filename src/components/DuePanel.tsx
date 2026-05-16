@@ -4,7 +4,7 @@
  * Renders on JournalPage. Groups blocks by todo_state in order:
  * DOING > TODO > DONE > null (Other). Within each group, sorts by
  * priority: 1 > 2 > 3 > null. Uses cursor-based pagination with
- * "Load more" button.
+ * a `t('duePanel.loadMore')` button.
  *
  * Orchestrator that connects useDuePanelData to extracted section
  * components (OverdueSection, UpcomingSection, DuePanelFilters).
@@ -263,7 +263,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
 
   // UX-152: Don't render when ALL sources are empty (not loading).
   // When a source filter is active, always keep the panel visible so the
-  // user can switch back to "All" — otherwise the filter pills vanish.
+  // user can switch back to `t('duePanel.filterAll')` — otherwise the filter pills vanish.
   if (!loading && !projectedLoading && allDisplayItems.length === 0 && sourceFilter === null) {
     return null
   }

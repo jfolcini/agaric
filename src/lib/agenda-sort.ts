@@ -54,7 +54,9 @@ export interface AgendaGroup {
 
 /**
  * Group blocks by effective date. Returns groups in date order.
- * Special groups: "Overdue" (pinned first), "Today", "Tomorrow", then date strings.
+ * Special group keys (renderer maps to t('agenda.overdue') / t('agenda.today') /
+ * t('agenda.tomorrow') / t('agenda.noDate')): `Overdue` (pinned first),
+ * `Today`, `Tomorrow`, then date strings, then `No date` last.
  */
 export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
   const sorted = sortAgendaBlocks(blocks)
@@ -101,7 +103,7 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
     }
   }
 
-  // Remaining date groups (sorted chronologically), excluding "No date"
+  // Remaining date groups (sorted chronologically), excluding the `No date` key
   const noDate = groups.get('No date')
   groups.delete('No date')
 
@@ -120,7 +122,8 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
 
 /**
  * Group blocks by priority level. Returns groups in level order
- * (configurable via UX-201b), with "No priority" last. Within each group,
+ * (configurable via UX-201b), with the `No priority` key last (renderer
+ * translates via t('agenda.noPriority')). Within each group,
  * blocks are sorted by date ASC then state.
  *
  * Index-keyed `CLASS_MAP` matches the first three groups to the
@@ -282,7 +285,7 @@ export function sortByState(blocks: BlockRow[]): BlockRow[] {
 
 /**
  * Group blocks by page_id. Returns groups in alphabetical order by page title,
- * with "No page" group at the end.
+ * with the `No page` key at the end (renderer translates via t('agenda.noPage')).
  * Within each group, blocks are sorted by state (DOING > TODO > DONE > CANCELLED > null),
  * then priority, then date.
  */
@@ -332,7 +335,7 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
     })
   }
 
-  // "No page" group at the end
+  // `No page` group key at the end (renderer translates via t('agenda.noPage'))
   if (noPageBlocks && noPageBlocks.length > 0) {
     result.push({
       label: 'No page',

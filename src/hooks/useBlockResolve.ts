@@ -201,9 +201,10 @@ async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promis
 }
 
 /**
- * Appends (not prepends) a "Create new page" option when the query doesn't
- * exactly match an existing page. Pages keep Create at the end — F-26 only
- * moved Create to the top for tags.
+ * Appends (not prepends) a create-new-page option (`isCreate: true`) when the
+ * query doesn't exactly match an existing page. Consumers render the option
+ * label via `t('properties.createNewPageAction')` / `t('pageProperty.createButton')`.
+ * Pages keep Create at the end — F-26 only moved Create to the top for tags.
  */
 function appendCreatePageOptionIfNeeded(
   matches: PickerItem[],
@@ -217,8 +218,9 @@ function appendCreatePageOptionIfNeeded(
   // Turkish / German / accented inputs the same way `matchesSearchFolded`
   // does in the filter above.  Without this, a page titled `İstanbul`
   // when queried as `istanbul` would appear as "no exact match" and the
-  // "Create new page" option would be appended, even though the page
-  // does exist.
+  // create-new-page option (rendered by consumers via
+  // `t('properties.createNewPageAction')`) would be appended, even
+  // though the page does exist.
   const qFolded = foldForSearch(q)
   const exactMatch = allSource.some(
     (p) => foldForSearch('title' in p ? p.title : p.label) === qFolded,
@@ -302,9 +304,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
         icon: Tag,
       }))
 
-      // Prepend a "Create new tag" option when the query doesn't exactly match
-      // an existing tag — this makes it the default selection so pressing Enter
-      // auto-creates the tag (F-26).
+      // Prepend a create-new-tag option (`isCreate: true`, rendered by
+      // consumers via `t('pageHeader.createTag', { name })`) when the
+      // query doesn't exactly match an existing tag — this makes it the
+      // default selection so pressing Enter auto-creates the tag (F-26).
       if (q.length > 0) {
         // UX-248 — fold both sides so Turkish / German / accented tag
         // names match their ASCII-typed queries the same way as pages do.
@@ -338,7 +341,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
    * Priority (low → high in the result list):
    *   1. Alias match (prepended first — highest relevance)
    *   2. FTS / cache matches (ordered by strategy)
-   *   3. "Create new page" (appended last)
+   *   3. Create-new-page item with `isCreate: true` (appended last)
    */
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
     const t0 = performance.now()

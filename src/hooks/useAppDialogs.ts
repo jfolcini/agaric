@@ -16,7 +16,7 @@
  * Also installs the two custom-event listeners that drive these dialogs:
  * - `BUG_REPORT_EVENT` (window) — opens the bug-report dialog with the
  *   captured error message + stack pre-filled. Dispatched from
- *   `FeatureErrorBoundary`'s "Report bug" button; the boundary lives
+ *   `FeatureErrorBoundary`'s `t('bugReport.reportCrashTitle')` button; the boundary lives
  *   inside the crashed subtree and can't open a dialog itself, so the
  *   App shell mounts the dialog and listens here.
  * - `CLOSE_ALL_OVERLAYS_EVENT` (window) — Esc-key bridge that closes the

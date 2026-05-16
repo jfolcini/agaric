@@ -76,7 +76,7 @@ async function createSamplePages(t: TFunction): Promise<void> {
     throw new Error('No active space; cannot create sample pages')
   }
 
-  // Create "Getting Started" page with child blocks
+  // Create t('welcome.sampleGettingStartedTitle') page with child blocks
   const gettingStartedId = await createPageInSpace({
     content: t('welcome.sampleGettingStartedTitle'),
     spaceId: currentSpaceId,
@@ -100,7 +100,7 @@ async function createSamplePages(t: TFunction): Promise<void> {
     position: 2,
   })
 
-  // Create "Quick Tips" page with keyboard shortcut highlights
+  // Create t('welcome.sampleQuickTipsTitle') page with keyboard shortcut highlights
   const quickTipsId = await createPageInSpace({
     content: t('welcome.sampleQuickTipsTitle'),
     spaceId: currentSpaceId,

@@ -96,8 +96,8 @@ export function BlockZoomBar({
         ariaLabel={t('blockZoom.breadcrumbs')}
         home={{
           onClick: onZoomToRoot,
-          // PEND-21 — Use the explicit "Exit zoom" wording on the Home icon so
-          // touch users (who lost the dedicated "<X /> Exit zoom" button) still
+          // PEND-21 — Use the explicit t('blockZoom.exitZoom') wording on the Home icon so
+          // touch users (who lost the dedicated <X /> exit-zoom button) still
           // get the verbal affordance via screen readers / long-press tooltip.
           ariaLabel: t('blockZoom.exitZoom'),
           testId: 'home',

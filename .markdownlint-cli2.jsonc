@@ -2,7 +2,9 @@
   "config": {
     "default": true,
     "MD013": false,
-    "MD033": { "allowed_elements": ["br", "sub", "sup", "kbd", "details", "summary", "p", "img", "a"] },
+    "MD033": {
+      "allowed_elements": ["br", "sub", "sup", "kbd", "details", "summary", "p", "img", "a"]
+    },
     "MD041": false,
     "MD024": { "siblings_only": true }
   },

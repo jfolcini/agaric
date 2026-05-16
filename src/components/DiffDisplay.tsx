@@ -44,8 +44,8 @@ function findScrollableAncestor(el: HTMLElement | null): HTMLElement | null {
  *
  * UX-265 sub-fix 5: when the diff has more than {@link LARGE_DIFF_THRESHOLD}
  * spans, the first {@link COLLAPSED_SPAN_COUNT} are shown by default and a
- * "Show full diff (N hidden)" button reveals the rest. Click the same button
- * (now "Collapse diff") to re-collapse.
+ * `t('diff.showMore')` button reveals the rest. Click the same button
+ * (now `t('diff.collapse')`) to re-collapse.
  *
  * UX-275 sub-fix 1: the diff is wrapped in a labelled region and exposes
  * prev/next "hunk" navigation. A *hunk* is a maximal run of consecutive spans

@@ -4,7 +4,7 @@
  * Renders on JournalPage below LinkedReferences. Groups blocks by parent page
  * (resolved via batchResolve). Within each group, sorts blocks by ID descending
  * (ULID ≈ most recently created first). Uses cursor-based pagination with
- * "Load more" button.
+ * a `t('donePanel.loadMore')` button.
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -57,7 +57,7 @@ export function DonePanel({
   //
   // PEND-35 Tier 1.5 — `excludeParentId` and `contentNonEmpty` are
   // passed straight to the backend so cursor pagination, `total_count`,
-  // and "Load more" reflect the visible (post-filter) set instead of
+  // and `t('donePanel.loadMore')` reflect the visible (post-filter) set instead of
   // the raw page. Previously the FE post-filtered each cursor page
   // (UX-129 / B-74) which silently broke the cursor accounting on
   // partial pages.

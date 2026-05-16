@@ -459,6 +459,85 @@ describe('KeyboardShortcuts', () => {
     })
   })
 
+  // Discoverability: the quick-capture global hotkey is OS-wide but was
+  // never announced inside the app. Surface it in the help panel under
+  // its own "Quick Capture" category, sourced from the same storage helper
+  // SettingsView reads (so customisation flows through).
+  describe('quick-capture hotkey announcement', () => {
+    it('renders a Quick Capture category with the platform default chord', () => {
+      setPlatform('Linux x86_64')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      expect(screen.getByText(t('keyboard.category.quickCapture'))).toBeInTheDocument()
+      const actionLabel = screen.getByText(t('keyboard.quickCapture.openDialog'))
+      const row = actionLabel.closest('tr') as HTMLElement
+      expect(row).toBeTruthy()
+
+      // Linux/Windows default: Ctrl+Alt+N → rendered as three <kbd>s.
+      const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+      expect(kbdTexts).toEqual(['Ctrl', 'Alt', 'N'])
+    })
+
+    it('renders the macOS default chord with the ⌘ glyph on macOS', () => {
+      setPlatform('MacIntel')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const actionLabel = screen.getByText(t('keyboard.quickCapture.openDialog'))
+      const row = actionLabel.closest('tr') as HTMLElement
+      const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+      // `loadQuickCaptureShortcut()` returns `Cmd+Alt+N` on mac and
+      // `normaliseAccelerator` rewrites `Cmd` → `Ctrl` so `renderKeys`
+      // substitutes the platform mod glyph.
+      expect(kbdTexts).toEqual(['⌘', 'Alt', 'N'])
+    })
+
+    it('reflects the user-customised chord persisted in localStorage', () => {
+      setPlatform('Linux x86_64')
+      localStorage.setItem('agaric:quickCaptureShortcut', 'Ctrl+Shift+J')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const actionLabel = screen.getByText(t('keyboard.quickCapture.openDialog'))
+      const row = actionLabel.closest('tr') as HTMLElement
+      const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+      expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'J'])
+    })
+  })
+
+  // Discoverability: `agaric://…` deep links work but were undocumented.
+  // List the three routes the Rust router (`parse_deep_link`) accepts.
+  describe('deep links section', () => {
+    it('renders the section header and description', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      expect(screen.getByTestId('deep-links-section-title')).toHaveTextContent(
+        t('keyboard.section.deepLinks'),
+      )
+      expect(screen.getByText(t('keyboard.deepLinks.description'))).toBeInTheDocument()
+    })
+
+    it('lists exactly the three documented deep-link routes', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const table = screen.getByTestId('deep-links-table')
+      const codeTexts = Array.from(table.querySelectorAll('code')).map((el) => el.textContent)
+      expect(codeTexts).toEqual([
+        'agaric://block/<ULID>',
+        'agaric://page/<ULID>',
+        'agaric://settings/<tab>',
+      ])
+
+      expect(screen.getByText(t('keyboard.deepLinks.block'))).toBeInTheDocument()
+      expect(screen.getByText(t('keyboard.deepLinks.page'))).toBeInTheDocument()
+      expect(screen.getByText(t('keyboard.deepLinks.settings'))).toBeInTheDocument()
+    })
+
+    it('has no a11y violations with the new sections rendered', async () => {
+      const { container } = render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   // UX-397: customised shortcuts in the help panel are flagged with a
   // "Customized" badge so users can tell which rows reflect their own
   // bindings vs. defaults.

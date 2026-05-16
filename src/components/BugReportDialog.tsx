@@ -3,17 +3,18 @@
  *
  * Three-section dialog: a form (title, description, include-logs +
  * redact switches), a read-only Markdown preview + list of log files,
- * and a footer with Cancel / Copy report / [Download zip] / Open GitHub
- * issue. "Download zip" only renders when logs are ON; "Open GitHub
- * issue" is gated on the confirmation checkbox.
+ * and a footer with Cancel / Copy report / [t('bugReport.downloadZip')] /
+ * t('bugReport.openGitHubIssue'). The download-zip button only renders
+ * when logs are ON; the open-issue button is gated on the confirmation
+ * checkbox.
  *
  * Flow (PEND-bug-report-zip-affordance):
- *   - logs ON:  user clicks "Download zip" (readLogsForReport →
+ *   - logs ON:  user clicks t('bugReport.downloadZip') (readLogsForReport →
  *               buildReportZip → downloadBlob → success toast naming the
- *               file), then clicks "Open GitHub issue" (openUrl). The
+ *               file), then clicks t('bugReport.openGitHubIssue') (openUrl). The
  *               dialog stays open so the user can re-download if the OS
  *               save dialog is dismissed.
- *   - logs OFF: user clicks "Open in GitHub" (openUrl), dialog closes.
+ *   - logs OFF: user clicks t('bugReport.openIssue') (openUrl), dialog closes.
  *   - On IPC/JSZip failure: notify.error + logger.warn; dialog stays open.
  *
  * Errors are never swallowed silently — every `.catch` routes through
@@ -224,10 +225,10 @@ export function BugReportDialog({
     },
   })
 
-  // PEND-bug-report-zip-affordance: "Download zip" footer handler.
+  // PEND-bug-report-zip-affordance: t('bugReport.downloadZip') footer handler.
   // readLogsForReport → buildReportZip → downloadBlob, then a toast
   // naming the saved file. The dialog stays open so the user can then
-  // click "Open GitHub issue" and drag the file in.
+  // click t('bugReport.openGitHubIssue') and drag the file in.
   const handleDownloadZip = useCallback(async () => {
     if (submitting) return
     if (metadata == null) return

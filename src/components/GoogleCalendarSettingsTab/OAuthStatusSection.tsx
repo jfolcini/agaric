@@ -9,9 +9,10 @@
  * resolved state + handlers as props.
  *
  * Two visual states:
- *  - Connected: shows the bound account email + a small "Disconnect"
- *    button that opens the parent's disconnect dialog.
- *  - Disconnected: shows the "Connect Google Account" CTA which
+ *  - Connected: shows the bound account email + a small
+ *    `t('gcal.disconnect.openButton')` button that opens the parent's
+ *    disconnect dialog.
+ *  - Disconnected: shows the `t('gcal.connectButton')` CTA which
  *    triggers `onConnect`; while the IPC is in flight the button is
  *    disabled, aria-busy, and shows the spinner + waiting label.
  *

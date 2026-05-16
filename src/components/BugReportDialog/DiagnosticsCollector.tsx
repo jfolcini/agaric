@@ -5,8 +5,9 @@
  * Renders three pieces of the bug-report dialog that all revolve around
  * diagnostic logs:
  *
- *   1. The logs list (filename + size + per-row "Preview" Eye button),
- *      which is rendered only when "Include diagnostic logs" is ON.
+ *   1. The logs list (filename + size + per-row `t('bugReport.previewTitle')`
+ *      Eye button), which is rendered only when
+ *      `t('bugReport.includeLogsLabel')` is ON.
  *   2. The zip-download hint that names the eventual ZIP and reminds the
  *      user the file must be dragged into the GitHub issue manually.
  *   3. The nested per-log preview sub-dialog (UX-277) — a Radix Dialog

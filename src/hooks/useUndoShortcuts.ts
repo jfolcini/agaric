@@ -67,7 +67,7 @@ export function useUndoShortcuts(): void {
           .undo(pageId)
           .then(async (result) => {
             if (result) {
-              // Use per-op-type translation; fall back to generic "Undone" if unknown.
+              // Use per-op-type translation; fall back to generic t('undo.undoneMessage') if unknown.
               const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
               const message = t(opKey, { defaultValue: t('undo.undoneMessage') })
               notify(message, { duration: 1500 })
@@ -93,7 +93,7 @@ export function useUndoShortcuts(): void {
           .redo(pageId)
           .then(async (result) => {
             if (result) {
-              // Use per-op-type translation; fall back to generic "Redone" if unknown.
+              // Use per-op-type translation; fall back to generic t('undo.redoneMessage') if unknown.
               const opKey = `redo.op.${snakeToCamel(result.reversed_op_type)}`
               const message = t(opKey, { defaultValue: t('undo.redoneMessage') })
               notify(message, { duration: 1500 })

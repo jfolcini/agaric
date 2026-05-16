@@ -130,7 +130,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
   //
   // Walk the current entries (newest-first) and bucket the opRef of
   // every agent+ok+opRef entry by sessionId.  Used to:
-  //   - gate the per-session "Revert session" button on ≥ 2 ops
+  //   - gate the per-session t('agentAccess.revertSession.button') button on ≥ 2 ops
   //   - collect the opRef payload when the button is clicked
   //   - decide which entry gets the session header (the first-seen
   //     of each sessionId in newest-first order)
@@ -165,7 +165,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
     return m
   }, [entries])
 
-  // User clicked "Revert session" on a session header — open the
+  // User clicked t('agentAccess.revertSession.button') on a session header — open the
   // confirm dialog with the exact opRefs we'll submit.  The ops array
   // is a snapshot of the session's undoable entries at click time; if
   // the ring rolls over between the click and the confirmation, the

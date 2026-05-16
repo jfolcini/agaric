@@ -5,7 +5,7 @@
  * updates `currentSpaceId` synchronously; downstream panels (PageBrowser,
  * SearchPanel, …) re-scope their queries when `currentSpaceId` flips.
  *
- * The "Manage spaces…" entry now (FEAT-3 Phase 6) opens
+ * The `t('space.manage')` entry now (FEAT-3 Phase 6) opens
  * `SpaceManageDialog` instead of being a disabled placeholder. The
  * MANAGE_SENTINEL value is short-circuited inside `handleValueChange`
  * so selecting it does not switch space — it only flips the dialog
@@ -31,7 +31,7 @@ import { useSpaceStore } from '@/stores/space'
 import { SpaceManageDialog } from './SpaceManageDialog'
 
 /**
- * Sentinel value used by the "Manage spaces…" item so Radix Select
+ * Sentinel value used by the `t('space.manage')` item so Radix Select
  * does not treat the click as a real space switch. `SelectItem`
  * requires a non-empty `value`, so a unique reserved string is the
  * simplest way to keep the option in the listbox; `handleValueChange`
@@ -124,7 +124,7 @@ export function SpaceSwitcher(): React.JSX.Element {
                  * prefix (UX-364) with a colour-identity dot that
                  * mirrors `SpaceTopStripe` and `SpaceAccentBadge`. The
                  * dot is decorative (`aria-hidden`) so the
-                 * `aria-label="Switch space"` on `SelectTrigger` is
+                 * `aria-label={t('space.switch')}` on `SelectTrigger` is
                  * still the accessible name. Rendered as a sibling
                  * BEFORE `<SelectValue>` for the same reason the old
                  * prefix span was: Radix mirrors the active option's
@@ -204,9 +204,9 @@ export function SpaceSwitcher(): React.JSX.Element {
           {/*
            * UX-373 — when the user has only one space, the switcher is
            * a visual no-op (nothing else to switch to). Surface a
-           * "Create another space…" hint inside the dropdown so the
+           * `t('spaceSwitcher.createAnotherHint')` hint inside the dropdown so the
            * single-space user discovers the manage flow without having
-           * to scan past the (lone) space row to the "Manage spaces…"
+           * to scan past the (lone) space row to the `t('space.manage')`
            * entry below. Rendered as a native `<button>` rather than a
            * `<SelectItem>` because `SelectItem` requires a `value` and
            * would interfere with Radix Select's selection model;
@@ -229,7 +229,7 @@ export function SpaceSwitcher(): React.JSX.Element {
             </button>
           ) : null}
           {/*
-           * FEAT-3 Phase 6 — the "Manage spaces…" entry is now a real,
+           * FEAT-3 Phase 6 — the `t('space.manage')` entry is now a real,
            * enabled action. `handleValueChange` short-circuits the
            * sentinel and opens `SpaceManageDialog` instead of calling
            * `setCurrentSpace`, so selecting it does not switch space.

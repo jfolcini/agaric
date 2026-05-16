@@ -44,7 +44,7 @@
  *
  * MAINT-215: on phones < 768 px (`useIsMobile() === true`) the outer
  * dialog renders as a bottom Sheet so the per-row controls + the
- * "Create new space" form land within thumb reach. The desktop path
+ * `t('space.createSpaceLabel')` form land within thumb reach. The desktop path
  * keeps the regular Radix `Dialog` (not `AlertDialog`) so
  * dismiss-on-outside-click / Escape works without confirmation gating.
  * Sub-components under `./SpaceManageDialog/` are unaffected by the

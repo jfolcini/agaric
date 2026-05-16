@@ -124,7 +124,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
 
   // UX-275 sub-fix 4: restore is reversible — capture the current block
   // content BEFORE applying the historical version so the success toast can
-  // offer a one-click "Undo" that re-applies the captured snapshot.
+  // offer a one-click `t('action.undo')` that re-applies the captured snapshot.
   const handleUndoRestore = useCallback(
     async (targetBlockId: string, previousContent: string) => {
       try {
@@ -300,7 +300,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     (entry: HistoryEntry, opening: boolean) => {
       // Single-expansion model: opening row N collapses any other,
       // and clicking the active row again collapses it. Also lazily
-      // hydrate the "Just this change" diff when expanding so the
+      // hydrate the `t('history.diffMode.justThisChange')` diff when expanding so the
       // bottom toggle has data ready when the user switches modes.
       if (opening) {
         setExpandedSeq(entry.seq)

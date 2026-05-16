@@ -23,6 +23,7 @@ import {
 import { useNavigationStore } from '@/stores/navigation'
 import { getCurrentShortcuts } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
+import { loadQuickCaptureShortcut } from '../lib/quick-capture-shortcut'
 import { renderKeys } from '../lib/render-keyboard-shortcut'
 
 interface ShortcutDef {
@@ -30,6 +31,22 @@ interface ShortcutDef {
   condition?: string
   description: string
   isCustom?: boolean
+}
+
+/**
+ * Normalise an accelerator string from `tauri-plugin-global-shortcut` format
+ * (`Ctrl+Alt+N`, `Cmd+Alt+N`, `Option+Space`) into the space-padded `Ctrl + …`
+ * tokens that {@link renderKeys} understands. `Cmd` collapses to `Ctrl` so
+ * `renderKeys` substitutes the platform mod key (⌘ on macOS, Ctrl elsewhere);
+ * `Option` collapses to `Alt` for the same reason.
+ */
+function normaliseAccelerator(accelerator: string): string {
+  return accelerator
+    .split('+')
+    .map((part) => part.trim())
+    .map((part) => (part === 'Cmd' || part === 'Command' ? 'Ctrl' : part))
+    .map((part) => (part === 'Option' ? 'Alt' : part))
+    .join(' + ')
 }
 
 function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[] {
@@ -45,8 +62,32 @@ function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[]
     })
     groupMap.set(s.category, list)
   }
+  // Quick-capture lives outside `getCurrentShortcuts()` because it has its
+  // own per-platform default + storage flow (`loadQuickCaptureShortcut`,
+  // owned by SettingsView → QuickCaptureRow). Surface it here so the help
+  // sheet announces the OS-global hotkey alongside the in-app bindings.
+  groupMap.set('keyboard.category.quickCapture', [
+    {
+      keys: normaliseAccelerator(loadQuickCaptureShortcut()),
+      description: 'keyboard.quickCapture.openDialog',
+    },
+  ])
   return Array.from(groupMap.entries()).map(([category, shortcuts]) => ({ category, shortcuts }))
 }
+
+interface DeepLinkEntry {
+  path: string
+  description: string
+}
+
+// Mirrors the three hosts the Rust router (`src-tauri/src/deeplink/mod.rs`
+// `parse_deep_link`) accepts. Keep in sync with that file — any new host
+// added there must appear here so the help sheet stays accurate.
+const DEEP_LINK_ENTRIES: DeepLinkEntry[] = [
+  { path: 'agaric://block/<ULID>', description: 'keyboard.deepLinks.block' },
+  { path: 'agaric://page/<ULID>', description: 'keyboard.deepLinks.page' },
+  { path: 'agaric://settings/<tab>', description: 'keyboard.deepLinks.settings' },
+]
 
 interface SyntaxEntry {
   syntax: string
@@ -249,6 +290,48 @@ export function KeyboardShortcuts({
                   <td className="py-3 pr-4">
                     <code className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
                       {entry.syntax}
+                    </code>
+                  </td>
+                  <td className="py-3 text-muted-foreground">{t(entry.description)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Deep links — `agaric://…` URLs the OS routes back into the app.
+              Listed so power users discover the scheme without grepping
+              the codebase. Hosts must mirror `parse_deep_link` in
+              `src-tauri/src/deeplink/mod.rs`. */}
+          <table className="w-full text-sm mt-6" data-testid="deep-links-table">
+            <thead>
+              <tr className="border-b">
+                <th
+                  colSpan={2}
+                  className="pb-1 text-left font-semibold text-foreground"
+                  data-testid="deep-links-section-title"
+                >
+                  {t('keyboard.section.deepLinks')}
+                </th>
+              </tr>
+              <tr>
+                <td colSpan={2} className="pb-2 text-xs text-muted-foreground">
+                  {t('keyboard.deepLinks.description')}
+                </td>
+              </tr>
+              <tr className="border-b">
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('keyboard.deepLinks.pathHeader')}
+                </th>
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('keyboard.deepLinks.actionHeader')}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {DEEP_LINK_ENTRIES.map((entry) => (
+                <tr key={entry.path} className="border-b last:border-0">
+                  <td className="py-3 pr-4">
+                    <code className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+                      {entry.path}
                     </code>
                   </td>
                   <td className="py-3 text-muted-foreground">{t(entry.description)}</td>

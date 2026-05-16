@@ -1,5 +1,5 @@
 /**
- * RecentPageChip — chip primitive for the desktop "Recently visited" strip.
+ * RecentPageChip — chip primitive for the desktop t('recent.ariaLabel') strip.
  *
  * Purpose-built `<button>` (NOT a `Button` ghost variant): the row of MRU
  * chips needs visible rest-state chrome — border + faint secondary tint —

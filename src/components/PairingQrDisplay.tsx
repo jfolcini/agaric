@@ -27,7 +27,7 @@ export interface PairingQrDisplayProps {
   onRetry: () => void
   retryBtnRef: React.RefObject<HTMLButtonElement | null>
   /**
-   * UX-263: When true, render an inline "Paused while typing…" indicator
+   * UX-263: When true, render an inline `t('pairing.countdownPaused')` indicator
    * next to the countdown so the user knows the timer isn't ticking
    * while they enter the passphrase.
    */
@@ -47,7 +47,7 @@ export function PairingQrDisplay({
 }: PairingQrDisplayProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // UX-377: The visual "Paused while typing…" indicator lives inside an
+  // UX-377: The visual `t('pairing.countdownPaused')` indicator lives inside an
   // aria-hidden countdown paragraph (see below), so SR users can't hear it.
   // Mirror the pause/resume transitions through the shared `announce()`
   // singleton — same pattern PairingDialog's handleTypingStateChange uses,

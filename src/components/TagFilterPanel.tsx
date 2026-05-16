@@ -3,7 +3,7 @@
  *
  * Lets users select multiple tags via prefix search and see blocks
  * matching all (AND), any (OR), or none (NOT) of the selected tags.
- * Results are paginated with cursor-based "Load more" via usePaginatedQuery.
+ * Results are paginated with cursor-based `t('tagFilter.loadMoreButton')` via usePaginatedQuery.
  */
 
 import { Plus, Search } from 'lucide-react'

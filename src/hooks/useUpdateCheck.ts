@@ -18,7 +18,7 @@
  * The 24-hour debounce uses `localStorage` (`agaric:last-update-check`)
  * so it survives page reloads. The exported `checkForUpdatesNow()`
  * function bypasses the debounce and always surfaces a confirmation
- * toast — it is what the Settings → Help "Check now" button calls.
+ * toast — it is what the Settings → Help `t('help.updateCheckNowButton')` button calls.
  *
  * Boot-check errors are logged silently — a connection blip at startup
  * shouldn't pester the user. The manual path surfaces failures.
@@ -170,7 +170,7 @@ let inFlightCheck: Promise<void> | null = null
 
 /**
  * Run the updater check + handle the result. Shared between the boot
- * effect and the manual "Check now" flow; `silentOnNoUpdate` controls
+ * effect and the manual `t('help.updateCheckNowButton')` flow; `silentOnNoUpdate` controls
  * whether a confirmation toast fires when there's nothing new.
  *
  * Not `async` — the body either short-circuits (returns `undefined`
@@ -214,7 +214,7 @@ async function runUpdateCheckInner(silentOnNoUpdate: boolean): Promise<void> {
 }
 
 /**
- * Manual "Check now" entry point — bypasses the 24 h debounce and
+ * Manual `t('help.updateCheckNowButton')` entry point — bypasses the 24 h debounce and
  * always shows a toast (either update-available or the no-update
  * confirmation). Used by the Settings → Help button.
  */

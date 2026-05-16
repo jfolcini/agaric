@@ -1,5 +1,5 @@
 /**
- * RecentPagesStrip — desktop-only "Recently visited" chip row (FEAT-9).
+ * RecentPagesStrip — desktop-only chip row labelled via `t('recent.ariaLabel')` (FEAT-9).
  *
  * Mounted at the app-shell level between the hoisted `<TabBar />` (FEAT-7)
  * and the `<ViewHeaderOutletSlot />` (UX-198). Reads the MRU list from

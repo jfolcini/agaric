@@ -79,8 +79,8 @@ export function AddPropertyPopover({
   // UX-248 — Unicode-aware fold.  Both the filter and the
   // "exists-exact-match" check must agree on Unicode equivalence
   // (`café-visits` matching `cafe`), otherwise the picker shows
-  // the matching definition AND the "Create new" suggestion at
-  // the same time.
+  // the matching definition AND the `t('pageProperty.createButton')`
+  // suggestion at the same time.
   const filteredDefs = definitions.filter((d) => matchesSearchFolded(d.key, defSearch))
 
   const searchMatchesExistingDef = definitions.some(

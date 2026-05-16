@@ -208,9 +208,9 @@ export function PairingDialog({
   }, [countdownActive])
 
   // UX-263: Single setter that updates both the ref (read by the interval)
-  // and the state (drives the "Paused while typing…" indicator render).
+  // and the state (drives the `t('pairing.countdownPaused')` indicator render).
   // Announces the pause / resume transition so screen-reader users — who
-  // can't see the inline "Paused while typing…" indicator (it sits inside
+  // can't see the inline `t('pairing.countdownPaused')` indicator (it sits inside
   // an aria-hidden countdown <p>) — still hear the state change.
   const handleTypingStateChange = useCallback(
     (isTyping: boolean) => {

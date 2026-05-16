@@ -277,7 +277,7 @@ function AppSidebarInner({
             {/*
              * UX-387 — surface the current theme in the tooltip so the
              * 3-state cycle (auto / dark / light) is no longer silent.
-             * The visible label still reads "Toggle theme" so the
+             * The visible label still reads `t('sidebar.toggleTheme')` so the
              * expanded sidebar stays terse; only the tooltip carries
              * the disambiguating state.
              */}

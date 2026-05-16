@@ -1,12 +1,13 @@
 /**
- * ResetOnboardingRow — "Reset spaces onboarding" row inside the
+ * ResetOnboardingRow — `t('settings.resetOnboarding.title')` row inside the
  * General settings tab (UX-374).
  *
- * The Spaces onboarding banner inside `Manage spaces…` is dismissed
- * permanently the first time the user clicks `Got it`, persisting a
- * flag in localStorage. There was no in-app way to bring the banner
- * back; this row is that affordance. Click → clear the flag → toast
- * confirmation. Next open of `Manage spaces…` re-renders the hint.
+ * The Spaces onboarding banner inside `t('space.manage')` is dismissed
+ * permanently the first time the user clicks `t('space.onboardingDismiss')`,
+ * persisting a flag in localStorage. There was no in-app way to bring
+ * the banner back; this row is that affordance. Click → clear the flag
+ * → toast confirmation. Next open of `t('space.manage')` re-renders
+ * the hint.
  *
  * Stays visible on every platform — the underlying banner ships in
  * the cross-platform dialog, so the reset switch is equally useful

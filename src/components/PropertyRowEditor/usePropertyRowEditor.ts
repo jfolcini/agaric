@@ -244,7 +244,7 @@ export function usePropertyRowEditor({
     // load so the open state is stable on success (also clears any
     // half-mounted state from a prior fast-rejection); (2) on rejection
     // close the popover explicitly so the user doesn't stare at an
-    // empty "Select page" list with no indication that the load failed.
+    // empty page-picker list with no indication that the load failed.
     // The toast + `logger.error` on the catch path remains the only
     // failure surface the user sees.
     // FEAT-3 Phase 4 — `listAllPagesInSpace` requires `spaceId`.  The

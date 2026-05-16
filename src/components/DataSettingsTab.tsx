@@ -46,7 +46,7 @@ export function DataSettingsTab(): React.ReactElement {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   // UX-283: per-file progress for multi-file imports — shows
-  // "Importing file 2 of 5: document.md" while the loop runs.
+  // `t('data.importingProgress', { index, total, name })` while the loop runs.
   const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null)
   const [currentFileName, setCurrentFileName] = useState('')
   const [totalFiles, setTotalFiles] = useState(0)
@@ -58,7 +58,7 @@ export function DataSettingsTab(): React.ReactElement {
   const [bytesProcessed, setBytesProcessed] = useState(0)
   const [exporting, setExporting] = useState(false)
   // PEND-35 Tier 1.1 — stable id wires the disabled-button's
-  // `aria-describedby` to the visible "Select a space before importing"
+  // `aria-describedby` to the visible `t('data.importSpaceNotReady')`
   // hint, so screen-reader users hear WHY the button is unactionable.
   // The hint also fixes the mobile/touch path: the `title` attribute
   // alone is invisible on `pointer:coarse` (no hover) and is suppressed

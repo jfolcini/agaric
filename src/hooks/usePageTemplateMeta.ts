@@ -3,7 +3,7 @@
  * `PageHeader`.
  *
  * Loads the four property-derived booleans/refs the kebab menu and
- * "Move to space" sub-menu need (`isTemplate`, `isJournalTemplate`,
+ * `t('space.moveTo')` sub-menu need (`isTemplate`, `isJournalTemplate`,
  * `isSpaceBlock`, `pageSpaceId`), and exposes the toggle handlers for
  * the two template flags. The factory pattern (`createTemplateToggle`)
  * collapses the previously-duplicated template/journal-template
@@ -26,7 +26,7 @@ export interface UsePageTemplateMetaReturn {
   isSpaceBlock: boolean
   /** The space id currently owning this page (or `null` for orphans). */
   pageSpaceId: string | null
-  /** Setter used by the "Move to space" flow once the move resolves. */
+  /** Setter used by the `t('space.moveTo')` flow once the move resolves. */
   setPageSpaceId: (id: string | null) => void
   /** Toggle `template=true`; flips the local flag + persists. */
   handleToggleTemplate: () => Promise<void>
@@ -47,7 +47,7 @@ export function usePageTemplateMeta(
 ): UsePageTemplateMetaReturn {
   const [isTemplate, setIsTemplate] = useState(false)
   const [isJournalTemplate, setIsJournalTemplate] = useState(false)
-  // FEAT-3 Phase 2 — "Move to space" needs two bits of metadata that
+  // FEAT-3 Phase 2 — `t('space.moveTo')` needs two bits of metadata that
   // aren't derivable from props: whether the current page is itself a
   // space block (moving spaces into spaces is nonsensical), and which
   // space currently owns it (so the destination list can exclude it).

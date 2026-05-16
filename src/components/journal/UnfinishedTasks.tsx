@@ -2,8 +2,8 @@
  * UnfinishedTasks — collapsible section showing open tasks from before today.
  *
  * Queries blocks with todo_state in ('TODO', 'DOING') that have a due_date
- * or scheduled_date before today. Groups results by age: "Yesterday",
- * "This Week", "Older".
+ * or scheduled_date before today. Groups results by age via the
+ * `unfinished.yesterday` / `unfinished.thisWeek` / `unfinished.older` keys.
  */
 
 import type React from 'react'

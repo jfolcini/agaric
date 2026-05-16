@@ -1,7 +1,7 @@
 /**
  * GraphFilterBar — multi-dimension filter UI for the graph view (UX-205).
  *
- * Shows each active filter as a removable pill, plus an "Add filter" button
+ * Shows each active filter as a removable pill, plus a `t('graph.filter.addFilter')` button
  * that opens a popover for picking a dimension and value. Built on top of
  * `FilterPill`, Radix `Popover`, and `Select` primitives — no custom
  * overlays or classes.

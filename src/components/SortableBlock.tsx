@@ -228,7 +228,7 @@ function SortableBlockInner({
         {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
         {/* UX-304: progressive cue — the backdrop is a muted destructive
             tint while the gesture only reveals the action, then flips to
-            the solid destructive variant + "Release to delete" label
+            the solid destructive variant + t('block.swipe.releaseToDelete') label
             once the auto-delete threshold is crossed mid-drag. */}
         {isTouchDevice && onDelete && (swipeRevealed || swipeTranslateX < 0) && (
           <div

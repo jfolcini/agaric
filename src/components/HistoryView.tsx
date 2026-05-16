@@ -44,7 +44,7 @@ export function HistoryView(): React.ReactElement {
   const [confirmRestore, setConfirmRestore] = useState(false)
   // FEAT-3 Phase 8 — current-space scoping. Default `false` ⇒ pass the
   // current space id so only ops on pages in this space are returned.
-  // Toggling on drops the filter (cross-space "All spaces" mode).
+  // Toggling on drops the filter (cross-space `t('history.allSpacesToggle')` mode).
   //
   // UX-369 — opt-in localStorage persistence so power users who audit
   // cross-space history don't have to re-flip the toggle every visit.
@@ -69,7 +69,7 @@ export function HistoryView(): React.ReactElement {
   // UX-275 sub-fix 7: track the categorised failure so the error banner can
   // show network/server/unknown-specific copy alongside the generic title.
   const [errorCategory, setErrorCategory] = useState<HistoryErrorCategory | null>(null)
-  // FEAT-3 Phase 8 — when "All spaces" is off, narrow the IPC to the
+  // FEAT-3 Phase 8 — when `t('history.allSpacesToggle')` is off, narrow the IPC to the
   // current space. When on (or when no current space exists yet), pass
   // `undefined` so the backend returns ops from every space.
   const effectiveSpaceId = showAllSpaces ? undefined : (currentSpaceId ?? undefined)
