@@ -110,7 +110,6 @@
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.1.4",
     "better-npm-audit": "^3.11.0",
-    "depcheck": "^1.4.7",
     "fast-check": "^4.7.0",
     "happy-dom": "^20.9.0",
     "jsdom": "^29.0.2",

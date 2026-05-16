@@ -279,18 +279,8 @@ language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
 
-# JS: depcheck (unused dependency detection — like cargo-machete for JS)
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "depcheck"
-name = "depcheck"
-entry = "npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,knip,license-checker,markdownlint-cli2'"
-language = "system"
-pass_filenames = false
-files = "(^package\\.json$|^package-lock\\.json$)"
-
-# JS: knip (dead export detection)
+# JS: knip (dead export detection — also covers unused-dep detection, so PEND-41
+# R19 retired the separate `depcheck` hook in favour of knip-only).
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -316,7 +306,7 @@ exclude = "^(SESSION-LOG\\.md|node_modules/|dist/)"
 # Broken link check
 [[repos]]
 repo = "https://github.com/lycheeverse/lychee"
-rev = "lychee-v0.23.0"
+rev = "lychee-v0.24.2"
 hooks = [
     { id = "lychee", args = ["--no-progress", "--max-concurrency=4", "--cache"], types = ["markdown"] },
 ]
@@ -419,6 +409,23 @@ entry = "node scripts/sync-audit-from-deny.mjs --check"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/(deny\\.toml|\\.cargo/audit\\.toml)$"
+
+# Rust: unsafe-code allowlist (PEND-41 R13). Workspace lint is
+# `unsafe_code = "deny"`; the only escape hatch is a per-file
+# `#![allow(unsafe_code)]`. This hook fails when a file carries that
+# attribute without an explicit entry in
+# `src-tauri/unsafe-allowlist.txt`, ensuring every escape hatch is
+# reviewed centrally. See the allowlist file and `scripts/check-
+# unsafe-allowlist.sh` for the audit procedure.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "unsafe-allowlist"
+name = "unsafe-code allowlist"
+entry = "bash scripts/check-unsafe-allowlist.sh"
+language = "system"
+pass_filenames = false
+files = "^(src-tauri/src/.*\\.rs|src-tauri/unsafe-allowlist\\.txt)$"
 
 # Rust: cargo-machete (unused dependency detection)
 [[repos]]

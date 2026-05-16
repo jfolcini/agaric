@@ -1,0 +1,16 @@
+# PEND-41 R13 — files allowed to carry `#![allow(unsafe_code)]`.
+#
+# Workspace lint is `unsafe_code = "deny"` (`src-tauri/Cargo.toml`). The
+# only escape hatch is a per-file `#![allow(unsafe_code)]`. Every file
+# listed below has been reviewed and the inner `unsafe` blocks are
+# justified inline with `// SAFETY:` comments.
+#
+# Adding a new entry to this list is a load-bearing decision — require an
+# explicit PR with a documented justification. The
+# `scripts/check-unsafe-allowlist.sh` prek hook fails any commit that
+# introduces a `#![allow(unsafe_code)]` outside this allowlist.
+#
+# Paths are relative to `src-tauri/`. Comments (lines starting with `#`)
+# and blank lines are ignored.
+
+src/sync_daemon/android_multicast.rs

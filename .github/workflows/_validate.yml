@@ -30,7 +30,7 @@ env:
 jobs:
   # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
-  # npm audit signatures (warn-only), cargo audit (warn-only), and the sqlx
+  # npm audit signatures (warn-only), cargo audit (blocking — see PEND-41 R5), and the sqlx
   # offline-cache drift check. Needs the full Node + Rust + mold + cargo
   # plugins stack because prek's hooks invoke clippy, cargo-deny, sqruff,
   # zizmor, etc.
@@ -131,7 +131,7 @@ jobs:
         # tag bump or a tool-version pin change. cargo-nextest lives on
         # the cargo-tests job (the only consumer); this job needs the
         # lint/audit set.
-        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2
+        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2.78.1
         with:
           tool: cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli
 
@@ -179,15 +179,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: prek run --all-files
 
-      - name: Cargo audit (RustSec advisory check, warn-only)
+      - name: Cargo audit (RustSec advisory check, blocking)
         # Complements `cargo deny check` (in the prek run above) by hitting
         # the upstream RustSec advisory DB directly — catches advisories
-        # published since deny.toml's ignore list was last triaged. Warn-only
-        # so a freshly-published advisory doesn't block CI before the
-        # maintainer has had a chance to triage it; treat the log as a
-        # weekly-review surface, not a gate. PEND-40 #4.
+        # published since `deny.toml`'s ignore list was last triaged.
+        #
+        # PEND-41 R5 — promoted from warn-only to blocking. A new advisory
+        # surfaces here exactly once; the maintainer must either fix the
+        # underlying dep or add an explicit entry to
+        # `src-tauri/deny.toml [advisories].ignore` with a `reason` field
+        # documenting why the call-site is unaffected. The .nsprc-style
+        # explicit-waiver discipline applies; same pattern used by the
+        # npm-side audit step.
         working-directory: src-tauri
-        run: cargo audit || echo "::warning::cargo audit had findings (warn-only mode); review the log above and update src-tauri/deny.toml's [advisories] ignore list if accepted."
+        run: cargo audit
 
       - name: sqlx offline cache check
         # `-- --tests` matches the local pre-push hook + the
@@ -205,8 +210,10 @@ jobs:
   vitest:
     runs-on: ubuntu-24.04
     # PEND-41 R1 — per-shard wall-clock 2.2 min max (run 25966040732, n=1
-    # post-PEND-39-split). +50% headroom + 5-min floor → 5 min.
-    timeout-minutes: 5
+    # post-PEND-39-split). +50% headroom + 5-min floor → 5 min. Shard 1
+    # additionally runs with `--coverage` (PEND-41 R17), which adds ~2 min
+    # of v8 instrumentation overhead — bump that one cell to 8 min.
+    timeout-minutes: ${{ matrix.shard == 1 && 8 || 5 }}
     strategy:
       fail-fast: false
       matrix:
@@ -225,8 +232,38 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Vitest (shard ${{ matrix.shard }}/3)
-        run: npx vitest run --shard ${{ matrix.shard }}/3
+      - name: Vitest (shard ${{ matrix.shard }}/3${{ matrix.shard == 1 && ', with coverage' || '' }})
+        # PEND-41 R17 — shard 1 runs with `--coverage` so the summary
+        # step below has data to render. The other shards skip
+        # instrumentation to preserve their tight 5-min timeout budgets.
+        # The coverage view is therefore partial (shard 1's slice of the
+        # suite, ~1/3 of files); good enough as a regression signal,
+        # not yet a SLO. Full-suite coverage is a follow-up.
+        run: npx vitest run --shard ${{ matrix.shard }}/3 ${{ matrix.shard == 1 && '--coverage' || '' }}
+
+      - name: Coverage summary (shard 1 only)
+        # PEND-41 R17 — render the aggregated coverage totals from
+        # `coverage/coverage-summary.json` (emitted by vitest's
+        # `json-summary` reporter) as a markdown table on the job's
+        # step-summary page. No Codecov / third-party dependency.
+        if: matrix.shard == 1 && hashFiles('coverage/coverage-summary.json') != ''
+        run: |
+          {
+            echo "## Coverage (shard 1, partial — PEND-41 R17)"
+            echo
+            echo "| Metric | % | Covered / Total |"
+            echo "| --- | --- | --- |"
+            jq -r '
+              .total |
+              "| Lines      | \(.lines.pct)% | \(.lines.covered) / \(.lines.total) |",
+              "| Statements | \(.statements.pct)% | \(.statements.covered) / \(.statements.total) |",
+              "| Functions  | \(.functions.pct)% | \(.functions.covered) / \(.functions.total) |",
+              "| Branches   | \(.branches.pct)% | \(.branches.covered) / \(.branches.total) |"
+            ' coverage/coverage-summary.json
+            echo
+            echo "_Thresholds in \`vitest.config.ts\`: lines/functions/statements >= 80%, branches >= 75%._"
+            echo "_This is shard-1 partial coverage; a future change can promote to full-suite coverage as a dedicated job._"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # playwright — E2E browser tests, sharded 2-ways (PEND-39 C8). Per-shard
@@ -345,7 +382,7 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
-        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2
+        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2.78.1
         with:
           tool: cargo-nextest
 

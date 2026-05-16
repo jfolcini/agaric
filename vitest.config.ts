@@ -10,7 +10,10 @@ export default defineConfig({
     slowTestThreshold: 2000,
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      // `json-summary` writes `coverage/coverage-summary.json` (aggregated
+      // totals), which `_validate.yml`'s coverage step (PEND-41 R17)
+      // parses to render the step-summary table.
+      reporter: ['text', 'json', 'json-summary', 'html'],
       include: ['src/**/*.{ts,tsx}'],
       exclude: [
         'src/**/*.d.ts',
