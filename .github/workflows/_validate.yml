@@ -148,6 +148,18 @@ jobs:
         run: |
           if ! command -v prek >/dev/null; then cargo install --locked prek; fi
 
+      - name: Restore lychee link-check cache
+        # Persist the lychee URL cache across runs so we don't re-hit the
+        # same github.com / crates.io / npm URLs from cold every time.
+        # Key on the markdown file set so a doc edit invalidates as expected;
+        # restore-keys lets a partial cache survive when the key misses.
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .lycheecache
+          key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md') }}
+          restore-keys: |
+            lychee-${{ runner.os }}-
+
       - name: Run prek (same as `prek run --all-files` locally)
         env:
           # `no-commit-to-branch` is a pre-push guard for local dev only.
@@ -156,6 +168,12 @@ jobs:
           # sibling jobs (vitest, cargo-tests) so a CI run never silently
           # misses tests outside the diff window.
           SKIP: no-commit-to-branch,vitest,cargo-test
+          # Lychee reads GITHUB_TOKEN automatically. Without this, lychee
+          # makes unauthenticated requests to github.com and gets rate-
+          # limited (~60 req/hour) — bursty Dependabot PR runs blow the
+          # budget and surface as transient lint failures even with 429 +
+          # 5xx accepted in `lychee.toml`.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: prek run --all-files
 
       - name: Cargo audit (RustSec advisory check, warn-only)
