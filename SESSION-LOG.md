@@ -2,10 +2,53 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 751 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 752 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 752 — PEND-39 wrap (CI parallelism overhaul) + PEND-40 #11 follow-up triage (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | 1 build (orchestrator-reviewed) |
+| **Items closed** | PEND-39 (plan deleted; all 4 outstanding CI items C3/C5/C6/C8 shipped) |
+| **Items modified** | — |
+| **Tests added** | — (CI YAML + Cargo.lock + deny.toml; verified via prek + zizmor + cargo audit) |
+| **Files touched** | 6 |
+
+**Summary:** Wrapped PEND-39 by splitting the monolithic `_validate.yml` validate job into 4 parallel worker jobs + 1 aggregate, with vitest sharded 3× and Playwright sharded 2×. **C6 (shared rust-cache)** landed first as a localized change to both `_validate.yml` and `ci.yml` — `shared-key: rust-deps` plus `save-if: ${{ github.ref == 'refs/heads/main' }}` so the Linux validate slot dedupes its cargo dep build with the Linux desktop-build matrix slot (Android gets a separate `rust-android` key to avoid cross-target collision). **C3 + C8 + C5 (the split)** then landed as one big rewrite: `lint` (prek + npm audit signatures + cargo audit + sqlx prepare check), `vitest` (3-shard matrix), `playwright` (2-shard matrix with per-shard report upload on failure), `cargo-tests` (nextest + agaric-mcp build + MCP UDS smoke + externalBin verification), and `validate-all` (trivial aggregate `needs:` all four — gives branch protection a single stable check name). Projected CI wall clock: ~25-30 min → ~7-10 min (bounded by `cargo-tests`). All SHA-pins preserved; zizmor still 0 findings. **Also addressed PEND-40 #11 follow-up triage** — `cargo update -p constant_time_eq` (0.4.3 yanked → 0.4.2) and added 4 fresh advisories to `deny.toml` with rationale (RUSTSEC-2023-0071 rsa via sqlx-mysql is unreachable because Agaric configures sqlx SQLite-only; RUSTSEC-2023-0089 atomic-polyfill via Loro; RUSTSEC-2024-0429 glib unsound as sibling of GTK3 list; RUSTSEC-2026-0097 rand thread_rng unsound, Agaric uses OsRng). `cargo audit` now exits 0 cleanly.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (this batch only touched `pending/` plans + workflow/security files).
+
+**Files touched (this session, across 3 commits):**
+- `.github/workflows/_validate.yml` (+234 / -45 — split 1 job → 5 jobs; vitest 3-shard + Playwright 2-shard).
+- `.github/workflows/ci.yml` (+33 / -0 — shared-key + save-if on both rust-cache slots).
+- `src-tauri/deny.toml` (+11 / -1 — 4 new advisory accepts with rationale).
+- `src-tauri/.cargo/audit.toml` (regenerated — 22 advisories now synced from deny.toml, was 18).
+- `src-tauri/Cargo.lock` (constant_time_eq 0.4.3 → 0.4.2 downgrade past the yank).
+- `pending/PEND-39-ci-parallelism.md` (deleted per "delete on completion").
+- `pending/README.md` (-1 line — drop PEND-39 row).
+
+**Verification:**
+- `cd src-tauri && cargo audit --no-fetch` — exit 0 (was: 1 vuln + 4 warnings).
+- `node scripts/sync-audit-from-deny.mjs --check` — passes (in sync).
+- `zizmor .github/workflows/_validate.yml` — 0 findings (9 suppressed from existing baseline; no new entries needed).
+- `prek run --all-files` — all 48 hooks pass (1 skipped, knip no files).
+
+**Process notes:**
+- C3/C8 sharding **requires** the C5 job split — vitest/playwright `--shard` makes sense only when each shard runs on a separate runner, which means each shard is its own matrix-spawned job. The plan's recommended sequence (C6 → C3 → C8 → C5) only works incrementally if C3/C8 each create a *new sibling* job alongside the still-monolithic validate; in practice it was cleaner to land C3+C8+C5 in one rewrite commit.
+- `cargo-tests` job needed `setup-node` + `npm ci` even though it's logically Rust-only — `scripts/prepare-external-bins.mjs` resolves its host triple via a node_modules import. Documented inline.
+- `cargo-tests` and `lint` both compile the full Rust dep tree; both pay it once via the `rust-deps` shared cache. Per-job target/incremental tree is per-job (Swatinem's internal segregation), so they don't collide.
+- Subagent had to use `git rm` (not just `rm`) on PEND-39's plan file — the `md-link-targets` prek hook reads from `git ls-files "*.md"` and crashed with ENOENT on an unstaged-delete state.
+- Aggregate `validate-all` job is intentionally trivial (`echo "all validate jobs passed"`); GitHub propagates child failures automatically. Its only purpose is giving branch-protection a single stable check name to require (the alternative — listing all 4 child names — is brittle to job renames).
+- Out-of-scope observation surfaced by the subagent: prek's `vitest` and `cargo-test` hooks (the related-tests subsets) are now redundant with the new dedicated jobs, but are still useful as a pre-push local gate. Left alone.
+
+**Commit plan:** 3 commits (maintainer follow-ups; C6 alone; C3+C8+C5 rewrite); push deferred.
+
+---
+
 ## Session 751 — PEND-40 wrap (SLSA provenance + threat-model doc + audit/deny sync + sweeps) (2026-05-16)
 
 | Metadata | Value |

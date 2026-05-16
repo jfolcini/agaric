@@ -5,13 +5,22 @@ name: Validate (prek-equivalent)
 # externalBin / sqlx-offline-cache smoke checks.
 #
 # Invoked by ci.yml (every push/PR) and release.yml (every tag).
+#
+# PEND-39 C3 + C5 + C8: the historical monolithic `validate` job was split
+# into four parallel worker jobs (lint, vitest [3-shard matrix], playwright
+# [2-shard matrix], cargo-tests) plus a trivial `validate-all` aggregate
+# whose only job is to give branch-protection rules a single stable check
+# name to depend on. Wall clock drops from ~25-30 min sequential to
+# ~7-10 min (limited by the slowest single job, typically cargo-tests).
+# Callers that `needs: validate` on the workflow-call as a whole continue
+# to work — GitHub propagates per-job failures up to the caller.
 
 on:
   workflow_call:
 
-# Read-only by default. The job only checks out the code, runs prek + the
-# full test suites, and uploads the playwright report on failure (which
-# uses its own scoped token via actions/upload-artifact).
+# Read-only by default. The workers only check out the code, run prek + the
+# full test suites, and upload the playwright report on failure (which uses
+# its own scoped token via actions/upload-artifact).
 permissions:
   contents: read
 
@@ -19,7 +28,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  validate:
+  # ---------------------------------------------------------------------------
+  # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
+  # npm audit signatures (warn-only), cargo audit (warn-only), and the sqlx
+  # offline-cache drift check. Needs the full Node + Rust + mold + cargo
+  # plugins stack because prek's hooks invoke clippy, cargo-deny, sqruff,
+  # zizmor, etc.
+  # ---------------------------------------------------------------------------
+  lint:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -31,9 +47,8 @@ jobs:
 
       - name: Install system dependencies
         # `mold` is added to speed up the linker step on the Rust builds
-        # below (nextest, mcp binary, sqlx prepare's compile pass).
+        # (clippy, cargo-deny, sqlx prepare's compile pass, etc).
         # Activated via the .cargo/config.toml under the linux runner.
-        # See PEND-37 (local dev) for the measurement.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -49,8 +64,7 @@ jobs:
         # Project ships `.cargo/config.toml.example` staged so local builds
         # don't break if a contributor hasn't installed mold yet; CI always
         # has mold available (apt step above), so we materialise the
-        # active config at runtime. Affects all subsequent cargo invocations
-        # in this job.
+        # active config at runtime.
         run: |
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
@@ -62,13 +76,12 @@ jobs:
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: src-tauri
-          # Cache `~/.cargo/bin/` so cargo-installed plugins (prek, sqruff,
-          # cargo-deny, cargo-machete, cargo-nextest) persist across runs.
+          # Cache `~/.cargo/bin/` so cargo-installed plugins (prek, sqlx-cli)
+          # persist across runs.
           cache-bin: 'true'
           # PEND-39 C6: shared key with ci.yml's Linux desktop build job
-          # (same `shared-key: rust-deps`). First runner to populate the
-          # dep cache pays the build cost; the second restores. Swatinem
-          # segregates internally by profile (test/release) and by
+          # and the cargo-tests sibling here (same `shared-key: rust-deps`).
+          # Swatinem segregates internally by profile (test/release) and by
           # runner.os, so the Linux validate + Linux build slots dedupe
           # without colliding with macOS / Windows build slots or the
           # Android job (which uses a different shared-key for its
@@ -103,29 +116,27 @@ jobs:
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo
-        # invocation — clippy, nextest, deny, machete all trigger it.
+        # invocation — clippy, cargo-deny, machete all trigger it.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install Rust-based dev tools via prebuilt binaries (PEND-39 C1)
         # taiki-e/install-action pulls prebuilt binaries from the upstream
         # GitHub Releases of each tool, side-stepping the per-binary
         # `cargo install` compile that previously dominated cold-cache
-        # runs (~15min combined). Unlike `cargo install`, the binary
-        # cache here is not invalidated by `Cargo.lock` changes — only
-        # by the explicit `@v2` tag bump or a tool-version pin change.
-        # sqlx-cli still needs custom features (`--no-default-features --features rustls,sqlite`)
-        # to skip Postgres/MySQL drivers; the action accepts a `version`
-        # pin but not feature flags, so install it with cargo as a fallback
-        # the first time, cached by Swatinem/rust-cache's cache-bin: 'true'.
+        # runs. Unlike `cargo install`, the binary cache here is not
+        # invalidated by `Cargo.lock` changes — only by the explicit `@v2`
+        # tag bump or a tool-version pin change. cargo-nextest lives on
+        # the cargo-tests job (the only consumer); this job needs the
+        # lint/audit set.
         uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2
         with:
-          tool: cargo-nextest,cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli
+          tool: cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli
 
       - name: Install sqlx-cli (custom features, cargo fallback)
-        # sqlx-cli with the right features set isn't covered by taiki-e/install-action's
-        # binary list — has to compile from source. Cached across runs via
-        # Swatinem/rust-cache's cache-bin: 'true'; only recompiles when
-        # Cargo.lock invalidates that cache.
+        # sqlx-cli with the right features set isn't covered by
+        # taiki-e/install-action's binary list — has to compile from source.
+        # Cached across runs via Swatinem/rust-cache's cache-bin: 'true';
+        # only recompiles when Cargo.lock invalidates that cache.
         run: |
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
 
@@ -141,9 +152,9 @@ jobs:
         env:
           # `no-commit-to-branch` is a pre-push guard for local dev only.
           # `vitest` and `cargo-test` here run only the related test subset
-          # (`scripts/test-related-*.sh`); the full suites run as separate
-          # steps below so a CI run never silently misses tests outside the
-          # diff window.
+          # (`scripts/test-related-*.sh`); the full suites run as dedicated
+          # sibling jobs (vitest, cargo-tests) so a CI run never silently
+          # misses tests outside the diff window.
           SKIP: no-commit-to-branch,vitest,cargo-test
         run: prek run --all-files
 
@@ -157,6 +168,151 @@ jobs:
         working-directory: src-tauri
         run: cargo audit || echo "::warning::cargo audit had findings (warn-only mode); review the log above and update src-tauri/deny.toml's [advisories] ignore list if accepted."
 
+      - name: sqlx offline cache check
+        working-directory: src-tauri
+        run: cargo sqlx prepare --check
+
+  # ---------------------------------------------------------------------------
+  # vitest — frontend unit + integration suite, sharded 3-ways (PEND-39 C3).
+  # Each shard pays its own jsdom-env-setup cost, so near-linear scaling.
+  # Node-only; no Rust toolchain or apt deps needed.
+  # ---------------------------------------------------------------------------
+  vitest:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Vitest (shard ${{ matrix.shard }}/3)
+        run: npx vitest run --shard ${{ matrix.shard }}/3
+
+  # ---------------------------------------------------------------------------
+  # playwright — E2E browser tests, sharded 2-ways (PEND-39 C8). Per-shard
+  # report uploaded on failure (artifact name includes the shard number so
+  # the two shards don't collide). No merge step yet — deferred per the plan.
+  # ---------------------------------------------------------------------------
+  playwright:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright E2E tests (shard ${{ matrix.shard }}/2)
+        id: playwright
+        run: npx playwright test --shard ${{ matrix.shard }}/2
+
+      - name: Upload Playwright report (on failure)
+        if: failure() && steps.playwright.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          # `${{ matrix.shard }}` keeps shard artifacts from colliding —
+          # GitHub rejects duplicate artifact names within a workflow run.
+          name: playwright-report-shard-${{ matrix.shard }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # cargo-tests — full Rust test suite (nextest), agaric-mcp build + stub-
+  # binary UDS smoke, and the externalBin staging smoke test. Shares the
+  # `rust-deps` Swatinem cache key with the `lint` sibling and the Linux
+  # desktop build job in ci.yml.
+  # ---------------------------------------------------------------------------
+  cargo-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        # Same apt list as the `lint` sibling — both jobs compile Rust and
+        # need the webkit/gtk/ssl/rsvg/soup stack plus mold for fast linking.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: src-tauri
+          cache-bin: 'true'
+          # PEND-39 C6: shared with the `lint` sibling and ci.yml's Linux
+          # desktop build. See the matching comment in the `lint` job for
+          # the per-OS / per-profile segregation logic.
+          shared-key: rust-deps
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        # Needed for `scripts/prepare-external-bins.mjs` below (it imports
+        # from node_modules to resolve the host triple).
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation — including nextest. The full-release agaric-mcp
+        # build below replaces this placeholder with the real binary.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
+        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2
+        with:
+          tool: cargo-nextest
+
       - name: Cargo test (nextest, full suite)
         working-directory: src-tauri
         run: cargo nextest run --profile ci
@@ -169,31 +325,6 @@ jobs:
         working-directory: src-tauri
         run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_roundtrips_initialize_over_uds)'
 
-      - name: Vitest (full suite)
-        run: npm test
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-
-      - name: Playwright E2E tests
-        id: playwright
-        run: npx playwright test
-
-      - name: Upload Playwright report (on failure)
-        if: failure() && steps.playwright.outcome == 'failure'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: playwright-report
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 14
-          if-no-files-found: ignore
-
-      - name: sqlx offline cache check
-        working-directory: src-tauri
-        run: cargo sqlx prepare --check
-
       - name: Build agaric-mcp stub binary (FEAT-4f)
         # Smoke-check that the `agaric-mcp` sidecar still compiles and lands
         # at the externalBin path Tauri's bundler expects.
@@ -204,3 +335,18 @@ jobs:
 
       - name: Verify externalBin artifact exists
         run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
+
+  # ---------------------------------------------------------------------------
+  # validate-all — trivial aggregate. Branch protection rules and the
+  # ci.yml / release.yml callers should treat this as the single "did all
+  # validate work pass?" gate. Required so adding/removing a sibling job
+  # doesn't churn the protected-check list. `needs:` declares the
+  # dependency; GitHub fails this job automatically if any sibling fails
+  # (or is skipped/cancelled), so the echo only runs on full green.
+  # ---------------------------------------------------------------------------
+  validate-all:
+    needs: [lint, vitest, playwright, cargo-tests]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All validate jobs passed
+        run: echo "all validate jobs passed"
