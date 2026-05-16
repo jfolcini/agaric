@@ -1,0 +1,9 @@
+# Solo-maintainer ownership: everything routes to @jfolcini. The path-specific lines below
+# are extra-scrutiny markers (security-sensitive areas), not different owners.
+* @jfolcini
+/src-tauri/src/sync_daemon/android_multicast.rs @jfolcini
+/.github/workflows/ @jfolcini
+/src-tauri/migrations/ @jfolcini
+/.nsprc @jfolcini
+/src-tauri/deny.toml @jfolcini
+/src-tauri/.cargo/audit.toml @jfolcini

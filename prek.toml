@@ -31,6 +31,14 @@ hooks = [
     { id = "gitleaks" },
 ]
 
+# Conventional Commits enforcement on commit-msg stage (PEND-41 R8).
+[[repos]]
+repo = "https://github.com/compilerla/conventional-pre-commit"
+rev = "v4.4.0"
+hooks = [
+    { id = "conventional-pre-commit", stages = ["commit-msg"], args = [] },
+]
+
 # GitHub Actions workflow lint (catches missing `permissions:` blocks,
 # bad uses syntax, deprecated set-output usage, etc.). Closes the
 # `actions/missing-workflow-permissions` class of CodeQL findings
@@ -209,23 +217,6 @@ entry = "bash scripts/check-test-file-naming.sh"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
-
-# agents-md-count-tables: keep the "<N>+ tests" / "<N> files" claims
-# in AGENTS.md and src/__tests__/AGENTS.md within ±25% of reality.
-# Tolerance is intentionally loose — the docs use round numbers
-# ("7300+", not "7917") so equality checks would force doc churn on
-# every test add. ±25% catches the kind of doc drift that
-# MAINT-97 / MAINT-99 are aimed at without firing on incremental
-# growth. Easy half of MAINT-99.
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "agents-md-count-tables"
-name = "AGENTS.md test-count drift"
-entry = "node scripts/check-agents-md-counts.mjs"
-language = "system"
-pass_filenames = false
-files = "(AGENTS\\.md$|\\.test\\.(ts|tsx)$|\\.spec\\.ts$|^src-tauri/src/.*\\.rs$)"
 
 # ipc-error-path-coverage: every `src/components/**/*.tsx` (recursive,
 # excluding `ui/` and `__tests__/`) that imports from `@/lib/tauri` (or

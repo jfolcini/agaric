@@ -1,0 +1,22 @@
+# EditorConfig — repo-wide editor defaults for Agaric.
+# Aligns with biome.json (2-space, LF) for JS/TS/JSON and rustfmt for Rust.
+# Docs: https://editorconfig.org
+root = true
+
+# Defaults for all files: matches Biome's formatter (indentStyle=space, indentWidth=2)
+# and ensures Unix line endings + trimmed trailing whitespace across editors.
+[*]
+charset = utf-8
+end_of_line = lf
+trim_trailing_whitespace = true
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+
+# Rust: rustfmt defaults to 4-space indent.
+[*.rs]
+indent_size = 4
+
+# Markdown: trailing spaces are significant (hard line breaks), so don't trim.
+[*.md]
+trim_trailing_whitespace = false
