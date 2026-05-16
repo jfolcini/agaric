@@ -1,5 +1,5 @@
 /**
- * Calendar — a shadcn-style wrapper around react-day-picker v9.
+ * Calendar — a shadcn-style wrapper around react-day-picker v10.
  *
  * Provides Tailwind styling consistent with the app's design system.
  * Supports week numbers (clickable) and Monday-start weeks.
@@ -94,19 +94,23 @@ const Calendar = ({
           },
           // Custom WeekNumber component to make week numbers clickable.
           //
-          // IMPORTANT: react-day-picker's default WeekNumber renders a <th>, and
-          // the parent Week renders a <tr>. If we return a bare <button> here,
-          // the DOM becomes <tr><button>...</button></tr> — which triggers
-          // React 19's "In HTML, <button> cannot be a child of <tr>" hydration
-          // warning. Wrap the interactive element in a <th> so the <tr><th>...
-          // nesting stays valid and forward the week number cell's ARIA /
-          // styling attributes onto the <th> (not the <button>) so voice-over
-          // tools see the table cell correctly.
+          // react-day-picker v10 removed the `onWeekNumberClick` prop; the
+          // sanctioned replacement is to supply a custom `WeekNumber`
+          // component (`week: CalendarWeek` + th attrs).
+          //
+          // IMPORTANT: the default WeekNumber renders a <th>, and the parent
+          // Week renders a <tr>. If we return a bare <button> here, the DOM
+          // becomes <tr><button>...</button></tr> — which triggers React 19's
+          // "In HTML, <button> cannot be a child of <tr>" hydration warning.
+          // Wrap the interactive element in a <th> so the <tr><th>... nesting
+          // stays valid and forward the week number cell's ARIA / styling
+          // attributes onto the <th> (not the <button>) so voice-over tools
+          // see the table cell correctly.
           ...(onWeekNumberClick
             ? {
                 WeekNumber: ({ week, children, ...thProps }) => {
-                  const dates = week?.days?.map((d: { date: Date }) => d.date) ?? []
-                  const weekNum = typeof children === 'number' ? children : Number(children)
+                  const dates = week.days.map((d) => d.date)
+                  const weekNum = week.weekNumber
                   return (
                     <th {...thProps}>
                       <button
