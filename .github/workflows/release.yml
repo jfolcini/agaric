@@ -181,7 +181,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
           # Release jobs always print "No cache found." on restore — every
@@ -475,7 +475,7 @@ jobs:
           targets: aarch64-linux-android
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
           # Same rationale as the desktop matrix above: release tags get
