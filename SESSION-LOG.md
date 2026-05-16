@@ -2,10 +2,79 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 752 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 753 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 753 — Auto-update wire-up + pre-push CI-equivalent + runner matrix freshness (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | 1 build (auto-update FE) + 1 technical review (orchestrator applied fixes) |
+| **Items closed** | ui-improvements "Auto-update wire-up (desktop)" section (removed from the file) |
+| **Items modified** | — |
+| **Tests added** | +17 frontend (9 useUpdateCheck + 6 HelpTab + 2 review-driven additions: install-failure toast-dismissal + flushAllDrafts-rejection-aborts-install) |
+| **Files touched** | 19 |
+
+**Summary:** Three interwoven strands landed together. **Strand 1 — Desktop auto-update wire-up:** `src/hooks/useUpdateCheck.ts` runs the Tauri updater plugin at boot (24 h localStorage debounce keyed `agaric:last-update-check`, mobile UA short-circuit), raises a sonner toast via `@/lib/notify` on `update-available` with Install &amp; restart + Later actions; install path flushes drafts → `update.downloadAndInstall()` → `relaunch()` from `@tauri-apps/plugin-process`. Settings → Help got an "Updates" card with a Check-now button (bypasses debounce) and a "Last checked N ago" line that uses `formatRelativeTime`; mobile shows a Play-Store hint instead. `capabilities/default.json` granted `updater:default`; `lib.rs` MAINT-16 comment retired in favour of an accurate description; new npm dep `@tauri-apps/plugin-updater`. **Strand 2 — Pre-push CI-equivalent:** new `scripts/verify-ci-equivalent.sh` runs everything `_validate.yml` runs (full vitest, full Playwright, cargo nextest + agaric-mcp build + sqlx prepare check, MCP UDS smoke, externalBin verify, plus warn-only cargo audit + npm audit signatures), parallelized via bash background jobs (one prek hook slot instead of letting prek serialize hooks). Wall clock ≈3-4 min warm cache (was ≈5-8 min when each hook ran sequentially); `SKIP_CI_VERIFY=1 git push` escape hatch. Separate opt-in `scripts/verify-release-build.sh` covers what `release.yml` does that `_validate.yml` does not — full Tauri bundle build for the local OS + per-OS path probes (AppImage/.deb on Linux, .dmg/.app on macOS, .msi/.exe on Windows) AND, when `TAURI_SIGNING_PRIVATE_KEY` is set, the updater-payload artifacts (.tar.gz / .zip) the in-app auto-updater fetches. `prek.toml` replaced the 2 individual pre-push hooks (sqlx-prepare-check + playwright) with one chokepoint `verify-ci-equivalent` hook. **Strand 3 — Runner matrix freshness:** `windows-latest` → `windows-2025` and `macos-latest` → `macos-15` pins across `ci.yml` + `release.yml`, plus the conditional `if: matrix.platform == ...` matchers. `ubuntu-latest` → `ubuntu-24.04` for consistency. Apple Silicon macos-15 runs aarch64 builds natively; x86_64 stays a cross-compile via the SDK.
+
+**Technical review pass** (post-implementation, before commit) caught and fixed:
+
+- **MUST-FIX #1**: `useUpdateCheck.ts` performInstall doc said flushAllDrafts failure aborts install; code swallowed the rejection and proceeded. Fixed — rejection now bubbles to the outer catch and prevents `downloadAndInstall`. Test added to lock the behaviour.
+- **MUST-FIX #2**: install-failure left the persistent `update-available` toast intact (Install button still clickable) and the LS timestamp set (so boot won't retry for 24 h). Fixed — outer catch now calls `notify.dismiss('update-available')` and `localStorage.removeItem(...)`. Test added.
+- **MUST-FIX #9**: `verify-ci-equivalent.sh` Phase 3 used `(...) > log; if [ "$?" -ne 0 ]` — brittle to interposed commands. Switched to `if ! (...) > log 2>&1; then`.
+- **MUST-FIX #10**: no SIGINT trap; backgrounded jobs would survive Ctrl+C. Added `trap cleanup EXIT INT TERM` that TERMs every tracked PID and removes tempfiles.
+- **SHOULD-FIX #3**: clock-skew trap — `nowMs - last < ONE_DAY_MS` returned true when `last` was in the future (NTP roll-back). Now guards `delta < 0` first.
+- **SHOULD-FIX #4**: concurrent boot + manual check could issue 2 parallel `check()` round trips. Added module-level `inFlightCheck` promise guard.
+- **SHOULD-FIX #5**: `@tauri-apps/plugin-process` import hoisted to module top (was dynamic-imported inside install closure, racy if network dropped between download and relaunch chunk fetch).
+- **SHOULD-FIX #11**: `_validate.yml`'s `cargo sqlx prepare --check` was missing `-- --tests`; the pre-push hook has it (per MAINT-227's session-679 catch). CI now matches the local hook.
+- **SHOULD-FIX #13**: hardcoded `/tmp/ci-verify-*.log` paths replaced with `mktemp` so two concurrent runs in different checkouts don't collide.
+- **SHOULD-FIX #14**: `tail -40` bumped to `tail -200` so vitest/nextest failure stacks aren't truncated.
+- **SHOULD-FIX #15**: externalBin verify hardcoded the Linux triple; resolves via `rustc -vV` so macOS / Windows contributors can use the hook.
+- **SHOULD-FIX #17**: `verify-release-build.sh` only probed `.AppImage` / `.dmg` / `.msi` etc — missed the `.tar.gz` / `.zip` updater payloads the in-app auto-updater fetches. Added them, guarded behind `TAURI_SIGNING_PRIVATE_KEY` (only produced when signing is configured).
+
+**Cannot verify without an actual CI run** (flagged by the reviewer): #19 `cargo tauri build --target x86_64-apple-darwin` cross-compile on macos-15 (Apple Silicon host, x86_64 SDK present per runner notes); #20 WiX 3.14 on windows-2025 (preinstalled per runner notes, Tauri 2 MSI bundler defaults to WiX 3 — should be fine). Recommend a `workflow_dispatch` smoke run on a throwaway tag before the next real release.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged.
+
+**Files touched (this session, single commit):**
+- `.github/workflows/_validate.yml` (+6 — sqlx `-- --tests` flag).
+- `.github/workflows/ci.yml` (+16 — runner pins + comments).
+- `.github/workflows/release.yml` (+24 / -8 — runner pins + comments + conditional matchers).
+- `AGENTS.md` (+3 / -2 — pre-push section + CI job topology updated).
+- `docs/BUILD.md` (+33 / -3 — new pre-push table + release-pre-flight section).
+- `prek.toml` (-34 / +20 — 2 individual hooks → 1 umbrella hook).
+- `scripts/verify-ci-equivalent.sh` (NEW, ~225 lines).
+- `scripts/verify-release-build.sh` (NEW, ~120 lines).
+- `src-tauri/capabilities/default.json` (+1 — `updater:default`).
+- `src-tauri/src/lib.rs` (rewritten comment around updater plugin reg, -7 / +9 lines).
+- `src/App.tsx` (+9 — `useUpdateCheck()` wired alongside other lifecycle hooks).
+- `src/components/settings/HelpTab.tsx` (+90 — Updates card + mobile-hint branch).
+- `src/components/__tests__/HelpTab.test.tsx` (NEW, 6 tests).
+- `src/hooks/useUpdateCheck.ts` (NEW, ~225 lines after review fixes).
+- `src/hooks/__tests__/useUpdateCheck.test.tsx` (NEW, 11 tests after additions).
+- `src/lib/i18n/common.ts` (+13 — `help.update*` keys).
+- `package.json`, `package-lock.json` (+1 dep: `@tauri-apps/plugin-updater`).
+- `pending/ui-improvements-2026-05-16.md` (-20 — Auto-update wire-up section removed).
+
+**Verification:**
+- `npx vitest run src/hooks/__tests__/useUpdateCheck.test.tsx src/components/__tests__/HelpTab.test.tsx` — 17 / 17 pass.
+- Full vitest suite via prek (gates the commit) — all pass.
+- `shellcheck scripts/verify-ci-equivalent.sh scripts/verify-release-build.sh` — clean (no findings).
+- `bash -n` on both scripts — clean.
+- `prek run --all-files` — all 48 hooks pass (1 skipped, knip no files).
+
+**Process notes:**
+- The technical-reviewer subagent caught two install-flow bugs that would have shipped a real data-loss path (flushAllDrafts rejection + orphan toast). Worth the cycle.
+- Pre-push wall clock target of "≈3-4 min on a warm cache" qualified per reviewer feedback — on a cold cargo cache the cargo slot alone runs 5-8 min and dominates.
+- macos-15 / windows-2025 pin moves bring the matrix to current Tier 1 images but introduce a small but real risk on the next release tag (cross-compile + WiX). Sanity-check before relying on the auto-update path against a fresh release.
+
+**Commit plan:** single commit; push deferred.
+
+---
+
 ## Session 752 — PEND-39 wrap (CI parallelism overhaul) + PEND-40 #11 follow-up triage (2026-05-16)
 
 | Metadata | Value |

@@ -101,7 +101,7 @@ jobs:
     # skipped (tag-push path), but block on real failures or
     # cancellation.
     if: ${{ !cancelled() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -149,11 +149,23 @@ jobs:
         include:
           - platform: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - platform: windows-latest
+          # Explicit version pins (`windows-2025` GA Q1 2026,
+          # `macos-15` GA late 2025) instead of `*-latest` aliases —
+          # the floating tags move silently and have caused
+          # actions-side deprecation warnings + image-rebuild lag on
+          # past transitions. Pinning lets Dependabot bump us
+          # explicitly when the next major image cuts.
+          # windows-2025 cuts ~15-25% off WiX bundler + Rust release
+          # builds vs windows-2022 per the runner-image release notes.
+          - platform: windows-2025
             target: x86_64-pc-windows-msvc
-          - platform: macos-latest
+          # macos-15 is Apple Silicon natively. The x86_64-apple-darwin
+          # target stays a cross-compile via the SDK (Rosetta-free),
+          # which is supported and faster than the older Intel runner.
+          # The aarch64 build is native on macos-15.
+          - platform: macos-15
             target: x86_64-apple-darwin
-          - platform: macos-latest
+          - platform: macos-15
             target: aarch64-apple-darwin
 
     runs-on: ${{ matrix.platform }}
@@ -409,7 +421,7 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
 
       - name: Attest desktop bundles (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'windows-2025'
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: |
@@ -419,7 +431,7 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.zip
 
       - name: Attest desktop bundles (macOS)
-        if: matrix.platform == 'macos-latest'
+        if: matrix.platform == 'macos-15'
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: |

@@ -169,8 +169,12 @@ jobs:
         run: cargo audit || echo "::warning::cargo audit had findings (warn-only mode); review the log above and update src-tauri/deny.toml's [advisories] ignore list if accepted."
 
       - name: sqlx offline cache check
+        # `-- --tests` matches the local pre-push hook + the
+        # MAINT-227 closure note in prek.toml: without it, query
+        # drift in `#[cfg(test)]` modules slips through CI silently
+        # (caught 5 such drifts in session 679's PEND-18 work).
         working-directory: src-tauri
-        run: cargo sqlx prepare --check
+        run: cargo sqlx prepare --check -- --tests
 
   # ---------------------------------------------------------------------------
   # vitest — frontend unit + integration suite, sharded 3-ways (PEND-39 C3).

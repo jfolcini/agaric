@@ -120,7 +120,33 @@ prek run                 # only staged-file hooks (pre-commit)
 
 The `prek.toml` file is the single source of truth for hooks. CI invokes the same `_validate.yml` reusable workflow that mirrors `prek run --all-files`, so a green local prek implies a green CI validate job.
 
-Pre-commit vs pre-push split: fast hooks (biome, type-check, vitest, lychee, …) run on commit; compile-heavy hooks (`cargo nextest`, `cargo sqlx prepare --check`, `playwright`) run on push. The split is deliberate — commits stay fast, push catches everything.
+### Pre-commit vs pre-push split
+
+Pre-commit (every `git commit`): fast hooks only — biome, tsc, cargo fmt/clippy, vitest related-subset, cargo-test related-subset, lychee, sqruff, taplo, typos, zizmor, markdownlint, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache.
+
+Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — that runs `scripts/verify-ci-equivalent.sh`. The script parallelizes every blocking check that `.github/workflows/_validate.yml` runs in CI:
+
+| Phase | Checks (run in parallel) |
+| --- | --- |
+| Phase 1 | externalBin placeholder (1 s, prerequisite for Phase 2) |
+| Phase 2 (parallel) | vitest (full, ≈70 s) ‖ playwright (full, ≈80 s) ‖ cargo nextest --profile ci + agaric-mcp build + sqlx prepare --check |
+| Phase 3 (sequential) | MCP UDS smoke test, full release build of agaric-mcp, externalBin artifact verification |
+| Phase 4 (warn-only) | cargo audit, npm audit signatures — surface warnings but never block |
+
+Wall clock on a warm cache: ≈3-4 min (was ≈5-8 min when each hook ran sequentially via prek's per-hook scheduler).
+
+`SKIP_CI_VERIFY=1 git push` short-circuits the script. Reserve it for docs-only typo fixes that obviously cannot affect CI behaviour; anything that touches source code should let the verifier run.
+
+### Release pre-flight
+
+Pre-push does NOT run `cargo tauri build` (5-10 min wall clock per push is too slow for daily cadence). Run `scripts/verify-release-build.sh` manually before tagging a release:
+
+```bash
+scripts/verify-release-build.sh                   # local-OS bundle build + path probes
+scripts/bump-version.sh <new-version> --commit --tag --push
+```
+
+The script does what release.yml does that `_validate.yml` does not: full Tauri bundle build for the current OS, with per-OS artifact path probes (AppImage + .deb on Linux, .dmg + .app on macOS, .msi + .exe on Windows). Cross-OS bundles are inherently un-buildable locally — only the matching CI matrix slot can verify them, but most release-blocker bugs surface in the LOCAL bundle build first.
 
 ## Production builds
 

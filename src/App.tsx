@@ -26,6 +26,7 @@ import { useSyncEvents } from './hooks/useSyncEvents'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useTheme } from './hooks/useTheme'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
+import { useUpdateCheck } from './hooks/useUpdateCheck'
 import { announce } from './lib/announcer'
 import { logger } from './lib/logger'
 import {
@@ -152,6 +153,14 @@ function App() {
   // hydrate the global state from Tauri once at app start. Both are
   // empty-deps effects with no React state coupling.
   useAppBootRecovery()
+
+  // ── Desktop auto-update check (FEAT: updater wire-up) ─────────────
+  // Fires at most once per 24 h to ask the Tauri updater plugin whether
+  // a new release is available. Surfaces an "update available" sonner
+  // toast with Install & restart + Later actions. Mobile is a no-op —
+  // the Play Store / App Store own that distribution path. Empty-deps;
+  // safe to slot adjacent to the other boot hooks.
+  useUpdateCheck()
 
   // ── Focus main content when view changes ──────────────────────────
   // Each view can register its preferred primary-focus element (search

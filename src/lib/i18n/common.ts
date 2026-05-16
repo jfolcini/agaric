@@ -280,6 +280,19 @@ export const common: Record<string, string> = {
   'help.reportBugDescription':
     'Found a problem? Send us what happened and — if you like — the recent logs from your device.',
   'help.reportBugButton': 'Report a bug',
+  'help.updateTitle': 'Updates',
+  'help.updateDescription':
+    'Agaric checks for updates automatically when it starts. You can also check manually.',
+  'help.updateCheckNowButton': 'Check for updates now',
+  'help.updateCheckingLabel': 'Checking...',
+  'help.updateLastCheckedLabel': 'Last checked {{ago}}',
+  'help.updateLastCheckedNever': 'Never checked',
+  'help.updateAvailableToast': 'Agaric {{version}} is available',
+  'help.updateInstallActionLabel': 'Install & restart',
+  'help.updateLaterActionLabel': 'Later',
+  'help.updateNoneFoundToast': "You're on the latest version",
+  'help.updateInstallFailedToast': 'Update install failed',
+  'help.updateMobileHint': 'Updates are managed by the Play Store on Android.',
   'spaceSwitcher.shortcutHint': 'Tip: Ctrl+1–9 to switch spaces',
   'spaceSwitcher.createAnotherHint': 'Create another space\u2026',
 }

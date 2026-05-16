@@ -31,26 +31,6 @@
 
 - **`max-sm:` vs `[@media(pointer:coarse)]` divergence is intentional but invisible.** Now documented in `docs/UX.md`. Consider linking from inline code comments where the convention is exercised so future maintainers don't try to "unify".
 
-## Auto-update wire-up (desktop)
-
-The plumbing is **wired** but the frontend never calls the API and the capability permission isn't granted, so the app silently never updates:
-
-- `tauri-plugin-updater` is in `Cargo.toml` and registered on desktop (`lib.rs:566-575`, gated `#[cfg(not(mobile))]`).
-- `tauri.conf.json` updater config points at `github.com/jfolcini/agaric/releases/latest/download/latest.json` and carries a real Minisign pubkey.
-- `release.yml` exports `TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` from GH secrets; bundles ship with valid signatures and a `latest.json` manifest.
-
-What's missing:
-
-1. **Capability permission.** Add `updater:default` (or specific `check` + `download_and_install`) to `src-tauri/capabilities/default.json`.
-2. **Boot-time silent check.** In `App.tsx` boot, call `check()` from `@tauri-apps/plugin-updater` (npm install needed). Debounce to once per day in `localStorage`.
-3. **Update-available toast.** When `check()` returns an update, show a sonner toast — `"Agaric <version> is available"` — with **Install & restart** + **Later** actions. The install path calls `update.downloadAndInstall()` then `relaunch()` from `@tauri-apps/plugin-process`.
-4. **Settings → Help.** Add a *Check for updates now* button + *Last checked N ago* line for users who dismissed the toast.
-5. **Mid-edit guard.** Before triggering install-and-relaunch, flush any pending drafts (`use the same path as before-close`) so an unsaved-edits race can't lose work.
-6. **Cleanup `lib.rs:566-575` comment.** The "currently not wired up" note is half-stale — signing is done; the FE wire-up is the remaining gap.
-7. **Drop the MAINT-16 TODO comment** in `lib.rs` once (6) is done.
-
-Estimated cost: S (~2 h end-to-end for a clean implementation).
-
 ## Android publishing (Play Store)
 
 Android updates **do not** go through the Tauri updater — desktop only. On Android, distribution is either sideloaded APK (already supported via `release.yml`'s Android job) or the Play Store. To publish on the Play Store:

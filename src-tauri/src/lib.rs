@@ -563,12 +563,15 @@ pub fn run() {
         ));
     }
 
-    // MAINT-16: tauri-plugin-updater is desktop-only and currently not wired up
-    // (empty pubkey in `tauri.conf.json`, no frontend code calls the update
-    // API). Gate registration behind `not(mobile)` so we don't register an
-    // unusable plugin on Android, and keep it out of the desktop build until
-    // pubkey signing + a frontend action + `updater:default` capability are
-    // added. Tracked TODO in `.github/workflows/release.yml`.
+    // Desktop-only auto-update. Minisign signing is wired in
+    // `release.yml` (TAURI_SIGNING_PRIVATE_KEY + _PASSWORD secrets);
+    // `tauri.conf.json` carries the matching pubkey + the
+    // `releases/latest/download/latest.json` endpoint. The frontend
+    // boot check (`src/hooks/useUpdateCheck.ts`) consumes this plugin
+    // via the `updater:default` capability granted in
+    // `capabilities/default.json`. Android updates flow through the
+    // Play Store (or sideloaded APK) — not Tauri's updater path — so
+    // gate registration behind `not(mobile)`.
     #[cfg(not(mobile))]
     {
         tauri_builder = tauri_builder.plugin(tauri_plugin_updater::Builder::new().build());

@@ -51,9 +51,21 @@ jobs:
         include:
           - os: ubuntu-24.04
             label: linux
-          - os: windows-latest
+          # Explicit version pins (`windows-2025` GA Q1 2026,
+          # `macos-15` GA late 2025) instead of `*-latest` aliases:
+          # the floating tags move silently and have caused
+          # actions-side deprecation warnings + image-rebuild lag on
+          # past transitions. Pinning lets Dependabot bump us
+          # explicitly when the next major image cuts.
+          # windows-2025 runs ~15-25% faster than windows-2022 on
+          # Rust toolchain + Tauri's WiX bundler workload per the
+          # GitHub runner image release notes.
+          - os: windows-2025
             label: windows
-          - os: macos-latest
+          # macos-15 is Apple Silicon by default (M1 hardware);
+          # macOS 14 was the transition runner. Apple-Silicon runs
+          # build ≈2-3× faster than the Intel slots for Rust workloads.
+          - os: macos-15
             label: macos
     runs-on: ${{ matrix.os }}
     steps:

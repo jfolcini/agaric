@@ -551,41 +551,31 @@ types = ["toml"]
 
 # ─── pre-push only ────────────────────────────────────────────────
 #
-# Hooks below run only on `git push`, not on every `git commit`. They
-# trade per-commit speed for the kind of full-suite / compile-required
-# coverage that's worth running before changes leave the local machine.
-
-# `cargo sqlx prepare --check -- --tests` verifies that the committed
-# `.sqlx/` offline cache is in sync with every `query!()` call in the
-# source AND in `#[cfg(test)]` modules. The `-- --tests` cargo-flag
-# pass-through is non-negotiable: without it, drift in test-only
-# queries slips through silently (session 679 caught 5 such drifts
-# from session 678's PEND-18 Phase 0/1/2 work — MAINT-227 closure).
-# Drift surfaces as a CI failure; running it on push lets the author
-# fix it (`cargo sqlx prepare -- --tests`) before the remote run.
+# A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`,
+# which parallelizes every check `_validate.yml` runs in CI (full
+# vitest, full Playwright, cargo nextest + agaric-mcp build + sqlx
+# prepare check, MCP UDS smoke, externalBin verification, plus
+# warn-only `cargo audit` and `npm audit signatures`).
+#
+# The script wraps everything in one prek slot so we can fan out
+# across cores via background jobs instead of letting prek serialize
+# per-hook. Total wall clock on a warm cache: ≈3-4 min (was ≈5-8 min
+# when each hook ran sequentially via prek).
+#
+# Escape hatch: `SKIP_CI_VERIFY=1 git push` short-circuits the
+# script. Use sparingly — for docs-only typo fixes that obviously
+# cannot affect CI behaviour. Anything that touches source code
+# should let the verifier run.
+#
+# Release pre-flight (cargo tauri bundle build for the local OS) is
+# NOT here — too slow for daily push cadence. Run
+# `scripts/verify-release-build.sh` manually before tagging a release.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
-id = "sqlx-prepare-check"
-name = "sqlx prepare --check"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo sqlx prepare --check -- --tests'"
+id = "verify-ci-equivalent"
+name = "verify CI-equivalent (parallel)"
+entry = "bash scripts/verify-ci-equivalent.sh"
 language = "system"
 pass_filenames = false
-files = "^src-tauri/(src/.*\\.rs|migrations/.*\\.sql|Cargo\\.(toml|lock))$"
-stages = ["pre-push"]
-
-# Full Playwright suite. The `vitest` hook above runs related-only
-# tests for fast per-commit feedback; this hook runs the full e2e
-# matrix on push so integration regressions (smoke-test rot,
-# cross-view navigation bugs, IPC-mock drift) get caught before
-# they reach CI. Adds ≈80s to `git push` on a clean cache.
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "playwright"
-name = "playwright (full e2e suite)"
-entry = "npx playwright test"
-language = "system"
-pass_filenames = false
-types_or = ["ts", "tsx"]
 stages = ["pre-push"]

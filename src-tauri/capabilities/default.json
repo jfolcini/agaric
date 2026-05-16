@@ -11,6 +11,7 @@
     "os:default",
     "global-shortcut:default",
     "deep-link:default",
-    "autostart:default"
+    "autostart:default",
+    "updater:default"
   ]
 }
