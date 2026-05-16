@@ -54,6 +54,8 @@ cargo tauri android build --target aarch64            # Android release APK (~24
 prek run --all-files         # Pre-commit hooks
 ```
 
+**Daily dev loop:** prefer `npm run dev` (browser, ~50 ms HMR) for pure UI work; reach for `cargo tauri dev` (~10-20 s per Rust edit) only when touching backend behaviour. Backend-only iteration: `bacon` in a sidecar terminal. Linux: activate the staged mold linker (`sudo apt install mold && cp .cargo/config.toml{.example,}`) to drop incremental link time ~3-4×. Full guidance in [docs/BUILD.md § Development](docs/BUILD.md#development).
+
 ## Key Architectural Invariants
 
 1. **Op log is strictly append-only** — never mutate, never delete (except compaction)

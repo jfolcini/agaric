@@ -2,10 +2,44 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 749 (latest entry 2026-05-15).
+- **This file:** sessions 401 – 750 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 750 — PEND-37 wrap (mold L1 + L4/L5 dev-loop docs) (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-37 (plan deleted; L1+L4+L5 shipped) |
+| **Items modified** | — |
+| **Tests added** | — (docs + tooling activation) |
+| **Files touched** | 5 |
+
+**Summary:** Wrapped PEND-37 by activating the mold linker (`.cargo/config.toml` now staged-on, ignored from git) and consolidating the dev-loop guidance into `docs/BUILD.md § Development` with a short pointer added to `AGENTS.md § Build Commands`. Mold + warm-cache incremental `cargo check` lands at 4.52 s (vs 20.49 s baseline; 4.5× speedup); incremental `cargo build --bin agaric-mcp` (real link step) at 11.91 s. PEND-37 had three outstanding follow-ups (L1 mold activation, L4 browser-mode workflow doc, L5 `bacon` note) — all shipped this cycle. Stretch follow-ups (sccache, cargo workspace split, dev-profile dep opt, prek hook profile) were explicitly "not greenlit" in the plan body and were dropped on deletion rather than promoted to REVIEW-LATER.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (this batch only touched `pending/` plans, not REVIEW-LATER).
+
+**Files touched (this session):**
+- `.gitignore` (+4 lines — ignore the per-machine active `.cargo/config.toml`).
+- `AGENTS.md` (+2 lines — daily-dev-loop pointer into BUILD.md).
+- `docs/BUILD.md` (+35 / -1 lines — three new subsections: "When to use which loop", "Backend iteration with bacon", "Faster linker (Linux only)").
+- `pending/PEND-37-local-dev-speed.md` (deleted per "delete on completion" convention).
+- `pending/README.md` (-1 line — drop PEND-37 row from index).
+
+**Verification:**
+- mold activation measured: `touch src-tauri/src/lib.rs && time cargo check` = 4.52 s wall, 107 % CPU (was 20.49 s, 58 % CPU per PEND-37 baseline).
+- `touch src-tauri/src/lib.rs && time cargo build --bin agaric-mcp` = 11.91 s wall (real link step).
+- `prek run --all-files` — all hooks pass (commit gate).
+
+**Process notes:** `.cargo/config.toml` deliberately gitignored alongside this commit — the `.example` file stays tracked so a fresh clone sees the activation recipe, but the active config never ships to peers (would break every build for contributors without mold installed). The staged-then-opt-in pattern matches the project's `src-tauri/.env.example` model.
+
+**Commit plan:** single commit; push deferred.
+
+---
+
 ## Session 749 — MAINT-111 M1 (rmcp tools/list adapter) (2026-05-15)
 
 | Metadata | Value |

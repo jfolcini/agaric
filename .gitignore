@@ -50,3 +50,7 @@ agaric-release.apk.idsig
 .claude/settings.local.json
 # Added by code-review-graph
 .code-review-graph/
+
+# Per-machine active cargo config (the staged `.example` is tracked;
+# activating it makes the build depend on host-installed mold)
+.cargo/config.toml

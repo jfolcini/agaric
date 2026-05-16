@@ -63,7 +63,39 @@ npm run dev                  # browser-only fallback (uses tauri-mock for IPC)
 cargo tauri android dev --target x86_64   # Android emulator
 ```
 
-The browser-only fallback is useful for UI work — every Tauri IPC is mocked via `src/lib/tauri-mock/`. Some space-scoping and sync flows are stubbed there; for those, run the full app.
+### When to use which loop
+
+| Loop | Wall time / edit | Use it for |
+| --- | --- | --- |
+| `npm run dev` (Vite HMR) | ~50 ms | Pure UI work: component layout, styles, copy, interactions wired through `tauri-mock`. |
+| `cargo tauri dev` | ~10-20 s (Rust edit), ~50 ms (frontend edit) | Anything that hits real backend behaviour: sync, search, materializer, command handlers, sqlx queries, capability permissions. |
+| `cargo tauri android dev --target x86_64` | minutes (cold), ~20 s (incremental) | Mobile-specific layout, touch gestures, Android-only IPC paths, keystore-signed builds. |
+
+The browser fallback covers most frontend work — every Tauri IPC is mocked via `src/lib/tauri-mock/`. Some space-scoping and live sync flows are stubbed there; for those, run the full app. The Rust loop on every UI tweak is otherwise the long pole of the dev cycle and worth avoiding.
+
+### Backend iteration with `bacon`
+
+For Rust-only edits, a continuously-running `cargo check` tightens the loop further than ad-hoc invocations:
+
+```sh
+cargo install bacon
+bacon                       # default: cargo check, re-runs on save
+```
+
+Keep a `bacon` window open next to the editor. Defaults are sensible; optional `bacon.toml` wires up custom jobs (clippy, nextest, …). No project-side config needed.
+
+### Faster linker (Linux only)
+
+`mold` cuts the link step on Linux ~3-4×. Activation is one apt install + one copy:
+
+```sh
+sudo apt install mold        # Debian/Ubuntu (mold has been in main since 22.04)
+cp .cargo/config.toml.example .cargo/config.toml
+```
+
+After activation, incremental `cargo build --bin agaric-mcp` after touching a single Rust file lands in ~12 s instead of ~30-40 s on this codebase (228 Rust files, ~200K LOC). Safe to delete `.cargo/config.toml` any time — it only affects the linker pick on Linux.
+
+The `.example` file ships staged so a fresh clone doesn't break on contributors who haven't installed mold yet (an unconditional `[target.…] rustflags` would fail every build with a confusing `cannot find -fuse-ld=mold` error).
 
 ## Testing
 
