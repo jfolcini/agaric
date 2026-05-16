@@ -70,6 +70,24 @@ Verification: `zizmor` reports **0 findings** on all 3 workflow files after SHA 
 
 **Highest-leverage:** other items (#5, #8, #9, plus #1/#3/#4 already shipped) all reference "the threat model" implicitly. Writing it once means subsequent triage decisions land in 5 min instead of 30.
 
+### #11 — Unify `cargo audit` and `cargo deny check` accept-lists
+
+**What:** The two RustSec-DB checkers we ship today (`cargo deny check` in the prek hook + `cargo audit` in CI) read DIFFERENT accept-lists. `cargo deny` consults `src-tauri/deny.toml`'s `[advisories] ignore = [...]` (19 entries today). `cargo audit` reads `.cargo/audit.toml` or `--ignore <ID>` flags — neither of which we have. Today this means `cargo audit` surfaces every advisory `cargo deny` accepts, so the CI logs are noisy and the maintainer has to mentally re-filter them.
+
+Three viable consolidation strategies:
+
+- **A. Mirror `deny.toml` → `audit.toml`.** Write a `src-tauri/audit.toml` that duplicates the `[advisories] ignore` list. Drift risk: every new accepted advisory must be added to both files.
+- **B. Generate `audit.toml` from `deny.toml`.** Add `scripts/sync-audit-from-deny.mjs` that parses `deny.toml`, extracts the `[advisories].ignore` table, and writes a fresh `audit.toml`. Run from a prek hook on `deny.toml` change. Single source of truth (deny.toml), zero drift.
+- **C. Drop `cargo audit`, keep only `cargo deny check`.** Cuts the upstream-fresh-DB benefit (`cargo audit` pulls the RustSec git head; `cargo deny` uses the version baked into the local crate cache). For a single-maintainer project the freshness gap is small (~days), so this is defensible if maintenance overhead matters more than freshness.
+
+**Recommendation:** Option B. ~30 min of one-time scripting; the resulting file lives in `src-tauri/audit.toml` (gitignored auto-generated) or `src-tauri/audit.toml` (tracked, regenerated on every deny.toml change). The script is small; the payoff is "cargo audit logs stay actionable forever."
+
+**Cost:** XS-S (~30-45 min: write the sync script, add to prek as a hook that runs on `deny.toml` change, verify cargo audit logs are clean after sync).
+
+**Risk:** XS. Worst case: the sync script regresses and audit.toml drifts; cargo audit's noisy logs (today's state) reappear. Easy to spot.
+
+**Verification:** `cd src-tauri && cargo audit` should exit 0 cleanly after the sync, OR surface only advisories not yet in deny.toml's accept list. Either is the desired signal.
+
 ### Additional ideas worth flagging (not yet scheduled)
 
 - **GitHub branch protection**: require status checks on PRs, require signed commits, restrict force-pushes on `main`. Not in scope here because branch protection lives in repo settings (web UI / `gh repo edit`), not in this repo's files. Worth a 30-min config session.
