@@ -113,7 +113,10 @@ describe('useBlockTags allTags', () => {
     renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load tags')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Failed to load tags',
+        expect.objectContaining({ id: 'tags-load-failed' }),
+      )
     })
   })
 })
@@ -172,7 +175,10 @@ describe('useBlockTags appliedTagIds', () => {
     renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load tags')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Failed to load tags',
+        expect.objectContaining({ id: 'tags-load-failed' }),
+      )
     })
   })
 })

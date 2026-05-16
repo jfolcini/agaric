@@ -252,7 +252,12 @@ describe('AttachmentList', () => {
 
     // Should show error toast
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load attachments')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Failed to load attachments',
+        // Effect-driven load: dedup so re-mounts / rapid blockId
+        // changes don't stack identical toasts.
+        expect.objectContaining({ id: 'attachments-load-failed' }),
+      )
     })
 
     // Loading should be finished (no skeletons)

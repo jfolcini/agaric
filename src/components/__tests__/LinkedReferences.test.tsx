@@ -631,7 +631,10 @@ describe('LinkedReferences', () => {
     renderLinkedReferences({ pageId: 'PAGE1' })
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Failed to load references',
+        expect.objectContaining({ id: 'references-load-failed' }),
+      )
     })
   })
 
@@ -1237,7 +1240,10 @@ describe('LinkedReferences', () => {
 
     // Toast fires with the translated error message
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Failed to load references',
+        expect.objectContaining({ id: 'references-load-failed' }),
+      )
     })
 
     // Loading finishes — no skeletons remain
@@ -1289,7 +1295,10 @@ describe('LinkedReferences', () => {
 
     // Toast fires for the pagination failure
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Failed to load references',
+        expect.objectContaining({ id: 'references-load-failed' }),
+      )
     })
 
     // Existing groups are still rendered (not wiped out)
@@ -1339,7 +1348,10 @@ describe('LinkedReferences', () => {
     renderLinkedReferences({ pageId: 'PAGE1' })
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load tags')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Failed to load tags',
+        expect.objectContaining({ id: 'references-load-tags-failed' }),
+      )
     })
   })
 
@@ -1358,8 +1370,14 @@ describe('LinkedReferences', () => {
     renderLinkedReferences({ pageId: 'PAGE1' })
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
-      expect(toast.error).toHaveBeenCalledWith('Failed to load tags')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Failed to load references',
+        expect.objectContaining({ id: 'references-load-failed' }),
+      )
+      expect(toast.error).toHaveBeenCalledWith(
+        'Failed to load tags',
+        expect.objectContaining({ id: 'references-load-tags-failed' }),
+      )
     })
 
     // Two distinct toasts fired; the property-keys failure is logged

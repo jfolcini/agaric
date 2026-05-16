@@ -135,14 +135,16 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     }
     void Promise.all([
       register(EVENT_REAUTH, () => {
-        notify.error(t('gcal.reauthRequired'))
+        // Backend re-emits the reauth event on every failed call until
+        // the user reconnects — dedup so the toast updates in place.
+        notify.error(t('gcal.reauthRequired'), { id: 'gcal-reauth' })
       }),
       register(EVENT_PUSH_DISABLED, () => {
         void loadStatus()
         notify.info(t('gcal.pushDisabled'))
       }),
       register(EVENT_KEYRING, () => {
-        notify.error(t('gcal.keyringUnavailable'))
+        notify.error(t('gcal.keyringUnavailable'), { id: 'gcal-keyring' })
       }),
       register(EVENT_CALENDAR_RECREATED, () => {
         notify.info(t('gcal.calendarRecreated'))

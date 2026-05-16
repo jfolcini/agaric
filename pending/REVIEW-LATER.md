@@ -17,11 +17,10 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items in the summary table; 22 detail entries (FE-* sub-tables don't appear in the summary).
+20 open items in the summary table; 20 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
-| PERF-21 | PERF | `batch_resolve_100k` SLO regression — measured ~12 ms vs 5 ms budget (~2.4× miss) on the `interactive_slo` Criterion bench. Last touched the path: `perf(sql): SQL-review Phase 4` (page_link_cache + incremental rebuilds, commit `4a4128fd`) and `perf(bench): scale-benchmarks Phase 2` (commit `5a3fe0b5`). Bisect needed. Likely culprit: the FK-CASCADE refactor / `resolve_block_space` helper / new `space` join-clause in the resolve path. Repro: `cargo bench --bench interactive_slo` in `src-tauri/`. Either fix the regression or move `batch_resolve` to the `SLO_INCLUDE_PROBLEM` problem tier with a written reason. | M | — |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — foundation (per-space `gcal_space_config` table + per-space keychain key + legacy single-space migration) in place; remaining work threads `space_id` through oauth/lease/connector/commands, branches the push loop by space, ships per-space Settings accordion, and (when FEAT-11 lands) prefixes OS notifications with the space name | M | — (M3 sub-task blocked on FEAT-11) |
 | PEND-38 | FEAT | Import progress streaming over `Channel<T>` (PEND-06 Tier 3) — DEFERRED. Needs the import pipeline restructured before per-block progress channel has UX value (today `import_markdown` parses + applies the whole file in one tx, so the only progress signal is start / done). Pursue when imports become a UX paper-cut OR someone is already touching `import_markdown` for an unrelated reason. | L restructure + S emission | Import pipeline restructure |
 | AGENDA-SQL | PERF | Agenda sort/group SQL pushdown — DEFERRED. Move `sortAgendaBlocks` + `groupBy*` from `src/lib/agenda-sort.ts` (sort sites at lines 30, 108, 175, 230, 242, 265, 325, 331, 339, 354) into a backend `ORDER BY (effective_date, state_rank, priority_rank)`. The current JS sort is sub-ms on the ≤200-item per-page set, so the SQL pushdown is a maintainability / consistency win, not a perf win. Cost driven by the compound-cursor reshape this requires (paginate-by-multi-column is non-trivial). Filed as a tombstone so a future contributor doesn't re-derive the blocker. Original sql-audit H4 item, separated from the audit doc when the audit was retired. | M | Decision to invest in compound-cursor reshape |
@@ -38,7 +37,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | MAINT-227 | MAINT | gcal OAuth — migrate browser-open from `tauri-plugin-shell::open` (deprecated) to `tauri-plugin-opener`. Site: `src-tauri/src/commands/gcal.rs:550-557`, currently behind `#[allow(deprecated)]`. The new plugin lands when we next bump Tauri plugins; the surface is a 1-line callback swap. | S | `tauri-plugin-opener` dep added |
-| MAINT-228 | MAINT | Loro sync — when applying an `Update` from a peer, verify the peer's `from_vv` is reachable from our current `oplog_vv()`. If unreachable, respond with a `request-snapshot-fallback` signal instead of letting `import_with_changed_blocks` surface a confusing Loro decode error. Site: `src-tauri/src/sync_protocol/loro_sync.rs:127`; design rationale in the module docstring. Today divergence manifests as an opaque import failure; the fallback path is the cleaner recovery shape. | M | — |
 | OSSF-1 | MAINT | OpenSSF Best Practices badge — register the project at <https://bestpractices.coreinfrastructure.org/> and earn at least the Passing tier. The Scorecard `CII-Best-Practices` check currently scores 0/10 (no badge detected); the form is a self-assessment, takes roughly an hour, and instantly lifts the overall score. Deferred from the 2026-05-16 Scorecard triage because the assessment expects pre-1.0 answers like "How will you handle bug reports?" to be already-final — easier to fill out once the project is stable and the surrounding docs (SECURITY.md, CONTRIBUTING.md) have settled. Revisit at 1.0 cut or when the Scorecard score becomes a release-gating concern. | S (~1h) | — (do at 1.0 or when score becomes load-bearing) |
 | OSSF-2 | MAINT | Scorecard `Code-Review` score = 0 because changesets pushed directly to `main` by the solo maintainer count as "0/N approved" — the asymmetric maintainer-bypass ruleset (R12, see `docs/architecture/ci-and-tooling.md` §13) is by design. The score auto-improves the moment any external maintainer lands, because their PRs route through `validate-all` + at least one review. **Revisit trigger:** first external maintainer onboarded → flip the ruleset to symmetric (require review for everyone, drop the maintainer bypass), or accept a permanent 0 here and document the design choice in the public security posture. | S (decision) → M (ruleset flip + bypass test plan) | First external maintainer joining the repo |
 | OSSF-3 | MAINT | Scorecard `Vulnerabilities` score = 0 because of 23 RUSTSEC advisories, the bulk of which are atk/gtk3 "no longer maintained" notices (`RUSTSEC-2024-04xx`) reaching us transitively via `wry → tauri`. All are documented in `src-tauri/deny.toml [advisories].ignore` with rationale and the upstream tracking issue. The score will recover automatically when `tauri`/`wry` finish migrating off gtk3 (already in progress upstream — wry's webkit2gtk backend is the only remaining gtk3 user, and the gtk4 work is on their roadmap). **Revisit trigger:** Tauri release notes announce gtk4 migration complete → drop the relevant `deny.toml` ignore entries + re-run Scorecard to confirm the score lifts. Tracking item: <https://github.com/tauri-apps/wry/issues/802>. | S (delete ignore entries + verify) | Upstream wry/tauri gtk4 migration |
@@ -447,32 +445,6 @@ Items in this section are test-quality improvements identified during a thorough
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
 ## PERF — Performance items
-
-### PERF-21 — `batch_resolve_100k` SLO regression (~2.4× over budget)
-
-**Problem:** the `interactive_slo` Criterion bench panics on `batch_resolve_100k`:
-
-```text
-interactive_slo: batch_resolve @ 100K = 11.94 ms > budget 5 ms (regression — see docs/ARCHITECTURE.md §25)
-```
-
-Measured ~12 ms isolated (Playwright not running); ~13 ms under load. Budget is 5 ms.
-
-**Path:** `src-tauri/src/commands/blocks/queries.rs::batch_resolve_inner`. Repros via `cd src-tauri && cargo bench --bench interactive_slo`.
-
-**Likely culprits (bisect needed):**
-
-- Commit `4a4128fd perf(sql): SQL-review Phase 4` — added `page_link_cache` with incremental rebuilds + COALESCE-removal backfill on `blocks.page_id`. Changed the join shape across multiple read paths.
-- Commit `5a3fe0b5 perf(bench): scale-benchmarks Phase 2` — modified the bench fixture (`seed_blocks_bulk`, FIXTURE_SIZE, `assign_all_to_slo_space`). Could be measuring more work, not necessarily real regression.
-- The `resolve_block_space` helper added under PEND-15 Phase 2 has no callers in `batch_resolve_inner` today but the surrounding space-scope refactor may have changed the join plan.
-
-**Fix:** bisect between `a3f8c9e3` (bench landed, presumably passing) and `4962abf4` (current). Either restore the original perf or move `batch_resolve` to the `SLO_INCLUDE_PROBLEM` problem tier with a written reason. Don't just bump the budget without documenting why.
-
-**Status:** Filed during session 750 (docs restructure release). Doc-only release shipped despite the failure since the regression predates the doc work. **Open.**
-
-**Cost:** M (bisect + fix; the path is small enough that the fix should be quick once located).
-**Risk:** Low (bench-only; doesn't affect correctness; the SLO is a guardrail not a hard requirement).
-**Impact:** Medium (the SLO bench is the CI gate against perf drift; one false-positive failure means the gate is not effective today).
 
 ### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (3 sites)
 

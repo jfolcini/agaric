@@ -375,7 +375,14 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
       onDoubleClick={onDoubleClick}
       title={t('sidebar.toggleSidebar')}
       className={cn(
-        'absolute inset-y-0 z-20 hidden w-4 [@media(pointer:coarse)]:w-8 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex',
+        // The rail is a drag-to-resize handle and is only meaningful on
+        // fine-pointer (mouse) input. On touch, the sidebar is a Sheet
+        // overlay and the rail's resize state isn't read by the mobile
+        // layout — tapping the rail used to be a no-op. Hide on pointer-
+        // coarse devices (docs/UX.md § Touch & responsive, line 47:
+        // "Mobile sidebar … Distinct from desktop's SidebarRail (resize
+        // handle)").
+        'absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex [@media(pointer:coarse)]:hidden',
         'in-data-[side=left]:cursor-col-resize in-data-[side=right]:cursor-col-resize',
         '[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize',
         'group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full hover:group-data-[collapsible=offcanvas]:bg-sidebar',

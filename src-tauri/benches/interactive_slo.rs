@@ -350,6 +350,127 @@ async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) {
     tx.commit().await.unwrap();
 }
 
+/// Seed a production-realistic 100K shape for `batch_resolve`:
+/// `PAGE_COUNT` pages (each `page_id = id`, each carrying a `space`
+/// property pointing at `SLO_SPACE_ID`) and `n` content blocks
+/// distributed round-robin across those pages with `page_id` set to
+/// their owning page's id.
+///
+/// ## Why this seeder exists separately from `seed_blocks_bulk`
+///
+/// SQL-review Phase 4 (commit `4a4128fd`) removed `COALESCE(b.page_id,
+/// b.id)` from the space filter at every read site; the new shape
+/// (`b.page_id IN (SELECT bp.block_id ... WHERE bp.key='space')`)
+/// requires `page_id` to be non-NULL for any block that should pass the
+/// filter. The legacy `seed_blocks_bulk` + `assign_all_to_slo_space`
+/// pair was written against the COALESCE-era SQL where `page_id` NULL
+/// fell back to `b.id` — under the new SQL it silently produces an
+/// empty result set, and `batch_resolve` ends up benchmarking the cost
+/// of an unindexed filter that never matches. The 50 request_ids
+/// returned here resolve to ~50 live rows under both the old and new
+/// SQL shapes, so the bench measures real interactive-resolve cost.
+///
+/// Other benches in this file (`bench_list_blocks`, `bench_get_block`,
+/// etc.) continue to use `seed_blocks_bulk` because they either don't
+/// space-filter (`get_block`) or paginate with `LIMIT 50` (`list_blocks`)
+/// where an empty result is bounded by the index scan, not the subquery
+/// re-evaluation that hurts `batch_resolve`.
+async fn seed_resolve_fixture(pool: &SqlitePool, n: usize) -> Vec<String> {
+    // Density chosen to match the real-world shape: ~1 page per 100
+    // content blocks gives 1000 pages at 100K total — close to the
+    // upper end of what FEAT-3 telemetry sees in active vaults. Keep
+    // PAGE_COUNT < FIXTURE_SIZE so the round-robin distribution
+    // produces ≥1 block per page.
+    const PAGE_COUNT: usize = 1_000;
+    let blocks_per_page = n.div_ceil(PAGE_COUNT);
+
+    let mut tx = pool.begin().await.unwrap();
+
+    // The space-owner page (mirrors `assign_all_to_slo_space`).
+    sqlx::query(
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'SloSpace', NULL, NULL, ?)",
+    )
+    .bind(SLO_SPACE_ID)
+    .bind(SLO_SPACE_ID)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    // Seed PAGE_COUNT pages. `page_id = id` matches the invariant
+    // migration 0066 backfilled (every page-create path now sets this).
+    let mut page_ids: Vec<String> = Vec::with_capacity(PAGE_COUNT);
+    for p in 0..PAGE_COUNT {
+        let page_id = format!("SLPG{p:020}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(format!("Resolve fixture page {p}"))
+        .bind(p as i64 + 1)
+        .bind(&page_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        // Each page carries the `space` property — this is the
+        // production invariant: pages own the space tag, content
+        // blocks inherit via `page_id`.
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(&page_id)
+        .bind(SLO_SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        page_ids.push(page_id);
+    }
+
+    // Seed n content blocks distributed across the pages.
+    let mut ids = Vec::with_capacity(n);
+    for i in 0..n {
+        let id = format!("SEED{i:020}");
+        let content = format!("Seeded block {i} with some placeholder content.");
+        let ts = format!("2025-01-15T12:00:{:06}+00:00", i);
+        let owning_page = &page_ids[i % PAGE_COUNT];
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&content)
+        .bind(owning_page)
+        .bind(i as i64 + 1)
+        .bind(owning_page)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES ('dev-bench', ?, 'fakehash', 'create_block', ?, ?)",
+        )
+        .bind(i as i64 + 1)
+        .bind(format!(
+            r#"{{"block_id":"{id}","block_type":"content","parent_id":"{owning_page}","content":"{content}"}}"#,
+        ))
+        .bind(&ts)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        ids.push(id);
+    }
+    tx.commit().await.unwrap();
+    // `blocks_per_page` is computed for symmetry / debugging only; the
+    // round-robin loop above does not need it. Silence the unused
+    // binding without dragging an `#[allow]` attribute through the
+    // helper.
+    let _ = blocks_per_page;
+    ids
+}
+
 /// Seed `n` source content blocks linking round-robin to 10 target pages.
 /// Mirrors `backlink_query_bench.rs::seed_backlinks_for_batch`.
 async fn seed_backlinks_for_batch(pool: &SqlitePool, n: usize) {
@@ -684,13 +805,23 @@ fn bench_list_blocks(c: &mut Criterion) {
 }
 
 /// `batch_resolve` — resolve 50 ids in a 100K DB. Budget: 5 ms.
+///
+/// SQL-review Phase 4 (commit `4a4128fd`) tightened the space filter
+/// from `COALESCE(b.page_id, b.id) IN (...)` to `b.page_id IN (...)`,
+/// matching the invariant migration 0066 backfilled. The fixture must
+/// therefore set `page_id` to a non-NULL page that carries the `space`
+/// property — `seed_resolve_fixture` produces this shape; the legacy
+/// `seed_blocks_bulk` + `assign_all_to_slo_space` pair (still used by
+/// other benches in this file) does not, and would silently make this
+/// bench measure an empty-result path that runs ~12 ms because the
+/// planner re-evaluates the unindexed `b.page_id IS NULL` filter for
+/// every `json_each(?1)` row.
 fn bench_batch_resolve(c: &mut Criterion) {
     const BUDGET_MS: f64 = 5.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_batch_resolve"));
-    let ids = rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
-    rt.block_on(assign_all_to_slo_space(&pool));
+    let ids = rt.block_on(seed_resolve_fixture(&pool, FIXTURE_SIZE));
 
     // 50 ids spread across the seed range — same shape as a typical
     // chip-rehydration request.

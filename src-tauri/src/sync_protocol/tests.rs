@@ -1705,9 +1705,16 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
 
     // Apply on B (fresh registry, fresh DB).
     let registry_b = LoroEngineRegistry::new();
-    let returned_space = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
-        .await
-        .expect("apply_remote");
+    let returned_space =
+        match loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+            .await
+            .expect("apply_remote")
+        {
+            loro_sync::ApplyOutcome::Imported(s) => s,
+            loro_sync::ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
+                panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
+            }
+        };
     assert_eq!(returned_space, space);
 
     // Engine B sees the block.
@@ -1887,9 +1894,15 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
         };
 
         let returned_space =
-            loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+            match loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
                 .await
-                .expect("apply_remote");
+                .expect("apply_remote")
+            {
+                loro_sync::ApplyOutcome::Imported(s) => s,
+                loro_sync::ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
+                    panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
+                }
+            };
         assert_eq!(&returned_space, space, "apply_remote must echo space");
     }
 
@@ -2031,9 +2044,13 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
             SyncMessage::LoroSync { msg, .. } => msg,
             other => panic!("expected LoroSync, got {other:?}"),
         };
-        loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+        let outcome = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
             .await
             .expect("apply snapshot");
+        assert!(
+            matches!(outcome, loro_sync::ApplyOutcome::Imported(_)),
+            "snapshot apply must report Imported, got {outcome:?}",
+        );
     }
 
     // Sanity — B has X but not Y.
@@ -2095,9 +2112,13 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
         SyncMessage::LoroSync { msg, .. } => msg,
         other => panic!("expected LoroSync, got {other:?}"),
     };
-    loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+    let outcome = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
         .await
         .expect("apply update");
+    assert!(
+        matches!(outcome, loro_sync::ApplyOutcome::Imported(_)),
+        "update apply must report Imported, got {outcome:?}",
+    );
 
     // ── Engine on B sees both X and Y.
     {
@@ -2211,12 +2232,20 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
     };
 
     // Mutual import: A applies B's snapshot, B applies A's snapshot.
-    loro_sync::apply_remote(&pool_b, &registry_b, "device-B", inner_a_to_b)
+    let outcome_ab = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", inner_a_to_b)
         .await
         .expect("apply A→B");
-    loro_sync::apply_remote(&pool_a, &registry_a, "device-A", inner_b_to_a)
+    assert!(
+        matches!(outcome_ab, loro_sync::ApplyOutcome::Imported(_)),
+        "A→B apply must report Imported, got {outcome_ab:?}",
+    );
+    let outcome_ba = loro_sync::apply_remote(&pool_a, &registry_a, "device-A", inner_b_to_a)
         .await
         .expect("apply B→A");
+    assert!(
+        matches!(outcome_ba, loro_sync::ApplyOutcome::Imported(_)),
+        "B→A apply must report Imported, got {outcome_ba:?}",
+    );
 
     // ── Engine convergence — both engines see both blocks with the
     // original content + position.

@@ -47,7 +47,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       })
       .catch((error) => {
         logger.error('useBlockTags', 'Failed to load all tags', undefined, error)
-        notify.error(i18n.t('tags.loadFailed'))
+        notify.error(i18n.t('tags.loadFailed'), { id: 'tags-load-failed' })
       })
   }, [currentSpaceId])
 
@@ -63,7 +63,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         })
         .catch((error) => {
           logger.error('useBlockTags', 'Failed to load tags for block', { blockId }, error)
-          notify.error(i18n.t('tags.loadFailed'))
+          notify.error(i18n.t('tags.loadFailed'), { id: 'tags-load-failed' })
           setLoading(false)
         })
     } else {

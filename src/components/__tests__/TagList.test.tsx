@@ -496,6 +496,9 @@ describe('TagList', () => {
       await waitFor(() => {
         expect(mockedToastError).toHaveBeenCalledWith(
           expect.stringContaining('Failed to load tags'),
+          // Effect-driven panel load: dedup by id so rapid mounts /
+          // space switches don't stack identical toasts.
+          expect.objectContaining({ id: 'tags-load-failed' }),
         )
       })
     })

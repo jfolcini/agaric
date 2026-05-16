@@ -166,7 +166,10 @@ describe('useHistoryDiffToggle', () => {
     // Error recovery: key should be removed from expandedKeys
     expect(result.current.expandedKeys.has(99)).toBe(false)
     expect(result.current.loadingDiffs.has(99)).toBe(false)
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to load diff')
+    expect(mockedToastError).toHaveBeenCalledWith(
+      'Failed to load diff',
+      expect.objectContaining({ id: 'history-load-diff-failed' }),
+    )
   })
 
   it('works with number keys (HistoryPanel pattern)', async () => {
@@ -265,6 +268,9 @@ describe('useHistoryDiffToggle', () => {
       rejection,
     )
     // Regression guard: existing toast.error behaviour preserved.
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to load diff')
+    expect(mockedToastError).toHaveBeenCalledWith(
+      'Failed to load diff',
+      expect.objectContaining({ id: 'history-load-diff-failed' }),
+    )
   })
 })

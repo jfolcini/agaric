@@ -286,7 +286,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           },
           err,
         )
-        notify.error(i18n.t('error.loadBlocksFailed'))
+        notify.error(i18n.t('error.loadBlocksFailed'), { id: 'load-blocks-failed' })
       }
     },
 

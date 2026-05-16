@@ -117,7 +117,10 @@ export function GcalReauthBanner(): React.ReactElement | null {
       setAccountEmail(null)
     },
     onError: () => {
-      notify.error(t('gcal.connectFailed'))
+      // User may click Reconnect repeatedly when the IPC keeps
+      // rejecting; dedup so the toast updates in place rather than
+      // stacking one per click.
+      notify.error(t('gcal.connectFailed'), { id: 'gcal-connect-failed' })
     },
   })
 

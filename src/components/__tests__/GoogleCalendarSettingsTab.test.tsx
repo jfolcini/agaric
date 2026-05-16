@@ -758,6 +758,10 @@ describe('GoogleCalendarSettingsTab — event stream', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(
         'Google sign-in expired. Reconnect to resume pushing.',
+        // The backend re-emits the reauth event on every failed call —
+        // sonner dedupes by id so the toast updates in place instead
+        // of stacking. See `notify.ts` dedup note.
+        expect.objectContaining({ id: 'gcal-reauth' }),
       )
     })
   })
@@ -797,6 +801,8 @@ describe('GoogleCalendarSettingsTab — event stream', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(
         'Cannot access the OS keychain. Google Calendar push is disabled on this device.',
+        // Event-driven recurring error → dedup by id.
+        expect.objectContaining({ id: 'gcal-keyring' }),
       )
     })
   })

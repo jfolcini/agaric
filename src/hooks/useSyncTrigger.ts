@@ -100,6 +100,10 @@ async function syncOnePeerWithToast(peerId: string): Promise<boolean> {
     return true
   } catch {
     notify.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }), {
+      // Per-peer dedup: a single failing peer should not stack multiple
+      // toasts on retry-loop iterations. Different peers still surface
+      // their own toast because the id is scoped by peerId.
+      id: `sync-peer-error:${peerId}`,
       duration: 5000,
       action: {
         label: i18n.t('sync.retryAction'),
@@ -177,7 +181,7 @@ export function useSyncTrigger() {
       hadFailure = true
       if (mountedRef.current) {
         setState('error', 'Sync failed')
-        notify.error(i18n.t('device.syncFailed'))
+        notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })
         announce(i18n.t('announce.syncFailed'))
         intervalRef.current = computeNextSyncDelay(intervalRef.current, true)
       }

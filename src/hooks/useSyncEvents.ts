@@ -129,7 +129,7 @@ export function useSyncEvents(): void {
       try {
         const { message } = event.payload
         useSyncStore.getState().setState('error', message)
-        notify.error(i18n.t('sync.failed', { message }))
+        notify.error(i18n.t('sync.failed', { message }), { id: 'sync-error' })
         announce(i18n.t('announce.syncFailed'))
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:error handler failed', undefined, err)

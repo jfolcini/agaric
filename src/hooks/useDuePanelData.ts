@@ -501,14 +501,14 @@ export function useDuePanelData({
             // FE-M-2: skip side effects (logging, toast) if the effect has unmounted.
             if (stale) return
             logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
-            notify.error(t('duePanel.loadAgendaFailed'))
+            notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
           })
         }
       })
       .catch((err) => {
         logger.warn('useDuePanelData', 'projected agenda fetch failed', undefined, err)
         if (!stale) setProjectedEntries([])
-        notify.error(t('duePanel.loadAgendaFailed'))
+        notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
       })
       .finally(() => {
         if (!stale) setProjectedLoading(false)

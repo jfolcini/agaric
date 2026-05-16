@@ -605,6 +605,9 @@ describe('useBlockProperties handleToggleTodo F-37 dependency warning', () => {
 
     expect(mockedToastWarning).toHaveBeenCalledWith(
       'This task has dependencies that may not be complete',
+      // Dependency warning fires per checkbox toggle — dedup by id so
+      // rapid cycling doesn't stack toasts.
+      expect.objectContaining({ id: 'dependency-warning' }),
     )
   })
 

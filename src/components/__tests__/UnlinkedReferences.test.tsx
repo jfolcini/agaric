@@ -1141,7 +1141,10 @@ describe('UnlinkedReferences', () => {
 
     // Error surfaces as a toast and the component does not crash.
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load unlinked references')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Failed to load unlinked references',
+        expect.objectContaining({ id: 'unlinked-refs-load-failed' }),
+      )
     })
     // UX-152 / empty-state mandate: component renders EmptyState when
     // totalCount=0 and no filters active — that's the graceful fallback

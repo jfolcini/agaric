@@ -79,7 +79,7 @@ export function TagFilterPanel(): React.ReactElement {
           })),
         )
       } catch {
-        notify.error(t('tags.loadFailed'))
+        notify.error(t('tags.loadFailed'), { id: 'tags-load-failed' })
       }
     },
     [t],

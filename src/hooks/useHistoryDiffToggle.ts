@@ -45,7 +45,7 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
         }
       } catch (err) {
         logger.warn('useHistoryDiffToggle', 'computeEditDiff failed', undefined, err)
-        notify.error(i18n.t('history.loadDiffFailed'))
+        notify.error(i18n.t('history.loadDiffFailed'), { id: 'history-load-diff-failed' })
         setExpandedKeys((prev) => {
           const next = new Set(prev)
           next.delete(key)

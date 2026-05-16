@@ -73,7 +73,10 @@ describe('useSlashCommandProperty — TODO state', () => {
     // F-37 dependency check is fire-and-forget (Promise.then). Wait a tick.
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(vi.mocked(toast.warning)).toHaveBeenCalledWith('dependency.dependencyWarning')
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+      'dependency.dependencyWarning',
+      expect.objectContaining({ id: 'dependency-warning' }),
+    )
   })
 
   it('toasts on TODO failure', async () => {

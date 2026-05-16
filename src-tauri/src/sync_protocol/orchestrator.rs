@@ -368,9 +368,18 @@ impl SyncOrchestrator {
             // sender never emits a zero-byte `Snapshot` for the no-
             // spaces case, so the receiver always has real bytes to
             // import.
+            //
+            // MAINT-228: `apply_remote` may return
+            // `ApplyOutcome::SnapshotFallbackRequested` when the
+            // peer's `from_vv` is unreachable from our local
+            // `oplog_vv()`.  In that case the engine import was NOT
+            // attempted; we translate the signal into a
+            // `SyncMessage::ResetRequired` reply and hand off to the
+            // daemon-level snapshot catch-up sub-flow — identical to
+            // the log-compacted-side-exit path.
             SyncMessage::LoroSync { msg, is_last } => {
                 {
-                    use crate::sync_protocol::loro_sync;
+                    use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 
                     match crate::loro::shared::get() {
                         Some(loro_state) => {
@@ -383,14 +392,43 @@ impl SyncOrchestrator {
                                 ops_received: self.session.ops_received,
                                 ops_sent: self.session.ops_sent,
                             });
-                            loro_sync::apply_remote(
+                            let outcome = loro_sync::apply_remote(
                                 &self.pool,
                                 &loro_state.registry,
                                 &self.device_id,
                                 msg,
                             )
                             .await?;
-                            self.session.ops_received = self.session.ops_received.saturating_add(1);
+                            match outcome {
+                                ApplyOutcome::Imported(_space_id) => {
+                                    self.session.ops_received =
+                                        self.session.ops_received.saturating_add(1);
+                                }
+                                ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
+                                    // MAINT-228: the import was NOT
+                                    // attempted because the peer's
+                                    // `from_vv` is not reachable from
+                                    // our `oplog_vv()`.  Transition
+                                    // to ResetRequired and let the
+                                    // daemon layer drive snapshot
+                                    // catch-up via
+                                    // `sync_daemon::snapshot_transfer`.
+                                    let full_reason = format!(
+                                        "loro-sync update from_vv unreachable for space {space_id}: \
+                                         {reason}",
+                                        space_id = space_id.as_str(),
+                                    );
+                                    self.state = SyncState::ResetRequired;
+                                    self.session.state = SyncState::ResetRequired;
+                                    self.emit(crate::sync_events::SyncEvent::Error {
+                                        message: full_reason.clone(),
+                                        remote_device_id: self.session.remote_device_id.clone(),
+                                    });
+                                    return Ok(Some(SyncMessage::ResetRequired {
+                                        reason: full_reason,
+                                    }));
+                                }
+                            }
                         }
                         None => {
                             tracing::warn!(

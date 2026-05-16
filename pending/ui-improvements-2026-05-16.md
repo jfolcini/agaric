@@ -10,22 +10,10 @@
 ## UX consistency
 
 - **Toast deduplication missing.** sonner doesn't dedupe by default and `notify()` doesn't either. Rapid identical errors (e.g. sync loops) stack visibly. Thread a dedup helper into `notify()` or use sonner's `id` field for known recurring error categories.
-- **`MenuPopoverContent` adoption is partial.** Some popovers still use plain `PopoverContent` for menu surfaces. Grep + sweep would tighten consistency.
-- **Toast action signature inconsistency.** Some call sites use raw sonner options; others wrap with `t()`-keyed text. Standardise on `notify.error(msg, { action: { label, onClick } })` and add a `notify.retry()` helper.
-
-## Discoverability
-
-- **`agaric://` deep-link scheme is undiscoverable.** Power users don't know it exists. A "Deep links" section in the `KeyboardShortcuts` panel listing `/block/<id>`, `/page/<id>`, `/settings/<tab>` surfaces a hidden feature.
-- **Quick-capture hotkey is OS-global but unannounced.** Consider a one-time welcome-modal mention or settings tooltip.
 
 ## Mobile / responsive
 
 - **Sidebar resize toggle appears clickable on mobile but is a no-op.** Either hide the toggle on mobile or match the affordance to behaviour.
-
-## Maintenance / tooling
-
-- **No CI lint catches doc-vs-code drift.** Many doc-audit findings would be auto-caught by a script that greps `src/...` paths in `docs/` against the filesystem and fails CI on miss. Low cost, high leverage.
-- **JSDoc i18n drift.** Some component JSDoc comments reference English strings since moved into `t()` calls. Not user-facing, but agents reading JSDoc may infer wrong UI text. Low priority.
 
 ## Convention documentation
 

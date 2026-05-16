@@ -41,6 +41,16 @@ type OptionalOpts = [ExternalToast?]
  * `console.error` for debugging. Anything else (number, object) is
  * coerced via `String(...)` so the toast always shows something
  * actionable. The opts arg is forwarded to sonner unchanged.
+ *
+ * Dedup: pass `{ id: 'category-id' }` to collapse rapid identical
+ * errors from a recurring source (sync loops, IPC failures, auto-
+ * refreshing panels) into a single visible toast. Sonner natively
+ * dedupes by `id` — two `toast.error(msg, { id: 'sync-error' })` calls
+ * in a row update the existing toast in place. Do NOT pass an `id`
+ * for one-shot user-action errors (save-failed, delete-failed) — those
+ * should stack so the user sees each distinct failure. See
+ * `notify.retry` below for the action-bearing variant with the same
+ * dedup contract.
  */
 function notifyError(
   messageOrError: string | number | Error,

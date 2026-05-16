@@ -128,7 +128,12 @@ describe('useBatchCounts', () => {
     renderHook(() => useBatchCounts([makeDayEntry('2025-01-06')]))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith(expect.stringContaining('calendar counts'))
+      expect(mockedToastError).toHaveBeenCalledWith(
+        expect.stringContaining('calendar counts'),
+        // Auto-refreshing journal counts: dedup so date scrubs that
+        // repeatedly hit a failing backend don't stack toasts.
+        expect.objectContaining({ id: 'journal-load-counts-failed' }),
+      )
     })
   })
 

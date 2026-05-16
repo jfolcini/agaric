@@ -135,7 +135,7 @@ export function LinkedReferences({
           },
           err,
         )
-        notify.error(t('references.loadFailed'))
+        notify.error(t('references.loadFailed'), { id: 'references-load-failed' })
       } finally {
         setLoading(false)
       }
@@ -165,7 +165,7 @@ export function LinkedReferences({
       .catch((e) => {
         if (cancelled) return
         logger.error('LinkedReferences', 'Failed to load tags', undefined, e)
-        notify.error(t('references.loadTagsFailed'))
+        notify.error(t('references.loadTagsFailed'), { id: 'references-load-tags-failed' })
       })
     return () => {
       cancelled = true

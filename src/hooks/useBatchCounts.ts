@@ -43,7 +43,7 @@ export function useBatchCounts(entries: DayEntry[]) {
     }
     fetchCounts().catch((err) => {
       logger.warn('useBatchCounts', 'batch counts fetch failed', undefined, err)
-      notify.error(t('journal.loadCountsFailed'))
+      notify.error(t('journal.loadCountsFailed'), { id: 'journal-load-counts-failed' })
     })
     return () => {
       cancelled = true

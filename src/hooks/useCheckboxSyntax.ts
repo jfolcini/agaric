@@ -49,7 +49,7 @@ export function useCheckboxSyntax({
               .then((row) => {
                 const hasBlockedBy = row != null && row.value_ref != null
                 if (hasBlockedBy) {
-                  notify.warning(t('dependency.dependencyWarning'))
+                  notify.warning(t('dependency.dependencyWarning'), { id: 'dependency-warning' })
                 }
               })
               .catch((err) => {

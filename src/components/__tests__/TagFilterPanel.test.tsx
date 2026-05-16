@@ -556,7 +556,12 @@ describe('TagFilterPanel', () => {
       await vi.advanceTimersByTimeAsync(300)
     })
 
-    expect(mockedToastError).toHaveBeenCalledWith(t('tags.loadFailed'))
+    expect(mockedToastError).toHaveBeenCalledWith(
+      t('tags.loadFailed'),
+      // Debounced search keystrokes can fire repeatedly when the backend
+      // is failing — dedup so the toast updates in place.
+      expect.objectContaining({ id: 'tags-load-failed' }),
+    )
   })
 
   it('hides already-selected tags from matching results', async () => {

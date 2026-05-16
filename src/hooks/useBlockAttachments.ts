@@ -67,7 +67,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
       .then(setAttachments)
       .catch((err) => {
         logger.warn('useBlockAttachments', 'list attachments failed', { blockId }, err)
-        notify.error(i18n.t('attachments.loadFailed'))
+        notify.error(i18n.t('attachments.loadFailed'), { id: 'attachments-load-failed' })
       })
       .finally(() => setLoading(false))
   }, [blockId, batchActive, batchLoading, batchRows])

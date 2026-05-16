@@ -512,7 +512,12 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedToastError).toHaveBeenCalledWith('Sync failed: Connection timed out')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Sync failed: Connection timed out',
+        // sync:error fires per failing sync attempt — dedup so a flaky
+        // network doesn't stack a toast per retry.
+        expect.objectContaining({ id: 'sync-error' }),
+      )
 
       unmount()
     })

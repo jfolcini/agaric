@@ -62,7 +62,8 @@ function warnIfBlocked(blockId: string): void {
   getProperty(blockId, 'blocked_by')
     .then((row) => {
       const hasBlockedBy = row != null && row.value_ref != null
-      if (hasBlockedBy) notify.warning(i18n.t('dependency.dependencyWarning'))
+      if (hasBlockedBy)
+        notify.warning(i18n.t('dependency.dependencyWarning'), { id: 'dependency-warning' })
     })
     .catch((err) => {
       logger.warn('useBlockProperties', 'F-37 dependency check failed', undefined, err)

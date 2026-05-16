@@ -1404,7 +1404,10 @@ describe('DuePanel', () => {
 
       // Toast error was shown
       await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith('duePanel.loadAgendaFailed')
+        expect(mockedToastError).toHaveBeenCalledWith(
+          'duePanel.loadAgendaFailed',
+          expect.objectContaining({ id: 'due-panel-load-failed' }),
+        )
       })
 
       // No projected section
@@ -1443,7 +1446,10 @@ describe('DuePanel', () => {
 
       // Toast error was shown for the failed title resolution
       await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith('duePanel.loadAgendaFailed')
+        expect(mockedToastError).toHaveBeenCalledWith(
+          'duePanel.loadAgendaFailed',
+          expect.objectContaining({ id: 'due-panel-load-failed' }),
+        )
       })
     })
 

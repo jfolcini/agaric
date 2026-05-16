@@ -110,7 +110,10 @@ describe('useBlockAttachments loading', () => {
     renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load attachments')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Failed to load attachments',
+        expect.objectContaining({ id: 'attachments-load-failed' }),
+      )
     })
   })
 })
@@ -375,7 +378,10 @@ describe('useBlockAttachments error paths', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to load attachments')
+    expect(mockedToastError).toHaveBeenCalledWith(
+      'Failed to load attachments',
+      expect.objectContaining({ id: 'attachments-load-failed' }),
+    )
     expect(result.current.attachments).toEqual([])
   })
 

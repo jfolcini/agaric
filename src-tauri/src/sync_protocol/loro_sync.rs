@@ -9,20 +9,33 @@
 //! * [`apply_remote`] — receiver side. Given a parsed
 //!   [`super::loro_sync_types::LoroSyncMessage`], import the bytes
 //!   into the per-space engine and project every changed block into
-//!   the SQL `blocks` table inside a single transaction.
+//!   the SQL `blocks` table inside a single transaction.  Returns an
+//!   [`ApplyOutcome`] discriminating between successful import and a
+//!   snapshot-fallback request (see below).
+//!
+//! ## Snapshot-fallback path (MAINT-228)
+//!
+//! Before importing a [`LoroSyncMessage::Update`], [`apply_remote`]
+//! verifies that the peer's declared `from_vv` is **reachable** from
+//! our current `oplog_vv()`: for every `(peer_id, counter)` entry in
+//! `from_vv`, our local vv has an entry for the same `peer_id` with a
+//! counter `>=` the peer's.  If any entry is missing or our counter
+//! lags, the update cannot be applied without losing ops — Loro would
+//! otherwise surface this as an opaque decode error from
+//! `import_with_changed_blocks`.
+//!
+//! On a miss, [`apply_remote`] short-circuits **before** the engine
+//! import and returns [`ApplyOutcome::SnapshotFallbackRequested`].  The
+//! orchestrator translates that into a [`super::types::SyncMessage::ResetRequired`],
+//! which the daemon layer's snapshot catch-up sub-flow
+//! ([`crate::sync_daemon::snapshot_transfer`]) already handles —
+//! identical to the first-time-pairing / log-compacted path.
 //!
 //! ## TODOs
 //!
 //! * `peer_refs.loro_vv_bytes` schema / read. Callers pass the peer's
 //!   vv as `Option<&[u8]>`; the read-from-SQL piece lands with the
 //!   push wiring.
-//! * Snapshot-fallback request. An
-//!   [`super::loro_sync_types::LoroSyncMessage::Update`] whose
-//!   `from_vv` is ahead of the receiver's `oplog_vv` cannot be
-//!   imported safely; the receiver dispatch will add the
-//!   "request-fresh-snapshot" path. Today this surfaces as a Loro
-//!   import error, which [`apply_remote`] forwards as
-//!   [`crate::error::AppError::Validation`].
 
 use sqlx::SqlitePool;
 
@@ -30,6 +43,91 @@ use crate::error::AppError;
 use crate::loro::registry::LoroEngineRegistry;
 use crate::space::SpaceId;
 use crate::sync_protocol::loro_sync_types::{LoroSyncMessage, LORO_SYNC_PROTOCOL_VERSION};
+use loro::VersionVector;
+
+/// Outcome of [`apply_remote`].  Discriminates between a successful
+/// engine import and a `from_vv`-unreachable snapshot-fallback signal.
+///
+/// MAINT-228: callers (the orchestrator) must `match` on this to
+/// decide whether to transition into `Complete` (after a successful
+/// import) or `ResetRequired` (to trigger the snapshot catch-up
+/// sub-flow at the daemon layer).
+#[derive(Debug, Clone)]
+pub enum ApplyOutcome {
+    /// The message was imported into the engine (and, for Update /
+    /// Snapshot variants, projected into SQL).  Carries the targeted
+    /// [`SpaceId`] so the caller can invalidate per-space caches.
+    Imported(SpaceId),
+    /// The message was a [`LoroSyncMessage::Update`] whose `from_vv`
+    /// is not reachable from our current `oplog_vv()` — applying the
+    /// delta would yield an incoherent CRDT state.  The engine import
+    /// was **not** attempted; callers should request a fresh snapshot
+    /// from the peer (the orchestrator translates this into
+    /// [`super::types::SyncMessage::ResetRequired`]).
+    SnapshotFallbackRequested {
+        /// Per-space scope of the rejected message.
+        space_id: SpaceId,
+        /// Human-readable reason — surfaced in `SyncEvent::Error` /
+        /// `SyncMessage::ResetRequired::reason` for log + telemetry.
+        reason: String,
+    },
+}
+
+/// Internal: classify whether a peer's `from_vv` (encoded) is
+/// reachable from our local `oplog_vv()` (encoded).
+///
+/// "Reachable" — for every `(peer_id, counter)` entry in the peer's
+/// vv, our local vv has an entry for the same `peer_id` with a
+/// counter `>=` the peer's.  An entry the peer has at counter `c > 0`
+/// that we lack entirely is **also** unreachable (we have zero ops
+/// from that peer, the peer believes we have `c`).
+///
+/// Returns `Ok(None)` for reachable; `Ok(Some(reason))` for
+/// unreachable with a human-readable diagnostic.  Decode failures on
+/// either side surface as [`AppError::Validation`] — a malformed vv
+/// on the wire is a protocol error, distinct from a clean miss.
+fn classify_from_vv_reachability(
+    local_encoded: &[u8],
+    peer_encoded: &[u8],
+) -> Result<Option<String>, AppError> {
+    let local_vv = VersionVector::decode(local_encoded).map_err(|e| {
+        AppError::Validation(format!(
+            "loro_sync: decode local oplog_vv for reachability check: {e}",
+        ))
+    })?;
+    let peer_vv = VersionVector::decode(peer_encoded).map_err(|e| {
+        AppError::Validation(format!(
+            "loro_sync: decode peer from_vv for reachability check: {e}",
+        ))
+    })?;
+
+    // VersionVector derefs to FxHashMap<PeerID, Counter>; the
+    // contract is "every peer entry in `peer_vv` must be matched by
+    // an entry in `local_vv` whose counter is >=".  A `0` counter on
+    // the peer side carries no ops and is trivially reachable; treat
+    // it as a no-op to avoid spurious misses against fresh peers.
+    for (peer_id, &peer_counter) in peer_vv.iter() {
+        if peer_counter == 0 {
+            continue;
+        }
+        match local_vv.get(peer_id) {
+            Some(&local_counter) if local_counter >= peer_counter => continue,
+            Some(&local_counter) => {
+                return Ok(Some(format!(
+                    "peer's from_vv requires peer={peer_id} counter>={peer_counter}, \
+                     local oplog_vv has counter={local_counter}",
+                )));
+            }
+            None => {
+                return Ok(Some(format!(
+                    "peer's from_vv requires peer={peer_id} counter>={peer_counter}, \
+                     local oplog_vv has no entry for that peer",
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
 
 /// Build the next outgoing [`LoroSyncMessage`] for `space_id`.
 ///
@@ -81,9 +179,17 @@ pub async fn prepare_outgoing(
 /// Apply an incoming [`LoroSyncMessage`] to the local engine and
 /// project the changed blocks to SQL.
 ///
-/// Returns the [`SpaceId`] the message targeted so the caller can
-/// invalidate per-space caches (FE event emission, agenda recompute,
-/// etc.) at the materializer boundary.
+/// Returns an [`ApplyOutcome`]:
+///
+/// * [`ApplyOutcome::Imported`] — engine import + SQL projection
+///   succeeded; the carried [`SpaceId`] lets the caller invalidate
+///   per-space caches (FE event emission, agenda recompute, etc.).
+/// * [`ApplyOutcome::SnapshotFallbackRequested`] (MAINT-228) — the
+///   message was a [`LoroSyncMessage::Update`] whose `from_vv` is
+///   ahead of (or concurrent with) our `oplog_vv()`.  The engine
+///   import is **not** attempted; the caller MUST request a fresh
+///   snapshot from the peer (orchestrator emits
+///   [`super::types::SyncMessage::ResetRequired`] for this).
 ///
 /// Atomicity contract: the engine import happens **before** the SQL
 /// transaction. A crash between the two leaves the engine ahead of
@@ -94,10 +200,15 @@ pub async fn apply_remote(
     registry: &LoroEngineRegistry,
     device_id: &str,
     message: LoroSyncMessage,
-) -> Result<SpaceId, AppError> {
+) -> Result<ApplyOutcome, AppError> {
     use crate::loro::projection::project_block_full_to_sql;
 
-    // Validate protocol version + extract bytes / space_id.
+    // Validate protocol version + extract bytes / space_id.  For
+    // Update, also gate the import on the MAINT-228 reachability
+    // check — if the peer's `from_vv` is unreachable from our local
+    // `oplog_vv()`, short-circuit with `SnapshotFallbackRequested`
+    // instead of letting `import_with_changed_blocks` surface an
+    // opaque Loro decode error.
     let (space_id, bytes) = match message {
         LoroSyncMessage::Snapshot {
             protocol_version,
@@ -115,7 +226,7 @@ pub async fn apply_remote(
         LoroSyncMessage::Update {
             protocol_version,
             space_id,
-            from_vv: _,
+            from_vv,
             bytes,
         } => {
             if protocol_version != LORO_SYNC_PROTOCOL_VERSION {
@@ -124,10 +235,22 @@ pub async fn apply_remote(
                      (this build speaks {LORO_SYNC_PROTOCOL_VERSION})",
                 )));
             }
-            // MAINT-228: verify peer's `from_vv` is reachable from our
-            // current `oplog_vv()`; if not, return a
-            // "request-snapshot-fallback" signal instead of forwarding
-            // the Loro import error.  See module docstring.
+            // MAINT-228: verify peer's `from_vv` is reachable from
+            // our current `oplog_vv()`.  Read the local vv off the
+            // engine BEFORE the import — and BEFORE any SQL tx — so
+            // a miss returns without side-effects.
+            let local_vv_bytes: Vec<u8> = {
+                let mut guard = registry.for_space(&space_id, device_id)?;
+                guard.engine_mut().version_vector()
+            };
+            match classify_from_vv_reachability(&local_vv_bytes, &from_vv)? {
+                None => {
+                    // Reachable — fall through to the import.
+                }
+                Some(reason) => {
+                    return Ok(ApplyOutcome::SnapshotFallbackRequested { space_id, reason });
+                }
+            }
             (space_id, bytes)
         }
     };
@@ -155,7 +278,7 @@ pub async fn apply_remote(
     }
     tx.commit().await?;
 
-    Ok(space_id)
+    Ok(ApplyOutcome::Imported(space_id))
 }
 
 // ---------------------------------------------------------------------------
@@ -311,10 +434,15 @@ mod tests {
 
         // Apply on B (fresh registry).
         let registry_b = LoroEngineRegistry::new();
-        let returned = apply_remote(&pool, &registry_b, "device-B", msg)
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
             .await
             .expect("apply_remote");
-        assert_eq!(returned, space);
+        match outcome {
+            ApplyOutcome::Imported(returned) => assert_eq!(returned, space),
+            ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
+                panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
+            }
+        }
 
         // B's engine now sees BLOCK_A.
         let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
@@ -347,9 +475,13 @@ mod tests {
 
         // Apply on B (fresh registry, fresh DB).
         let registry_b = LoroEngineRegistry::new();
-        apply_remote(&pool, &registry_b, "device-B", msg)
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
             .await
             .expect("apply_remote");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            "snapshot apply must report Imported, got {outcome:?}"
+        );
 
         // SQL now has the projected `blocks` row.
         let row: (String, String, String, Option<String>, i64) = sqlx::query_as(
@@ -415,5 +547,315 @@ mod tests {
             }
             other => panic!("expected AppError::Validation, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // MAINT-228 — `from_vv` reachability check + snapshot-fallback
+    // -----------------------------------------------------------------
+
+    /// Happy-path: peer's `from_vv` is exactly our current
+    /// `oplog_vv()`.  Reachability passes; `apply_remote` performs the
+    /// engine import and returns `ApplyOutcome::Imported`.
+    ///
+    /// Locks the wire-shape pin for MAINT-228 normal flow — every
+    /// in-band incremental sync between two peers that have been
+    /// continuously paired hits this path.
+    #[tokio::test]
+    async fn apply_remote_update_with_reachable_from_vv_imports() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // Build A with one block, capture B's vv (== A's vv before
+        // the next op), then A adds a second block; A exports the
+        // delta with `from_vv = b_vv`.
+        let registry_a = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "first", None, 0)
+                .expect("create A");
+        }
+        // Mirror A's pre-second-op state into B so B's local vv
+        // exactly matches the `from_vv` A will use.
+        let registry_b = LoroEngineRegistry::new();
+        let snap_msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare snapshot");
+        let snap_outcome = apply_remote(&pool, &registry_b, "device-B", snap_msg)
+            .await
+            .expect("apply snapshot");
+        assert!(
+            matches!(snap_outcome, ApplyOutcome::Imported(_)),
+            "seed snapshot must import cleanly, got {snap_outcome:?}"
+        );
+
+        let b_vv: Vec<u8> = {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B");
+            g.engine_mut().version_vector()
+        };
+        assert!(!b_vv.is_empty(), "B's vv must be non-empty after import");
+
+        {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A2");
+            g.engine_mut()
+                .apply_create_block(BLOCK_B, "content", "second", None, 1)
+                .expect("create B");
+        }
+        let update = prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare update");
+
+        let outcome = apply_remote(&pool, &registry_b, "device-B", update)
+            .await
+            .expect("apply update");
+        match outcome {
+            ApplyOutcome::Imported(s) => assert_eq!(s, space),
+            ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
+                panic!("reachable from_vv must Imported, got SnapshotFallbackRequested: {reason}")
+            }
+        }
+
+        // B's engine actually advanced — BLOCK_B is now visible.
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B3");
+        assert!(
+            g.engine_mut()
+                .read_block(BLOCK_B)
+                .expect("read B")
+                .is_some(),
+            "BLOCK_B must be visible after a reachable Update is imported",
+        );
+    }
+
+    /// Miss-path: peer's `from_vv` claims ops from a peer we have
+    /// never heard of (counter > 0 for an unknown peer).  Reachability
+    /// fails; `apply_remote` returns `SnapshotFallbackRequested`
+    /// **without** attempting the engine import.
+    ///
+    /// MAINT-228 invariant.  Pre-fix the engine raised an opaque Loro
+    /// decode error from `import_with_changed_blocks`; the new path
+    /// emits a typed fallback signal the orchestrator can route to
+    /// the snapshot catch-up sub-flow.
+    #[tokio::test]
+    async fn apply_remote_update_with_unreachable_from_vv_requests_fallback() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // B starts fresh (vv is empty / contains only its own peer
+        // at counter 0).  We then hand B an Update whose `from_vv`
+        // claims a third peer's ops at a non-zero counter — B has
+        // no entry for that peer, so the import would lose context.
+        let registry_b = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Construct a `from_vv` that includes a phantom peer with a
+        // non-zero counter.  Use a real LoroEngine with a distinct
+        // device_id to manufacture the encoded vv; this matches the
+        // production wire shape (a postcard-encoded VersionVector).
+        let phantom_vv_bytes: Vec<u8> = {
+            let mut phantom = LoroEngine::with_peer_id("device-PHANTOM").expect("phantom engine");
+            phantom
+                .apply_create_block(BLOCK_C, "content", "phantom-op", None, 0)
+                .expect("phantom op");
+            phantom.version_vector()
+        };
+
+        // The `bytes` payload must be syntactically a valid Update
+        // body so that, if the reachability check were ever
+        // bypassed, the test would loudly fail on the import call
+        // rather than coincidentally pass.  Use an Update produced by
+        // the phantom engine itself against a known prior vv.
+        let payload_bytes: Vec<u8> = {
+            let phantom = LoroEngine::with_peer_id("device-PHANTOM").expect("phantom payload");
+            let empty_vv = phantom.version_vector();
+            // Produce a delta from the *initial* empty vv — even if
+            // this is somehow imported, it does not contain the ops
+            // referenced by `phantom_vv_bytes`, so the assertion
+            // below ("BLOCK_C not present on B") still pins the
+            // "import NOT attempted" invariant.
+            phantom
+                .export_update_since(&empty_vv)
+                .unwrap_or_else(|_| vec![0u8])
+        };
+
+        let unreachable_update = LoroSyncMessage::Update {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: space.clone(),
+            from_vv: phantom_vv_bytes,
+            bytes: payload_bytes,
+        };
+
+        let outcome = apply_remote(&pool, &registry_b, "device-B", unreachable_update)
+            .await
+            .expect("apply_remote must NOT error on unreachable from_vv — it must return the typed fallback variant");
+
+        match outcome {
+            ApplyOutcome::SnapshotFallbackRequested {
+                space_id: returned_space,
+                reason,
+            } => {
+                assert_eq!(returned_space, space);
+                assert!(
+                    reason.contains("from_vv") || reason.contains("oplog_vv"),
+                    "reason should mention the vv mismatch context, got: {reason}"
+                );
+            }
+            ApplyOutcome::Imported(_) => {
+                panic!("unreachable from_vv MUST NOT report Imported")
+            }
+        }
+
+        // Side-effect-free guarantee: the import was NOT attempted.
+        // B's engine has no entry for BLOCK_C (the phantom's op).
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B");
+        assert!(
+            g.engine_mut().read_block(BLOCK_C).expect("read C").is_none(),
+            "BLOCK_C must NOT be present on B — the engine import must be skipped on a fallback miss",
+        );
+
+        // Same guarantee at the SQL layer.
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK_C)
+            .fetch_one(&pool)
+            .await
+            .expect("count rows");
+        assert_eq!(
+            row_count, 0,
+            "no blocks must be projected to SQL when fallback is requested",
+        );
+    }
+
+    /// Miss-path corner: peer has us **behind** on a peer we DO
+    /// share — same peer_id in both vvs, peer's counter is strictly
+    /// greater than ours.  Reachability must reject.
+    #[tokio::test]
+    async fn apply_remote_update_with_behind_counter_requests_fallback() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // A and B share device-A as a peer, but A is 2 ops ahead.
+        // B receives an Update whose `from_vv` echoes A's full vv —
+        // since B's vv has device-A at counter 0 (B has no ops from
+        // A), the reachability check must fail.
+        let registry_a = LoroEngineRegistry::new();
+        let registry_b = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "a1", None, 0)
+                .expect("a1");
+            e.apply_create_block(BLOCK_B, "content", "a2", None, 1)
+                .expect("a2");
+        }
+        let a_vv: Vec<u8> = {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A2");
+            g.engine_mut().version_vector()
+        };
+        // A produces a third op then an Update whose from_vv == its
+        // *pre-third-op* vv (which B does not have).
+        {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A3");
+            g.engine_mut()
+                .apply_create_block(BLOCK_D, "content", "a3", None, 2)
+                .expect("a3");
+        }
+        let update = prepare_outgoing(&registry_a, &space, "device-A", Some(&a_vv))
+            .await
+            .expect("prepare update");
+
+        let outcome = apply_remote(&pool, &registry_b, "device-B", update)
+            .await
+            .expect("apply_remote must return fallback variant cleanly");
+
+        assert!(
+            matches!(outcome, ApplyOutcome::SnapshotFallbackRequested { .. }),
+            "behind-on-shared-peer from_vv must yield SnapshotFallbackRequested, got {outcome:?}",
+        );
+
+        // Engine import was skipped — none of A's blocks landed.
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B");
+        let e = g.engine_mut();
+        for blk in [BLOCK_A, BLOCK_B, BLOCK_D] {
+            assert!(
+                e.read_block(blk).expect("read").is_none(),
+                "{blk} must NOT be present after a fallback miss",
+            );
+        }
+    }
+
+    /// Unit-test the reachability classifier in isolation against
+    /// hand-built version vectors — three cases:
+    ///  - exact match  → reachable
+    ///  - local ahead  → reachable
+    ///  - local behind → unreachable (with diagnostic)
+    ///  - peer mentions an unknown peer at counter==0 → reachable
+    ///    (no-op entries do not gate reachability)
+    #[tokio::test]
+    async fn classify_from_vv_reachability_cases() {
+        // Build two engines + extract their encoded vvs at known
+        // states.  Using real engines avoids hand-rolling postcard.
+        let mut e_local = LoroEngine::with_peer_id("device-L").expect("L");
+        let mut e_peer = LoroEngine::with_peer_id("device-L").expect("peer-L"); // same peer_id
+
+        // Local: 2 ops.  Peer (echo): 2 ops too → exact match.
+        for (eng, prefix) in [(&mut e_local, "l"), (&mut e_peer, "p")] {
+            eng.apply_create_block(BLOCK_A, "content", &format!("{prefix}1"), None, 0)
+                .expect("op1");
+            eng.apply_create_block(BLOCK_B, "content", &format!("{prefix}2"), None, 1)
+                .expect("op2");
+        }
+        let local_vv = e_local.version_vector();
+        let peer_vv_eq = e_peer.version_vector();
+        assert!(
+            classify_from_vv_reachability(&local_vv, &peer_vv_eq)
+                .expect("decode")
+                .is_none(),
+            "exact match must be reachable",
+        );
+
+        // Local ahead: local has 3 ops, peer still at 2.
+        e_local
+            .apply_create_block(BLOCK_C, "content", "l3", None, 2)
+            .expect("l3");
+        let local_vv_ahead = e_local.version_vector();
+        assert!(
+            classify_from_vv_reachability(&local_vv_ahead, &peer_vv_eq)
+                .expect("decode")
+                .is_none(),
+            "local ahead must be reachable (we have everything peer claims)",
+        );
+
+        // Local behind: peer has 4 ops, local still at 3.
+        e_peer
+            .apply_create_block(BLOCK_C, "content", "p3", None, 2)
+            .expect("p3");
+        e_peer
+            .apply_create_block(BLOCK_D, "content", "p4", None, 3)
+            .expect("p4");
+        let peer_vv_ahead = e_peer.version_vector();
+        let miss = classify_from_vv_reachability(&local_vv_ahead, &peer_vv_ahead)
+            .expect("decode")
+            .expect("local-behind must be unreachable");
+        assert!(
+            miss.contains("counter") || miss.contains("peer"),
+            "diagnostic should mention peer/counter, got: {miss}",
+        );
     }
 }

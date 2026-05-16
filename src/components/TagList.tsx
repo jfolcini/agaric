@@ -77,7 +77,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       setTags(resp)
     } catch (error) {
       logger.error('TagList', 'failed to load tags', undefined, error)
-      notify.error(t('tags.loadFailed'))
+      notify.error(t('tags.loadFailed'), { id: 'tags-load-failed' })
     }
     setLoading(false)
   }, [t])

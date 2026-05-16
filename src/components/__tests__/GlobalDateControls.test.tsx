@@ -228,6 +228,9 @@ describe('GlobalDateControls', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to load calendar'),
+        // Effect-driven panel load: dedup so date-range scrubs that
+        // repeatedly hit a failing backend don't stack toasts.
+        expect.objectContaining({ id: 'journal-load-calendar-failed' }),
       )
     })
   })

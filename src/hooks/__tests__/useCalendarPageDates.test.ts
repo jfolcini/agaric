@@ -202,7 +202,10 @@ describe('useCalendarPageDates', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('calendar'))
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      expect.stringContaining('calendar'),
+      expect.objectContaining({ id: 'journal-load-calendar-failed' }),
+    )
   })
 
   it('subsequent mount after settled fetch issues a fresh fetch', async () => {

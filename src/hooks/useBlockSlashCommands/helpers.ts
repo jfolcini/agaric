@@ -62,7 +62,8 @@ export function warnIfBlocked(ctx: SlashCommandContext): void {
   getProperty(ctx.blockId, 'blocked_by')
     .then((row) => {
       const hasBlockedBy = row != null && row.value_ref != null
-      if (hasBlockedBy) notify.warning(ctx.t('dependency.dependencyWarning'))
+      if (hasBlockedBy)
+        notify.warning(ctx.t('dependency.dependencyWarning'), { id: 'dependency-warning' })
     })
     .catch((err) => {
       logger.warn('useBlockSlashCommands', 'dependency check failed', undefined, err)

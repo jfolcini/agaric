@@ -63,3 +63,48 @@ describe('notify.retry', () => {
     expect(consoleSpy).toHaveBeenCalledWith(err)
   })
 })
+
+// Dedup via sonner's `id` field. Sonner natively collapses identical
+// `id`s into a single toast — our wrapper's contract is just to forward
+// the opts unchanged. These tests pin that contract: an explicit `id`
+// reaches `toast.error` / `toast.warning`, and two calls with the same
+// id are still both forwarded (the dedup happens inside sonner, not in
+// our wrapper, so a per-call mock spy sees both).
+describe('notify dedup (id forwarding)', () => {
+  it('forwards an explicit id to toast.error for recurring-error categories', () => {
+    notify.error('Sync failed', { id: 'sync-error' })
+
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    const opts = vi.mocked(toast.error).mock.calls[0]?.[1] as Record<string, unknown> | undefined
+    expect(opts?.['id']).toBe('sync-error')
+  })
+
+  it('does not synthesise an id when the caller omits one (user-action toasts stack)', () => {
+    notify.error('Save failed')
+
+    const call = vi.mocked(toast.error).mock.calls[0]
+    // No opts arg forwarded → caller-controlled, dedup opt-in.
+    expect(call?.[1]).toBeUndefined()
+  })
+
+  it('forwards the same id on repeat calls (sonner does the dedup, not our wrapper)', () => {
+    notify.error('Sync failed', { id: 'sync-error' })
+    notify.error('Sync failed', { id: 'sync-error' })
+
+    // Both calls reach toast.error — sonner is responsible for
+    // collapsing them in the rendered toast list, not us.
+    expect(toast.error).toHaveBeenCalledTimes(2)
+    const opts1 = vi.mocked(toast.error).mock.calls[0]?.[1] as Record<string, unknown>
+    const opts2 = vi.mocked(toast.error).mock.calls[1]?.[1] as Record<string, unknown>
+    expect(opts1['id']).toBe('sync-error')
+    expect(opts2['id']).toBe('sync-error')
+  })
+
+  it('forwards an explicit id to toast.warning (e.g. dependency-warning, repeats per toggle)', () => {
+    notify.warning('blocked_by unresolved', { id: 'dependency-warning' })
+
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    const opts = vi.mocked(toast.warning).mock.calls[0]?.[1] as Record<string, unknown> | undefined
+    expect(opts?.['id']).toBe('dependency-warning')
+  })
+})

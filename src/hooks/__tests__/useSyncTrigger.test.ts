@@ -355,6 +355,10 @@ describe('useSyncTrigger', () => {
       'Sync failed for device PEER_FAIL_12...',
       expect.objectContaining({
         duration: 5000,
+        // Per-peer dedup id keyed by the full peer id — different peers
+        // surface their own toast, repeated failures from the same peer
+        // collapse into one.
+        id: 'sync-peer-error:PEER_FAIL_12345',
         action: expect.objectContaining({
           label: 'Retry sync',
           onClick: expect.any(Function),
@@ -416,7 +420,10 @@ describe('useSyncTrigger', () => {
       await result.current.syncAll()
     })
 
-    expect(toast.error).toHaveBeenCalledWith('Sync failed')
+    expect(toast.error).toHaveBeenCalledWith(
+      'Sync failed',
+      expect.objectContaining({ id: 'sync-error' }),
+    )
   })
 
   it('triggers periodic resync every 60 seconds (#446)', async () => {

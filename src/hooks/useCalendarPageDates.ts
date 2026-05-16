@@ -132,7 +132,7 @@ export function useCalendarPageDates(
       .catch((err) => {
         if (cancelled || !mountedRef.current) return
         logger.warn('useCalendarPageDates', 'page-dates fetch failed', undefined, err)
-        notify.error(t('journal.loadCalendarFailed'))
+        notify.error(t('journal.loadCalendarFailed'), { id: 'journal-load-calendar-failed' })
       })
       .finally(() => {
         if (cancelled || !mountedRef.current) return

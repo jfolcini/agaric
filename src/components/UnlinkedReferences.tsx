@@ -124,7 +124,7 @@ export function UnlinkedReferences({
         setTruncated(resp.truncated)
       } catch (err) {
         logger.error('UnlinkedReferences', 'Failed to load unlinked references', { pageId }, err)
-        notify.error(t('unlinkedRefs.loadFailed'))
+        notify.error(t('unlinkedRefs.loadFailed'), { id: 'unlinked-refs-load-failed' })
       } finally {
         setLoading(false)
       }
