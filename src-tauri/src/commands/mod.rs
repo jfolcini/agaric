@@ -26,24 +26,24 @@ use crate::pairing::PairingSession;
 use crate::ulid::BlockId;
 
 // Domain sub-modules
-mod agenda;
-mod attachments;
-mod blocks;
-mod bug_report;
-mod compaction;
-mod drafts;
-mod gcal;
-mod history;
-mod journal;
-mod link_metadata;
-mod logging;
-mod mcp;
-mod pages;
-mod properties;
-mod queries;
-mod spaces;
-mod sync_cmds;
-mod tags;
+pub(crate) mod agenda;
+pub(crate) mod attachments;
+pub(crate) mod blocks;
+pub(crate) mod bug_report;
+pub(crate) mod compaction;
+pub(crate) mod drafts;
+pub(crate) mod gcal;
+pub(crate) mod history;
+pub(crate) mod journal;
+pub(crate) mod link_metadata;
+pub(crate) mod logging;
+pub(crate) mod mcp;
+pub(crate) mod pages;
+pub(crate) mod properties;
+pub(crate) mod queries;
+pub(crate) mod spaces;
+pub(crate) mod sync_cmds;
+pub(crate) mod tags;
 
 // Tauri command handlers and testable _inner functions — explicitly re-exported.
 pub use agenda::{

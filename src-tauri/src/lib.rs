@@ -64,196 +64,196 @@ pub mod word_diff;
 macro_rules! agaric_commands {
     () => {
         ::tauri_specta::collect_commands![
-            $crate::commands::create_block,
+            $crate::commands::blocks::crud::create_block,
             // PEND-35 Tier 4.3 — atomic batch-create for templates: a
             // 10-line journal template that previously fired 10
             // `create_block` IPCs now fires 1, with one IMMEDIATE tx
             // and one op_log scope covering every block + its
             // properties.
-            $crate::commands::create_blocks_batch,
-            $crate::commands::edit_block,
-            $crate::commands::delete_block,
+            $crate::commands::blocks::crud::create_blocks_batch,
+            $crate::commands::blocks::crud::edit_block,
+            $crate::commands::blocks::crud::delete_block,
             // PEND-35 Tier 2.1 — multi-select batch delete: collapses
             // the FE per-row IPC loop (50 IPCs for a 50-row delete)
             // into one IMMEDIATE tx with a single recursive CTE
             // seeded from every root simultaneously.
-            $crate::commands::delete_blocks_by_ids,
-            $crate::commands::restore_block,
-            $crate::commands::purge_block,
+            $crate::commands::blocks::crud::delete_blocks_by_ids,
+            $crate::commands::blocks::crud::restore_block,
+            $crate::commands::blocks::crud::purge_block,
             // PEND-35 Tier 2.2 — TrashView batch restore/purge: collapses
             // the per-row IMMEDIATE-tx loop (50 IPCs for a 50-row purge)
             // into a single tx running the cleanup chain once.
-            $crate::commands::restore_blocks_by_ids,
-            $crate::commands::purge_blocks_by_ids,
-            $crate::commands::move_block,
-            $crate::commands::list_blocks,
-            $crate::commands::get_block,
-            $crate::commands::batch_resolve,
-            $crate::commands::add_tag,
-            $crate::commands::remove_tag,
-            $crate::commands::get_backlinks,
+            $crate::commands::blocks::crud::restore_blocks_by_ids,
+            $crate::commands::blocks::crud::purge_blocks_by_ids,
+            $crate::commands::blocks::move_ops::move_block,
+            $crate::commands::blocks::queries::list_blocks,
+            $crate::commands::blocks::queries::get_block,
+            $crate::commands::blocks::queries::batch_resolve,
+            $crate::commands::tags::add_tag,
+            $crate::commands::tags::remove_tag,
+            $crate::commands::queries::get_backlinks,
             $crate::commands::get_block_history,
-            $crate::commands::get_status,
-            $crate::commands::search_blocks,
-            $crate::commands::query_by_tags,
-            $crate::commands::query_by_property,
+            $crate::commands::queries::get_status,
+            $crate::commands::queries::search_blocks,
+            $crate::commands::tags::query_by_tags,
+            $crate::commands::queries::query_by_property,
             // PEND-35 Tier 2.10b — AND-intersected property + tag query
             // resolved entirely in SQL via composed `EXISTS` subqueries.
             // Replaces the FE `useQueryExecution.fetchFilteredQuery` shape
             // that fanned out one IPC per sub-filter (each capped at 200
             // rows) and intersected in JS — silently dropping any AND-set
             // member outside the top-200 of any one sub-query.
-            $crate::commands::filtered_blocks_query,
-            $crate::commands::list_unfinished_tasks,
-            $crate::commands::list_tags_by_prefix,
+            $crate::commands::queries::filtered_blocks_query,
+            $crate::commands::queries::list_unfinished_tasks,
+            $crate::commands::tags::list_tags_by_prefix,
             // limit-clamp-followup — `TagList.tsx`'s tag-management list
             // view used to call `list_tags_by_prefix({ prefix: '',
             // limit: 500 })` and silently get only 200 rows (the
             // `MAX_TAGS_PREFIX` ceiling).  `list_all_tags_in_space`
             // returns every tag in the space with no pagination and no
             // clamp.
-            $crate::commands::list_all_tags_in_space,
-            $crate::commands::list_tags_for_block,
-            $crate::commands::set_property,
-            $crate::commands::set_todo_state,
+            $crate::commands::tags::list_all_tags_in_space,
+            $crate::commands::tags::list_tags_for_block,
+            $crate::commands::properties::set_property,
+            $crate::commands::properties::set_todo_state,
             // PEND-35 Tier 2.1 — multi-select batch set-todo: collapses
             // the per-row IPC loop (50 IPCs for "mark 50 done") into
             // one IMMEDIATE tx with one op_log scope.
-            $crate::commands::set_todo_state_batch,
-            $crate::commands::set_priority,
-            $crate::commands::set_due_date,
-            $crate::commands::set_scheduled_date,
-            $crate::commands::delete_property,
-            $crate::commands::get_properties,
-            $crate::commands::get_property,
-            $crate::commands::get_batch_properties,
-            $crate::commands::list_page_history,
-            $crate::commands::revert_ops,
-            $crate::commands::undo_page_op,
-            $crate::commands::redo_page_op,
+            $crate::commands::properties::set_todo_state_batch,
+            $crate::commands::properties::set_priority,
+            $crate::commands::properties::set_due_date,
+            $crate::commands::properties::set_scheduled_date,
+            $crate::commands::properties::delete_property,
+            $crate::commands::properties::get_properties,
+            $crate::commands::properties::get_property,
+            $crate::commands::properties::get_batch_properties,
+            $crate::commands::history::list_page_history,
+            $crate::commands::history::revert_ops,
+            $crate::commands::history::undo_page_op,
+            $crate::commands::history::redo_page_op,
             // PEND-35 Tier 4.4 — single-IPC undo-group sizing: replaces
             // the FE's growing-window `list_page_history` re-fetch loop
             // after every Ctrl+Z with one recursive-CTE query that
             // walks consecutive same-device + within-window ops.
-            $crate::commands::find_undo_group,
-            $crate::commands::compute_edit_diff,
-            $crate::commands::compute_block_vs_current_diff,
-            $crate::commands::query_backlinks_filtered,
-            $crate::commands::list_backlinks_grouped,
-            $crate::commands::list_unlinked_references,
-            $crate::commands::list_property_keys,
-            $crate::commands::create_property_def,
-            $crate::commands::get_property_def,
-            $crate::commands::list_property_defs,
-            $crate::commands::update_property_def_options,
-            $crate::commands::delete_property_def,
+            $crate::commands::history::find_undo_group,
+            $crate::commands::history::compute_edit_diff,
+            $crate::commands::history::compute_block_vs_current_diff,
+            $crate::commands::queries::query_backlinks_filtered,
+            $crate::commands::queries::list_backlinks_grouped,
+            $crate::commands::queries::list_unlinked_references,
+            $crate::commands::properties::list_property_keys,
+            $crate::commands::properties::create_property_def,
+            $crate::commands::properties::get_property_def,
+            $crate::commands::properties::list_property_defs,
+            $crate::commands::properties::update_property_def_options,
+            $crate::commands::properties::delete_property_def,
             // Sync
-            $crate::commands::list_peer_refs,
-            $crate::commands::get_peer_ref,
-            $crate::commands::delete_peer_ref,
-            $crate::commands::update_peer_name,
-            $crate::commands::set_peer_address,
-            $crate::commands::get_device_id,
+            $crate::commands::sync_cmds::list_peer_refs,
+            $crate::commands::sync_cmds::get_peer_ref,
+            $crate::commands::sync_cmds::delete_peer_ref,
+            $crate::commands::sync_cmds::update_peer_name,
+            $crate::commands::sync_cmds::set_peer_address,
+            $crate::commands::sync_cmds::get_device_id,
             // Sync — pairing & session (#275, #278)
-            $crate::commands::start_pairing,
-            $crate::commands::confirm_pairing,
-            $crate::commands::cancel_pairing,
-            $crate::commands::start_sync,
-            $crate::commands::cancel_sync,
+            $crate::commands::sync_cmds::start_pairing,
+            $crate::commands::sync_cmds::confirm_pairing,
+            $crate::commands::sync_cmds::cancel_pairing,
+            $crate::commands::sync_cmds::start_sync,
+            $crate::commands::sync_cmds::cancel_sync,
             // Batch count commands (#604)
-            $crate::commands::count_agenda_batch,
-            $crate::commands::count_agenda_batch_by_source,
-            $crate::commands::count_backlinks_batch,
+            $crate::commands::agenda::count_agenda_batch,
+            $crate::commands::agenda::count_agenda_batch_by_source,
+            $crate::commands::queries::count_backlinks_batch,
             // Page aliases (#598)
-            $crate::commands::set_page_aliases,
-            $crate::commands::get_page_aliases,
-            $crate::commands::list_page_aliases_by_prefix,
-            $crate::commands::resolve_page_by_alias,
+            $crate::commands::pages::set_page_aliases,
+            $crate::commands::pages::get_page_aliases,
+            $crate::commands::pages::list_page_aliases_by_prefix,
+            $crate::commands::pages::resolve_page_by_alias,
             // Markdown export (#519)
-            $crate::commands::export_page_markdown,
+            $crate::commands::pages::export_page_markdown,
             // Agenda projection (#644)
-            $crate::commands::list_projected_agenda,
+            $crate::commands::agenda::list_projected_agenda,
             // Undated tasks (FEAT-1)
-            $crate::commands::list_undated_tasks,
+            $crate::commands::agenda::list_undated_tasks,
             // Logseq/Markdown import (#660)
-            $crate::commands::import_markdown,
+            $crate::commands::pages::import_markdown,
             // Attachments (F-7)
-            $crate::commands::add_attachment,
-            $crate::commands::delete_attachment,
-            $crate::commands::list_attachments,
-            $crate::commands::list_attachments_batch,
+            $crate::commands::attachments::add_attachment,
+            $crate::commands::attachments::delete_attachment,
+            $crate::commands::attachments::list_attachments,
+            $crate::commands::attachments::list_attachments_batch,
             // Graph visualization (F-33)
-            $crate::commands::list_page_links,
+            $crate::commands::pages::list_page_links,
             // Draft autosave (F-17)
-            $crate::commands::save_draft,
-            $crate::commands::flush_draft,
-            $crate::commands::flush_all_drafts,
-            $crate::commands::delete_draft,
-            $crate::commands::list_drafts,
+            $crate::commands::drafts::save_draft,
+            $crate::commands::drafts::flush_draft,
+            $crate::commands::drafts::flush_all_drafts,
+            $crate::commands::drafts::delete_draft,
+            $crate::commands::drafts::list_drafts,
             // Frontend logging (F-19)
-            $crate::commands::log_frontend,
-            $crate::commands::get_log_dir,
+            $crate::commands::logging::log_frontend,
+            $crate::commands::logging::get_log_dir,
             // Op log compaction (F-20)
-            $crate::commands::get_compaction_status,
-            $crate::commands::compact_op_log_cmd,
+            $crate::commands::compaction::get_compaction_status,
+            $crate::commands::compaction::compact_op_log_cmd,
             // Point-in-time restore (F-26)
-            $crate::commands::restore_page_to_op,
+            $crate::commands::history::restore_page_to_op,
             // Bulk trash operations (B-46)
-            $crate::commands::restore_all_deleted,
-            $crate::commands::purge_all_deleted,
+            $crate::commands::blocks::crud::restore_all_deleted,
+            $crate::commands::blocks::crud::purge_all_deleted,
             // Trash descendant counts (UX-243)
-            $crate::commands::trash_descendant_counts,
+            $crate::commands::blocks::queries::trash_descendant_counts,
             // Trash count badge (limit-clamp follow-up, ViewDispatcher trash badge)
             // — pushes the count into SQL so the badge is accurate beyond 100
             // soft-deleted items. Replaces the legacy `listBlocks({ showDeleted:
             // true, limit: 100 }).items.length` shape that silently clamped.
-            $crate::commands::count_trash,
+            $crate::commands::blocks::queries::count_trash,
             // First-child-per-parent batch (PEND-35 Tier 2.8) — collapses the
             // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.
-            $crate::commands::first_child_for_blocks,
+            $crate::commands::blocks::queries::first_child_for_blocks,
             // PEND-35 Tier 2.3 — get_blocks batch endpoint
             //   • get_blocks(ids) — full BlockRow batch.
-            $crate::commands::get_blocks,
+            $crate::commands::blocks::queries::get_blocks,
             // Link metadata (UX-165)
-            $crate::commands::fetch_link_metadata,
-            $crate::commands::get_link_metadata,
+            $crate::commands::link_metadata::fetch_link_metadata,
+            $crate::commands::link_metadata::get_link_metadata,
             // Bug report (FEAT-5)
-            $crate::commands::collect_bug_report_metadata,
-            $crate::commands::read_logs_for_report,
+            $crate::commands::bug_report::collect_bug_report_metadata,
+            $crate::commands::bug_report::read_logs_for_report,
             // MCP (FEAT-4e) — Settings "Agent access" tab
-            $crate::commands::get_mcp_status,
-            $crate::commands::get_mcp_socket_path,
-            $crate::commands::mcp_set_enabled,
-            $crate::commands::mcp_disconnect_all,
+            $crate::commands::mcp::get_mcp_status,
+            $crate::commands::mcp::get_mcp_socket_path,
+            $crate::commands::mcp::mcp_set_enabled,
+            $crate::commands::mcp::mcp_disconnect_all,
             // MCP RW (FEAT-4h slice 2)
-            $crate::commands::get_mcp_rw_status,
-            $crate::commands::get_mcp_rw_socket_path,
-            $crate::commands::mcp_rw_set_enabled,
-            $crate::commands::mcp_rw_disconnect_all,
+            $crate::commands::mcp::get_mcp_rw_status,
+            $crate::commands::mcp::get_mcp_rw_socket_path,
+            $crate::commands::mcp::mcp_rw_set_enabled,
+            $crate::commands::mcp::mcp_rw_disconnect_all,
             // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
-            $crate::commands::get_gcal_status,
-            $crate::commands::force_gcal_resync,
-            $crate::commands::disconnect_gcal,
-            $crate::commands::set_gcal_window_days,
-            $crate::commands::set_gcal_privacy_mode,
+            $crate::commands::gcal::get_gcal_status,
+            $crate::commands::gcal::force_gcal_resync,
+            $crate::commands::gcal::disconnect_gcal,
+            $crate::commands::gcal::set_gcal_window_days,
+            $crate::commands::gcal::set_gcal_privacy_mode,
             // Desktop OAuth flow entry point (FEAT-5b).
-            $crate::commands::begin_gcal_oauth,
+            $crate::commands::gcal::begin_gcal_oauth,
             // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
-            $crate::commands::list_spaces,
-            $crate::commands::create_page_in_space,
-            $crate::commands::create_space,
+            $crate::commands::spaces::list_spaces,
+            $crate::commands::spaces::create_page_in_space,
+            $crate::commands::spaces::create_space,
             // Quick capture (FEAT-12) — desktop global-shortcut entry point
-            $crate::commands::quick_capture_block,
+            $crate::commands::journal::quick_capture_block,
             // Journal page lookup (BUG-48) — database-native date queries
-            $crate::commands::get_journal_page_by_date,
-            $crate::commands::list_journal_pages_in_range,
+            $crate::commands::journal::get_journal_page_by_date,
+            $crate::commands::journal::list_journal_pages_in_range,
             // All-pages-in-space (export / graph) — no-pagination IPC for callers
             // that genuinely need every page in the space
-            $crate::commands::list_all_pages_in_space,
-            $crate::commands::list_template_page_ids_in_space,
+            $crate::commands::pages::list_all_pages_in_space,
+            $crate::commands::pages::list_template_page_ids_in_space,
             // Page subtree loader — single SELECT against the `page_id` index;
             // replaces the FE-side recursive `listBlocks` walk
-            $crate::commands::load_page_subtree,
+            $crate::commands::pages::load_page_subtree,
         ]
     };
 }
@@ -1385,8 +1385,20 @@ mod specta_tests {
     /// command list stays in sync. I-Core-7: the command list itself lives
     /// in the `agaric_commands!` macro near the top of `lib.rs`; this
     /// function and `run()` both expand it so they cannot drift.
-    fn specta_builder() -> Builder {
-        Builder::<tauri::Wry>::new().commands(agaric_commands!())
+    fn specta_builder() -> Builder<tauri::Wry> {
+        // tauri-specta 2.0.0-rc.25 forbids BigInt-style integer types
+        // (u64/i64/u128/i128/usize/isize) in TypeScript exports by default
+        // because JS `number` is f64 and silently loses precision above
+        // ~2^53. We've shipped on the rc.24 default (cast as `number`) for
+        // the lifetime of the app — every IPC u64/i64 we surface is a row
+        // count, byte count, or millisecond timestamp, all comfortably
+        // under the safe-integer ceiling. The `dangerously_*` opt-in
+        // preserves that behavior so we keep wire compatibility without
+        // forcing a frontend-wide BigInt audit. Revisit if any IPC field
+        // ever needs to carry values >2^53.
+        Builder::<tauri::Wry>::new()
+            .commands(agaric_commands!())
+            .dangerously_cast_bigints_to_number()
     }
 
     /// Verify the generated TypeScript bindings match the committed file.

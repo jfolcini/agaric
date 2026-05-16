@@ -2,6 +2,16 @@
   <img src="src-tauri/icons/128x128.png" alt="Agaric logo" width="128" height="128">
 </p>
 
+<p align="center">
+  <a href="https://github.com/jfolcini/agaric/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jfolcini/agaric/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/jfolcini/agaric/releases"><img alt="Release" src="https://img.shields.io/github/v/release/jfolcini/agaric?include_prereleases"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/jfolcini/agaric"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/jfolcini/agaric/badge"></a>
+  <a href="https://slsa.dev"><img alt="SLSA 3" src="https://slsa.dev/images/gh-badge-level3.svg"></a>
+  <a href="https://v2.tauri.app"><img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=white"></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey">
+</p>
+
 # Agaric
 
 A local-first, block-based note-taking app for **Linux** (primary), **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine, syncs over local WiFi. **AI-ready** — ships an MCP integration so Claude Desktop, Cursor, Continue, and other agents talk directly to your local vault.

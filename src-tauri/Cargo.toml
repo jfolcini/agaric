@@ -134,9 +134,9 @@ tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "
 regex = "1"
 aho-corasick = "1"
 base64 = "0.22.1"
-specta = { version = "=2.0.0-rc.24", features = ["derive"] }
-specta-typescript = "0.0.11"
-tauri-specta = { version = "=2.0.0-rc.24", features = ["derive", "typescript"] }
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 rustc-hash = "2.1.2"
 similar = "3"
 zstd = "0.13"

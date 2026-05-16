@@ -3,8 +3,11 @@
 # classic branch-protection's "required status checks"; this repo uses a
 # ruleset instead, so we assert the set of *rule types* enforced on `main`.
 #
-# Expected ruleset shape (sorted), as of PEND-41 R30 baseline:
-#   ["deletion", "non_fast_forward", "pull_request", "required_signatures"]
+# Expected ruleset shape (sorted), as of the 2026-05-16 Scorecard-hardening
+# pass (added `required_status_checks` so PRs can't merge until `validate-all`
+# is green; see `docs/architecture/ci-and-tooling.md` §13):
+#   ["deletion", "non_fast_forward", "pull_request",
+#    "required_signatures", "required_status_checks"]
 #
 # If a maintainer intentionally changes the ruleset, update the EXPECTED list
 # below in the same PR that adjusts the ruleset.
@@ -38,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          EXPECTED='["deletion","non_fast_forward","pull_request","required_signatures"]'
+          EXPECTED='["deletion","non_fast_forward","pull_request","required_signatures","required_status_checks"]'
           ACTUAL="$(gh api "repos/${REPO}/rules/branches/main" --jq '[.[] | .type] | sort | tostring')"
 
           if [ "${ACTUAL}" = "${EXPECTED}" ]; then

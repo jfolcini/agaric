@@ -12,7 +12,7 @@ export const commands = {
 	 *  (BUG-1 / H-3a). The optional `space_id` is required when
 	 *  `block_type == "page"` and ignored otherwise.
 	 */
-	createBlock: (blockType: string, content: string, parentId: string | null, position: number | null, scope: SpaceScope) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("create_block", { blockType, content, parentId, position, scope })),
+	createBlock: (blockType: string, content: string, parentId: string | null, position: number | null, scope: SpaceScope) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, position, scope })),
 	/**
 	 *  Tauri command: atomically create a batch of blocks. Delegates to
 	 *  [`create_blocks_batch_inner`].
@@ -23,11 +23,11 @@ export const commands = {
 	 *  writer-lock window. A 10-line template that previously fired 10
 	 *  IPCs now fires 1.
 	 */
-	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("create_blocks_batch", { specs })),
-	// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
-	editBlock: (blockId: string, toText: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("edit_block", { blockId, toText })),
-	// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
-	deleteBlock: (blockId: string) => typedError<DeleteResponse, AppErrorSchema>(__TAURI_INVOKE("delete_block", { blockId })),
+	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("create_blocks_batch", { specs })),
+	/**  Tauri command: edit a block's content. Delegates to [`edit_block_inner`]. */
+	editBlock: (blockId: string, toText: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText })),
+	/**  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`]. */
+	deleteBlock: (blockId: string) => typedError<DeleteResponse, AppError>(__TAURI_INVOKE("delete_block", { blockId })),
 	/**
 	 *  Tauri command: batch-delete blocks by ids (PEND-35 Tier 2.1).
 	 *
@@ -37,23 +37,23 @@ export const commands = {
 	 *  one writer-lock window. Returns the number of blocks soft-deleted
 	 *  (roots + descendants combined).
 	 */
-	deleteBlocksByIds: (blockIds: string[]) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
-	// Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
-	restoreBlock: (blockId: string, deletedAtRef: string) => typedError<RestoreResponse, AppErrorSchema>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
-	// Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`].
-	purgeBlock: (blockId: string) => typedError<PurgeResponse, AppErrorSchema>(__TAURI_INVOKE("purge_block", { blockId })),
+	deleteBlocksByIds: (blockIds: string[]) => typedError<number, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
+	/**  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`]. */
+	restoreBlock: (blockId: string, deletedAtRef: string) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
+	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
+	purgeBlock: (blockId: string) => typedError<PurgeResponse, AppError>(__TAURI_INVOKE("purge_block", { blockId })),
 	/**
 	 *  PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in one IPC.
 	 *  Delegates to [`restore_blocks_by_ids_inner`].
 	 */
-	restoreBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("restore_blocks_by_ids", { blockIds })),
+	restoreBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("restore_blocks_by_ids", { blockIds })),
 	/**
 	 *  PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in one IPC.
 	 *  Delegates to [`purge_blocks_by_ids_inner`].
 	 */
-	purgeBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("purge_blocks_by_ids", { blockIds })),
-	// Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`].
-	moveBlock: (blockId: string, newParentId: string | null, newPosition: number) => typedError<MoveResponse, AppErrorSchema>(__TAURI_INVOKE("move_block", { blockId, newParentId, newPosition })),
+	purgeBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("purge_blocks_by_ids", { blockIds })),
+	/**  Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`]. */
+	moveBlock: (blockId: string, newParentId: string | null, newPosition: number) => typedError<MoveResponse, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newPosition })),
 	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 	 *
@@ -66,13 +66,13 @@ export const commands = {
 	 *  boundary).
 	 */
 	listBlocks: (parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agenda: {
-	// Single-date agenda lookup (`YYYY-MM-DD`).
+	/**  Single-date agenda lookup (`YYYY-MM-DD`). */
 	date: string | null,
-	// Date-range agenda lookup (inclusive on both ends).
+	/**  Date-range agenda lookup (inclusive on both ends). */
 	dateRange: DateRange | null,
-	// Optional source filter (`due_date` / `scheduled_date`).
+	/**  Optional source filter (`due_date` / `scheduled_date`). */
 	source: string | null,
-} | null, cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agenda, cursor, limit, spaceId })),
+} | null, cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agenda, cursor, limit, spaceId })),
 	/**
 	 *  Tauri command: fetch a single block by ID. Delegates to
 	 *  [`get_active_block_inner`].
@@ -84,7 +84,7 @@ export const commands = {
 	 *  `NotFound` to the IPC caller instead of an apparently-live row
 	 *  with `deleted_at` set.
 	 */
-	getBlock: (blockId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("get_block", { blockId })),
+	getBlock: (blockId: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("get_block", { blockId })),
 	/**
 	 *  Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
 	 *
@@ -92,21 +92,21 @@ export const commands = {
 	 *  surface foreign-space titles. The frontend always knows the current
 	 *  space and threads it through `useResolveStore.preload(spaceId)`.
 	 */
-	batchResolve: (ids: string[], scope: SpaceScope) => typedError<ResolvedBlock[], AppErrorSchema>(__TAURI_INVOKE("batch_resolve", { ids, scope })),
-	// Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
-	addTag: (blockId: string, tagId: string) => typedError<TagResponse, AppErrorSchema>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
-	// Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].
-	removeTag: (blockId: string, tagId: string) => typedError<TagResponse, AppErrorSchema>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
-	// Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
-	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
-	// Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
-	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
-	// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
-	getStatus: () => typedError<StatusInfo, AppErrorSchema>(__TAURI_INVOKE("get_status")),
-	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
-	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
-	// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
-	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope, blockType })),
+	batchResolve: (ids: string[], scope: SpaceScope) => typedError<ResolvedBlock[], AppError>(__TAURI_INVOKE("batch_resolve", { ids, scope })),
+	/**  Tauri command: add a tag to a block. Delegates to [`add_tag_inner`]. */
+	addTag: (blockId: string, tagId: string) => typedError<TagResponse, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
+	/**  Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`]. */
+	removeTag: (blockId: string, tagId: string) => typedError<TagResponse, AppError>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
+	/**  Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`]. */
+	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
+	/**  Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`]. */
+	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
+	/**  Tauri command: get materializer queue status. Delegates to [`get_status_inner`]. */
+	getStatus: () => typedError<StatusInfo, AppError>(__TAURI_INVOKE("get_status")),
+	/**  Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`]. */
+	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
+	/**  Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`]. */
+	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope, blockType })),
 	/**
 	 *  Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
 	 *
@@ -130,7 +130,7 @@ export const commands = {
 	 *  whitespace-only (matches FE `!b.content?.trim()`).
 	 */
 	contentNonEmpty: boolean | null,
-	// PEND-35 Tier 3.4 — push `block_type = ?` into SQL.
+	/**  PEND-35 Tier 3.4 — push `block_type = ?` into SQL. */
 	blockType: string | null,
 	/**
 	 *  PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
@@ -143,7 +143,7 @@ export const commands = {
 	 *  into SQL (half-open `[from, to)` range).
 	 */
 	valueDateRange: [string, string] | null,
-} | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, extraFilters })),
+} | null) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, extraFilters })),
 	/**
 	 *  Tauri command: AND-intersect property + tag predicates in SQL.
 	 *  Delegates to [`filtered_blocks_query_inner`].
@@ -156,9 +156,9 @@ export const commands = {
 	 *  intersection ran.
 	 */
 	filteredBlocksQuery: (propertyFilters: PropertyFilter[], tagFilters: {
-	// Explicit tag-block ULIDs.
+	/**  Explicit tag-block ULIDs. */
 	tagIds?: string[],
-	// Tag-name prefixes (resolved via `tags_cache.name LIKE ?`).
+	/**  Tag-name prefixes (resolved via `tags_cache.name LIKE ?`). */
 	prefixes?: string[],
 	/**
 	 *  `"and"` for intersection across all tag matches, anything else
@@ -171,18 +171,18 @@ export const commands = {
 	 *  (`block_tag_refs`) associations. Defaults to `false`.
 	 */
 	includeInherited?: boolean,
-} | null, blockType: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("filtered_blocks_query", { propertyFilters, tagFilters, blockType, scope, cursor, limit })),
-	// Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`].
-	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
-	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
-	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppErrorSchema>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
+} | null, blockType: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("filtered_blocks_query", { propertyFilters, tagFilters, blockType, scope, cursor, limit })),
+	/**  Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`]. */
+	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
+	/**  Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`]. */
+	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
 	/**
 	 *  Tauri command: list every tag in `space_id` as `TagCacheRow[]`. No
 	 *  pagination, no clamp.  Delegates to [`list_all_tags_in_space_inner`].
 	 */
-	listAllTagsInSpace: (spaceId: string) => typedError<TagCacheRow[], AppErrorSchema>(__TAURI_INVOKE("list_all_tags_in_space", { spaceId })),
-	// Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].
-	listTagsForBlock: (blockId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
+	listAllTagsInSpace: (spaceId: string) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_all_tags_in_space", { spaceId })),
+	/**  Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`]. */
+	listTagsForBlock: (blockId: string) => typedError<string[], AppError>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
 	/**
 	 *  Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
 	 *
@@ -190,9 +190,9 @@ export const commands = {
 	 *  IPC signature stays at 7 positional args (under specta's 10-arg cap).
 	 *  Adding `value_bool` as a 5th flat field would have exceeded the limit.
 	 */
-	setProperty: (blockId: string, key: string, value: SetPropertyArgs) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_property", { blockId, key, value })),
-	// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
-	setTodoState: (blockId: string, state: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
+	setProperty: (blockId: string, key: string, value: SetPropertyArgs) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_property", { blockId, key, value })),
+	/**  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`]. */
+	setTodoState: (blockId: string, state: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
 	 *  Tauri command: batch-set todo state on multiple blocks (PEND-35 Tier 2.1).
 	 *
@@ -206,7 +206,7 @@ export const commands = {
 	 *  drawer) keep firing without protocol changes. Failed-emit
 	 *  breadcrumbs follow the established log-on-error pattern (L-33).
 	 */
-	setTodoStateBatch: (blockIds: string[], state: string | null) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
+	setTodoStateBatch: (blockIds: string[], state: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
 	 *  Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
 	 *
@@ -217,15 +217,15 @@ export const commands = {
 	 *  log-on-error pattern (mirror of L-33) so a transient emit failure
 	 *  does not propagate as a command error.
 	 */
-	setPriority: (blockId: string, level: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_priority", { blockId, level })),
-	// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
-	setDueDate: (blockId: string, date: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_due_date", { blockId, date })),
-	// Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`].
-	setScheduledDate: (blockId: string, date: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_scheduled_date", { blockId, date })),
-	// Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
-	deleteProperty: (blockId: string, key: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_property", { blockId, key })),
-	// Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].
-	getProperties: (blockId: string) => typedError<PropertyRow[], AppErrorSchema>(__TAURI_INVOKE("get_properties", { blockId })),
+	setPriority: (blockId: string, level: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_priority", { blockId, level })),
+	/**  Tauri command: set due date on a block. Delegates to [`set_due_date_inner`]. */
+	setDueDate: (blockId: string, date: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_due_date", { blockId, date })),
+	/**  Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`]. */
+	setScheduledDate: (blockId: string, date: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_scheduled_date", { blockId, date })),
+	/**  Tauri command: delete a property from a block. Delegates to [`delete_property_inner`]. */
+	deleteProperty: (blockId: string, key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property", { blockId, key })),
+	/**  Tauri command: get all properties for a block. Delegates to [`get_properties_inner`]. */
+	getProperties: (blockId: string) => typedError<PropertyRow[], AppError>(__TAURI_INVOKE("get_properties", { blockId })),
 	/**
 	 *  Tauri command: fetch a single property row by `(block_id, key)`
 	 *  primary key (PEND-35 Tier 2.4c). Delegates to [`get_property_inner`].
@@ -241,44 +241,44 @@ export const commands = {
 	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
 	 */
 	value_bool: number | null,
-} | null, AppErrorSchema>(__TAURI_INVOKE("get_property", { blockId, key })),
-	// Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`].
-	getBatchProperties: (blockIds: string[]) => typedError<{ [key in string]: PropertyRow[] }, AppErrorSchema>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
-	// Tauri command: list page history. Delegates to [`list_page_history_inner`].
-	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
-	// Tauri command: batch revert ops. Delegates to [`revert_ops_inner`].
-	revertOps: (ops: OpRef[]) => typedError<UndoResult[], AppErrorSchema>(__TAURI_INVOKE("revert_ops", { ops })),
-	// Tauri command: undo page op. Delegates to [`undo_page_op_inner`].
-	undoPageOp: (pageId: string, undoDepth: number) => typedError<UndoResult, AppErrorSchema>(__TAURI_INVOKE("undo_page_op", { pageId, undoDepth })),
-	// Tauri command: redo page op. Delegates to [`redo_page_op_inner`].
-	redoPageOp: (undoDeviceId: string, undoSeq: number) => typedError<UndoResult, AppErrorSchema>(__TAURI_INVOKE("redo_page_op", { undoDeviceId, undoSeq })),
+} | null, AppError>(__TAURI_INVOKE("get_property", { blockId, key })),
+	/**  Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`]. */
+	getBatchProperties: (blockIds: string[]) => typedError<{ [key in string]: PropertyRow[] }, AppError>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
+	/**  Tauri command: list page history. Delegates to [`list_page_history_inner`]. */
+	listPageHistory: (pageId: string, opTypeFilter: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, scope, cursor, limit })),
+	/**  Tauri command: batch revert ops. Delegates to [`revert_ops_inner`]. */
+	revertOps: (ops: OpRef[]) => typedError<UndoResult[], AppError>(__TAURI_INVOKE("revert_ops", { ops })),
+	/**  Tauri command: undo page op. Delegates to [`undo_page_op_inner`]. */
+	undoPageOp: (pageId: string, undoDepth: number) => typedError<UndoResult, AppError>(__TAURI_INVOKE("undo_page_op", { pageId, undoDepth })),
+	/**  Tauri command: redo page op. Delegates to [`redo_page_op_inner`]. */
+	redoPageOp: (undoDeviceId: string, undoSeq: number) => typedError<UndoResult, AppError>(__TAURI_INVOKE("redo_page_op", { undoDeviceId, undoSeq })),
 	/**
 	 *  Tauri command: compute the size of the consecutive same-device,
 	 *  within-window undo group starting at the Nth-most-recent undoable op.
 	 *  Delegates to [`find_undo_group_inner`]. PEND-35 Tier 4.4.
 	 */
-	findUndoGroup: (pageId: string, depth: number, windowMs: number) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("find_undo_group", { pageId, depth, windowMs })),
+	findUndoGroup: (pageId: string, depth: number, windowMs: number) => typedError<number, AppError>(__TAURI_INVOKE("find_undo_group", { pageId, depth, windowMs })),
 	/**
 	 *  Tauri command: compute word-level diff for an edit_block history entry.
 	 *  Delegates to [`compute_edit_diff_inner`].
 	 */
-	computeEditDiff: (deviceId: string, seq: number) => typedError<DiffSpan[] | null, AppErrorSchema>(__TAURI_INVOKE("compute_edit_diff", { deviceId, seq })),
+	computeEditDiff: (deviceId: string, seq: number) => typedError<DiffSpan[] | null, AppError>(__TAURI_INVOKE("compute_edit_diff", { deviceId, seq })),
 	/**
 	 *  Tauri command: compute word-level diff between a block's historical
 	 *  content (as of `historical_seq`) and its current live content.
 	 *  Delegates to [`compute_block_vs_current_diff_inner`].
 	 */
-	computeBlockVsCurrentDiff: (blockId: string, historicalSeq: number) => typedError<DiffSpan[], AppErrorSchema>(__TAURI_INVOKE("compute_block_vs_current_diff", { blockId, historicalSeq })),
-	// Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
-	queryBacklinksFiltered: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<BacklinkQueryResponse, AppErrorSchema>(__TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit, scope })),
-	// Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].
-	listBacklinksGrouped: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppErrorSchema>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, scope })),
-	// Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
-	listUnlinkedReferences: (pageId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppErrorSchema>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit, scope })),
-	// Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`].
-	listPropertyKeys: () => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_property_keys")),
-	// Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
-	createPropertyDef: (key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppErrorSchema>(__TAURI_INVOKE("create_property_def", { key, valueType, options })),
+	computeBlockVsCurrentDiff: (blockId: string, historicalSeq: number) => typedError<DiffSpan[], AppError>(__TAURI_INVOKE("compute_block_vs_current_diff", { blockId, historicalSeq })),
+	/**  Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`]. */
+	queryBacklinksFiltered: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<BacklinkQueryResponse, AppError>(__TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit, scope })),
+	/**  Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`]. */
+	listBacklinksGrouped: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, scope })),
+	/**  Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`]. */
+	listUnlinkedReferences: (pageId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit, scope })),
+	/**  Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`]. */
+	listPropertyKeys: () => typedError<string[], AppError>(__TAURI_INVOKE("list_property_keys")),
+	/**  Tauri command: create a property definition. Delegates to [`create_property_def_inner`]. */
+	createPropertyDef: (key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("create_property_def", { key, valueType, options })),
 	/**
 	 *  Tauri command: fetch a single property definition by key (PEND-35 Tier 2.6).
 	 *  Delegates to [`get_property_def_inner`].
@@ -288,19 +288,19 @@ export const commands = {
 	value_type: string,
 	options: string | null,
 	created_at: string,
-} | null, AppErrorSchema>(__TAURI_INVOKE("get_property_def", { key })),
+} | null, AppError>(__TAURI_INVOKE("get_property_def", { key })),
 	/**
 	 *  Tauri command: list all property definitions, paginated (M-85).
 	 *  Delegates to [`list_property_defs_inner`].
 	 */
-	listPropertyDefs: (cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppErrorSchema>(__TAURI_INVOKE("list_property_defs", { cursor, limit })),
-	// Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].
-	updatePropertyDefOptions: (key: string, options: string) => typedError<PropertyDefinition, AppErrorSchema>(__TAURI_INVOKE("update_property_def_options", { key, options })),
-	// Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`].
-	deletePropertyDef: (key: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_property_def", { key })),
-	// Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`].
-	listPeerRefs: () => typedError<PeerRef[], AppErrorSchema>(__TAURI_INVOKE("list_peer_refs")),
-	// Tauri command: get a single sync peer by ID. Delegates to [`get_peer_ref_inner`].
+	listPropertyDefs: (cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppError>(__TAURI_INVOKE("list_property_defs", { cursor, limit })),
+	/**  Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`]. */
+	updatePropertyDefOptions: (key: string, options: string) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("update_property_def_options", { key, options })),
+	/**  Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`]. */
+	deletePropertyDef: (key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property_def", { key })),
+	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
+	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
+	/**  Tauri command: get a single sync peer by ID. Delegates to [`get_peer_ref_inner`]. */
 	getPeerRef: (peerId: string) => typedError<{
 	peer_id: string,
 	last_hash: string | null,
@@ -313,64 +313,64 @@ export const commands = {
 	 *  Used for certificate pinning on reconnection.
 	 */
 	cert_hash: string | null,
-	// Human-readable name/label for this peer (e.g. "Javier's Phone").
+	/**  Human-readable name/label for this peer (e.g. "Javier's Phone"). */
 	device_name: string | null,
 	/**
 	 *  Last known network address (host:port) for direct connection.
 	 *  Updated after each successful sync. Used when mDNS is unavailable.
 	 */
 	last_address: string | null,
-} | null, AppErrorSchema>(__TAURI_INVOKE("get_peer_ref", { peerId })),
-	// Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`].
-	deletePeerRef: (peerId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_peer_ref", { peerId })),
+} | null, AppError>(__TAURI_INVOKE("get_peer_ref", { peerId })),
+	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
+	deletePeerRef: (peerId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_peer_ref", { peerId })),
 	/**
 	 *  Tauri command: rename a paired sync peer's display name (or clear
 	 *  it back to the device-supplied value when `device_name` is `None`).
 	 *  Delegates to [`update_peer_name_inner`].
 	 */
-	updatePeerName: (peerId: string, deviceName: string | null) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("update_peer_name", { peerId, deviceName })),
-	// Tauri command: set a peer's last-known network address for direct connection.
-	setPeerAddress: (peerId: string, address: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_peer_address", { peerId, address })),
-	// Tauri command: return the local device's persistent UUID.
-	getDeviceId: () => typedError<string, AppErrorSchema>(__TAURI_INVOKE("get_device_id")),
+	updatePeerName: (peerId: string, deviceName: string | null) => typedError<null, AppError>(__TAURI_INVOKE("update_peer_name", { peerId, deviceName })),
+	/**  Tauri command: set a peer's last-known network address for direct connection. */
+	setPeerAddress: (peerId: string, address: string) => typedError<null, AppError>(__TAURI_INVOKE("set_peer_address", { peerId, address })),
+	/**  Tauri command: return the local device's persistent UUID. */
+	getDeviceId: () => typedError<string, AppError>(__TAURI_INVOKE("get_device_id")),
 	/**
 	 *  Tauri command: start a new pairing session.
 	 *  Generates a passphrase + QR SVG and stores the session in managed state.
 	 */
-	startPairing: () => typedError<PairingInfo, AppErrorSchema>(__TAURI_INVOKE("start_pairing")),
+	startPairing: () => typedError<PairingInfo, AppError>(__TAURI_INVOKE("start_pairing")),
 	/**
 	 *  Tauri command: confirm pairing with a remote device.
 	 *  Stores the peer ref in the database and clears the pairing session.
 	 */
-	confirmPairing: (passphrase: string, remoteDeviceId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("confirm_pairing", { passphrase, remoteDeviceId })),
-	// Tauri command: cancel an in-progress pairing session.
-	cancelPairing: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("cancel_pairing")),
+	confirmPairing: (passphrase: string, remoteDeviceId: string) => typedError<null, AppError>(__TAURI_INVOKE("confirm_pairing", { passphrase, remoteDeviceId })),
+	/**  Tauri command: cancel an in-progress pairing session. */
+	cancelPairing: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_pairing")),
 	/**
 	 *  Tauri command: start sync with a remote peer.
 	 *  Checks backoff (#278), acquires the per-peer lock, and returns session info.
 	 */
-	startSync: (peerId: string, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppErrorSchema>(__TAURI_INVOKE("start_sync", { peerId, progress })),
-	// Tauri command: cancel an active sync session.
-	cancelSync: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("cancel_sync")),
-	// Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`].
-	countAgendaBatch: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch", { dates, scope })),
-	// Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`].
-	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
-	// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
-	countBacklinksBatch: (pageIds: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
-	// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
-	setPageAliases: (pageId: string, aliases: string[]) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
-	// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
-	getPageAliases: (pageId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("get_page_aliases", { pageId })),
+	startSync: (peerId: string, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppError>(__TAURI_INVOKE("start_sync", { peerId, progress })),
+	/**  Tauri command: cancel an active sync session. */
+	cancelSync: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_sync")),
+	/**  Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`]. */
+	countAgendaBatch: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_agenda_batch", { dates, scope })),
+	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
+	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
+	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */
+	countBacklinksBatch: (pageIds: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
+	/**  Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`]. */
+	setPageAliases: (pageId: string, aliases: string[]) => typedError<string[], AppError>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
+	/**  Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`]. */
+	getPageAliases: (pageId: string) => typedError<string[], AppError>(__TAURI_INVOKE("get_page_aliases", { pageId })),
 	/**
 	 *  Tauri command: list page aliases by prefix.
 	 *  Delegates to [`list_page_aliases_by_prefix_inner`].
 	 */
-	listPageAliasesByPrefix: (prefix: string, limit: number | null, scope: SpaceScope) => typedError<([string, string, string | null])[], AppErrorSchema>(__TAURI_INVOKE("list_page_aliases_by_prefix", { prefix, limit, scope })),
-	// Tauri command: resolve a page by alias. Delegates to [`resolve_page_by_alias_inner`].
-	resolvePageByAlias: (alias: string, scope: SpaceScope) => typedError<[string, string | null] | null, AppErrorSchema>(__TAURI_INVOKE("resolve_page_by_alias", { alias, scope })),
-	// Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`].
-	exportPageMarkdown: (pageId: string) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("export_page_markdown", { pageId })),
+	listPageAliasesByPrefix: (prefix: string, limit: number | null, scope: SpaceScope) => typedError<([string, string, string | null])[], AppError>(__TAURI_INVOKE("list_page_aliases_by_prefix", { prefix, limit, scope })),
+	/**  Tauri command: resolve a page by alias. Delegates to [`resolve_page_by_alias_inner`]. */
+	resolvePageByAlias: (alias: string, scope: SpaceScope) => typedError<[string, string | null] | null, AppError>(__TAURI_INVOKE("resolve_page_by_alias", { alias, scope })),
+	/**  Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`]. */
+	exportPageMarkdown: (pageId: string) => typedError<string, AppError>(__TAURI_INVOKE("export_page_markdown", { pageId })),
 	/**
 	 *  Tauri command: list projected future occurrences of repeating tasks.
 	 *  Delegates to [`list_projected_agenda_inner`].
@@ -378,9 +378,9 @@ export const commands = {
 	 *  Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
 	 *  response to fetch the next page.
 	 */
-	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveProjectedAgendaEntry>, AppErrorSchema>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit, scope })),
-	// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
-	listUndatedTasks: (cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit, scope })),
+	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveProjectedAgendaEntry>, AppError>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit, scope })),
+	/**  Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`]. */
+	listUndatedTasks: (cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit, scope })),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_inner`].
@@ -391,15 +391,15 @@ export const commands = {
 	 *  without its space property (FEAT-3 invariant). Validation against a
 	 *  live space block happens TOCTOU-safe inside the same transaction.
 	 */
-	importMarkdown: (content: string, filename: string | null, spaceId: string) => typedError<ImportResult, AppErrorSchema>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId })),
-	// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
-	addAttachment: (blockId: string, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppErrorSchema>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
-	// Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`].
-	deleteAttachment: (attachmentId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
-	// Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`].
-	listAttachments: (blockId: string) => typedError<AttachmentRow[], AppErrorSchema>(__TAURI_INVOKE("list_attachments", { blockId })),
-	// Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`].
-	listAttachmentsBatch: (blockIds: string[]) => typedError<{ [key in string]: AttachmentRow[] }, AppErrorSchema>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
+	importMarkdown: (content: string, filename: string | null, spaceId: string) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId })),
+	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
+	addAttachment: (blockId: string, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
+	/**  Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`]. */
+	deleteAttachment: (attachmentId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
+	/**  Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`]. */
+	listAttachments: (blockId: string) => typedError<AttachmentRow[], AppError>(__TAURI_INVOKE("list_attachments", { blockId })),
+	/**  Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`]. */
+	listAttachmentsBatch: (blockIds: string[]) => typedError<{ [key in string]: AttachmentRow[] }, AppError>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
 	/**
 	 *  Tauri command: list all page-to-page links for graph visualization.
 	 *
@@ -408,24 +408,24 @@ export const commands = {
 	 *  frontend GraphView passes its active tag filter here so the backend
 	 *  no longer ships every space-wide edge for the renderer to discard.
 	 */
-	listPageLinks: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageLink[], AppErrorSchema>(__TAURI_INVOKE("list_page_links", { scope, tagIds })),
-	// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
-	saveDraft: (blockId: string, content: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("save_draft", { blockId, content })),
+	listPageLinks: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageLink[], AppError>(__TAURI_INVOKE("list_page_links", { scope, tagIds })),
+	/**  Tauri command: save a draft for a block. Delegates to [`draft::save_draft`]. */
+	saveDraft: (blockId: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("save_draft", { blockId, content })),
 	/**
 	 *  Tauri command: flush a draft (write edit_block op + delete draft row).
 	 *  Delegates to [`flush_draft_inner`].
 	 */
-	flushDraft: (blockId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("flush_draft", { blockId })),
+	flushDraft: (blockId: string) => typedError<null, AppError>(__TAURI_INVOKE("flush_draft", { blockId })),
 	/**
 	 *  Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
 	 *  Delegates to [`flush_all_drafts_inner`]. See that function's doc
 	 *  comment for the all-or-nothing atomicity contract.
 	 */
-	flushAllDrafts: () => typedError<FlushAllDraftsResult, AppErrorSchema>(__TAURI_INVOKE("flush_all_drafts")),
-	// Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`].
-	deleteDraft: (blockId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_draft", { blockId })),
-	// Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`].
-	listDrafts: () => typedError<Draft[], AppErrorSchema>(__TAURI_INVOKE("list_drafts")),
+	flushAllDrafts: () => typedError<FlushAllDraftsResult, AppError>(__TAURI_INVOKE("flush_all_drafts")),
+	/**  Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`]. */
+	deleteDraft: (blockId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_draft", { blockId })),
+	/**  Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`]. */
+	listDrafts: () => typedError<Draft[], AppError>(__TAURI_INVOKE("list_drafts")),
 	/**
 	 *  Log a frontend message to the backend's daily-rolling log file.
 	 *  Fire-and-forget — the frontend never awaits this.
@@ -437,7 +437,7 @@ export const commands = {
 	 *  trust scope (caller of `log_frontend` may be a panic handler that
 	 *  fires before the rate-limiter takes effect).
 	 */
-	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
+	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppError>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
 	/**
 	 *  Return the path to the logs directory.
 	 *
@@ -445,9 +445,9 @@ export const commands = {
 	 *  frontend ("Open logs folder") is guaranteed to match the directory
 	 *  the tracing-appender writes to — on every platform (BUG-34).
 	 */
-	getLogDir: () => typedError<string, AppErrorSchema>(__TAURI_INVOKE("get_log_dir")),
-	// Tauri command: return op log compaction statistics for the UI.
-	getCompactionStatus: () => typedError<CompactionStatus, AppErrorSchema>(__TAURI_INVOKE("get_compaction_status")),
+	getLogDir: () => typedError<string, AppError>(__TAURI_INVOKE("get_log_dir")),
+	/**  Tauri command: return op log compaction statistics for the UI. */
+	getCompactionStatus: () => typedError<CompactionStatus, AppError>(__TAURI_INVOKE("get_compaction_status")),
 	/**
 	 *  Tauri command: trigger op log compaction.
 	 *
@@ -459,40 +459,40 @@ export const commands = {
 	 *  just purged get swept. The complementary boot-time enqueue in
 	 *  `lib.rs` covers the case where the user never triggers compaction.
 	 */
-	compactOpLogCmd: (retentionDays: number) => typedError<CompactionResult, AppErrorSchema>(__TAURI_INVOKE("compact_op_log_cmd", { retentionDays })),
-	// Tauri command: point-in-time restore. Delegates to [`restore_page_to_op_inner`].
-	restorePageToOp: (pageId: string, targetDeviceId: string, targetSeq: number) => typedError<RestoreToOpResult, AppErrorSchema>(__TAURI_INVOKE("restore_page_to_op", { pageId, targetDeviceId, targetSeq })),
-	// Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`].
-	restoreAllDeleted: () => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("restore_all_deleted")),
-	// Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`].
-	purgeAllDeleted: () => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("purge_all_deleted")),
+	compactOpLogCmd: (retentionDays: number) => typedError<CompactionResult, AppError>(__TAURI_INVOKE("compact_op_log_cmd", { retentionDays })),
+	/**  Tauri command: point-in-time restore. Delegates to [`restore_page_to_op_inner`]. */
+	restorePageToOp: (pageId: string, targetDeviceId: string, targetSeq: number) => typedError<RestoreToOpResult, AppError>(__TAURI_INVOKE("restore_page_to_op", { pageId, targetDeviceId, targetSeq })),
+	/**  Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`]. */
+	restoreAllDeleted: () => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("restore_all_deleted")),
+	/**  Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`]. */
+	purgeAllDeleted: () => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("purge_all_deleted")),
 	/**
 	 *  Tauri command: batch-count cascade-deleted descendants per trash root.
 	 *  Delegates to [`trash_descendant_counts_inner`].
 	 */
-	trashDescendantCounts: (rootIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("trash_descendant_counts", { rootIds })),
+	trashDescendantCounts: (rootIds: string[]) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("trash_descendant_counts", { rootIds })),
 	/**
 	 *  Tauri command: count soft-deleted blocks in a space. Delegates to
 	 *  [`count_trash_inner`].
 	 */
-	countTrash: (spaceId: string) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("count_trash", { spaceId })),
+	countTrash: (spaceId: string) => typedError<number, AppError>(__TAURI_INVOKE("count_trash", { spaceId })),
 	/**
 	 *  Tauri command: batch-fetch the first child per parent block. Delegates
 	 *  to [`first_child_for_blocks_inner`].
 	 */
-	firstChildForBlocks: (blockIds: string[]) => typedError<{ [key in string]: BlockRow }, AppErrorSchema>(__TAURI_INVOKE("first_child_for_blocks", { blockIds })),
+	firstChildForBlocks: (blockIds: string[]) => typedError<{ [key in string]: BlockRow }, AppError>(__TAURI_INVOKE("first_child_for_blocks", { blockIds })),
 	/**
 	 *  Tauri command: batch-fetch full block rows by id. Delegates to
 	 *  [`get_blocks_inner`].
 	 */
-	getBlocks: (ids: string[]) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("get_blocks", { ids })),
+	getBlocks: (ids: string[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("get_blocks", { ids })),
 	/**
 	 *  Tauri command: fetch (or refresh) link metadata for a URL. Cache
 	 *  hits return immediately; stale or missing entries trigger an HTTP
 	 *  fetch and an upsert into the cache. Delegates to
 	 *  [`fetch_link_metadata_inner`].
 	 */
-	fetchLinkMetadata: (url: string) => typedError<LinkMetadata, AppErrorSchema>(__TAURI_INVOKE("fetch_link_metadata", { url })),
+	fetchLinkMetadata: (url: string) => typedError<LinkMetadata, AppError>(__TAURI_INVOKE("fetch_link_metadata", { url })),
 	/**
 	 *  Tauri command: read cached link metadata only (no network fetch).
 	 *  Returns `None` if the URL has not been seen. Delegates to
@@ -518,24 +518,24 @@ export const commands = {
 	 *  deserializing cleanly as `false`.
 	 */
 	not_found?: boolean,
-} | null, AppErrorSchema>(__TAURI_INVOKE("get_link_metadata", { url })),
+} | null, AppError>(__TAURI_INVOKE("get_link_metadata", { url })),
 	/**
 	 *  Tauri command: gather bug-report metadata (app version, OS, arch,
 	 *  device id, recent ERROR/WARN log lines). Delegates to
 	 *  [`collect_bug_report_metadata_inner`].
 	 */
-	collectBugReportMetadata: () => typedError<BugReport, AppErrorSchema>(__TAURI_INVOKE("collect_bug_report_metadata")),
+	collectBugReportMetadata: () => typedError<BugReport, AppError>(__TAURI_INVOKE("collect_bug_report_metadata")),
 	/**
 	 *  Tauri command: enumerate the log files eligible for inclusion in a
 	 *  bug-report ZIP, applying per-file size caps and optional PII
 	 *  redaction (home path, device id, GCal email, peer device ids).
 	 *  Delegates to [`read_logs_for_report_inner`].
 	 */
-	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppErrorSchema>(__TAURI_INVOKE("read_logs_for_report", { redact })),
-	// Tauri command: return the current MCP RO status for the Settings tab.
-	getMcpStatus: () => typedError<McpStatus, AppErrorSchema>(__TAURI_INVOKE("get_mcp_status")),
-	// Tauri command: return the default socket path for the current platform.
-	getMcpSocketPath: () => typedError<string, AppErrorSchema>(__TAURI_INVOKE("get_mcp_socket_path")),
+	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
+	/**  Tauri command: return the current MCP RO status for the Settings tab. */
+	getMcpStatus: () => typedError<McpStatus, AppError>(__TAURI_INVOKE("get_mcp_status")),
+	/**  Tauri command: return the default socket path for the current platform. */
+	getMcpSocketPath: () => typedError<string, AppError>(__TAURI_INVOKE("get_mcp_socket_path")),
 	/**
 	 *  Tauri command: toggle the MCP RO enabled marker file and start / stop
 	 *  the serve task accordingly.
@@ -546,7 +546,7 @@ export const commands = {
 	 *  bound" stall. The lock is held for the full command body so a
 	 *  concurrent disable cannot race ahead of the spawn.
 	 */
-	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
+	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppError>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
 	/**
 	 *  Tauri command: disconnect every in-flight MCP connection.
 	 *
@@ -571,14 +571,14 @@ export const commands = {
 	 *  `get_mcp_status` polling loop is the right place to read the
 	 *  post-disconnect count, not this command.
 	 */
-	mcpDisconnectAll: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("mcp_disconnect_all")),
-	// Tauri command: return the current MCP RW status for the Settings tab.
-	getMcpRwStatus: () => typedError<McpRwStatus, AppErrorSchema>(__TAURI_INVOKE("get_mcp_rw_status")),
+	mcpDisconnectAll: () => typedError<null, AppError>(__TAURI_INVOKE("mcp_disconnect_all")),
+	/**  Tauri command: return the current MCP RW status for the Settings tab. */
+	getMcpRwStatus: () => typedError<McpRwStatus, AppError>(__TAURI_INVOKE("get_mcp_rw_status")),
 	/**
 	 *  Tauri command: return the default RW socket path for the current
 	 *  platform. Same shape as [`get_mcp_socket_path`].
 	 */
-	getMcpRwSocketPath: () => typedError<string, AppErrorSchema>(__TAURI_INVOKE("get_mcp_rw_socket_path")),
+	getMcpRwSocketPath: () => typedError<string, AppError>(__TAURI_INVOKE("get_mcp_rw_socket_path")),
 	/**
 	 *  Tauri command: toggle the MCP RW enabled marker file and start / stop
 	 *  the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
@@ -588,38 +588,38 @@ export const commands = {
 	 *  for the rationale. RO and RW each hold their own gate so they do
 	 *  not block each other.
 	 */
-	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
-	// Tauri command: disconnect every in-flight RW MCP connection.
-	mcpRwDisconnectAll: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("mcp_rw_disconnect_all")),
+	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppError>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
+	/**  Tauri command: disconnect every in-flight RW MCP connection. */
+	mcpRwDisconnectAll: () => typedError<null, AppError>(__TAURI_INVOKE("mcp_rw_disconnect_all")),
 	/**
 	 *  Tauri command: report the GCal connector's connect/sync status to
 	 *  the Settings tab. Delegates to [`get_gcal_status_inner`].
 	 */
-	getGcalStatus: () => typedError<GcalStatus, AppErrorSchema>(__TAURI_INVOKE("get_gcal_status")),
+	getGcalStatus: () => typedError<GcalStatus, AppError>(__TAURI_INVOKE("get_gcal_status")),
 	/**
 	 *  Tauri command: poke the GCal connector to run a resync immediately
 	 *  (rather than waiting for the next scheduled tick). Delegates to
 	 *  [`force_gcal_resync_inner`].
 	 */
-	forceGcalResync: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("force_gcal_resync")),
+	forceGcalResync: () => typedError<null, AppError>(__TAURI_INVOKE("force_gcal_resync")),
 	/**
 	 *  Tauri command: disconnect the GCal account (revoke tokens, optionally
 	 *  delete the synced calendar). Delegates to [`disconnect_gcal_inner`].
 	 */
-	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
+	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppError>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
 	/**
 	 *  Tauri command: update the GCal sync window (days before/after today
 	 *  that are mirrored to the connected calendar). The value is clamped
 	 *  to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` in the inner. Delegates to
 	 *  [`set_gcal_window_days_inner`].
 	 */
-	setGcalWindowDays: (n: number) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("set_gcal_window_days", { n })),
+	setGcalWindowDays: (n: number) => typedError<number, AppError>(__TAURI_INVOKE("set_gcal_window_days", { n })),
 	/**
 	 *  Tauri command: update the GCal privacy mode (`"full"` vs.
 	 *  `"minimal"` event-body sharing). Delegates to
 	 *  [`set_gcal_privacy_mode_inner`].
 	 */
-	setGcalPrivacyMode: (mode: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
+	setGcalPrivacyMode: (mode: string) => typedError<null, AppError>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
 	/**
 	 *  Tauri command: kick off the desktop OAuth flow. Binds a loopback
 	 *  listener, opens the authorize URL in the OS browser, waits for the
@@ -628,9 +628,9 @@ export const commands = {
 	 *  Returns the unverified account email so the FE can update its
 	 *  connected-state label without waiting for the next status poll.
 	 */
-	beginGcalOauth: () => typedError<BeginOauthOutcome, AppErrorSchema>(__TAURI_INVOKE("begin_gcal_oauth")),
-	// Tauri command: list every space. Delegates to [`list_spaces_inner`].
-	listSpaces: () => typedError<SpaceRow[], AppErrorSchema>(__TAURI_INVOKE("list_spaces")),
+	beginGcalOauth: () => typedError<BeginOauthOutcome, AppError>(__TAURI_INVOKE("begin_gcal_oauth")),
+	/**  Tauri command: list every space. Delegates to [`list_spaces_inner`]. */
+	listSpaces: () => typedError<SpaceRow[], AppError>(__TAURI_INVOKE("list_spaces")),
 	/**
 	 *  Tauri command wrapper around [`create_page_in_space_inner`].
 	 *
@@ -640,7 +640,7 @@ export const commands = {
 	 *  FTS indexing) are dispatched inside `_inner` via `CommandTx` — the
 	 *  wrapper only needs to thread `materializer` through.
 	 */
-	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
+	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppError>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
 	/**
 	 *  Tauri command wrapper around [`create_space_inner`].
 	 *
@@ -649,12 +649,12 @@ export const commands = {
 	 *  inside `_inner` via `CommandTx`; the wrapper only threads
 	 *  `materializer` through.
 	 */
-	createSpace: (name: string, accentColor: string | null) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_space", { name, accentColor })),
+	createSpace: (name: string, accentColor: string | null) => typedError<string, AppError>(__TAURI_INVOKE("create_space", { name, accentColor })),
 	/**
 	 *  Tauri command: quick-capture a single content block onto today's
 	 *  journal page in `space_id`. Delegates to [`quick_capture_block_inner`].
 	 */
-	quickCaptureBlock: (content: string, spaceId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("quick_capture_block", { content, spaceId })),
+	quickCaptureBlock: (content: string, spaceId: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("quick_capture_block", { content, spaceId })),
 	/**
 	 *  Tauri command: look up a journal page by date. Delegates to
 	 *  [`get_journal_page_by_date_inner`].
@@ -671,28 +671,28 @@ export const commands = {
 	due_date: string | null,
 	scheduled_date: string | null,
 	page_id: string | null,
-} | null, AppErrorSchema>(__TAURI_INVOKE("get_journal_page_by_date", { date, spaceId })),
+} | null, AppError>(__TAURI_INVOKE("get_journal_page_by_date", { date, spaceId })),
 	/**
 	 *  Tauri command: list date-formatted journal pages in `[start_date,
 	 *  end_date]`. Delegates to [`list_journal_pages_in_range_inner`].
 	 */
-	listJournalPagesInRange: (startDate: string, endDate: string, spaceId: string) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, spaceId })),
+	listJournalPagesInRange: (startDate: string, endDate: string, spaceId: string) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, spaceId })),
 	/**
 	 *  Tauri command: list every page in `space_id` as `{ id, content }`,
 	 *  optionally restricted to pages carrying at least one of `tag_ids`.
 	 *  Delegates to [`list_all_pages_in_space_inner`].
 	 */
-	listAllPagesInSpace: (spaceId: string, tagIds: string[] | null) => typedError<PageHeading[], AppErrorSchema>(__TAURI_INVOKE("list_all_pages_in_space", { spaceId, tagIds })),
+	listAllPagesInSpace: (spaceId: string, tagIds: string[] | null) => typedError<PageHeading[], AppError>(__TAURI_INVOKE("list_all_pages_in_space", { spaceId, tagIds })),
 	/**
 	 *  Tauri command: list template page IDs in `space_id`.
 	 *  Delegates to [`list_template_page_ids_in_space_inner`].
 	 */
-	listTemplatePageIdsInSpace: (spaceId: string) => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_template_page_ids_in_space", { spaceId })),
+	listTemplatePageIdsInSpace: (spaceId: string) => typedError<string[], AppError>(__TAURI_INVOKE("list_template_page_ids_in_space", { spaceId })),
 	/**
 	 *  Tauri command: load every active descendant under `root_block_id`
 	 *  in `space_id`.  Delegates to [`load_page_subtree_inner`].
 	 */
-	loadPageSubtree: (rootBlockId: string, spaceId: string) => typedError<BlockRow[], AppErrorSchema>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
+	loadPageSubtree: (rootBlockId: string, spaceId: string) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
 };
 
 /* Types */
@@ -759,11 +759,11 @@ export type ActiveBlockRow = {
  *  `blocks WHERE deleted_at IS NULL`).
  */
 export type ActiveProjectedAgendaEntry = {
-	// The source block (real, materialized, active block).
+	/**  The source block (real, materialized, active block). */
 	block: ActiveBlockRow,
-	// The projected date for this occurrence (YYYY-MM-DD).
+	/**  The projected date for this occurrence (YYYY-MM-DD). */
 	projected_date: string,
-	// Which date column was used as the base for projection.
+	/**  Which date column was used as the base for projection. */
 	source: string,
 };
 
@@ -785,11 +785,11 @@ export type ActiveProjectedAgendaEntry = {
  *  without an extra translation layer.
  */
 export type AgendaQuery = {
-	// Single-date agenda lookup (`YYYY-MM-DD`).
+	/**  Single-date agenda lookup (`YYYY-MM-DD`). */
 	date: string | null,
-	// Date-range agenda lookup (inclusive on both ends).
+	/**  Date-range agenda lookup (inclusive on both ends). */
 	dateRange: DateRange | null,
-	// Optional source filter (`due_date` / `scheduled_date`).
+	/**  Optional source filter (`due_date` / `scheduled_date`). */
 	source: string | null,
 };
 
@@ -799,7 +799,7 @@ export type AgendaQuery = {
  *  `AppError` — the real serialisation is still handled by the manual
  *  `Serialize` impl below.
  */
-export type AppErrorSchema = {
+export type AppError = {
 	kind: string,
 	message: string,
 };
@@ -820,14 +820,14 @@ export type AttachmentRow = {
  *  Filters are combined with AND semantics at the top level.
  *  Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
-// Filter blocks by todo_state column (direct, no block_properties join).
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number | null } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
+/**  Filter blocks by todo_state column (direct, no block_properties join). */
 { type: "TodoState"; state: string } |
-// Filter blocks by priority column (direct, no block_properties join).
+/**  Filter blocks by priority column (direct, no block_properties join). */
 { type: "Priority"; level: string } |
-// Filter blocks by due_date column with comparison operator.
+/**  Filter blocks by due_date column with comparison operator. */
 { type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
-// Filter by source page — include/exclude blocks based on their root page ancestor.
+/**  Filter by source page — include/exclude blocks based on their root page ancestor. */
 { type: "SourcePage"; included: string[]; excluded: string[] } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter };
 
 /**
@@ -858,7 +858,7 @@ export type BacklinkQueryResponse = {
 	filtered_count: number,
 };
 
-// Tagged union of sort modes for backlink queries.
+/**  Tagged union of sort modes for backlink queries. */
 export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir };
 
 /**
@@ -901,7 +901,7 @@ export type BlockRow = {
 	page_id: string | null,
 };
 
-// Metadata returned by [`collect_bug_report_metadata`].
+/**  Metadata returned by [`collect_bug_report_metadata`]. */
 export type BugReport = {
 	app_version: string,
 	os: string,
@@ -918,13 +918,13 @@ export type BulkTrashResponse = {
 	affected_count: number,
 };
 
-// Result of an op log compaction, returned by [`compact_op_log_cmd`].
+/**  Result of an op log compaction, returned by [`compact_op_log_cmd`]. */
 export type CompactionResult = {
 	snapshot_id: string | null,
 	ops_deleted: number,
 };
 
-// Statistics about the op log, returned by [`get_compaction_status`].
+/**  Statistics about the op log, returned by [`get_compaction_status`]. */
 export type CompactionStatus = {
 	total_ops: number,
 	oldest_op_date: string | null,
@@ -932,7 +932,7 @@ export type CompactionStatus = {
 	retention_days: number,
 };
 
-// Comparison operators for property filters.
+/**  Comparison operators for property filters. */
 export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" | "StartsWith";
 
 /**
@@ -980,7 +980,7 @@ export type CreateBlockSpec = {
 	properties?: { [key in string]: string },
 };
 
-// A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format.
+/**  A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format. */
 export type DateRange = {
 	start: string,
 	end: string,
@@ -992,16 +992,16 @@ export type DeleteResponse = {
 	descendants_affected: number,
 };
 
-// A contiguous span of text with a diff tag.
+/**  A contiguous span of text with a diff tag. */
 export type DiffSpan = {
 	tag: DiffTag,
 	value: string,
 };
 
-// Tag indicating what happened to a span of text.
+/**  Tag indicating what happened to a span of text. */
 export type DiffTag = "Equal" | "Delete" | "Insert";
 
-// A single draft row from `block_drafts`.
+/**  A single draft row from `block_drafts`. */
 export type Draft = {
 	block_id: string,
 	content: string,
@@ -1041,7 +1041,7 @@ export type ExtraQueryFilters = {
 	 *  whitespace-only (matches FE `!b.content?.trim()`).
 	 */
 	contentNonEmpty: boolean | null,
-	// PEND-35 Tier 3.4 — push `block_type = ?` into SQL.
+	/**  PEND-35 Tier 3.4 — push `block_type = ?` into SQL. */
 	blockType: string | null,
 	/**
 	 *  PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
@@ -1096,7 +1096,7 @@ export type GcalStatus = {
 	push_lease: LeaseHolder,
 };
 
-// Response for grouped backlink queries — backlinks organized by source page.
+/**  Response for grouped backlink queries — backlinks organized by source page. */
 export type GroupedBacklinkResponse = {
 	groups: BacklinkGroup[],
 	next_cursor: string | null,
@@ -1111,7 +1111,7 @@ export type GroupedBacklinkResponse = {
 	truncated: boolean,
 };
 
-// Row returned by block history queries (op_log entries for a block).
+/**  Row returned by block history queries (op_log entries for a block). */
 export type HistoryEntry = {
 	device_id: string,
 	seq: number,
@@ -1120,7 +1120,7 @@ export type HistoryEntry = {
 	created_at: string,
 };
 
-// Result of parsing a markdown file.
+/**  Result of parsing a markdown file. */
 export type ImportResult = {
 	page_title: string,
 	blocks_created: number,
@@ -1160,7 +1160,7 @@ export type LinkMetadata = {
 	not_found?: boolean,
 };
 
-// One log file's name + contents returned by [`read_logs_for_report`].
+/**  One log file's name + contents returned by [`read_logs_for_report`]. */
 export type LogFileEntry = {
 	name: string,
 	contents: string,
@@ -1198,7 +1198,7 @@ export type MoveResponse = {
 	new_position: number,
 };
 
-// Reference to a specific op in the log.
+/**  Reference to a specific op in the log. */
 export type OpRef = {
 	device_id: string,
 	seq: number,
@@ -1279,7 +1279,7 @@ export type PairingInfo = {
 	qr_svg: string,
 };
 
-// A row from the `peer_refs` table representing a remote sync peer.
+/**  A row from the `peer_refs` table representing a remote sync peer. */
 export type PeerRef = {
 	peer_id: string,
 	last_hash: string | null,
@@ -1292,7 +1292,7 @@ export type PeerRef = {
 	 *  Used for certificate pinning on reconnection.
 	 */
 	cert_hash: string | null,
-	// Human-readable name/label for this peer (e.g. "Javier's Phone").
+	/**  Human-readable name/label for this peer (e.g. "Javier's Phone"). */
 	device_name: string | null,
 	/**
 	 *  Last known network address (host:port) for direct connection.
@@ -1301,7 +1301,7 @@ export type PeerRef = {
 	last_address: string | null,
 };
 
-// A property definition from the schema registry.
+/**  A property definition from the schema registry. */
 export type PropertyDefinition = {
 	key: string,
 	value_type: string,
@@ -1341,9 +1341,9 @@ export type PropertyFilter = {
 	 *  `json_each(?N)`. Empty = treated as `None`.
 	 */
 	valueTextIn?: string[],
-	// Single date-value equality / comparison.
+	/**  Single date-value equality / comparison. */
 	valueDate: string | null,
-	// Half-open `[from, to)` date range.
+	/**  Half-open `[from, to)` date range. */
 	valueDateRange: [string, string] | null,
 	/**
 	 *  Comparison operator — `"eq"`, `"neq"`, `"lt"`, `"gt"`, `"lte"`,
@@ -1370,10 +1370,10 @@ export type PurgeResponse = {
 	purged_count: number,
 };
 
-// Lightweight metadata returned by [`batch_resolve_inner`].
+/**  Lightweight metadata returned by [`batch_resolve_inner`]. */
 export type ResolvedBlock = {
 	id: string,
-	// `content` column — page title, tag name, or content text (truncated).
+	/**  `content` column — page title, tag name, or content text (truncated). */
 	title: string | null,
 	block_type: string,
 	deleted: boolean,
@@ -1384,13 +1384,13 @@ export type RestoreResponse = {
 	restored_count: number,
 };
 
-// Result of a point-in-time restore operation.
+/**  Result of a point-in-time restore operation. */
 export type RestoreToOpResult = {
-	// Number of ops that were successfully reverted.
+	/**  Number of ops that were successfully reverted. */
 	ops_reverted: number,
-	// Number of non-reversible ops (purge_block, delete_attachment) skipped.
+	/**  Number of non-reversible ops (purge_block, delete_attachment) skipped. */
 	non_reversible_skipped: number,
-	// Individual undo results for each reverted op.
+	/**  Individual undo results for each reverted op. */
 	results: UndoResult[],
 };
 
@@ -1408,11 +1408,11 @@ export type SetPropertyArgs = {
 	value_num?: number | null,
 	value_date?: string | null,
 	value_ref?: string | null,
-	// PEND-14: native boolean property value (`true` / `false`).
+	/**  PEND-14: native boolean property value (`true` / `false`). */
 	value_bool?: boolean | null,
 };
 
-// Sort direction.
+/**  Sort direction. */
 export type SortDir = "Asc" | "Desc";
 
 /**
@@ -1454,7 +1454,7 @@ export type SpaceId = string;
 export type SpaceRow = {
 	id: string,
 	name: string,
-	// FEAT-3p10 — accent palette token, or `None` if unset.
+	/**  FEAT-3p10 — accent palette token, or `None` if unset. */
 	accent_color: string | null,
 };
 
@@ -1564,7 +1564,7 @@ export type StatusInfo = {
 	 *  whether tasks are being lost to persist failures.
 	 */
 	retry_queue_persist_errors: number,
-	// RFC 3339 timestamp of the most recent successful batch, if any.
+	/**  RFC 3339 timestamp of the most recent successful batch, if any. */
 	last_materialize_at: string | null,
 	/**
 	 *  Seconds elapsed since `last_materialize_at`. None when no batch has
@@ -1618,7 +1618,7 @@ export type SyncProgressUpdate =
  *  `"complete"` (both halves are done for this session).
  */
 phase: string; remote_device_id: string;
-// Files fully transferred so far in the current `phase`.
+/**  Files fully transferred so far in the current `phase`. */
 files_done: number;
 /**
  *  Total files the peer or we requested for this `phase`. May
@@ -1630,10 +1630,10 @@ files_total: number;
  *  including in-progress frames.
  */
 bytes_done: number;
-// Aggregate byte total advertised for the current `phase`.
+/**  Aggregate byte total advertised for the current `phase`. */
 bytes_total: number };
 
-// Response payload returned by [`start_sync`].
+/**  Response payload returned by [`start_sync`]. */
 export type SyncSessionInfo = {
 	state: string,
 	local_device_id: string,
@@ -1642,7 +1642,7 @@ export type SyncSessionInfo = {
 	ops_sent: number,
 };
 
-// Row from `tags_cache`, used by `list_tags_by_prefix`.
+/**  Row from `tags_cache`, used by `list_tags_by_prefix`. */
 export type TagCacheRow = {
 	tag_id: string,
 	name: string,
@@ -1660,9 +1660,9 @@ export type TagCacheRow = {
  *  property and tag sub-results disappears.
  */
 export type TagFilterExpr = {
-	// Explicit tag-block ULIDs.
+	/**  Explicit tag-block ULIDs. */
 	tagIds?: string[],
-	// Tag-name prefixes (resolved via `tags_cache.name LIKE ?`).
+	/**  Tag-name prefixes (resolved via `tags_cache.name LIKE ?`). */
 	prefixes?: string[],
 	/**
 	 *  `"and"` for intersection across all tag matches, anything else
@@ -1682,20 +1682,20 @@ export type TagResponse = {
 	tag_id: string,
 };
 
-// Result of an undo or redo operation.
+/**  Result of an undo or redo operation. */
 export type UndoResult = {
-	// The op that was reversed (the original op for undo, the undo-op for redo).
+	/**  The op that was reversed (the original op for undo, the undo-op for redo). */
 	reversed_op: OpRef,
 	/**
 	 *  The op_type of the reversed op (e.g. `create_block`, `edit_block`, `set_property`).
 	 *  Used by the frontend to show a descriptive toast ("Undid create", "Undid edit", etc.).
 	 */
 	reversed_op_type: string,
-	// The newly appended reverse op.
+	/**  The newly appended reverse op. */
 	new_op_ref: OpRef,
-	// The op_type of the newly appended op.
+	/**  The op_type of the newly appended op. */
 	new_op_type: string,
-	// Whether this was a redo (true) or undo (false).
+	/**  Whether this was a redo (true) or undo (false). */
 	is_redo: boolean,
 };
 

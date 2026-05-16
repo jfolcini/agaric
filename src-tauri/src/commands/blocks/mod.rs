@@ -1,8 +1,8 @@
 //! Blocks command handlers.
 
-mod crud;
-mod move_ops;
-mod queries;
+pub(crate) mod crud;
+pub(crate) mod move_ops;
+pub(crate) mod queries;
 
 pub use crud::*;
 pub use move_ops::*;
