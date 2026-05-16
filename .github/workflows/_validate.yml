@@ -236,10 +236,12 @@ jobs:
         # PEND-41 R17 — shard 1 runs with `--coverage` so the summary
         # step below has data to render. The other shards skip
         # instrumentation to preserve their tight 5-min timeout budgets.
-        # The coverage view is therefore partial (shard 1's slice of the
-        # suite, ~1/3 of files); good enough as a regression signal,
-        # not yet a SLO. Full-suite coverage is a follow-up.
-        run: npx vitest run --shard ${{ matrix.shard }}/3 ${{ matrix.shard == 1 && '--coverage' || '' }}
+        # Thresholds in `vitest.config.ts` apply to FULL-suite runs
+        # (the local `npm run test:coverage` invocation); on this partial
+        # shard, ~⅔ of the codebase is unreached by design, so we override
+        # each threshold to 0 — the step is informational coverage, not a
+        # gate. Full-suite coverage is a follow-up.
+        run: npx vitest run --shard ${{ matrix.shard }}/3 ${{ matrix.shard == 1 && '--coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0' || '' }}
 
       - name: Coverage summary (shard 1 only)
         # PEND-41 R17 — render the aggregated coverage totals from

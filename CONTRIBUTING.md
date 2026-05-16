@@ -10,20 +10,34 @@ Thanks for your interest in contributing. Agaric is a local-first block-based no
 - Check the [issue tracker](https://github.com/jfolcini/agaric/issues) for items that are already known and triaged.
 - Abide by the [**Code of Conduct**](CODE_OF_CONDUCT.md).
 
+## Bootstrap
+
+The toolchain set is documented in [`docs/BUILD.md`](docs/BUILD.md): Rust stable (`rustup default stable`), Node 24 LTS (pinned in [`.nvmrc`](.nvmrc)), and Tauri's CLI. On top of that, two one-time installs wire up the local pre-commit / pre-push checks:
+
+```bash
+# 1. Install prek (Rust reimplementation of pre-commit; no Python toolchain needed).
+cargo install --locked prek
+
+# 2. Wire .git/hooks/{pre-commit,pre-push} to invoke prek.
+prek install
+```
+
+After this, every `git commit` runs the fast subset and every `git push` runs the slower CI-equivalent gate (`scripts/verify-ci-equivalent.sh`). The full surface — including all rules, hook IDs, and stage assignments — lives in [`prek.toml`](prek.toml); the same hooks run again in CI via `.github/workflows/_validate.yml`, so green local prek ⇒ green CI validate.
+
+**If you cannot install prek locally** (e.g., contributor without Rust toolchain): your patch is welcome anyway; CI will run the same gate on the PR. Open the PR and iterate based on CI feedback.
+
 ## Development workflow
 
 ```bash
-# One-time setup is documented in docs/BUILD.md.
-
 cargo tauri dev              # Dev mode with hot reload
 npm run test                 # Vitest (frontend)
 cd src-tauri && cargo nextest run   # Rust tests
-prek run --all-files         # Full pre-commit gate (runs all 26 hooks)
+prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
 
 Every change must:
 
-1. Keep `prek run --all-files` green. This runs biome, tsc, vitest, cargo fmt, cargo clippy, cargo nextest, cargo deny, license-checker, sqruff (SQL lint), and 17 more hooks.
+1. Keep `prek run --all-files` green. The hooks cover biome + tsc, vitest, cargo fmt / clippy / nextest / deny / machete, sqruff, license-checker, and the rest of the surface — `prek.toml` is the source of truth.
 2. Add tests for new or changed behaviour. Minimum bar per AGENTS.md: happy-path + error-path for exported functions; render + interaction + `axe(container)` for components.
 3. Not introduce architectural change without discussion first. The "Architectural Stability" section of AGENTS.md lists the specific guardrails (no new op types, tables, stores, or sync message types without explicit approval).
 

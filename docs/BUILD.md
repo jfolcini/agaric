@@ -232,7 +232,7 @@ $ANDROID_HOME/build-tools/<latest>/apksigner sign \
 
 ## Signing posture
 
-- **Updater signing**: enabled. Minisign-signed update manifests via `TAURI_SIGNING_PRIVATE_KEY` (CI secret). The desktop bundles ship with the matching public key.
+- **Updater signing**: enabled. Minisign-signed update manifests via `TAURI_SIGNING_PRIVATE_KEY` (CI secret). The desktop bundles ship with the matching public key. Rotation procedure (cadence, revocation, user notification): see [`../SECURITY.md`](../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
 - **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (right-click → *Open*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the README install section.
 - **Linux** `.deb` / `.AppImage`: intentionally not signed.
 

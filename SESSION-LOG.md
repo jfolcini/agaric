@@ -2,10 +2,61 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 760 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 761 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 761 — PEND-41 Batch 3b (docs + release-flow polish): R4 / R12 / R18 / R22 + R17 fix-forward (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | 2 build (R12 verified-ruleset doc + R22 updater-key rotation procedure) + orchestrator-direct (R4 contributor bootstrap + R18 release-notes verify-recipe + R17 fix-forward) |
+| **Items closed** | PEND-41 R4, R12, R18, R22. |
+| **Items modified** | R17 fix-forward (coverage thresholds disabled on the partial-shard CI run). |
+| **Tests added** | — (docs + workflow). |
+| **Files touched** | 6 |
+
+**Summary:**
+
+Cycle 2 of the PEND-41 backlog — four docs/release-flow items landed plus a fix-forward for session 759's R17 coverage step.
+
+**R4** — `CONTRIBUTING.md` gained a Bootstrap section above "Development workflow" with the two one-time installs (`cargo install --locked prek` and `prek install`), a fallback for contributors without Rust (CI will run the same gate on the PR), and the source-of-truth pointer to `prek.toml`. Same edit also swept residual drift-prone count claims ("runs all 26 hooks", "and 17 more hooks") per PEND-41 R7 — replaced with qualitative descriptions + a pointer.
+
+**R12** — Subagent A verified the live `gh api repos/jfolcini/agaric/rules/branches/main` ruleset (ruleset id `16192713` named `default`, active, targeting `~DEFAULT_BRANCH`) and replaced the `> **Maintainer TODO.**` placeholder in `docs/architecture/ci-and-tooling.md` §13 with the verified shape: rule types `deletion / non_fast_forward / pull_request / required_signatures`; `required_approving_review_count: 1`; one bypass actor with the Admin repository role (`bypass_mode: always`); signed commits required even on direct pushes. Added cross-reference to the new `branch-protection-assert.yml` daily-drift workflow. Section grew to 325 words to match the surrounding sections' density.
+
+**R18** — New `finalize-release-notes` job in `release.yml` (`needs:` build-and-release + android-build-and-release; runs after every release with `contents: write` for `gh release edit`). Appends a markdown section to the draft release notes with copy-pasteable `gh attestation verify` invocations per asset class (.AppImage / .msi / .dmg / APK / SBOM) plus an `slsa-verifier` air-gapped alternative. Guarded against double-append on rerun via `grep -q '^## Verifying this release'` on the existing notes. The recipe template lives in the step's `env:` as a YAML multi-line string with `__REPO__` placeholder (after a first attempt embedded a heredoc inside `run: |` and broke YAML parsing — captured the lesson inline). Same content mirrored to `$GITHUB_STEP_SUMMARY`.
+
+**R22** — Subagent B added a stand-alone `## Updater signing-key rotation` H2 section in `SECURITY.md` (lines 140–158) with annual cadence (rotate sooner on suspected compromise), the four-step procedure (`cargo tauri signer generate` → swap repo secrets → update `plugins.updater.pubkey` in `tauri.conf.json` → cut release → users on old install must manually re-install), the implicit revocation model (Tauri has no online CRL/OCSP), per-channel user notification matrix (annual: README notice + release notes; compromise: full GHSA + advisory + sticky toast), and a deferred Sigstore-keyless alternative linked to the Tauri updater plugin docs. Cross-referenced from `ci-and-tooling.md` §9 (SLSA/Sigstore section) and `docs/BUILD.md` (Signing posture bullet).
+
+**R17 fix-forward** — Session 759's CI run failed on vitest shard 1 because vitest's global coverage thresholds in `vitest.config.ts` (lines/functions/statements 80%, branches 75%) apply to ANY `--coverage` invocation. The shard-1 partial run only exercises ⅓ of the codebase; observed total coverage was ≈43%, which trips every threshold. Fixed by extending the per-shard CI command's matrix expression so shard 1 passes `--coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0` alongside `--coverage`. Local `npm run test:coverage` (full suite, no shard) still honours the thresholds — partial-shard coverage is informational on CI by design. Documented inline.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged.
+
+**Files touched (this session, single commit):**
+- `.github/workflows/_validate.yml` (R17 fix-forward: threshold overrides on shard-1 coverage).
+- `.github/workflows/release.yml` (R18 new finalize-release-notes job).
+- `CONTRIBUTING.md` (R4 Bootstrap section + count-sweep).
+- `SECURITY.md` (R22 rotation section).
+- `docs/architecture/ci-and-tooling.md` (R12 §13 verified-ruleset rewrite + R22 cross-link).
+- `docs/BUILD.md` (R22 cross-link bullet).
+- `pending/PEND-41-ci-tooling-review.md` (status block updated).
+- `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `prek run --files .github/workflows/_validate.yml .github/workflows/release.yml CONTRIBUTING.md SECURITY.md docs/architecture/ci-and-tooling.md docs/BUILD.md` — all hooks pass.
+- `zizmor .github/workflows/` — clean.
+- Subagent A's R12 sanity check: `gh api repos/jfolcini/agaric/rules/branches/main --jq '[.[] | .type] | sort'` returned exactly the documented rule-type list — no drift, no false-positive in the upcoming R30 daily-cron workflow.
+
+**Process notes:**
+- The R18 heredoc-inside-`run-|` YAML parse error was the visible failure of a subtle interaction: YAML block-scalar's indent baseline is set by its first non-empty line; heredoc content at column 0 falls BELOW that baseline and parses as new top-level YAML. Captured inline in the workflow comment for the next person who reaches for this pattern.
+- Saved the R17 coverage-threshold mismatch as a lesson: any `--coverage` invocation under `--shard` partial-run mode must explicitly opt out of the global thresholds, or the partial run trips them by construction.
+
+**Commit plan:** single commit; push with `--no-verify` (maintainer-direct convention).
+
+---
+
 ## Session 760 — PEND-41 Batch 3a (security workflows): R9 / R10 / R23 / R29 / R30 (2026-05-16)
 
 | Metadata | Value |

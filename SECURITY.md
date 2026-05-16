@@ -136,3 +136,23 @@ The following are explicitly outside this threat model. Reports that fit these c
 - DoS / rate-limiting on local-only listeners (sync daemon, OAuth callback, MCP socket).
 
 **If a future change shifts any of these into scope** — for example a server-mode build, a multi-user feature, or a public deployment — this document must be revisited *before* the change lands. The trust anchors, untrusted-input list, and mitigation set above all assume the local-first, single-user framing.
+
+## Updater signing-key rotation
+
+The `TAURI_SIGNING_PRIVATE_KEY` repo secret is the **root of trust for every auto-update**: it signs the updater payload that `release.yml` ships (via tauri-action), and the matching public key embedded in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`) is what the in-app updater (`src/hooks/useUpdateCheck.ts`) checks before applying a new bundle. If that private key leaks **and** the attacker can also induce the user's app to fetch a malicious payload (DNS spoofing, GitHub release-asset replacement via account compromise), the in-app signature check passes and the malicious update installs cleanly. The key is long-lived; rotation is the documented response.
+
+**Cadence.** Rotate at least annually. Rotate immediately on any suspected compromise (laptop loss, leaked CI logs, suspicious GitHub Actions activity). The annual rotation runs on a calendar reminder kept in the maintainer's personal calendar, not in the repo — there is no in-repo automation for it.
+
+**Procedure.**
+
+1. Generate a fresh keypair locally: `cargo tauri signer generate -w ~/.tauri/agaric-<YYYY-MM>.key`. Choose a strong password; the maintainer stores the password in the system keychain (Secret Service / Keychain / Credential Manager) via the same `keyring` crate the app uses for OAuth tokens. Never commit the private key.
+2. Update the GitHub Actions repo secrets `TAURI_SIGNING_PRIVATE_KEY` (the new private key file's contents) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (its password) under repo Settings → Secrets and variables → Actions.
+3. Update the embedded **public** key in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) `plugins.updater.pubkey` (the `cargo tauri signer generate` output prints both halves; the public half is what goes here). Commit on `main`.
+4. Cut a release with `scripts/bump-version.sh` — the matrix runs against the new secrets, the new bundle is signed by the new key, and the new binary embeds the new public key.
+5. **Document the user-facing consequence in the release notes.** Existing installs hold the *old* public key, so when their auto-updater fetches the new bundle the signature check fails (different key, signature can't be verified) and the update is refused. Users on the old binary will need to **manually download and re-install** the new release from GitHub Releases. This is the cost of rotation; advertise it loudly in the release notes and the GitHub Security Advisory (below) so users don't read the refusal as a bug.
+
+**Revocation.** Tauri's updater ships no online revocation channel — there is no CRL, no OCSP, no Rekor lookup. The implicit revocation is bidirectional and mechanical: the new binary will not trust anything signed by the old key (its embedded pubkey is the new one), and the old binary will not trust anything signed by the new key. Both directions are blocked by construction. That is the only revocation path available today.
+
+**User notification.** On any rotation (especially compromise-triggered): (i) publish a GitHub Security Advisory under <https://github.com/jfolcini/agaric/security/advisories> describing the rotation and the manual re-install requirement; (ii) pin a notice at the top of the README for the duration of the rotation cycle; (iii) include a one-shot toast in the next release announcing the rotation so users opening the app see it even if they never read release notes. For routine annual rotations, the README notice and release-notes mention are sufficient; an advisory is reserved for compromise-triggered rotations.
+
+**Sigstore-keyless alternative (deferred).** Tauri 2.x has discussion threads on cosign / Sigstore-based updater payload signing (no long-lived key; ephemeral Fulcio certificates bound to a GHA OIDC identity, transparency-logged in Rekor). Upstream tracker: the Tauri v2 updater plugin docs at <https://v2.tauri.app/plugin/updater/> are the canonical reference; cosign-based signing is not yet a first-class option in the plugin as of this writing. See [`PEND-41`](pending/PEND-41-ci-tooling-review.md) R22 — adoption deferred pending upstream support maturity. Revisit when Tauri ships a stable Sigstore signing path; the migration would remove this section's reason for existing.

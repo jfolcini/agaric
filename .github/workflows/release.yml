@@ -771,3 +771,85 @@ jobs:
             "${{ runner.temp }}/agaric-android-aarch64.spdx.json" \
             "${{ runner.temp }}/agaric-android-aarch64.cyclonedx.json" \
             --clobber
+
+  # ---------------------------------------------------------------------------
+  # PEND-41 R18 — append a copy-pasteable verify-recipe section to the draft
+  # release notes after all bundles + SBOMs have been attested + uploaded.
+  # End users (and downstream packagers / security-conscious tinkerers) get
+  # an in-line invocation showing exactly how to verify SLSA provenance on
+  # what they just downloaded; the same content also lands on the workflow
+  # run's step-summary page for the maintainer's at-a-glance check.
+  # ---------------------------------------------------------------------------
+  finalize-release-notes:
+    needs: [verify-version, validate, build-and-release, android-build-and-release]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write  # gh release edit appends to the draft release notes
+    # PEND-41 R1 — pure gh-API edits; trivial. 5-min budget.
+    timeout-minutes: 5
+    steps:
+      - name: Append SLSA-verify recipe to release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          # The recipe template is a YAML multi-line string so we don't
+          # have to fight bash heredoc indentation inside a `run: |` block.
+          # `__REPO__` is a placeholder substituted by the step below.
+          RECIPE_TEMPLATE: |
+            ## Verifying this release
+
+            Every bundle, updater payload, SBOM, and APK in this release is signed
+            with [SLSA build provenance](https://slsa.dev/) via GitHub's
+            [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)
+            → Sigstore transparency log. Verify any downloaded asset with the
+            [GitHub CLI](https://cli.github.com/):
+
+            ```bash
+            gh attestation verify <asset> --repo __REPO__
+            ```
+
+            Examples (substitute the version in the filename):
+
+            ```bash
+            # Linux .AppImage
+            gh attestation verify agaric_*_amd64.AppImage --repo __REPO__
+
+            # Windows .msi
+            gh attestation verify agaric_*_x64_en-US.msi --repo __REPO__
+
+            # macOS .dmg
+            gh attestation verify agaric_*_aarch64.dmg --repo __REPO__
+
+            # Android APK
+            gh attestation verify agaric-*-android-aarch64.apk --repo __REPO__
+
+            # SBOM (SPDX-JSON or CycloneDX-JSON)
+            gh attestation verify agaric-*.spdx.json --repo __REPO__
+            ```
+
+            For air-gapped verification, use
+            [`slsa-verifier`](https://github.com/slsa-framework/slsa-verifier)
+            against the Sigstore transparency log directly.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Substitute __REPO__ → actual `owner/repo`.
+          recipe="${RECIPE_TEMPLATE//__REPO__/$REPO}"
+          # Fetch the existing draft notes (whatever tauri-action wrote),
+          # guard against double-append on rerun, then edit.
+          existing=$(gh release view "$TAG" --json body --jq '.body // ""')
+          if grep -q '^## Verifying this release' <<<"$existing"; then
+            echo "Verify-recipe already present in release notes; skipping append."
+          else
+            combined=$(printf '%s\n\n---\n\n%s\n' "$existing" "$recipe")
+            gh release edit "$TAG" --notes "$combined"
+            echo "Appended verify-recipe to release ${TAG} notes."
+          fi
+          # Also surface to step summary for the maintainer.
+          {
+            echo "## Release notes appended"
+            echo
+            printf '%s\n' "$recipe"
+          } >> "$GITHUB_STEP_SUMMARY"
