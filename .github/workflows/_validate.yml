@@ -65,6 +65,21 @@ jobs:
           # Cache `~/.cargo/bin/` so cargo-installed plugins (prek, sqruff,
           # cargo-deny, cargo-machete, cargo-nextest) persist across runs.
           cache-bin: 'true'
+          # PEND-39 C6: shared key with ci.yml's Linux desktop build job
+          # (same `shared-key: rust-deps`). First runner to populate the
+          # dep cache pays the build cost; the second restores. Swatinem
+          # segregates internally by profile (test/release) and by
+          # runner.os, so the Linux validate + Linux build slots dedupe
+          # without colliding with macOS / Windows build slots or the
+          # Android job (which uses a different shared-key for its
+          # cross-compile target).
+          shared-key: rust-deps
+          # `save-if` gates which runs write to the cache. Only `main`
+          # populates it; feature branches read from main's cache and
+          # write only an ephemeral layer on top (expires at the standard
+          # 7-day GH cache TTL). Prevents every feature branch from
+          # poisoning the shared cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5

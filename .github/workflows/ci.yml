@@ -97,6 +97,16 @@ jobs:
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: src-tauri
+          # PEND-39 C6: shared with _validate.yml's `rust-deps` key.
+          # Swatinem segregates the cache by runner.os internally, so the
+          # Linux validate slot and the Linux desktop build slot share a
+          # cache while macOS / Windows entries in this matrix get their
+          # own per-OS cache (no cross-OS poisoning).
+          shared-key: rust-deps
+          # Only `main` writes to the cache (other branches read it
+          # without saving) to stop feature-branch churn from evicting
+          # the canonical baseline.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -211,6 +221,14 @@ jobs:
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: src-tauri
+          # PEND-39 C6: separate `rust-android` key — Android cross-
+          # compiles to aarch64-linux-android / x86_64-linux-android,
+          # which means a different `target/` tree and different
+          # rustup target installed. Sharing with the `rust-deps` key
+          # (used by validate + Linux desktop build for the host triple)
+          # would defeat both caches.
+          shared-key: rust-android
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
