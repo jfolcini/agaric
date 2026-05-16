@@ -569,51 +569,58 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         {isFiltering && filteredPages.length === 0 ? (
           <EmptyState icon={Search} message={t('pageBrowser.noMatches')} />
         ) : (
-          <div
-            style={{
-              height: `${virtualizer.getTotalSize()}px`,
-              width: '100%',
-              position: 'relative',
-            }}
-          >
-            {virtualItems.map((virtualRow) => {
-              const row = groupedRows[virtualRow.index]
-              if (!row) return null
-              return (
-                <PageBrowserRowRenderer
-                  key={virtualRow.key}
-                  virtualRow={virtualRow}
-                  row={row}
-                  measureElement={virtualizer.measureElement}
-                  focusedIndex={focusedIndex}
-                  hasStarred={hasStarred}
-                  sectionLabelId={sectionLabelId}
-                  filterText={filterText}
-                  isFiltering={isFiltering}
-                  aliasMatchId={aliasMatchId}
-                  deletingId={deletingId}
-                  isStarred={isStarred}
-                  toggleStar={toggleStar}
-                  onPageSelect={onPageSelect}
-                  onCreateUnder={handleCreateUnder}
-                  onDeleteRequest={setDeleteTarget}
-                />
-              )
-            })}
-          </div>
+          <>
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                width: '100%',
+                position: 'relative',
+              }}
+            >
+              {virtualItems.map((virtualRow) => {
+                const row = groupedRows[virtualRow.index]
+                if (!row) return null
+                return (
+                  <PageBrowserRowRenderer
+                    key={virtualRow.key}
+                    virtualRow={virtualRow}
+                    row={row}
+                    measureElement={virtualizer.measureElement}
+                    focusedIndex={focusedIndex}
+                    hasStarred={hasStarred}
+                    sectionLabelId={sectionLabelId}
+                    filterText={filterText}
+                    isFiltering={isFiltering}
+                    aliasMatchId={aliasMatchId}
+                    deletingId={deletingId}
+                    isStarred={isStarred}
+                    toggleStar={toggleStar}
+                    onPageSelect={onPageSelect}
+                    onCreateUnder={handleCreateUnder}
+                    onDeleteRequest={setDeleteTarget}
+                  />
+                )
+              })}
+            </div>
+            {/* Inside the ScrollArea so the button sits at the bottom of
+                the scrollable list (sibling of the virtual rows, not
+                positioned past the inner viewport's lower edge). Fixes
+                the case where the inner ScrollArea's `max-h` consumed
+                the outer viewport and a button rendered below it was
+                effectively off-screen. */}
+            <LoadMoreButton
+              hasMore={hasMore}
+              loading={loading}
+              onLoadMore={loadMore}
+              className="page-browser-load-more mt-2"
+              label={t('pageBrowser.loadMore')}
+              loadingLabel={t('pageBrowser.loading')}
+              loadedCount={pages.length}
+              totalCount={totalCount}
+            />
+          </>
         )}
       </ScrollArea>
-
-      <LoadMoreButton
-        hasMore={hasMore}
-        loading={loading}
-        onLoadMore={loadMore}
-        className="page-browser-load-more"
-        label={t('pageBrowser.loadMore')}
-        loadingLabel={t('pageBrowser.loading')}
-        loadedCount={pages.length}
-        totalCount={totalCount}
-      />
 
       <output className="sr-only" aria-live="polite">
         {loadMoreAnnouncement}
@@ -629,8 +636,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         description={t('pageBrowser.deleteDescription', { name: deleteTarget?.name })}
         cancelLabel={t('pageBrowser.cancel')}
         actionLabel={t('pageBrowser.delete')}
-        actionVariant="destructive"
-        onAction={handleConfirmDelete}
+        variant="destructive"
+        onConfirm={handleConfirmDelete}
       />
     </div>
   )
