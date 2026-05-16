@@ -37,7 +37,7 @@ jobs:
       contents: write  # pushes commits + tags back to main
     steps:
       - name: Checkout (with full history so we can push back)
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           # GITHUB_TOKEN's `contents: write` is enough to push commits +
@@ -103,7 +103,7 @@ jobs:
     if: ${{ !cancelled() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
       - name: Verify tag matches manifest versions
@@ -171,7 +171,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -465,7 +465,7 @@ jobs:
       id-token: write  # actions/attest-build-provenance — Sigstore OIDC token
       attestations: write  # actions/attest-build-provenance — write to GH attestations API
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
