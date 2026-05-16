@@ -1,0 +1,74 @@
+name: OpenSSF Scorecard
+
+# PEND-41 R10 — OpenSSF Scorecard supply-chain audit.
+#
+# Why these triggers:
+#   * branch_protection_rule: Scorecard's "Branch-Protection" check requires
+#     the workflow to react to changes in branch protection settings so the
+#     score reflects the current ruleset.
+#   * schedule (weekly): keeps the public badge fresh without burning CI on
+#     every push; Monday 06:00 UTC = quiet time, lands before the work week.
+#   * push to main: re-scores immediately when shipping changes that affect
+#     SAST/Dependency-Update-Tool/Pinned-Dependencies posture.
+#   * workflow_dispatch: manual re-run for debugging or after fixing a flag.
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Workflow-level: read-only. The single job below escalates per-step with
+# the minimum scopes Scorecard needs (security-events for SARIF, id-token
+# for OIDC publish to the public Scorecard API).
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-24.04
+    # Scorecard typically runs in 2-5 min on a repo this size. +50% headroom
+    # + round up → 20 min. Bump only if observed runs cross ~13 min.
+    timeout-minutes: 20
+    permissions:
+      # Required: upload SARIF results to GitHub Code Scanning (Security tab).
+      security-events: write
+      # Required: mint an OIDC token so Scorecard can publish results to the
+      # public scorecard.dev API (powers the README badge).
+      id-token: write
+      # Default: read the repo contents to audit them.
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Scorecard reads the tree directly; it does not need a writable
+          # token persisted in the local git config.
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publish results to scorecard.dev so the public badge resolves.
+          # Uses the OIDC token granted by `id-token: write` above.
+          publish_results: true
+
+      # Retain the raw SARIF as a workflow artifact for 5 days so a human
+      # can inspect the full check output without re-running the workflow.
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      # Surface findings in the repo's Security > Code scanning tab.
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@458d36d7d4f47d0dd16ca424c1d3cda0060f1360 # v3.35.5
+        with:
+          sarif_file: results.sarif

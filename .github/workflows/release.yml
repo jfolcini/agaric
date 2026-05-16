@@ -421,6 +421,60 @@ jobs:
       # (`.AppImage.tar.gz`, `.msi.zip`, `.exe.zip`, `.app.tar.gz`) ARE
       # attested because they ship as distributable binaries to end users
       # via the in-app updater.
+      # PEND-41 R9 — SBOM generation per platform. Two formats so downstream
+      # consumers (Flathub, Homebrew tap, security scanners) get whichever
+      # they support: SPDX-JSON (Linux Foundation standard) and CycloneDX-JSON
+      # (OWASP standard). Anchore's `sbom-action` wraps Syft; runs in <30 s
+      # against a directory. Output files are temp-paths so the subsequent
+      # attest + upload steps can reference them by predictable name; the
+      # rust target triple keeps the per-matrix-cell filenames unique.
+      - name: Generate SBOM (SPDX-JSON)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: src-tauri/target/${{ matrix.target }}/release/bundle
+          format: spdx-json
+          artifact-name: agaric-${{ matrix.target }}.spdx.json
+          output-file: ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
+          upload-release-assets: false
+
+      - name: Generate SBOM (CycloneDX-JSON)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: src-tauri/target/${{ matrix.target }}/release/bundle
+          format: cyclonedx-json
+          artifact-name: agaric-${{ matrix.target }}.cyclonedx.json
+          output-file: ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
+          upload-release-assets: false
+
+      # PEND-41 R29 — build-time secret scan against the produced bundles.
+      # `gitleaks` catches secrets in source; this catches the orthogonal
+      # case where a secret embedded in a CI env var (e.g.,
+      # TAURI_SIGNING_PRIVATE_KEY) silently leaks into the compiled binary.
+      # Linux-only for now (uses GNU `strings` + `grep -E`); cross-platform
+      # promotion via TruffleHog is a follow-up.
+      - name: Build-time secret scan (Linux)
+        if: matrix.platform == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
+          # High-confidence patterns. The list deliberately favours
+          # signature/prefix anchors over generic "looks like a base64
+          # blob" heuristics to keep the false-positive rate near zero.
+          PATTERNS='(AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|gho_[0-9A-Za-z]{36}|ghu_[0-9A-Za-z]{36}|ghr_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82}|sk-[0-9A-Za-z]{48}|-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----)'
+          found=0
+          while IFS= read -r f; do
+            if strings "$f" 2>/dev/null | grep -E -m 1 "$PATTERNS" > /dev/null; then
+              echo "::error file=$f::Potential secret embedded in release bundle"
+              found=1
+            fi
+          done < <(find "$BUNDLE_DIR" -type f \( -name '*.AppImage' -o -name '*.deb' -o -executable \) 2>/dev/null || true)
+          if [ "$found" -ne 0 ]; then
+            echo "::error::One or more release bundles match a secret pattern. Investigate before publishing."
+            exit 1
+          fi
+          echo "No secret patterns matched in release bundles."
+
       - name: Attest desktop bundles (Linux)
         if: matrix.platform == 'ubuntu-24.04'
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
@@ -429,6 +483,8 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
+            ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
 
       - name: Attest desktop bundles (Windows)
         if: matrix.platform == 'windows-2025'
@@ -439,6 +495,8 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.zip
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.zip
+            ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
+            ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
 
       - name: Attest desktop bundles (macOS)
         if: matrix.platform == 'macos-15'
@@ -447,6 +505,24 @@ jobs:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
+            ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
+
+      # PEND-41 R9 — attach the per-platform SBOMs to the draft release
+      # so downstream consumers (Flathub, Homebrew, Nix, security scanners)
+      # can pull them alongside the bundles. The provenance attestation
+      # above already covers each SBOM file's integrity. `--clobber` lets
+      # a re-run after a transient failure overwrite a partial upload.
+      - name: Upload SBOMs to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" \
+            "${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json" \
+            "${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json" \
+            --clobber
 
       # Windows code signing is intentionally NOT wired. The maintainer
       # has opted out of paid OV/EV certificates and SignPath OSS
@@ -637,16 +713,42 @@ jobs:
 
           echo "apk=$dest" >> "$GITHUB_OUTPUT"
 
+      # PEND-41 R9 — SBOM for the Android APK in both standard formats.
+      # Anchore's `sbom-action` extracts dependency metadata from the APK
+      # archive (Syft understands JAR/APK structure). Same per-platform
+      # pattern as the desktop matrix above.
+      - name: Generate SBOM (SPDX-JSON, Android)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: ${{ steps.sign_apk.outputs.apk }}
+          format: spdx-json
+          artifact-name: agaric-android-aarch64.spdx.json
+          output-file: ${{ runner.temp }}/agaric-android-aarch64.spdx.json
+          upload-release-assets: false
+
+      - name: Generate SBOM (CycloneDX-JSON, Android)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: ${{ steps.sign_apk.outputs.apk }}
+          format: cyclonedx-json
+          artifact-name: agaric-android-aarch64.cyclonedx.json
+          output-file: ${{ runner.temp }}/agaric-android-aarch64.cyclonedx.json
+          upload-release-assets: false
+
       # PEND-40 #5: SLSA build provenance attestation for the Android APK.
       # Runs against the final signed (or unsigned) APK emitted by the
       # previous step, BEFORE the asset is uploaded to the release —
       # downstream consumers (Play Store reviewer per PEND-36, end users
       # sideloading directly) can verify provenance via
       # `gh attestation verify <apk> --repo jfolcini/agaric`.
+      # PEND-41 R9 — same attest now also covers the SBOM files.
       - name: Attest Android APK
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
-          subject-path: ${{ steps.sign_apk.outputs.apk }}
+          subject-path: |
+            ${{ steps.sign_apk.outputs.apk }}
+            ${{ runner.temp }}/agaric-android-aarch64.spdx.json
+            ${{ runner.temp }}/agaric-android-aarch64.cyclonedx.json
 
       - name: Upload Android APK to release
         env:
@@ -657,3 +759,15 @@ jobs:
           set -euo pipefail
           echo "Uploading (clobber) $(basename "$APK_PATH") to release ${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" "$APK_PATH" --clobber
+
+      # PEND-41 R9 — attach Android SBOMs to the release alongside the APK.
+      - name: Upload Android SBOMs to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" \
+            "${{ runner.temp }}/agaric-android-aarch64.spdx.json" \
+            "${{ runner.temp }}/agaric-android-aarch64.cyclonedx.json" \
+            --clobber

@@ -1,0 +1,59 @@
+# PEND-41 R30 — Asserts that the `main` branch ruleset hasn't drifted (e.g.
+# silently weakened via a UI toggle or `gh api` mistake). The spec mentions
+# classic branch-protection's "required status checks"; this repo uses a
+# ruleset instead, so we assert the set of *rule types* enforced on `main`.
+#
+# Expected ruleset shape (sorted), as of PEND-41 R30 baseline:
+#   ["deletion", "non_fast_forward", "pull_request", "required_signatures"]
+#
+# If a maintainer intentionally changes the ruleset, update the EXPECTED list
+# below in the same PR that adjusts the ruleset.
+name: Branch Protection Assert
+
+on:
+  schedule:
+    # Daily at 12:00 UTC. Drift is unlikely to occur and the failure cost is
+    # low (a single annotated CI failure) — daily granularity is sufficient.
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assert:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Assert main-branch ruleset has not drifted
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          EXPECTED='["deletion","non_fast_forward","pull_request","required_signatures"]'
+          ACTUAL="$(gh api "repos/${REPO}/rules/branches/main" --jq '[.[] | .type] | sort | tostring')"
+
+          if [ "${ACTUAL}" = "${EXPECTED}" ]; then
+            echo "OK: main-branch ruleset matches expected shape: ${EXPECTED}"
+            exit 0
+          fi
+
+          echo "ERROR: main-branch ruleset has drifted." >&2
+          echo "  expected: ${EXPECTED}" >&2
+          echo "  actual:   ${ACTUAL}" >&2
+
+          # Compute missing / extra rule types for a clearer error message.
+          missing="$(jq -cn --argjson e "${EXPECTED}" --argjson a "${ACTUAL}" '$e - $a')"
+          extra="$(jq -cn   --argjson e "${EXPECTED}" --argjson a "${ACTUAL}" '$a - $e')"
+          echo "  missing rules: ${missing}" >&2
+          echo "  extra rules:   ${extra}" >&2
+
+          exit 1

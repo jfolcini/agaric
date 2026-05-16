@@ -268,7 +268,12 @@ language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
 
-# JS: license-checker (license compliance)
+# JS: license-checker (license compliance, PEND-41 R23). The repo is
+# GPL-3.0-or-later, so every accepted license below must be one-way-
+# compatible with GPL-3 (permissive or weak-copyleft compatible). The
+# Rust side enforces the equivalent allowlist in `src-tauri/deny.toml`
+# `[licenses].allow`; see the comment block there for the full
+# compatibility rationale.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

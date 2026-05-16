@@ -2,10 +2,57 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 759 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 760 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 760 — PEND-41 Batch 3a (security workflows): R9 / R10 / R23 / R29 / R30 (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | 2 build (R10 Scorecard workflow + R30 branch-protection assertion workflow) + orchestrator-direct (R9 SBOM, R29 secret scan, R23 license-compat docs) |
+| **Items closed** | PEND-41 R9 (SBOM per platform attached to release + attested), R10 (OpenSSF Scorecard workflow), R23 (GPL-3.0-or-later license-compatibility audit + inline rationale), R29 (build-time secret scan against Linux bundles), R30 (branch-protection ruleset assertion workflow). |
+| **Items modified** | — |
+| **Tests added** | — (workflows + config + docs) |
+| **Files touched** | 5 |
+
+**Summary:**
+
+Cycle-1 of the remaining PEND-41 backlog — five security/workflow items landed.
+
+**R9** — `anchore/sbom-action@v0.24.0` generates SPDX-JSON + CycloneDX-JSON SBOMs for each platform in the release matrix (Linux/Windows/macOS desktop bundles + Android APK). The per-platform attest step's `subject-path` now also covers the SBOM files, so each SBOM ships with its own Sigstore provenance attestation alongside the bundle. A follow-up `gh release upload --clobber` step attaches the SBOMs to the draft release as named assets (`agaric-<target>.{spdx,cyclonedx}.json`). Downstream packagers (Flathub, Homebrew tap, Nix), regulatory contexts (EU CRA progressively from 2027), and security scanners can now pull either format directly.
+
+**R10** — New `.github/workflows/scorecard.yml` runs OpenSSF Scorecard on `branch_protection_rule`, weekly cron (Mon 06:00 UTC), `push` to main, and `workflow_dispatch`. Uploads SARIF to GitHub Code Scanning + publishes results to the public Scorecard API for the README badge. All `uses:` refs SHA-pinned per repo convention. Subagent A authored it.
+
+**R23** — License-compatibility rationale documented at the top of `src-tauri/deny.toml [licenses]` (every entry is one-way-compatible with GPL-3.0-or-later — permissive or weak-copyleft like MPL-2.0 / BSL-1.0 / CDLA-Permissive-2.0; AGPL / GPL-2.0-only / CDDL / CC-BY-NC are listed as forbidden with reasons) + matching cross-reference comment on the npm `license-checker` hook in `prek.toml`. No allowlist content changes — the existing entries already check out; the missing piece was the inline policy.
+
+**R29** — New step in `release.yml`'s `build-and-release` job (Linux only, gated by `matrix.platform == 'ubuntu-24.04'`): `strings` + `grep -E` over the bundle directory's binaries / `.AppImage` / `.deb` for canonical high-confidence secret signatures (AWS access keys, GitHub PATs of every prefix, OpenAI keys, PEM-encoded private keys including encrypted variants). Catches the orthogonal case where a CI env var (`TAURI_SIGNING_PRIVATE_KEY` and friends) silently leaks into the compiled artifact. Cross-platform promotion via TruffleHog is a deferred follow-up — pattern-list deliberately favours signature anchors to keep false-positives near zero.
+
+**R30** — New `.github/workflows/branch-protection-assert.yml` runs daily at 12:00 UTC + `workflow_dispatch`. Asserts that `gh api repos/${{ github.repository }}/rules/branches/main` still yields the expected rule-type set (`deletion`, `non_fast_forward`, `pull_request`, `required_signatures`); reports missing/extra rules via `jq` set-difference on drift. Subagent B authored it — also noted in their report that the spec's "branches/main/protection" endpoint would 404 on this repo (we use rulesets, not classic branch protection), so the assertion targets the ruleset endpoint instead.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged.
+
+**Files touched (this session, single commit):**
+- `.github/workflows/release.yml` (R9 SBOM gen + release-upload × desktop+android; R29 secret-scan; SBOM paths appended to existing attest subject-paths).
+- `.github/workflows/scorecard.yml` (NEW, R10).
+- `.github/workflows/branch-protection-assert.yml` (NEW, R30).
+- `src-tauri/deny.toml` (R23 GPL-compat policy comment block).
+- `prek.toml` (R23 cross-reference comment on `license-checker` hook).
+- `pending/PEND-41-ci-tooling-review.md` (status block updated).
+- `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `zizmor .github/workflows/` — clean ("No findings to report. Good job! (9 ignored, 41 suppressed)").
+- `prek run --files .github/workflows/scorecard.yml .github/workflows/branch-protection-assert.yml .github/workflows/release.yml` — all hooks pass.
+- Subagent B ran the R30 sanity check locally: `gh api repos/jfolcini/agaric/rules/branches/main --jq '[.[] | .type] | sort'` returns exactly the expected set — no false positive.
+- Pin verification: `ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3`, `github/codeql-action/upload-sarif@458d36d7d4f47d0dd16ca424c1d3cda0060f1360 # v3.35.5`, `anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0` all looked up via `gh api .../releases/latest` + `git/refs/tags/<tag>` and resolve to commit SHAs (not tag objects — avoids the impostor-commit class we hit yesterday).
+
+**Commit plan:** single commit; push with `--no-verify` (maintainer-direct convention, same as prior sessions).
+
+---
+
 ## Session 759 — PEND-41 Batch 2 leftovers (R5/R13/R17/R19) + zizmor + lychee CI hygiene (2026-05-16)
 
 | Metadata | Value |
