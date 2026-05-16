@@ -477,7 +477,7 @@ jobs:
 
       - name: Attest desktop bundles (Linux)
         if: matrix.platform == 'ubuntu-24.04'
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
@@ -488,7 +488,7 @@ jobs:
 
       - name: Attest desktop bundles (Windows)
         if: matrix.platform == 'windows-2025'
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
@@ -500,7 +500,7 @@ jobs:
 
       - name: Attest desktop bundles (macOS)
         if: matrix.platform == 'macos-15'
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
@@ -743,7 +743,7 @@ jobs:
       # `gh attestation verify <apk> --repo jfolcini/agaric`.
       # PEND-41 R9 — same attest now also covers the SBOM files.
       - name: Attest Android APK
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: |
             ${{ steps.sign_apk.outputs.apk }}
