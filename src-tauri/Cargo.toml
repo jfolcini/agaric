@@ -128,7 +128,7 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 thiserror = "2.0.18"
 ulid = "1.2.1"
 uuid = { version = "1.23.0", features = ["v4"] }
-blake3 = "1.8.3"
+blake3 = "1.8.5"
 chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
 regex = "1"
@@ -175,7 +175,7 @@ tracing-appender = "0.2.4"
 # which defaulted to native-tls), so disabling defaults and re-selecting
 # `rustls` yields a single rustls stack — binary size drops by the
 # `native-tls-crate` slice.
-reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "http2", "charset"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "json", "http2", "charset"] }
 tauri-plugin-process = "2.3.1"
 
 # FEAT-5b — Google Calendar OAuth 2.0 PKCE flow + keychain token storage.
@@ -242,7 +242,7 @@ dirs = { version = "6.0.0", default-features = false }
 # `client` feature is added so the spike's end-to-end test can drive a
 # real rmcp client over an in-memory `tokio::io::duplex` pair. See
 # `src/mcp/rmcp_spike.md` for the spike verdict.
-rmcp = { version = "1.6", optional = true, features = ["client"] }
+rmcp = { version = "1.7", optional = true, features = ["client"] }
 
 # PEND-09 Phase 1 — Loro CRDT runtime.  Hard dep as of Phase 3 day-9
 # (the `loro-shadow` feature gate retired); the engine is the only
