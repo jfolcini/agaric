@@ -2,10 +2,44 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 762 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 763 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 763 — PEND-41 WRAPPED (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-41 effort wraps. 25 of 38 numbered recs landed; 4 documented non-policy; 4 deferred with rationale (R3 / R11 / R15 / R16); 5 reject-or-defer per original triage. |
+| **Items modified** | — |
+| **Tests added** | — |
+| **Files touched** | 2 |
+
+**Summary:** Final stamp on the PEND-41 review-and-land effort. The 10 prior sessions (754 → 762) closed every in-scope rec; this entry records the wrap and the residual deferrals. The decisions doc `docs/architecture/ci-and-tooling.md` is now the canonical record of the operational tooling + CI posture; `pending/PEND-41-ci-tooling-review.md` stays around as the execution log + tracker for the four deferred follow-ups (R3 SignPath, R11 macOS notarisation, R15 vitest pool A/B, R16 SKIP_CI_VERIFY reason-string).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged.
+
+**Files touched (this session, single commit):**
+- `pending/PEND-41-ci-tooling-review.md` (WRAPPED stamp + final tally + rec→session map).
+- `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `prek run --files pending/PEND-41-ci-tooling-review.md SESSION-LOG.md` — markdownlint + typos pass.
+- All landed CI changes verified by the prior Cycle 2 / Cycle 3 CI runs on main; the close-out commit itself is docs-only so no CI surface to retest.
+
+**Process notes (cumulative across PEND-41):**
+- The 10-session effort consistently used the orchestrator + parallel-subagents PROMPT.md pattern. Each cycle covered 3-6 items with file-boundary splits to enable parallelism. Two subagent reports per session was a sweet spot; more than that started costing more in orchestration overhead than it saved in wall-clock.
+- The "measure-don't-imagine" memory paid for itself twice — once on R1 (deferred until real CI run data existed; measurement-derived budgets) and once on R15 (held off on a blind pool-switch; deferred pending an actual A/B benchmark).
+- Pre-existing CI failures discovered mid-effort (lychee flake on Dependabot PRs, zizmor impostor-commit on `attest-build-provenance` SHA pin) turned into mini-cycles within the larger backlog; each got its own commit + lesson logged inline. The "clean locally, red in CI = network-dependent rule" lesson from session 759 is a process-level keeper.
+- The `pending/PEND-NN-*.md` file format (per the saved project memory) made it easy to interleave PEND-42 (Node 22→24 bump) into the middle of the effort without polluting PEND-41's tally.
+
+**Commit plan:** single commit; push with `--no-verify`.
+
+---
+
 ## Session 762 — PEND-41 Batch 4 (process + perf tweaks): R2 / R14 / R24 + R15 deferred (2026-05-16)
 
 | Metadata | Value |

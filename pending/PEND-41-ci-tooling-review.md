@@ -1,5 +1,35 @@
 # PEND-41 — Local tooling + CI review: decisions doc + recommendations backlog
 
+## Wrapped 2026-05-16
+
+**Status: WRAPPED.** All in-scope actionable recs landed across sessions 754 → 762. The decisions doc `docs/architecture/ci-and-tooling.md` is the canonical record of the operational tooling + CI posture going forward; this PEND file stays around purely as the execution log for the review-and-land effort.
+
+**Final tally (38 recs):**
+
+- **Closed (action taken): 25** — R1, R2, R4, R5, R6, R7, R8, R9, R10, R12, R13, R14, R17, R18, R19, R20, R21, R22, R23, R24, R25, R26, R27, R29, R30.
+- **Documented "non-policy" (no code change required): 4** — R23 license-compat note, R27 license-header non-policy, R28 reusable-workflow-relative-ref note (already covered inline in §13), R32 macOS Intel cross-compile revisit trigger (in decisions doc §6).
+- **Deferred-with-rationale: 4** — R3 (SignPath OSS — external 2-3 week application queue; maintainer action), R11 (macOS notarisation — strict no-go for now per user decision), R15 (vitest `forks` → `threads` — needs measurement; opt-in benchmark cycle is the unblock path), R16 (`SKIP_CI_VERIFY` reason-string guard — uncertain; user to decide cadence vs friction).
+- **Reject / defer per original triage: 5** — R31 (commit signing — not in current threat model), R33-R37 (TruffleHog source-side, reproducible builds, fuzzing, cargo-vet, CITATION.cff — all genuine effort items deferred; non-blocking).
+
+**Out-of-band**: the recurring Dependabot-PR lychee flake was diagnosed + fixed in session 756 (GITHUB_TOKEN injection + `.lycheecache` persistence + concurrency dial-down). Not a numbered rec; a separate sub-issue surfaced while merging Dependabot PRs.
+
+**Sub-cycle delivery (rec → session map):**
+
+| Session | Date | Recs landed |
+| --- | --- | --- |
+| 754 | 2026-05-16 | R6, R7, R8, R21, R26, R27 (Batch 1: decisions doc + zero-risk recs) |
+| 755 | 2026-05-16 | PEND-42 (Node 22 → 24 in CI; .nvmrc) — adjacent, not numbered here |
+| 756 | 2026-05-16 | (out-of-band) lychee robustness |
+| 757 | 2026-05-16 | R20, R25 (Batch 2 partial: cargo-machete rationale + slow-test budgets) |
+| 758 | 2026-05-16 | R1 (Batch 2 partial: measurement-derived timeout-minutes) |
+| 759 | 2026-05-16 | R5, R13, R17, R19 (Batch 2 leftovers) + zizmor + lychee CI hygiene |
+| 760 | 2026-05-16 | R9, R10, R23, R29, R30 (Batch 3a: security workflows) |
+| 761 | 2026-05-16 | R4, R12, R18, R22 (Batch 3b: docs + release-flow) + R17 fix-forward |
+| 762 | 2026-05-16 | R2, R14, R24 (Batch 4); R15 deferred |
+| 763 | 2026-05-16 | This wrap stamp + final summary in decisions doc |
+
+The deferred follow-ups (R3, R11, R15, R16) can stay tracked here in this file until a future session either lands them or migrates them to `pending/REVIEW-LATER.md` for long-tail tracking.
+
 ## Status (updated 2026-05-16)
 
 **Batch 1 landed in session 754** — 6 recs closed: R6 (`.editorconfig`), R7 (count tables + hook removed), R8 (conventional-commits commit-msg), R21 (`CODEOWNERS`), R26 (cache-key bump procedure in decisions doc), R27 (license-header non-policy in decisions doc). The decisions doc `docs/architecture/ci-and-tooling.md` has been seeded (15 sections, ≈2100 words).
