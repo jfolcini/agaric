@@ -37,6 +37,9 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — observed wall-clock 11.2 min (run 25966040732, 2026-05-16,
+    # n=1 post-PEND-39-split). +50% headroom + round up to nearest 5 → 20 min.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -201,6 +204,9 @@ jobs:
   # ---------------------------------------------------------------------------
   vitest:
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — per-shard wall-clock 2.2 min max (run 25966040732, n=1
+    # post-PEND-39-split). +50% headroom + 5-min floor → 5 min.
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -229,6 +235,9 @@ jobs:
   # ---------------------------------------------------------------------------
   playwright:
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — per-shard wall-clock 7.9 min max (run 25966040732, n=1
+    # post-PEND-39-split). +50% headroom + round up → 15 min.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -275,6 +284,11 @@ jobs:
   # ---------------------------------------------------------------------------
   cargo-tests:
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — observed wall-clock 22.6 min (run 25966040732, 2026-05-16,
+    # n=1 post-PEND-39-split). Slowest single validate job; cargo nextest
+    # dominates. +50% headroom + round up → 35 min. Bump if cold-cache
+    # misses push it over.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -369,6 +383,8 @@ jobs:
   validate-all:
     needs: [lint, vitest, playwright, cargo-tests]
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — trivial echo job (~2s observed); 5-min floor for sanity.
+    timeout-minutes: 5
     steps:
       - name: All validate jobs passed
         run: echo "all validate jobs passed"

@@ -33,6 +33,9 @@ jobs:
   bump-version:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — no historical sample (workflow_dispatch-only path). Bumps
+    # 5 manifests in lockstep + commit + tag + push. Conservative 10-min budget.
+    timeout-minutes: 10
     permissions:
       contents: write  # pushes commits + tags back to main
     steps:
@@ -102,6 +105,9 @@ jobs:
     # cancellation.
     if: ${{ !cancelled() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') }}
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — no historical sample. Trivial jq / grep / awk over the 5
+    # manifests + fail-fast comparison; 5-min budget is generous.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -139,6 +145,10 @@ jobs:
   build-and-release:
     needs: [verify-version, validate]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' }}
+    # PEND-41 R1 — based on ci.yml build observations (run 25966040732,
+    # 2026-05-16, n=1) + ~10 min signing/attest/upload overhead per platform:
+    # linux 50 + 10 = 60, macos 50 + 10 = 60, windows 65 + 10 = 75.
+    timeout-minutes: ${{ matrix.platform == 'windows-2025' && 75 || 60 }}
     permissions:
       contents: write  # tauri-action uploads release bundles
       id-token: write  # actions/attest-build-provenance — Sigstore OIDC token
@@ -460,6 +470,9 @@ jobs:
     needs: [verify-version, validate, build-and-release]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — based on ci.yml android-build observations (27.8 min,
+    # run 25966040732, n=1) + ~10 min signing/attest/upload overhead → 60 min.
+    timeout-minutes: 60
     permissions:
       contents: write  # gh release upload attaches the APK to the existing release
       id-token: write  # actions/attest-build-provenance — Sigstore OIDC token

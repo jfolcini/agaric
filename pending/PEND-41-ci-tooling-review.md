@@ -8,9 +8,9 @@
 
 **Batch 2 partial landed in session 757** — R20 (cargo-machete allowlist inline rationale comments — every entry now carries a reachability note + transitive path) and R25 (per-test slow-warning budgets: `vitest.slowTestThreshold = 2000`, `nextest leak-timeout = "30s"` on both profiles). The cargo-machete quarterly verification hook (R20 part 2 — `cargo tree --invert` reachability check) is explicitly deferred to a follow-up.
 
-**R1 unblocked 2026-05-16** by maintainer (`"you can already check times, there are a few recent builds"`); proceeding with the `gh run view`-based measurement next.
+**R1 landed in session 758 (2026-05-16)** — every job across `_validate.yml`, `ci.yml`, `release.yml` carries a measurement-derived `timeout-minutes:` with an inline comment citing the source run-id, sample size, and the +50% headroom calculation. Numbers measured from run `25966040732` (the first post-PEND-39-split successful main-branch run); n=1 for the split worker jobs. Build-matrix timeouts use per-matrix-cell expressions (`${{ matrix.label == 'windows' && 65 || 50 }}` in ci.yml; `${{ matrix.platform == 'windows-2025' && 75 || 60 }}` in release.yml) to honour the windows-runs-slower observation rather than coarse single-value-fits-all budgets.
 
-**Remaining:** Batch 2 leftovers (R1, R5, R13, R17, R19), Batch 3 (R9, R10, R12, R18, R22, R23, R29, R30), Batch 4 (R2, R14, R15, R24), and long-horizon (R3, R4, R11).
+**Remaining:** Batch 2 leftovers (R5, R13, R17, R19), Batch 3 (R9, R10, R12, R18, R22, R23, R29, R30), Batch 4 (R2, R14, R15, R24), and long-horizon (R3, R4, R11).
 
 ## Context
 

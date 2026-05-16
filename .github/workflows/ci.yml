@@ -45,6 +45,11 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     needs: validate
+    # PEND-41 R1 — observed wall-clock per OS (run 25966040732, 2026-05-16,
+    # n=1): linux 24.3 min, macos 31.5 min, windows 41.4 min. +50% headroom
+    # + round up → 50 (linux/macos) / 65 (windows). Per-matrix-cell timeout
+    # via the expression below.
+    timeout-minutes: ${{ matrix.label == 'windows' && 65 || 50 }}
     strategy:
       fail-fast: false
       matrix:
@@ -219,6 +224,9 @@ jobs:
   android-build:
     needs: validate
     runs-on: ubuntu-24.04
+    # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
+    # n=1). +50% headroom + round up → 45 min.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

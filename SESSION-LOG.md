@@ -2,10 +2,63 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 757 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 758 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 758 — PEND-41 R1: measurement-derived `timeout-minutes` across all CI jobs (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-41 R1 — every job in `_validate.yml`, `ci.yml`, `release.yml` has a measurement-derived `timeout-minutes:` with an inline rationale citing the source run-id + sample size. |
+| **Items modified** | — |
+| **Tests added** | — (CI config only) |
+| **Files touched** | 5 |
+
+**Summary:** R1 unblocked by the maintainer ("you can already check times, there are a few recent builds") after this morning's PEND-39 CI restructure stabilised. Pulled per-job wall-clock from recent main-branch successful runs via `gh run view <id> --json jobs`, aggregated max + 50% headroom + round up to nearest 5 min, and applied per-job. Sample size is **n=1 for the post-PEND-39-split worker jobs** (only run `25966040732` — today's 0.1.27 release commit — has the new split shape on main; older runs all carried the monolithic `validate / validate` job). Each inline comment cites the run-id so a future audit can re-measure.
+
+**Computed numbers** (max wall-clock observed → +50% → round up to nearest 5 → final `timeout-minutes`):
+
+- `validate / lint`: 11.2 min → 16.8 → **20**
+- `validate / vitest` (per shard, n=3): 2.2 min → 3.3 → **5** (5-min floor for sanity)
+- `validate / playwright` (per shard, n=2): 7.9 min → 11.9 → **15**
+- `validate / cargo-tests`: 22.6 min → 33.9 → **35** (slowest single validate job)
+- `validate / validate-all`: 2s → **5** (echo job; 5-min floor for sanity)
+- `ci.yml build` (matrix): linux 24.3 → **50**, macos 31.5 → **50**, windows 41.4 → **65** (per-cell expression)
+- `ci.yml android-build`: 27.8 min → 41.7 → **45**
+- `release.yml bump-version`: no historical sample (workflow_dispatch-only) → conservative **10**
+- `release.yml verify-version`: no historical sample (trivial jq) → conservative **5**
+- `release.yml build-and-release` (matrix): ci.yml build + ~10 min sign/attest overhead → linux/macos **60**, windows **75** (per-cell expression)
+- `release.yml android-build-and-release`: ci.yml android-build + ~10 min sign/attest → **60**
+
+**Per-matrix-cell expressions** were used in two places to honour the observed windows-runs-significantly-slower pattern rather than budgeting every cell to the windows maximum:
+
+- `ci.yml build`: `timeout-minutes: ${{ matrix.label == 'windows' && 65 || 50 }}`
+- `release.yml build-and-release`: `timeout-minutes: ${{ matrix.platform == 'windows-2025' && 75 || 60 }}`
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (PEND-41 R1 lands).
+
+**Files touched (this session, single commit):**
+- `.github/workflows/_validate.yml` (5 jobs: lint / vitest / playwright / cargo-tests / validate-all).
+- `.github/workflows/ci.yml` (2 jobs: build / android-build).
+- `.github/workflows/release.yml` (4 jobs: bump-version / verify-version / build-and-release / android-build-and-release).
+- `pending/PEND-41-ci-tooling-review.md` (status block updated: R1 landed; remaining list trimmed).
+- `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `prek run --files .github/workflows/*.yml` — zizmor, actionlint, yaml-check, typos all pass.
+
+**Process notes:**
+- The fact-checking rigour learned in session 754 (no invented thresholds — measure or cite "no historical sample" honestly) applied directly here. The two release.yml jobs without a sample (bump-version, verify-version) carry that caveat explicitly in their inline comment, with a conservative budget chosen instead of a measurement.
+- Real CI runs against tag-pushed releases or workflow_dispatch will replace those "no historical sample" placeholders with real data in a follow-up session.
+
+**Commit plan:** single commit; push with `SKIP=no-commit-to-branch,verify-ci-equivalent` (maintainer-push-to-main convention).
+
+---
+
 ## Session 757 — PEND-41 Batch 2 partial: R20 (cargo-machete rationale) + R25 (slow-test budgets) (2026-05-16)
 
 | Metadata | Value |
