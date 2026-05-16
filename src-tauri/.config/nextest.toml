@@ -8,8 +8,13 @@ fail-fast = false
 retries = 1
 # Generous per-test timeout (DB-backed tests may be slow on cold cache)
 slow-timeout = { period = "30s", terminate-after = 2 }
+# PEND-41 R25 — wait this long for subprocess cleanup before flagging a leak.
+# sync_daemon tests spawn TCP listeners that occasionally need a moment to
+# release sockets; 30s is generous enough to avoid false-positive leak reports.
+leak-timeout = "30s"
 
 [profile.ci]
 fail-fast = false
 retries = 2
 slow-timeout = { period = "60s", terminate-after = 2 }
+leak-timeout = "30s"

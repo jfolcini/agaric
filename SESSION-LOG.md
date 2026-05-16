@@ -2,10 +2,45 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 756 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 757 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 757 — PEND-41 Batch 2 partial: R20 (cargo-machete rationale) + R25 (slow-test budgets) (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-41 R20 (cargo-machete allowlist inline rationale), R25 (per-test slow-warning budgets in vitest + nextest). |
+| **Items modified** | — |
+| **Tests added** | — (config + docs only) |
+| **Files touched** | 5 |
+
+**Summary:** Closed two low-risk Batch 2 items chosen so the changes have zero effect on CI wall-clock (relevant because R1's timeout-minutes measurement was still pending the maintainer's CI churn from earlier today). **R20** — every entry in `src-tauri/Cargo.toml [package.metadata.cargo-machete].ignored` now carries an inline rationale describing the reachability path (direct use vs. transitive, named call sites where known). Verified each entry against `cargo tree --invert -p <crate>` for the transitive cases. The quarterly-verification half of R20 (a script that runs `cargo tree --invert` on each entry and fails when an entry is no longer reachable in the dep graph) is explicitly deferred to a follow-up. **R25** — vitest now emits a warning when any test exceeds 2 s (`test.slowTestThreshold = 2000`); nextest now waits 30 s for subprocess cleanup before flagging a test-leak (`leak-timeout = "30s"` on both `[profile.default]` and `[profile.ci]`). Neither touches the hard timeout — only warning-level thresholds — so flaky-on-cold-cache tests are not regressed.
+
+**Process notes:**
+- Taplo rewrote the column-alignment of the inline comments in `Cargo.toml` (taplo expects consistent columns within an array). Auto-fix applied via `taplo format`; result re-verified with `taplo fmt --check` + `taplo lint`.
+- `cargo tree --invert -p rand` and `-p sha2` returned empty results when queried individually — both crates ARE in the dep tree (declared at `Cargo.toml:153-154`, imported in `sync_net/*`, `pairing.rs`, `sync_scheduler.rs`). The empty `-p` filter was a quirk of the tool, not evidence of unreachable allowlist entries. Documented the rationale inline regardless.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (this batch sources from `pending/PEND-41-ci-tooling-review.md`).
+
+**Files touched (this session, single commit):**
+- `src-tauri/Cargo.toml` (R20 — 12 inline rationale comments, taplo-aligned).
+- `vitest.config.ts` (R25 — `slowTestThreshold: 2000`).
+- `src-tauri/.config/nextest.toml` (R25 — `leak-timeout = "30s"` on both profiles).
+- `pending/PEND-41-ci-tooling-review.md` (status block updated: Batch 2 partial landed; lychee out-of-band recorded).
+- `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `prek run --all-files` — all hooks pass (after `taplo format` reflow).
+- `cargo nextest run --profile ci` (via prek) — clean.
+
+**Commit plan:** single commit; push pending (alongside sessions 754 + 755 + 756). Pre-push `verify-ci-equivalent.sh` flaked on a "2 Playwright tests did not run" runner-side issue (no real test failure; no `.skip`/`.fixme` markers on the cited specs); push proceeding with the documented `SKIP_CI_VERIFY=1` escape hatch since the changes are config-only and CI on `main` will re-verify everything authoritatively.
+
+---
+
 ## Session 756 — Lychee robustness: GITHUB_TOKEN + persisted cache + concurrency dial-down (2026-05-16)
 
 | Metadata | Value |

@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     setupFiles: ['./src/test-setup.ts'],
+    // PEND-41 R25 — emit a warning when a single test exceeds 2 seconds.
+    // Catches regressions cheaply without altering test outcomes.
+    slowTestThreshold: 2000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

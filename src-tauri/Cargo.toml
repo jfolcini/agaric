@@ -20,21 +20,29 @@ publish = false
 # pointer when multiple targets exist.
 default-run = "agaric"
 
+# cargo-machete allowlist — PEND-41 R20.
+#
+# Each entry must carry a reachability rationale so a future audit can decide
+# whether to keep, remove, or replace. cargo-machete flags these because their
+# `use` statements live inside feature-gated modules or behind conditional
+# compilation, so the static analyzer can't see the call site under the
+# default feature set — but the runtime path is active and the crate ships
+# in the final binary.
 [package.metadata.cargo-machete]
 ignored = [
-    "mdns-sd",
-    "qrcode",
-    "rand",
-    "rcgen",
-    "rustls",
-    "sha2",
-    "tokio-tungstenite",
-    "tokio-rustls",
-    "futures-util",
-    "x509-parser",
+    "mdns-sd",           # LAN sync discovery; called directly from sync_daemon.
+    "qrcode",            # device-pairing QR code rendering; used in pairing.rs.
+    "rand",              # crypto-quality random for pairing tokens + sync_net key material; used in sync_net / pairing / sync_scheduler.
+    "rcgen",             # self-signed TLS certificate generation for mTLS sync handshake; used in sync_net/tls.rs.
+    "rustls",            # pure-Rust TLS stack. Direct dep + transitive via reqwest 0.12/0.13, hyper-rustls, tauri-plugin-updater, tokio-rustls.
+    "sha2",              # SHA-256 hashing for sync_scheduler digest paths + pairing token derivation.
+    "tokio-tungstenite", # WebSocket transport for the sync protocol (sync_net/websocket.rs).
+    "tokio-rustls",      # async TLS adapter for tokio. Direct dep + transitive via reqwest, tokio-tungstenite.
+    "futures-util",      # Stream / Sink combinators used by sync_net + sqlx_core paths. Direct dep + transitive via futures, sqlx-core, reqwest, hyper-util, gio, glib.
+    "x509-parser",       # peer-certificate parsing during the TLS mTLS handshake validation.
     # Android-only, unused on desktop targets (BUG-39)
-    "jni",
-    "ndk-context",
+    "jni",         # Java <-> Rust FFI for the multicast lock + Android lifecycle bridge.
+    "ndk-context", # Android NDK runtime context handle for JNI calls.
 ]
 
 [lints.rust]

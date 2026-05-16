@@ -4,9 +4,13 @@
 
 **Batch 1 landed in session 754** — 6 recs closed: R6 (`.editorconfig`), R7 (count tables + hook removed), R8 (conventional-commits commit-msg), R21 (`CODEOWNERS`), R26 (cache-key bump procedure in decisions doc), R27 (license-header non-policy in decisions doc). The decisions doc `docs/architecture/ci-and-tooling.md` has been seeded (15 sections, ≈2100 words).
 
-**R1 on HOLD** until 2026-05-17 — maintainer changed CI on 2026-05-16; wait for ≥1 day of post-change main-branch runs before sampling wall-clock.
+**Out-of-band: lychee robustness landed in session 756** — `GITHUB_TOKEN` injection on the prek lint step, `actions/cache@v5` for `.lycheecache` persistence, `--max-concurrency` 8 → 4, `--cache` flag on lychee. Diagnosed mid-session as the root cause of recurring Dependabot-PR lint flakes. Not a numbered rec — separate sub-issue surfaced while merging Dependabot PRs.
 
-**Remaining:** Batch 2 (R5, R13, R17, R19, R20, R25, plus R1 once unblocked), Batch 3 (R9, R10, R12, R18, R22, R23, R29, R30), Batch 4 (R2, R14, R15, R24), and long-horizon (R3, R4, R11).
+**Batch 2 partial landed in session 757** — R20 (cargo-machete allowlist inline rationale comments — every entry now carries a reachability note + transitive path) and R25 (per-test slow-warning budgets: `vitest.slowTestThreshold = 2000`, `nextest leak-timeout = "30s"` on both profiles). The cargo-machete quarterly verification hook (R20 part 2 — `cargo tree --invert` reachability check) is explicitly deferred to a follow-up.
+
+**R1 unblocked 2026-05-16** by maintainer (`"you can already check times, there are a few recent builds"`); proceeding with the `gh run view`-based measurement next.
+
+**Remaining:** Batch 2 leftovers (R1, R5, R13, R17, R19), Batch 3 (R9, R10, R12, R18, R22, R23, R29, R30), Batch 4 (R2, R14, R15, R24), and long-horizon (R3, R4, R11).
 
 ## Context
 
