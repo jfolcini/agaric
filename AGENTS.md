@@ -32,7 +32,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 |----------|---------|
 | **AGENTS.md** (this file) | Invariants, conventions, architecture overview |
 | **[docs/BUILD.md](docs/BUILD.md)** | Build guide: prerequisites, platforms, Android, CI, troubleshooting |
-| **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1870 lines) |
+| **docs/ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1870 lines) |
 | **[docs/FEATURE-MAP.md](docs/FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
 | [`src-tauri/tests/AGENTS.md`](src-tauri/tests/AGENTS.md) | Rust test patterns, fixtures, pitfalls |
 | [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md) | Frontend test patterns, mocking, a11y |
@@ -65,7 +65,7 @@ prek run --all-files         # Pre-commit hooks
 7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
 8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism
 9. **Recursive CTEs over `blocks` must bound `depth < 100`** in the recursive member to prevent runaway recursion on corrupted `parent_id` chains.
-10. **Pagination `limit` is loud at both ends** — backend IPCs reject out-of-range `limit` values with `AppError::Validation` (no silent `clamp(1, cap)` anywhere); frontend wrappers in `src/lib/tauri.ts` accept only the `SafeLimit` brand from `src/lib/safe-limit.ts`, so a naked numeric literal does not compile.  Caps: `list_blocks` → 100, `pagination::PageRequest::new` (the shared paginator behind `query_by_property`, `list_unfinished_tasks`, `list_tags_by_prefix`, `list_backlinks`, search, history, …) → 200, `list_projected_agenda` → 500, MCP `list_pages` / `get_page` → 100.  Callers that genuinely need "all of X" must route through one of the no-clamp dedicated IPCs (`list_all_pages_in_space`, `list_all_tags_in_space`, `count_trash`, `load_page_subtree`, `list_template_page_ids_in_space`) — these take no `limit` argument because the upper bound is intrinsic to the space.  See `ARCHITECTURE.md §5 — Pagination limits` and SESSION-LOG sessions 700–703 for the BUG-48 history.
+10. **Pagination `limit` is loud at both ends** — backend IPCs reject out-of-range `limit` values with `AppError::Validation` (no silent `clamp(1, cap)` anywhere); frontend wrappers in `src/lib/tauri.ts` accept only the `SafeLimit` brand from `src/lib/safe-limit.ts`, so a naked numeric literal does not compile.  Caps: `list_blocks` → 100, `pagination::PageRequest::new` (the shared paginator behind `query_by_property`, `list_unfinished_tasks`, `list_tags_by_prefix`, `list_backlinks`, search, history, …) → 200, `list_projected_agenda` → 500, MCP `list_pages` / `get_page` → 100.  Callers that genuinely need "all of X" must route through one of the no-clamp dedicated IPCs (`list_all_pages_in_space`, `list_all_tags_in_space`, `count_trash`, `load_page_subtree`, `list_template_page_ids_in_space`) — these take no `limit` argument because the upper bound is intrinsic to the space.  See `docs/ARCHITECTURE.md §5 — Pagination limits` and SESSION-LOG sessions 700–703 for the BUG-48 history.
 
 ## Architectural Stability
 

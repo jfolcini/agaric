@@ -48,7 +48,7 @@ The audit's phrasing was "evaluate" rather than "convert" because the existing p
 
 **Fix.** Add the missing automation (`dependency-cruiser` or biome equivalent for the documented `ui/` → `stores/` import boundary).
 
-(The two text-only ARCHITECTURE.md fixes — shadcn/ui count and `P-15/P-16` → `PERF-19/PERF-20` — landed in Session 729.)
+(The two text-only docs/ARCHITECTURE.md fixes — shadcn/ui count and `P-15/P-16` → `PERF-19/PERF-20` — landed in Session 729.)
 
 ---
 
@@ -56,7 +56,7 @@ The audit's phrasing was "evaluate" rather than "convert" because the existing p
 
 Reference snapshot of the architectural decisions that already paid off. Don't regress:
 
-- **Single roving TipTap editor** — only the focused block hosts `<EditorContent>`; others render `StaticBlock` (`EditableBlock.tsx:247-262`). Matches `ARCHITECTURE.md:627-641`.
+- **Single roving TipTap editor** — only the focused block hosts `<EditorContent>`; others render `StaticBlock` (`EditableBlock.tsx:247-262`). Matches `docs/ARCHITECTURE.md:627-641`.
 - **React 19 ref-as-prop migration complete** — zero `forwardRef` in `src/components/ui/` (37 primitives).
 - **All 13 secondary views are `React.lazy`** (`src/components/ViewDispatcher.tsx:48-66`); `KeyboardShortcuts` and `WelcomeModal` lazy in `App.tsx:60-65`.
 - **Mermaid + PdfViewerDialog + html5-qrcode lazy/dynamic-imported** — `src/components/RichContentRenderer.tsx:29`, `src/components/StaticBlock.tsx:27`, `src/components/QrScanner.tsx:43`.

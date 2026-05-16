@@ -6,7 +6,7 @@
 //! `pending/scale-benchmarks-100k-2026-05-14.md`.
 //!
 //! Re-runs the 100K-scale measurements for every user-facing Tauri command
-//! covered by `ARCHITECTURE.md` §25 (lines 2374-2393) and `panic!`s if any
+//! covered by `docs/ARCHITECTURE.md` §25 (lines 2374-2393) and `panic!`s if any
 //! sample's *mean* elapsed wall-clock exceeds the per-command latency
 //! budget. The product SLO is "interactive commands ≤ 200 ms p95 @ 100K";
 //! individual budgets are seeded from §25's current numbers, rounded up,
@@ -518,7 +518,7 @@ fn assert_under_budget(cmd: &str, acc: &Acc, budget_ms: f64) {
     assert!(
         mean_ms <= budget_ms,
         "interactive_slo: {cmd} = {mean_ms:.2} ms > budget {budget_ms} ms \
-         (regression — see ARCHITECTURE.md §25)"
+         (regression — see docs/ARCHITECTURE.md §25)"
     );
     println!("interactive_slo: {cmd} = {mean_ms:.2} ms <= budget {budget_ms} ms (PASS)");
 }

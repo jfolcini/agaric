@@ -168,7 +168,7 @@ pub(crate) async fn create_block_in_tx(
 
         // L-37: Enforce `MAX_BLOCK_DEPTH` on the create path. The new block
         // will live at depth = parent_depth + 1, so reject when that exceeds
-        // the documented limit (ARCHITECTURE.md §20). Without this guard
+        // the documented limit (docs/ARCHITECTURE.md §20). Without this guard
         // a user could repeatedly create blocks under the deepest leaf and
         // drift past the bound — `move_block_inner` already enforces the
         // same limit; the asymmetry was the loophole.

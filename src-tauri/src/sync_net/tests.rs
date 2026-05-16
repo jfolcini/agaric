@@ -452,7 +452,7 @@ fn mdns_browse_timeout_is_5_seconds() {
     assert_eq!(
         MDNS_BROWSE_TIMEOUT,
         Duration::from_secs(5),
-        "mDNS browse timeout should be 5s per ARCHITECTURE.md §20 Discovery + Timeouts"
+        "mDNS browse timeout should be 5s per docs/ARCHITECTURE.md §20 Discovery + Timeouts"
     );
 }
 

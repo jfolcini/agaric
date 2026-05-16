@@ -20,7 +20,7 @@ use crate::op_log::{
 };
 
 /// M-4: hard cap on the number of `prev_edit` chain steps `find_lca` will
-/// walk before giving up.  ARCHITECTURE.md §4 documents this 10,000-step
+/// walk before giving up.  docs/ARCHITECTURE.md §4 documents this 10,000-step
 /// cap as the cycle-detection ceiling; both the CTE's `depth < MAX_LCA_STEPS`
 /// recursion bound AND the Rust-side HashSet check below enforce it so a
 /// pathologically long acyclic chain (corruption, future schema bug) can

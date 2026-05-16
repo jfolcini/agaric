@@ -305,7 +305,7 @@ pub fn start_sync_inner(
     // `scheduler.record_success(peer_id)` after a real network sync
     // succeeds. Pre-crediting here (M-32) wiped per-peer backoff state
     // before the daemon had even attempted the sync, defeating the
-    // backoff invariant documented in ARCHITECTURE.md §18 ("`record_failure(id)`
+    // backoff invariant documented in docs/ARCHITECTURE.md §18 ("`record_failure(id)`
     // Doubles backoff: 1s → 2s → 4s → … → 60s max"). The wrapper's job
     // is to *trigger* a sync, not to mark it successful.
     scheduler.notify_change();

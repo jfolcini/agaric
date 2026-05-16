@@ -107,7 +107,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 
 ## Development
 
-See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting. See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the architecture deep-dive.
+See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting. See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the architecture deep-dive.
 
 ### Quick Start
 
@@ -180,7 +180,7 @@ e2e/                         # Playwright E2E tests (29 spec files)
 public/                      # Static assets (agaric.svg icon)
 docs/BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions
-ARCHITECTURE.md              # Architecture deep-dive
+docs/ARCHITECTURE.md              # Architecture deep-dive
 docs/FEATURE-MAP.md               # Complete feature inventory
 REVIEW-LATER.md              # Deferred items and tech debt
 ```

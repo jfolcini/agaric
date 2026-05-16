@@ -27,7 +27,7 @@
 /// between user-owned devices, no adversarial peers) this is intentional;
 /// tampering protection comes from the duplicate-hash check on the composite
 /// `(device_id, seq)` primary key rather than from chain re-computation. See
-/// ARCHITECTURE.md §"Hash chain" for the matching narrative.
+/// docs/ARCHITECTURE.md §"Hash chain" for the matching narrative.
 ///
 /// - `parent_seqs`: The raw JSON string from the `parent_seqs` column, or `None`
 ///   for the genesis op (seq 1). When `None`, the empty string is used in the

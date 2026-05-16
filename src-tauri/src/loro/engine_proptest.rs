@@ -635,7 +635,7 @@ mod two_device {
         ///
         /// Note: Loro's LWW tiebreak is Lamport-order (peer-id +
         /// op-counter) — NOT wall-clock timestamp.  The tiebreak rule
-        /// is documented in `ARCHITECTURE.md` §12 "LWW resolution
+        /// is documented in `docs/ARCHITECTURE.md` §12 "LWW resolution
         /// rule".  Convergence on each side is what kill-criterion #2
         /// actually requires.
         #[test]

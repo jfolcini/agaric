@@ -538,7 +538,7 @@ pub async fn set_todo_state_batch_inner(
 ///
 /// M-20: priority levels are user-configurable through the
 /// `property_definitions.options` JSON for the `priority` key (see
-/// ARCHITECTURE.md §20 / UX-201b). Validation against the configured
+/// docs/ARCHITECTURE.md §20 / UX-201b). Validation against the configured
 /// options is performed inside [`set_property_in_tx`], which honours the
 /// current definition row. As a defensive fallback — mirroring the
 /// `set_todo_state_inner` pattern (BUG-20) — when the `priority`

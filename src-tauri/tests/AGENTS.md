@@ -256,7 +256,7 @@ Tests sync message serialization, peer communication flows, and conflict resolut
 ### Undo/reverse testing
 
 `reverse.rs` tests verify inverse op computation. Key patterns:
-- Test the reverse of each op type (see ARCHITECTURE.md § Undo/Redo for the full table)
+- Test the reverse of each op type (see docs/ARCHITECTURE.md § Undo/Redo for the full table)
 - **Batch grouping:** consecutive ops within 200ms by the same device are grouped — backend's `revert_ops` sorts newest-first (`created_at DESC, seq DESC`) before applying. Tests must verify this ordering.
 - Non-reversible ops (`purge_block`, `delete_attachment`) must return `AppError::NonReversible`, not panic
 - Prior-state lookups use the op log exclusively (not the materialized `blocks` table), so tests must verify correct op-log walking even when the materializer lags
