@@ -2,10 +2,48 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 754 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 755 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 755 — PEND-42 Node 22 → 24 bump across CI (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-42 (Node 22 → Node 24 across CI; `.nvmrc` added; `docs/BUILD.md` Node-LTS callout refreshed). |
+| **Items modified** | — |
+| **Tests added** | — (CI-version + docs only) |
+| **Files touched** | 5 |
+
+**Summary:** Node 22 entered Maintenance LTS in October 2025; Node 24 is the current Active LTS through October 2026 (then Maintenance until April 2028). Bumped every `node-version: 22` pin to `24` across CI — 9 pins in total (PEND-42's spec said 7, actual count was 9: 4 in `_validate.yml` lint/vitest/playwright/cargo-tests, 2 in `ci.yml` build matrix Linux + android, 3 in `release.yml` verify-version + build-and-release + android-build-and-release). Added repo-root `.nvmrc` containing `24` as the single source of truth for local dev (no prior `.nvmrc` / `.node-version` / `.tool-versions`; previously every contributor resolved "what Node?" themselves). Updated `docs/BUILD.md` Linux prereq line from "Node (LTS)" → "Node 24 LTS (see `.nvmrc`)" — the only doc reference to Node that needed touching (no other "Node 22" mentions in current docs).
+
+Per PEND-42's recommendation, **deferred** adding `engines.node` to `package.json` — staging it one cycle later avoids blocking mid-upgrade contributors. Worth revisiting once the Node 24 CI run goes green.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged.
+
+**Files touched (this session, single commit):**
+- `.github/workflows/_validate.yml` (4 pins flipped).
+- `.github/workflows/ci.yml` (2 pins flipped).
+- `.github/workflows/release.yml` (3 pins flipped).
+- `.nvmrc` (NEW, 1 line: `24`).
+- `docs/BUILD.md` (line 39: "Node (LTS)" → "Node 24 LTS (see `.nvmrc`)").
+
+**Verification:**
+- `grep -rn 'node-version' .github/workflows/` — all 9 pins now `24`; zero references to `node-version: 22` remain.
+- `prek run --all-files` — all hooks pass.
+- Push-to-PR / runner-side smoke (CI matrix execution under Node 24, npm 11 lockfile stability, `cargo tauri build` cross-platform) deferred to the maintainer's first CI run on `main`.
+
+**Process notes:**
+- PEND-42's inventory undercounted by 2 pins (claimed 7, actual 9); the missed pins were in `release.yml` (build-and-release + android-build-and-release). Worth a glance at the inventory step on future bumps — `grep -rc` first, then write the plan.
+- `pending/PEND-42-node-22-to-24.md` was the maintainer's spec; untracked at session start. Removed from the working tree now that the work has landed.
+
+**Commit plan:** single commit; push deferred.
+
+---
+
 ## Session 754 — PEND-41 Batch 1 (CI/tooling review: decisions doc + zero-risk recs) (2026-05-16)
 
 | Metadata | Value |

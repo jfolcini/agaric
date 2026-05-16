@@ -36,7 +36,7 @@ sudo apt install -y \
   build-essential curl wget file
 ```
 
-Plus Rust (`rustup default stable`), Node (LTS), and Tauri's CLI: `cargo install tauri-cli --locked`.
+Plus Rust (`rustup default stable`), Node 24 LTS (see `.nvmrc`), and Tauri's CLI: `cargo install tauri-cli --locked`.
 
 ### Windows
 
