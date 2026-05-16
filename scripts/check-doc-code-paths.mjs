@@ -118,7 +118,7 @@ function isLocalPathCandidate(raw) {
   if (isAbsolute(cleaned)) return false
   // Must be repo-rooted under one of the known source prefixes — bare
   // filenames in prose ("`Cargo.toml`", "`README.md`") are out of scope.
-  if (!PATH_PREFIX_RE.test(cleaned + '/')) return false
+  if (!PATH_PREFIX_RE.test(`${cleaned}/`)) return false
   // Skip references into gitignored build-output / cache paths.
   if (GITIGNORED_PREFIX_RE.test(cleaned)) return false
   return cleaned
