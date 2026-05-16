@@ -125,6 +125,16 @@ TMP="$(mktemp)"
 jq --arg v "$NEW_VERSION" '.version = $v' src-tauri/tauri.conf.json > "$TMP"
 mv "$TMP" src-tauri/tauri.conf.json
 
+# `jq` pretty-prints with one-element-per-line arrays; biome's formatter
+# wants short arrays inlined. Without this, the post-bump diff carries
+# `tauri.conf.json` / `package.json` formatting changes the CI lint shard
+# rejects. Run biome's formatter on both manifests so the bump commit
+# matches the canonical repo style. biome is a devDependency — assume it
+# is installed (the script is documented to run after `npm install`).
+if [ -x node_modules/.bin/biome ]; then
+  node_modules/.bin/biome format --write package.json src-tauri/tauri.conf.json >/dev/null 2>&1
+fi
+
 # src-tauri/Cargo.toml — only the FIRST `version = "..."` line is the
 # package version; sub-dep `version = "..."` lines later in the file must
 # stay untouched. Use sed with `0,/.../` so only the first match is edited.
