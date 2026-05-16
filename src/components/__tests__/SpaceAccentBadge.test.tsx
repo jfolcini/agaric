@@ -1,3 +1,10 @@
+// @vitest-environment jsdom
+// PEND-37: React sets inline styles via the CSSStyleDeclaration interface;
+// happy-dom rejects values containing `var(--...)` (its CSS parser is
+// stricter than jsdom's), leaving `getAttribute('style')` null. The
+// accent-color assertions below check exactly that — pin this file to
+// jsdom until happy-dom relaxes the parser or we move to a data-* mirror.
+
 /**
  * Tests for SpaceAccentBadge (FEAT-3p10).
  *

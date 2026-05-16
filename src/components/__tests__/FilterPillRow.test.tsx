@@ -1,3 +1,7 @@
+// @vitest-environment jsdom
+// PEND-37: same STACK_TRACE_ERROR pattern as BacklinkFilterBuilder's "active
+// filters" a11y test under happy-dom. Pin until investigated.
+
 /**
  * Tests for FilterPillRow component.
  *
@@ -16,7 +20,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { axe } from '@/__tests__/helpers/axe'
 import { t } from '@/lib/i18n'
 import { FilterPillRow, type FilterWithKey, filterSummary } from '../FilterPillRow'
 

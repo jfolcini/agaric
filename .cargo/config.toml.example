@@ -1,0 +1,19 @@
+# Optional faster-linker config. Staged as `.example` so the working tree
+# doesn't break if you haven't installed mold yet. Activate with:
+#
+#   sudo apt install mold      # Debian/Ubuntu (mold is in main since 22.04)
+#   cp .cargo/config.toml.example .cargo/config.toml
+#
+# After activation, an incremental `cargo check` after touching a single
+# Rust file drops from ~20s to ~7-10s on this project (measured 2026-05-16:
+# 200K LOC across 228 files; the link step is the long pole, not codegen).
+#
+# Safe to delete the active config any time — it only affects the linker
+# the host toolchain picks for `cargo build` / `cargo check` on Linux,
+# and gcc/clang's `-fuse-ld=mold` is a no-op if mold isn't on PATH (you'd
+# get a clear "fuse-ld: cannot find mold" error, not silent breakage).
+#
+# Tracked in PEND-37 (local dev speed plan).
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

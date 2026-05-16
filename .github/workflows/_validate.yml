@@ -30,6 +30,10 @@ jobs:
           persist-credentials: false
 
       - name: Install system dependencies
+        # `mold` is added to speed up the linker step on the Rust builds
+        # below (nextest, mcp binary, sqlx prepare's compile pass).
+        # Activated via the .cargo/config.toml under the linux runner.
+        # See PEND-37 (local dev) for the measurement.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -38,7 +42,18 @@ jobs:
             libssl-dev \
             librsvg2-dev \
             libsoup-3.0-dev \
-            pkg-config
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        # Project ships `.cargo/config.toml.example` staged so local builds
+        # don't break if a contributor hasn't installed mold yet; CI always
+        # has mold available (apt step above), so we materialise the
+        # active config at runtime. Affects all subsequent cargo invocations
+        # in this job.
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -65,26 +80,34 @@ jobs:
         # invocation — clippy, nextest, deny, machete all trigger it.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+      - name: Install Rust-based dev tools via prebuilt binaries (PEND-39 C1)
+        # taiki-e/install-action pulls prebuilt binaries from the upstream
+        # GitHub Releases of each tool, side-stepping the per-binary
+        # `cargo install` compile that previously dominated cold-cache
+        # runs (~15min combined). Unlike `cargo install`, the binary
+        # cache here is not invalidated by `Cargo.lock` changes — only
+        # by the explicit `@v2` tag bump or a tool-version pin change.
+        # sqlx-cli still needs custom features (`--no-default-features --features rustls,sqlite`)
+        # to skip Postgres/MySQL drivers; the action accepts a `version`
+        # pin but not feature flags, so install it with cargo as a fallback
+        # the first time, cached by Swatinem/rust-cache's cache-bin: 'true'.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-deny,cargo-machete,sqruff,typos-cli,zizmor,taplo-cli
 
-      - name: Install cargo plugins used by prek hooks + sqlx-cli for offline-cache check
-        # First run is slow; subsequent runs use the cached ~/.cargo/bin/.
-        # sqlx-cli is built with `--no-default-features --features sqlite`
-        # to skip Postgres / MySQL drivers the project doesn't use, which
-        # would otherwise pull libpq / libmysqlclient and slow the build.
+      - name: Install sqlx-cli (custom features, cargo fallback)
+        # sqlx-cli with the right features set isn't covered by taiki-e/install-action's
+        # binary list — has to compile from source. Cached across runs via
+        # Swatinem/rust-cache's cache-bin: 'true'; only recompiles when
+        # Cargo.lock invalidates that cache.
         run: |
-          if ! command -v cargo-deny >/dev/null; then cargo install --locked cargo-deny; fi
-          if ! command -v cargo-machete >/dev/null; then cargo install --locked cargo-machete; fi
-          if ! command -v sqruff >/dev/null; then cargo install --locked sqruff; fi
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
-          if ! command -v typos >/dev/null; then cargo install --locked typos-cli; fi
-          if ! command -v zizmor >/dev/null; then cargo install --locked zizmor; fi
-          if ! command -v taplo >/dev/null; then cargo install --locked taplo-cli; fi
 
       - name: Install prek
-        # prek is a Rust reimplementation of pre-commit. Source-of-truth for
-        # the checks lives in prek.toml.
+        # prek is a Rust reimplementation of pre-commit; not yet covered by
+        # taiki-e/install-action's binary list, so falls back to cargo install
+        # + Swatinem cache-bin persistence. Source-of-truth for the checks
+        # lives in prek.toml.
         run: |
           if ! command -v prek >/dev/null; then cargo install --locked prek; fi
 

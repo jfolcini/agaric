@@ -1,3 +1,8 @@
+// @vitest-environment jsdom
+// PEND-37: same Storage-prototype-spy pattern as useBlockCollapse /
+// useLocalStoragePreference — pin to jsdom until the spies target the
+// instance directly.
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   configKeyToTipTap,

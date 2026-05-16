@@ -1,3 +1,8 @@
+// @vitest-environment jsdom
+// PEND-37: accent-dot inline-style assertion (`style.backgroundColor`
+// containing `var(--accent-…)`) requires jsdom — happy-dom's CSS parser
+// drops `var()` values, leaving the style empty.
+
 /**
  * Tests for SpaceSwitcher (FEAT-3 Phase 1 + Phase 6).
  *

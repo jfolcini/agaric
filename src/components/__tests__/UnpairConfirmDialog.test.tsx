@@ -5,7 +5,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { axe } from '@/__tests__/helpers/axe'
 import { UnpairConfirmDialog } from '../UnpairConfirmDialog'
 
 describe('UnpairConfirmDialog', () => {

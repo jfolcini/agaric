@@ -23,7 +23,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { axe } from '@/__tests__/helpers/axe'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { logger } from '@/lib/logger'
 import { announce } from '../../lib/announcer'

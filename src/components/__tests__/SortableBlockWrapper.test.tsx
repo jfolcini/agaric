@@ -1,3 +1,8 @@
+// @vitest-environment jsdom
+// PEND-37: drop-indicator assertion reads `style.marginLeft` which contains
+// `calc(var(--indent-width) * N)`. happy-dom's CSS parser rejects `var()` and
+// `calc()` so the property never lands. Pin to jsdom.
+
 /**
  * Tests for SortableBlockWrapper component (MAINT-55).
  *

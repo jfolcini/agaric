@@ -1,3 +1,9 @@
+// @vitest-environment jsdom
+// PEND-37: the "active filters" a11y test throws STACK_TRACE_ERROR (not a clean
+// assertion failure) under happy-dom — render or axe walk crashes deep in the
+// runner. Other tests in this file would work under happy-dom but pinning the
+// whole file is the conservative call until that crash is investigated.
+
 /**
  * Tests for BacklinkFilterBuilder component.
  *
@@ -21,7 +27,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { axe } from '@/__tests__/helpers/axe'
 import type { BacklinkFilter } from '../../lib/tauri'
 import { listTagsByPrefix } from '../../lib/tauri'
 import type { BacklinkFilterBuilderProps } from '../BacklinkFilterBuilder'

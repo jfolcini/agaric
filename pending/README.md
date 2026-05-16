@@ -11,6 +11,8 @@
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh post-1.0 status is the headline kill criterion) |
 | search-dialog-replace-view-2026-05-14 | Replace the full-takeover Search view with a Cmd+K-style dialog (drops view-replace context loss + ~700 lines of UI) | M-L (2-3 days) | **DRAFT — needs more discussion**; 8 open questions flagged inline |
 | design-system-perf-review-2026-05-09 | Open: Tier 1.3 (lazy-load the TipTap stack from JournalPage's static path); Tier 2.6 follow-up (windowing for BlockListRenderer + BlockTree); one doc-drift item (AGENTS.md import-boundary automation). | M-L | partial-shipped, plan stays for follow-up |
+| PEND-37 | Local dev feedback-loop speed-up (mold linker, target/debug cleanup, vitest env, workflow notes) | S | partial-shipped (L2 + L3 + L3-fix + CI siblings landed; vitest 169 s → 68.93 s, all 9874 green); L1 activation + L4/L5 outstanding |
+| PEND-39 | CI parallelism overhaul (vitest + Playwright sharding, split `_validate.yml`, shared rust-cache) | M (~1-2 days, mostly YAML) | partial-shipped (C1, C2, C4 landed); C3, C5, C6, C8 want one coherent design |
 
 Single-task plans live in `REVIEW-LATER.md` instead of as standalone files. Session 745's cleanup moved five (PEND-38 import progress, agenda-sort-sql-pushdown tombstone, design-system-maintainability's lone FormattingToolbar item, sql-review's deferred M-8 snapshot streaming, and the tauri-2.11 dependabot bump) over per the "0/1 tasks → consolidate" rule.
 

@@ -1,3 +1,7 @@
+// @vitest-environment jsdom
+// PEND-37: same as useBlockCollapse — spies on `Storage.prototype.{getItem,setItem}`
+// don't intercept under happy-dom. Pin to jsdom until refactored.
+
 /**
  * Tests for useLocalStoragePreference hook.
  *

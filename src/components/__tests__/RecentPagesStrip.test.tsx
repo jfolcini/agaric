@@ -733,7 +733,9 @@ describe('RecentPagesStrip', () => {
         const strip = screen.getByTestId('recent-pages-strip')
         const viewport = strip.querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement
         await waitFor(() => {
-          expect(viewport.style.maskImage).toBe('')
+          // PEND-37: happy-dom returns `undefined` for unset style properties
+          // where jsdom returns `''`. Coerce so the assertion is portable.
+          expect(viewport.style.maskImage ?? '').toBe('')
         })
       } finally {
         if (origScrollWidth)

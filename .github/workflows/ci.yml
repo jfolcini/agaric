@@ -10,6 +10,15 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel an in-flight CI run when a new push lands on the same ref. Saves
+# minutes on rapid push-then-fix cycles. NOT applied to `main` (the
+# `!= 'main'` guard) so a push that triggers a release-adjacent CI run
+# always completes — we never want the validate result for a commit on
+# main to be silently overwritten by a follow-up commit's run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Default to read-only for the workflow's GITHUB_TOKEN. Individual jobs do
 # not need to write back to the repo (artifact uploads use separate scopes
 # inside `actions/upload-artifact`), so the principle-of-least-privilege
@@ -60,6 +69,8 @@ jobs:
         # AppImage step with a generic "failed to run linuxdeploy" error
         # after ~60s of churn — match the apt list in release.yml so both
         # workflows produce identical bundles.
+        # `mold` is added for faster linking on the cargo tauri build below
+        # (PEND-37). Activated via `.cargo/config.toml.example` copy below.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -70,7 +81,14 @@ jobs:
             libsoup-3.0-dev \
             libappindicator3-dev \
             patchelf \
-            pkg-config
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        if: matrix.label == 'linux'
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

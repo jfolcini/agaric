@@ -1,3 +1,9 @@
+// @vitest-environment jsdom
+// PEND-37: the dragStart assertion relies on `fireEvent.dragStart(li, { dataTransfer })`
+// passing the test's dataTransfer reference through to the component. jsdom honours
+// this; happy-dom's DragEvent constructor reconstructs a fresh DataTransfer and
+// discards the test's object, so component mutations never surface back.
+
 /**
  * Tests for BlockListItem component (UX-9).
  *

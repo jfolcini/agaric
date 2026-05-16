@@ -51,39 +51,45 @@ rules:
       - release.yml:57
       - release.yml:58
   unpinned-uses:
+    # Re-baselined 2026-05-16 after PEND-37/PEND-39 CI edits shifted line
+    # numbers (added concurrency block + mold install steps in ci.yml,
+    # taiki-e/install-action + mold setup in _validate.yml). zizmor's
+    # ignore syntax is line-pinned, so any line shift requires this list
+    # to be regenerated. Same trust model as before: actions from `actions/*`,
+    # `dtolnay/*`, `taiki-e/*`, `Swatinem/*`, `android-actions/*`,
+    # `tauri-apps/*` pinned to release tags rather than SHAs.
     ignore:
-      - _validate.yml:125
       - _validate.yml:25
-      - _validate.yml:44
-      - _validate.yml:47
-      - _validate.yml:55
-      - _validate.yml:69
-      - ci.yml:154
-      - ci.yml:163
+      - _validate.yml:59
+      - _validate.yml:62
+      - _validate.yml:70
+      - _validate.yml:94
+      - _validate.yml:148
+      - ci.yml:60
+      - ci.yml:94
+      - ci.yml:97
+      - ci.yml:102
       - ci.yml:172
-      - ci.yml:183
-      - ci.yml:188
-      - ci.yml:193
-      - ci.yml:198
-      - ci.yml:204
-      - ci.yml:212
-      - ci.yml:287
-      - ci.yml:51
-      - ci.yml:76
-      - ci.yml:79
-      - ci.yml:84
+      - ci.yml:181
+      - ci.yml:190
+      - ci.yml:201
+      - ci.yml:206
+      - ci.yml:211
+      - ci.yml:216
+      - ci.yml:222
+      - ci.yml:230
+      - ci.yml:305
+      - release.yml:40
+      - release.yml:58
       - release.yml:106
       - release.yml:160
       - release.yml:165
       - release.yml:170
       - release.yml:201
       - release.yml:210
-      - release.yml:40
       - release.yml:406
       - release.yml:411
       - release.yml:416
       - release.yml:426
       - release.yml:432
       - release.yml:440
-      - release.yml:56
-      - release.yml:58

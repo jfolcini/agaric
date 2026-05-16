@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { LucideIcon } from 'lucide-react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { axe } from '@/__tests__/helpers/axe'
 import { t } from '../../lib/i18n'
 
 // Mock lucide-react icons. We extend the original module so transitive

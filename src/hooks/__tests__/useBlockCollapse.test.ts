@@ -1,3 +1,9 @@
+// @vitest-environment jsdom
+// PEND-37: `vi.spyOn(Storage.prototype, 'setItem')` doesn't intercept
+// `localStorage.setItem` calls under happy-dom (its Storage impl bypasses
+// the prototype method). Pin to jsdom until the spy pattern is refactored
+// to target the instance directly.
+
 /**
  * Tests for useBlockCollapse hook.
  *

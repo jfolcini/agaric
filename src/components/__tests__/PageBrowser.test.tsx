@@ -1,3 +1,9 @@
+// @vitest-environment jsdom
+// PEND-37: virtualized pagination relies on auto-load timing that behaves
+// differently under happy-dom's IntersectionObserver shim. Pin to jsdom
+// until the auto-load test is rewritten to use the explicit `<LoadMoreButton>`
+// fallback path (which doesn't depend on intersection events).
+
 /**
  * Tests for PageBrowser component.
  *
