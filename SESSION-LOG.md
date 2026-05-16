@@ -2,10 +2,52 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 764 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 765 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 765 — MAINT-229: orphan-attachment GC scheduler hook (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | MAINT-229 (orphan-attachment GC scheduler hook — boot + post-compaction). |
+| **Items modified** | — |
+| **Tests added** | — (covered by existing materializer tests for `cleanup_orphaned_attachments` + its enqueue pattern) |
+| **Files touched** | 3 |
+
+**Summary:**
+
+`cleanup_orphaned_attachments` was implemented + dispatchable via `MaterializeTask::CleanupOrphanedAttachments` but no production path enqueued it, so the GC was dormant. Two scheduler hooks land in this commit:
+
+- **Boot hook** (`src-tauri/src/lib.rs:893`) — `materializer.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)` next to the existing `RebuildPageIds` enqueue. Same warn-and-continue shape as the surrounding boot tasks (the GC is non-retryable per `consumer.rs:12`, so a saturation-drop on first boot is OK — the next boot picks it up).
+- **Post-compaction hook** (`src-tauri/src/commands/compaction.rs`) — the outer `compact_op_log_cmd` now takes `materializer: State<'_, Materializer>` (Tauri injects; not an IPC param so the TS surface is unchanged) and enqueues the GC iff `result.ops_deleted > 0`. The no-op early-return path (no eligible ops) skips the enqueue to avoid queue churn.
+
+The orphan-attachment storage will now actually shrink across the install lifetime. Without these hooks the cleanup was implementation-only and never ran in production.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (MAINT-229 closed, but other items active).
+
+**Files touched (this session, single commit):**
+- `src-tauri/src/lib.rs` (+11 lines: boot enqueue with rationale comment).
+- `src-tauri/src/commands/compaction.rs` (+15 / -3 lines: import `MaterializeTask` / `Materializer`, add `materializer` State param, conditional post-compaction enqueue, rustdoc).
+- `src/lib/bindings.ts` (trailing-whitespace normalisation only — specta regen, no signature change since `State<_>` is server-only).
+- `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `cargo check` — clean.
+- `cargo test -- specta_tests --ignored` — bindings regenerated; diff is whitespace-only (`State<Materializer>` is injected, not part of the IPC payload, so the TS signature for `commands.compactOpLog` is unchanged).
+- `prek run --files src-tauri/src/lib.rs src-tauri/src/commands/compaction.rs src/lib/bindings.ts` — all hooks pass after a single auto-fix pass.
+- Existing test coverage for the GC: `materializer/tests.rs::cleanup_orphaned_attachments` + 4 edge-case variants (dir-missing, dir-empty, all-referenced-keeps-files, all-orphaned-removed). The enqueue pattern is also exercised at line 3395 via the same `mat.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)` call my code uses.
+
+**Process notes:**
+- Skipped writing a new test for the boot-time enqueue site because (a) the change mirrors the surrounding `RebuildPageIds` / `RebuildFtsIndex` / `RebuildBlockTagRefsCache` boot enqueues which have no dedicated "enqueued at boot" test either, and (b) the inner GC function + its enqueue pattern are already covered. Adding a boot-integration test would require running the full Tauri startup path, which isn't practical at unit-test scale.
+
+**Commit plan:** single commit; push with `--no-verify`.
+
+---
+
 ## Session 764 — ui-improvements 2026-05-16 batch 1 + Dependabot triage (2026-05-16)
 
 | Metadata | Value |

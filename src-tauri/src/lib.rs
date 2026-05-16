@@ -891,6 +891,19 @@ pub fn run() {
                 tracing::warn!(error = %e, "failed to enqueue page_id rebuild at boot");
             }
 
+            // MAINT-229: enqueue the orphan-attachment GC at boot. The
+            // function is non-retryable (the bg consumer drops on
+            // saturation rather than persisting it), so a missed boot
+            // tick is fine — the next boot picks it up. A second hook
+            // in `compact_op_log_cmd` runs the same GC after every
+            // successful user-triggered compaction so deletions get
+            // their orphaned attachments swept promptly.
+            if let Err(e) =
+                materializer.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)
+            {
+                tracing::warn!(error = %e, "failed to enqueue CleanupOrphanedAttachments at boot");
+            }
+
             // BUG-23: When drafts were recovered before the materializer was
             // created, the targeted FTS / block_links / tags / pages caches
             // are stale for those block_ids. Refresh them now and block until

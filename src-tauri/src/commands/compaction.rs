@@ -8,6 +8,7 @@ use tracing::instrument;
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
+use crate::materializer::{MaterializeTask, Materializer};
 
 use super::*;
 
@@ -247,15 +248,39 @@ pub async fn compact_op_log_cmd_inner(
 ///
 /// The frontend is responsible for confirming with the user before calling
 /// this command. `retention_days` controls how far back ops are retained.
+///
+/// MAINT-229: a successful compaction that actually deleted ops enqueues
+/// `CleanupOrphanedAttachments` so attachments whose owning block was
+/// just purged get swept. The complementary boot-time enqueue in
+/// `lib.rs` covers the case where the user never triggers compaction.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn compact_op_log_cmd(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
-    compact_op_log_cmd_inner(&pool.0, device_id.as_str(), retention_days)
+    let result = compact_op_log_cmd_inner(&pool.0, device_id.as_str(), retention_days)
         .await
-        .map_err(sanitize_internal_error)
+        .map_err(sanitize_internal_error)?;
+
+    // Only fire the GC when compaction actually purged ops. The early
+    // -return path (no eligible ops) reaches here with ops_deleted = 0
+    // and nothing on disk has changed, so the sweep would be pointless
+    // queue churn.
+    if result.ops_deleted > 0 {
+        if let Err(e) =
+            materializer.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)
+        {
+            tracing::warn!(
+                error = %e,
+                ops_deleted = result.ops_deleted,
+                "failed to enqueue CleanupOrphanedAttachments after compaction",
+            );
+        }
+    }
+
+    Ok(result)
 }

@@ -453,6 +453,11 @@ export const commands = {
 	 *
 	 *  The frontend is responsible for confirming with the user before calling
 	 *  this command. `retention_days` controls how far back ops are retained.
+	 *
+	 *  MAINT-229: a successful compaction that actually deleted ops enqueues
+	 *  `CleanupOrphanedAttachments` so attachments whose owning block was
+	 *  just purged get swept. The complementary boot-time enqueue in
+	 *  `lib.rs` covers the case where the user never triggers compaction.
 	 */
 	compactOpLogCmd: (retentionDays: number) => typedError<CompactionResult, AppErrorSchema>(__TAURI_INVOKE("compact_op_log_cmd", { retentionDays })),
 	// Tauri command: point-in-time restore. Delegates to [`restore_page_to_op_inner`].
