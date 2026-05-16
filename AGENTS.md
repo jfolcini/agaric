@@ -33,7 +33,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 | **AGENTS.md** (this file) | Invariants, conventions, architecture overview |
 | **[BUILD.md](BUILD.md)** | Build guide: prerequisites, platforms, Android, CI, troubleshooting |
 | **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1870 lines) |
-| **[FEATURE-MAP.md](FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
+| **[docs/FEATURE-MAP.md](docs/FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
 | [`src-tauri/tests/AGENTS.md`](src-tauri/tests/AGENTS.md) | Rust test patterns, fixtures, pitfalls |
 | [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md) | Frontend test patterns, mocking, a11y |
 | `REVIEW-LATER.md` | Deferred items, tech debt backlog, future features |
@@ -214,7 +214,7 @@ If you need a new primitive, shared component, or hook:
 2. Follow the CVA + Radix + `cn()` patterns established by existing `ui/` components.
 3. Place it in the correct layer (see table above).
 4. Add tests: render + interaction + `axe(container)` a11y.
-5. Update FEATURE-MAP.md if it adds a user-facing capability.
+5. Update docs/FEATURE-MAP.md if it adds a user-facing capability.
 
 The measure of good frontend work is not just "does it work" but "does it make the next feature easier to build."
 
@@ -342,7 +342,7 @@ Baseline performance at 100K blocks (established by benchmarks):
 |------|---------|---------------|
 | `SESSION-LOG.md` | Subagent activity log | After each subagent completes |
 | `REVIEW-LATER.md` | Deferred items, tech debt, future features | When a fix is deferred |
-| `FEATURE-MAP.md` | Complete feature inventory for discovery/review | When features are added/changed (keep in sync with SESSION-LOG updates) |
+| `docs/FEATURE-MAP.md` | Complete feature inventory for discovery/review | When features are added/changed (keep in sync with SESSION-LOG updates) |
 | `AGENTS.md` | This file | Only with explicit user approval |
 
 For orchestrator workflow details, see [PROMPT.md § 2. BUILD](PROMPT.md).

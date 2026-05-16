@@ -10,7 +10,7 @@ Work through markdown files in pending folder in manageable batches, fixing item
 
 Read markdown files in pending folder. Group 3-6 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
 
-Use **FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
+Use **docs/FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
 
 ## 2. BUILD (parallel by default — up to 6 subagents)
 
@@ -101,7 +101,7 @@ Update SESSION-LOG.md with a summary of what was done (follow the existing forma
 
 In REVIEW-LATER.md: remove resolved items entirely — both the summary table row AND the detail section. Update the summary count at the top and the "Previously resolved" line. Never add "Resolved" sections.
 
-**Keep FEATURE-MAP.md in sync:** If the session added new commands, components, hooks, stores, database tables, or other user-facing features, update the relevant section of FEATURE-MAP.md. Also update the deferred features list (section 22) when REVIEW-LATER items are added or resolved.
+**Keep docs/FEATURE-MAP.md in sync:** If the session added new commands, components, hooks, stores, database tables, or other user-facing features, update the relevant section of docs/FEATURE-MAP.md. Also update the deferred features list (section 22) when REVIEW-LATER items are added or resolved.
 
 **Concurrent edits to markdown files in pending folder:** Other agents may be working on markfown files in pending folder at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
 
@@ -161,7 +161,7 @@ Apply this template to NEW sessions. Older sessions (590-597 included) stay as-i
 - **Serializing parallelizable work** — if 4 subagents have independent file targets, launch all 4 in one batch; don't queue them.
 - **Running prek inside subagents** — subagents only run their own targeted tests. Orchestrator runs `prek run --all-files` once at commit time.
 - **Forgetting to re-read REVIEW-LATER.md before writing** — other agents may concurrently edit it. Always re-read immediately before write.
-- **Forgetting FEATURE-MAP.md updates** — new commands / components / hooks / stores / tables must be reflected in the feature map.
+- **Forgetting docs/FEATURE-MAP.md updates** — new commands / components / hooks / stores / tables must be reflected in the feature map.
 - **Mixing refactoring with feature work in one commit** — keep them separate so reverts stay surgical.
 - **Subagent prompts that paste long doc contents inline** — keep prompts minimal; reference paths instead.
 - **Kitchen-sink refactors handed to subagents** — refactors that touch >10 consumer call sites or require coordinated edits across many test fixtures (prop-drill cleanups, hook-extraction sweeps, IPC-wrapper migrations, etc.) have repeatedly stalled or silent-failed when delegated to subagents (sessions 555 / 557 / 558 → orchestrator-direct close in 559 / 560). For this class of work: either (a) run it orchestrator-direct, or (b) split it explicitly by file boundary into 3-6 narrow subagents where each owns ≤6 files and has no cross-cutting test dependency. Do not hand "refactor X across the codebase" to a single subagent.

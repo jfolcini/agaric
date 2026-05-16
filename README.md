@@ -181,7 +181,7 @@ public/                      # Static assets (agaric.svg icon)
 BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions
 ARCHITECTURE.md              # Architecture deep-dive
-FEATURE-MAP.md               # Complete feature inventory
+docs/FEATURE-MAP.md               # Complete feature inventory
 REVIEW-LATER.md              # Deferred items and tech debt
 ```
 
