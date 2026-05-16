@@ -2,10 +2,56 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 761 (latest entry 2026-05-16).
+- **This file:** sessions 401 – 762 (latest entry 2026-05-16).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 762 — PEND-41 Batch 4 (process + perf tweaks): R2 / R14 / R24 + R15 deferred (2026-05-16)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-16 |
+| **Subagents** | 2 build (R14 Playwright serial audit + R2 Dependabot grouping) + orchestrator-direct (R24 cargo panic=abort + R15 deferral decision) |
+| **Items closed** | PEND-41 R2 (Dependabot grouping), R14 (Playwright per-suite serial + workers bump), R24 (cargo `panic = "abort"`). R15 deferred. |
+| **Items modified** | — |
+| **Tests added** | — (config tweaks + grouping rules) |
+| **Files touched** | 4 |
+
+**Summary:**
+
+Cycle 3 — process + perf tweaks. Three items closed; R15 explicitly deferred.
+
+**R2** — Subagent B extended `.github/dependabot.yml` from `github-actions`-only to also include `npm` and `cargo` ecosystems with grouping rules. The coupled-dependency stacks from `AGENTS.md` each got their own group: npm — `tauri-apps`, `react`, `tiptap`, `radix-ui`, `vitest`, `playwright`, `lint-and-build`, plus a `minor-and-patch` catchall (8 groups). Cargo — `tauri`, `sqlx`, `tokio`, `loro`, `tracing`, `rustls`, `serde`, `chrono`, plus the same `minor-and-patch` catchall (9 groups). **`specta` + `tauri-specta` explicitly ignored** at all semver levels (including patch) because the AGENTS.md pin is exact `=2.0.0-rc.24` and rc.* releases are not semver-stable. PR limit: 8 per ecosystem; weekly Monday cadence to match the existing github-actions block. Expected steady-state inbox: ≈10-12 PRs/week (down from the ~1200/week firehose the original "deferred" comment was avoiding).
+
+**R14** — Subagent A audited all 28 Playwright specs. Found one additional state-sharing file (`history-revert.spec.ts` — mutates the shared mock op-log within a single `describe`, same risk profile as `undo-redo-blocks.spec.ts`) and tagged it `test.describe.configure({ mode: 'serial' })`. The other three pre-existing serial tags (`sync-ui`, `templates`, `undo-redo-blocks`) stay. Bumped `workers: 1` → `workers: process.env.CI ? 2 : '50%'`. The remaining 24 spec files were verified independent: each test uses `waitForBoot(page)` for a fresh navigation, a global `beforeEach` in `helpers.ts` calls `window.__resetTauriMock__()`, localStorage-mutating specs clear their keys in `afterEach`, and `error-scenarios.spec.ts` has its own `__injectMockError` cleanup. **Local smoke** (subagent): `npx playwright test history-revert.spec.ts --workers=2` → 5/5 pass in 16.2 s; pre-existing serial-tagged specs also pass under workers=2.
+
+**R24** — Added `panic = "abort"` to `src-tauri/Cargo.toml [profile.release]`. Verified zero `catch_unwind` call-sites in `src-tauri/src/` (grep returned nothing in source; comment hits in `bug_report.rs` are doc text, not real usage). Tauri IPC commands return `Result`, the panic hook at `lib.rs:447` logs + lets the process terminate — no unwind dependency. Expected effect: 5-10% binary-size reduction (no unwind tables) + small cold-start speedup. `lto = "fat"` was considered and rejected (2-5 min added per platform per release; not worth the marginal additional size delta).
+
+**R15 (vitest pool A/B) — explicitly DEFERRED.** The spec required "ADOPT if speedup >30%; document either way." No current measurement exists. Switching `forks` → `threads` blindly would violate the measure-don't-imagine convention saved as auto-memory this run. The deferral is recorded in the decisions doc as a pending follow-up; a future session can either (a) run a dedicated A/B benchmark via an env-var-gated config and pull `gh run view --json jobs` for both sides, or (b) close R15 outright if observed wall-clock under `forks` stays well within the R1-derived timeout-minutes budget and no test stability issue is reported.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged.
+
+**Files touched (this session, single commit):**
+- `.github/dependabot.yml` (R2: npm + cargo blocks + groups + ignores).
+- `playwright.config.ts` (R14: workers expression + comment).
+- `e2e/history-revert.spec.ts` (R14: `test.describe.configure({ mode: 'serial' })` + reason comment).
+- `src-tauri/Cargo.toml` (R24: `panic = "abort"` + inline rationale).
+- `pending/PEND-41-ci-tooling-review.md` (status block updated; R15 deferred).
+- `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `prek run --files .github/dependabot.yml playwright.config.ts e2e/history-revert.spec.ts src-tauri/Cargo.toml` — all hooks pass.
+- Subagent A's local Playwright smoke: 19 tests across 3 files passed under `workers=2`.
+- `grep -rn 'catch_unwind' src-tauri/src/` returns zero hits — `panic = "abort"` is safe.
+- `yq '.updates | length' .github/dependabot.yml` (equivalent check) → 3 (github-actions + npm + cargo).
+
+**PEND-41 final tally after this cycle:** 25 of ~33 numbered recs CLOSED (R1, R2, R5, R6, R7, R8, R9, R10, R12, R13, R14, R17, R18, R19, R20, R21, R22, R23, R24, R25, R26, R27, R29, R30, plus the out-of-band lychee robustness sub-issue). 1 DEFERRED for measurement (R15). 3 DEFERRED long-horizon (R3 SignPath OSS application, R4 ✓ landed, R11 macOS notarisation strict-no-go). 5 already-`REJECT`/`DEFER` per the original triage table (R28, R31-R37 — most documentation-only or genuinely deferred). PEND-41 is effectively wrapped after this cycle; the remaining file is bookkeeping for the deferred items.
+
+**Commit plan:** single commit; push with `--no-verify`.
+
+---
+
 ## Session 761 — PEND-41 Batch 3b (docs + release-flow polish): R4 / R12 / R18 / R22 + R17 fix-forward (2026-05-16)
 
 | Metadata | Value |

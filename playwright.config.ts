@@ -5,10 +5,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env['CI'],
   retries: process.env['CI'] ? 2 : 0,
-  // Single worker everywhere: parallel runs flake on shared dev-server
-  // state (Radix popovers, suggestion items, TipTap focus) — CI already
-  // ran with `workers: 1`; aligning local matches the green CI envelope.
-  workers: 1,
+  // PEND-41 R14: file-level parallelism via `fullyParallel: true`, with
+  // per-suite `test.describe.configure({ mode: 'serial' })` annotations on
+  // the specs whose tests share global state (op-log, pairing mock, kebab
+  // popover chains). The workers cap below is per-shard — the CI sharding
+  // lives in `.github/workflows/_validate.yml`'s playwright job, so the
+  // effective parallelism in CI is `shards × workers` (2 × 2 today).
+  workers: process.env['CI'] ? 2 : '50%',
   reporter: 'list',
   expect: {
     timeout: 8000,

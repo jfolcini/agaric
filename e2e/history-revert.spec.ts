@@ -1,5 +1,10 @@
 import { expect, openPage, test, waitForBoot } from './helpers'
 
+// PEND-41 R14: HistoryView tests mutate and assert against the shared
+// mock op-log within a describe — same risk profile as undo-redo-blocks,
+// run serially to avoid op-log interleaving under fullyParallel.
+test.describe.configure({ mode: 'serial' })
+
 /**
  * E2E tests for HistoryView batch revert (#137).
  *

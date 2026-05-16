@@ -1,12 +1,32 @@
 version: 2
 
-# Dependabot is responsible for keeping our SHA-pinned action references
-# fresh. Workflows pin actions to a 40-char commit SHA + a `# vX` comment
-# (PEND-37/security baseline 2026-05-16). Dependabot opens weekly PRs that
-# bump the SHA and update the comment when a new release tag lands.
+# Dependabot keeps three ecosystems fresh on a single weekly cadence:
 #
-# Without this file, SHA-pinning becomes "pin once and forget", which is
-# almost worse than tag-floating — security fixes never reach us.
+#   1. github-actions  — SHA-pinned action references in `.github/workflows/`
+#                        (workflows pin to a 40-char commit SHA + a `# vX`
+#                        comment per the PEND-37 security baseline; without
+#                        this entry SHA-pinning becomes "pin once and
+#                        forget", which is almost worse than tag-floating
+#                        because security fixes never reach us).
+#   2. npm            — `package.json` / `package-lock.json` at the repo root.
+#   3. cargo          — `src-tauri/Cargo.toml` / `Cargo.lock` (Tauri workspace).
+#
+# Cadence: every Monday. A single weekday batch is easier to triage
+# than a trickle across the week, and Monday-AM lines the PRs up before
+# the maintainer's review window.
+#
+# Per-ecosystem PR caps (open-pull-requests-limit) keep the inbox
+# manageable. Grouping rules below collapse the long tail of coupled
+# updates (Tauri stack, React stack, TipTap, Radix, sqlx, tokio,
+# tracing, rustls, serde, etc.) into single PRs so we get ≈8-10 PRs/
+# week per ecosystem instead of one per transitive dep. Coupled-dep
+# rules are sourced from AGENTS.md § "Coupled Dependency Updates".
+#
+# Threat-model note: only minor + patch updates are auto-grouped. Major
+# bumps fall outside every `groups:` entry below (groups default to
+# `update-types: [minor, patch]` unless explicitly opened up), so each
+# major lands as its own individual PR for the maintainer to review —
+# which is what we want for breaking-change risk.
 
 updates:
   - package-ecosystem: github-actions
@@ -21,7 +41,174 @@ updates:
       - dependencies
       - github-actions
 
-  # npm + cargo are deferred to the supply-chain-hardening follow-up plan
-  # (PEND-XX). Reason: bumping ~700 npm + ~500 cargo transitive deps weekly
-  # creates a PR firehose that needs grouping/triage rules before it's
-  # actionable. github-actions is small enough (~9 refs) to land standalone.
+  # ─── npm (frontend) ────────────────────────────────────────────────
+  #
+  # Grouping rationale (AGENTS.md § Coupled Dependency Updates):
+  #   • tauri-apps  — every `@tauri-apps/*` package ships in lockstep
+  #                   with the Cargo `tauri-*` crates; mixing JS-side
+  #                   and Rust-side versions breaks IPC.
+  #   • react       — React core + types + the Vite plugin must agree
+  #                   on a major; partial bumps wedge the type system.
+  #   • tiptap      — every `@tiptap/*` package must sit on the exact
+  #                   same version (currently 3.22.4); the editor
+  #                   silently misbehaves on mixed versions.
+  #   • radix-ui    — `@radix-ui/*` primitives are API-compatible
+  #                   within a major; never mix majors.
+  #   • vitest      — runner + matchers + DOM env must agree.
+  #   • playwright  — `@playwright/test` and the `playwright` runtime
+  #                   ship as a pair.
+  #   • lint-and-build — biome, typescript, vite, tslib — bumping
+  #                   these together avoids tsc/biome rule churn
+  #                   landing across multiple PRs in the same week.
+  #   • minor-and-patch — catch-all for everything else; majors stay
+  #                   individual PRs.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 8
+    commit-message:
+      prefix: chore(npm)
+    labels:
+      - dependencies
+      - npm
+    groups:
+      tauri-apps:
+        patterns:
+          - "@tauri-apps/*"
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+          - "@vitejs/plugin-react"
+          - "vite-plugin-*"
+      tiptap:
+        patterns:
+          - "@tiptap/*"
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "vitest-axe"
+          - "happy-dom"
+          - "jsdom"
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+      lint-and-build:
+        patterns:
+          - "biome"
+          - "@biomejs/*"
+          - "typescript"
+          - "vite"
+          - "tslib"
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # ─── cargo (src-tauri workspace) ───────────────────────────────────
+  #
+  # Grouping rationale (AGENTS.md § Coupled Dependency Updates):
+  #   • tauri      — `tauri`, `tauri-build`, every `tauri-plugin-*`,
+  #                   and `tauri-utils` must share a major. Mixed
+  #                   versions break the IPC ABI.
+  #   • sqlx       — `sqlx` + `sqlx-cli` move together; the `.sqlx/`
+  #                   offline cache regenerates on the next prepare.
+  #   • tokio      — `tokio` + every `tokio-*` adapter (rustls,
+  #                   tungstenite, etc.) must agree on a major.
+  #   • loro       — `loro` + `loro-*` ship as a CRDT engine bundle.
+  #   • tracing    — `tracing` + `tracing-subscriber` + `tracing-
+  #                   appender` move together.
+  #   • rustls     — the rustls stack: `rustls`, `rustls-*`,
+  #                   `tokio-rustls`, `webpki-roots`. The repo runs
+  #                   rustls-everywhere (MAINT-91); mixing rustls
+  #                   majors fragments the TLS stack.
+  #   • serde      — `serde`, `serde_json`, `serde_with` derive +
+  #                   runtime must align on a serde major.
+  #   • chrono     — `chrono` + `chrono-tz` (timezone data table is
+  #                   tied to a specific chrono major).
+  #   • minor-and-patch — catch-all for everything else; majors stay
+  #                   individual PRs.
+  #
+  # Ignore rationale: `specta` and `tauri-specta` are intentionally
+  # pinned to exact `=2.0.0-rc.24` (AGENTS.md § Coupled Dependency
+  # Updates). Auto-bumping either crate regenerates `src/lib/
+  # bindings.ts` with incompatible types and breaks the IPC surface.
+  # Patch updates are also blocked because the rc.* line is not
+  # semver-stable. The ignore covers every semver level explicitly.
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 8
+    commit-message:
+      prefix: chore(cargo)
+    labels:
+      - dependencies
+      - cargo
+    groups:
+      tauri:
+        patterns:
+          - "tauri"
+          - "tauri-build"
+          - "tauri-plugin-*"
+          - "tauri-utils"
+      sqlx:
+        patterns:
+          - "sqlx"
+          - "sqlx-*"
+      tokio:
+        patterns:
+          - "tokio"
+          - "tokio-*"
+      loro:
+        patterns:
+          - "loro"
+          - "loro-*"
+      tracing:
+        patterns:
+          - "tracing"
+          - "tracing-*"
+      rustls:
+        patterns:
+          - "rustls"
+          - "rustls-*"
+          - "tokio-rustls"
+          - "webpki-roots"
+      serde:
+        patterns:
+          - "serde"
+          - "serde_json"
+          - "serde_with"
+      chrono:
+        patterns:
+          - "chrono"
+          - "chrono-tz"
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "specta"
+        update-types:
+          - "version-update:semver-patch"
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
+      - dependency-name: "tauri-specta"
+        update-types:
+          - "version-update:semver-patch"
+          - "version-update:semver-minor"
+          - "version-update:semver-major"

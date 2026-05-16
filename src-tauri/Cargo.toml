@@ -286,6 +286,17 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 debug = false
+# PEND-41 R24 — `panic = "abort"` shrinks the binary 5-10% (drops the
+# unwind tables) and shaves a small amount of cold-start cost. Safe
+# because Agaric does not rely on stack unwinding to recover from
+# panics: Tauri IPC commands return `Result`, the daemon panic hook
+# at lib.rs:447 just logs + lets the process terminate, and there
+# are zero `std::panic::catch_unwind` call-sites in `src-tauri/src/`
+# (verified during R24 landing — re-run `grep -r catch_unwind
+# src-tauri/src/` before tightening this further). `lto = "fat"`
+# was considered and rejected (2-5 min added to every release build
+# per platform; not worth it on a 5-10% binary-size delta).
+panic = "abort"
 
 [lib]
 name = "agaric_lib"
