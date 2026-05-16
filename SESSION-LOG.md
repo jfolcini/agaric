@@ -2,10 +2,64 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 766 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 767 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
 - **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 767 — Cycle 2: PERF-21 + MAINT-228 + toast dedup + sidebar mobile rail + 0.1.30 release-secret-scan fix (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | 4 build (PERF-21 bench bisect, MAINT-228 Loro vv check, toast dedup adoption, sidebar mobile rail) + orchestrator-direct review |
+| **Items closed** | PERF-21 (`batch_resolve_100k` SLO regression — diagnosed as bench-fixture/SQL coupling mismatch, fixed with production-realistic seeding; 12 ms panic → 0.25 ms, 48× under budget); MAINT-228 (Loro `from_vv` reachability check + snapshot-fallback signal piggy-backing on the existing `ResetRequired` path); Toast deduplication via sonner `id` field (15 call sites across 12 categories); Sidebar resize rail hidden on touch input. Plus orchestrator-direct: `release.yml` secret-scan PEM-header false-positive fix → 0.1.30 cut. |
+| **Items modified** | REVIEW-LATER: dropped PERF-21 + MAINT-228 (count 22 → 20). |
+| **Tests added** | +4 frontend (notify dedup) + 4 backend (Loro reachability happy-path / phantom-peer / behind-counter / classifier unit). |
+| **Files touched** | 44 (cycle 2 commit `b9116ae9`) + 1 (`release.yml` secret-scan fix, commit `49c253b4`) + 5 (0.1.30 bump commit `f879b479`) |
+
+**Summary:** Second cycle of the `prompt.md` loop. Four parallel subagent batches: PERF-21 turned out to be a measurement artefact (the post-SQL-review-Phase-4 read path needs `page_id` non-NULL on content blocks, but the legacy bench fixture left it NULL — the bench was measuring an empty-IN-subquery pathology); MAINT-228 added a vv reachability check that reuses the existing snapshot-fallback recovery pathway; toast dedup adopted sonner's `id` field on 15 recurring-error call sites; sidebar mobile rail hidden via the pointer-coarse convention. Then the 0.1.29 release surfaced a stale-but-not-broken `release.yml` secret-scan regex matching a validation-only PEM header literal in `sync_cert.rs`; tightened the regex to require a matching BEGIN+END footer pair and cut 0.1.30.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 22 → 20 (−PERF-21 −MAINT-228)
+- **Previously resolved:** 1184+ → 1186+ across 766 → 767 sessions
+
+**Files touched (this session):**
+- `src-tauri/benches/interactive_slo.rs` (+`seed_resolve_fixture` helper for production-shape bench seeding — cycle 2A)
+- `src-tauri/src/sync_protocol/loro_sync.rs` (+447/-22 — typed `ApplyOutcome` return + reachability classifier + 4 tests — cycle 2B)
+- `src-tauri/src/sync_protocol/orchestrator.rs` (+44/-3 — `SyncMessage::ResetRequired` emission on miss — cycle 2B)
+- `src-tauri/src/sync_protocol/tests.rs` (+48/-11 — 7 test sites updated for new return shape)
+- `src/lib/notify.ts` (+docstring documenting the `id` dedup contract — cycle 2C)
+- `src/lib/__tests__/notify.test.ts` (+47 LOC, +4 dedup tests)
+- 15 production call sites across `src/hooks/`, `src/components/`, `src/stores/` (toast `id` adoption — see commit body for the per-category mapping)
+- 13 existing test files updated to assert the new `expect.objectContaining({ id })` arg
+- `src/components/ui/sidebar.tsx` (+8/-1 — `SidebarRail` hidden via `[@media(pointer:coarse)]:hidden` — cycle 2D)
+- `.github/workflows/release.yml` (+13/-1 — tightened secret-scan regex to require BEGIN+END PEM block, not just the header literal)
+- `pending/REVIEW-LATER.md` (PERF-21 + MAINT-228 removed; count 22 → 20)
+- `pending/ui-improvements-2026-05-16.md` (closed items from cycles 1 + 2 swept out)
+
+**Verification:**
+- `npx tsc -b --noEmit` — clean
+- `node_modules/.bin/biome check .` — 0 errors (after format pass)
+- `cd src-tauri && cargo fmt --check` — clean
+- `node_modules/.bin/vitest run` — 412 files / 9905 tests pass
+- `cd src-tauri && cargo nextest run --profile ci` — 3710 / 3710 pass
+- `prek run --all-files` (`SKIP=cargo-test,lychee,verify-ci-equivalent`) — all hook invocations pass
+- `cargo bench --bench interactive_slo` — `batch_resolve @ 100K = 0.25 ms` (was 12 ms FAIL)
+- 0.1.30 release.yml: in flight — fixed secret-scan should clear the build-and-release Linux job that 0.1.29 stuck on.
+
+**Process notes:**
+- PERF-21 was on the books for weeks as "needs a bisect" but the diagnosis turned out to be the bench fixture, not the SQL. Lesson: when the bench-vs-prod shape diverges, the bench drifts before the prod path does — always cross-check fixture coupling against the actual prod invariants.
+- MAINT-228 explicitly steered the agent toward reusing the existing `ResetRequired` flow (which already routed to `snapshot_transfer`); we did NOT extend the wire-protocol `LoroSyncMessage` enum. Reuse beats invention for transport-shape changes.
+- The secret-scan false positive demonstrates the limit of `strings | grep` as a build-time scanner: any string literal that happens to match a "secret prefix" regex will trip it, even when the literal is structural (a header magic, a base64 alphabet sample, a known-test-vector). The fix isn't to drop the scanner — it's to make each pattern as anchored as possible (header+footer for PEM; rare prefix bytes for vendor tokens).
+
+**Lessons learned (for future sessions):**
+- When a release `build-and-release` step fails with `##[error]Potential secret embedded in release bundle`, the first move is to inspect the regex anchor — false positives from validation literals (PEM headers, base64 sample alphabets) are far more likely than a real leak in a project that runs gitleaks at commit time.
+- The maintainer's GPG signing key (B538CFB5CE9A3D3C) is configured locally and `git log %G?` reports `G`, but `gh api repos/.../commits/<sha>` returns `verification.verified: false / reason: unknown_key`. To make the `required_signatures` ruleset actually do work (rather than relying on admin bypass), the maintainer needs to import the public key into GitHub via Settings → SSH and GPG keys. **Action for the maintainer:** `gpg --armor --export B538CFB5CE9A3D3C` and paste into <https://github.com/settings/gpg/new>.
+
+**Commit plan:** three commits — cycle 2 bundle `b9116ae9`, secret-scan fix `49c253b4`, 0.1.30 bump `f879b479` (signed locally, currently unverified on GitHub pending key import). All pushed.
+
+---
+
 ## Session 766 — Cycle 1: KeyboardShortcuts + MenuPopoverContent sweep + JSDoc i18n drift + tauri-2.11 migration + 0.1.29 release (2026-05-17)
 
 | Metadata | Value |
