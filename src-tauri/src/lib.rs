@@ -87,6 +87,7 @@ macro_rules! agaric_commands {
             $crate::commands::blocks::crud::purge_blocks_by_ids,
             $crate::commands::blocks::move_ops::move_block,
             $crate::commands::blocks::queries::list_blocks,
+            $crate::commands::blocks::queries::list_trash,
             $crate::commands::blocks::queries::get_block,
             $crate::commands::blocks::queries::batch_resolve,
             $crate::commands::tags::add_tag,
@@ -203,10 +204,8 @@ macro_rules! agaric_commands {
             $crate::commands::blocks::crud::purge_all_deleted,
             // Trash descendant counts (UX-243)
             $crate::commands::blocks::queries::trash_descendant_counts,
-            // Trash count badge (limit-clamp follow-up, ViewDispatcher trash badge)
-            // — pushes the count into SQL so the badge is accurate beyond 100
-            // soft-deleted items. Replaces the legacy `listBlocks({ showDeleted:
-            // true, limit: 100 }).items.length` shape that silently clamped.
+            // Trash count badge (ViewDispatcher trash badge) — pushes the count
+            // into SQL so the badge is accurate regardless of trash size.
             $crate::commands::blocks::queries::count_trash,
             // First-child-per-parent batch (PEND-35 Tier 2.8) — collapses the
             // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.

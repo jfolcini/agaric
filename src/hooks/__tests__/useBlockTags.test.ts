@@ -92,7 +92,6 @@ describe('useBlockTags allTags', () => {
       parentId: null,
       blockType: 'tag',
       tagId: null,
-      showDeleted: null,
       agenda: null,
       cursor: null,
       limit: null,

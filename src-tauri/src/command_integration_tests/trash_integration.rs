@@ -461,9 +461,9 @@ async fn purge_all_deleted_preserves_non_deleted_blocks() {
 // UX-243: roots-only trash listing + descendant counts round-trip
 // ======================================================================
 
-/// After cascade_soft_delete on a page with children, `list_blocks_inner`
-/// with `show_deleted=true` returns only the root. Restoring that root
-/// brings the descendants back too.
+/// After cascade_soft_delete on a page with children, `list_trash_inner`
+/// returns only the root. Restoring that root brings the descendants back
+/// too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_descendants() {
     let (pool, _dir) = test_pool().await;
@@ -496,22 +496,9 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
 
     // Trash view returns only the root page.
     assign_all_to_test_space(&pool).await;
-    let trash = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(10),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
+    let trash = list_trash_inner(&pool, None, Some(10), TEST_SPACE_ID.into())
+        .await
+        .unwrap();
     assert_eq!(
         trash.items.len(),
         1,
@@ -551,22 +538,9 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
     assert!(c2.deleted_at.is_none(), "child 2 must be alive");
 
     // Trash is now empty.
-    let trash2 = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(10),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
+    let trash2 = list_trash_inner(&pool, None, Some(10), TEST_SPACE_ID.into())
+        .await
+        .unwrap();
     assert!(
         trash2.items.is_empty(),
         "trash must be empty after restore, got {:?}",
@@ -607,22 +581,9 @@ async fn purge_root_from_trash_removes_descendants() {
 
     // Roots-only list returns just the root.
     assign_all_to_test_space(&pool).await;
-    let trash = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(10),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
+    let trash = list_trash_inner(&pool, None, Some(10), TEST_SPACE_ID.into())
+        .await
+        .unwrap();
     assert_eq!(trash.items.len(), 1);
     assert_eq!(trash.items[0].id, "UX243_PP");
 

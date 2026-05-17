@@ -2,7 +2,7 @@
  * Tests for TrashView component.
  *
  * Validates:
- *  - Initial load calls listBlocks({ showDeleted: true })
+ *  - Initial load calls listTrash
  *  - Renders block items with restore/purge controls
  *  - Restore passes deleted_at_ref to restoreBlock
  *  - Purge requires explicit confirmation (two-click)
@@ -50,7 +50,7 @@ vi.mock('../../lib/announcer', () => ({
 const mockedInvoke = vi.mocked(invoke)
 
 /**
- * Helper: mock invoke to return items on list_blocks and empty [] on batch_resolve.
+ * Helper: mock invoke to return items on list_trash and empty [] on batch_resolve.
  * Returns the page so callers can reference it.
  */
 function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = false) {
@@ -60,7 +60,7 @@ function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = fal
     has_more: hasMore,
   }
   mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-    if (cmd === 'list_blocks') return page
+    if (cmd === 'list_trash') return page
     if (cmd === 'batch_resolve') return []
     if (cmd === 'trash_descendant_counts') return {}
     return undefined
@@ -82,18 +82,13 @@ beforeEach(() => {
 })
 
 describe('TrashView', () => {
-  it('calls listBlocks with showDeleted:true on mount', async () => {
+  it('calls listTrash on mount', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     render(<TrashView />)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-        parentId: null,
-        blockType: null,
-        tagId: null,
-        showDeleted: true,
-        agenda: null,
+      expect(mockedInvoke).toHaveBeenCalledWith('list_trash', {
         cursor: null,
         limit: 50,
         spaceId: 'SPACE_TEST',
@@ -136,7 +131,7 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item', deleted_at: '2025-01-15T12:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
       return undefined
@@ -224,7 +219,7 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_block') return { block_id: 'B1', purged_count: 1 }
       return undefined
@@ -273,7 +268,7 @@ describe('TrashView', () => {
     }
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') {
+      if (cmd === 'list_trash') {
         callCount++
         return callCount === 1 ? page1 : page2
       }
@@ -288,12 +283,7 @@ describe('TrashView', () => {
 
     // Second call should use the cursor from page 1
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-        parentId: null,
-        blockType: null,
-        tagId: null,
-        showDeleted: true,
-        agenda: null,
+      expect(mockedInvoke).toHaveBeenCalledWith('list_trash', {
         cursor: 'cursor_page2',
         limit: 50,
         spaceId: 'SPACE_TEST',
@@ -318,7 +308,7 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
       return undefined
@@ -360,7 +350,7 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_block') throw new Error('Restore failed')
       return undefined
@@ -386,7 +376,7 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_block') throw new Error('Purge failed')
       return undefined
@@ -417,7 +407,7 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
       return undefined
@@ -437,7 +427,7 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_block') return { block_id: 'B1', purged_count: 1 }
       return undefined
@@ -465,7 +455,7 @@ describe('TrashView', () => {
       block_type: 'page',
     }
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_block') return { block_id: 'P1', restored_count: 1 }
       return undefined
@@ -490,7 +480,7 @@ describe('TrashView', () => {
       deleted_at: '2025-01-15T12:00:00Z',
     })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_block') return { block_id: 'C1', restored_count: 1 }
       return undefined
@@ -650,7 +640,7 @@ describe('TrashView', () => {
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
       return undefined
@@ -693,7 +683,7 @@ describe('TrashView', () => {
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
       return undefined
@@ -793,7 +783,7 @@ describe('TrashView', () => {
       }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve')
         return [{ id: 'P1', title: 'My Parent Page', block_type: 'page', deleted: false }]
       return undefined
@@ -816,7 +806,7 @@ describe('TrashView', () => {
       }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve')
         return [{ id: 'P_DELETED', title: 'Old Page', block_type: 'page', deleted: true }]
       return undefined
@@ -838,7 +828,7 @@ describe('TrashView', () => {
       }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return [] // parent not found
       return undefined
     })
@@ -1260,7 +1250,7 @@ describe('TrashView', () => {
   it('calls purgeAllDeleted on Empty Trash confirmation', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1290,7 +1280,7 @@ describe('TrashView', () => {
   it('shows success toast with count after empty trash', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1316,7 +1306,7 @@ describe('TrashView', () => {
   it('shows error toast on empty trash failure', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1360,7 +1350,7 @@ describe('TrashView', () => {
   it('calls restoreAllDeleted on Restore All confirmation', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1391,7 +1381,7 @@ describe('TrashView', () => {
   it('shows success toast with count after restore all', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1418,7 +1408,7 @@ describe('TrashView', () => {
   it('shows error toast on restore all failure', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1475,7 +1465,7 @@ describe('TrashView', () => {
       deleted_at: '2025-01-14T00:00:00Z',
     })
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return { items: [block1, block2], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') {
@@ -1507,7 +1497,7 @@ describe('TrashView', () => {
       deleted_at: '2025-01-14T00:00:00Z',
     })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [blockWithKids, lonelyBlock],
           next_cursor: null,
@@ -1532,7 +1522,7 @@ describe('TrashView', () => {
   it('renders singular "+1 block" for roots with exactly one descendant', async () => {
     const single = makeBlock({ id: 'R1', content: 'root + 1', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [single], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [single], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return { R1: 1 }
       return undefined
@@ -1547,7 +1537,7 @@ describe('TrashView', () => {
   it('renders no batch-count badge when counts returns empty map', async () => {
     const block = makeBlock({ id: 'R1', content: 'root', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       return undefined
@@ -1567,7 +1557,7 @@ describe('TrashView', () => {
       deleted_at: '2025-01-15T00:00:00Z',
     })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return { R1: 5 }
       if (cmd === 'restore_block') return { block_id: 'R1', restored_count: 6 }
@@ -1591,7 +1581,7 @@ describe('TrashView', () => {
   it('logs warning and keeps list usable when count fetch fails', async () => {
     const block = makeBlock({ id: 'R1', content: 'root', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') throw new Error('DB unavailable')
       return undefined
@@ -1615,7 +1605,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       // PEND-35 Tier 2.2 — single-IPC batch restore.
       if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
@@ -1643,7 +1633,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       // PEND-35 Tier 2.2 — single-IPC batch purge.
       if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
@@ -1668,7 +1658,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1695,7 +1685,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_blocks')
+      if (cmd === 'list_trash')
         return {
           items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
@@ -1732,7 +1722,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       deleted_at: '2025-01-15T00:00:00Z',
     })
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return { R1: 4 }
       return undefined
@@ -1755,7 +1745,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       // PEND-35 Tier 2.2 — single-IPC batch restore.
@@ -1789,7 +1779,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     const user = userEvent.setup()
     const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })]
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       return undefined
@@ -1812,7 +1802,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     const user = userEvent.setup()
     const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })]
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
@@ -1836,7 +1826,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       return undefined
@@ -1865,7 +1855,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     )
     let restoreCalls = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       if (cmd === 'restore_blocks_by_ids') {
@@ -1905,7 +1895,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: '2025-01-15T00:00:00Z' }),
     )
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       if (cmd === 'restore_blocks_by_ids') return { affected_count: 3 }
@@ -1939,7 +1929,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: '2025-01-15T00:00:00Z' }),
     )
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
       if (cmd === 'restore_blocks_by_ids') return { affected_count: 6 }

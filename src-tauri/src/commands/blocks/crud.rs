@@ -1769,7 +1769,7 @@ use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
 ///
 /// Each input id is treated as a *root* of a soft-delete cascade —
 /// the frontend's batch action is sourced from
-/// `listBlocks({showDeleted:true})` which already returns roots only.
+/// `listTrash` which already returns roots only.
 /// The descendant walk uses the standard CTE (invariant #9).
 /// Restoration filters `deleted_at IS NOT NULL` so non-deleted ids in
 /// the input are silently no-ops (matches the "all" variant's

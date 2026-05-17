@@ -786,7 +786,6 @@ fn bench_list_blocks(c: &mut Criterion) {
                         None,
                         None,
                         None,
-                        None,
                         Some(50),
                         SLO_SPACE_ID.into(),
                     )

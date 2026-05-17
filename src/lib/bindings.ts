@@ -65,24 +65,25 @@ export const commands = {
 	 *  at the top level and marshals them into this struct for the IPC
 	 *  boundary).
 	 */
-	listBlocks: (parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agenda: {
+	listBlocks: (parentId: string | null, blockType: string | null, tagId: string | null, agenda: {
 	/**  Single-date agenda lookup (`YYYY-MM-DD`). */
 	date: string | null,
 	/**  Date-range agenda lookup (inclusive on both ends). */
 	dateRange: DateRange | null,
 	/**  Optional source filter (`due_date` / `scheduled_date`). */
 	source: string | null,
-} | null, cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agenda, cursor, limit, spaceId })),
+} | null, cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, agenda, cursor, limit, spaceId })),
+	/**  Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`]. */
+	listTrash: (cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_trash", { cursor, limit, spaceId })),
 	/**
 	 *  Tauri command: fetch a single block by ID. Delegates to
 	 *  [`get_active_block_inner`].
 	 *
 	 *  M-98 — the public IPC must never surface soft-deleted rows; the
-	 *  frontend exposes them only via `list_blocks({ show_deleted:
-	 *  true })` (the trash view). Switched from `get_block_inner` to
-	 *  [`get_active_block_inner`] so a soft-deleted block returns
-	 *  `NotFound` to the IPC caller instead of an apparently-live row
-	 *  with `deleted_at` set.
+	 *  frontend exposes them only via [`list_trash`] (the trash view).
+	 *  Switched from `get_block_inner` to [`get_active_block_inner`] so a
+	 *  soft-deleted block returns `NotFound` to the IPC caller instead of an
+	 *  apparently-live row with `deleted_at` set.
 	 */
 	getBlock: (blockId: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("get_block", { blockId })),
 	/**

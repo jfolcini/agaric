@@ -686,7 +686,6 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
@@ -729,22 +728,9 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         .unwrap();
 
     assign_all_to_test_space(&pool).await;
-    let trash = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
+    let trash = list_trash_inner(&pool, None, None, TEST_SPACE_ID.into())
+        .await
+        .unwrap();
 
     assert_eq!(trash.items.len(), 1, "only deleted blocks in trash view");
     assert_eq!(trash.items[0].id, b2.id, "deleted block must be b2");
@@ -1458,7 +1444,6 @@ async fn list_blocks_top_level_returns_root_blocks() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
@@ -1491,7 +1476,6 @@ async fn list_blocks_with_parent_id_returns_children_only() {
     let resp = list_blocks_inner(
         &pool,
         Some("LP01".into()),
-        None,
         None,
         None,
         None,
@@ -1535,7 +1519,6 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
@@ -1552,7 +1535,6 @@ async fn list_blocks_empty_db_returns_empty_page_no_more() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -1593,22 +1575,9 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
         .unwrap();
 
     assign_all_to_test_space(&pool).await;
-    let trash = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
+    let trash = list_trash_inner(&pool, None, None, TEST_SPACE_ID.into())
+        .await
+        .unwrap();
 
     assert_eq!(
         trash.items.len(),
@@ -1662,7 +1631,6 @@ async fn pagination_walk_all_pages_no_duplicates() {
             None,
             None,
             None,
-            None,
             cursor,
             Some(4),
             TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
@@ -1706,7 +1674,6 @@ async fn pagination_limit_1_produces_single_item_pages() {
         assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
-            None,
             None,
             None,
             None,

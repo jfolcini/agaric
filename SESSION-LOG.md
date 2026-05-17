@@ -2,10 +2,55 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 771 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 772 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1199+ REVIEW-LATER items across 771 sessions.
+- **Previously-resolved counter:** 1200+ REVIEW-LATER items across 772 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 772 — MAINT-113 M3 (a): split list_trash out of list_blocks_inner (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-direct (bulk-edit via /tmp Python script) + 1 reviewer (technical code review) |
+| **Items closed** | MAINT-113 M3 (a) — `list_trash_inner` / `list_trash` Tauri command split out of the polymorphic `list_blocks_inner` dispatcher per the maintainer's path-(a) decision. `show_deleted` removed from `list_blocks_inner` / `list_blocks`. Frontend `TrashView` switched to `listTrash`; tauri-mock + bindings updated. |
+| **Items modified** | MAINT-113 remaining work re-scoped from "L + dispatcher decision" to "M — mostly mechanical retype to `ActiveBlockRow` + `.as_str()` fixture updates". |
+| **Tests added** | — (test count unchanged; 1 stale conflict-rejection assertion removed, 1 stale "false=not a filter" assertion removed). |
+| **Files touched** | 28 (1 backend `queries.rs` + 1 `lib.rs` + 1 commands `mod.rs` re-export + 10 backend test/integration/bench files via bulk-transform + 14 frontend files including 1 `tauri.ts` + 1 `tauri-mock/handlers.ts` + regenerated `bindings.ts` + `TrashView.tsx` + 6 frontend test files; 1 `REVIEW-LATER.md` + 1 `SESSION-LOG.md`). |
+
+**Summary:** The polymorphic dispatcher routed `show_deleted == Some(true)` to deleted blocks and every other branch to active blocks, all under one `PageResponse<BlockRow>` return — the blocker for M3 retyping the active fan-out to `ActiveBlockRow`. Path (a) per the maintainer's session-mid decision: split deletion surfacing into its own Tauri command (`list_trash`) and drop `show_deleted` from the active dispatcher. The IPC split is honest — `TrashView` was the only frontend caller of `show_deleted: true`. The mechanical bulk-edit across 72 backend `list_blocks_inner(...)` call sites + 9 trash-conversion rewrites was handled by a one-off Python script (`/tmp/fix_list_blocks_inner.py`) that walked each call structurally; the script was iterated twice to handle inline-comment quirks (`// show_deleted` sticking to the next arg, `let resp = ` prefix throwing off indentation). Cleaner approaches considered (per-file Edit, sed) were rejected for blast-radius and brittleness reasons.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 23 → 23 (MAINT-113 stays open with reduced remaining scope; M3 (a) sub-task done)
+- **Previously resolved:** 1199+ → 1200+ across 771 → 772 sessions (MAINT-113 M3 (a) counted as one resolution)
+
+**Files touched (this session):**
+- **Backend types/dispatcher:** `src-tauri/src/commands/blocks/queries.rs` (+57 / −16: new `list_trash_inner` + `list_trash` Tauri command; `show_deleted` arg + branch removed from `list_blocks_inner` + `list_blocks`; conflict-count validation tightened; doc comments updated).
+- **Backend registration:** `src-tauri/src/lib.rs` (+1 / −3: `list_trash` registered in `agaric_commands!` macro; stale "legacy listBlocks" comment trimmed). `src-tauri/src/commands/mod.rs` (re-export adds `list_trash` + `list_trash_inner`).
+- **Backend tests/integration/benches (bulk-transformed):** `commands/tests/{snapshot,edge_case,agenda_cmd,block_cmd}_tests.rs`, `command_integration_tests/{lifecycle,property,block,trash}_integration.rs`, `spaces/tests.rs`, `integration_tests.rs`, `benches/{interactive_slo,commands_bench}.rs` — 72 `None` arg drops + 9 `list_trash_inner(...)` rewrites + 1 hand-edited stale-validation-test removal.
+- **Frontend:** `src/lib/tauri.ts` (+15 / −5: new `listTrash` wrapper; `listBlocks` loses `showDeleted` param; 3 doc-comment fixes). `src/lib/bindings.ts` (regenerated). `src/lib/tauri-mock/handlers.ts` (+11 / −5: new `list_trash` handler; `list_blocks` no longer branches on `showDeleted`). `src/components/TrashView.tsx` (+5 / −7: call `listTrash`; drop `listBlocks` import; comment tightened). `src/components/ViewDispatcher.tsx` (+3 / −6: comment refresh).
+- **Frontend tests:** `src/components/__tests__/{TrashView,PageBrowser,App,ViewDispatcher}.test.tsx`, `src/lib/__tests__/{tauri,tauri-mock}.test.ts`, `src/hooks/__tests__/{useBlockTags,useItemCount}.test.ts` — `showDeleted` field removed from mock-args; `cmd === 'list_blocks'` → `cmd === 'list_trash'` in TrashView mock branches.
+- **Docs / tracking:** `pending/REVIEW-LATER.md` (summary row + detail entry refreshed to mark M3 (a) done + scope the remaining retype work), `SESSION-LOG.md` (this entry).
+
+**Verification:**
+- `cargo nextest run --profile ci` (backend) — 3710 / 3710 pass (1 flaky test passed on retry: `sync_files::tests::run_file_transfer_initiator_breaks_on_cancel_m47`, pre-existing intermittent timeout).
+- `npx vitest run` (frontend) — 9883 / 9883 pass.
+- `npx tsc --noEmit` — clean.
+- `cargo check --tests --benches` — clean (0 errors / 0 warnings).
+- Independent technical-reviewer subagent: no BLOCKING / IMPORTANT issues; 4 NITs (3 doc-comment stragglers + 1 duplicate-semantics test assertion), all addressed in the same commit.
+- `prek run` — see commit (full hook run pre-commit).
+
+**Process notes:**
+- The mechanical bulk-edit was the right shape for this scope. The python script paid off — orchestrator-direct `Edit` on 72 call sites would have been wall-clock-slow and error-prone; subagent delegation was rejected because every test file shares the same call-shape and there's no per-file domain knowledge that would help. The script's two iterations (trailing-comment "arg" + indent under `let X = ` prefix) are the standard category of pitfall for structural-text rewrites and worth flagging for next time.
+- Path (a) (IPC split) vs path (b) (call-site downcasts): path (a) is the right choice. The frontend already had a hard UI boundary between trash and active listings (`TrashView` vs everything else), so the IPC split mirrors an honest semantic split. Path (b) would have preserved the IPC contract but defeated the type-safety win at the dispatcher boundary — that was the explicit M3 motivation.
+
+**Lessons learned (for future sessions):**
+- Pre-process inline `//` comments before parsing structural Rust call sites; comment-after-comma sticks to the next arg in naive parsers and skews arg-count detection.
+- When converting a call into a different shape, derive the inner-line indent from the body's existing first-arg line, not from the surrounding `let X = ` prefix.
+
+**Commit plan:** single commit (refactor scope is naturally atomic — splitting an IPC + propagating).
+
+---
+
 ## Session 771 — MAINT-194 close: stabilise BlockTree keyboard-callback identities (2026-05-17)
 
 | Metadata | Value |

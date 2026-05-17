@@ -331,7 +331,6 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             None,
             None,
             None,
-            None,
             cursor,
             Some(PAGE_SIZE),
             TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
@@ -410,7 +409,6 @@ async fn list_blocks_with_agenda_date_returns_matching_blocks() {
         None,
         None,
         None,
-        None,
         Some("2025-06-15".into()),
         None,
         None,
@@ -445,7 +443,6 @@ async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -533,7 +530,6 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
@@ -560,7 +556,6 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         Some(tag.id.clone()),
-        None,
         None,
         None,
         None,
@@ -737,7 +732,6 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None,
         Some("2025-1-1".into()),
         None,
         None,
@@ -755,7 +749,6 @@ async fn test_list_blocks_rejects_invalid_date() {
     // Non-digit characters
     let result = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -779,7 +772,6 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None,
         Some("2025-13-01".into()),
         None,
         None,
@@ -797,7 +789,6 @@ async fn test_list_blocks_rejects_invalid_date() {
     // Invalid day (00)
     let result = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -821,7 +812,6 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None,
         Some("2024-01-32".into()),
         None,
         None,
@@ -842,7 +832,6 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None,
         Some("not-a-date".into()),
         None,
         None,
@@ -860,7 +849,6 @@ async fn test_list_blocks_rejects_invalid_date() {
     // Wrong separator
     let result = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -891,7 +879,6 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        None,
         Some("2025-06-15".into()),
         None,
         None,
@@ -912,7 +899,6 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        None,
         Some("2025-01-01".into()),
         None,
         None,
@@ -930,7 +916,6 @@ async fn test_list_blocks_accepts_valid_date() {
     // Boundary: Dec 31
     let result = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,

@@ -39,7 +39,6 @@ async fn list_blocks_with_agenda_source_filter_due_date() {
         None,
         None,
         None,
-        None,
         Some("2025-08-01".into()),
         None,
         None,
@@ -86,7 +85,6 @@ async fn list_blocks_with_agenda_source_filter_scheduled_date() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -148,7 +146,6 @@ async fn list_blocks_with_agenda_no_source_returns_all() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -218,7 +215,6 @@ async fn list_blocks_with_date_range_returns_blocks_in_range() {
         None,
         None,
         None,
-        None,
         Some("2025-01-01".into()),
         Some("2025-01-31".into()),
         Some("column:due_date".into()),
@@ -273,7 +269,6 @@ async fn list_blocks_with_date_range_single_day() {
         None,
         None,
         None,
-        None,
         Some("2025-03-15".into()),
         Some("2025-03-15".into()),
         None,
@@ -303,7 +298,6 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        None,
         Some("bad".into()),
         Some("2025-01-31".into()),
         None,
@@ -325,7 +319,6 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        None,
         Some("2025-02-01".into()),
         Some("2025-01-01".into()),
         None,
@@ -343,7 +336,6 @@ async fn list_blocks_with_date_range_validates_format() {
     // Only one of start/end provided
     let result = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -393,7 +385,6 @@ async fn list_blocks_date_range_with_source_filter() {
         None,
         None,
         None,
-        None,
         Some("2025-04-01".into()),
         Some("2025-04-30".into()),
         Some("column:due_date".into()),
@@ -417,7 +408,6 @@ async fn list_blocks_date_range_with_source_filter() {
     // Without source filter — both items
     let resp = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,

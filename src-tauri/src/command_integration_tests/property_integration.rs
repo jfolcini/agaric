@@ -687,7 +687,6 @@ async fn date_validation_invalid_month_13_returns_validation() {
         None,
         None,
         None,
-        None,
         Some("2025-13-01".into()),
         None,
         None,
@@ -710,7 +709,6 @@ async fn date_validation_short_format_returns_validation() {
     assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -739,7 +737,6 @@ async fn date_validation_two_digit_year_returns_validation() {
         None,
         None,
         None,
-        None,
         Some("25-1-1".into()),
         None,
         None,
@@ -765,7 +762,6 @@ async fn date_validation_day_32_returns_validation() {
         None,
         None,
         None,
-        None,
         Some("2025-01-32".into()),
         None,
         None,
@@ -788,7 +784,6 @@ async fn date_validation_non_date_string_returns_validation() {
     assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,

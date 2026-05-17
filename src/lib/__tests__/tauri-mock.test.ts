@@ -1192,13 +1192,13 @@ describe('revert_ops', () => {
 })
 
 // ---------------------------------------------------------------------------
-// list_blocks with showDeleted
+// list_trash (paginated soft-deleted blocks)
 // ---------------------------------------------------------------------------
 
-describe('list_blocks with showDeleted', () => {
-  it('showDeleted=true includes deleted blocks', () => {
+describe('list_trash', () => {
+  it('includes deleted blocks', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
-    const result = invoke('list_blocks', { showDeleted: true }) as {
+    const result = invoke('list_trash', {}) as {
       items: Record<string, unknown>[]
     }
     const ids = result.items.map((b) => b['id'])
@@ -1209,7 +1209,7 @@ describe('list_blocks with showDeleted', () => {
     }
   })
 
-  it('showDeleted=false (default) excludes deleted blocks', () => {
+  it('list_blocks excludes deleted blocks', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
     const result = invoke('list_blocks', {}) as {
       items: Record<string, unknown>[]
@@ -1218,24 +1218,10 @@ describe('list_blocks with showDeleted', () => {
     expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
   })
 
-  it('showDeleted=true with blockType filter', () => {
-    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
-    const result = invoke('list_blocks', { showDeleted: true, blockType: 'content' }) as {
+  it('returns empty when nothing is deleted', () => {
+    const result = invoke('list_trash', {}) as {
       items: Record<string, unknown>[]
     }
-    for (const item of result.items) {
-      expect(item['block_type']).toBe('content')
-      expect(item['deleted_at']).not.toBeNull()
-    }
-    const ids = result.items.map((b) => b['id'])
-    expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
-  })
-
-  it('showDeleted=true returns empty when nothing is deleted', () => {
-    const result = invoke('list_blocks', { showDeleted: true }) as {
-      items: Record<string, unknown>[]
-    }
-    // No blocks have deleted_at set initially
     expect(result.items).toHaveLength(0)
   })
 })

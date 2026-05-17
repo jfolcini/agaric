@@ -237,11 +237,8 @@ describe('useTrashCount', () => {
   })
 
   it('polls count_trash every 30 s', async () => {
-    // Limit-clamp follow-up — the hook now routes through the dedicated
-    // `count_trash` IPC (returns a plain `number`) instead of the legacy
-    // `list_blocks({ showDeleted: true, limit: 100 }).items.length` shape
-    // that silently clamped the badge at 100. The polling interval is
-    // unchanged.
+    // The hook routes through the dedicated `count_trash` IPC (returns a
+    // plain `number`) so the badge stays accurate regardless of trash size.
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'count_trash') return 137 as unknown as never
       return emptyPage

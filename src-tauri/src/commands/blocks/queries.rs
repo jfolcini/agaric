@@ -5,20 +5,17 @@ use tracing::instrument;
 use super::super::*;
 use crate::space::SpaceScope;
 
-/// List blocks with pagination, applying at most one exclusive filter.
+/// List active blocks with pagination, applying at most one exclusive filter.
 ///
 /// Dispatches to the appropriate pagination query based on which filter
-/// parameter is set: `show_deleted` (trash), `agenda_date`, `tag_id`,
-/// `block_type`, or `parent_id` (children, the default). Page size is
-/// clamped to `[1, 100]`.
+/// parameter is set: `agenda_date`, `tag_id`, `block_type`, or `parent_id`
+/// (children, the default). Page size is clamped to `[1, 100]`. Trash
+/// (soft-deleted) blocks are served by [`list_trash_inner`] / the
+/// [`list_trash`] Tauri command — never through this entry point.
 ///
 /// FEAT-3 Phase 4 — `space_id` is required (not optional). The filter is
-/// threaded through every dispatch path (trash, agenda, tag, by-type,
-/// children) so the result set always reflects the active space. The
-/// Phase 2 carve-out that rejected `space_id` combined with agenda or
-/// tag filters is gone — the corresponding pagination helpers
-/// (`list_agenda`, `list_agenda_range`, `list_by_tag`) now thread the
-/// filter through their SQL.
+/// threaded through every dispatch path (agenda, tag, by-type, children)
+/// so the result set always reflects the active space.
 ///
 /// # Errors
 ///
@@ -30,7 +27,6 @@ pub async fn list_blocks_inner(
     parent_id: Option<String>,
     block_type: Option<String>,
     tag_id: Option<String>,
-    show_deleted: Option<bool>,
     agenda_date: Option<String>,
     agenda_date_start: Option<String>,
     agenda_date_end: Option<String>,
@@ -49,7 +45,6 @@ pub async fn list_blocks_inner(
         parent_id.is_some(),
         block_type.is_some(),
         tag_id.is_some(),
-        show_deleted == Some(true),
         agenda_date.is_some(),
         has_agenda_range,
     ]
@@ -59,7 +54,7 @@ pub async fn list_blocks_inner(
 
     if filter_count > 1 {
         return Err(AppError::Validation(
-            "conflicting filters: only one of parent_id, block_type, tag_id, show_deleted, agenda_date, agenda_date_start+end may be set".to_string(),
+            "conflicting filters: only one of parent_id, block_type, tag_id, agenda_date, agenda_date_start+end may be set".to_string(),
         ));
     }
 
@@ -90,9 +85,7 @@ pub async fn list_blocks_inner(
     // keep the `Option<&str>` shape so other callers (e.g.
     // `list_pages_inner`, MCP unscoped paths) can still pass `None`.
     let space_id_opt: Option<&str> = Some(space_id.as_str());
-    if show_deleted == Some(true) {
-        pagination::list_trash(pool, &page, space_id_opt).await
-    } else if has_agenda_range {
+    if has_agenda_range {
         let start = agenda_date_start.as_ref().unwrap();
         let end = agenda_date_end.as_ref().unwrap();
         validate_date_format(start)?;
@@ -334,7 +327,6 @@ pub async fn list_blocks(
     parent_id: Option<String>,
     block_type: Option<String>,
     tag_id: Option<String>,
-    show_deleted: Option<bool>,
     agenda: Option<AgendaQuery>,
     cursor: Option<String>,
     limit: Option<i64>,
@@ -354,7 +346,6 @@ pub async fn list_blocks(
         parent_id,
         block_type,
         tag_id,
-        show_deleted,
         agenda_date,
         agenda_date_start,
         agenda_date_end,
@@ -367,15 +358,58 @@ pub async fn list_blocks(
     .map_err(sanitize_internal_error)
 }
 
+/// Paginate soft-deleted blocks (trash view), space-scoped.
+///
+/// Delegates to [`pagination::list_trash`], which returns deletion-batch
+/// roots ordered by `deleted_at DESC, id ASC`. Active-block fan-out lives
+/// in [`list_blocks_inner`] and never surfaces deleted rows.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — invalid `limit` (must be in `[1, 100]`)
+/// - [`AppError::Database`] — propagated from sqlx
+#[instrument(skip(pool), err)]
+pub async fn list_trash_inner(
+    pool: &SqlitePool,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    space_id: String,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    if let Some(l) = limit {
+        if !(1..=100).contains(&l) {
+            return Err(AppError::Validation(format!(
+                "list_trash limit must be in [1, 100]; got {l}. \
+                 For larger result sets, use cursor pagination."
+            )));
+        }
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_trash(pool, &page, Some(space_id.as_str())).await
+}
+
+/// Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_trash(
+    pool: State<'_, ReadPool>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    space_id: String,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    list_trash_inner(&pool.0, cursor, limit, space_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 /// Tauri command: fetch a single block by ID. Delegates to
 /// [`get_active_block_inner`].
 ///
 /// M-98 — the public IPC must never surface soft-deleted rows; the
-/// frontend exposes them only via `list_blocks({ show_deleted:
-/// true })` (the trash view). Switched from `get_block_inner` to
-/// [`get_active_block_inner`] so a soft-deleted block returns
-/// `NotFound` to the IPC caller instead of an apparently-live row
-/// with `deleted_at` set.
+/// frontend exposes them only via [`list_trash`] (the trash view).
+/// Switched from `get_block_inner` to [`get_active_block_inner`] so a
+/// soft-deleted block returns `NotFound` to the IPC caller instead of an
+/// apparently-live row with `deleted_at` set.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -405,7 +439,7 @@ pub async fn batch_resolve(
 
 /// Batch-count cascade-deleted descendants per trash root.
 ///
-/// Given a list of trash-root ids (as returned by `list_blocks({ show_deleted: true })`),
+/// Given a list of trash-root ids (as returned by [`list_trash`]),
 /// return a map of `root_id -> descendant_count`. Descendants are blocks
 /// sharing the root's `deleted_at` timestamp, excluding the root itself.
 /// Roots with zero descendants are omitted — callers should default to
@@ -594,14 +628,10 @@ pub async fn get_blocks(
 
 /// Count soft-deleted blocks scoped to a single space.
 ///
-/// Limit-clamp follow-up (`pending/limit-clamp-followup-2026-05-09.md`,
-/// row at `src/components/ViewDispatcher.tsx:111`) — the sidebar trash
-/// badge previously fed `useItemCount` with the page envelope from
-/// `listBlocks({ showDeleted: true, limit: 100, spaceId })` and used
-/// `.items.length`. That count silently clamped at 100 and would have
-/// been wrong for any workspace with more than 100 soft-deleted blocks.
-/// This IPC pushes the count into SQL so the badge is always accurate
-/// regardless of trash size.
+/// Used by the sidebar trash badge via `useItemCount`. Pushing the count
+/// into SQL keeps the badge accurate regardless of trash size (the
+/// paginated `listTrash` endpoint would silently clamp at the page
+/// limit).
 ///
 /// The space-filter shape mirrors `pagination::list_trash` (and the
 /// `space_filter_clause` family in `pagination/{hierarchy,trash}.rs`):

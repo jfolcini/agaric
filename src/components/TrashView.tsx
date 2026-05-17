@@ -36,7 +36,7 @@ import { announce } from '../lib/announcer'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import {
-  listBlocks,
+  listTrash,
   purgeAllDeleted,
   purgeBlock,
   purgeBlocksByIds,
@@ -60,13 +60,11 @@ export function TrashView(): React.ReactElement {
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const queryFn = useCallback(
     (cursor?: string) =>
-      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The trash
-      // surface is scoped to the active space (each space owns its
-      // own deletion set). The `?? ''` fallback is intentional
-      // pre-bootstrap behaviour: empty string forces a no-match SQL
-      // filter rather than a runtime null deref.
-      listBlocks({
-        showDeleted: true,
+      // FEAT-3 Phase 4 — trash is scoped to the active space (each
+      // space owns its own deletion set). The `?? ''` fallback is
+      // intentional pre-bootstrap behaviour: empty string forces a
+      // no-match SQL filter rather than a runtime null deref.
+      listTrash({
         ...(cursor != null && { cursor }),
         limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId ?? '',

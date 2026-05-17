@@ -355,7 +355,6 @@ describe('listBlocks', () => {
       parentId: null,
       blockType: null,
       tagId: null,
-      showDeleted: null,
       agenda: null,
       cursor: null,
       limit: null,
@@ -386,7 +385,6 @@ describe('listBlocks', () => {
       parentId: 'PARENT01',
       blockType: 'page',
       tagId: 'TAG01',
-      showDeleted: true,
       agendaDate: '2025-01-15',
       cursor: 'cursor123',
       limit: listBlocksLimit(25),
@@ -397,7 +395,6 @@ describe('listBlocks', () => {
       parentId: 'PARENT01',
       blockType: 'page',
       tagId: 'TAG01',
-      showDeleted: true,
       agenda: {
         date: '2025-01-15',
         dateRange: null,
@@ -419,7 +416,6 @@ describe('listBlocks', () => {
     // Tauri 2 requires null for Option<T>, not undefined
     expect(args['parentId']).toBeNull()
     expect(args['tagId']).toBeNull()
-    expect(args['showDeleted']).toBeNull()
     // agenda params bundle to null on the IPC boundary when none are set
     expect(args['agenda']).toBeNull()
     expect(args['cursor']).toBeNull()

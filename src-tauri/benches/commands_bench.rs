@@ -364,7 +364,6 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
                     None,
                     None,
                     None,
-                    None,
                     Some(50),
                     TEST_SPACE_ID.into(),
                 )
@@ -390,7 +389,6 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
             async move {
                 list_blocks_inner(
                     &pool,
-                    None,
                     None,
                     None,
                     None,
@@ -426,7 +424,6 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
             async move {
                 list_blocks_inner(
                     &pool,
-                    None,
                     None,
                     None,
                     None,
@@ -471,7 +468,6 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
                     None,
                     None,
                     None,
-                    None,
                     Some(10),
                     TEST_SPACE_ID.into(),
                 )
@@ -481,7 +477,6 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
                 if let Some(cursor) = page1.next_cursor {
                     list_blocks_inner(
                         &pool,
-                        None,
                         None,
                         None,
                         None,
@@ -536,7 +531,6 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
                     &pool,
                     None,
                     Some("page".into()),
-                    None,
                     None,
                     None,
                     None,
@@ -801,7 +795,6 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
                     async move {
                         list_blocks_inner(
                             &pool,
-                            None,
                             None,
                             None,
                             None,

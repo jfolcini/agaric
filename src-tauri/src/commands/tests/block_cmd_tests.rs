@@ -534,7 +534,6 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
         None,
         Some("page".into()),
         None, // tag_id
-        None, // show_deleted
         None, // agenda_date
         None, // agenda_date_start
         None, // agenda_date_end
@@ -1755,7 +1754,6 @@ async fn list_blocks_no_filters_returns_top_level() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
@@ -1791,7 +1789,6 @@ async fn list_blocks_with_block_type_filter() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
@@ -1814,7 +1811,6 @@ async fn list_blocks_with_parent_id_filter() {
     let resp = list_blocks_inner(
         &pool,
         Some("PAR".into()),
-        None,
         None,
         None,
         None,
@@ -1860,7 +1856,6 @@ async fn list_blocks_with_tag_id_filter() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
@@ -1891,22 +1886,9 @@ async fn list_blocks_show_deleted_returns_trash() {
         .unwrap();
 
     assign_all_to_test_space(&pool).await;
-    let resp = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
+    let resp = list_trash_inner(&pool, None, None, TEST_SPACE_ID.into())
+        .await
+        .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -1936,7 +1918,6 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        None,
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
@@ -1945,32 +1926,10 @@ async fn list_blocks_rejects_conflicting_filters() {
         "parent_id + block_type should be rejected: {result:?}"
     );
 
-    // tag_id + show_deleted
-    let result = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        Some("T1".into()),
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await;
-    assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
-        "tag_id + show_deleted should be rejected: {result:?}"
-    );
-
     // parent_id + agenda_date
     let result = list_blocks_inner(
         &pool,
         Some("P1".into()),
-        None,
         None,
         None,
         Some("2025-01-15".into()),
@@ -1993,7 +1952,6 @@ async fn list_blocks_rejects_conflicting_filters() {
         Some("P1".into()),
         Some("page".into()),
         Some("T1".into()),
-        None,
         None,
         None,
         None,
@@ -2037,7 +1995,6 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None,
             TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
@@ -2056,7 +2013,6 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None,
             TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
@@ -2064,43 +2020,10 @@ async fn list_blocks_single_filter_is_accepted() {
         "block_type alone should be accepted"
     );
     assert!(
-        list_blocks_inner(
-            &pool,
-            None,
-            None,
-            None,
-            Some(true),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-        )
-        .await
-        .is_ok(),
-        "show_deleted alone should be accepted"
-    );
-    // show_deleted=false should NOT count as a filter
-    assert!(
-        list_blocks_inner(
-            &pool,
-            None,
-            Some("page".into()),
-            None,
-            Some(false),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-        )
-        .await
-        .is_ok(),
-        "block_type + show_deleted=false should be accepted (false is not a filter)"
+        list_trash_inner(&pool, None, None, TEST_SPACE_ID.into())
+            .await
+            .is_ok(),
+        "list_trash alone should be accepted"
     );
 }
 
@@ -2111,7 +2034,6 @@ async fn list_blocks_empty_db_returns_empty_page() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,

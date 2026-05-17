@@ -2,9 +2,8 @@
  * Tests for useItemCount — the polling-badge hook that powers
  * sidebar counters (e.g. the trash-tab badge).
  *
- * The hook accepts both shapes — paginated page envelopes (e.g. the
- * trash badge polling `listBlocks({ showDeleted: true, limit: 100 })`)
- * AND plain `number` returns (count-only IPCs).
+ * The hook accepts both shapes — paginated page envelopes AND plain
+ * `number` returns (count-only IPCs).
  *
  * The "counts > 100" case is a regression guard: paginated-page
  * counters silently cap at the page limit because the second page is
@@ -76,9 +75,8 @@ describe('useItemCount', () => {
   // ── page-envelope (paginated IPCs — legacy trash-badge path) ──
 
   it('returns items.length when queryFn resolves to a page envelope', async () => {
-    // Trash badge still polls `listBlocks({ showDeleted: true, limit: 100 })`
-    // — a paginated IPC. The hook must keep handling that shape until
-    // the trash-side migration (Tier 4 follow-up) lands a count-only IPC.
+    // The hook supports paginated IPCs that return a page envelope as well
+    // as count-only IPCs that return a plain number.
     const queryFn = vi.fn().mockResolvedValue({
       items: [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
       next_cursor: null,

@@ -236,8 +236,8 @@ export async function purgeAllDeleted(): Promise<BulkTrashResponse> {
  *
  * Mirrors `restoreBlock` but accepts an array of ids; the backend runs one
  * IMMEDIATE transaction with one op_log scope instead of N. Each id is
- * treated as a cascade root (matches the TrashView's
- * `listBlocks({showDeleted:true})` source). Non-deleted / missing ids are
+ * treated as a cascade root (matches the TrashView's `listTrash` source).
+ * Non-deleted / missing ids are
  * silently skipped (no error). Returns the number of blocks (roots +
  * descendants) whose `deleted_at` was actually cleared.
  */
@@ -263,7 +263,7 @@ export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
 /**
  * Batch-count cascade-deleted descendants per trash root.
  *
- * Given a list of trash-root IDs (as returned by `listBlocks({ showDeleted: true })`),
+ * Given a list of trash-root IDs (as returned by `listTrash`),
  * returns a map of `root_id -> descendant_count`. Descendants are blocks sharing
  * the root's `deleted_at` timestamp, excluding the root itself and conflict copies.
  * Roots with zero descendants are omitted — treat missing keys as `0`.
@@ -329,7 +329,6 @@ export async function listBlocks(params: {
   parentId?: string | undefined
   blockType?: string | undefined
   tagId?: string | undefined
-  showDeleted?: boolean | undefined
   agendaDate?: string | undefined
   agendaDateRange?: DateRange | undefined
   agendaSource?: string | undefined
@@ -351,12 +350,24 @@ export async function listBlocks(params: {
       params.parentId ?? null,
       params.blockType ?? null,
       params.tagId ?? null,
-      params.showDeleted ?? null,
       agenda,
       params.cursor ?? null,
       params.limit ?? null,
       params.spaceId,
     ),
+  )
+}
+
+/**
+ * Paginate soft-deleted blocks (the trash view). Scoped to a single space.
+ */
+export async function listTrash(params: {
+  cursor?: string | undefined
+  limit?: SafeLimit | undefined
+  spaceId: string
+}): Promise<PageResponse<BlockRow>> {
+  return unwrap(
+    await commands.listTrash(params.cursor ?? null, params.limit ?? null, params.spaceId),
   )
 }
 
@@ -743,17 +754,12 @@ export async function countBacklinksBatch(params: {
 
 /** Count soft-deleted blocks in a space. Used by the sidebar trash badge.
  *
- * Limit-clamp follow-up — `useTrashCount` previously fed the badge from
- * `listBlocks({ showDeleted: true, limit: 100, spaceId }).items.length`,
- * which silently clamped at 100 and would have been wrong for any
- * workspace with more than 100 soft-deleted blocks. This wrapper pushes
- * the count into SQL via a `SELECT COUNT(*)` IPC so the badge is always
- * accurate regardless of trash size.
+ * The badge fetches the count via a `SELECT COUNT(*)` IPC so it stays
+ * accurate regardless of trash size (limit-clamp follow-up).
  *
  * Pass `''` for the pre-bootstrap window before a space is active — the
  * backend `value_ref` filter treats the empty string as a no-match, so
- * the result is `0`. Mirrors the `?? ''` fallback used by the legacy
- * `listBlocks` call site and by `TrashView`.
+ * the result is `0`. Mirrors the `?? ''` fallback used by `TrashView`.
  */
 export async function countTrash(spaceId: string): Promise<number> {
   return unwrap(await commands.countTrash(spaceId))

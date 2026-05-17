@@ -51,12 +51,9 @@ export const HANDLERS: Record<string, Handler> = {
 
   list_blocks: (args) => {
     const a = args as Record<string, unknown>
-    let items: Record<string, unknown>[]
-    if (a['showDeleted']) {
-      items = [...blocks.values()].filter((b) => b['deleted_at'])
-    } else {
-      items = [...blocks.values()].filter((b) => !(b['deleted_at'] as string | null))
-    }
+    let items: Record<string, unknown>[] = [...blocks.values()].filter(
+      (b) => !(b['deleted_at'] as string | null),
+    )
     if (a['blockType']) items = items.filter((b) => b['block_type'] === a['blockType'])
     if (a['parentId']) items = items.filter((b) => b['parent_id'] === a['parentId'])
     // Tag filtering
@@ -94,6 +91,14 @@ export const HANDLERS: Record<string, Handler> = {
     }
     // Sort by position for consistent ordering (matches real backend)
     items.sort((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
+    return { items, next_cursor: null, has_more: false }
+  },
+
+  // Paginate soft-deleted blocks, space-scoped. Mirrors backend
+  // `pagination::list_trash` (deleted_at DESC, id ASC).
+  list_trash: () => {
+    const items = [...blocks.values()].filter((b) => b['deleted_at'])
+    items.sort((x, y) => String(y['deleted_at'] ?? '').localeCompare(String(x['deleted_at'] ?? '')))
     return { items, next_cursor: null, has_more: false }
   },
 

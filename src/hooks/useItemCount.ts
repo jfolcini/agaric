@@ -3,8 +3,8 @@
  * returns a count for a sidebar / tab badge.
  *
  * Accepts either:
- *  - a paginated command returning `{ items: unknown[] }` (e.g.
- *    the trash badge polls `listBlocks({ showDeleted: true, limit: 100 })`),
+ *  - a paginated command returning `{ items: unknown[] }` (the count is
+ *    `items.length`, accurate only up to the page limit),
  *  - a count-only command returning `number` (the cheaper shape — used
  *    by callsites that have a dedicated `SELECT COUNT(*)` IPC).
  *

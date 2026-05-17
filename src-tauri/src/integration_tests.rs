@@ -810,7 +810,6 @@ async fn pagination_on_empty_database_returns_no_items() {
         None,
         None,
         None,
-        None,
         Some(50),
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
@@ -869,7 +868,6 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         None,
         None,
         None,
-        None,
         Some(50),
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
@@ -877,22 +875,9 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
     .unwrap();
     assert_eq!(live.items.len(), 3, "should show 3 live blocks");
 
-    let trash = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(50),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
-    )
-    .await
-    .unwrap();
+    let trash = list_trash_inner(&pool, None, Some(50), TEST_SPACE_ID.into())
+        .await
+        .unwrap();
     assert_eq!(
         trash.items.len(),
         2,
@@ -932,7 +917,6 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
         assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
-            None,
             None,
             None,
             None,
@@ -981,7 +965,6 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
     assign_all_to_test_space(&pool).await;
     let page = list_blocks_inner(
         &pool,
-        None,
         None,
         None,
         None,
@@ -1063,7 +1046,6 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         None,
-        None,
         Some(50),
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
@@ -1081,7 +1063,6 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         None,
-        None,
         Some(50),
         TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
@@ -1093,7 +1074,6 @@ async fn list_by_type_filters_to_matching_block_type() {
         &pool,
         None,
         Some(TYPE_TAG.into()),
-        None,
         None,
         None,
         None,
@@ -1130,7 +1110,6 @@ async fn children_listed_in_position_order() {
     let children = list_blocks_inner(
         &pool,
         Some(parent.id.clone()),
-        None,
         None,
         None,
         None,

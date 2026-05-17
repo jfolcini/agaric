@@ -81,12 +81,9 @@ export function useTrashCount(): number {
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view or space changes (user may have restored items / switched spaces)
   const queryFn = useCallback(
     () =>
-      // Limit-clamp follow-up (FEAT-3 Phase 4 trash badge): the legacy
-      // shape was `listBlocks({ showDeleted: true, limit: 100, spaceId })
-      // .items.length`, which silently clamped the badge count at 100.
-      // `countTrash` pushes the count into SQL so the badge is accurate
-      // regardless of trash size. `?? ''` is the pre-bootstrap no-match
-      // fallback (see `TrashView` / the `countTrash` wrapper for context).
+      // `countTrash` pushes the count into SQL so the trash badge stays
+      // accurate regardless of trash size. `?? ''` is the pre-bootstrap
+      // no-match fallback (see `TrashView` / the `countTrash` wrapper).
       countTrash(currentSpaceId ?? ''),
     [currentView, currentSpaceId],
   )

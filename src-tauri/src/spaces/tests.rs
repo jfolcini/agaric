@@ -875,7 +875,6 @@ async fn list_blocks_inner_isolates_blocks_by_space_id() {
         None,                           // parent_id
         Some("page".into()),            // block_type
         None,                           // tag_id
-        None,                           // show_deleted
         None,                           // agenda_date
         None,                           // agenda_date_start
         None,                           // agenda_date_end
@@ -910,7 +909,6 @@ async fn list_blocks_inner_isolates_blocks_by_space_id() {
         &pool,
         None,
         Some("page".into()),
-        None,
         None,
         None,
         None,
