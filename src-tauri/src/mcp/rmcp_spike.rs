@@ -80,8 +80,8 @@ use std::sync::Arc;
 use rmcp::{
     handler::server::ServerHandler,
     model::{
-        CallToolRequestMethod, CallToolRequestParams, CallToolResult, ErrorData, Implementation,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+        CallToolRequestParams, CallToolResult, ErrorData, Implementation, ListToolsResult,
+        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
     },
     service::{RequestContext, RoleServer},
 };
@@ -94,6 +94,7 @@ use super::activity::{
 use super::actor::{Actor, ActorContext, ACTOR};
 use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
+use crate::error::AppError;
 
 /// Wire-format name of the only tool the spike currently dispatches
 /// through `rmcp::call_tool` (M1 still gates `call_tool` to this single
@@ -198,22 +199,6 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let name = request.name.to_string();
-        if name != SEARCH_TOOL_NAME {
-            // MAINT-111 M2 TODO: drop this filter so every tool name
-            // returned by `list_tools` is also dispatchable through
-            // rmcp. The activity/actor/LAST_APPEND wrapper below is
-            // already registry-generic (it reads `&name` rather than
-            // hard-coding `SEARCH_TOOL_NAME`); only the early-return
-            // guard and the two trailing `SEARCH_TOOL_NAME` literals
-            // in the activity emission block need to become `&name`.
-            //
-            // Surfaces today as JSON-RPC `-32601 Method not found`
-            // over the wire — M1 keeps the spike's `call_tool`
-            // surface area intentionally narrow (only `search`) so
-            // the parity test for `tools/list` is the only behaviour
-            // change in this milestone.
-            return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
-        }
 
         // Pull `clientInfo.name` out of rmcp's per-connection peer
         // state. rmcp captures `InitializeRequestParams` during the
@@ -242,6 +227,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         let args_for_summary = args.clone();
 
         let registry = self.registry.clone();
+        let name_for_call = name.clone();
 
         // Re-implement `handle_tools_call`'s nested scope:
         //  - ACTOR scope so `current_actor()` reads the agent name in
@@ -255,7 +241,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
             .scope(scoped_ctx, async move {
                 crate::task_locals::LAST_APPEND
                     .scope(std::cell::RefCell::new(Vec::new()), async move {
-                        let r = registry.call_tool(&name, args, &call_ctx).await;
+                        let r = registry.call_tool(&name_for_call, args, &call_ctx).await;
                         let captured = crate::task_locals::take_appends();
                         (r, captured)
                     })
@@ -268,12 +254,12 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         // the error branch clips at ERROR_CLIP_CAP chars before pushing.
         let (summary, result_variant) = match &result {
             Ok(value) => (
-                super::summarise::summarise(SEARCH_TOOL_NAME, &args_for_summary, value),
+                super::summarise::summarise(&name, &args_for_summary, value),
                 ActivityResult::Ok,
             ),
             Err(err) => {
                 let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
-                (SEARCH_TOOL_NAME.to_string(), ActivityResult::Err(short))
+                (name.clone(), ActivityResult::Err(short))
             }
         };
         let mut iter = op_refs.into_iter();
@@ -282,7 +268,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         emit_tool_completion(
             &self.activity_ctx,
             ToolCompletionEvent {
-                tool_name: SEARCH_TOOL_NAME,
+                tool_name: &name,
                 summary: &summary,
                 actor_kind: ActorKind::Agent,
                 agent_name: Some(agent_name),
@@ -298,17 +284,29 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
             // `wrap_tool_result_success` so the wire shape is
             // `{ content, structuredContent, isError: false }`.
             // `CallToolResult::structured` produces the exact same
-            // envelope — confirms the spec wire-shape parity.
+            // envelope.
             Ok(value) => Ok(CallToolResult::structured(value)),
-            // `AppError` → JSON-RPC error mapping is intentionally
-            // simplified in the spike. The hand-rolled
-            // `app_error_to_jsonrpc` distinguishes
-            // NotFound/Validation/InvalidOperation; rmcp wants
-            // `ErrorData` and exposes the same standard codes
-            // (`invalid_params`, `internal_error`, …). A full
-            // migration would re-export the mapping here.
-            Err(err) => Err(ErrorData::internal_error(err.to_string(), None)),
+            // Mirror `super::server::app_error_to_jsonrpc`'s mapping
+            // so the wire-format error codes match the hand-rolled
+            // path byte-for-byte: NotFound → resource-not-found
+            // (-32002), Validation / InvalidOperation → invalid-params
+            // (-32602), everything else → internal-error (-32603).
+            Err(err) => Err(app_error_to_rmcp(&err)),
         }
+    }
+}
+
+/// `AppError → rmcp::ErrorData` translation that mirrors the
+/// hand-rolled [`super::server::app_error_to_jsonrpc`] mapping so the
+/// wire-format error codes match byte-for-byte.
+fn app_error_to_rmcp(err: &AppError) -> ErrorData {
+    let msg = err.to_string();
+    match err {
+        AppError::NotFound(_) => ErrorData::resource_not_found(msg, None),
+        AppError::Validation(_) | AppError::InvalidOperation(_) => {
+            ErrorData::invalid_params(msg, None)
+        }
+        _ => ErrorData::internal_error(msg, None),
     }
 }
 
@@ -559,12 +557,19 @@ mod tests {
         assert_eq!(MCP_ACTIVITY_EVENT, "mcp:activity");
     }
 
-    /// Negative path — a `tools/call` for a tool the spike does not
-    /// expose surfaces as `method_not_found` over the wire and DOES
-    /// NOT emit an activity entry. Confirms the dispatcher's
-    /// not-found branch matches the hand-rolled `-32601` semantics.
+    /// Negative path — a `tools/call` for a tool name the registry
+    /// does not advertise surfaces as `resource_not_found` (-32002) /
+    /// `-32001` over the wire AND emits one activity entry with an
+    /// `Err` variant. Mirrors the hand-rolled `handle_tools_call`
+    /// behaviour: unknown tool names round-trip through the registry,
+    /// returning `AppError::NotFound` which the dispatcher maps to
+    /// the spec's resource-not-found code.
+    ///
+    /// (`-32601 Method not found` is reserved at the JSON-RPC method
+    /// level — `tools/nonexistent_method` — and is handled outside
+    /// `call_tool`.)
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rmcp_spike_unknown_tool_returns_method_not_found_no_activity() {
+    async fn rmcp_spike_unknown_tool_returns_resource_not_found_with_activity() {
         let observed = Arc::new(Mutex::new(None));
         let count = Arc::new(Mutex::new(0));
         let registry = Arc::new(SpikeMockRegistry {
@@ -599,14 +604,18 @@ mod tests {
         let _ = client.cancel().await;
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
 
-        // Registry never sees the call — the adapter rejects it before
-        // entering the ACTOR scope.
-        assert_eq!(*count.lock().unwrap(), 0);
-        // No activity entry pushed for unknown tools — matches the
-        // hand-rolled path's behaviour where `-32601` is built before
-        // the activity-emission branch.
-        assert!(ring.lock().unwrap().entries().is_empty());
-        assert!(emitter.entries().is_empty());
+        // Registry sees the call (the dispatcher hands every name to
+        // the registry — the mock matches the hand-rolled path's
+        // single-name guard).
+        assert_eq!(*count.lock().unwrap(), 1);
+        // One activity entry pushed for the failed call — the
+        // hand-rolled path also emits failure entries so an operator
+        // sees agent-attempted-unknown-tool events in the feed.
+        assert_eq!(ring.lock().unwrap().entries().len(), 1);
+        let emitted = emitter.entries();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].tool_name, "definitely-not-search");
+        assert!(matches!(emitted[0].result, ActivityResult::Err(_)));
     }
 
     /// MAINT-111 M1 parity gate. Builds the production
