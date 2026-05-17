@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-23 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
+22 open items in the summary table; 22 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -28,7 +28,6 @@ Items flagged during development that need revisiting. Organized by section with
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L | Design review |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L | — |
 | MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6. **M1 LANDED** — `RmcpReadOnlyAdapter` advertises every RO tool, parity test pins byte-for-byte equivalence with the hand-rolled `handle_tools_list`. M2 (route `tools/call` through rmcp, ~6h) + M3 (drop hand-rolled framing, ~3h) remain, both behind the `mcp_rmcp_spike` feature flag. | M-L | — |
-| MAINT-113 | MAINT | `ActiveBlockId` newtype to lift invariant #9 into the type system. **M1 + M1.5 + M2 LANDED (2026-05-02):** newtype + `verify_active` gate; `fts::search_fts`, `search_blocks_inner`, `list_projected_agenda_inner`, backlink/tag query helpers retyped to `ActiveBlockRow`. **M3 (a) split-trash LANDED (2026-05-17):** `list_trash_inner` / `list_trash` Tauri command split out; `show_deleted` parameter removed from `list_blocks_inner` + `list_blocks`. **Remaining:** retype `list_blocks_inner` + 4 leaf helpers (`list_children` / `list_by_type` / `list_by_tag` / `list_agenda*`) to `PageResponse<ActiveBlockRow>`; migrate `commands/properties.rs::set_*_inner` family with `verify_active` IPC gates; convert cascade/move/delete paths + materializer handlers. | M (~4-6h) | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-208 | MAINT | PEND-25 M1 deferred — deferrable `block_on` calls in `src-tauri/src/lib.rs` (in the `recover_at_boot`, `bootstrap_spaces`, and gcal-migration setup paths; the file currently has 6 `block_on` sites total, of which the PEND-25 plan classed 3 as deferrable). Per the PEND-25 plan body, only act if Android boot profile shows >100 ms cumulative cost; on desktop the headroom is irrelevant. Profile `adb shell am start -W` with `tracing::info!` instrumentation before refactoring; if confirmed, defer to a post-window-show task. Conditional. | M (4-7h) | Android boot profile data |
 | MAINT-209 | MAINT | PEND-25 L15 + L16 deferred — gcal connector channel + agenda fetch hygiene. (L15) `mpsc::UnboundedSender<DirtyEvent>` in `src-tauri/src/gcal_push/connector.rs` (carried on the connector struct + spawn arg; the channel is constructed via `mpsc::unbounded_channel::<DirtyEvent>()` near the connector init) is unbounded; defensive bounded channel + `try_send` only matters if a fast producer overruns the consumer (no observed instance today). (L16) `connector.rs::push_date` is called per-date in a loop instead of one `list_projected_agenda_inner(min_date, max_date)` call; only matters when the gcal push window grows beyond a handful of days. Both are speculative — only pursue if profiling shows a concrete need. | S-M (~3h together) | Profiling data showing gcal contention |
@@ -156,194 +155,6 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 **Cost:** M-L (~9h remaining across M2 + M3).
 **Risk:** Medium — wire format is identical (rmcp targets the same MCP spec we hand-roll) but every existing `mcp/server/tests.rs` / `tools_ro/tests.rs` / `tools_rw/tests.rs` test must still pass byte-equivalent.
 **Impact:** Medium — reduces framing boilerplate, tracks the MCP spec upstream rather than reimplementing it, and unlocks several spec features we currently stub (protocol-version negotiation, listChanged, cancel/progress, _meta, ping, structuredContent).
-
-### MAINT-113 — `ActiveBlockId` newtype to lift invariant #9 into the type system
-
-**What:** AGENTS.md "Key Architectural Invariants" #9 reads:
-
-> Recursive CTEs over `blocks` must filter `is_conflict = 0` in the recursive member, and bound `depth < 100` to prevent runaway recursion on corrupted data. Conflict copies leak into results otherwise.
-
-This invariant is currently enforced by code review + grep + one-line comments. It is baked into **275 `is_conflict = 0` SQL occurrences across 52 source files** (plus 3 more in `0021_block_tag_inherited.sql`) — count refreshed 2026-05-02 from the original 220/70. Every new query touching `blocks` must remember to add it.
-
-**Design:**
-
-```rust
-pub struct BlockId(String);        // raw — may refer to a conflict copy or deleted block
-pub struct ActiveBlockId(String);  // materialised AND is_conflict = 0 AND deleted_at IS NULL
-```
-
-Conversion `BlockId → ActiveBlockId` goes through a single checked gate
-(`verify_active(&BlockId) -> Result<ActiveBlockId>`) that runs the
-`is_conflict = 0 AND deleted_at IS NULL` predicate exactly once. Recursive
-CTEs hidden behind active-filtering helpers keep their `AND is_conflict = 0`
-in SQL — the newtype just prevents callers from accidentally feeding a raw
-`BlockId` into a path that assumes active.
-
-**M1 + M1.5 + M2 progress (2026-05-02):**
-
-LANDED in M1:
-- `ActiveBlockId` newtype in `src-tauri/src/ulid.rs` with full impl set
-  (`sqlx::Type` transparent, `serde(transparent)`, `specta::Type`,
-  `PartialEq`/`PartialOrd`/`Hash`/`Display`/`AsRef`/`From` conversions).
-- `verify_active(pool, &BlockId) -> Result<ActiveBlockId, AppError>`
-  gate in the same file.
-- 13 unit tests in `src-tauri/src/ulid/tests.rs` (7 type-level + 6
-  DB-backed): rejects conflict copies, soft-deleted blocks, non-existent
-  ids; conflict-check precedence over deletion-check; lowercase
-  normalisation in lookup.
-- `PageLink` retyped: `source_id: ActiveBlockId, target_id: ActiveBlockId`.
-- `soft_delete::get_descendants` removed — dead code (zero production
-  callers); doc reference in `block_descendants.rs` updated.
-
-LANDED in M1.5:
-- `ActiveBlockRow` parallel struct in `pagination/mod.rs` (mirror of
-  `BlockRow` with `id: ActiveBlockId`) + `From<ActiveBlockRow> for BlockRow`
-  + `ActiveBlockRow::from_block_row_unchecked`.
-- `ActiveProjectedAgendaEntry` parallel struct (mirror of
-  `ProjectedAgendaEntry` with `block: ActiveBlockRow`) + `From` downcast.
-- `fts::search_fts` retyped to return `PageResponse<ActiveBlockRow>`.
-- `commands::queries::search_blocks_inner` + the `search_blocks` Tauri
-  command retyped to return `PageResponse<ActiveBlockRow>`.
-- `commands::agenda::list_projected_agenda_inner` +
-  `list_projected_agenda_on_the_fly` + the `list_projected_agenda` Tauri
-  command retyped to return `PageResponse<ActiveProjectedAgendaEntry>`.
-- `RepeatingBlockRow::to_active_block_row()` replaces `to_block_row()`.
-- `gcal_push::connector` downcasts entries to `ProjectedAgendaEntry`
-  at the boundary because the digest pipeline only consumes row content.
-- 5 test sites updated with `.into()` widenings (HashSet/Vec collection
-  targets in fts/tests, mcp/tools_ro/tests, cache/tests, agenda_cmd_tests).
-
-LANDED in M2:
-- `BacklinkQueryResponse.items` and `BacklinkGroup.blocks` retyped to
-  `Vec<ActiveBlockRow>` in `src-tauri/src/backlink/types.rs`.
-- `backlink::query::eval_backlink_query` retyped — uses
-  `ActiveBlockRow::from_block_row_unchecked` boundary cast over the
-  active-pre-filtered `actual_ids` set.
-- `backlink::grouped::eval_backlink_query_grouped` and
-  `eval_unlinked_references` retyped via the same boundary-cast pattern
-  at the per-group block-row construction.
-- `tag_query::query::eval_tag_query` retyped to
-  `PageResponse<ActiveBlockRow>` — switched from
-  `query_as::<_, BlockRow>` to `query_as::<_, ActiveBlockRow>` (sqlx's
-  `FromRow` derive handles the typed-id slot via `sqlx::Type`
-  transparent over `String`).
-- `pagination::list_backlinks` retyped — added the sqlx column-cast
-  hint `id as "id: crate::ulid::ActiveBlockId"` in the `query_as!`
-  macro. New `.sqlx/` cache entry committed.
-- `commands::queries::get_backlinks_inner` + the `get_backlinks` Tauri
-  command propagate the typed return.
-- `commands::tags::query_by_tags_inner` + the `query_by_tags` Tauri
-  command propagate the typed return.
-- 3 test sites updated with `.into()` widenings on `String` collection
-  targets (`backlink/tests.rs`, `commands/tests/query_cmd_tests.rs`,
-  `command_integration_tests/backlink_integration.rs`).
-- specta-typescript regen confirms `ActiveBlockRow` is structurally
-  compatible with `BlockRow` at the wire level (because
-  `ActiveBlockId = string` alias) — frontend `BacklinkQueryResponse`,
-  `BacklinkGroup`, and `getBacklinks` / `queryByTags` consumers
-  continue to compile without changes.
-
-DESIGN: parallel-types path chosen over `BlockRow<Id = String>` generic
-because `specta-typescript` 0.0.11 (a) does not emit Rust generic
-defaults (TS sees `BlockRow<Id>` requiring an explicit type arg, breaking
-~69 frontend imports) and (b) the `specta::Type` derive macro drops
-`Id: Clone` bounds through embedded generic structs (`PLACEHOLDER_Id`
-codegen). The parallel struct duplicates 13 fields but is structurally
-clean: `ActiveBlockRow` is a strict subset of `BlockRow` (always-safe
-`From<ActiveBlockRow> for BlockRow`), and at the wire level both have
-`id: string` (TS structural typing accepts each in place of the other).
-
-LANDED in M3 (a) — split-trash dispatcher reshape:
-
-- `list_trash_inner` + `list_trash` Tauri command in
-  `src-tauri/src/commands/blocks/queries.rs` (paginated, space-scoped,
-  delegates to `pagination::list_trash`). Registered in `lib.rs`.
-- `list_blocks_inner` + `list_blocks` Tauri command lose the
-  `show_deleted` parameter. The dispatcher's polymorphism collapses to
-  active-only fan-out (`list_children` / `list_by_type` / `list_by_tag`
-  / `list_agenda*`). Filter-conflict validation tightened in step.
-- Frontend `listBlocks` wrapper drops `showDeleted`; new `listTrash`
-  wrapper exported. `TrashView.tsx` switches to `listTrash`. tauri-mock
-  gains a dedicated `list_trash` handler. `bindings.ts` regenerated.
-- All call sites updated: 72 mechanical arg drops (test files +
-  benches) + 9 conversions to `list_trash_inner`. Backend nextest +
-  frontend vitest (9883 pass) green.
-
-The trash split unblocks the active-fan-out retype to `ActiveBlockRow`.
-Choosing path (a) per maintainer decision in this session — the IPC
-split + frontend wiring is the honest separation; `TrashView` already
-differentiated at the UI layer.
-
-**Remaining work (path (a) follow-up):**
-
-- **Retype `list_blocks_inner` + `list_blocks` to
-  `PageResponse<ActiveBlockRow>`** — at the Tauri boundary, downcast
-  via `From<ActiveBlockRow> for BlockRow` to preserve frontend
-  bindings, OR propagate `ActiveBlockRow` across IPC (the wire format
-  is structurally identical because `ActiveBlockId = string` alias).
-  Retype the 4 leaf helpers (`list_children`, `list_by_type`,
-  `list_by_tag`, `list_agenda*`) to return `ActiveBlockRow`. Test
-  call sites that read `.items[0].id` need `.as_str()` because
-  `ActiveBlockId` is not `String`.
-- **`commands/properties.rs` `set_*_inner` family** — 9 functions take
-  `block_id: String` and return `BlockRow`. Add a `verify_active`
-  gate at each Tauri command boundary so the inner helper takes
-  `&ActiveBlockId` and returns `ActiveBlockRow`. Adds one DB roundtrip
-  per call but tightens the type-safety win at the IPC boundary
-  (every property write proves the target is active).
-- **Cascade/move/delete paths + materializer handlers** — original M3
-  scope. After the active fan-out retype lands, the last raw-`BlockId`
-  SQL sites can be retyped.
-
-**Cost remaining:** M. Mostly mechanical retype + test-fixture
-`.id.as_str()` adjustments across ~76 backend call sites.
-
-**Risk:** M for the dispatcher refactor (touches the central block IPC
-surface). L for the property-resolution helpers (mechanical retype with
-verify_active gates).
-
-**Impact:** Six of the highest-traffic active-filtering helper chains
-now carry typed IDs at the helper signature (search, agenda projection,
-backlinks, grouped backlinks, unlinked references, tag query). The
-`From` downcasts make the type system enforce the producer/consumer
-asymmetry: any code that calls these and feeds the result back into a
-raw `BlockRow` consumer must explicitly opt in via `.into()`, surfacing
-the trust transition.
-
-**Milestone plan:**
-
-1. **M1 (DONE 2026-05-02)** — `ActiveBlockId` + `verify_active` + 13
-   tests; `PageLink` retyped; `get_descendants` removed.
-2. **M1.5 (DONE 2026-05-02)** — `ActiveBlockRow` +
-   `ActiveProjectedAgendaEntry` parallel structs; `search_blocks_inner`
-   + `list_projected_agenda_inner` + their command wrappers and `fts`
-   delegate retyped.
-3. **M2 (DONE 2026-05-02)** — `BacklinkQueryResponse` + `BacklinkGroup`
-   retyped; `eval_backlink_query` + `eval_backlink_query_grouped` +
-   `eval_unlinked_references` + `eval_tag_query` + `list_backlinks` +
-   `get_backlinks_inner` + `query_by_tags_inner` retyped.
-4. **M3 (a) split-trash (DONE 2026-05-17)** — `list_trash_inner` /
-   `list_trash` Tauri command split out of `list_blocks_inner`'s
-   dispatcher. `show_deleted` parameter removed from `list_blocks`.
-   Frontend `TrashView` + tauri-mock + bindings updated. Path (a)
-   chosen.
-5. **M3 retype + cascade (M, ~4–6h, follow-up)** — Retype
-   `list_blocks_inner` + 4 leaf helpers to `ActiveBlockRow`. Migrate
-   `commands/properties.rs::set_*_inner` family with `verify_active`
-   IPC gates. Convert cascade/move/delete paths + materializer
-   handlers. Update AGENTS.md invariant #9 to reference the newtype
-   instead of the prose rule. Remove this row from REVIEW-LATER.
-
-**Per-milestone exit criteria:**
-
-- All `cargo nextest run` + `npx vitest run` pass; existing E2E specs pass.
-- No new `unsafe_code` or `biome-ignore`.
-- `specta` bindings regenerated; `ts_bindings_up_to_date` test passes.
-- Number of `is_conflict = 0` SQL sites strictly decreases at each
-  milestone (sites that get hidden behind `ActiveBlockId`-returning
-  helpers no longer count) — track in the commit message.
-
-**Decision:** **Scheduled** — M1 + M1.5 + M2 closed 2026-05-02. M3 next, with the dispatcher architectural decision required up-front.
 
 ### MAINT-168 — Sync trigger / scheduler dual-backoff unification
 

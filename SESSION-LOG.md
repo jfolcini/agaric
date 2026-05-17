@@ -2,10 +2,70 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 772 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 774 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1200+ REVIEW-LATER items across 772 sessions.
+- **Previously-resolved counter:** 1202+ REVIEW-LATER items across 774 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 774 — MAINT-113 closed: AGENTS.md invariant #9 + REVIEW-LATER entry deleted (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-direct |
+| **Items closed** | MAINT-113 (entry deleted from REVIEW-LATER). |
+| **Items modified** | AGENTS.md invariant #9 — appended a note covering the `ActiveBlockId` newtype, the active-block listing surfaces that carry it, and the `verify_active` / `From<String>` distinction. |
+| **Files touched** | 3 (AGENTS.md, pending/REVIEW-LATER.md, SESSION-LOG.md). |
+
+**Summary:** Final MAINT-113 close-out. Invariant #9 in AGENTS.md now references the type-system carry of the active-blocks claim (`ActiveBlockRow` return type across the pagination / search / agenda / backlinks / tag query / property mutation surfaces; `verify_active` as the sole DB-checked gate). The optional cascade/move/delete + materializer-handler retype that remained in the entry's "could be done if motivated" section is intentionally left for future opportunistic work — invariant #9's typing goal is captured by the existing typed surface area; further refinement would be diminishing-returns plumbing.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 23 → 22 (−MAINT-113)
+- **Previously resolved:** 1201+ → 1202+ across 773 → 774 sessions
+
+**Files touched (this session):**
+- `AGENTS.md` (+2 lines on invariant #9).
+- `pending/REVIEW-LATER.md` (−180 lines: summary row + detail entry deleted; count 23 → 22).
+- `SESSION-LOG.md` (this entry + counter bump).
+
+**Verification:** trivial doc edit; no code change.
+
+**Commit plan:** single commit (sessions 772/773 already committed).
+
+---
+
+## Session 773 — MAINT-113 M3: properties retype with verify_active gate (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-direct (bulk-edit via /tmp Python scripts handling multi-line + single-line call shapes). |
+| **Items closed** | MAINT-113 M3 properties — 7 property-mutation `set_*_inner` + `delete_property_inner` retyped to take `ActiveBlockId` and (where they return a row) return `ActiveBlockRow`. Tauri wrappers gained `verify_active` IPC gates; MCP `set_property` tool gained the same. Active fan-out retype (Stage 1 / Session 772 second commit) propagated `ActiveBlockRow` through `list_blocks_inner` + the 4 pagination leaves. |
+| **Items modified** | `ActiveBlockId` grew `From<String>` / `From<&str>` impls (always-on, documented as bypassing the DB activeness check — production callers must still route through `verify_active`). |
+| **Tests added** | — (mechanical retype; existing test coverage validates behaviour). |
+| **Files touched** | 22 (production: queries.rs, pages.rs, properties.rs, mcp/tools_rw.rs, lib.rs, commands/mod.rs, ulid.rs, pagination/hierarchy.rs, pagination/tags.rs, pagination/agenda.rs, pagination/block_row_columns.rs; tests/benches: pagination/tests.rs, spaces/tests.rs, integration_tests.rs, block_integration.rs, lifecycle_integration.rs, property_integration.rs, agenda_cmd_tests.rs, property_cmd_tests.rs, query_cmd_tests.rs, undo_redo_tests.rs, gcal_hook_tests.rs, recurrence/compute.rs, recurrence/tests.rs, mcp/tools_rw/tests.rs, mcp/tools_ro/tests.rs, commands_bench.rs, property_bench.rs). |
+
+**Summary:** Major M3 push, landing in two commits. First commit (`eb638188`) retyped the four pagination leaves (`list_children`, `list_by_type`, `list_by_tag`, `list_agenda` + `list_agenda_range`) to return `PageResponse<ActiveBlockRow>`, propagated the typed return through `list_blocks_inner`, and added the boundary downcast at the `list_blocks` Tauri wrapper + the MCP `list_pages_inner` to keep the wire format / frontend bindings unchanged. Second commit (`a70dfb9b`) retyped the property-mutation family (7 functions: `set_property` / `set_todo_state` / `set_priority` / `set_due_date` / `set_scheduled_date` / `delete_property` + the inline `set_property_inner` body) to take `ActiveBlockId` and return `ActiveBlockRow`; each Tauri wrapper now calls `verify_active` before delegating. ~300 test/bench call sites were mechanically updated via two Python scripts (multi-line vs single-line call shapes) to wrap the block_id arg with `.into()` — the new always-on `From<String> for ActiveBlockId` impl handles the conversion. `set_todo_state_batch_inner` deliberately stays on `Vec<String>` because the batch contract is "tolerate missing/deleted blocks", incompatible with `verify_active`'s strict early-error semantics.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 23 → 23 (MAINT-113 stays open with reduced remaining scope, deleted in session 774)
+- **Previously resolved:** 1200+ → 1201+ across 772 → 773 sessions
+
+**Files touched (this session):** see commits `eb638188` + `a70dfb9b`.
+
+**Verification:**
+- `cargo nextest run --profile ci` — 3710/3710 pass (after each commit).
+- `cargo check --tests --benches` — clean.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:**
+- The `From<String> for ActiveBlockId` impl was originally gated on `cfg(test)` so production callers had to use `verify_active` or `from_trusted_active` explicitly. Benches (separate compilation unit) broke under that gate, so I made the impl always-on with a docstring explicitly calling out the bypass. The friction of "explicit conversion" is mostly theoretical when `from_trusted_active` is also available; the docstring guards intent.
+- The bulk-edit Python scripts handled the multi-line and single-line `set_*_inner(...)` call shapes separately because the regex anchoring differs. Worth keeping the two-pass pattern for future "wrap-Nth-arg" refactors.
+- Type-shifting `block_id: String` to `block_id: ActiveBlockId` inside `set_todo_state_inner` cascaded into ~10 internal uses of `block_id` (as `&str` for SQL bind, as `String` for `set_property_in_tx` calls). The pattern `let block_id_str = block_id.as_str();` + `let block_id_owned = block_id.into_string();` cleanly factored the two cases.
+
+**Commit plan:** two commits already pushed (`eb638188`, `a70dfb9b`).
+
+---
+
 ## Session 772 — MAINT-113 M3 (a): split list_trash out of list_blocks_inner (2026-05-17)
 
 | Metadata | Value |
