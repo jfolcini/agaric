@@ -298,11 +298,20 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
 
 /// `AppError → rmcp::ErrorData` translation that mirrors the
 /// hand-rolled [`super::server::app_error_to_jsonrpc`] mapping so the
-/// wire-format error codes match byte-for-byte.
+/// wire-format error codes match byte-for-byte. NotFound is mapped
+/// via [`ErrorData::new`] rather than [`ErrorData::resource_not_found`]
+/// because the latter emits -32002 (MCP-spec default); the agaric
+/// hand-rolled path deliberately uses -32001 to leave -32002 free
+/// for a future second resource class.
 fn app_error_to_rmcp(err: &AppError) -> ErrorData {
+    use rmcp::model::ErrorCode;
     let msg = err.to_string();
     match err {
-        AppError::NotFound(_) => ErrorData::resource_not_found(msg, None),
+        AppError::NotFound(_) => ErrorData::new(
+            ErrorCode(super::server::JSONRPC_RESOURCE_NOT_FOUND as i32),
+            msg,
+            None,
+        ),
         AppError::Validation(_) | AppError::InvalidOperation(_) => {
             ErrorData::invalid_params(msg, None)
         }
@@ -774,6 +783,100 @@ mod tests {
                 rmcp_schema, hand_schema,
                 "tools[{idx}].inputSchema drift on `{hand_name}`: \
                  rmcp={rmcp_schema} hand_rolled={hand_schema}",
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // MAINT-111 M2b — byte-equivalent wrapper parity tests.
+    //
+    // The hand-rolled `handle_tools_call` and the rmcp adapter share the
+    // exact same `ToolRegistry::call_tool` body — i.e. the tool's
+    // actual behaviour, error paths, op-log writes, and activity
+    // emission are identical. The only sites where the two paths could
+    // diverge are the success-wrapping and the error-mapping shims:
+    //
+    // - success: `wrap_tool_result_success(value)` (hand-rolled) vs
+    //   `CallToolResult::structured(value)` (rmcp)
+    // - failure: `(code, message) = app_error_to_jsonrpc(&err)` (hand-
+    //   rolled, expanded into a JSON-RPC error envelope by the
+    //   dispatcher) vs `ErrorData = app_error_to_rmcp(&err)` (rmcp,
+    //   serialised by `ServerHandler::handle_request`)
+    //
+    // The two tests below pin byte-equivalence at both shims. If the
+    // spec's wire format ever shifts on either side, exactly one
+    // assertion fails and points at the drifting shim.
+    // ---------------------------------------------------------------------
+
+    /// Parity gate for the success-wrapper: assert
+    /// `wrap_tool_result_success(value)` and the serialised form of
+    /// `CallToolResult::structured(value)` produce the exact same JSON
+    /// bytes for a representative cross-section of `Value` shapes
+    /// (object, array, primitive, null).
+    #[test]
+    fn rmcp_spike_success_envelope_matches_hand_rolled_byte_for_byte() {
+        use rmcp::model::CallToolResult;
+
+        let samples: &[(&str, Value)] = &[
+            (
+                "object",
+                json!({"results": [{"id": "ABC"}], "next_cursor": null}),
+            ),
+            ("array", json!([1, 2, 3])),
+            ("string", json!("hello")),
+            ("number", json!(42)),
+            ("bool", json!(true)),
+            ("null", Value::Null),
+            ("empty_object", json!({})),
+        ];
+        for (label, value) in samples {
+            let hand = super::super::server::wrap_tool_result_success(value.clone());
+            let rmcp_envelope = CallToolResult::structured(value.clone());
+            let rmcp_json = serde_json::to_value(&rmcp_envelope).expect("rmcp serialise");
+            assert_eq!(
+                rmcp_json, hand,
+                "{label}: rmcp `CallToolResult::structured` diverges from \
+                 hand-rolled `wrap_tool_result_success`\n  rmcp={rmcp_json}\n  hand={hand}",
+            );
+        }
+    }
+
+    /// Parity gate for the error-mapper: assert `app_error_to_rmcp`
+    /// and the hand-rolled `app_error_to_jsonrpc` produce the same
+    /// `(code, message)` pair for every variant the latter handles.
+    /// `ErrorData` serialises to `{"code": N, "message": "..."}` plus
+    /// optional `data`; we compare the structural code+message pair.
+    #[test]
+    fn rmcp_spike_error_mapping_matches_hand_rolled_byte_for_byte() {
+        let cases: &[(&str, AppError)] = &[
+            ("NotFound", AppError::NotFound("block X missing".into())),
+            ("Validation", AppError::Validation("invalid args".into())),
+            (
+                "InvalidOperation",
+                AppError::InvalidOperation("cannot do that".into()),
+            ),
+            // Catch-all: any other variant maps to internal_error.
+            (
+                "Database (catch-all)",
+                AppError::Database(sqlx::Error::PoolClosed),
+            ),
+        ];
+        for (label, err) in cases {
+            let (hand_code, hand_msg) = super::super::server::app_error_to_jsonrpc(err);
+            let rmcp_err = super::app_error_to_rmcp(err);
+            // `ErrorData::code` is wrapped in `ErrorCode(i32)` — pull
+            // the underlying i32 for comparison; the hand-rolled
+            // mapping returns i64.
+            assert_eq!(
+                i64::from(rmcp_err.code.0),
+                hand_code,
+                "{label}: code drift (rmcp={} vs hand-rolled={hand_code})",
+                rmcp_err.code.0,
+            );
+            assert_eq!(
+                rmcp_err.message.as_ref(),
+                hand_msg.as_str(),
+                "{label}: message drift",
             );
         }
     }

@@ -350,7 +350,7 @@ pub(crate) fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, 
 /// failures above the tool layer. Mapping everything to JSON-RPC
 /// codes keeps FEAT-4c's wire contract stable and preserves the
 /// error-code routing that clients already rely on.
-fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
+pub(crate) fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
     let code = match err {
         AppError::NotFound(_) => JSONRPC_RESOURCE_NOT_FOUND,
         AppError::Validation(_) | AppError::InvalidOperation(_) => JSONRPC_INVALID_PARAMS,
@@ -382,7 +382,7 @@ fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
 ///
 /// Pure function — unit-tested on its own so the envelope shape is
 /// locked in independently of the dispatch path.
-fn wrap_tool_result_success(value: Value) -> Value {
+pub(crate) fn wrap_tool_result_success(value: Value) -> Value {
     // `to_string` on any valid `serde_json::Value` cannot fail — there
     // is no I/O and every `Value` variant is representable. Fall back
     // to the `Debug` rendering if it somehow does (should never happen
