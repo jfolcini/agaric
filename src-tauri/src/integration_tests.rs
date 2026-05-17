@@ -946,7 +946,7 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
         "12 blocks with PAGE_SIZE=5 should produce 3 pages"
     );
 
-    let unique: HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+    let unique: HashSet<&str> = all_ids.iter().map(AsRef::as_ref).collect();
     assert_eq!(unique.len(), TOTAL, "no duplicate blocks across pages");
 }
 

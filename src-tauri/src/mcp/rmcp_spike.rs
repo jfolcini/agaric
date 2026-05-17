@@ -118,7 +118,10 @@ pub const SEARCH_TOOL_NAME: &str = "search";
 /// that the adapter does NOT need a parallel registration model.
 pub struct RmcpReadOnlyAdapter<R: ToolRegistry> {
     registry: Arc<R>,
-    activity_ctx: ActivityContext,
+    /// FEAT-4d activity-emission seam. `None` in tests / stub binaries
+    /// where no Tauri runtime is bound; `Some(_)` in production via
+    /// `ActivityContext::from_app_handle`.
+    activity_ctx: Option<ActivityContext>,
     /// Stable per-connection ULID, mirroring
     /// `super::server::ConnectionState::session_id`. Stamped onto every
     /// emitted activity entry so the frontend feed can group entries
@@ -127,11 +130,12 @@ pub struct RmcpReadOnlyAdapter<R: ToolRegistry> {
 }
 
 impl<R: ToolRegistry> RmcpReadOnlyAdapter<R> {
-    /// Build an adapter around an existing registry handle and the
-    /// FEAT-4d activity context. Mirrors the
+    /// Build an adapter around an existing registry handle and an
+    /// optional FEAT-4d activity context. Mirrors the
     /// [`super::server::ConnectionState`] construction, minus the
-    /// hand-rolled JSON-RPC plumbing.
-    pub fn new(registry: Arc<R>, activity_ctx: ActivityContext) -> Self {
+    /// hand-rolled JSON-RPC plumbing. Pass `None` for activity_ctx in
+    /// tests / stub binaries with no Tauri runtime bound.
+    pub fn new(registry: Arc<R>, activity_ctx: Option<ActivityContext>) -> Self {
         Self {
             registry,
             activity_ctx,
@@ -265,19 +269,21 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         let mut iter = op_refs.into_iter();
         let op_ref = iter.next();
         let additional_op_refs: Vec<crate::op::OpRef> = iter.collect();
-        emit_tool_completion(
-            &self.activity_ctx,
-            ToolCompletionEvent {
-                tool_name: &name,
-                summary: &summary,
-                actor_kind: ActorKind::Agent,
-                agent_name: Some(agent_name),
-                result: result_variant,
-                session_id: &self.session_id,
-                op_ref,
-                additional_op_refs,
-            },
-        );
+        if let Some(ref ctx) = self.activity_ctx {
+            emit_tool_completion(
+                ctx,
+                ToolCompletionEvent {
+                    tool_name: &name,
+                    summary: &summary,
+                    actor_kind: ActorKind::Agent,
+                    agent_name: Some(agent_name),
+                    result: result_variant,
+                    session_id: &self.session_id,
+                    op_ref,
+                    additional_op_refs,
+                },
+            );
+        }
 
         match result {
             // The hand-rolled path wraps the value in
@@ -430,7 +436,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(ActivityRing::new())),
             Arc::new(RecordingEmitter::new()),
         );
-        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
+        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
         let info = adapter.get_info();
         assert!(
             info.capabilities.tools.is_some(),
@@ -471,7 +477,7 @@ mod tests {
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
 
-        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
+        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
 
         // 4 KiB duplex pipe — large enough for handshake + one tool
         // call without back-pressure stalls.
@@ -594,7 +600,7 @@ mod tests {
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
-        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
+        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
 
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
@@ -692,7 +698,7 @@ mod tests {
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring, emitter);
-        let adapter = RmcpReadOnlyAdapter::new(registry, activity_ctx);
+        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
 
         let (server_io, client_io) = tokio::io::duplex(64 * 1024);
         let server_task = tokio::spawn(async move {

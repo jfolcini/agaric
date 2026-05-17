@@ -854,8 +854,8 @@ mod tests {
         // Spawn the in-process server against this socket.
         tokio::spawn(async move {
             let (server_side, _) = listener.accept().await.unwrap();
-            let registry = PlaceholderRegistry;
-            let _ = handle_connection(server_side, &registry, None).await;
+            let _ = handle_connection(server_side, std::sync::Arc::new(PlaceholderRegistry), None)
+                .await;
         });
 
         // Locate the built binary relative to CARGO_MANIFEST_DIR.

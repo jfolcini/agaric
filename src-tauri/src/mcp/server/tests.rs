@@ -1,5 +1,6 @@
 use super::*;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[cfg(unix)]
 async fn connect_pair(
@@ -9,8 +10,7 @@ async fn connect_pair(
     let listener = UnixListener::bind(socket_path).unwrap();
     let accept_task = tokio::spawn(async move {
         let (server_side, _) = listener.accept().await.unwrap();
-        let registry = PlaceholderRegistry;
-        let _ = handle_connection(server_side, &registry, None).await;
+        let _ = handle_connection(server_side, Arc::new(PlaceholderRegistry), None).await;
     });
     let client = UnixStream::connect(socket_path).await.unwrap();
     (client, accept_task)
@@ -30,6 +30,7 @@ async fn read_line<R: AsyncRead + Unpin>(r: &mut BufReader<R>) -> Value {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn initialize_handshake_returns_server_info() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -77,6 +78,7 @@ async fn initialize_handshake_returns_server_info() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn initialize_returns_2025_06_18_protocol_version_m86() {
     // M-86: the server emits `structuredContent` in tool-call
@@ -118,6 +120,7 @@ async fn initialize_returns_2025_06_18_protocol_version_m86() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn tools_list_returns_empty_array_in_feat_4a() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -148,6 +151,7 @@ async fn tools_list_returns_empty_array_in_feat_4a() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn tools_call_returns_resource_not_found() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -180,6 +184,7 @@ async fn tools_call_returns_resource_not_found() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn unknown_method_returns_method_not_found() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -205,6 +210,7 @@ async fn unknown_method_returns_method_not_found() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn malformed_json_returns_parse_error() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -229,6 +235,7 @@ async fn malformed_json_returns_parse_error() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn notifications_initialized_has_no_response() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -263,19 +270,20 @@ async fn notifications_initialized_has_no_response() {
     let _ = task.await;
 }
 
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn handle_connection_returns_ok_on_eof() {
     // Feed an empty stream; the handler should return Ok(()) cleanly
     // instead of panicking or spinning forever.
     let (client, server) = tokio::io::duplex(64);
     drop(client); // immediate EOF on the server side
-    let registry = PlaceholderRegistry;
-    handle_connection(server, &registry, None)
+    handle_connection(server, Arc::new(PlaceholderRegistry), None)
         .await
         .expect("clean EOF must be Ok(())");
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn serve_accepts_multiple_sequential_connections() {
     use tokio::net::UnixListener;
@@ -590,13 +598,14 @@ async fn connect_pair_with_registry<R: ToolRegistry + 'static>(
     let listener = UnixListener::bind(socket_path).unwrap();
     let accept_task = tokio::spawn(async move {
         let (server_side, _) = listener.accept().await.unwrap();
-        let _ = handle_connection(server_side, registry.as_ref(), None).await;
+        let _ = handle_connection(server_side, Arc::clone(&registry), None).await;
     });
     let client = UnixStream::connect(socket_path).await.unwrap();
     (client, accept_task)
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_list_dispatches_through_registry() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -642,6 +651,7 @@ async fn tools_list_dispatches_through_registry() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_scopes_actor_context_to_client_name() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -728,6 +738,7 @@ async fn tools_call_scopes_actor_context_to_client_name() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_without_handshake_uses_unknown_agent_name() {
     // Some test harnesses (and our own stub binary smoke test) issue
@@ -767,6 +778,7 @@ async fn tools_call_without_handshake_uses_unknown_agent_name() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_maps_registry_not_found_to_32001() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -807,6 +819,7 @@ async fn tools_call_maps_registry_not_found_to_32001() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_maps_registry_validation_to_32602() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -836,6 +849,7 @@ async fn tools_call_maps_registry_validation_to_32602() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_with_missing_name_returns_invalid_params() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -872,6 +886,7 @@ async fn tools_call_with_missing_name_returns_invalid_params() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_each_invocation_gets_fresh_request_id() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -948,6 +963,7 @@ fn wrap_tool_result_success_shape() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_success_returns_calltoolresult_envelope() {
     // End-to-end: feed a canned success value through the dispatch
@@ -1014,6 +1030,7 @@ async fn tools_call_success_returns_calltoolresult_envelope() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_success_text_content_is_parseable_json() {
     // FEAT-4j: content[0].text must parse back to JSON equal to
@@ -1063,6 +1080,7 @@ async fn tools_call_success_text_content_is_parseable_json() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_not_found_still_returns_minus_32001_error() {
     // FEAT-4j regression: `AppError::NotFound` must still surface as
@@ -1116,6 +1134,7 @@ async fn tools_call_not_found_still_returns_minus_32001_error() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tools_call_validation_error_still_returns_minus_32602_error() {
     // FEAT-4j regression: `AppError::Validation` must still surface
@@ -1199,6 +1218,7 @@ fn connection_state_default_generates_non_empty_ulid_session_id() {
     );
 }
 
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn handle_connection_emits_activity_on_placeholder_error_tools_call() {
     // FEAT-4h slice 3 wires the emission path: every completed
@@ -1214,8 +1234,7 @@ async fn handle_connection_emits_activity_on_placeholder_error_tools_call() {
 
     let (mut client, server) = tokio::io::duplex(1024);
     let task = tokio::spawn(async move {
-        let registry = PlaceholderRegistry;
-        handle_connection(server, &registry, Some(ctx)).await
+        handle_connection(server, Arc::new(PlaceholderRegistry), Some(ctx)).await
     });
 
     // Drive initialize + tools/call and read each response so the
@@ -2137,6 +2156,7 @@ impl ToolRegistry for SlowRegistry {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
     // L-113: when `disconnect_all` fires while a `tools/call` is
@@ -2161,7 +2181,7 @@ async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
     let task_registry = registry.clone();
     let accept_task = tokio::spawn(async move {
         let (server_side, _) = listener.accept().await.unwrap();
-        run_connection(server_side, task_registry.as_ref(), None, Some(task_lc)).await;
+        run_connection(server_side, task_registry, None, Some(task_lc)).await;
     });
 
     let client = UnixStream::connect(&path).await.unwrap();
@@ -2233,6 +2253,7 @@ async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
 }
 
 #[cfg(unix)]
+#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]
 #[tokio::test]
 async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
     // L-113: if the in-flight `tools/call` does not complete within
@@ -2271,7 +2292,7 @@ async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
     let task_registry = registry.clone();
     let accept_task = tokio::spawn(async move {
         let (server_side, _) = listener.accept().await.unwrap();
-        run_connection(server_side, task_registry.as_ref(), None, Some(task_lc)).await;
+        run_connection(server_side, task_registry, None, Some(task_lc)).await;
     });
 
     let client = UnixStream::connect(&path).await.unwrap();

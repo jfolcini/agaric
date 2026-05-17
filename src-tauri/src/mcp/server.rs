@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite};
 use ulid::Ulid;
 
 use super::actor::{Actor, ActorContext, ACTOR};
@@ -76,6 +76,8 @@ pub const JSONRPC_RESOURCE_NOT_FOUND: i64 = -32001;
 /// underlying error message contains multi-byte codepoints.
 pub(crate) const ERROR_CLIP_CAP: usize = 200;
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// L-12 (PEND-25): truncate `s` to the first `max` Unicode scalars and
 /// return a borrowed slice over the input. Always lands on a valid
 /// UTF-8 boundary because `char_indices()` walks scalars, so the
@@ -175,6 +177,8 @@ impl Default for ConnectionState {
 // JSON-RPC framing
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Build a JSON-RPC 2.0 success response body.
 fn make_success(id: &Value, result: &Value) -> Value {
     json!({
@@ -184,6 +188,8 @@ fn make_success(id: &Value, result: &Value) -> Value {
     })
 }
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Build a JSON-RPC 2.0 error response body.
 pub fn make_error(id: &Value, code: i64, message: impl Into<String>) -> Value {
     json!({
@@ -196,6 +202,8 @@ pub fn make_error(id: &Value, code: i64, message: impl Into<String>) -> Value {
     })
 }
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Parse a single line as a JSON-RPC 2.0 request. Returns either the parsed
 /// request or a ready-to-send error envelope (for `-32700 Parse error` etc).
 enum ParsedRequest {
@@ -205,17 +213,20 @@ enum ParsedRequest {
     Notification(IncomingNotification),
 }
 
+#[allow(dead_code)] // MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 struct IncomingRequest {
     id: Value,
     method: String,
     params: Value,
 }
 
+#[allow(dead_code)] // MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 struct IncomingNotification {
     method: String,
     params: Value,
 }
 
+#[allow(dead_code)] // MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 fn parse_request(line: &str) -> ParsedRequest {
     let value: Value = match serde_json::from_str(line) {
         Ok(v) => v,
@@ -264,6 +275,7 @@ fn parse_request(line: &str) -> ParsedRequest {
 // Method dispatch
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)] // MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 fn handle_initialize(state: &mut ConnectionState, params: &Value) -> Result<Value, (i64, String)> {
     // `protocolVersion` is required by the MCP spec. Accept any string —
     // version negotiation is the client's responsibility.
@@ -313,6 +325,7 @@ fn handle_initialize(state: &mut ConnectionState, params: &Value) -> Result<Valu
 // `tools/list` is routed through rmcp in production.
 // `pub(crate)` so the spike's parity test can drive both paths from
 // the same registry handle.
+#[allow(dead_code)] // MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 pub(crate) fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, String)> {
     let tools = registry.list_tools();
     let serialised = serde_json::to_value(&tools).map_err(|e| {
@@ -324,6 +337,8 @@ pub(crate) fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, 
     Ok(json!({ "tools": serialised }))
 }
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Map an [`AppError`] returned by a tool handler onto a JSON-RPC error
 /// envelope pair `(code, message)`. The message is the `AppError`'s
 /// `Display` rendering — good enough for agent-side debugging without
@@ -359,6 +374,8 @@ pub(crate) fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
     (code, err.to_string())
 }
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Wrap a successful tool-call result in the MCP `CallToolResult`
 /// envelope expected by real MCP clients (Claude Desktop, Cursor, the
 /// official Python `mcp` SDK). See FEAT-4j.
@@ -407,6 +424,8 @@ pub(crate) fn wrap_tool_result_success(value: Value) -> Value {
     Value::Object(envelope)
 }
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Dispatch a `tools/call` request through the registry. Constructs a
 /// fresh [`ActorContext`] from the handshake's captured `clientInfo.name`
 /// (defaulting to a synthetic `Agent { name: "unknown" }` if the client
@@ -588,6 +607,7 @@ async fn handle_tools_call<R: ToolRegistry>(
     }
 }
 
+#[allow(dead_code)] // MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 async fn dispatch<R: ToolRegistry>(
     state: &mut ConnectionState,
     method: &str,
@@ -605,12 +625,15 @@ async fn dispatch<R: ToolRegistry>(
     }
 }
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Maximum length (in bytes) of the truncated `params` summary that
 /// `handle_notification` includes in its warn-level log line.
 /// I-MCP-3: keep the diagnostic short so a noisy / verbose client cannot
 /// blow up the log buffer, while still leaving enough context for support.
 const UNKNOWN_NOTIFICATION_PARAMS_PREVIEW_LEN: usize = 200;
 
+#[allow(dead_code)] // MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 fn handle_notification(state: &mut ConnectionState, method: &str, params: &Value) {
     match method {
         "notifications/initialized" => {
@@ -634,6 +657,8 @@ fn handle_notification(state: &mut ConnectionState, method: &str, params: &Value
     }
 }
 
+#[allow(dead_code)]
+// MAINT-111 M3: dead since handle_connection flipped to rmcp; deleted with the ignored server::tests.
 /// Render `params` as a short single-line preview suitable for logs.
 ///
 /// Returns an empty string for `Null`, otherwise serialises to JSON and
@@ -662,66 +687,39 @@ fn truncate_params_preview(params: &Value, max_len: usize) -> String {
 // Per-connection loop
 // ---------------------------------------------------------------------------
 
-/// Drive a single MCP connection to completion. Reads line-delimited JSON
-/// requests from `stream`, dispatches each through `registry`, and writes
-/// line-delimited JSON responses back. Returns `Ok(())` on clean EOF.
+/// Drive a single MCP connection to completion via the `rmcp` adapter.
+/// Production path as of MAINT-111 M3 — hand-rolled JSON-RPC framing
+/// (`parse_request` / `make_*` / `dispatch` / `handle_*`) below is
+/// dead code retained for the wrapper-parity tests in
+/// `mcp::rmcp_spike::tests` until those move to hardcoded reference
+/// fixtures.
 ///
-/// `activity_ctx` is the FEAT-4d activity-emission seam. Pass `None` when
-/// no activity tracking is desired (stub binary, tests); pass
+/// `activity_ctx` is the FEAT-4d activity-emission seam. Pass `None`
+/// when no activity tracking is desired (stub binary, tests); pass
 /// `Some(ActivityContext::from_app_handle(...))` in production. When
-/// `Some`, successful tool dispatches (FEAT-4c) will emit `mcp:activity`
-/// events via the bundled emitter.
+/// `Some`, successful tool dispatches will emit `mcp:activity` events
+/// via the bundled emitter.
 pub async fn handle_connection<S, R>(
     stream: S,
-    registry: &R,
+    registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
 ) -> Result<(), AppError>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     R: ToolRegistry,
 {
-    let (read_half, mut write_half) = tokio::io::split(stream);
-    let mut reader = BufReader::new(read_half);
-    let mut state = ConnectionState {
-        activity_ctx,
-        ..ConnectionState::default()
-    };
-    let mut line = String::new();
+    use rmcp::service::ServiceExt;
 
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
-            // EOF — clean disconnect.
-            return Ok(());
-        }
-
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let response = match parse_request(trimmed) {
-            ParsedRequest::Ok(req) => {
-                match dispatch(&mut state, &req.method, &req.params, registry).await {
-                    Ok(result) => Some(make_success(&req.id, &result)),
-                    Err((code, message)) => Some(make_error(&req.id, code, message)),
-                }
-            }
-            ParsedRequest::Err(envelope) => Some(envelope),
-            ParsedRequest::Notification(note) => {
-                handle_notification(&mut state, &note.method, &note.params);
-                None
-            }
-        };
-
-        if let Some(response) = response {
-            let mut payload = serde_json::to_vec(&response)?;
-            payload.push(b'\n');
-            write_half.write_all(&payload).await?;
-            write_half.flush().await?;
-        }
-    }
+    let adapter = super::rmcp_spike::RmcpReadOnlyAdapter::new(registry, activity_ctx);
+    let server = adapter
+        .serve(stream)
+        .await
+        .map_err(|e| AppError::Validation(format!("rmcp serve handshake: {e}")))?;
+    server
+        .waiting()
+        .await
+        .map_err(|e| AppError::Validation(format!("rmcp serve loop: {e}")))?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -838,7 +836,7 @@ where
         let activity_ctx = activity_ctx.clone();
         let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            run_connection(stream, registry.as_ref(), activity_ctx, lifecycle).await;
+            run_connection(stream, registry, activity_ctx, lifecycle).await;
         });
     }
 }
@@ -923,7 +921,7 @@ where
         let activity_ctx = activity_ctx.clone();
         let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            run_connection(connected, registry.as_ref(), activity_ctx, lifecycle).await;
+            run_connection(connected, registry, activity_ctx, lifecycle).await;
         });
     }
 }
@@ -935,11 +933,11 @@ where
 /// straight passthrough.
 async fn run_connection<S, R>(
     stream: S,
-    registry: &R,
+    registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
     lifecycle: Option<McpLifecycle>,
 ) where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     R: ToolRegistry,
 {
     // Bind the RAII counter guard to the task lifetime so panics (or the
