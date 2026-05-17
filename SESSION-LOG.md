@@ -2,10 +2,46 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 777 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 778 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1202+ REVIEW-LATER items across 777 sessions.
+- **Previously-resolved counter:** 1203+ REVIEW-LATER items across 778 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 778 — MAINT-111 M3 close-out + CI green-up (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-direct |
+| **Items closed** | MAINT-111 (rmcp MCP server testing follow-up: 7-step plan executed end-to-end). |
+| **Items modified** | — |
+| **Tests added** | +4 backend (`mcp::server::tests_rmcp`: 2 FEAT-4e grace-period + 2 protocol-error against a real rmcp client over `tokio::io::duplex`) |
+| **Files touched** | 6 (`src-tauri/src/mcp/{server.rs, server/tests.rs, server/tests_rmcp.rs, rmcp_spike.rs, mod.rs}`, `src/components/__tests__/PageBrowser.test.tsx`) + 4 `.sqlx/` cache entries + `pending/REVIEW-LATER.md` + `SESSION-LOG.md`. |
+
+**Summary:** Closed MAINT-111. Rewrote the 2 FEAT-4e disconnect-grace tests + 2 protocol-error tests against a real rmcp client, deleted the 23 `#[ignore]`-marked wire-level tests + their hand-rolled helpers, deleted ~640 LOC of dead framing in `mcp/server.rs` (`make_*` / `parse_request` / `dispatch` / `handle_*` / `truncate_params_preview` / `ClientInfo` / `ConnectionState` + the JSONRPC_PARSE_ERROR / INVALID_REQUEST / METHOD_NOT_FOUND / INVALID_PARAMS / INTERNAL_ERROR constants). Inlined the M2b parity tests as hardcoded JSON literals so `wrap_tool_result_success` + `app_error_to_jsonrpc` could be deleted too. `cargo clippy --all-targets -- -D warnings` back to its strict default — no `#[allow(dead_code)]` carve-outs in `mcp/server.rs`. Same session also fixed two unrelated CI failures (`.sqlx/` cache regenerated for the MAINT-113 column-cast retypes; PageBrowser cursor-pagination flake reworked to a single `waitFor` with a 5 s budget) and updated the `stub_binary_roundtrips_initialize_over_uds` smoke to include the spec-required `capabilities: {}` bag now that rmcp's framer enforces it.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 22 → 21 (MAINT-111 closed).
+- **Previously resolved:** 1202+ → 1203+ across 777 → 778 sessions.
+
+**Files touched (this session):**
+- `src-tauri/src/mcp/server.rs` (−~640 LOC)
+- `src-tauri/src/mcp/server/tests.rs` (−~2000 LOC; kept H-2 lifecycle tests)
+- `src-tauri/src/mcp/server/tests_rmcp.rs` (+~300 LOC, new file)
+- `src-tauri/src/mcp/rmcp_spike.rs` (M2b parity tests now self-contained against hardcoded JSON literals; tools_list parity now compares against the registry directly)
+- `src-tauri/src/mcp/mod.rs` (stub-binary smoke sends `capabilities: {}`; expected `serverInfo.name` is `agaric-rmcp-spike`)
+- `src/components/__tests__/PageBrowser.test.tsx` (cursor-pagination flake: single `waitFor` with 5 s budget)
+- `src-tauri/.sqlx/` (4 entries regenerated for MAINT-113 column-cast queries)
+
+**Verification:**
+- `cargo nextest run --features ci-smoke --profile ci` — 3673 / 3673 pass, 3 skipped.
+- `cargo clippy --all-targets -- -D warnings` — clean.
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** two commits on `main` — (1) `01ced95f` already pushed (sqlx cache + PageBrowser flake), (2) MAINT-111 close-out this session.
+
+---
+
 ## Session 777 — MAINT-111 M2c: production flip + testing-follow-up plan (2026-05-17)
 
 | Metadata | Value |

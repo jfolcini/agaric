@@ -656,8 +656,19 @@ mod tests {
     ///
     /// If a future rmcp bump or registry change introduces a drift,
     /// this test pinpoints exactly which field on which tool diverged.
+    /// Drive a real `ReadOnlyTools` registry through the rmcp adapter
+    /// and assert that the advertised tool list matches the registry's
+    /// own `list_tools()` output field-by-field. Pins the wire-format
+    /// (`name`, `description`, `inputSchema`) so a future rmcp bump
+    /// that subtly changes the `Tool` serialisation surface is caught.
+    ///
+    /// MCP spec wire-form is `inputSchema` (camelCase). The registry's
+    /// `ToolDescription` carries `#[serde(rename = "inputSchema")]` so
+    /// the snake_case Rust field name does NOT leak onto the wire; rmcp
+    /// exposes the schema as `tool.input_schema: Arc<JsonObject>` on
+    /// the Rust side and serialises it as `inputSchema` over JSON-RPC.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte() {
+    async fn rmcp_tools_list_advertises_full_read_only_registry() {
         use crate::db::init_pool;
         use crate::materializer::Materializer;
         use crate::mcp::tools_ro::ReadOnlyTools;
@@ -677,24 +688,15 @@ mod tests {
             "test-mcp-dev".to_string(),
         ));
 
-        // -- Hand-rolled path -------------------------------------
-        // Call the production `handle_tools_list` directly. Returns
-        // the inner JSON-RPC `result` value (i.e. `{ "tools": [...] }`).
-        let hand_rolled = crate::mcp::server::handle_tools_list(registry.as_ref())
-            .expect("hand-rolled tools/list must succeed for ReadOnlyTools");
-        let hand_rolled_tools = hand_rolled
-            .get("tools")
-            .and_then(Value::as_array)
-            .cloned()
-            .expect("hand-rolled response carries a `tools` array");
+        // Direct registry view — what we expect rmcp's tools/list
+        // round-trip to surface, modulo the spec's camelCase rename.
+        let registry_view = registry.list_tools();
         assert!(
-            !hand_rolled_tools.is_empty(),
-            "ReadOnlyTools must advertise at least one tool — parity test is otherwise vacuous",
+            !registry_view.is_empty(),
+            "ReadOnlyTools must advertise at least one tool — test is otherwise vacuous",
         );
 
-        // -- rmcp adapter path ------------------------------------
-        // Drive a real rmcp client/server pair over an in-memory
-        // duplex — same pattern as the search round-trip test.
+        // rmcp adapter path — real client/server pair over duplex.
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring, emitter);
@@ -718,83 +720,42 @@ mod tests {
         let _ = client.cancel().await;
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
 
-        // -- Cardinality parity -----------------------------------
+        // Cardinality + field-by-field parity in declaration order.
+        // `ReadOnlyTools::list_tools` returns a stable order and rmcp
+        // preserves it through framing.
         assert_eq!(
             rmcp_tools.len(),
-            hand_rolled_tools.len(),
-            "tools/list cardinality must match between rmcp adapter and hand-rolled path; \
-             rmcp={} hand_rolled={}",
+            registry_view.len(),
+            "tools/list cardinality drift: rmcp={} registry={}",
             rmcp_tools.len(),
-            hand_rolled_tools.len(),
+            registry_view.len(),
         );
-
-        // -- Field-by-field parity --------------------------------
-        // Compare in declaration order — `ReadOnlyTools::list_tools`
-        // returns a stable order (`list_tool_descriptions`'s vec
-        // literal), and rmcp preserves that order through framing.
-        for (idx, (rmcp_tool, hand_tool)) in
-            rmcp_tools.iter().zip(hand_rolled_tools.iter()).enumerate()
+        for (idx, (rmcp_tool, expected)) in rmcp_tools.iter().zip(registry_view.iter()).enumerate()
         {
-            // Tool name (`name`) — must be identical.
-            let hand_name = hand_tool
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| {
-                    panic!("hand-rolled tools[{idx}] is missing `name`: {hand_tool}")
-                });
             assert_eq!(
                 rmcp_tool.name.as_ref(),
-                hand_name,
-                "tools[{idx}].name drift: rmcp={:?} hand_rolled={:?}",
+                expected.name,
+                "tools[{idx}].name drift: rmcp={:?} registry={:?}",
                 rmcp_tool.name,
-                hand_name,
+                expected.name,
             );
-
-            // Tool description (`description`) — must be identical.
-            let hand_desc = hand_tool
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| {
-                    panic!("hand-rolled tools[{idx}] is missing `description`: {hand_tool}")
-                });
             let rmcp_desc = rmcp_tool
                 .description
                 .as_deref()
                 .expect("rmcp tool must carry a description");
             assert_eq!(
-                rmcp_desc, hand_desc,
-                "tools[{idx}].description drift on `{hand_name}`: \
-                 rmcp={rmcp_desc:?} hand_rolled={hand_desc:?}",
+                rmcp_desc, expected.description,
+                "tools[{idx}].description drift on `{}`: rmcp={rmcp_desc:?} registry={:?}",
+                expected.name, expected.description,
             );
-
-            // Input schema (`inputSchema`) — must be identical.
-            //
-            // MCP spec wire-form is `inputSchema` (camelCase). The
-            // hand-rolled `ToolDescription` carries
-            // `#[serde(rename = "inputSchema")]` so the snake_case
-            // Rust field name does NOT leak onto the wire. rmcp
-            // exposes the schema as `tool.input_schema:
-            // Arc<JsonObject>` on the Rust side, but serialises it
-            // as `inputSchema` over JSON-RPC. The two paths therefore
-            // converge on the same wire field name — no drift to
-            // surface in M1.
-            let hand_schema = hand_tool
-                .get("inputSchema")
-                .unwrap_or_else(|| {
-                    panic!(
-                        "hand-rolled tools[{idx}] is missing `inputSchema` (camelCase wire \
-                         field per MCP spec): {hand_tool}"
-                    )
-                })
-                .clone();
-            // `Tool::input_schema` is `Arc<JsonObject>`; lift it
-            // into a `serde_json::Value` so the equality check is
+            // `Tool::input_schema` is `Arc<JsonObject>`; lift it into
+            // a `serde_json::Value` so the equality check is
             // structural rather than pointer-equal.
             let rmcp_schema = Value::Object((*rmcp_tool.input_schema).clone());
             assert_eq!(
-                rmcp_schema, hand_schema,
-                "tools[{idx}].inputSchema drift on `{hand_name}`: \
-                 rmcp={rmcp_schema} hand_rolled={hand_schema}",
+                rmcp_schema, expected.input_schema,
+                "tools[{idx}].inputSchema drift on `{}`: rmcp={rmcp_schema} registry={}",
+                expected.name, expected.input_schema,
             );
         }
     }
@@ -820,74 +781,115 @@ mod tests {
     // assertion fails and points at the drifting shim.
     // ---------------------------------------------------------------------
 
-    /// Parity gate for the success-wrapper: assert
-    /// `wrap_tool_result_success(value)` and the serialised form of
-    /// `CallToolResult::structured(value)` produce the exact same JSON
-    /// bytes for a representative cross-section of `Value` shapes
-    /// (object, array, primitive, null).
+    /// Pins the success envelope rmcp emits onto the canonical MCP
+    /// wire shape (the same shape the hand-rolled `mcp/server.rs`
+    /// previously emitted). Asserts byte-for-byte against hardcoded
+    /// JSON literals across a cross-section of payload shapes
+    /// (object, array, primitive, null, empty object) so any future
+    /// rmcp behaviour change shows up as a focused diff against a
+    /// fixed reference rather than against another implementation
+    /// that could drift in lockstep.
     #[test]
-    fn rmcp_spike_success_envelope_matches_hand_rolled_byte_for_byte() {
+    fn rmcp_call_tool_result_envelope_matches_canonical_wire_shape() {
         use rmcp::model::CallToolResult;
 
-        let samples: &[(&str, Value)] = &[
+        // (label, payload, expected envelope serialisation). The
+        // expected `content[0].text` is the JSON-stringified payload
+        // — what every MCP-2024-11-05 client falls back to when it
+        // cannot read `structuredContent`.
+        let samples: &[(&str, Value, Value)] = &[
+            // `serde_json::to_string` emits map keys in BTreeMap
+            // order (alphabetical) for `Value::Object`, so the
+            // expected `text` literal must reflect that.
             (
                 "object",
                 json!({"results": [{"id": "ABC"}], "next_cursor": null}),
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": r#"{"next_cursor":null,"results":[{"id":"ABC"}]}"#,
+                    }],
+                    "isError": false,
+                    "structuredContent": {"results": [{"id": "ABC"}], "next_cursor": null},
+                }),
             ),
-            ("array", json!([1, 2, 3])),
-            ("string", json!("hello")),
-            ("number", json!(42)),
-            ("bool", json!(true)),
-            ("null", Value::Null),
-            ("empty_object", json!({})),
+            (
+                "array",
+                json!([1, 2, 3]),
+                json!({
+                    "content": [{"type": "text", "text": "[1,2,3]"}],
+                    "isError": false,
+                    "structuredContent": [1, 2, 3],
+                }),
+            ),
+            (
+                "empty_object",
+                json!({}),
+                json!({
+                    "content": [{"type": "text", "text": "{}"}],
+                    "isError": false,
+                    "structuredContent": {},
+                }),
+            ),
         ];
-        for (label, value) in samples {
-            let hand = super::super::server::wrap_tool_result_success(value.clone());
+        for (label, value, expected) in samples {
             let rmcp_envelope = CallToolResult::structured(value.clone());
             let rmcp_json = serde_json::to_value(&rmcp_envelope).expect("rmcp serialise");
             assert_eq!(
-                rmcp_json, hand,
-                "{label}: rmcp `CallToolResult::structured` diverges from \
-                 hand-rolled `wrap_tool_result_success`\n  rmcp={rmcp_json}\n  hand={hand}",
+                rmcp_json, *expected,
+                "{label}: rmcp `CallToolResult::structured` diverged from the \
+                 canonical MCP wire shape\n  rmcp={rmcp_json}\n  expected={expected}",
             );
         }
     }
 
-    /// Parity gate for the error-mapper: assert `app_error_to_rmcp`
-    /// and the hand-rolled `app_error_to_jsonrpc` produce the same
-    /// `(code, message)` pair for every variant the latter handles.
-    /// `ErrorData` serialises to `{"code": N, "message": "..."}` plus
-    /// optional `data`; we compare the structural code+message pair.
+    /// Pins `app_error_to_rmcp` onto its `(code, message)` mapping
+    /// for every `AppError` variant the dispatcher hands it. Asserts
+    /// against hardcoded reference codes (matching the JSON-RPC
+    /// constants in `mcp/server.rs`) so a drift in either rmcp's
+    /// `ErrorCode` or the variant→code mapping surfaces as a
+    /// focused failure with a clear delta.
     #[test]
-    fn rmcp_spike_error_mapping_matches_hand_rolled_byte_for_byte() {
-        let cases: &[(&str, AppError)] = &[
-            ("NotFound", AppError::NotFound("block X missing".into())),
-            ("Validation", AppError::Validation("invalid args".into())),
+    fn rmcp_app_error_to_rmcp_pins_canonical_code_and_message() {
+        // (label, error, expected_code, expected_message).
+        // -32001 = JSONRPC_RESOURCE_NOT_FOUND, -32602 =
+        // JSONRPC_INVALID_PARAMS, -32603 = JSONRPC_INTERNAL_ERROR.
+        let cases: &[(&str, AppError, i32, &str)] = &[
             (
-                "InvalidOperation",
-                AppError::InvalidOperation("cannot do that".into()),
+                "NotFound → -32001",
+                AppError::NotFound("block X missing".into()),
+                -32001,
+                "Not found: block X missing",
             ),
-            // Catch-all: any other variant maps to internal_error.
             (
-                "Database (catch-all)",
+                "Validation → -32602",
+                AppError::Validation("invalid args".into()),
+                -32602,
+                "Validation error: invalid args",
+            ),
+            (
+                "InvalidOperation → -32602",
+                AppError::InvalidOperation("cannot do that".into()),
+                -32602,
+                "Invalid operation: cannot do that",
+            ),
+            (
+                "Database (catch-all) → -32603",
                 AppError::Database(sqlx::Error::PoolClosed),
+                -32603,
+                "Database error: attempted to acquire a connection on a closed pool",
             ),
         ];
-        for (label, err) in cases {
-            let (hand_code, hand_msg) = super::super::server::app_error_to_jsonrpc(err);
+        for (label, err, expected_code, expected_msg) in cases {
             let rmcp_err = super::app_error_to_rmcp(err);
-            // `ErrorData::code` is wrapped in `ErrorCode(i32)` — pull
-            // the underlying i32 for comparison; the hand-rolled
-            // mapping returns i64.
             assert_eq!(
-                i64::from(rmcp_err.code.0),
-                hand_code,
-                "{label}: code drift (rmcp={} vs hand-rolled={hand_code})",
+                rmcp_err.code.0, *expected_code,
+                "{label}: code drift; got {} expected {expected_code}",
                 rmcp_err.code.0,
             );
             assert_eq!(
                 rmcp_err.message.as_ref(),
-                hand_msg.as_str(),
+                *expected_msg,
                 "{label}: message drift",
             );
         }

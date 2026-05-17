@@ -880,11 +880,16 @@ mod tests {
         let mut stdin = child.stdin.take().expect("stdin");
         let stdout = child.stdout.take().expect("stdout");
 
+        // MCP spec (and rmcp) require `capabilities` in the initialize
+        // params. The hand-rolled framing used to tolerate the field
+        // being absent; rmcp rejects the handshake and closes the
+        // connection without responding, so include the bag explicitly.
         stdin
             .write_all(
                 b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\
                   \"params\":{\"protocolVersion\":\"2024-11-05\",\
-                  \"clientInfo\":{\"name\":\"integration\",\"version\":\"0\"}}}\n",
+                  \"clientInfo\":{\"name\":\"integration\",\"version\":\"0\"},\
+                  \"capabilities\":{}}}\n",
             )
             .unwrap();
         stdin.flush().unwrap();
@@ -895,7 +900,15 @@ mod tests {
         reader.read_line(&mut line).expect("read response");
         let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
         assert_eq!(response["id"], 1);
-        assert_eq!(response["result"]["serverInfo"]["name"], "agaric");
+        // rmcp's `serverInfo.name` defaults to the implementation name
+        // passed at adapter construction — `agaric-rmcp-spike` for the
+        // production adapter. The hand-rolled path emitted `agaric`;
+        // assert the current production identifier so a future rmcp
+        // bump that changes the field surfaces here as a focused diff.
+        assert_eq!(
+            response["result"]["serverInfo"]["name"],
+            "agaric-rmcp-spike"
+        );
 
         let _ = child.kill();
         let _ = child.wait();
