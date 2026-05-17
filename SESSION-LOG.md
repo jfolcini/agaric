@@ -2,10 +2,43 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 770 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 771 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1198+ REVIEW-LATER items across 770 sessions.
+- **Previously-resolved counter:** 1199+ REVIEW-LATER items across 771 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 771 — MAINT-194 close: stabilise BlockTree keyboard-callback identities (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | MAINT-194 (option (a) from the menu — memoise the 3 inline arrow callbacks at the `useBlockKeyboard` call site so unrelated BlockTree re-renders no longer churn the document keydown listener). |
+| **Items modified** | — |
+| **Tests added** | — (perf-tuning refactor; existing 258-test `use-block-keyboard` + `BlockTree` suites cover behaviour). |
+| **Files touched** | 3 |
+
+**Summary:** Closed MAINT-194 the safe way — option (a) per the REVIEW-LATER recommendation. The 3 inline arrows at `BlockTree.tsx:480-482` (`onToggleTodo`, `onToggleCollapse`, `onShowProperties`) flowed into `useBlockKeyboard`'s `useCallback` dep array and got fresh identities on every BlockTree render, forcing the document keydown listener to detach/re-attach. Wrapped each in `useCallback` keyed on `[focusedBlockId, <action>]`. The 11 hook-returned callbacks already use `useCallback` (with legitimate `focusedBlockId` / `collapsedVisible` deps — re-attach on focus change is intrinsic and was never the concern). Option (b)/(c) — the ref-bag redo that MAINT-185 botched (broke 57 e2e) — was deliberately not attempted: low impact (O(μs) per render) doesn't justify the regression risk.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 24 → 23 (−MAINT-194)
+- **Previously resolved:** 1198+ → 1199+ across 770 → 771 sessions
+
+**Files touched (this session):**
+- `src/components/BlockTree.tsx` (+13 / −3): three `useCallback` wrappers replace the inline arrows; short comment explaining the listener-stability invariant.
+- `pending/REVIEW-LATER.md` (−18): summary-table row + detail entry removed; count 24 → 23.
+- `SESSION-LOG.md` (+entry).
+
+**Verification:**
+- `npx vitest run src/editor/__tests__/use-block-keyboard.test.ts src/components/__tests__/BlockTree.test.tsx` — 258 / 258 pass.
+- `npx tsc --noEmit` — clean.
+- `prek run --all-files` — see commit (run pre-commit).
+
+**Process notes:** Followed PROMPT.md asked-for batch mode but the actual landscape forced a single-item session — most remaining REVIEW-LATER items are intentionally deferred or blocked on external triggers (see Session 770 cleanup). The user picked MAINT-194 from a 4-way menu after I surfaced the no-good-batch reality.
+
+**Commit plan:** single commit.
+
+---
+
 ## Session 770 — Pending cleanup + CodeQL fix + PropertiesView orphan + 0.1.31 release recovery (2026-05-17)
 
 | Metadata | Value |

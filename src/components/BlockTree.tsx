@@ -465,6 +465,19 @@ export function BlockTree({
     [toggleSelected, rawRangeSelect, blocks],
   )
 
+  // Stable identities so `useBlockKeyboard` doesn't detach/re-attach the
+  // document keydown listener on every BlockTree render (block edits,
+  // selection changes, text input). Inline arrows here would defeat that.
+  const handleToggleFocusedTodo = useCallback(() => {
+    if (focusedBlockId) handleToggleTodo(focusedBlockId)
+  }, [focusedBlockId, handleToggleTodo])
+  const handleToggleFocusedCollapse = useCallback(() => {
+    if (focusedBlockId) toggleCollapse(focusedBlockId)
+  }, [focusedBlockId, toggleCollapse])
+  const handleShowFocusedProperties = useCallback(() => {
+    if (focusedBlockId) handleShowProperties(focusedBlockId)
+  }, [focusedBlockId, handleShowProperties])
+
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
     onFocusNext: handleFocusNext,
@@ -477,9 +490,9 @@ export function BlockTree({
     onMergeWithPrev: handleMergeWithPrev,
     onEnterSave: handleEnterSave,
     onEscapeCancel: handleEscapeCancel,
-    onToggleTodo: () => focusedBlockId && handleToggleTodo(focusedBlockId),
-    onToggleCollapse: () => focusedBlockId && toggleCollapse(focusedBlockId),
-    onShowProperties: () => focusedBlockId && handleShowProperties(focusedBlockId),
+    onToggleTodo: handleToggleFocusedTodo,
+    onToggleCollapse: handleToggleFocusedCollapse,
+    onShowProperties: handleShowFocusedProperties,
   })
 
   // ── Extracted event listeners (custom DOM events from toolbar) ───────
