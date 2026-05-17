@@ -19,6 +19,7 @@ import {
   usePageBlockStoreApi,
 } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
+import { useInPageFindStore } from '../stores/useInPageFindStore'
 import { AddBlockButton } from './AddBlockButton'
 import { BlockTree } from './BlockTree'
 import { DonePanel } from './DonePanel'
@@ -145,10 +146,26 @@ function PageEditorInner({
   }, [])
 
   // ── Link preview tooltip — covers all blocks (static + editor) ──
+  // PEND-52 — the same container element doubles as the host for the
+  // in-page-find matcher. Registered via the find store so the toolbar
+  // (mounted at App level) knows which subtree to walk; unregistering
+  // on unmount auto-closes the toolbar when the user navigates away.
+  const setFindContainer = useInPageFindStore((s) => s.setContainer)
   const [pageContainerEl, setPageContainerEl] = useState<HTMLDivElement | null>(null)
-  const pageRef = useCallback((node: HTMLDivElement | null) => {
-    setPageContainerEl(node)
-  }, [])
+  const pageRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setPageContainerEl(node)
+      setFindContainer(node)
+    },
+    [setFindContainer],
+  )
+  useEffect(() => {
+    return () => {
+      // Unmount path — when this page is replaced, drop the container
+      // registration so a leftover toolbar can't paint stale highlights.
+      setFindContainer(null)
+    }
+  }, [setFindContainer])
 
   return (
     <div

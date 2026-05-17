@@ -922,10 +922,11 @@ describe('keyboard-config', () => {
 
   describe('Global shortcut rebinding (BUG-18)', () => {
     it('rebinding focusSearch to Ctrl+Shift+Q fires on new binding and not on old', () => {
-      // Default Ctrl+F fires
+      // PEND-52 — the default focusSearch binding is now Ctrl+Shift+F.
+      // (Ctrl+F was reclaimed for the in-page find toolbar.)
       expect(
         matchesShortcutBinding(
-          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'f' },
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'f' },
           'focusSearch',
         ),
       ).toBe(true)
@@ -939,10 +940,10 @@ describe('keyboard-config', () => {
           'focusSearch',
         ),
       ).toBe(true)
-      // Old Ctrl+F does NOT fire after rebind
+      // Old Ctrl+Shift+F does NOT fire after rebind
       expect(
         matchesShortcutBinding(
-          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'f' },
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'f' },
           'focusSearch',
         ),
       ).toBe(false)

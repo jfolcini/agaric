@@ -435,7 +435,7 @@ describe('App', () => {
     expect(headerLabel.textContent).toBe('')
   })
 
-  it('Ctrl+F switches to search view', async () => {
+  it('Ctrl+Shift+F switches to search view (PEND-52 rebind)', async () => {
     render(<App />)
 
     // Wait for boot
@@ -443,8 +443,9 @@ describe('App', () => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    // Fire Ctrl+F on window
-    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    // PEND-52 — the global search view is now Ctrl+Shift+F; Ctrl+F
+    // reclaimed for the in-page-find toolbar (browser convention).
+    fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
 
     // Should switch to search view
     await waitFor(() => {
@@ -491,14 +492,14 @@ describe('App', () => {
     })
   })
 
-  it('Ctrl+F announces "Search opened"', async () => {
+  it('Ctrl+Shift+F announces "Search opened" (PEND-52 rebind)', async () => {
     render(<App />)
 
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
 
     await waitFor(() => {
       expect(announce).toHaveBeenCalledWith(t('announce.searchOpened'))
@@ -736,7 +737,7 @@ describe('App', () => {
       localStorage.removeItem('agaric-keyboard-shortcuts')
     })
 
-    it('rebinding focusSearch: new keys fire, old Ctrl+F does not', async () => {
+    it('rebinding focusSearch: new keys fire, old default does not (PEND-52)', async () => {
       localStorage.setItem(
         'agaric-keyboard-shortcuts',
         JSON.stringify({ focusSearch: 'Ctrl + Shift + Q' }),
@@ -746,8 +747,8 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // Old Ctrl+F does NOT fire
-      fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+      // The old default (Ctrl+Shift+F after PEND-52) does NOT fire after rebind.
+      fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
       await Promise.resolve()
       expect(useNavigationStore.getState().currentView).toBe('journal')
 
@@ -859,8 +860,9 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // Ctrl+F switches to search
-      fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+      // PEND-52 — Ctrl+Shift+F switches to search (Ctrl+F was reclaimed
+      // for the in-page find toolbar).
+      fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
       await waitFor(() => {
         expect(useNavigationStore.getState().currentView).toBe('search')
       })

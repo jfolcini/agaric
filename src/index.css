@@ -1545,3 +1545,39 @@
 .search-result-group + .search-result-group {
   margin-top: 0.5rem;
 }
+
+/* ── PEND-52: in-page find — CSS Custom Highlight Registry pseudos ───────────
+ *
+ * The find toolbar (`src/components/InPageFind.tsx`) paints matches via
+ * the CSS Custom Highlight API (`CSS.highlights.set('find-match', …)`).
+ * Each match is a `Range` registered under one of two named highlights:
+ *
+ *   - `find-match`         — every match.
+ *   - `find-match-current` — the single current match (cursor target).
+ *
+ * Styling uses the same accent contrast pair documented on
+ * `.search-result-mark` (above) so the two surfaces — search results
+ * snippet highlighting and in-page find — share a visual language.
+ *
+ * The current-match pseudo wins on overlap because we register it AFTER
+ * the all-matches highlight; in cases where browsers respect priority,
+ * the higher `priority` value (set to 1 by default by the Highlight ctor
+ * when called via `new Highlight(...)` with explicit priority) wins. We
+ * don't set priority explicitly — both highlights stack and the current-
+ * match style is heavier, so the visual is unambiguous either way.
+ *
+ * No layout impact: ::highlight() pseudos paint over text without
+ * inserting boxes; they don't trigger reflow when the highlight set
+ * changes during typing.
+ */
+::highlight(find-match) {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+::highlight(find-match-current) {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}

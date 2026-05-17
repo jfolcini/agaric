@@ -14,7 +14,7 @@
 
 import { Settings2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,7 @@ import type { DayEntry } from '../lib/date-utils'
 import { formatDate, formatDateDisplay, getCalendarMonthRange } from '../lib/date-utils'
 import { useJournalStore } from '../stores/journal'
 import { useSpaceStore } from '../stores/space'
+import { useInPageFindStore } from '../stores/useInPageFindStore'
 import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
 import { MonthlyView } from './journal/MonthlyView'
@@ -123,16 +124,29 @@ export function JournalPage({
   })
 
   // ── Link preview tooltip — covers all blocks in the journal view ────
+  // PEND-52 — same container element also doubles as the in-page-find
+  // host so the Ctrl+F toolbar can walk every block in the active mode
+  // (daily section, weekly grid, monthly cells, agenda panels).
+  const setFindContainer = useInPageFindStore((s) => s.setContainer)
   const [journalContainerEl, setJournalContainerEl] = useState<HTMLDivElement | null>(null)
   // Stable DOM ref for usePrimaryFocus. Keeping this separate from the
   // callback-ref above (which powers LinkPreviewTooltip) avoids a rerender
   // loop from the registry re-running register() on every parent render.
   const journalDomRef = useRef<HTMLDivElement | null>(null)
   useRegisterPrimaryFocus(journalDomRef)
-  const journalRef = useCallback((node: HTMLDivElement | null) => {
-    setJournalContainerEl(node)
-    journalDomRef.current = node
-  }, [])
+  const journalRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setJournalContainerEl(node)
+      journalDomRef.current = node
+      setFindContainer(node)
+    },
+    [setFindContainer],
+  )
+  useEffect(() => {
+    return () => {
+      setFindContainer(null)
+    }
+  }, [setFindContainer])
 
   // ── Main render ─────────────────────────────────────────────────────
 

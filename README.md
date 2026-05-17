@@ -92,7 +92,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 
 ### More Features
 
-- **Search** — full-text search across blocks and pages (FTS5 trigram index). In-app help via the `?` button in the search toolbar; user guide at [docs/SEARCH.md](docs/SEARCH.md).
+- **Search** — three surfaces: in-page find (`Ctrl+F`), find across pages (`Ctrl+Shift+F`), and the upcoming `Cmd+K` palette. Full-text engine is FTS5 (trigram index). In-app help via the `?` button in the search toolbar; user guide at [docs/SEARCH.md](docs/SEARCH.md).
 - **Graph view** — force-directed page relationship visualization (d3-force), click-to-navigate, zoom/pan, keyboard-accessible
 - **History view** — browse the operation log for any block, point-in-time page restore
 - **Visual query builder** — modal for constructing inline queries by tag, property, or backlinks

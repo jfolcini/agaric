@@ -17,6 +17,7 @@ import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
+import { useInPageFindStore } from '../../stores/useInPageFindStore'
 import { useAppKeyboardShortcuts } from '../useAppKeyboardShortcuts'
 
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
@@ -73,10 +74,23 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () => {
-  it('Ctrl+F (focusSearch) sets navigation view to "search"', () => {
+  it('Ctrl+F (findInPage, PEND-52) opens the in-page find toolbar', () => {
+    // Reset the find store explicitly so prior test runs don't leak state.
+    useInPageFindStore.setState({ open: false, query: '', lastQuery: '' })
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+
+    // The PEND-52 rebind reclaims Ctrl+F for the in-page find toolbar;
+    // the global search view now lives under Ctrl+Shift+F.
+    expect(useInPageFindStore.getState().open).toBe(true)
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+  })
+
+  it('Ctrl+Shift+F (focusSearch) sets navigation view to "search"', () => {
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
 
     expect(useNavigationStore.getState().currentView).toBe('search')
   })

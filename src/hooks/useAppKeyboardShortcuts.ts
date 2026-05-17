@@ -46,6 +46,7 @@ import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '../stores/tabs'
+import { useInPageFindStore } from '../stores/useInPageFindStore'
 
 // ---------------------------------------------------------------------------
 // Helpers and dispatch tables (moved verbatim from App.tsx so the hook owns
@@ -173,6 +174,22 @@ const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
   },
 ]
 
+/**
+ * PEND-52 — open the in-page find toolbar from a global keyboard
+ * shortcut. Captures the user's current text selection (if any) so it
+ * seeds the toolbar query (browser/VSCode convention). When there's no
+ * selection the store restores the previous query (locked-in Q3).
+ *
+ * Extracted from the global-shortcuts handler so the main `useEffect`
+ * dispatcher stays within Biome's cognitive-complexity budget.
+ */
+function openInPageFindFromShortcut(t: (key: string) => string): void {
+  const sel = typeof window !== 'undefined' ? window.getSelection?.() : null
+  const selectedText = sel && !sel.isCollapsed ? sel.toString().trim() : ''
+  useInPageFindStore.getState().open$(selectedText.length > 0 ? selectedText : undefined)
+  announce(t('announce.findInPageOpened'))
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -218,6 +235,15 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       // re-fire view changes / new-page creation on every keypress.
       if (e.repeat) return
 
+      // PEND-52 — `findInPage` (Ctrl+F by default) opens the in-page
+      // find toolbar; `focusSearch` (now Ctrl+Shift+F) opens the
+      // global find-in-files view. Both bindings are landed together
+      // so the help dialog and live behaviour stay consistent.
+      if (matchesShortcutBinding(e, 'findInPage')) {
+        e.preventDefault()
+        openInPageFindFromShortcut(t)
+        return
+      }
       if (matchesShortcutBinding(e, 'focusSearch')) {
         e.preventDefault()
         useNavigationStore.getState().setView('search')

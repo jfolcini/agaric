@@ -73,6 +73,13 @@ const QuickCaptureDialog = lazy(() =>
 const NoPeersDialog = lazy(() =>
   import('./components/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
 )
+// PEND-52 — in-page find toolbar; lazy so the matcher + highlight code
+// only ships when the user actually opens it (Ctrl+F). It self-renders
+// nothing when the store flag is closed, so the lazy boundary is also
+// the rendering gate.
+const InPageFind = lazy(() =>
+  import('./components/InPageFind').then((m) => ({ default: m.InPageFind })),
+)
 
 function App() {
   const { t } = useTranslation()
@@ -500,6 +507,14 @@ function App() {
           </ViewHeaderOutletProvider>
         </SidebarInset>
       </SidebarProvider>
+      {/* PEND-52 — in-page find toolbar. Mounted at App level so the
+          overlay floats above every view (journal, page-editor, …)
+          without each view having to participate. The component
+          self-renders nothing when its store flag is closed; the
+          keyboard handler in `useAppKeyboardShortcuts` flips it. */}
+      <Suspense fallback={null}>
+        <InPageFind />
+      </Suspense>
       <Suspense fallback={null}>
         <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
         <WelcomeModal />

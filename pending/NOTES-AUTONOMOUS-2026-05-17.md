@@ -50,9 +50,17 @@ I took the **Recommendation** verbatim unless noted otherwise.
 
 ## Per-plan decisions (filled in as each cycle lands)
 
-### PEND-50 — search foundation
+### PEND-50 — search foundation — LANDED (`95a55773`)
 
-(populated when cycle completes)
+- **Page-name-only counts:** "1 match (in name)" via new `search.matchCountInGroupNameOnly` i18n key (plan's recommendation).
+- **`<mark>` highlight contrast:** reused `--accent` / `--accent-foreground` theme tokens (light ≈ 7.1:1, dark ≈ 8.0:1; both clear WCAG AA). No new tokens.
+- **Snippet window constant:** left at backend default 32. Bumping deferred to a later perf pass.
+- **`useListKeyboardNavigation` not extended:** kept the hook unchanged; routed `onKeyDown` through a new `listOnKeyDown` prop on `CollapsibleGroupList`. Workaround is short + idiomatic; no TODO needed.
+- **i18n delivery shape:** the codebase uses TS-namespace files (`src/lib/i18n/references.ts`), not JSON locale files. The plan's step referring to `src/i18n/locales/en.json` collapses into the references.ts additions.
+- **SearchHelpDialog export shape:** named export (Biome `lint/style/noDefaultExport` is enforced project-wide).
+- **Existing tests migrated:** `src/lib/__tests__/tauri.test.ts` and `src/components/__tests__/SearchPanel.test.tsx` updated to the new struct shape; behaviour assertions unchanged.
+- **Test delta:** +43 (10 backend, 33 frontend). 9925 / 9925 vitest, 3682 / 3682 nextest, clippy clean.
+- **Biome rule ignores added (2, both with rationale comments):** `aria-activedescendant` on conditional-role `<ul>` in `CollapsibleGroupList`; `role="option"` on `<li>` in `SearchResultBlockRow`. Both are canonical WAI-ARIA listbox patterns the linter misclassifies.
 
 ### PEND-54 — inline filter syntax
 

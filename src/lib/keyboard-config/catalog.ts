@@ -294,11 +294,37 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   },
 
   // Global
+  // PEND-52 — Ctrl+F reclaims the universal in-page-find binding;
+  // the global find-in-files view moves to Ctrl+Shift+F (matching VSCode).
   {
-    id: 'focusSearch',
+    id: 'findInPage',
     keys: 'Ctrl + F',
     category: 'keyboard.category.global',
+    description: 'keyboard.findInPage',
+  },
+  {
+    id: 'focusSearch',
+    keys: 'Ctrl + Shift + F',
+    category: 'keyboard.category.global',
     description: 'keyboard.focusSearch',
+  },
+  // PEND-52 — F3 / Shift+F3 cycle matches in the in-page-find toolbar.
+  // The matcher is responsible for actually wiring these (it listens
+  // while the toolbar is open); listing them here makes them discoverable
+  // in the KeyboardShortcuts help dialog and rebindable in Settings.
+  {
+    id: 'findInPageNext',
+    keys: 'F3',
+    category: 'keyboard.category.global',
+    description: 'keyboard.findInPageNext',
+    condition: 'keyboard.condition.findInPageOpen',
+  },
+  {
+    id: 'findInPagePrev',
+    keys: 'Shift + F3',
+    category: 'keyboard.category.global',
+    description: 'keyboard.findInPagePrev',
+    condition: 'keyboard.condition.findInPageOpen',
   },
   {
     id: 'toggleSidebar',

@@ -296,4 +296,22 @@ export const common: Record<string, string> = {
   'help.updateMobileHint': 'Updates are managed by the Play Store on Android.',
   'spaceSwitcher.shortcutHint': 'Tip: Ctrl+1–9 to switch spaces',
   'spaceSwitcher.createAnotherHint': 'Create another space\u2026',
+
+  // PEND-52 \u2014 in-page find toolbar.
+  'findInPage.toolbarLabel': 'Find in page',
+  'findInPage.inputPlaceholder': 'Find in page\u2026',
+  'findInPage.inputLabel': 'Find in page',
+  'findInPage.toggleCaseSensitive': 'Match case (Aa)',
+  'findInPage.toggleWholeWord': 'Match whole word (Ab|)',
+  'findInPage.toggleRegex': 'Regular expression (.*)',
+  'findInPage.previousMatch': 'Previous match (Shift+F3)',
+  'findInPage.nextMatch': 'Next match (F3)',
+  'findInPage.close': 'Close (Esc)',
+  'findInPage.counter': '{{current}} of {{total}}',
+  'findInPage.counterEmpty': '0 of 0',
+  'findInPage.regexTooLong': 'Pattern is too long (max 1 KB).',
+  'findInPage.regexInvalid': 'Invalid regex: {{message}}',
+  'findInPage.skippedLongPassages_one': '{{count}} long passage skipped',
+  'findInPage.skippedLongPassages_other': '{{count}} long passages skipped',
+  'announce.findInPageOpened': 'Find in page opened',
 }
