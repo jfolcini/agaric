@@ -2,10 +2,57 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 775 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 776 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1202+ REVIEW-LATER items across 775 sessions.
+- **Previously-resolved counter:** 1202+ REVIEW-LATER items across 776 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 776 — MAINT-111 M2b + M3 partial: wrapper-parity tests + un-gate the rmcp adapter (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-direct |
+| **Items closed** | — (MAINT-111 still open; M2c + the rest of M3 remain). |
+| **Items modified** | MAINT-111 — M2b + partial M3 landed. |
+| **Tests added** | 2 wrapper-parity tests (`rmcp_spike_success_envelope_matches_hand_rolled_byte_for_byte`, `rmcp_spike_error_mapping_matches_hand_rolled_byte_for_byte`). |
+| **Files touched** | 4 (`src-tauri/Cargo.toml`, `src-tauri/src/mcp/mod.rs`, `src-tauri/src/mcp/server.rs`, `src-tauri/src/mcp/rmcp_spike.rs`). |
+
+**Summary:** Two clean MAINT-111 sub-milestones in one session run.
+
+**M2b — byte-equivalent wrapper parity:** Pinned the two shims where the hand-rolled and rmcp paths could diverge. The success-wrapper test asserts `wrap_tool_result_success(value)` and `serde_json::to_value(CallToolResult::structured(value))` produce identical JSON across object / array / primitive / null / empty samples. The error-mapper test asserts `app_error_to_rmcp(err)` and `app_error_to_jsonrpc(err)` produce the same `(code, message)` pair for every variant the hand-rolled path discriminates (NotFound, Validation, InvalidOperation, plus a Database catch-all → internal_error). The registry's `call_tool` is shared between both paths, so wrapper-level tests provably cover every tool — a stronger guarantee than the entry's "per-tool parity" framing.
+
+Caught one parity divergence in the process: `app_error_to_rmcp` had been using rmcp's `ErrorData::resource_not_found(...)` which emits MCP-spec-default code -32002. The agaric hand-rolled path deliberately uses -32001 (the `JSONRPC_RESOURCE_NOT_FOUND` constant's docstring documents the rationale: -32002 left free for a future second resource class). Fix: route through the explicit `ErrorData::new(ErrorCode(JSONRPC_RESOURCE_NOT_FOUND), ...)` path so the constant is the single source of truth on both dispatchers.
+
+**M3 partial — un-gate the rmcp adapter:** Dropped the `mcp_rmcp_spike` Cargo feature; `rmcp` is now a hard dep. The adapter module is no longer `#[cfg(feature = "...")]`-gated. Production tools/call still routes through the hand-rolled `handle_tools_call` body (the actual production flip — M2c — comes next). The byte-equivalence tests committed in M2b mean that flip is provably a no-op on the wire.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 22 → 22 (MAINT-111 tracks remaining work).
+- **Previously resolved:** 1202+ → 1202+ (no top-level close).
+
+**Files touched (this session):**
+- `src-tauri/Cargo.toml` (−14 / +3: feature flag deleted; rmcp dep `optional = true` removed).
+- `src-tauri/src/mcp/mod.rs` (−6 / +5: `#[cfg(feature = "mcp_rmcp_spike")]` gate dropped).
+- `src-tauri/src/mcp/server.rs` (visibility bump for `wrap_tool_result_success` + `app_error_to_jsonrpc` so the parity tests can call them).
+- `src-tauri/src/mcp/rmcp_spike.rs` (+115: the M2b parity tests + the explicit-code-construction tweak to `app_error_to_rmcp`).
+
+**Verification:**
+- `cargo check --tests --benches` (default features) — clean.
+- `cargo clippy --all-targets -- -D warnings` — clean (the spike's narrowing cast surfaced once and got switched to `i32::try_from(...).expect(...)`).
+- `cargo nextest run rmcp_spike` — 6/6 pass without `--features mcp_rmcp_spike`.
+- `cargo nextest run --profile ci` — 3710/3710 pass (no production regression from the `pub(crate)` visibility change).
+
+**Remaining MAINT-111 work:**
+- M2c: route `handle_connection` through `RmcpReadOnlyAdapter::serve(stream)` instead of the hand-rolled `parse_request` / `dispatch` / `make_*` loop. The wrapper-parity tests in M2b prove this is a no-op on the wire, but ~1000 lines of `mcp/server/tests.rs` that exercise the hand-rolled helpers directly need to be either deleted (tests for now-deleted functions) or rewritten as wire-level integration tests through the adapter.
+- M3 rest: delete the hand-rolled framing (`parse_request`, `make_success`, `make_error`, `handle_initialize`, `handle_notification`, `dispatch`, `handle_tools_list`, `handle_tools_call`, `truncate_params_preview`, the JSON-RPC error-code constants that nothing else references).
+
+**Process notes:**
+- The `ErrorCode(JSONRPC_RESOURCE_NOT_FOUND as i32)` cast tripped `clippy::cast_possible_truncation` even though the value is statically -32001. The explicit `i32::try_from(...).expect("fits in i32")` makes the round-trip visible and is the idiom clippy expects.
+- M2b's "wrapper-level parity" approach is stronger than per-tool tests because the registry's `call_tool` is the shared spine — if it works for one tool, it works for all of them. Per-tool tests would duplicate effort to exercise the same shims with different payloads.
+
+**Commit plan:** two commits already pushed (`a4637abe` M2b, `27d74238` M3 partial).
+
+---
+
 ## Session 775 — MAINT-111 M2a: rmcp spike call_tool dispatches every tool (2026-05-17)
 
 | Metadata | Value |
