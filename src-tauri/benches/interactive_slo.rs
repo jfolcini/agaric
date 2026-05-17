@@ -962,7 +962,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 /// (2K)" row, the scale parameter is *children of the exported page*).
 fn bench_export_page_markdown(c: &mut Criterion) {
     const BUDGET_MS: f64 = 10.0;
-    const EXPORT_PAGE_ID: &str = "SLOEXPORTPAGE000000000001";
+    const EXPORT_PAGE_ID: &str = "SLOEXPORTPAGE0000000000001";
     const CHILD_COUNT: usize = 2_000;
 
     let rt = Runtime::new().unwrap();

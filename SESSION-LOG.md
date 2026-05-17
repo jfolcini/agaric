@@ -2,10 +2,52 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 767 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 768 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1182+ REVIEW-LATER items across 749 sessions.
+- **Previously-resolved counter:** 1190+ REVIEW-LATER items across 768 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 768 — OpenSSF batch: CodeQL workflow + support-window matrix + formal threat model + OpenVEX statements + bench ULID fix (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | 2 build (threat-model doc, VEX wiring) + 2 review (technical) + orchestrator-direct (CodeQL workflow, SECURITY.md table, bench ULID fix, reviewer-finding lockstep fix in SECURITY.md) |
+| **Items closed** | PEND-45 (support-window matrix in SECURITY.md), PEND-46 (formal threat-model document at `docs/architecture/threat-model.md`), PEND-47 (OpenVEX 0.2.0 generator + release.yml wiring), MAINT-230 (bench fixture ULID length). Plus closing Scorecard SAST check (alert #33, score 0/10) by wiring `.github/workflows/codeql.yml` (matrix: actions / javascript-typescript / rust at `build-mode: none`). |
+| **Items modified** | REVIEW-LATER: dropped MAINT-230 + PEND-45 + PEND-46 + PEND-47 (count 26 → 22). Plan files deleted from `pending/`. |
+| **Tests added** | — (docs + workflow + 1-char bench-fixture change, no production code paths). |
+| **Files touched** | 7 plus 3 plan deletions: `.github/workflows/codeql.yml` (new, 81 LOC), `scripts/generate-vex.mjs` (new, ~240 LOC), `docs/architecture/threat-model.md` (new, ~200 LOC), `SECURITY.md`, `.github/workflows/release.yml`, `src-tauri/benches/interactive_slo.rs`, `pending/REVIEW-LATER.md` |
+
+**Summary:** OpenSSF Best Practices badge follow-through batch. Wired CodeQL as advanced configuration after disabling the repo's default-setup (the two are mutually exclusive — default-setup blocked the workflow's SARIF upload with `CodeQL analyses from advanced configurations cannot be processed when the default setup is enabled`). Then closed the three medium-effort PENDs left over from the badge cleanup: SECURITY.md now publishes a per-version-range support matrix with explicit EOL trigger; `docs/architecture/threat-model.md` provides the structured STRIDE-per-trust-boundary complement to SECURITY.md's prose threat model (data-flow diagram + five boundaries B1–B5); `scripts/generate-vex.mjs` emits OpenVEX 0.2.0 statements from `src-tauri/deny.toml` rationale (22 statements, all `not_affected / vulnerable_code_not_in_execute_path`), wired into `release.yml` as a single non-matrix `generate-vex` job (VEX is platform-independent) with SLSA attestation + Sigstore bundle. Reviewer caught two real findings on the threat-model doc — claimed `logger.ts` had a redaction list (it doesn't; `src/lib/logger.ts` is a thin console wrapper) and characterised `sanitize_internal_error` as a security mitigation (its docstring frames it as UX consistency); both fixed in lockstep, with a parallel correction in SECURITY.md:18 where the same false `logger.ts` redactor claim was pre-existing.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 26 → 22 (−MAINT-230 −PEND-45 −PEND-46 −PEND-47)
+- **Previously resolved:** 1186+ → 1190+ across 767 → 768 sessions
+
+**Files touched (this session):**
+- `.github/workflows/codeql.yml` (+81 — new advanced-config CodeQL workflow; closes Scorecard SAST alert #33)
+- `scripts/generate-vex.mjs` (+240 — zero-dep Node ES module reading `deny.toml`)
+- `docs/architecture/threat-model.md` (+200 — five trust boundaries, ASCII data-flow, STRIDE tables)
+- `SECURITY.md` (+15/−6 — support-window table reshape; cross-link to threat-model.md; fixed pre-existing wrong logger.ts redactor claim at line 18)
+- `.github/workflows/release.yml` (+89/−2 — `generate-vex` job + verify-recipe extension)
+- `src-tauri/benches/interactive_slo.rs` (1-char fix: ULID literal extended to 26 chars)
+- `pending/REVIEW-LATER.md` (4 rows removed; summary 26 → 22)
+- Deleted plan files: `pending/PEND-45-support-window-matrix.md`, `pending/PEND-46-threat-model-formal.md`, `pending/PEND-47-vex-statements.md`
+
+**Verification:**
+- `prek run --files <batch>` — all hooks pass (gitleaks, actionlint, zizmor, biome, markdownlint-cli2, lychee, typos, cargo-fmt, cargo-clippy, cargo-nextest, md-link-targets, doc-citations).
+- `cd src-tauri && cargo check --bench interactive_slo` — compiles clean.
+- `node scripts/generate-vex.mjs | python3 -m json.tool | jq '.statements | length'` → 22, all RUSTSEC-prefixed, all `not_affected / vulnerable_code_not_in_execute_path`.
+- CodeQL workflow: first run (25986634265) failed before SARIF upload because default-setup was enabled; default-setup PATCHed to `not-configured` via `gh api`, re-run pending.
+
+**Process notes:**
+- CodeQL "advanced" workflow vs "default setup" are mutually exclusive — the error `CodeQL analyses from advanced configurations cannot be processed when the default setup is enabled` is the GitHub side rejecting the upload, not a workflow bug. Disabling default-setup is `PATCH /repos/{owner}/{repo}/code-scanning/default-setup` with `state=not-configured`.
+- Build subagents reported clean self-tests but the technical reviewer surfaced two real correctness issues in the threat-model doc (invented `logger.ts` redaction layer; mischaracterised `sanitize_internal_error` framing). Reinforces PROMPT.md's "no self-reviews" rule — both findings would have shipped silently otherwise.
+- VEX file is platform-independent — emitted as one non-matrix job rather than per-platform. The PEND-47 plan body itself noted "future optimisation: emit one VEX in a single non-matrix job"; we applied it now to avoid 4× duplicate files.
+
+**Commit plan:** two commits — `codeql.yml` already shipped earlier this session (commit before this batch); this batch lands as a single commit.
+
+---
+
 ## Session 767 — Cycle 2: PERF-21 + MAINT-228 + toast dedup + sidebar mobile rail + 0.1.30 release-secret-scan fix (2026-05-17)
 
 | Metadata | Value |

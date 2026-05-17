@@ -15,7 +15,7 @@ That makes the in-scope / out-of-scope list shorter than for a typical web app, 
 A vulnerability report is welcome if you can demonstrate any of the following:
 
 - **Memory safety / undefined behaviour** in the Rust backend, despite the crate-wide `unsafe_code = "deny"` lint. New `unsafe { … }` blocks slipping past review, FFI mistakes, or out-of-bounds reads in any `bytes::` / `&[u8]` decoder all count.
-- **Accidental data exposure** — file modes that are too permissive on `notes.db` or `~/.local/share/com.agaric.app/`, secrets in logs (the `logger.ts` redactor missing a code path, a `log::info!` printing a private key), plaintext dumps of user content, IPC commands that return data outside the calling page.
+- **Accidental data exposure** — file modes that are too permissive on `notes.db` or `~/.local/share/com.agaric.app/`, secrets in logs (a `log::info!` or `console.log` that prints a private key or OAuth token; the rolling `agaric.log` is in-process and unredacted), the `bug_report` deny-by-default redactor missing a code path so user content leaks into a support bundle, plaintext dumps of user content, IPC commands that return data outside the calling page.
 - **Supply-chain concerns** — a direct or transitive dependency that ships a known CVE not yet covered by the `.nsprc` exception list, a typosquat in `package.json` / `Cargo.toml`, an install/post-install script that contacts an external network.
 - **Threat-model violations in code** — anything that adds an outbound network call to a server the maintainer doesn't operate, opens a listening port the user didn't ask for, or otherwise widens the attack surface beyond "the user's own paired devices on a local network."
 - **CSP / IPC bypass** — code that escapes Tauri's command allowlist, that lets the WebView reach arbitrary `file://` or `asset:` URLs, or that defeats the `default-src 'self'` policy declared in `tauri.conf.json`.
@@ -36,11 +36,16 @@ These are not security bugs in this project — they are by design and reports d
 
 Agaric is pre-1.0. The supported version is **the latest tagged release on `main`** (`0.1.x`). Earlier `0.1.x` point releases do not receive security updates; the upgrade path is to bump to the latest tag, which stays binary-compatible with on-disk data per the append-only-migrations invariant in AGENTS.md.
 
-| Version                   | Supported                       |
-|---------------------------|---------------------------------|
-| latest `0.1.x` tag        | yes                             |
-| earlier `0.1.x` tags      | no                              |
-| pre-tag commits on `main` | best-effort, no guarantee       |
+| Version range             | Status        | Security updates                                       | EOL trigger                          |
+|---------------------------|---------------|--------------------------------------------------------|--------------------------------------|
+| Latest `0.1.x` tag        | Supported     | Until the next `0.1.x` tag (typically days to weeks).  | New `0.1.(x+1)` tag pushed.          |
+| Earlier `0.1.x` tags      | End-of-life   | No backports — upgrade to the latest `0.1.x` instead.  | EOL the day a newer `0.1.x` ships.   |
+| Pre-tag commits on `main` | Best-effort   | No guarantee — tagged releases are the supported unit. | Always best-effort (no EOL trigger). |
+| `1.x` (post-1.0 cut)      | Policy TBD    | To be defined when 1.0 is cut.                         | Placeholder — not yet defined.       |
+
+**Why there is no LTS branch for `0.1.x`.** The project is pre-1.0 with a single maintainer, and the upgrade path is binary-compatible with on-disk data (append-only migrations + op-log invariants documented in AGENTS.md), so users can always move to the latest tag without losing data. Maintaining a parallel LTS branch would cost more than the user benefit at this stage; the policy will be revisited at the 1.0 cut.
+
+**End-of-life signalling.** An EOL `0.1.x` release is **not removed** from GitHub Releases — its artefacts stay downloadable for reproducibility / archive value (and for users who must temporarily pin to a prior version while investigating an upgrade regression). EOL only means "no further security updates for that point release; install the latest tag for the fix." The signal is implicit in the table above and in this document; there is no separate EOL announcement channel.
 
 ## How to report
 
@@ -87,6 +92,8 @@ A report that points at an issue already covered by one of the above is still us
 ## Threat-model reference (for maintainers)
 
 The sections below are the canonical reference for triaging advisories and reviewing security-sensitive changes. The framing here lets a fresh contributor decide "is this finding something we already accepted, something we mitigate elsewhere, or something we need to fix?" without re-deriving the threat model each time.
+
+For the **structured detail** — assets, trust-boundary enumeration, a data-flow diagram, and per-boundary STRIDE tables (the OSPS-SA-03.02 artefact) — see [`docs/architecture/threat-model.md`](docs/architecture/threat-model.md). That file is the structured complement to the prose below; it does not replace it. The prose here is what a triager skims when deciding whether a report is in scope; the structured page is what a reviewer audits when checking whether a new feature crosses a trust boundary the model has not yet accounted for.
 
 ### Trust anchors
 

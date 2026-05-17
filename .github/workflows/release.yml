@@ -869,6 +869,90 @@ jobs:
             --clobber
 
   # ---------------------------------------------------------------------------
+  # PEND-47 — emit one OpenVEX 0.2.0 document per release, attest it under
+  # SLSA build provenance, and upload it to the release as
+  # `agaric-<tag>.openvex.json`. VEX statements are platform-independent
+  # (they describe *which CVEs do/don't affect the source code*, not the
+  # bundle layout), so a single non-matrix job is the right shape — emitting
+  # one per platform like the SBOMs would produce 4× identical files. The
+  # source of truth is `src-tauri/deny.toml [advisories].ignore`; the
+  # generator script translates each waived advisory into a `not_affected`
+  # statement with the appropriate justification. Closes OSPS-VM-04.02.
+  # ---------------------------------------------------------------------------
+  generate-vex:
+    needs: [verify-version, validate]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    # Pure node script + one attest call + one gh upload. No build, no
+    # cache restore. 5-min budget is generous.
+    timeout-minutes: 5
+    permissions:
+      contents: write  # gh release upload attaches the VEX JSON to the release
+      id-token: write  # actions/attest-build-provenance — Sigstore OIDC token
+      attestations: write  # actions/attest-build-provenance — write to GH attestations API
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Generate OpenVEX statements
+        env:
+          # Strip optional leading "v" from the tag — keeps the asset
+          # filename + OpenVEX `@id` aligned with the in-manifest
+          # version (which verify-version already proved matches the
+          # tag). Routed via env: rather than direct ${{ }} in the
+          # `run:` body to defuse zizmor's template-injection rule
+          # (same pattern as bump-version.sh invocation above).
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          node scripts/generate-vex.mjs \
+            --version "$VERSION" \
+            --output "agaric-${VERSION}.openvex.json"
+          echo "OPENVEX_FILE=agaric-${VERSION}.openvex.json" >> "$GITHUB_ENV"
+
+      - name: Attest OpenVEX document
+        id: attest_vex
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: ${{ env.OPENVEX_FILE }}
+
+      # Mirror the per-platform Sigstore-bundle upload pattern from
+      # build-and-release: attach the bundle as a release asset so
+      # Scorecard's `Signed-Releases` heuristic sees a matching
+      # `*.sigstore.json` alongside every signed artefact. `gh
+      # attestation verify` keeps working via the Sigstore log; this
+      # is purely additive.
+      - name: Upload SLSA attestation bundle to release (VEX)
+        if: steps.attest_vex.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_vex.outputs.bundle-path }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          dest="${RUNNER_TEMP}/agaric-${VERSION}.openvex.sigstore.json"
+          cp "$BUNDLE_SRC" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
+      - name: Upload OpenVEX document to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" "${OPENVEX_FILE}" --clobber
+
+  # ---------------------------------------------------------------------------
   # PEND-41 R18 — append a copy-pasteable verify-recipe section to the draft
   # release notes after all bundles + SBOMs have been attested + uploaded.
   # End users (and downstream packagers / security-conscious tinkerers) get
@@ -877,8 +961,8 @@ jobs:
   # run's step-summary page for the maintainer's at-a-glance check.
   # ---------------------------------------------------------------------------
   finalize-release-notes:
-    needs: [verify-version, validate, build-and-release, android-build-and-release]
-    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' }}
+    needs: [verify-version, validate, build-and-release, android-build-and-release, generate-vex]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-vex.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write  # gh release edit appends to the draft release notes
@@ -923,6 +1007,9 @@ jobs:
 
             # SBOM (SPDX-JSON or CycloneDX-JSON)
             gh attestation verify agaric-*.spdx.json --repo __REPO__
+
+            # OpenVEX statements (machine-readable VEX for waived advisories)
+            gh attestation verify agaric-*.openvex.json --repo __REPO__
             ```
 
             For air-gapped verification, use
