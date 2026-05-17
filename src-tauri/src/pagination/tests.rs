@@ -94,25 +94,42 @@ async fn soft_delete_block(pool: &SqlitePool, id: &str, deleted_at: &str) {
 /// `r2.next_cursor` — at `limit = 2`, and asserts the page sizes (2, 2, 1),
 /// `has_more` flags (true, true, false), absence of a trailing cursor, and
 /// that the items appear in `expected_ids` order across pages.
-async fn assert_paginates_with_cursor<F>(pool: &SqlitePool, expected_ids: [&str; 5], list_fn: F)
+trait RowIdStr {
+    fn id_str(&self) -> &str;
+}
+
+impl RowIdStr for BlockRow {
+    fn id_str(&self) -> &str {
+        &self.id
+    }
+}
+
+impl RowIdStr for ActiveBlockRow {
+    fn id_str(&self) -> &str {
+        self.id.as_str()
+    }
+}
+
+async fn assert_paginates_with_cursor<F, R>(pool: &SqlitePool, expected_ids: [&str; 5], list_fn: F)
 where
-    F: AsyncFn(&SqlitePool, PageRequest) -> Result<PageResponse<BlockRow>, AppError>,
+    F: AsyncFn(&SqlitePool, PageRequest) -> Result<PageResponse<R>, AppError>,
+    R: RowIdStr + specta::Type,
 {
     let r1 = list_fn(pool, PageRequest::new(None, Some(2)).unwrap())
         .await
         .unwrap();
     assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
     assert!(r1.has_more, "page 1 should indicate more pages");
-    assert_eq!(r1.items[0].id, expected_ids[0], "page 1 first item");
-    assert_eq!(r1.items[1].id, expected_ids[1], "page 1 second item");
+    assert_eq!(r1.items[0].id_str(), expected_ids[0], "page 1 first item");
+    assert_eq!(r1.items[1].id_str(), expected_ids[1], "page 1 second item");
 
     let r2 = list_fn(pool, PageRequest::new(r1.next_cursor, Some(2)).unwrap())
         .await
         .unwrap();
     assert_eq!(r2.items.len(), 2, "page 2 should return 2 items");
     assert!(r2.has_more, "page 2 should indicate more pages");
-    assert_eq!(r2.items[0].id, expected_ids[2], "page 2 first item");
-    assert_eq!(r2.items[1].id, expected_ids[3], "page 2 second item");
+    assert_eq!(r2.items[0].id_str(), expected_ids[2], "page 2 first item");
+    assert_eq!(r2.items[1].id_str(), expected_ids[3], "page 2 second item");
 
     let r3 = list_fn(pool, PageRequest::new(r2.next_cursor, Some(2)).unwrap())
         .await
@@ -120,7 +137,7 @@ where
     assert_eq!(r3.items.len(), 1, "last page should return 1 item");
     assert!(!r3.has_more, "last page should not indicate more");
     assert!(r3.next_cursor.is_none(), "last page should have no cursor");
-    assert_eq!(r3.items[0].id, expected_ids[4], "last page item");
+    assert_eq!(r3.items[0].id_str(), expected_ids[4], "last page item");
 }
 
 // ====================================================================
@@ -688,7 +705,7 @@ async fn list_children_exhaustive_walk_returns_all_items_once() {
         let resp = list_children(&pool, Some("PARENT01"), &page, None)
             .await
             .unwrap();
-        all_ids.extend(resp.items.iter().map(|b| b.id.clone()));
+        all_ids.extend(resp.items.iter().map(|b| b.id.as_str().to_string()));
         if !resp.has_more {
             break;
         }
@@ -2035,7 +2052,7 @@ async fn list_agenda_range_exhaustive_walk_returns_all_items_once() {
         let resp = list_agenda_range(&pool, "2025-06-01", "2025-06-05", None, &page, None)
             .await
             .unwrap();
-        all_ids.extend(resp.items.iter().map(|b| b.id.clone()));
+        all_ids.extend(resp.items.iter().map(|b| b.id.as_str().to_string()));
         if !resp.has_more {
             break;
         }
@@ -3096,8 +3113,8 @@ async fn cursor_stability_after_delete() {
     );
 
     // Verify no duplicates between page 1 and page 2
-    let mut all_ids: Vec<String> = r1.items.iter().map(|b| b.id.clone()).collect();
-    all_ids.extend(r2.items.iter().map(|b| b.id.clone()));
+    let mut all_ids: Vec<String> = r1.items.iter().map(|b| b.id.as_str().to_string()).collect();
+    all_ids.extend(r2.items.iter().map(|b| b.id.as_str().to_string()));
     let unique_count = {
         let mut set = std::collections::HashSet::new();
         all_ids

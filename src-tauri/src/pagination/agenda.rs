@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use super::{build_page_response, BlockRow, Cursor, PageRequest, PageResponse};
+use super::{build_page_response, ActiveBlockRow, Cursor, PageRequest, PageResponse};
 use crate::error::AppError;
 
 /// List blocks for a specific date from the agenda cache, paginated.
@@ -20,7 +20,7 @@ pub async fn list_agenda(
     source: Option<&str>,
     page: &PageRequest,
     space_id: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
     let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
@@ -34,8 +34,8 @@ pub async fn list_agenda(
     // accept `concat!()`. Mirror any change to the filter SQL across
     // every inlined copy.
     let rows = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+        ActiveBlockRow,
+        r#"SELECT b.id as "id: crate::ulid::ActiveBlockId", b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
@@ -59,7 +59,9 @@ pub async fn list_agenda(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.as_str().to_string())
+    })
 }
 
 /// List blocks for a date *range* from the agenda cache, paginated.
@@ -84,7 +86,7 @@ pub async fn list_agenda_range(
     source: Option<&str>,
     page: &PageRequest,
     space_id: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
     // For the range query we use a composite cursor: (date, block_id).
@@ -95,9 +97,9 @@ pub async fn list_agenda_range(
         None => (None, "", ""),
     };
 
-    // Use a raw `query!` (rather than `query_as!(BlockRow, …)`) so we can
-    // also project `ac.date` — which is what `ORDER BY` keys on — and use
-    // it directly to populate the cursor instead of guessing from
+    // Use a raw `query!` (rather than `query_as!(ActiveBlockRow, …)`) so we
+    // can also project `ac.date` — which is what `ORDER BY` keys on — and
+    // use it directly to populate the cursor instead of guessing from
     // `b.due_date` / `b.scheduled_date`.
     //
     // FEAT-3p4 — ?8 (space_id) drives the shared space-filter clause.
@@ -131,14 +133,16 @@ pub async fn list_agenda_range(
     .fetch_all(pool)
     .await?;
 
-    // Split each raw row into (BlockRow, ac_date) so we can carry the
-    // agenda_cache date through to the cursor. The two vectors stay
-    // index-aligned by construction.
-    let mut rows: Vec<BlockRow> = Vec::with_capacity(raw_rows.len());
+    // Split each raw row into (ActiveBlockRow, ac_date) so we can carry
+    // the agenda_cache date through to the cursor. The two vectors stay
+    // index-aligned by construction. The boundary cast
+    // `ActiveBlockRow::from_block_row_unchecked` is safe here because the
+    // SQL filter pins `b.deleted_at IS NULL`.
+    let mut rows: Vec<ActiveBlockRow> = Vec::with_capacity(raw_rows.len());
     let mut ac_dates: Vec<String> = Vec::with_capacity(raw_rows.len());
     for r in raw_rows {
         ac_dates.push(r.ac_date);
-        rows.push(BlockRow {
+        rows.push(ActiveBlockRow::from_block_row_unchecked(super::BlockRow {
             id: r.id,
             block_type: r.block_type,
             content: r.content,
@@ -150,7 +154,7 @@ pub async fn list_agenda_range(
             due_date: r.due_date,
             scheduled_date: r.scheduled_date,
             page_id: r.page_id,
-        });
+        }));
     }
 
     // Pre-trim `ac_dates` to the page size so its `.last()` aligns with
@@ -163,6 +167,6 @@ pub async fn list_agenda_range(
     let last_ac_date = ac_dates.last().cloned();
 
     build_page_response(rows, page.limit, move |last| {
-        Cursor::for_id_and_deleted_at(last.id.clone(), last_ac_date)
+        Cursor::for_id_and_deleted_at(last.id.as_str().to_string(), last_ac_date)
     })
 }

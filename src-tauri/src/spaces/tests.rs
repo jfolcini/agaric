@@ -886,7 +886,11 @@ async fn list_blocks_inner_isolates_blocks_by_space_id() {
     .await
     .unwrap();
 
-    let personal_ids: Vec<String> = personal_resp.items.iter().map(|r| r.id.clone()).collect();
+    let personal_ids: Vec<String> = personal_resp
+        .items
+        .iter()
+        .map(|r| r.id.as_str().to_string())
+        .collect();
     assert!(
         personal_ids.contains(&personal_1.as_str().to_owned()),
         "Personal query must surface page 1 created in Personal; got {personal_ids:?}"
@@ -921,7 +925,11 @@ async fn list_blocks_inner_isolates_blocks_by_space_id() {
     .await
     .unwrap();
 
-    let work_ids: Vec<String> = work_resp.items.iter().map(|r| r.id.clone()).collect();
+    let work_ids: Vec<String> = work_resp
+        .items
+        .iter()
+        .map(|r| r.id.as_str().to_string())
+        .collect();
     assert!(
         work_ids.contains(&work_1.as_str().to_owned()),
         "Work query must surface page 1 created in Work; got {work_ids:?}"

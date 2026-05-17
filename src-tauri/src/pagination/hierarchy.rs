@@ -1,7 +1,7 @@
 use sqlx::SqlitePool;
 
 use super::{
-    build_page_response, BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL,
+    build_page_response, ActiveBlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL,
 };
 use crate::error::AppError;
 
@@ -34,7 +34,7 @@ pub async fn list_children(
     parent_id: Option<&str>,
     page: &PageRequest,
     space_id: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
     let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) = match page.after.as_ref() {
@@ -50,8 +50,8 @@ pub async fn list_children(
     // inlined copy (list_children, list_by_type, list_trash,
     // fts::search_fts).
     let rows = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position,
+        ActiveBlockRow,
+        r#"SELECT id as "id: crate::ulid::ActiveBlockId", block_type, content, parent_id, position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date,
                 page_id
@@ -77,7 +77,7 @@ pub async fn list_children(
 
     build_page_response(rows, page.limit, |last| {
         Cursor::for_id_and_position(
-            last.id.clone(),
+            last.id.as_str().to_string(),
             last.position.unwrap_or(NULL_POSITION_SENTINEL),
         )
     })
@@ -98,7 +98,7 @@ pub async fn list_by_type(
     block_type: &str,
     page: &PageRequest,
     space_id: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
     let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
@@ -110,8 +110,8 @@ pub async fn list_by_type(
     // header note on `list_children` for why the clause is inlined
     // rather than composed via `crate::space_filter_clause!`.
     let rows = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position,
+        ActiveBlockRow,
+        r#"SELECT id as "id: crate::ulid::ActiveBlockId", block_type, content, parent_id, position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date,
                 page_id
@@ -132,5 +132,7 @@ pub async fn list_by_type(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.as_str().to_string())
+    })
 }

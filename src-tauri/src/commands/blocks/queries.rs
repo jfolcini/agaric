@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 use super::super::*;
+use crate::pagination::ActiveBlockRow;
 use crate::space::SpaceScope;
 
 /// List active blocks with pagination, applying at most one exclusive filter.
@@ -34,7 +35,7 @@ pub async fn list_blocks_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: String,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     // Treat agenda_date_start/end as an agenda filter for conflict detection
     let has_agenda_range = agenda_date_start.is_some() && agenda_date_end.is_some();
 
@@ -341,7 +342,7 @@ pub async fn list_blocks(
         ),
         None => (None, None, None, None),
     };
-    list_blocks_inner(
+    let resp = list_blocks_inner(
         &pool.0,
         parent_id,
         block_type,
@@ -355,7 +356,17 @@ pub async fn list_blocks(
         space_id,
     )
     .await
-    .map_err(sanitize_internal_error)
+    .map_err(sanitize_internal_error)?;
+    // Downcast `ActiveBlockRow` → `BlockRow` at the IPC boundary to keep
+    // the generated frontend bindings stable. The wire format is
+    // identical (`ActiveBlockId` is serde-transparent over `String`) but
+    // the TS type name would change, forcing every consumer to migrate.
+    Ok(PageResponse {
+        items: resp.items.into_iter().map(BlockRow::from).collect(),
+        next_cursor: resp.next_cursor,
+        has_more: resp.has_more,
+        total_count: resp.total_count,
+    })
 }
 
 /// Paginate soft-deleted blocks (trash view), space-scoped.

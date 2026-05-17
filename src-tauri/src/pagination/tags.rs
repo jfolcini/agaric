@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use super::{build_page_response, BlockRow, Cursor, PageRequest, PageResponse};
+use super::{build_page_response, ActiveBlockRow, Cursor, PageRequest, PageResponse};
 use crate::error::AppError;
 
 /// List blocks that carry a specific tag, paginated.
@@ -18,7 +18,7 @@ pub async fn list_by_tag(
     tag_id: &str,
     page: &PageRequest,
     space_id: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
     let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
@@ -30,8 +30,8 @@ pub async fn list_by_tag(
     // Mirrors `crate::space_filter_clause!` — kept inline because
     // `sqlx::query_as!` requires a string literal directly.
     let rows = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+        ActiveBlockRow,
+        r#"SELECT b.id as "id: crate::ulid::ActiveBlockId", b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id
@@ -53,5 +53,7 @@ pub async fn list_by_tag(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.as_str().to_string())
+    })
 }

@@ -269,7 +269,7 @@ async fn concurrent_creates_from_multiple_devices_no_conflicts() {
         "15 total blocks created across 3 devices"
     );
 
-    let unique: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
+    let unique: HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
     assert_eq!(unique.len(), 15, "all IDs must be unique across devices");
 
     // Verify each device's op_log is independent
@@ -353,7 +353,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
         "must collect all {TOTAL} blocks across pages"
     );
 
-    let unique: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
+    let unique: HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
     assert_eq!(
         unique.len(),
         TOTAL,

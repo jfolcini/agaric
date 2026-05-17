@@ -829,7 +829,15 @@ pub async fn list_pages_inner(
     // FEAT-3 Phase 2: `list_pages` is the MCP (agent) page enumeration
     // and stays unscoped — agents see every space. Frontend-facing page
     // lookups go through `list_blocks_inner` which threads `space_id`.
-    pagination::list_by_type(pool, "page", &page, None).await
+    // Downcast at the MCP-facing boundary to keep the tool's wire shape
+    // stable; the active-typing invariant lives inside `list_by_type`.
+    let resp = pagination::list_by_type(pool, "page", &page, None).await?;
+    Ok(PageResponse {
+        items: resp.items.into_iter().map(BlockRow::from).collect(),
+        next_cursor: resp.next_cursor,
+        has_more: resp.has_more,
+        total_count: resp.total_count,
+    })
 }
 
 /// Response shape for [`get_page_inner`] — the page itself plus its

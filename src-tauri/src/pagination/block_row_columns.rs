@@ -319,7 +319,7 @@ mod tests {
         // removed), this assertion fails — bump the constant
         // deliberately and confirm the new site uses the canonical
         // SELECT.
-        const EXPECTED_HITS: usize = 20;
+        const EXPECTED_HITS: usize = 16;
         assert_eq!(
             total_hits, EXPECTED_HITS,
             "expected {EXPECTED_HITS} `query_as!(BlockRow, …)` \
