@@ -851,12 +851,19 @@ jobs:
           recipe="${RECIPE_TEMPLATE//__REPO__/$REPO}"
           # Fetch the existing draft notes (whatever tauri-action wrote),
           # guard against double-append on rerun, then edit.
-          existing=$(gh release view "$TAG" --json body --jq '.body // ""')
+          #
+          # `gh release view` / `gh release edit` auto-detect the repo
+          # from `.git/config` when `--repo` is unset, but this job
+          # doesn't run `actions/checkout` (it operates on artefacts
+          # already attached to the release), so the implicit lookup
+          # would fail with `fatal: not a git repository`. Pass
+          # `--repo "$REPO"` explicitly to keep the job stateless.
+          existing=$(gh release view "$TAG" --repo "$REPO" --json body --jq '.body // ""')
           if grep -q '^## Verifying this release' <<<"$existing"; then
             echo "Verify-recipe already present in release notes; skipping append."
           else
             combined=$(printf '%s\n\n---\n\n%s\n' "$existing" "$recipe")
-            gh release edit "$TAG" --notes "$combined"
+            gh release edit "$TAG" --repo "$REPO" --notes "$combined"
             echo "Appended verify-recipe to release ${TAG} notes."
           fi
           # Also surface to step summary for the maintainer.
