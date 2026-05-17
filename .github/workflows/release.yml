@@ -236,6 +236,39 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      # Ensure the draft release exists before tauri-action runs.
+      #
+      # tauri-action's `releaseDraft: true` flow looks for a draft release
+      # matching the tag; if none exists, it tries to create one. The
+      # `createRelease` REST call has intermittently failed with "Resource
+      # not accessible by integration" on this repo (run 25986402862 hit
+      # this on Linux + both macOS in 0.1.31) despite the runtime token
+      # showing `Contents: write`. The exact root cause is uncertain, but
+      # pre-creating the draft sidesteps the call entirely — tauri-action
+      # finds the existing draft and proceeds to the upload phase.
+      #
+      # Race-tolerant: when 4 matrix workers hit `gh release create`
+      # concurrently, only one wins; the rest get a 422 "already_exists"
+      # which we swallow. The result is the same draft for all of them.
+      - name: Ensure draft release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft release for tag $TAG already exists; reusing."
+          else
+            echo "Creating draft release for tag $TAG..."
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Agaric $TAG" \
+              --notes "Release notes will be finalized by the workflow." \
+              || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
