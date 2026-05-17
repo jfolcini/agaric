@@ -2,10 +2,47 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 768 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 769 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1190+ REVIEW-LATER items across 768 sessions.
+- **Previously-resolved counter:** 1192+ REVIEW-LATER items across 769 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 769 — PEND-44 close (coverage gates raised) + design-system doc-drift cleanup (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-direct (all work) |
+| **Items closed** | PEND-44 (vitest coverage gates raised to measurement-derived Silver-tier thresholds) + design-system-perf-review doc-vs-code drift (AGENTS.md hook list amended). |
+| **Items modified** | REVIEW-LATER: PEND-44 row removed (count 22 → 21). PEND-44 plan file deleted. design-system-perf-review.md trimmed: the doc-drift sub-section closed inline. |
+| **Tests added** | — (config + docs change). |
+| **Files touched** | 5: `vitest.config.ts`, `AGENTS.md`, `pending/REVIEW-LATER.md`, `pending/design-system-perf-review-2026-05-09.md`, `pending/PEND-44-coverage-90.md` (deleted). |
+
+**Summary:** PEND-44 turned out to be already-met by the test-additions accumulated in sessions 754-767. Pulled the merged coverage from CI run `25985548538`: vitest 91.91% lines / 90.17% statements / 81.81% branches / 91.17% functions; Rust llvm-cov 91.24% line coverage. All four PEND-44 acceptance criteria thresholds satisfied. Bumped `vitest.config.ts` gates from 80/80/75/80 to **90/89/80/89** (lines/functions/branches/statements) — 2-percentage-point headroom below observed CI values to absorb shard-merge variance (run-to-run ~0.3% normal per the PEND-44 plan body, confirmed against a local `vitest --coverage` run that came in 0.12-0.20 pp below CI). Statements gate sits at 89 rather than 90 to give the published Silver claim (≥90% statements via CI step-summary report) room to wobble without flaking the CI gate. Plan file deleted; REVIEW-LATER row removed. Second item in the batch: the design-system-perf-review `Doc-vs-code drift` item turned out to be premise-wrong — the `no-ui-store-imports` prek hook *already exists* at `prek.toml:111-117` (inline bash via `grep`); the actual fix was a one-line amendment to the `AGENTS.md:249` hook list to mention it.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 22 → 21 (−PEND-44)
+- **Previously resolved:** 1190+ → 1192+ across 768 → 769 sessions
+
+**Files touched (this session):**
+- `vitest.config.ts` (+10 LOC of inline rationale, gate bump 80/80/75/80 → 90/89/80/89)
+- `AGENTS.md` (added `no-ui-store-imports` to the repo-specific guards list at line ~249)
+- `pending/design-system-perf-review-2026-05-09.md` (doc-drift sub-section trimmed; open-list at top updated)
+- `pending/REVIEW-LATER.md` (PEND-44 row removed; count 22 → 21)
+- `pending/PEND-44-coverage-90.md` (deleted)
+
+**Verification:**
+- `npx vitest run --coverage` (local) — 9905 tests pass; coverage 91.79% lines / 89.97% statements / 81.67% branches / 91.05% functions (all ≥ new gates with comfortable headroom).
+- CI run `25985548538` artifacts pulled: `vitest-coverage-merged` + `rust-coverage-lcov` confirm OSPS Silver thresholds organically reached.
+- `prek run --files <batch>` — pending (next step).
+
+**Process notes:**
+- Two of this batch's items turned out to be **already done by accumulation** (PEND-44) or **premise-wrong** (design-system doc-drift — the hook existed). Always verify the plan body's "Current state" against fresh measurements before scheduling work — stale plans can describe a problem that no longer exists.
+- The "Measure, don't imagine" memory drove gate-setting: PEND-44's literal spec was 90/90/90/80, but observed values + 0.3% shard-variance left zero margin on statements. Setting statements at 89 instead gives the gate enforcement value (CI fails on a meaningful regression) without flaking on healthy noise. The OSPS Silver claim still reads ≥90% from the actual measurement (step-summary), not from the gate floor.
+
+**Commit plan:** single commit, push to main.
+
+---
+
 ## Session 768 — OpenSSF batch: CodeQL workflow + support-window matrix + formal threat model + OpenVEX statements + bench ULID fix (2026-05-17)
 
 | Metadata | Value |

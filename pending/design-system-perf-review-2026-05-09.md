@@ -4,7 +4,7 @@
 >
 > History of closed items lives in `SESSION-LOG.md` sessions 706-729. Don't reintroduce them here.
 >
-> **Open below: Tier 1.3 TipTap lazy-load; Tier 2.6 follow-up BlockListRenderer + BlockTree windowing; one doc-drift cleanup (AGENTS.md import-boundary automation).**
+> **Open below: Tier 1.3 TipTap lazy-load; Tier 2.6 follow-up BlockListRenderer + BlockTree windowing.**
 
 ---
 
@@ -42,13 +42,7 @@ The audit's phrasing was "evaluate" rather than "convert" because the existing p
 
 ---
 
-## Doc-vs-code drift
-
-- `AGENTS.md:130-138` documents the layer table as policy but no automated import-boundary check exists in the prek hook list at `AGENTS.md:249`.
-
-**Fix.** Add the missing automation (`dependency-cruiser` or biome equivalent for the documented `ui/` → `stores/` import boundary).
-
-(The two text-only docs/ARCHITECTURE.md fixes — shadcn/ui count and `P-15/P-16` → `PERF-19/PERF-20` — landed in Session 729.)
+(The doc-drift item — AGENTS.md import-boundary automation — closed: the `no-ui-store-imports` hook already exists in `prek.toml:111-117`; the AGENTS.md hook list at line 249 has been amended to mention it. The two text-only docs/ARCHITECTURE.md fixes — shadcn/ui count and `P-15/P-16` → `PERF-19/PERF-20` — landed in Session 729.)
 
 ---
 
