@@ -221,4 +221,19 @@ export const references: Record<string, string> = {
   'linkedReferences.errorBoundary': 'Failed to load backlinks for this page.',
   'unlinkedReferences.errorBoundary': 'Failed to load unlinked mentions.',
   'graph.filterBar.errorBoundary': 'Filter bar failed to render.',
+  'search.resultsRegionLabel': 'Search results',
+  'search.matchCountSingular': '1 match in 1 page',
+  'search.matchCountPlural': '{{matchCount}} matches in {{pageCount}} pages',
+  'search.matchCountInGroupSingular': '1 match',
+  'search.matchCountInGroupPlural': '{{count}} matches',
+  /**
+   * PEND-50 Phase 1 recommendation: page-name-only hits surface as
+   * "1 match (in name)" so users understand why a content-less group
+   * appears. Used when a group has exactly one block that is a
+   * page-type hit on the title rather than the content.
+   */
+  'search.matchCountInGroupNameOnly': '1 match (in name)',
+  'search.groupCollapsedLabel': 'Show matches in {{pageTitle}}',
+  'search.groupExpandedLabel': 'Hide matches in {{pageTitle}}',
+  'search.helpButtonLabel': 'Search help',
 }

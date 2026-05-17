@@ -1,6 +1,6 @@
 ---
 source: src/mcp/tools_ro/tests.rs
-assertion_line: 1774
+assertion_line: 1775
 expression: result
 ---
 has_more: false
@@ -15,6 +15,7 @@ items:
     position: 1
     priority: ~
     scheduled_date: ~
+    snippet: "<mark>findme</mark> please"
     todo_state: ~
 next_cursor: "[CURSOR]"
 total_count: ~

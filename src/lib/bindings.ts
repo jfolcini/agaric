@@ -104,8 +104,19 @@ export const commands = {
 	getBlockHistory: (blockId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppError>(__TAURI_INVOKE("get_block_history", { blockId, opTypeFilter, cursor, limit })),
 	/**  Tauri command: get materializer queue status. Delegates to [`get_status_inner`]. */
 	getStatus: () => typedError<StatusInfo, AppError>(__TAURI_INVOKE("get_status")),
-	/**  Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`]. */
-	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
+	/**
+	 *  Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
+	 *
+	 *  PEND-50 Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
+	 *  into [`SearchFilter`] so the wrapper stays well under the
+	 *  `tauri-specta` 10-arg ceiling as follow-up plans append filter
+	 *  fields (`#[serde(default)]` keeps wire compat). The hand-written
+	 *  TS wrapper in `src/lib/tauri.ts` keeps the public API at
+	 *  `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
+	 *  into the struct only at the IPC boundary, mirroring the
+	 *  [`ExtraQueryFilters`] precedent on [`query_by_property`].
+	 */
+	searchBlocks: (query: string, cursor: string | null, limit: number | null, filter: SearchFilter) => typedError<PageResponse<SearchBlockRow>, AppError>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, filter })),
 	/**  Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`]. */
 	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope, blockType })),
 	/**
@@ -1393,6 +1404,82 @@ export type RestoreToOpResult = {
 	non_reversible_skipped: number,
 	/**  Individual undo results for each reverted op. */
 	results: UndoResult[],
+};
+
+/**
+ *  Response row for [`search_blocks_inner`].
+ *
+ *  Mirrors [`ActiveBlockRow`] column-for-column so the wire format is a
+ *  strict superset (every field in `ActiveBlockRow` is reproduced
+ *  verbatim) and adds `snippet` — the FTS5 [`snippet`] window with
+ *  literal `<mark>...</mark>` boundaries on every match span. The
+ *  frontend parses the markers into React nodes (no
+ *  `dangerouslySetInnerHTML`); see `pending/PEND-50-search-vscode-ux.md`
+ *  for the renderer contract.
+ *
+ *  PEND-55 will append `match_offsets: Vec<MatchOffset>` for the
+ *  regex/whole-word offset rendering path, also with
+ *  `#[serde(default)]`.
+ *
+ *  [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
+ */
+export type SearchBlockRow = {
+	id: ActiveBlockId,
+	block_type: string,
+	content: string | null,
+	parent_id: string | null,
+	position: number | null,
+	deleted_at: string | null,
+	todo_state: string | null,
+	priority: string | null,
+	due_date: string | null,
+	scheduled_date: string | null,
+	page_id: string | null,
+	/**
+	 *  FTS5 `snippet()` window for the matched block. `None` when the
+	 *  match has no content snippet (e.g. a page-title-only hit on a
+	 *  block with `content IS NULL`). Contains literal `<mark>` /
+	 *  `</mark>` boundaries around each match span — the frontend
+	 *  parses these as React nodes and never invokes
+	 *  `dangerouslySetInnerHTML`.
+	 */
+	snippet?: string | null,
+};
+
+/**
+ *  Optional filter bundle for [`search_blocks_inner`].
+ *
+ *  PEND-50 Phase 0 collapses the previous positional `parent_id` /
+ *  `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
+ *  10-arg ceiling stays comfortable as follow-up plans append filter
+ *  fields. Every field carries `#[serde(default)]` — a missing key on
+ *  the wire deserialises to the field's `Default`, which preserves
+ *  today's "no filter" behaviour. Follow-up plans append new fields the
+ *  same way; they MUST NOT add positional args.
+ *
+ *  Future appendees (locked in by PEND-50's design section):
+ *
+ *  - PEND-54: `include_page_globs`, `exclude_page_globs` (`Vec<String>`).
+ *  - PEND-55: `case_sensitive`, `whole_word`, `is_regex` (`bool`).
+ *  - PEND-51: `block_type_filter` (`Option<String>`).
+ *  - PEND-53: `state_filter`, `priority_filter`, `due_filter`,
+ *    `scheduled_filter`, `property_filters`, `excluded_property_filters`.
+ */
+export type SearchFilter = {
+	/**  Restrict results to direct children of this parent block. */
+	parentId?: string | null,
+	/**
+	 *  Restrict results to blocks carrying every tag in this list
+	 *  (`ALL` semantics — see `fts::search_fts`).
+	 */
+	tagIds?: string[],
+	/**
+	 *  FEAT-3p4 — restrict to blocks whose owning page lives in this
+	 *  space. Empty string is treated as "no match" by the SQL path
+	 *  (returns an empty page), matching pre-bootstrap callers that
+	 *  pass `''`.
+	 */
+	spaceId?: string | null,
 };
 
 /**

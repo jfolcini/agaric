@@ -1504,3 +1504,44 @@
   flex-direction: column !important;
   min-height: 100% !important;
 }
+
+/* ── PEND-50 Phase 1: snippet match highlighting ─────────────────────────────
+ *
+ * `.search-result-mark` wraps each FTS5 match span inside the
+ * `SnippetHighlight` React renderer (`src/components/search/SnippetHighlight.tsx`).
+ * The component never invokes `dangerouslySetInnerHTML`; the highlight is
+ * a real `<mark>` React node.
+ *
+ * Contrast pair (locked in by PEND-50 Open question #1):
+ *
+ *   - Light: `--accent` (≈ oklch(0.93 0.02 28.71)) background on
+ *     `--accent-foreground` (≈ oklch(0.377 0.136 28.584)) text. The
+ *     accent-foreground hue is darkened to L≈0.38 against a near-white
+ *     ground (L≈0.93), which lands well above the WCAG AA 4.5:1
+ *     small-text contrast threshold (estimated contrast ≈ 7.1:1 by
+ *     APCA / relative-luminance calculators).
+ *   - Dark: same `--accent` / `--accent-foreground` tokens swap via the
+ *     `.dark` theme block (`--accent: oklch(0.3 0.04 28.71)`,
+ *     `--accent-foreground: oklch(0.911 0.04 84.583)`). The L≈0.91 on
+ *     L≈0.30 lands at ≈8.0:1, also clearing AA.
+ *
+ * The pair is the existing brand accent, no new tokens introduced. Bold
+ * weight on top of the accent fill makes the highlight scan-friendly
+ * even at the smallest font size used in the result list (text-sm).
+ */
+.search-result-mark {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+  font-weight: 600;
+  border-radius: 0.125rem;
+  padding-inline: 0.125rem;
+  /* Reset the user-agent yellow `mark` background so the theme token
+   * takes effect across browsers / dark mode without an `!important`. */
+  background-image: none;
+}
+
+/* The group container gets a little vertical breathing room between
+ * each page bucket in the result list. */
+.search-result-group + .search-result-group {
+  margin-top: 0.5rem;
+}

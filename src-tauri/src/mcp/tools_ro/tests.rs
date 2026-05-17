@@ -1341,9 +1341,10 @@ proptest::proptest! {
                 query.clone(),
                 None,
                 Some(SEARCH_RESULT_CAP),
-                None,
-                None,
-                TEST_SPACE_ID.into(),
+                crate::commands::SearchFilter {
+                    space_id: Some(TEST_SPACE_ID.into()),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap();

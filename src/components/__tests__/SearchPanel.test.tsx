@@ -164,11 +164,9 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: 'test',
-        parentId: null,
-        tagIds: null,
         cursor: null,
         limit: 50,
-        spaceId: 'SPACE_TEST',
+        filter: { parentId: null, tagIds: [], spaceId: 'SPACE_TEST' },
       })
     })
 
@@ -198,11 +196,9 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: 'query',
-        parentId: null,
-        tagIds: null,
         cursor: null,
         limit: 50,
-        spaceId: 'SPACE_TEST',
+        filter: { parentId: null, tagIds: [], spaceId: 'SPACE_TEST' },
       })
     })
 
@@ -268,11 +264,9 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: 'result',
-        parentId: null,
-        tagIds: null,
         cursor: 'cursor_abc',
         limit: 50,
-        spaceId: 'SPACE_TEST',
+        filter: { parentId: null, tagIds: [], spaceId: 'SPACE_TEST' },
       })
     })
 
@@ -311,11 +305,9 @@ describe('SearchPanel', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
       query: 'debounce',
-      parentId: null,
-      tagIds: null,
       cursor: null,
       limit: 50,
-      spaceId: 'SPACE_TEST',
+      filter: { parentId: null, tagIds: [], spaceId: 'SPACE_TEST' },
     })
   })
 
@@ -547,11 +539,14 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'page')
 
-    await waitFor(() => {
-      expect(screen.getByText(textContent('My Page'))).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByText(textContent('My Page')))
+    // PEND-50 Phase 1 — a page-type hit now appears twice in the
+    // grouped layout: once as the page-link group header (clickable)
+    // and once as the `role="option"` row body. Click the row itself
+    // (the option, which is now a click-handling `<li>`) so we
+    // exercise `handleResultClick`; the header path is exercised by
+    // the breadcrumb test.
+    const option = await screen.findByRole('option')
+    await user.click(option)
 
     await waitFor(() => {
       const navState = useNavigationStore.getState()
@@ -660,11 +655,9 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: longQuery,
-        parentId: null,
-        tagIds: null,
         cursor: null,
         limit: 50,
-        spaceId: 'SPACE_TEST',
+        filter: { parentId: null, tagIds: [], spaceId: 'SPACE_TEST' },
       })
     })
 
@@ -684,11 +677,9 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: '<script>alert("xss")</script>',
-        parentId: null,
-        tagIds: null,
         cursor: null,
         limit: 50,
-        spaceId: 'SPACE_TEST',
+        filter: { parentId: null, tagIds: [], spaceId: 'SPACE_TEST' },
       })
     })
 
@@ -729,11 +720,9 @@ describe('SearchPanel', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
     expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
       query: 'hello',
-      parentId: null,
-      tagIds: null,
       cursor: null,
       limit: 50,
-      spaceId: 'SPACE_TEST',
+      filter: { parentId: null, tagIds: [], spaceId: 'SPACE_TEST' },
     })
   })
 
@@ -811,7 +800,7 @@ describe('SearchPanel', () => {
     expect(spinner).toBeInTheDocument()
   })
 
-  it('disables result button during click loading', async () => {
+  it('disables result row during click loading', async () => {
     const user = userEvent.setup()
 
     // search_blocks returns a block with parent_id
@@ -848,13 +837,14 @@ describe('SearchPanel', () => {
         }),
     )
 
-    // biome-ignore lint/style/noNonNullAssertion: test assertion — button always exists in rendered output
-    const resultBtn = screen.getByText(textContent('child block')).closest('button')!
-    await user.click(resultBtn)
+    // PEND-50 Phase 1 — the row is a `role="option"` `<li>` (not a
+    // `<button>`); "disabled" surfaces via `aria-disabled` rather than
+    // the disabled DOM property.
+    const resultRow = screen.getByRole('option')
+    await user.click(resultRow)
 
-    // Button should be disabled while loading
     await waitFor(() => {
-      expect(resultBtn).toBeDisabled()
+      expect(resultRow).toHaveAttribute('aria-disabled', 'true')
     })
 
     // Resolve the pending get_block call
@@ -867,9 +857,8 @@ describe('SearchPanel', () => {
       deleted_at: null,
     })
 
-    // Button should re-enable after loading completes
     await waitFor(() => {
-      expect(resultBtn).not.toBeDisabled()
+      expect(resultRow).not.toHaveAttribute('aria-disabled', 'true')
     })
   })
 
@@ -903,7 +892,13 @@ describe('SearchPanel', () => {
     })
   })
 
-  it('results listbox aria-label resolves via t() (UX-210)', async () => {
+  // PEND-50 Phase 1 — the flat listbox was replaced with per-group
+  // listboxes (one per page), wrapped in a `role="region"` with the
+  // localised label. The per-group listbox `aria-label` resolves via
+  // `t('search.groupExpandedLabel', { pageTitle: ... })`. We assert
+  // both surfaces here to lock in the a11y model rather than the old
+  // single-listbox label.
+  it('results region + per-group listbox aria-labels resolve via t() (UX-210 / PEND-50)', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [makeSearchResult()],
       next_cursor: null,
@@ -917,9 +912,10 @@ describe('SearchPanel', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole('listbox', { name: t('search.resultsListLabel') }),
+        screen.getByRole('region', { name: t('search.resultsRegionLabel') }),
       ).toBeInTheDocument()
     })
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
   })
 
   // =========================================================================
@@ -1002,11 +998,11 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'page')
 
-    await waitFor(() => {
-      expect(screen.getByText(textContent('My Page'))).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByText(textContent('My Page')))
+    // PEND-50 Phase 1 — click the row itself (the option, a
+    // click-handling `<li>`), not the page-link header, so we
+    // exercise `handleResultClick` and its recent-page bookkeeping.
+    const option = await screen.findByRole('option')
+    await user.click(option)
 
     const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
     expect(stored).toHaveLength(1)
@@ -1241,10 +1237,13 @@ describe('SearchPanel', () => {
     it('supports ArrowDown/ArrowUp through results', async () => {
       const user = userEvent.setup()
 
+      // PEND-50 Phase 1 — results are page-grouped now. Share a
+      // `page_id` so both rows land in the same listbox; the
+      // keyboard-nav assertion is unchanged.
       mockedInvoke.mockResolvedValueOnce({
         items: [
-          makeSearchResult({ id: 'B1', content: 'result1' }),
-          makeSearchResult({ id: 'B2', content: 'result2' }),
+          makeSearchResult({ id: 'B1', content: 'result1', page_id: 'P_NAV' }),
+          makeSearchResult({ id: 'B2', content: 'result2', page_id: 'P_NAV' }),
         ],
         next_cursor: null,
         has_more: false,
@@ -1340,10 +1339,12 @@ describe('SearchPanel', () => {
     it('highlights focused result visually', async () => {
       const user = userEvent.setup()
 
+      // PEND-50 Phase 1 — share `page_id` so both rows are in one
+      // listbox (page-grouped layout).
       mockedInvoke.mockResolvedValueOnce({
         items: [
-          makeSearchResult({ id: 'B1', content: 'highlight result' }),
-          makeSearchResult({ id: 'B2', content: 'other result' }),
+          makeSearchResult({ id: 'B1', content: 'highlight result', page_id: 'P_HL' }),
+          makeSearchResult({ id: 'B2', content: 'other result', page_id: 'P_HL' }),
         ],
         next_cursor: null,
         has_more: false,
@@ -1569,11 +1570,9 @@ describe('SearchPanel', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
           query: 'test',
-          parentId: 'PAGE1',
-          tagIds: null,
           cursor: null,
           limit: 50,
-          spaceId: 'SPACE_TEST',
+          filter: { parentId: 'PAGE1', tagIds: [], spaceId: 'SPACE_TEST' },
         })
       })
     })
@@ -1717,11 +1716,14 @@ describe('SearchPanel', () => {
     it('Home key moves focus to first result, End to last', async () => {
       const user = userEvent.setup()
 
+      // PEND-50 Phase 1 — single page-group so Home/End walk the same
+      // listbox (the keyboard hook is per-group; Home/End within one
+      // group covers the same behaviour).
       mockedInvoke.mockResolvedValueOnce({
         items: [
-          makeSearchResult({ id: 'B1', content: 'first' }),
-          makeSearchResult({ id: 'B2', content: 'second' }),
-          makeSearchResult({ id: 'B3', content: 'third' }),
+          makeSearchResult({ id: 'B1', content: 'first', page_id: 'P_HE' }),
+          makeSearchResult({ id: 'B2', content: 'second', page_id: 'P_HE' }),
+          makeSearchResult({ id: 'B3', content: 'third', page_id: 'P_HE' }),
         ],
         next_cursor: null,
         has_more: false,
@@ -1758,8 +1760,10 @@ describe('SearchPanel', () => {
     it('PageDown/PageUp navigate through results', async () => {
       const user = userEvent.setup()
 
+      // PEND-50 Phase 1 — single page-group so all 15 rows share one
+      // listbox.
       const items = Array.from({ length: 15 }, (_, i) =>
-        makeSearchResult({ id: `B${i}`, content: `result ${i}` }),
+        makeSearchResult({ id: `B${i}`, content: `result ${i}`, page_id: 'P_PG' }),
       )
 
       mockedInvoke.mockResolvedValueOnce({
@@ -1868,7 +1872,10 @@ describe('SearchPanel', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'search_blocks',
-          expect.objectContaining({ query: 'scoped', spaceId: 'SPACE_WORK' }),
+          expect.objectContaining({
+            query: 'scoped',
+            filter: expect.objectContaining({ spaceId: 'SPACE_WORK' }),
+          }),
         )
       })
     })

@@ -28,7 +28,7 @@
 
 import { Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
@@ -43,7 +43,7 @@ import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { reportIpcError } from '../lib/report-ipc-error'
-import type { BlockRow, TagCacheRow } from '../lib/tauri'
+import type { BlockRow, SearchBlockRow, TagCacheRow } from '../lib/tauri'
 import {
   batchResolve,
   getBlock,
@@ -58,11 +58,11 @@ import { EmptyState } from './EmptyState'
 import { ResultCard } from './ResultCard'
 import { SearchFilters } from './SearchPanel/SearchFilters'
 import { SearchHeader } from './SearchPanel/SearchHeader'
-import { SearchResultList } from './SearchPanel/SearchResultList'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { INITIAL_SEARCH_FILTER_STATE, searchFilterReducer } from './SearchPanel/searchFilterReducer'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
 import { usePopoverEntity } from './SearchPanel/usePopoverEntity'
+import { groupResultsByPage, SearchResultGroups } from './search/SearchResultGroups'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -269,7 +269,7 @@ export function SearchPanel(): React.ReactElement {
   }
 
   const handleResultClick = useCallback(
-    async (block: BlockRow) => {
+    async (block: BlockRow | SearchBlockRow) => {
       setLoadingResultId(block.id)
       try {
         if (block.block_type === 'page') {
@@ -301,12 +301,45 @@ export function SearchPanel(): React.ReactElement {
     [navigateToPage, t],
   )
 
+  // PEND-50 Phase 1 — page-group results.
+  // The flat result list drives the `focusedIndex` for roving-tabindex /
+  // `aria-activedescendant`. Groups are derived from the flat list each
+  // render via `groupResultsByPage`; their expand state lives in
+  // `expandedGroups` so it persists across re-renders but resets on a
+  // new query (see effect below).
+  const groups = useMemo(() => groupResultsByPage(results, pageTitles), [results, pageTitles])
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
+  const handleToggleGroup = useCallback((pageId: string) => {
+    setExpandedGroups((prev) => ({ ...prev, [pageId]: !(prev[pageId] ?? true) }))
+  }, [])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `debouncedQuery` is the trigger, not a body-read dep — we intentionally reset on every new query.
+  useEffect(() => {
+    // Reset collapse state on each new query so the UX always starts
+    // fully expanded.
+    setExpandedGroups({})
+  }, [debouncedQuery])
+
+  // PEND-50 Phase 1 — flatten visible (i.e. expanded) rows for the
+  // keyboard nav hook. Collapsed groups contribute zero rows. Note that
+  // we keep `results.length` as the upper bound for `useListKeyboardNavigation`
+  // when no groups are collapsed, which is the default state (every
+  // `expandedGroups[k]` is `undefined`, treated as expanded).
+  const visibleRows = useMemo(() => {
+    const out: SearchBlockRow[] = []
+    for (const g of groups) {
+      const isExpanded = expandedGroups[g.page_id] ?? true
+      if (!isExpanded) continue
+      for (const block of g.blocks) out.push(block)
+    }
+    return out
+  }, [groups, expandedGroups])
+
   const { focusedIndex, handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
-    itemCount: results.length,
+    itemCount: visibleRows.length,
     homeEnd: true,
     pageUpDown: true,
     onSelect: (idx) => {
-      const block = results[idx]
+      const block = visibleRows[idx]
       if (block) handleResultClick(block)
     },
   })
@@ -437,14 +470,30 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* PEND-30 Phase 3b — listbox lifted into `SearchResultList`. */}
-      <SearchResultList
-        results={results}
+      {/* PEND-50 Phase 1 — page-grouped result tree. The summary count
+          sits above the first group (rendered inside `SearchResultGroups`).
+          Per-group listboxes preserve the existing
+          `useListKeyboardNavigation` roving model and replace the flat
+          listbox formerly owned by `SearchResultList`. */}
+      <SearchResultGroups
+        groups={groups}
+        flatRows={visibleRows}
         focusedIndex={focusedIndex}
-        onKeyDown={handleListKeyDown}
+        expandedGroups={expandedGroups}
+        onToggleGroup={handleToggleGroup}
         onResultClick={handleResultClick}
+        // PEND-50 Phase 1 — passing a no-op tells `CollapsibleGroupList`
+        // to render the page title via `<PageLink>` (its own click
+        // navigates through `useTabsStore.navigateToPage`). The
+        // callback signature is preserved for future hooks (e.g.
+        // recent-page bookkeeping); today it deliberately defers to
+        // `PageLink`'s built-in handler so click + Enter parity is
+        // free.
+        onPageTitleClick={() => {
+          /* navigation handled by `PageLink` */
+        }}
         loadingResultId={loadingResultId}
-        pageTitles={pageTitles}
+        onKeyDown={handleListKeyDown}
         t={t}
       />
 

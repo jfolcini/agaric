@@ -5,8 +5,9 @@
 
 use sqlx::SqlitePool;
 
+use crate::commands::SearchBlockRow;
 use crate::error::AppError;
-use crate::pagination::{ActiveBlockRow, Cursor, PageRequest, PageResponse};
+use crate::pagination::{Cursor, PageRequest, PageResponse};
 
 // ---------------------------------------------------------------------------
 // FTS5 search
@@ -191,6 +192,10 @@ struct FtsSearchRow {
     due_date: Option<String>,
     scheduled_date: Option<String>,
     page_id: Option<String>,
+    // PEND-50 Phase 1 — FTS5 `snippet()` window with literal `<mark>` /
+    // `</mark>` boundaries. May be `NULL` from SQLite when the matched
+    // row has `content IS NULL` (page-title hits etc.).
+    snippet: Option<String>,
     // FTS ranking field (for cursor)
     search_rank: f64,
 }
@@ -232,7 +237,7 @@ pub async fn search_fts(
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
     space_id: Option<&str>,
-) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
         return Ok(PageResponse {
@@ -277,11 +282,19 @@ pub async fn search_fts(
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
     // and (FEAT-3 Phase 2) space_id.
+    // PEND-50 Phase 1 — `snippet()` carries literal `<mark>` / `</mark>`
+    // boundaries around each match span. Column index 1 = the `stripped`
+    // column of `fts_blocks` (migration `0006_fts5_trigram.sql:13`).
+    // Window width is `32` trigrams (≈ a few words); the constant is
+    // documented in PEND-50's "Edge cases" as tunable. The leading /
+    // trailing `…` flag truncation. The result is rendered as React
+    // nodes by the frontend; NEVER `dangerouslySetInnerHTML`.
     let mut sql = String::from(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
+                snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet,
                 fts.rank as search_rank
          FROM fts_blocks fts
          JOIN blocks b ON b.id = fts.block_id
@@ -412,12 +425,17 @@ pub async fn search_fts(
         None
     };
     // MAINT-113 M1.5 — boundary cast: the SQL above filters
-    // deleted_at IS NULL` (line ~288), so every
-    // surviving row is active. `from_trusted_active` records the claim
-    // in the type system without re-running the predicate.
-    let mut block_rows: Vec<ActiveBlockRow> = rows
+    // `deleted_at IS NULL`, so every surviving row is active.
+    // `from_trusted_active` records the claim in the type system
+    // without re-running the predicate.
+    //
+    // PEND-50 Phase 1 — emit `SearchBlockRow` (= `ActiveBlockRow` +
+    // `snippet`). The `snippet` column from FTS5 carries literal
+    // `<mark>` / `</mark>` boundaries; the frontend parses them as
+    // React nodes — never as raw HTML.
+    let mut block_rows: Vec<SearchBlockRow> = rows
         .into_iter()
-        .map(|r| ActiveBlockRow {
+        .map(|r| SearchBlockRow {
             id: crate::ulid::ActiveBlockId::from_trusted_active(&r.id),
             block_type: r.block_type,
             content: r.content,
@@ -429,6 +447,7 @@ pub async fn search_fts(
             due_date: r.due_date,
             scheduled_date: r.scheduled_date,
             page_id: r.page_id,
+            snippet: r.snippet,
         })
         .collect();
 

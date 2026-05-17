@@ -117,26 +117,108 @@ pub async fn get_status_inner(
     materializer.status_with_scheduler(scheduler).await
 }
 
+// ---------------------------------------------------------------------------
+// PEND-50 Phase 0 — `search_blocks` IPC struct migration
+// ---------------------------------------------------------------------------
+
+/// Optional filter bundle for [`search_blocks_inner`].
+///
+/// PEND-50 Phase 0 collapses the previous positional `parent_id` /
+/// `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
+/// 10-arg ceiling stays comfortable as follow-up plans append filter
+/// fields. Every field carries `#[serde(default)]` — a missing key on
+/// the wire deserialises to the field's `Default`, which preserves
+/// today's "no filter" behaviour. Follow-up plans append new fields the
+/// same way; they MUST NOT add positional args.
+///
+/// Future appendees (locked in by PEND-50's design section):
+///
+/// - PEND-54: `include_page_globs`, `exclude_page_globs` (`Vec<String>`).
+/// - PEND-55: `case_sensitive`, `whole_word`, `is_regex` (`bool`).
+/// - PEND-51: `block_type_filter` (`Option<String>`).
+/// - PEND-53: `state_filter`, `priority_filter`, `due_filter`,
+///   `scheduled_filter`, `property_filters`, `excluded_property_filters`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchFilter {
+    /// Restrict results to direct children of this parent block.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Restrict results to blocks carrying every tag in this list
+    /// (`ALL` semantics — see `fts::search_fts`).
+    #[serde(default)]
+    pub tag_ids: Vec<String>,
+    /// FEAT-3p4 — restrict to blocks whose owning page lives in this
+    /// space. Empty string is treated as "no match" by the SQL path
+    /// (returns an empty page), matching pre-bootstrap callers that
+    /// pass `''`.
+    #[serde(default)]
+    pub space_id: Option<String>,
+}
+
+/// Response row for [`search_blocks_inner`].
+///
+/// Mirrors [`ActiveBlockRow`] column-for-column so the wire format is a
+/// strict superset (every field in `ActiveBlockRow` is reproduced
+/// verbatim) and adds `snippet` — the FTS5 [`snippet`] window with
+/// literal `<mark>...</mark>` boundaries on every match span. The
+/// frontend parses the markers into React nodes (no
+/// `dangerouslySetInnerHTML`); see `pending/PEND-50-search-vscode-ux.md`
+/// for the renderer contract.
+///
+/// PEND-55 will append `match_offsets: Vec<MatchOffset>` for the
+/// regex/whole-word offset rendering path, also with
+/// `#[serde(default)]`.
+///
+/// [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct SearchBlockRow {
+    pub id: crate::ulid::ActiveBlockId,
+    pub block_type: String,
+    pub content: Option<String>,
+    pub parent_id: Option<String>,
+    pub position: Option<i64>,
+    pub deleted_at: Option<String>,
+    pub todo_state: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
+    pub page_id: Option<String>,
+    /// FTS5 `snippet()` window for the matched block. `None` when the
+    /// match has no content snippet (e.g. a page-title-only hit on a
+    /// block with `content IS NULL`). Contains literal `<mark>` /
+    /// `</mark>` boundaries around each match span — the frontend
+    /// parses these as React nodes and never invokes
+    /// `dangerouslySetInnerHTML`.
+    #[serde(default)]
+    pub snippet: Option<String>,
+}
+
 /// Full-text search across block content using FTS5.
 ///
 /// Returns an empty page if the query is blank. Otherwise delegates to
 /// [`fts::search_fts`] with cursor pagination.
 ///
-/// FEAT-3 Phase 4 — `space_id` is required (not optional). The filter is
-/// threaded through `fts::search_fts` so the FTS5 hits are restricted to
-/// blocks whose owning page carries `space = ?space_id`. The MCP path
-/// (`mcp::tools_ro::handle_search`) requires the agent to thread its
-/// active space too — see the `search` tool's input schema.
-#[instrument(skip(pool, tag_ids), err)]
+/// PEND-50 Phase 0 — the previous positional `parent_id` / `tag_ids` /
+/// `space_id` args are bundled into [`SearchFilter`]. A
+/// default-constructed `SearchFilter` reproduces the pre-PEND-50
+/// "no filter" behaviour (apart from `space_id`, which the FEAT-3p4
+/// path still requires the caller to supply).
+///
+/// FEAT-3 Phase 4 — `filter.space_id` is required (not optional). The
+/// filter is threaded through `fts::search_fts` so the FTS5 hits are
+/// restricted to blocks whose owning page carries `space =
+/// ?space_id`. The MCP path (`mcp::tools_ro::handle_search`) requires
+/// the agent to thread its active space too — see the `search` tool's
+/// input schema.
+#[instrument(skip(pool, filter), err)]
 pub async fn search_blocks_inner(
     pool: &SqlitePool,
     query: String,
     cursor: Option<String>,
     limit: Option<i64>,
-    parent_id: Option<String>,
-    tag_ids: Option<Vec<String>>,
-    space_id: String,
-) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    filter: SearchFilter,
+) -> Result<PageResponse<SearchBlockRow>, AppError> {
     if query.trim().is_empty() {
         return Ok(PageResponse {
             items: vec![],
@@ -146,13 +228,18 @@ pub async fn search_blocks_inner(
         });
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
+    let tag_ids_slice: Option<&[String]> = if filter.tag_ids.is_empty() {
+        None
+    } else {
+        Some(filter.tag_ids.as_slice())
+    };
     fts::search_fts(
         pool,
         &query,
         &page,
-        parent_id.as_deref(),
-        tag_ids.as_deref(),
-        Some(space_id.as_str()),
+        filter.parent_id.as_deref(),
+        tag_ids_slice,
+        filter.space_id.as_deref(),
     )
     .await
 }
@@ -454,20 +541,26 @@ pub async fn get_status(
 }
 
 /// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
+///
+/// PEND-50 Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
+/// into [`SearchFilter`] so the wrapper stays well under the
+/// `tauri-specta` 10-arg ceiling as follow-up plans append filter
+/// fields (`#[serde(default)]` keeps wire compat). The hand-written
+/// TS wrapper in `src/lib/tauri.ts` keeps the public API at
+/// `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
+/// into the struct only at the IPC boundary, mirroring the
+/// [`ExtraQueryFilters`] precedent on [`query_by_property`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub async fn search_blocks(
     pool: State<'_, ReadPool>,
     query: String,
     cursor: Option<String>,
     limit: Option<i64>,
-    parent_id: Option<String>,
-    tag_ids: Option<Vec<String>>,
-    space_id: String,
-) -> Result<PageResponse<ActiveBlockRow>, AppError> {
-    search_blocks_inner(&pool.0, query, cursor, limit, parent_id, tag_ids, space_id)
+    filter: SearchFilter,
+) -> Result<PageResponse<SearchBlockRow>, AppError> {
+    search_blocks_inner(&pool.0, query, cursor, limit, filter)
         .await
         .map_err(sanitize_internal_error)
 }

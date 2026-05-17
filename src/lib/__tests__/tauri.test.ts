@@ -585,7 +585,11 @@ describe('removeTag', () => {
 describe('searchBlocks', () => {
   const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
-  it('invokes search_blocks with all nulls when no optional params given', async () => {
+  // PEND-50 Phase 0 — the IPC payload is now a struct: `{ query, cursor, limit, filter }`
+  // where `filter` carries the previously-positional `parentId`, `tagIds`, and
+  // `spaceId`. The wrapper's public API stays flat — these tests verify the
+  // marshalling at the IPC boundary.
+  it('invokes search_blocks with default-shaped filter when no optional params given', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     const result = await searchBlocks({ query: 'hello', spaceId: 'TEST_SPACE_01' })
@@ -595,14 +599,16 @@ describe('searchBlocks', () => {
       query: 'hello',
       cursor: null,
       limit: null,
-      parentId: null,
-      tagIds: null,
-      spaceId: 'TEST_SPACE_01',
+      filter: {
+        parentId: null,
+        tagIds: [],
+        spaceId: 'TEST_SPACE_01',
+      },
     })
     expect(result).toEqual(emptyPage)
   })
 
-  it('passes all optional parameters through', async () => {
+  it('passes all optional parameters through into the filter struct', async () => {
     const pageResp = {
       items: [
         {
@@ -612,6 +618,7 @@ describe('searchBlocks', () => {
           parent_id: null,
           position: null,
           deleted_at: null,
+          snippet: null,
         },
       ],
       next_cursor: 'next123',
@@ -631,18 +638,41 @@ describe('searchBlocks', () => {
       query: 'found',
       cursor: 'cursor123',
       limit: 25,
-      parentId: null,
-      tagIds: null,
-      spaceId: 'TEST_SPACE_01',
+      filter: {
+        parentId: null,
+        tagIds: [],
+        spaceId: 'TEST_SPACE_01',
+      },
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId verbatim to the binding inside `filter` (FEAT-3 Phase 4)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    const filter = args['filter'] as Record<string, unknown>
+    expect(filter['spaceId']).toBe('SPACE_42')
+  })
+
+  it('marshals parentId and tagIds into the filter struct', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await searchBlocks({
+      query: 'q',
+      parentId: 'PAGE1',
+      tagIds: ['TAG1', 'TAG2'],
+      spaceId: 'SPACE_42',
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: 'q',
+      cursor: null,
+      limit: null,
+      filter: {
+        parentId: 'PAGE1',
+        tagIds: ['TAG1', 'TAG2'],
+        spaceId: 'SPACE_42',
+      },
+    })
   })
 })
 

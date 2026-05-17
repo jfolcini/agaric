@@ -3054,3 +3054,235 @@ async fn reindex_fts_references_multi_row_insert_no_duplicates() {
         );
     }
 }
+
+// ======================================================================
+// PEND-50 Phase 1 — `snippet()` column tests
+// ======================================================================
+//
+// These tests pin the wire shape of `SearchBlockRow.snippet` to the
+// FTS5 `snippet()` window with literal `<mark>` / `</mark>` markers.
+// The frontend renders them as React nodes (parsing the literal
+// markers); NEVER as `dangerouslySetInnerHTML`. Any change here must
+// be paired with a frontend renderer change.
+//
+// The window constant is `32` (trigrams) — see
+// `pending/PEND-50-search-vscode-ux.md` "Edge cases (locked in)" for
+// the tuning policy; the "snippet length tuning" test below is the
+// benchmark anchor.
+
+#[tokio::test]
+async fn snippet_returns_paired_mark_boundaries_on_content_match() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "the wonderful searchable thing",
+        None,
+        Some(0),
+    )
+    .await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let results = search_fts(&pool, "wonderful", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(results.items.len(), 1, "expected exactly one match");
+    let snippet = results.items[0]
+        .snippet
+        .as_deref()
+        .expect("snippet() must produce some text for a content match");
+    let opens = snippet.matches("<mark>").count();
+    let closes = snippet.matches("</mark>").count();
+    assert!(
+        opens >= 1,
+        "snippet must contain at least one <mark> opener, got: {snippet:?}"
+    );
+    assert_eq!(
+        opens, closes,
+        "every <mark> opener must have a matching </mark> closer, got: {snippet:?}"
+    );
+    assert!(
+        snippet.contains("<mark>wonderful</mark>"),
+        "expected the match span to be wrapped, got: {snippet:?}"
+    );
+}
+
+#[tokio::test]
+async fn snippet_for_null_content_block_renders_no_match_span() {
+    let (pool, _dir) = test_pool().await;
+    // A block with NULL content can still be indexed by FTS via its
+    // tag/page-ref references (page-title-only hits). We approximate
+    // the shape here by inserting a content block whose stripped
+    // representation is empty after all references resolve to nothing.
+    insert_block_with_null_content(&pool, BLOCK_A, "content").await;
+    crate::fts::update_fts_for_block(&pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    // A query that wouldn't match the block at all should still
+    // produce zero items (the FTS row is empty/missing).
+    let results = search_fts(&pool, "absent", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        results.items.len(),
+        0,
+        "a NULL-content block must not falsely match an unrelated query"
+    );
+}
+
+#[tokio::test]
+async fn snippet_preserves_literal_lt_and_amp_in_source_content() {
+    let (pool, _dir) = test_pool().await;
+    // The frontend renderer must escape these characters as text on
+    // React's side; the backend must not double-escape or mangle them.
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "if a < b && c then findme",
+        None,
+        Some(0),
+    )
+    .await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let results = search_fts(&pool, "findme", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(results.items.len(), 1, "expected exactly one match");
+    let snippet = results.items[0].snippet.as_deref().unwrap_or("");
+    // FTS5 does not HTML-escape; the raw characters survive verbatim.
+    assert!(
+        snippet.contains('<') && snippet.contains('&'),
+        "expected literal '<' and '&' to survive verbatim, got: {snippet:?}"
+    );
+}
+
+#[tokio::test]
+async fn snippet_for_long_content_returns_windowed_output() {
+    let (pool, _dir) = test_pool().await;
+    // Build a ~1000-char body with one targeted match in the middle.
+    // The 32-trigram window must clip the surrounding context — a
+    // useful regression baseline if a future plan re-tunes the
+    // constant.
+    let prefix = "padding ".repeat(70); // ~560 chars
+    let suffix = " trailing".repeat(50); // ~450 chars
+    let body = format!("{prefix} uniquely-targetable {suffix}");
+    assert!(body.len() >= 1000, "fixture body must exceed 1000 chars");
+    insert_block(&pool, BLOCK_A, "content", &body, None, Some(0)).await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let results = search_fts(&pool, "uniquely-targetable", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(results.items.len(), 1, "expected exactly one match");
+    let snippet = results.items[0]
+        .snippet
+        .as_deref()
+        .expect("snippet must be produced");
+    // PEND-50 baseline: the 32-trigram window plus ellipsis must keep
+    // the output well under the source body length.
+    assert!(
+        snippet.len() < 400,
+        "snippet must be windowed, got len={} for body of len {}: {snippet:?}",
+        snippet.len(),
+        body.len(),
+    );
+    assert!(
+        snippet.contains("<mark>"),
+        "windowed snippet must still contain the match span: {snippet:?}"
+    );
+}
+
+#[tokio::test]
+async fn snippet_with_multiple_matches_contains_at_least_one_pair() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "alpha alpha alpha alpha alpha",
+        None,
+        Some(0),
+    )
+    .await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let results = search_fts(&pool, "alpha", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(results.items.len(), 1, "expected exactly one matched block");
+    let snippet = results.items[0]
+        .snippet
+        .as_deref()
+        .expect("snippet must be produced");
+    let opens = snippet.matches("<mark>").count();
+    let closes = snippet.matches("</mark>").count();
+    assert!(
+        opens >= 1,
+        "multi-match block must include at least one <mark> pair, got: {snippet:?}"
+    );
+    assert_eq!(
+        opens, closes,
+        "every <mark> opener must have a matching </mark> closer in a multi-match snippet"
+    );
+}
+
+#[tokio::test]
+async fn snippet_window_constant_produces_readable_output_on_representative_sample() {
+    // PEND-50 "Snippet length tuning" anchor — pins the perceived
+    // utility of the snippet window. If the constant (`32`) is bumped
+    // or the trigram-tokenizer behaviour changes, this test must be
+    // updated together. Today, on a mid-length sentence with one
+    // match, the windowed snippet must:
+    //   1. Contain the match span (non-degenerate window).
+    //   2. Contain at least one non-marker character on each side of
+    //      the match span (a "readable" window — the user can see
+    //      surrounding context, not just the highlighted word).
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "the quick brown fox jumps over the lazy dog under the bridge",
+        None,
+        Some(0),
+    )
+    .await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let results = search_fts(&pool, "jumps", &page, None, None, None)
+        .await
+        .unwrap();
+    let snippet = results.items[0]
+        .snippet
+        .as_deref()
+        .expect("snippet must be produced for a content match");
+    let mark_start = snippet
+        .find("<mark>")
+        .expect("snippet must contain a match span");
+    let mark_end = snippet
+        .find("</mark>")
+        .expect("snippet must close the match span");
+    // Some surrounding context before/after the highlighted span —
+    // at least one non-marker character on each side (allowing the
+    // FTS5 truncation ellipsis to count as context).
+    let before = &snippet[..mark_start];
+    let after = &snippet[mark_end + "</mark>".len()..];
+    assert!(
+        before.chars().any(|c| !c.is_whitespace()),
+        "snippet must include non-empty leading context: {snippet:?}"
+    );
+    assert!(
+        after.chars().any(|c| !c.is_whitespace()),
+        "snippet must include non-empty trailing context: {snippet:?}"
+    );
+}

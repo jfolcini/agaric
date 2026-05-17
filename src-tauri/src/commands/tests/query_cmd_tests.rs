@@ -48,21 +48,22 @@ async fn get_backlinks_returns_linked_blocks() {
 // search_blocks_inner tests
 // ======================================================================
 
+/// Helper: a [`SearchFilter`] scoped to [`TEST_SPACE_ID`] with no other
+/// predicates. Mirrors today's "default filter + space" callsite shape.
+fn test_space_filter() -> SearchFilter {
+    SearchFilter {
+        space_id: Some(TEST_SPACE_ID.into()),
+        ..Default::default()
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_blocks_inner_empty_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(
-        &pool,
-        "".into(),
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
-    )
-    .await
-    .unwrap();
+    let result = search_blocks_inner(&pool, "".into(), None, None, test_space_filter())
+        .await
+        .unwrap();
     assert_eq!(
         result.items.len(),
         0,
@@ -75,17 +76,9 @@ async fn search_blocks_inner_empty_query_returns_empty() {
 async fn search_blocks_inner_whitespace_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(
-        &pool,
-        "   ".into(),
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
-    )
-    .await
-    .unwrap();
+    let result = search_blocks_inner(&pool, "   ".into(), None, None, test_space_filter())
+        .await
+        .unwrap();
     assert_eq!(
         result.items.len(),
         0,
@@ -112,17 +105,9 @@ async fn search_blocks_inner_finds_indexed_block() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(
-        &pool,
-        "searchable".into(),
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
-    )
-    .await
-    .unwrap();
+    let result = search_blocks_inner(&pool, "searchable".into(), None, None, test_space_filter())
+        .await
+        .unwrap();
     assert_eq!(result.items.len(), 1, "should find one matching block");
     assert_eq!(result.items[0].id, "SRCH1", "found block should be SRCH1");
 }
@@ -134,17 +119,9 @@ async fn search_blocks_inner_no_results_for_unindexed_term() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(
-        &pool,
-        "cherry".into(),
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
-    )
-    .await
-    .unwrap();
+    let result = search_blocks_inner(&pool, "cherry".into(), None, None, test_space_filter())
+        .await
+        .unwrap();
     assert_eq!(
         result.items.len(),
         0,
@@ -183,17 +160,9 @@ async fn search_blocks_with_parent_id_filter() {
 
     // Without filter — both should appear
     assign_all_to_test_space(&pool).await;
-    let all = search_blocks_inner(
-        &pool,
-        "searchable".into(),
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
-    )
-    .await
-    .unwrap();
+    let all = search_blocks_inner(&pool, "searchable".into(), None, None, test_space_filter())
+        .await
+        .unwrap();
     assert_eq!(all.items.len(), 2, "no filter: should find both blocks");
 
     // With parent_id filter — only block under PAGE_A
@@ -202,9 +171,11 @@ async fn search_blocks_with_parent_id_filter() {
         "searchable".into(),
         None,
         None,
-        Some("PAGE_A".into()),
-        None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        SearchFilter {
+            parent_id: Some("PAGE_A".into()),
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -254,17 +225,9 @@ async fn search_blocks_with_tag_filter() {
 
     // Without tag filter — all three
     assign_all_to_test_space(&pool).await;
-    let all = search_blocks_inner(
-        &pool,
-        "findme".into(),
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
-    )
-    .await
-    .unwrap();
+    let all = search_blocks_inner(&pool, "findme".into(), None, None, test_space_filter())
+        .await
+        .unwrap();
     assert_eq!(
         all.items.len(),
         3,
@@ -277,9 +240,11 @@ async fn search_blocks_with_tag_filter() {
         "findme".into(),
         None,
         None,
-        None,
-        Some(vec!["TAG_X".into()]),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        SearchFilter {
+            tag_ids: vec!["TAG_X".into()],
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -297,9 +262,11 @@ async fn search_blocks_with_tag_filter() {
         "findme".into(),
         None,
         None,
-        None,
-        Some(vec!["TAG_X".into(), "TAG_Y".into()]),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        SearchFilter {
+            tag_ids: vec!["TAG_X".into(), "TAG_Y".into()],
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -339,17 +306,9 @@ async fn search_blocks_without_filters() {
 
     // No filters (backward compatible) — all matching results returned
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(
-        &pool,
-        "universal".into(),
-        None,
-        None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
-    )
-    .await
-    .unwrap();
+    let result = search_blocks_inner(&pool, "universal".into(), None, None, test_space_filter())
+        .await
+        .unwrap();
     assert_eq!(
         result.items.len(),
         2,
@@ -362,9 +321,11 @@ async fn search_blocks_without_filters() {
         "universal".into(),
         None,
         None,
-        None,
-        Some(vec![]),
-        TEST_SPACE_ID.into(),
+        SearchFilter {
+            tag_ids: vec![],
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();

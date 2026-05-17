@@ -25,6 +25,8 @@ export type {
   PropertyDefinition,
   PurgeResponse,
   RestoreResponse,
+  SearchBlockRow,
+  SearchFilter,
   SortDir,
   SpaceId,
   SpaceRow,
@@ -64,6 +66,7 @@ import type {
   PropertyDefinition,
   PurgeResponse,
   RestoreResponse,
+  SearchBlockRow,
   SpaceRow,
   SpaceScope,
   StatusInfo,
@@ -566,6 +569,16 @@ export async function getBlockHistory(params: {
  * pre-bootstrap callers should pass `''` (empty string), which the
  * backend treats as a no-match (returns an empty page) rather than
  * crashing on a runtime null deref.
+ *
+ * PEND-50 Phase 0 — `parentId`, `tagIds`, `spaceId` are marshalled into
+ * the backend's `SearchFilter` struct at the IPC boundary. The public
+ * API stays flat so existing call sites (e.g. `SearchPanel.tsx`) do
+ * not need to change. Follow-up plans (PEND-51 / 54 / 55 / 53) append
+ * new filter fields here; the wrapper forwards each into the struct.
+ *
+ * PEND-50 Phase 1 — responses now carry `SearchBlockRow` (which adds
+ * `snippet: string | null`). The shape is a strict superset of
+ * `BlockRow`, so existing consumers compile unchanged.
  */
 export async function searchBlocks(params: {
   query: string
@@ -574,16 +587,13 @@ export async function searchBlocks(params: {
   cursor?: string | undefined
   limit?: SafeLimit | undefined
   spaceId: string
-}): Promise<PageResponse<BlockRow>> {
+}): Promise<PageResponse<SearchBlockRow>> {
   return unwrap(
-    await commands.searchBlocks(
-      params.query,
-      params.cursor ?? null,
-      params.limit ?? null,
-      params.parentId ?? null,
-      params.tagIds ?? null,
-      params.spaceId,
-    ),
+    await commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
+      parentId: params.parentId ?? null,
+      tagIds: params.tagIds ?? [],
+      spaceId: params.spaceId,
+    }),
   )
 }
 

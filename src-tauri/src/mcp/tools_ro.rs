@@ -663,11 +663,16 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         args.query,
         args.cursor,
         limit,
-        parent_id,
-        tag_ids,
-        // FEAT-3p4 — `search_blocks_inner` requires a space ULID; the
-        // agent threads its active space (see `SearchArgs::space_id`).
-        args.space_id,
+        crate::commands::SearchFilter {
+            parent_id,
+            tag_ids: tag_ids.unwrap_or_default(),
+            // FEAT-3p4 — `search_blocks_inner` requires a space ULID;
+            // the agent threads its active space (see
+            // `SearchArgs::space_id`). PEND-50 Phase 0 — the wire
+            // shape changed to a `SearchFilter` struct but the MCP
+            // contract is unchanged.
+            space_id: Some(args.space_id),
+        },
     )
     .await?;
     // Truncate each result's content to SEARCH_SNIPPET_CAP chars. We

@@ -327,6 +327,13 @@ Baseline performance at 100K blocks (established by benchmarks):
 5. **Materializer error propagation:** `ApplyOp` / `BatchApplyOps` tasks must propagate errors for retry, not swallow with `.ok()`. Background cache rebuild errors must bubble up so retry logic can kick in.
 6. **Multi-row INSERT for bulk data:** use chunked `INSERT INTO ... VALUES (?,?,...), (?,?,...)` with a `MAX_SQL_PARAMS` constant (SQLite limit ~999, chunk size depends on columns-per-row). See `apply_snapshot`.
 
+## Search & FTS
+
+Architectural contract for the search surface. Detail and rationale live in [`docs/architecture/search.md`](docs/architecture/search.md); the invariants below are mandatory.
+
+1. **`SearchFilter` is the canonical extension struct for `search_blocks`.** New filter dimensions land as additional fields on `SearchFilter` in `src-tauri/src/commands/queries.rs` — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on this surface; the struct keeps the command signature at four arguments (`pool`, `query`, `cursor`, `limit`, `filter`). Every new field MUST carry `#[serde(default)]` so older frontend bindings stay backward-compatible across the regen cycle. Mirrors the `ExtraQueryFilters` precedent in `src-tauri/src/commands/mod.rs`.
+2. **`SearchBlockRow.snippet` carries literal `<mark>` boundaries from FTS5.** The boundaries are opaque marker strings, not HTML. The frontend never feeds this field to `dangerouslySetInnerHTML`. Renderers split the string on the literal marker pairs and emit alternating React text nodes and `<mark>` elements; React escapes any stray `<`, `&`, or HTML-shaped content as text. No DOMPurify dep, no XSS surface. New rendering paths consuming `snippet` must follow the same pattern.
+
 ## Android
 
 - **Status:** Both debug and release APKs build, install, and launch successfully.

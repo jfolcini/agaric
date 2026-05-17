@@ -194,6 +194,7 @@ export const common: Record<string, string> = {
   'common.expand': 'Expand {{section}}',
   'common.collapse': 'Collapse {{section}}',
   'common.empty': '(empty)',
+  'common.untitled': 'Untitled',
   'accessibility.skipToMain': 'Skip to main content',
   'sidebar.label': 'Sidebar',
   'ui.close': 'Close',

@@ -8,6 +8,7 @@ mod history_cmd_tests;
 mod page_cmd_tests;
 mod property_cmd_tests;
 mod query_cmd_tests;
+mod search_blocks_struct_tests;
 mod snapshot_tests;
 mod status_cmd_tests;
 mod sync_cmd_tests;

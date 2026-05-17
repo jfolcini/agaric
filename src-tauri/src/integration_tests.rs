@@ -1513,9 +1513,10 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         "quantum".into(),
         None,
         None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
+        crate::commands::SearchFilter {
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -1547,9 +1548,10 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         "quantum".into(),
         None,
         None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
+        crate::commands::SearchFilter {
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -1564,9 +1566,10 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         "classical".into(),
         None,
         None,
-        None,
-        None,
-        TEST_SPACE_ID.into(),
+        crate::commands::SearchFilter {
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
