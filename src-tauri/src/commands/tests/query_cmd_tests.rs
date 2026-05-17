@@ -806,9 +806,15 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
     )
     .await
     .unwrap();
-    set_due_date_inner(&pool, DEV, &mat, b1.id.clone(), Some("2025-06-15".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into(),
+        Some("2025-06-15".into()),
+    )
+    .await
+    .unwrap();
 
     let b2 = create_block_inner(
         &pool,
@@ -821,9 +827,15 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
     )
     .await
     .unwrap();
-    set_due_date_inner(&pool, DEV, &mat, b2.id.clone(), Some("2025-12-31".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone().into(),
+        Some("2025-12-31".into()),
+    )
+    .await
+    .unwrap();
 
     // Query all blocks with due_date (no value filter)
     let all = query_by_property_inner(
@@ -1293,9 +1305,15 @@ async fn query_by_property_value_date_range() {
     )
     .await
     .unwrap();
-    set_due_date_inner(&pool, DEV, &mat, b1.id.clone(), Some("2026-01-01".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into(),
+        Some("2026-01-01".into()),
+    )
+    .await
+    .unwrap();
     let b2 = create_block_inner(
         &pool,
         DEV,
@@ -1307,9 +1325,15 @@ async fn query_by_property_value_date_range() {
     )
     .await
     .unwrap();
-    set_due_date_inner(&pool, DEV, &mat, b2.id.clone(), Some("2026-01-15".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone().into(),
+        Some("2026-01-15".into()),
+    )
+    .await
+    .unwrap();
     let b3 = create_block_inner(
         &pool,
         DEV,
@@ -1321,9 +1345,15 @@ async fn query_by_property_value_date_range() {
     )
     .await
     .unwrap();
-    set_due_date_inner(&pool, DEV, &mat, b3.id.clone(), Some("2026-02-01".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        b3.id.clone().into(),
+        Some("2026-02-01".into()),
+    )
+    .await
+    .unwrap();
 
     let result = query_by_property_inner(
         &pool,

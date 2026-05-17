@@ -4,7 +4,7 @@
 
 The user has approved adopting **iroh** as the sync transport layer to enable cross-WiFi sync (cellular ↔ home, work ↔ home, etc.). iroh is a P2P networking stack built on QUIC with built-in NAT traversal, hole-punching, and relay fallback. Pure Rust, MIT/Apache-2.0 dual-licensed, actively maintained by n0.
 
-**Scope: transport only.** iroh replaces the existing mDNS+WebSocket+TLS+TOFU+pairing stack. The merge layer (diffy, conflict copies, `is_conflict` schema) stays unchanged — that's PEND-09 (separate, independent decision). The op-batch protocol shapes (`HeadExchange`, `OpBatch`, `SyncComplete`, etc.) stay; they just ride over iroh's QUIC streams instead of `tokio-tungstenite`.
+**Scope: transport only.** iroh replaces the existing mDNS+WebSocket+TLS+TOFU+pairing stack. The merge layer (diffy, conflict copies, `is_conflict` schema) stays unchanged — a future CRDT migration is a separate, independent decision (not currently scoped in `pending/`). The op-batch protocol shapes (`HeadExchange`, `OpBatch`, `SyncComplete`, etc.) stay; they just ride over iroh's QUIC streams instead of `tokio-tungstenite`.
 
 **Rationale:** the current stack is LAN-only by design. Users cannot sync between a phone on cellular and a desktop at home without being on the same WiFi. iroh solves this with transparent NAT traversal and relay fallback (n0's relay servers as a safety net when direct connection fails). The threat model doesn't change — still single-user, no adversaries, TOFU-style device pairing.
 
@@ -41,7 +41,7 @@ iroh is a modular P2P stack. Agaric would consume:
 
 ## Phased plan
 
-### Phase 0 — Spike (2 weeks, hard time-box)
+### Phase 0 — Spike (3 weeks / 15-21 person-days, hard time-box)
 
 Prototype two iroh nodes on two machines, exchange synthetic `OpBatch` payloads end-to-end, verify tickets work, test across-LAN and across-NAT.
 
@@ -65,7 +65,7 @@ Prototype two iroh nodes on two machines, exchange synthetic `OpBatch` payloads 
 
 **Kill criteria — measurable, no subjective bars. Any one fires → kill the migration.**
 
-1. **(a) iroh wire-format + minor-version churn — confirm version-pinning strategy in spike.** iroh is at v1.x (`v1.0.0-rc.0` published 2026-05-07; treated as latest stable by the project). Semver governs wire-format stability from this line onward. The spike's job is the lighter-weight task of (i) propose a concrete pin (e.g., `iroh = "=1.x.y"` with a published commit hash) and a re-evaluation cadence ("we revisit at every minor"), (ii) sanity-check the v1.0 release notes for any post-1.0 wire-format break announcements before commit. Kill only if a documented wire-format break with no upgrade path appears upstream while the spike is in flight.
+1. **(a) iroh wire-format + minor-version churn.** Verify in spike that a stable `iroh 1.x.y` is published on crates.io and the spike compiles + runs against that pin (no 0.x dependency leaks). The spike must produce (i) the concrete `iroh = "=1.x.y"` pin and the commit hash, (ii) a documented re-evaluation cadence for minor bumps, (iii) a scan of the v1.0 release notes for any post-1.0 wire-format break announcements. **Kill if any of:** iroh is still 0.x at spike completion; a documented wire-format break with no upgrade path lands between the pin and the chosen release; the spike cannot compile against a stable `1.x.y` for any reason.
 2. **(b) Transport handshake works end-to-end.** Two iroh nodes on the same LAN connect and exchange a 1 MB `OpBatch` payload in **<2 seconds**. Across NAT (one node behind home NAT, the other on public internet) connect and exchange same payload via relay in **<5 seconds**.
 3. **(c) Compatible license.** iroh + iroh-blobs are MIT or Apache-2.0 (compatible with Agaric's GPL-3.0-or-later). Any GPL-incompatible deps in the iroh tree → kill.
 4. **(d) Ticket flow is human-acceptable.** A ticket can be shared via QR code (visual length, scannable on a phone screen) and via text paste (length, no whitespace gotchas). **If tickets are 500+ chars or break on paste, kill** (pairing UX gap forces a fallback design).
@@ -125,9 +125,9 @@ Delete the old transport stack.
 | `src-tauri/src/sync_daemon/android_multicast.rs` (JNI multicast lock) | **227** |
 | `src-tauri/src/sync_cert.rs` (TLS cert generation/persistence) | **786** |
 | `src-tauri/src/pairing.rs` (passphrase + QR) | **625** |
-| `src-tauri/src/sync_files.rs` (root file) | **1,159** |
-| `src-tauri/src/sync_daemon/tests.rs` | **4,028** |
-| `src-tauri/src/sync_files/tests.rs` | **2,180** |
+| `src-tauri/src/sync_files.rs` (root file) | **1,326** |
+| `src-tauri/src/sync_daemon/tests.rs` | **3,797** |
+| `src-tauri/src/sync_files/tests.rs` | **2,368** |
 
 `Cargo.toml`: remove `mdns-sd`, `tokio-tungstenite`, `rustls`, `tokio-rustls`, `rcgen`, `x509-parser`, `sha2` (used **only** for cert-pin hashing in `sync_net/tls.rs` + `sync_net/websocket.rs` — verified; blake3 stays for op-log hash chain), `qrcode`, `if-addrs`. Add `iroh`, `iroh-blobs` (and any iroh-net split-out — verify the actual crate names + count in spike).
 
@@ -137,7 +137,7 @@ Delete the per-file test modules (`#[cfg(test)] mod tests`) inside each deleted 
 
 **Reversibility:** none. Commit only after Phase 2 stabilizes.
 
-**Total LOC deleted: ~14,616** (including `sync_daemon/tests.rs` ~4,028 LOC and `sync_files/tests.rs` ~2,180 LOC). **Added: ~2-3k LOC** (iroh module + integration glue). **Net delete: ~12k LOC.**
+**Total LOC deleted: ~14,740** (including `sync_daemon/tests.rs` ~3,797 LOC and `sync_files/tests.rs` ~2,368 LOC; numbers refreshed 2026-05-17 via `wc -l`). **Added: ~2-3k LOC** (iroh module + integration glue). **Net delete: ~12k LOC.**
 
 ### Phase 4 (optional) — Drop the WebSocket fallback (1 release later)
 
@@ -173,14 +173,13 @@ One full release after Phase 2, remove WebSocket fallback entirely. Delete `tran
 | **CI integration testing for iroh** | iroh integration tests need network access. The existing CI runs nextest on linux-only; verify whether iroh tests run there or whether they need to be marked `#[ignore]` and run only locally. May need a separate "iroh-network-tests" CI job. |
 | **`SecretKey` storage and reinstall flow** | iroh derives `NodeId` from a `SecretKey`. Spike must verify: where does iroh keep the key by default? Can it be persisted via the existing `keyring` crate (preferred — same backend as OAuth tokens)? Is loss of key on reinstall the same UX as today's TOFU re-pin? |
 
-## Sequencing with PEND-09 (CRDT)
+## Sequencing with a future CRDT migration
 
-iroh (transport) and CRDT (merge) are **independent in design** — iroh swaps the transport, CRDT swaps the merge engine. But a solo maintainer should not run both at once.
+A future CRDT migration (merge engine swap) is **independent in design** — iroh swaps the transport, CRDT would swap the merge engine. But a solo maintainer should not run both at once. CRDT is not currently scoped in `pending/`; this section is forward-looking guidance for whenever it gets filed.
 
 **Recommended order: iroh first, CRDT after.**
 
-- **Why:** iroh Phase 1+2 lets you observe sync flowing over a new transport on real networks while the merge engine is still the well-tested diffy. If iroh has a bug, debug it without simultaneously debugging Loro. Then CRDT migration runs against a known-stable transport.
-- **Calendar:** iroh Phases 0-3 ≈ 7-9 weeks. CRDT Phases 0-3 ≈ 11-15 weeks. Sequential total: ~18-24 weeks (~5-6 months).
+- **Why:** iroh Phase 1+2 lets you observe sync flowing over a new transport on real networks while the merge engine is still the well-tested diffy. If iroh has a bug, debug it without simultaneously debugging the new merge engine.
 
 **Alternative order: CRDT first, iroh after.**
 
@@ -225,21 +224,21 @@ iroh (transport) and CRDT (merge) are **independent in design** — iroh swaps t
 - Phase 0 (spike): **15-21 days**
 - Phase 1 (shadow): **20-25 days**
 - Phase 2 (cutover): **15-21 days**
-- Phase 3 (cleanup, ~14.6k LOC including tests): **20-30 days**
+- Phase 3 (cleanup, ~14.7k LOC including tests): **14-21 days**
 - Phase 4 (optional): **3-5 days** (unchanged)
 
-**Total: 70-97 person-days (~10-14 person-weeks) for Phases 0-3.**
+**Total: 64-88 person-days (~9-13 person-weeks) for Phases 0-3.**
 
-**Calendar (solo maintainer): 14-19 weeks (~3.5-5 months) for Phases 0-3.**
+**Calendar (solo maintainer): 13-18 weeks (~3-4.5 months) for Phases 0-3.**
 
-This is a meaningful project. Build in a 2-3 week buffer that's invisible inside individual phase windows but visible in the overall plan. Sequencing with PEND-09 (CRDT, also 11-15 weeks) means the combined "iroh-then-CRDT" path is **~28-36 weeks of focused engineering** — most of a year for a solo maintainer. Decide accordingly.
+This is a meaningful project. Build in a 2-3 week buffer that's invisible inside individual phase windows but visible in the overall plan.
 
 ## Total impact
 
-- **Net LOC: ~12k deleted** (~14.6k removed including test files, ~2-3k added).
+- **Net LOC: ~12k deleted** (~14.7k removed including test files, ~2-3k added).
 - **Net Cargo deps:** −7 to −9 crates (mdns-sd, tokio-tungstenite, rustls, tokio-rustls, rcgen, x509-parser, sha2-for-cert-pinning, qrcode, if-addrs); +2-3 (iroh stack — verify exact crate names in spike).
 - **User-visible:** cross-WiFi sync; new pairing UX; one-time re-pair during cutover (N-1 prompts for users with N paired devices).
-- **Maintenance dividend:** the `sync_net/` + `sync_daemon/` test corpus (~6.2k LOC) goes away too. This is the largest single test-deletion in the project.
+- **Maintenance dividend:** the `sync_net/` + `sync_daemon/` test corpus (~6.2k LOC) goes away too.
 
 ## Total risk
 

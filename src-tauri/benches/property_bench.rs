@@ -108,7 +108,7 @@ fn bench_set_property(c: &mut Criterion) {
                             &pool,
                             "dev-bench",
                             materializer_ref,
-                            target_id,
+                            target_id.into(),
                             "custom_field".to_string(),
                             Some("value".to_string()),
                             None,
@@ -221,7 +221,7 @@ fn bench_delete_property(c: &mut Criterion) {
                                 &pool,
                                 "dev-bench",
                                 materializer_ref,
-                                target_id.clone(),
+                                target_id.clone().into(),
                                 "deletable".to_string(),
                             )
                             .await
@@ -267,7 +267,7 @@ fn bench_set_todo_state(c: &mut Criterion) {
                             &pool,
                             "dev-bench",
                             materializer_ref,
-                            target_id,
+                            target_id.into(),
                             Some("TODO".to_string()),
                         )
                         .await
@@ -311,7 +311,7 @@ fn bench_set_priority(c: &mut Criterion) {
                             &pool,
                             "dev-bench",
                             materializer_ref,
-                            target_id,
+                            target_id.into(),
                             Some("1".to_string()),
                         )
                         .await
@@ -355,7 +355,7 @@ fn bench_set_due_date(c: &mut Criterion) {
                             &pool,
                             "dev-bench",
                             materializer_ref,
-                            target_id,
+                            target_id.into(),
                             Some("2025-12-31".to_string()),
                         )
                         .await
@@ -399,7 +399,7 @@ fn bench_set_scheduled_date(c: &mut Criterion) {
                             &pool,
                             "dev-bench",
                             materializer_ref,
-                            target_id,
+                            target_id.into(),
                             Some("2025-12-31".to_string()),
                         )
                         .await

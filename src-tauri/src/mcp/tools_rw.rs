@@ -442,11 +442,13 @@ async fn handle_set_property(
     // `set_property_inner` when a `caller_context` is supplied — passing
     // `Some(TOOL_SET_PROPERTY)` keeps the agent-facing error message
     // naming the tool, without duplicating the precheck at this boundary.
+    let active_id =
+        crate::ulid::verify_active(pool, &crate::ulid::BlockId::from_trusted(&block_id)).await?;
     let resp = set_property_inner(
         pool,
         device_id,
         materializer,
-        block_id,
+        active_id,
         args.key,
         args.value_text,
         args.value_num,
@@ -456,7 +458,7 @@ async fn handle_set_property(
         Some(TOOL_SET_PROPERTY),
     )
     .await?;
-    to_tool_result(&resp)
+    to_tool_result(&crate::pagination::BlockRow::from(resp))
 }
 
 async fn handle_add_tag(

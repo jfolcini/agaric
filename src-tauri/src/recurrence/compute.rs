@@ -567,9 +567,15 @@ mod tests_h17_m77 {
         .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-            .await
-            .unwrap();
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone().into(),
+            Some("TODO".into()),
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
         settle().await;
 
@@ -577,7 +583,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone(),
+            block.id.clone().into(),
             Some("2025-06-15".into()),
         )
         .await
@@ -687,9 +693,15 @@ mod tests_h17_m77 {
         mat.flush_background().await.unwrap();
         settle().await;
 
-        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-            .await
-            .unwrap();
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone().into(),
+            Some("TODO".into()),
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
         settle().await;
 
@@ -697,7 +709,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone(),
+            block.id.clone().into(),
             Some("2025-06-15".into()),
         )
         .await
@@ -709,7 +721,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone(),
+            block.id.clone().into(),
             "repeat".into(),
             Some("daily".into()),
             None,
@@ -902,13 +914,13 @@ mod tests_l99_l100 {
             .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_todo_state_inner(pool, DEV, mat, block.id.clone(), Some("TODO".into()))
+        set_todo_state_inner(pool, DEV, mat, block.id.clone().into(), Some("TODO".into()))
             .await
             .unwrap();
         mat.flush_background().await.unwrap();
         settle().await;
 
-        set_due_date_inner(pool, DEV, mat, block.id.clone(), Some(due.into()))
+        set_due_date_inner(pool, DEV, mat, block.id.clone().into(), Some(due.into()))
             .await
             .unwrap();
         mat.flush_background().await.unwrap();
@@ -918,7 +930,7 @@ mod tests_l99_l100 {
             pool,
             DEV,
             mat,
-            block.id.clone(),
+            block.id.clone().into(),
             "repeat".into(),
             Some("daily".into()),
             None,
@@ -960,7 +972,7 @@ mod tests_l99_l100 {
             &pool,
             DEV,
             &mat,
-            id.clone(),
+            id.clone().into(),
             "repeat-seq".into(),
             None,
             Some(3.0),

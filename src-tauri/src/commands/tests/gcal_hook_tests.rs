@@ -83,7 +83,7 @@ async fn set_property_due_date_emits_single_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -105,7 +105,7 @@ async fn set_property_due_date_emits_single_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -146,7 +146,7 @@ async fn set_property_todo_state_emits_single_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -161,9 +161,15 @@ async fn set_property_todo_state_emits_single_dirty_event() {
     // NOW wire the handle — subsequent ops should notify.
     let mut rx = wire_up_handle(&mat);
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
 
     let events = drain_events(&mut rx, 5).await;
     // set_todo_state_inner fires set_property_inner twice in the
@@ -196,7 +202,7 @@ async fn set_property_non_agenda_key_emits_zero_events() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -215,7 +221,7 @@ async fn set_property_non_agenda_key_emits_zero_events() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "assignee".into(),
         Some("alice".into()),
         None,
@@ -255,7 +261,7 @@ async fn delete_property_due_date_emits_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -269,7 +275,7 @@ async fn delete_property_due_date_emits_dirty_event() {
 
     let mut rx = wire_up_handle(&mat);
 
-    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "due_date".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "due_date".into())
         .await
         .unwrap();
 
@@ -303,7 +309,7 @@ async fn edit_block_with_date_emits_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -383,7 +389,7 @@ async fn delete_block_emits_old_only_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -398,7 +404,7 @@ async fn delete_block_emits_old_only_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "scheduled_date".into(),
         None,
         None,
@@ -445,7 +451,7 @@ async fn restore_block_emits_new_only_dirty_event() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,
@@ -499,7 +505,7 @@ async fn no_handle_set_property_commits_cleanly() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due_date".into(),
         None,
         None,

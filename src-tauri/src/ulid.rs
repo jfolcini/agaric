@@ -215,6 +215,26 @@ impl ActiveBlockId {
     }
 }
 
+/// `String → ActiveBlockId` for test fixtures and trusted in-process
+/// conversions (e.g., wiring through `verify_active`'s returned
+/// `ActiveBlockId.into_string()` round-trips, benches that seed known
+/// rows). Bypasses both ULID validation and the DB activeness check —
+/// production code reaching for a fresh `ActiveBlockId` should always
+/// route through [`verify_active`] so the activeness claim is verified
+/// at the call site. Mirror of [`BlockId`]'s implicit conversion.
+impl From<String> for ActiveBlockId {
+    fn from(s: String) -> Self {
+        Self(s.to_ascii_uppercase())
+    }
+}
+
+/// `&str → ActiveBlockId`. Same caveats as the `String` impl above.
+impl From<&str> for ActiveBlockId {
+    fn from(s: &str) -> Self {
+        Self(s.to_ascii_uppercase())
+    }
+}
+
 impl fmt::Display for ActiveBlockId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)

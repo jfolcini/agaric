@@ -1312,7 +1312,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         &pool,
         DEV,
         &mat,
-        block_a.id.clone(),
+        block_a.id.clone().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -1329,7 +1329,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         &pool,
         DEV,
         &mat,
-        block_b.id.clone(),
+        block_b.id.clone().into(),
         "deadline".into(),
         None,
         None,
@@ -1731,7 +1731,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -1779,7 +1779,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
     );
 
     // 5. Delete property
-    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "status".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "status".into())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
@@ -1795,7 +1795,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "importance".into(),
         None,
         Some(1.0),
@@ -2249,7 +2249,7 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
         &pool,
         DEV,
         &mat,
-        w1.as_str().to_owned(),
+        w1.as_str().to_owned().into(),
         "space".into(),
         None,
         None,

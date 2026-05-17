@@ -13,6 +13,8 @@ use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination;
+use crate::pagination::ActiveBlockRow;
+use crate::ulid::{verify_active, ActiveBlockId, BlockId};
 
 use super::sanitize_internal_error;
 use super::*;
@@ -104,7 +106,7 @@ pub async fn set_property_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: ActiveBlockId,
     key: String,
     value_text: Option<String>,
     value_num: Option<f64>,
@@ -112,7 +114,7 @@ pub async fn set_property_inner(
     value_ref: Option<String>,
     value_bool: Option<bool>,
     caller_context: Option<&str>,
-) -> Result<BlockRow, AppError> {
+) -> Result<ActiveBlockRow, AppError> {
     // L-122: when a caller_context is supplied, enforce the
     // exactly-one-value invariant here so the error message can name
     // the caller. Callers that pass `None` keep the legacy behaviour
@@ -146,12 +148,19 @@ pub async fn set_property_inner(
     // `old_affected_dates` half of the `DirtyEvent`.  Skip the
     // extra SELECT when no connector is wired (common in tests).
     let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, block_id.as_str()).await?)
     } else {
         None
     };
     let (block, op_record) = set_property_in_tx(
-        &mut tx, device_id, block_id, &key, value_text, value_num, value_date, value_ref,
+        &mut tx,
+        device_id,
+        block_id.into_string(),
+        &key,
+        value_text,
+        value_num,
+        value_date,
+        value_ref,
         value_bool,
     )
     .await?;
@@ -166,7 +175,7 @@ pub async fn set_property_inner(
     if let Some(snapshot) = gcal_snapshot {
         materializer.notify_gcal_for_op(&op_record, &snapshot);
     }
-    Ok(block)
+    Ok(ActiveBlockRow::from_block_row_unchecked(block))
 }
 
 /// Set the todo state on a block (TODO / DOING / DONE or clear).
@@ -193,9 +202,9 @@ pub async fn set_todo_state_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: ActiveBlockId,
     state: Option<String>,
-) -> Result<BlockRow, AppError> {
+) -> Result<ActiveBlockRow, AppError> {
     if let Some(ref s) = state {
         if s.is_empty() || s.len() > 50 {
             return Err(AppError::Validation(
@@ -237,8 +246,9 @@ pub async fn set_todo_state_inner(
     // FEAT-5i — snapshot pre-mutation agenda-relevant state once for
     // the post-commit `notify_gcal_for_op` call below. Skip the extra
     // SELECT when no connector is wired (common in tests).
+    let block_id_str = block_id.as_str();
     let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, block_id_str).await?)
     } else {
         None
     };
@@ -248,22 +258,23 @@ pub async fn set_todo_state_inner(
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-        block_id
+        block_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
 
-    let _ = existing
-        .as_ref()
-        .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+    let _ = existing.as_ref().ok_or_else(|| {
+        AppError::NotFound(format!("block '{block_id_str}' (not found or deleted)"))
+    })?;
 
     let prev_state = existing.as_ref().and_then(|b| b.todo_state.clone());
     let new_state = state.clone();
 
+    let block_id_owned = block_id.into_string();
     let (result, todo_op) = set_property_in_tx(
         &mut tx,
         device_id,
-        block_id.clone(),
+        block_id_owned.clone(),
         "todo_state",
         state,
         None,
@@ -286,7 +297,7 @@ pub async fn set_todo_state_inner(
             let (_, op) = set_property_in_tx(
                 &mut tx,
                 device_id,
-                block_id.clone(),
+                block_id_owned.clone(),
                 "created_at",
                 None,
                 None,
@@ -302,7 +313,7 @@ pub async fn set_todo_state_inner(
             let (_, op) = set_property_in_tx(
                 &mut tx,
                 device_id,
-                block_id.clone(),
+                block_id_owned.clone(),
                 "created_at",
                 None,
                 None,
@@ -312,7 +323,8 @@ pub async fn set_todo_state_inner(
             )
             .await?;
             tx.enqueue_background(op);
-            let op = delete_property_in_tx(&mut tx, device_id, &block_id, "completed_at").await?;
+            let op =
+                delete_property_in_tx(&mut tx, device_id, &block_id_owned, "completed_at").await?;
             tx.enqueue_background(op);
         }
         // TODO/DOING → DONE: set completed_at
@@ -320,7 +332,7 @@ pub async fn set_todo_state_inner(
             let (_, op) = set_property_in_tx(
                 &mut tx,
                 device_id,
-                block_id.clone(),
+                block_id_owned.clone(),
                 "completed_at",
                 None,
                 None,
@@ -333,9 +345,11 @@ pub async fn set_todo_state_inner(
         }
         // Any → null (un-tasking): clear both
         (Some(_), None) => {
-            let op = delete_property_in_tx(&mut tx, device_id, &block_id, "created_at").await?;
+            let op =
+                delete_property_in_tx(&mut tx, device_id, &block_id_owned, "created_at").await?;
             tx.enqueue_background(op);
-            let op = delete_property_in_tx(&mut tx, device_id, &block_id, "completed_at").await?;
+            let op =
+                delete_property_in_tx(&mut tx, device_id, &block_id_owned, "completed_at").await?;
             tx.enqueue_background(op);
         }
         _ => {} // Same state or other transitions — no timestamp changes
@@ -345,7 +359,7 @@ pub async fn set_todo_state_inner(
     // module — using the in-tx form so the sibling creation rolls back
     // alongside the state change if anything below fails.
     if new_state.as_deref() == Some("DONE") && prev_state.as_deref() != Some("DONE") {
-        crate::recurrence::handle_recurrence_in_tx(&mut tx, device_id, &block_id).await?;
+        crate::recurrence::handle_recurrence_in_tx(&mut tx, device_id, &block_id_owned).await?;
     }
 
     tx.commit_and_dispatch(materializer).await?;
@@ -360,7 +374,7 @@ pub async fn set_todo_state_inner(
         materializer.notify_gcal_for_op(&todo_op_for_gcal, &snapshot);
     }
 
-    Ok(result)
+    Ok(ActiveBlockRow::from_block_row_unchecked(result))
 }
 
 /// PEND-35 Tier 2.1 — maximum number of block ids accepted by a single
@@ -550,9 +564,9 @@ pub async fn set_priority_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: ActiveBlockId,
     level: Option<String>,
-) -> Result<BlockRow, AppError> {
+) -> Result<ActiveBlockRow, AppError> {
     if let Some(ref l) = level {
         if l.is_empty() || l.len() > 50 {
             return Err(AppError::Validation(
@@ -590,13 +604,21 @@ pub async fn set_priority_inner(
     // `old_affected_dates` half of the `DirtyEvent`. Skip the extra
     // SELECT when no connector is wired (common in tests).
     let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, block_id.as_str()).await?)
     } else {
         None
     };
 
     let (block, op_record) = set_property_in_tx(
-        &mut tx, device_id, block_id, "priority", level, None, None, None, None,
+        &mut tx,
+        device_id,
+        block_id.into_string(),
+        "priority",
+        level,
+        None,
+        None,
+        None,
+        None,
     )
     .await?;
     // PEND-25 L9: same Arc-share pattern as `set_property_inner`. The
@@ -608,7 +630,7 @@ pub async fn set_priority_inner(
     if let Some(snapshot) = gcal_snapshot {
         materializer.notify_gcal_for_op(&op_record, &snapshot);
     }
-    Ok(block)
+    Ok(ActiveBlockRow::from_block_row_unchecked(block))
 }
 
 /// Set the due date on a block (ISO date YYYY-MM-DD or clear).
@@ -620,9 +642,9 @@ pub async fn set_due_date_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: ActiveBlockId,
     date: Option<String>,
-) -> Result<BlockRow, AppError> {
+) -> Result<ActiveBlockRow, AppError> {
     if let Some(ref d) = date {
         if !is_valid_iso_date(d) {
             return Err(AppError::Validation(format!(
@@ -655,9 +677,9 @@ pub async fn set_scheduled_date_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: ActiveBlockId,
     date: Option<String>,
-) -> Result<BlockRow, AppError> {
+) -> Result<ActiveBlockRow, AppError> {
     if let Some(ref d) = date {
         if !is_valid_iso_date(d) {
             return Err(AppError::Validation(format!(
@@ -700,10 +722,10 @@ pub async fn delete_property_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: ActiveBlockId,
     key: String,
 ) -> Result<(), AppError> {
-    delete_property_core(pool, device_id, materializer, block_id, key).await
+    delete_property_core(pool, device_id, materializer, block_id.into_string(), key).await
 }
 
 /// Get all properties for a block (read-only).
@@ -1153,11 +1175,14 @@ pub async fn set_property(
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone();
     let key_clone = key.clone();
+    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+        .await
+        .map_err(sanitize_internal_error)?;
     let result = set_property_inner(
         &pool.0,
         device_id.as_str(),
         &materializer,
-        block_id,
+        active_id,
         key,
         value.value_text,
         value.value_num,
@@ -1169,7 +1194,7 @@ pub async fn set_property(
     .await
     .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
-    Ok(result)
+    Ok(result.into())
 }
 
 /// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
@@ -1185,11 +1210,14 @@ pub async fn set_todo_state(
     state: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone();
-    let result = set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, block_id, state)
+    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+        .await
+        .map_err(sanitize_internal_error)?;
+    let result = set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, active_id, state)
         .await
         .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["todo_state".to_string()]);
-    Ok(result)
+    Ok(result.into())
 }
 
 /// Tauri command: batch-set todo state on multiple blocks (PEND-35 Tier 2.1).
@@ -1254,11 +1282,14 @@ pub async fn set_priority(
     level: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone();
-    let result = set_priority_inner(&pool.0, device_id.as_str(), &materializer, block_id, level)
+    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+        .await
+        .map_err(sanitize_internal_error)?;
+    let result = set_priority_inner(&pool.0, device_id.as_str(), &materializer, active_id, level)
         .await
         .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["priority".to_string()]);
-    Ok(result)
+    Ok(result.into())
 }
 
 /// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
@@ -1274,11 +1305,14 @@ pub async fn set_due_date(
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone();
-    let result = set_due_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
+    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+        .await
+        .map_err(sanitize_internal_error)?;
+    let result = set_due_date_inner(&pool.0, device_id.as_str(), &materializer, active_id, date)
         .await
         .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["due_date".to_string()]);
-    Ok(result)
+    Ok(result.into())
 }
 
 /// Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`].
@@ -1294,12 +1328,15 @@ pub async fn set_scheduled_date(
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone();
+    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+        .await
+        .map_err(sanitize_internal_error)?;
     let result =
-        set_scheduled_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
+        set_scheduled_date_inner(&pool.0, device_id.as_str(), &materializer, active_id, date)
             .await
             .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["scheduled_date".to_string()]);
-    Ok(result)
+    Ok(result.into())
 }
 
 /// Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
@@ -1316,7 +1353,10 @@ pub async fn delete_property(
 ) -> Result<(), AppError> {
     let block_id_clone = block_id.clone();
     let key_clone = key.clone();
-    delete_property_inner(&pool.0, device_id.as_str(), &materializer, block_id, key)
+    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+        .await
+        .map_err(sanitize_internal_error)?;
+    delete_property_inner(&pool.0, device_id.as_str(), &materializer, active_id, key)
         .await
         .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec![key_clone]);

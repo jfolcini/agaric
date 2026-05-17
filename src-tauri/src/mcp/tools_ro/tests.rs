@@ -1894,7 +1894,7 @@ async fn snapshot_get_agenda_response_shape() {
         &tools.pool,
         DEV,
         &mat,
-        task.id.clone(),
+        task.id.clone().into(),
         Some("2099-01-03".into()),
     )
     .await
@@ -1903,7 +1903,7 @@ async fn snapshot_get_agenda_response_shape() {
         &tools.pool,
         DEV,
         &mat,
-        task.id.clone(),
+        task.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,

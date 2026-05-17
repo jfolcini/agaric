@@ -2201,7 +2201,7 @@ async fn revert_set_property_restores_prior_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -2219,7 +2219,7 @@ async fn revert_set_property_restores_prior_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "importance".into(),
         Some("low".into()),
         None,
@@ -2294,7 +2294,7 @@ async fn revert_set_property_first_produces_delete() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "color".into(),
         Some("red".into()),
         None,
@@ -2357,7 +2357,7 @@ async fn revert_delete_property_restores_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         "due".into(),
         None,
         None,
@@ -2371,7 +2371,7 @@ async fn revert_delete_property_restores_value() {
     mat.flush_background().await.unwrap();
 
     // Delete the property
-    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "due".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "due".into())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -3495,7 +3495,7 @@ async fn undo_page_op_reverses_set_property() {
         &pool,
         DEV,
         &mat,
-        child.id.clone(),
+        child.id.clone().into(),
         "importance".into(),
         Some("high".into()),
         None,

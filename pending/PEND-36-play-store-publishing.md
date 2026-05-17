@@ -4,8 +4,8 @@
 
 ## TL;DR
 
-- **Cost:** $25 one-time Play Console fee. No annual / per-app fees. 0% commission on the default install (no IAP, no ads).
-- **Engineering work:** S (~1 day) — add an AAB build job alongside the existing APK job, lock down the `versionCode` bump path, host a privacy policy URL.
+- **Cost:** $25 one-time Play Console fee. No annual / per-app fees.
+- **Engineering work:** S (~0.5-1.5 days) — add an AAB build job alongside the existing APK job, lock down the `versionCode` bump path, host a privacy policy URL, document the signing-key offline backup.
 - **Process work:** M-L (~2-3 weeks **elapsed**, mostly waiting): Console signup + ID verification (~3-5 days), assets + listing (~1 day of work), then for a *personal* developer account a mandatory **14-day closed test with 12+ opted-in testers** before the production track unlocks.
 - **No regression to current sideload path.** The GitHub Release APK keeps shipping for power users; Play Store adds a second distribution channel, not a replacement.
 
@@ -33,7 +33,7 @@ Audit of `src-tauri/gen/android/app/build.gradle.kts` + `.github/workflows/relea
 
    …and upload `agaric-<tag>-android.aab` alongside the existing APK. Same keystore signs both. Keep the APK path so sideload users on GitHub Releases aren't affected.
 
-2. **`versionCode` collision audit.** Tauri's default formula appears to be `MAJOR*10000 + MINOR*100 + PATCH` (e.g., `0.1.27` → `versionCode 1027`). That's fine until the project ships `0.1.100` (versionCode `1100`) which would collide with a future `0.11.0` (also `11000` if normalised, but `1100` under the bare formula) or with `1.0.16` (`10016`) vs `0.10.16` (`1016`). **Pin the formula** explicitly in `scripts/` (or a `build.rs` override) so versionCode is unambiguous and document the next-version boundary. Play Store rejects re-using a versionCode forever, even across removed apps.
+2. **`versionCode` collision audit.** Tauri's generated `tauri.properties` currently shows `versionName=0.1.16 → versionCode=1016`, which fits `MINOR*1000 + PATCH` (the simple, plausible-but-fragile formula). **Audit empirically** by running `cargo tauri android init` against several `0.X.Y` and `1.X.Y` synthetic version bumps and recording the resulting `versionCode` values; then pin the formula explicitly in `scripts/bump-version.sh` (or a `build.rs` override) so future versionCode values are unambiguous and monotonic. Play Store rejects re-using a versionCode forever, even across removed apps — so the audit must surface any collision before the first AAB upload.
 
 3. **Privacy policy URL.** Required. Cheapest option: add `docs/privacy-policy.md` and publish it via GitHub Pages (`https://jfolcini.github.io/agaric/privacy-policy`) or as a section in the repo README that resolves via `https://github.com/jfolcini/agaric#privacy-policy`. Content (Agaric's truthful answer):
    - No data collected by the app itself.
@@ -50,7 +50,7 @@ Audit of `src-tauri/gen/android/app/build.gradle.kts` + `.github/workflows/relea
    - **Personal** (default for `jfolcini86@gmail.com`): mandatory **closed test with 12+ testers running the app for 14 consecutive days** before the production track unlocks. Recruit testers early — this is the long pole.
    - **Organization**: skips the 14-day test, but requires a D-U-N-S number and business-entity verification (typically ~weeks).
 
-2. **Play App Signing (recommended).** Opt in during app creation. We upload AABs signed with our existing CI keystore (which becomes the *upload key*); Google manages the production signing key. If we ever lose the upload key, Google can reset it. The alternative (self-managed) means losing the key = abandoning the app ID forever. **Choose Play App Signing.**
+2. **Play App Signing (recommended).** Opt in during app creation. We upload AABs signed with our existing CI keystore (which becomes the *upload key*); Google manages the production signing key. If we ever lose the upload key, Google can reset it. The alternative (self-managed) means losing the key = abandoning the app ID forever. **Choose Play App Signing.** Even so, the upload key currently lives only as `ANDROID_KEYSTORE_BASE64` in GitHub Secrets — a single point of failure if the GH org is lost. **Add an offline-backup runbook** to `docs/BUILD.md`: export the keystore + passphrase to encrypted offline storage and document the recovery procedure.
 
 3. **Store listing assets** (1024×500 feature graphic is the only one we don't already have):
    - App icon: 512×512 (✅ `src-tauri/icons/icon.png` works).
@@ -81,16 +81,21 @@ The sideload path (`agaric-<tag>-android-aarch64.apk` on the GH Release) keeps w
 
 ## Decision points (need maintainer call)
 
-- **D1: Personal or Organization Play Console account?** Affects: 14-day-test gate, identity flow, ETA. Personal is cheaper/faster to set up but slower-to-first-publish. Organization is the reverse but requires a real business entity / D-U-N-S.
+- **D1: Personal or Organization Play Console account?** Affects: 14-day-test gate, identity flow, ETA. Personal is cheaper/faster to set up but slower-to-first-publish (closed test → production is the conservative path either way — the 14-day timer runs regardless). Organization is the reverse but requires a real business entity / D-U-N-S (1-4 weeks for verification).
 - **D2: Where to host the privacy policy?** Options: GitHub Pages, a section in `README.md`, or a standalone repo `agaric-website`. GitHub Pages is the lowest-overhead permanent URL.
-- **D3: Initial release track.** Closed testing → Open testing → Production, or jump straight to Production after the (required-for-personal) closed test? For a v0.1.x app, **closed test → production** is the conservative path; the 14-day timer runs either way.
-- **D4: Single distribution channel, or maintain both forever?** Recommend **both** — Play Store for typical users, GH Release APK for power users / FOSS-only purists / users on AOSP-without-GMS devices. They can coexist; only Play cares about its own upload key.
+- **D3: Single distribution channel, or maintain both forever?** Recommend **both** — Play Store for typical users, GH Release APK for power users / FOSS-only purists / users on AOSP-without-GMS devices. They can coexist; only Play cares about its own upload key.
 
 ## Cost / Impact / Risk
 
 - **Cost:** S engineering (~1 day) + $25 fee + ~2-3 weeks elapsed for the personal-account path (~3-5 days for ID verification, then 14 days of closed test, then a few days of Play review). Organization path: weeks for D-U-N-S/entity verification, then ~days for review.
 - **Impact:** **High discoverability**. Sideloading an APK is a non-starter for ~99% of mobile users; Play Store is the de-facto distribution channel. Also unlocks Play-Store-managed auto-updates (we currently have *zero* update mechanism on Android — desktop has the Tauri updater, but mobile has nothing).
-- **Risk:** **Low engineering / Medium policy.** Engineering risk is small (AAB target is one CLI flag; signing already works). Policy risk: Play's data-safety and target-API rules change yearly; a future SDK bump or a policy reinterpretation could force a forced-update on us. Mitigation: keep `targetSdk` current as a standing chore (`prek.toml` or a yearly REVIEW-LATER ticket).
+- **Risk:** **Low engineering / Medium policy.** Engineering risk is small (AAB target is one CLI flag; signing already works). Policy risk: Play's data-safety and target-API rules change yearly; a future SDK bump or a policy reinterpretation could force a forced-update on us. Mitigation: keep `targetSdk` current as a standing chore (`prek.toml` or a yearly REVIEW-LATER ticket) — Aug 2026 will push to API 37.
+
+Additional risks worth surfacing before the first AAB lands:
+
+- **AGP / Tauri Android churn.** `scripts/patch-android-build.sh` patches generated files with `sed`; a Tauri minor bump can silently no-op the patch. Verify after every Tauri plugin bump.
+- **AAB size.** Play caps the base APK at 200 MB and on-the-wire delivery at 150 MB. Current Android release APK is ~24 MB so there is headroom, but track the trend.
+- **Data safety form nuance.** Calendar OAuth, MCP socket, and crash reporting (none today) all need explicit declarations even when the answer is "none collected". Walk the form before the first upload — Google's categories don't always map cleanly.
 
 ## Open questions
 
@@ -101,5 +106,5 @@ The sideload path (`agaric-<tag>-android-aarch64.apk` on the GH Release) keeps w
 
 ## Related
 
-- `.github/workflows/release.yml` → `android-build-and-release` job (lines ~399-590) is where the AAB step lands.
-- `BUILD.md` → "Release signing in CI" — already documents keystore secret generation; extend with the AAB step once shipped.
+- `.github/workflows/release.yml` → `android-build-and-release` job (lines 656-914) is where the AAB step lands.
+- `docs/BUILD.md` → "Release signing in CI" — already documents keystore secret generation; extend with the AAB step + offline-backup runbook once shipped.

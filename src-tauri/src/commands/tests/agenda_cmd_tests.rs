@@ -820,7 +820,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     let due_date = (today - chrono::Duration::days(21))
         .format("%Y-%m-%d")
         .to_string();
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some(due_date))
+    set_due_date_inner(&pool, DEV, &mat, resp.id.clone().into(), Some(due_date))
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -830,7 +830,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -844,9 +844,15 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     mat.flush_background().await.unwrap();
 
     // Set todo_state=TODO
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Project 4 weeks ahead from today
@@ -921,7 +927,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         Some({
             let today = chrono::Local::now().date_naive();
             (today - chrono::Duration::days(14))
@@ -937,7 +943,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -960,7 +966,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat-until".into(),
         None,
         None,
@@ -973,9 +979,15 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let start = today.format("%Y-%m-%d").to_string();
@@ -1036,16 +1048,22 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1063,7 +1081,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat-count".into(),
         None,
         Some(3.0),
@@ -1080,7 +1098,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat-seq".into(),
         None,
         Some(1.0),
@@ -1093,9 +1111,15 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // MAINT-164: bypass the projected_agenda_cache (which itself reads
@@ -1147,16 +1171,22 @@ async fn projected_agenda_skips_done_blocks() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -1170,9 +1200,15 @@ async fn projected_agenda_skips_done_blocks() {
     mat.flush_background().await.unwrap();
 
     // Mark as DONE — should be excluded from projection
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let entries = list_projected_agenda_inner(
@@ -1274,9 +1310,15 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
     mat.flush_background().await.unwrap();
 
     // Due date far in the past
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-01-01".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2025-01-01".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // From-completion mode: shifts from today
@@ -1284,7 +1326,7 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some(".+weekly".into()),
         None,
@@ -1297,9 +1339,15 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Query a wide range that includes today + several weeks
@@ -1350,9 +1398,15 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
     mat.flush_background().await.unwrap();
 
     // Due date far in the past
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-01-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2025-01-06".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // ++ mode: advance on original cadence until > today
@@ -1360,7 +1414,7 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("++weekly".into()),
         None,
@@ -1373,9 +1427,15 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let today = chrono::Local::now().date_naive();
@@ -1426,21 +1486,33 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_scheduled_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_scheduled_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -1453,9 +1525,15 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let entries = list_projected_agenda_inner(
@@ -1503,16 +1581,22 @@ async fn projected_agenda_exhausted_count_returns_zero() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1530,7 +1614,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat-count".into(),
         None,
         Some(3.0),
@@ -1547,7 +1631,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat-seq".into(),
         None,
         Some(3.0),
@@ -1560,9 +1644,15 @@ async fn projected_agenda_exhausted_count_returns_zero() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let entries = list_projected_agenda_inner(
@@ -1604,16 +1694,22 @@ async fn projected_agenda_limit_caps_results() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1626,9 +1722,15 @@ async fn projected_agenda_limit_caps_results() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Request 365 days of daily projections but limit to 5
@@ -1686,7 +1788,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         &pool,
         DEV,
         &mat,
-        page.id.clone(),
+        page.id.clone().into(),
         "template".into(),
         Some("true".into()),
         None,
@@ -1712,14 +1814,20 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, task.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        task.id.clone(),
+        task.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1730,9 +1838,15 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
     )
     .await
     .unwrap();
-    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Cache path: the materializer has populated `projected_agenda_cache`
@@ -1804,7 +1918,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         &pool,
         DEV,
         &mat,
-        page.id.clone(),
+        page.id.clone().into(),
         "template".into(),
         Some("true".into()),
         None,
@@ -1830,14 +1944,20 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, task.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        task.id.clone(),
+        task.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1848,9 +1968,15 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
     )
     .await
     .unwrap();
-    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Sanity: with the template property set, the task is filtered out.
@@ -1870,7 +1996,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
     // Remove the template property and the task must re-enter the
     // agenda (on-the-fly path — we clear the cache to keep the test
     // deterministic).
-    delete_property_inner(&pool, DEV, &mat, page.id.clone(), "template".into())
+    delete_property_inner(&pool, DEV, &mat, page.id.clone().into(), "template".into())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -1934,9 +2060,15 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
     )
     .await
     .unwrap();
-    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
 
     let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
         .await
@@ -1976,12 +2108,24 @@ async fn list_undated_tasks_excludes_dated_tasks() {
     )
     .await
     .unwrap();
-    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
-    set_due_date_inner(&pool, DEV, &mat, task.id.clone(), Some("2025-06-01".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("2025-06-01".into()),
+    )
+    .await
+    .unwrap();
 
     let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
         .await
@@ -2010,9 +2154,15 @@ async fn list_undated_tasks_excludes_deleted() {
     )
     .await
     .unwrap();
-    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     delete_block_inner(&pool, DEV, &mat, task.id.clone())
         .await
         .unwrap();
@@ -2043,9 +2193,15 @@ async fn list_undated_tasks_pagination() {
         )
         .await
         .unwrap();
-        set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
-            .await
-            .unwrap();
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            task.id.clone().into(),
+            Some("TODO".into()),
+        )
+        .await
+        .unwrap();
     }
 
     // Page 1: limit = 2
@@ -2120,7 +2276,7 @@ async fn seed_daily_repeating_block(
     let due = (today - chrono::Duration::days(days_before_today))
         .format("%Y-%m-%d")
         .to_string();
-    set_due_date_inner(pool, DEV, mat, resp.id.clone(), Some(due))
+    set_due_date_inner(pool, DEV, mat, resp.id.clone().into(), Some(due))
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -2129,7 +2285,7 @@ async fn seed_daily_repeating_block(
         pool,
         DEV,
         mat,
-        resp.id.clone(),
+        resp.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -2142,7 +2298,7 @@ async fn seed_daily_repeating_block(
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(pool, DEV, mat, resp.id.clone(), Some("TODO".into()))
+    set_todo_state_inner(pool, DEV, mat, resp.id.clone().into(), Some("TODO".into()))
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -2983,15 +3139,21 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     .await
     .unwrap();
     settle(&mat).await;
-    set_due_date_inner(&pool, DEV, &mat, a.id.clone(), Some("2050-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        a.id.clone().into(),
+        Some("2050-04-06".into()),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        a.id.clone(),
+        a.id.clone().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -3007,7 +3169,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        a.id.clone(),
+        a.id.clone().into(),
         "repeat-count".into(),
         None,
         Some(5.0),
@@ -3048,7 +3210,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        b.id.clone(),
+        b.id.clone().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -3064,7 +3226,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        b.id.clone(),
+        b.id.clone().into(),
         "repeat-until".into(),
         None,
         None,
@@ -3090,15 +3252,21 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     .await
     .unwrap();
     settle(&mat).await;
-    set_due_date_inner(&pool, DEV, &mat, c.id.clone(), Some("2050-04-15".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        c.id.clone().into(),
+        Some("2050-04-15".into()),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        c.id.clone(),
+        c.id.clone().into(),
         "repeat".into(),
         Some("+3d".into()),
         None,
@@ -3114,7 +3282,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        c.id.clone(),
+        c.id.clone().into(),
         "repeat-count".into(),
         None,
         Some(3.0),
@@ -3140,15 +3308,21 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     .await
     .unwrap();
     settle(&mat).await;
-    set_due_date_inner(&pool, DEV, &mat, d.id.clone(), Some("2050-04-20".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        d.id.clone().into(),
+        Some("2050-04-20".into()),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        d.id.clone(),
+        d.id.clone().into(),
         "repeat".into(),
         Some(".+1w".into()),
         None,
@@ -3174,15 +3348,21 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     .await
     .unwrap();
     settle(&mat).await;
-    set_due_date_inner(&pool, DEV, &mat, e.id.clone(), Some("2050-04-25".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        e.id.clone().into(),
+        Some("2050-04-25".into()),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     set_property_inner(
         &pool,
         DEV,
         &mat,
-        e.id.clone(),
+        e.id.clone().into(),
         "repeat".into(),
         Some("++1w".into()),
         None,

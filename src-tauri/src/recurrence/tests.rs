@@ -562,7 +562,7 @@ async fn set_repeat_property(pool: &SqlitePool, mat: &Materializer, block_id: &s
         pool,
         DEV,
         mat,
-        block_id.to_string(),
+        block_id.to_string().into(),
         "repeat".to_string(),
         Some(rule.to_string()),
         None,
@@ -587,7 +587,7 @@ async fn set_num_property(
         pool,
         DEV,
         mat,
-        block_id.to_string(),
+        block_id.to_string().into(),
         key.to_string(),
         None,
         Some(value),
@@ -612,7 +612,7 @@ async fn set_date_property(
         pool,
         DEV,
         mat,
-        block_id.to_string(),
+        block_id.to_string().into(),
         key.to_string(),
         None,
         None,
@@ -660,9 +660,15 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
     mat.flush_background().await.unwrap();
 
     // Set TODO state
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Set due_date
@@ -670,7 +676,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -682,9 +688,15 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
     mat.flush_background().await.unwrap();
 
     // Mark DONE to trigger handle_recurrence via set_todo_state_inner
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify sibling was created with shifted due_date
@@ -740,9 +752,15 @@ async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Set due_date to 2025-06-15
@@ -750,7 +768,7 @@ async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -766,9 +784,15 @@ async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
     mat.flush_background().await.unwrap();
 
     // Mark DONE — handle_recurrence should NOT create a sibling
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let siblings = find_recurrence_siblings(&pool, &block.id).await;
@@ -799,16 +823,22 @@ async fn handle_recurrence_repeat_count_stops_when_exhausted() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_due_date_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -825,9 +855,15 @@ async fn handle_recurrence_repeat_count_stops_when_exhausted() {
     mat.flush_background().await.unwrap();
 
     // Mark DONE — handle_recurrence should NOT create a sibling
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let siblings = find_recurrence_siblings(&pool, &block.id).await;
@@ -858,16 +894,22 @@ async fn handle_recurrence_copies_properties_to_sibling() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_due_date_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -888,9 +930,15 @@ async fn handle_recurrence_copies_properties_to_sibling() {
     mat.flush_background().await.unwrap();
 
     // Mark DONE
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let siblings = find_recurrence_siblings(&pool, &block.id).await;
@@ -975,16 +1023,22 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_due_date_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -995,9 +1049,15 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
     mat.flush_background().await.unwrap();
 
     // Mark DONE — creates first sibling
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let siblings = find_recurrence_siblings(&pool, &block.id).await;
@@ -1081,15 +1141,21 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
     mat.flush_background().await.unwrap();
 
     // Wire up the recurring task and trigger the recurrence flow.
-    set_todo_state_inner(&pool, DEV, &mat, recurring.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        recurring.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
     set_due_date_inner(
         &pool,
         DEV,
         &mat,
-        recurring.id.clone(),
+        recurring.id.clone().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -1098,9 +1164,15 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
     set_repeat_property(&pool, &mat, &recurring.id, "daily").await;
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, recurring.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        recurring.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Find the new recurrence sibling (TODO under the same parent, distinct
@@ -1190,16 +1262,22 @@ async fn handle_recurrence_daily_crosses_year_boundary() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_due_date_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some("2025-12-31".into()),
     )
     .await
@@ -1209,9 +1287,15 @@ async fn handle_recurrence_daily_crosses_year_boundary() {
     set_repeat_property(&pool, &mat, &block.id, "daily").await;
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let siblings = find_recurrence_siblings(&pool, &block.id).await;
@@ -1252,16 +1336,22 @@ async fn handle_recurrence_weekly_crosses_year_boundary() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_due_date_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some("2025-12-30".into()),
     )
     .await
@@ -1271,9 +1361,15 @@ async fn handle_recurrence_weekly_crosses_year_boundary() {
     set_repeat_property(&pool, &mat, &block.id, "weekly").await;
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let siblings = find_recurrence_siblings(&pool, &block.id).await;
@@ -1325,9 +1421,15 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
-        .await
-        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let today = chrono::Local::now().date_naive();
@@ -1337,7 +1439,7 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
         &pool,
         DEV,
         &mat,
-        block.id.clone(),
+        block.id.clone().into(),
         Some(ancient_str.clone()),
     )
     .await
@@ -1358,8 +1460,14 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
     // Mark DONE — `handle_recurrence_in_tx` should propagate the
     // cap-exceeded `Err`. Pre-fix this returned `Ok(_)` and committed
     // a sibling with a stale past `due_date`.
-    let result =
-        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into())).await;
+    let result = set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into(),
+        Some("DONE".into()),
+    )
+    .await;
 
     let err = result.expect_err(
         "PEND-24 H2: ancient origin under ++1d must propagate cap-exceeded as AppError::Validation",
