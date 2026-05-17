@@ -1,6 +1,6 @@
 # PEND-36 — Publish Agaric on Google Play Store
 
-> Captured 2026-05-16. Distills the "Android publishing" section in `pending/ui-improvements-2026-05-16.md` into a concrete, schedulable plan, plus a current-state audit of `src-tauri/gen/android/` and `.github/workflows/release.yml`. Most of the *engineering* is already done; the bulk of the remaining cost is **process** (Play Console paperwork, store assets, 14-day closed test for personal accounts).
+> A concrete, schedulable plan for shipping Agaric on the Play Store, plus a current-state audit of `src-tauri/gen/android/` and `.github/workflows/release.yml`. Most of the *engineering* is already done; the bulk of the remaining cost is **process** (Play Console paperwork, store assets, 14-day closed test for personal accounts).
 
 ## TL;DR
 
@@ -33,7 +33,7 @@ Audit of `src-tauri/gen/android/app/build.gradle.kts` + `.github/workflows/relea
 
    …and upload `agaric-<tag>-android.aab` alongside the existing APK. Same keystore signs both. Keep the APK path so sideload users on GitHub Releases aren't affected.
 
-2. **`versionCode` collision audit.** `tauri.properties` currently shows `versionCode=1016` for `versionName=0.1.16` — i.e. Tauri's default formula is `MAJOR*10000 + MINOR*100 + PATCH`. That's fine *until* we ship `0.1.100` (versionCode `1100`, collides with `0.11.0` → `11000`… wait, no — `0.11.0` would be `11000`, `0.1.100` would be `1100`. OK, the real collision is `1.0.16` (`10016`) vs `0.10.16` (`1016`) vs `0.1.16` (`1016`)). **Pin the formula** explicitly in `scripts/` (or a `build.rs` override) so versionCode is unambiguous and document the next-version boundary. Play Store rejects re-using a versionCode forever, even across removed apps.
+2. **`versionCode` collision audit.** Tauri's default formula appears to be `MAJOR*10000 + MINOR*100 + PATCH` (e.g., `0.1.27` → `versionCode 1027`). That's fine until the project ships `0.1.100` (versionCode `1100`) which would collide with a future `0.11.0` (also `11000` if normalised, but `1100` under the bare formula) or with `1.0.16` (`10016`) vs `0.10.16` (`1016`). **Pin the formula** explicitly in `scripts/` (or a `build.rs` override) so versionCode is unambiguous and document the next-version boundary. Play Store rejects re-using a versionCode forever, even across removed apps.
 
 3. **Privacy policy URL.** Required. Cheapest option: add `docs/privacy-policy.md` and publish it via GitHub Pages (`https://jfolcini.github.io/agaric/privacy-policy`) or as a section in the repo README that resolves via `https://github.com/jfolcini/agaric#privacy-policy`. Content (Agaric's truthful answer):
    - No data collected by the app itself.
@@ -42,7 +42,7 @@ Audit of `src-tauri/gen/android/app/build.gradle.kts` + `.github/workflows/relea
    - **Optional agent / MCP access**: local-only Unix socket / TCP; no remote access by default.
    - Crash data: none collected.
 
-4. **Optional: in-app update prompt via Play Core.** `com.google.android.play:app-update` would prompt users when a Play update is available. Not wired today (Tauri doesn't bundle it). **Skip for v1** — Play Store auto-update covers ~95% of users; revisit only if telemetry shows a long tail on old versions.
+4. **In-app update prompt via Play Core — explicit defer.** Not wired; Play Store auto-update covers ~95% of users without Tauri-side integration. Revisit only if telemetry shows a long tail on old versions.
 
 ### Process / paperwork (M-L, mostly waiting)
 
@@ -101,7 +101,5 @@ The sideload path (`agaric-<tag>-android-aarch64.apk` on the GH Release) keeps w
 
 ## Related
 
-- `pending/ui-improvements-2026-05-16.md` → "Android publishing (Play Store)" section — superseded by this file; can be trimmed to a one-line cross-reference.
-- `pending/ui-improvements-2026-05-16.md` → "Auto-update wire-up (desktop)" — independent but related (both close the "no update mechanism in v1" gap). Schedule together if doing a "release infrastructure" sprint.
 - `.github/workflows/release.yml` → `android-build-and-release` job (lines ~399-590) is where the AAB step lands.
 - `BUILD.md` → "Release signing in CI" — already documents keystore secret generation; extend with the AAB step once shipped.

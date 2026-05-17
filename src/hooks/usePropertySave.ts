@@ -69,7 +69,7 @@ export function usePropertySave({
             logTag,
             'Failed to save property',
             {
-              blockId: blockId ?? '',
+              blockId,
               key,
             },
             err,
@@ -97,7 +97,7 @@ export function usePropertySave({
             logTag,
             'Failed to delete property',
             {
-              blockId: blockId ?? '',
+              blockId,
               key,
             },
             err,

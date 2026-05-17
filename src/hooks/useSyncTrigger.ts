@@ -178,7 +178,6 @@ export function useSyncTrigger() {
         announce(i18n.t('announce.syncCompleted'))
       }
     } catch {
-      hadFailure = true
       if (mountedRef.current) {
         setState('error', 'Sync failed')
         notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })

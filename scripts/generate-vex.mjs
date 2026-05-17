@@ -129,7 +129,6 @@ function parseIgnoreEntries(denyTomlText) {
       continue
     }
     if (line === ']') {
-      inArray = false
       break
     }
     if (line === '' || line.startsWith('#')) {

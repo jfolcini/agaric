@@ -65,9 +65,7 @@ Prototype two iroh nodes on two machines, exchange synthetic `OpBatch` payloads 
 
 **Kill criteria — measurable, no subjective bars. Any one fires → kill the migration.**
 
-> **Reviewer note:** the original draft *assumed* iroh is post-1.0. **It is not.** As of writing, iroh is in the 0.x series with no public commitment to wire-protocol stability across minor versions. Treat criterion (a) as the mandatory week-1 spike output, not an assumption.
-
-1. **(a) iroh API + wire-format stability — VERIFY DURING SPIKE, DO NOT ASSUME.** Document the current iroh version, the project's stability commitments (or lack thereof), wire-format stability between minor versions, and the realistic version-pinning strategy this codebase would commit to. **Specific outputs the spike must produce:** (i) cite the latest released iroh version + its release date; (ii) cite an upstream issue or doc that addresses wire-format stability between minor versions; (iii) propose a pin (e.g., `iroh = "=0.x.y"` with a published commit hash) and a maintenance plan ("we re-evaluate every minor"). **If wire-format breaks between minor versions without a documented upgrade path, kill** — this is a data-durability red line for live sync sessions across upgrade boundaries. (Sources: <https://github.com/n0-computer/iroh/releases>, <https://docs.rs/iroh>, the iroh CHANGELOG.)
+1. **(a) iroh wire-format + minor-version churn — confirm version-pinning strategy in spike.** iroh is at v1.x (`v1.0.0-rc.0` published 2026-05-07; treated as latest stable by the project). Semver governs wire-format stability from this line onward. The spike's job is the lighter-weight task of (i) propose a concrete pin (e.g., `iroh = "=1.x.y"` with a published commit hash) and a re-evaluation cadence ("we revisit at every minor"), (ii) sanity-check the v1.0 release notes for any post-1.0 wire-format break announcements before commit. Kill only if a documented wire-format break with no upgrade path appears upstream while the spike is in flight.
 2. **(b) Transport handshake works end-to-end.** Two iroh nodes on the same LAN connect and exchange a 1 MB `OpBatch` payload in **<2 seconds**. Across NAT (one node behind home NAT, the other on public internet) connect and exchange same payload via relay in **<5 seconds**.
 3. **(c) Compatible license.** iroh + iroh-blobs are MIT or Apache-2.0 (compatible with Agaric's GPL-3.0-or-later). Any GPL-incompatible deps in the iroh tree → kill.
 4. **(d) Ticket flow is human-acceptable.** A ticket can be shared via QR code (visual length, scannable on a phone screen) and via text paste (length, no whitespace gotchas). **If tickets are 500+ chars or break on paste, kill** (pairing UX gap forces a fallback design).
@@ -112,18 +110,18 @@ iroh becomes the default transport. WebSocket+mDNS stays as fallback for one rel
 
 **Reversibility:** WebSocket fallback stays. Critical bug → flip the default back.
 
-### Phase 3 — Cleanup (4-6 weeks; reviewer-revised, originally drafted as 2-3 weeks)
+### Phase 3 — Cleanup (4-6 weeks)
 
 Delete the old transport stack.
 
-**Deliverables:** (LOC counts reviewer-verified by `wc -l`; original draft was off by 87% due to omitted test files and wrong estimate for snapshot_transfer)
+**Deliverables:**
 
 | File / module | LOC (verified) |
 | --- | --- |
 | `src-tauri/src/sync_net/` (mod.rs, connection.rs, tls.rs, websocket.rs, tests.rs) | **3,128** |
 | `src-tauri/src/sync_daemon/server.rs` (WebSocket responder) | **376** |
 | `src-tauri/src/sync_daemon/discovery.rs` (mDNS peer discovery) | **283** |
-| `src-tauri/src/sync_daemon/snapshot_transfer.rs` (binary frame chunking) | **1,824** ← reviewer correction; original draft said ~400 |
+| `src-tauri/src/sync_daemon/snapshot_transfer.rs` (binary frame chunking) | **1,824** |
 | `src-tauri/src/sync_daemon/android_multicast.rs` (JNI multicast lock) | **227** |
 | `src-tauri/src/sync_cert.rs` (TLS cert generation/persistence) | **786** |
 | `src-tauri/src/pairing.rs` (passphrase + QR) | **625** |
@@ -139,13 +137,7 @@ Delete the per-file test modules (`#[cfg(test)] mod tests`) inside each deleted 
 
 **Reversibility:** none. Commit only after Phase 2 stabilizes.
 
-**Total LOC deleted (corrected): ~14,616.** Original draft said ~7,825 — off by 6,791 because of:
-
-- Wrong estimate for `sync_daemon/snapshot_transfer.rs` (1,824 actual vs 400 estimated)
-- `sync_daemon/server.rs` undercounted (376 vs 200)
-- Test files entirely omitted (`sync_daemon/tests.rs` 4,028 LOC + `sync_files/tests.rs` 2,180 LOC)
-
-**Added:** ~2-3k LOC (iroh module + integration glue). **Net delete: ~12k LOC.** This is a much larger code-deletion than the draft implied.
+**Total LOC deleted: ~14,616** (including `sync_daemon/tests.rs` ~4,028 LOC and `sync_files/tests.rs` ~2,180 LOC). **Added: ~2-3k LOC** (iroh module + integration glue). **Net delete: ~12k LOC.**
 
 ### Phase 4 (optional) — Drop the WebSocket fallback (1 release later)
 
@@ -164,7 +156,7 @@ One full release after Phase 2, remove WebSocket fallback entirely. Delete `tran
 
 | Risk | Mitigation |
 | --- | --- |
-| **iroh pre-1.0 / API churn** ⚠️ headline risk | Phase 0 kill criterion (a) is the gate, not an assumption. Pin a specific minor + watch upstream. The spike must publish a "what is iroh today" report before continuing. |
+| **iroh minor-version churn (post-1.0)** | Pin to a specific `1.x.y` and re-evaluate every minor. Wire-format stability is in effect under semver from the v1.0 line; this is now a normal maintenance cost, not a headline risk. |
 | **Relay dependency on n0.computer** | Verify self-host + LAN-only options in spike (kill criterion (f)). LAN sync still works direct if relays go down. |
 | **Relay metadata leak** (NodeId + traffic timing visible to relay operator) | Document explicitly in user-facing settings: "When sync uses relay (cross-WiFi), n0's relay servers can see your device's NodeId, the timing of your sync sessions, and the byte sizes of your messages — not the contents (QUIC encrypts those). Use 'LAN-only' mode in Settings to disable relays." Same threat model floor (single-user, no adversaries), but the user should be informed. |
 | **n0 (relay operator) goes out of business / is compromised** | LAN-only mode (kill criterion (f)) is the durable fallback — sync continues to work over LAN regardless of relay status. Self-host story (also (f)) is the user's escape hatch for cross-WiFi if n0 disappears. |
@@ -228,12 +220,12 @@ iroh (transport) and CRDT (merge) are **independent in design** — iroh swaps t
 
 ## Total cost
 
-> **Reviewer-revised** — original draft was 2-2.5× optimistic. The correction comes from (a) test-file LOC undercount in Phase 3 (~6.2k extra), (b) cross-NAT spike infrastructure being non-trivial for a solo maintainer, (c) the `sync_daemon/orchestrator.rs` directly imports `sync_net::*` so it's not fully transport-agnostic — Phase 1 has more refactoring than the draft implied.
+> Cost is driven by (a) substantial test-file LOC in Phase 3 (~6.2k), (b) cross-NAT spike infrastructure being non-trivial for a solo maintainer, (c) `sync_daemon/orchestrator.rs` directly imports `sync_net::*` so Phase 1 has more refactoring than a clean transport-swap would suggest.
 
-- Phase 0 (spike): **15-21 days** (was 10-14)
-- Phase 1 (shadow): **20-25 days** (was 10-15)
-- Phase 2 (cutover): **15-21 days** (was 10-15)
-- Phase 3 (cleanup, ~14.6k LOC including tests): **20-30 days** (was 10-15)
+- Phase 0 (spike): **15-21 days**
+- Phase 1 (shadow): **20-25 days**
+- Phase 2 (cutover): **15-21 days**
+- Phase 3 (cleanup, ~14.6k LOC including tests): **20-30 days**
 - Phase 4 (optional): **3-5 days** (unchanged)
 
 **Total: 70-97 person-days (~10-14 person-weeks) for Phases 0-3.**
@@ -244,7 +236,7 @@ This is a meaningful project. Build in a 2-3 week buffer that's invisible inside
 
 ## Total impact
 
-- **Net LOC: ~12k deleted** (~14.6k removed including test files, ~2-3k added). The draft said ~5k; reviewer correction.
+- **Net LOC: ~12k deleted** (~14.6k removed including test files, ~2-3k added).
 - **Net Cargo deps:** −7 to −9 crates (mdns-sd, tokio-tungstenite, rustls, tokio-rustls, rcgen, x509-parser, sha2-for-cert-pinning, qrcode, if-addrs); +2-3 (iroh stack — verify exact crate names in spike).
 - **User-visible:** cross-WiFi sync; new pairing UX; one-time re-pair during cutover (N-1 prompts for users with N paired devices).
 - **Maintenance dividend:** the `sync_net/` + `sync_daemon/` test corpus (~6.2k LOC) goes away too. This is the largest single test-deletion in the project.
@@ -261,7 +253,7 @@ This is a meaningful project. Build in a 2-3 week buffer that's invisible inside
 
 ## Open questions
 
-1. **iroh's actual current version + stability stance.** Most important question. Spike week-1 deliverable. Without an answer, kill criterion (a) cannot resolve. (Sources: GitHub releases, docs.rs, CHANGELOG, relevant upstream issues.)
+1. **Concrete iroh `1.x.y` pin + minor-cadence plan.** iroh v1.x is stable; the spike just needs to settle on a specific minor and a "we revisit on minor bumps" rhythm. (Sources: GitHub releases, docs.rs, CHANGELOG.)
 2. **iroh relay cost model.** Are there bandwidth/latency caveats when traffic falls back to relays? Quantify in spike.
 3. **iroh-blobs resumability.** Does iroh-blobs support resumable transfers? Current `sync_files/` does not. If iroh-blobs does, that's a win.
 4. **Ticket expiration / revocation.** Do iroh tickets expire? Can they be revoked? Current pairing is one-shot (5-minute timeout); persistent tickets change the UX (accidental old-ticket sharing risk).

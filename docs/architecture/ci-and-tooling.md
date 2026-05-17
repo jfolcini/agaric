@@ -49,14 +49,14 @@ Every release asset (Linux `.deb` / `.AppImage`, Windows `.msi` / `.exe`, macOS 
 
 Frame the no-OS-signing posture honestly: **SLSA provenance does not substitute for OS-level code signing at the UX layer.** A SmartScreen warning on Windows still appears on first install; macOS Gatekeeper still quarantines a non-notarised `.app`. Provenance lets a sophisticated user verify origin; it does not change the first-launch experience. Two follow-on positions:
 
-- **macOS notarisation — strict no-go for now** ([`PEND-41`](../../pending/PEND-41-ci-tooling-review.md) R11). Not adopting in the current cycle; unquarantine instructions in [`../BUILD.md`](../BUILD.md) remain the UX.
-- **Windows SignPath OSS — pending action** ([`PEND-41`](../../pending/PEND-41-ci-tooling-review.md) R3). Free for public OSS, integrates as one GHA step. Application queue runs multiple weeks; flagged P0.
+- **macOS notarisation — strict no-go for now** (tracked as `CI-R11` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md)). Not adopting in the current cycle; unquarantine instructions in [`../BUILD.md`](../BUILD.md) remain the UX.
+- **Windows SignPath OSS — pending action** (tracked as `CI-R3` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md)). Free for public OSS, integrates as one GHA step. Application queue runs multiple weeks.
 
 The Tauri updater signing key — distinct from OS-level code signing — is the **root of trust for every auto-update**. See [`../../SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation" for cadence, procedure, revocation path, and the deferred Sigstore-keyless alternative.
 
 ## Advisory handling — three concentric rings
 
-Vulnerability advisories filter through three rings of decreasing strictness. **Block** is `cargo deny check` driven by `src-tauri/deny.toml` with an explicit `[advisories].ignore` list — anything not on the list and unresolved fails the build. **Warn** is `cargo audit` (upstream RustSec, run after `cargo deny` to catch advisories published since `deny.toml` was last triaged) and `npm audit signatures` (Sigstore provenance check on the npm dependency closure). Both run warn-only so a freshly-published advisory does not block CI before the maintainer has triaged it. **Time-boxed waiver** is `.nsprc` with a `expiresOn` field per ignored entry, set 90 days from triage — the entry expires automatically, forcing a re-review rather than silent indefinite ignore. The asymmetry between `cargo audit`-warn and `cargo deny`-block is acknowledged and slated for promotion ([`PEND-41`](../../pending/PEND-41-ci-tooling-review.md) R5): the `.nsprc` 90-day pattern proves the team can run an explicit-waiver discipline, and mirroring it in `deny.toml` is the next step.
+Vulnerability advisories filter through three rings of decreasing strictness. **Block** is `cargo deny check` driven by `src-tauri/deny.toml` with an explicit `[advisories].ignore` list — anything not on the list and unresolved fails the build (this also catches advisories published since the last triage, since `cargo audit` was promoted from warn-only). **Warn** is `npm audit signatures` (Sigstore provenance check on the npm dependency closure), run warn-only because the Sigstore-attested coverage of the npm ecosystem is still partial. **Time-boxed waiver** is `.nsprc` with an `expiresOn` field per ignored entry set 90 days from triage — the entry expires automatically, forcing a re-review rather than silent indefinite ignore. The same explicit-waiver discipline now applies to `src-tauri/deny.toml [advisories].ignore` with inline expiry comments per entry.
 
 ## Local↔CI parity — `verify-ci-equivalent.sh` as contract
 
@@ -64,7 +64,7 @@ Vulnerability advisories filter through three rings of decreasing strictness. **
 
 ## JNI / Android `unsafe_code` reconciliation
 
-Workspace lint is `unsafe_code = "deny"` (`src-tauri/Cargo.toml:41`). Exactly one file holds a `#![allow(unsafe_code)]` carve-out: `src-tauri/src/sync_daemon/android_multicast.rs:33`, which acquires Android's `WifiManager.MulticastLock` over JNI — the only way to receive multicast packets on an Android Wi-Fi interface, and the only JNI raw-pointer surface in the tree. Each `unsafe` block inside that file is justified inline. Contract: any *new* file needing the allow requires explicit review. A central allowlist with a prek guard against non-allowlisted expansion is on the backlog ([`PEND-41`](../../pending/PEND-41-ci-tooling-review.md) R13).
+Workspace lint is `unsafe_code = "deny"` (`src-tauri/Cargo.toml:41`). Exactly one file holds a `#![allow(unsafe_code)]` carve-out: `src-tauri/src/sync_daemon/android_multicast.rs:33`, which acquires Android's `WifiManager.MulticastLock` over JNI — the only way to receive multicast packets on an Android Wi-Fi interface, and the only JNI raw-pointer surface in the tree. Each `unsafe` block inside that file is justified inline. Contract: any *new* file needing the allow requires explicit review, enforced by the `unsafe-code allowlist` prek hook (`src-tauri/unsafe-allowlist.txt` + `scripts/check-unsafe-allowlist.sh`).
 
 ## Asymmetric branch-protection convention
 
@@ -76,20 +76,16 @@ The asymmetry is wired through the ruleset's `bypass_actors` list: a single acto
 
 The tighter PR-side parameters (code-owner review, last-push approval, stale-review dismissal, thread-resolution gate, required `validate-all`, strict-up-to-date, linear history) primarily lift the OpenSSF Scorecard `Branch-Protection` score and harden the external-contributor path. They cost the maintainer nothing on direct pushes because the admin bypass remains in place. If the maintainer cycle ever needs to go through a PR (e.g. someone else's branch picked up by the maintainer), the same gates apply — by design. The one Scorecard sub-check we deliberately do **not** satisfy is "branch protection settings apply to administrators" — that is the bypass, kept as the R12 design choice (revisit trigger: first external maintainer joins).
 
-Drift on this ruleset is policed by the `branch-protection-assert.yml` daily cron ([`PEND-41`](../../pending/PEND-41-ci-tooling-review.md) R30), which re-reads the live rule-type set and diffs it against the expected six; an accidental UI toggle surfaces the next morning.
+Drift on this ruleset is policed by the `branch-protection-assert.yml` daily cron, which re-reads the live rule-type set and diffs it against the expected six; an accidental UI toggle surfaces the next morning.
 
 ## Accepted risks and revisit triggers
 
-Each row is a deliberate decision, the reason it is accepted today, and the trigger that would force a re-evaluation. Pointers go to the rec backlog in [`PEND-41`](../../pending/PEND-41-ci-tooling-review.md).
+Each row is a deliberate decision, the reason it is accepted today, and the trigger that would force a re-evaluation.
 
-- **No macOS notarisation** — accepted because the Apple Developer Program fee and the operational overhead of an Apple-managed signing key are out of scope for the current cycle. Trigger: a downstream that requires notarisation (a managed corporate fleet, a third-party Mac app catalogue). See R11 — strict no-go for now.
-- **Dependabot grouping for npm and cargo pending** — accepted because the raw, ungrouped feed would generate untriagable PR volume. Trigger: grouping rules land per R2 (next cycle).
-- **`cargo audit` warn-only, not block** — accepted to avoid a freshly-published advisory blocking CI before the maintainer can triage. Trigger: promote to block once the `.nsprc` waiver pattern is mirrored in `deny.toml` per R5.
-- **Playwright `workers: 1` globally** — accepted because Radix and TipTap focus state genuinely flakes under parallel workers, and per-suite serial-mode tagging has not been audited yet. Trigger: per-suite audit lands per R14.
-- **x86_64 macOS via SDK cross-compile from Apple Silicon** — accepted because Apple's own Intel deprecation is in motion (post-macOS Tahoe transition); maintaining a separate Intel runner today would be paying for hardware that is already self-limiting. Trigger: an end-user-reported regression that cross-compile cannot reproduce. See R32 — explicitly rejected as a change, documented as a revisit trigger.
+- **No macOS notarisation** — accepted because the Apple Developer Program fee and the operational overhead of an Apple-managed signing key are out of scope for the current cycle. Trigger: a downstream that requires notarisation (a managed corporate fleet, a third-party Mac app catalogue). Tracked as `CI-R11` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md).
+- **Playwright `workers: 1` globally** — accepted on the desktop runner because Radix and TipTap focus state flakes under parallel workers; CI runs with `workers: 2` per-shard after the recent audit identified the truly-serial specs.
+- **x86_64 macOS via SDK cross-compile from Apple Silicon** — accepted because Apple's own Intel deprecation is in motion (post-macOS Tahoe transition); maintaining a separate Intel runner today would be paying for hardware that is already self-limiting. Trigger: an end-user-reported regression that cross-compile cannot reproduce.
 - **`zizmor` `cache-poisoning` baseline (not strict)** — accepted because the threat model is single-user, no adversarial peers with repo-push capability. Trigger: the threat model expands to include external maintainers with merge rights.
-- **No SBOM** — accepted because the SLSA provenance attestation already covers the primary supply-chain question (where did this binary come from). Trigger: SLSA L3 formal claim or EU CRA enforcement deadline. See R9.
-- **No CI `timeout-minutes`** — accepted because GitHub Actions' 6h default rarely bites in practice and a wrong upper bound is worse than no bound. Trigger: measurement lands per R1 — pull observed wall-clock from successful main-branch runs, take the max with headroom, document inline.
 
 The list deliberately omits items that have landed this batch (the count tables in `AGENTS.md` are gone, the conventional-commits hook is in, CODEOWNERS exists, an `.editorconfig` is in place). Those are no longer "accepted risks"; they are simply current state.
 
@@ -97,5 +93,4 @@ The list deliberately omits items that have landed this batch (the count tables 
 
 Things this doc does not commit to yet — and the canonical location for tracking them — are:
 
-- The full rec backlog: [`../../pending/PEND-41-ci-tooling-review.md`](../../pending/PEND-41-ci-tooling-review.md). As each rec ships, the relevant row above flips from "accepted risk" to "current state", and the rec is crossed off the backlog. When the backlog is fully drained, that file is deleted in the same commit as the last rec.
-- Longer-horizon items not specific to CI (transport changes, sync evolution, editor surface work): [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md) is canonical.
+- CI/tooling backlog and longer-horizon items (transport changes, sync evolution, editor surface work) live in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md). The four `CI-R*` rows there are the still-open follow-ups from the 2026-05-16 review wave (SignPath OSS, macOS notarisation, vitest threads benchmark, `SKIP_CI_VERIFY` reason-string).

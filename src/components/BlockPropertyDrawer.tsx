@@ -137,7 +137,7 @@ export function BlockPropertyDrawer({
         'BlockPropertyDrawer',
         'Failed to reload properties after ref save',
         {
-          blockId: blockId ?? '',
+          blockId,
         },
         err,
       )
@@ -163,7 +163,7 @@ export function BlockPropertyDrawer({
           'BlockPropertyDrawer',
           'Failed to clear builtin date',
           {
-            blockId: blockId ?? '',
+            blockId,
             field,
           },
           err,
@@ -193,7 +193,7 @@ export function BlockPropertyDrawer({
           'BlockPropertyDrawer',
           'Failed to save builtin date',
           {
-            blockId: blockId ?? '',
+            blockId,
             field,
             value,
           },
@@ -222,7 +222,7 @@ export function BlockPropertyDrawer({
           'BlockPropertyDrawer',
           'Failed to add property from definition',
           {
-            blockId: blockId ?? '',
+            blockId,
             key: def.key,
           },
           err,
