@@ -2,11 +2,6 @@
 
 > Captured during the `docs/UI-MAP.md` + `docs/UX.md` rewrite work. Independently actionable; each entry is a candidate for a future REVIEW-LATER ticket or a session task. Not yet scheduled.
 
-## Wiring gaps
-
-- **Properties tab in Settings is half-wired.** The `settings.tabProperties` i18n key exists but `SettingsView` never branches on `activeTab === 'properties'`. Either finish the tab branch + nav-item or drop the orphan key.
-- **Properties view has no sidebar entry.** `nav-items.ts` doesn't list it; only reachable from internal nav state. If still supported, add a nav item; if not, fold into Settings or remove.
-
 ## UX consistency
 
 - **Toast deduplication missing.** sonner doesn't dedupe by default and `notify()` doesn't either. Rapid identical errors (e.g. sync loops) stack visibly. Thread a dedup helper into `notify()` or use sonner's `id` field for known recurring error categories.

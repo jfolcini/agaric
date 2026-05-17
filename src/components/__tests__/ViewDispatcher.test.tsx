@@ -50,9 +50,6 @@ vi.mock('../PageEditor', () => ({
     <div data-testid="page-editor-mock">{`page-editor:${title}`}</div>
   ),
 }))
-vi.mock('../PropertiesView', () => ({
-  PropertiesView: () => <div data-testid="properties-view-mock">properties</div>,
-}))
 vi.mock('../SearchPanel', () => ({
   SearchPanel: () => <div data-testid="search-panel-mock">search</div>,
 }))
@@ -113,7 +110,6 @@ describe('ViewDispatcher — routing', () => {
     ['pages', 'page-browser-mock'],
     ['tags', 'tag-list-mock'],
     ['trash', 'trash-view-mock'],
-    ['properties', 'properties-view-mock'],
     ['settings', 'settings-view-mock'],
     ['status', 'status-panel-mock'],
     ['history', 'history-view-mock'],

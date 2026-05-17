@@ -143,7 +143,6 @@ describe('useNavigationStore', () => {
         'search',
         'pages',
         'tags',
-        'properties',
         'trash',
         'status',
         'history',

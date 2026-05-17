@@ -2,8 +2,7 @@
  * ListItem — shared interactive list-item with hover highlight.
  *
  * Standardizes the `group flex items-center gap-3 rounded-lg …
- * hover:bg-accent/50` pattern used across TagList, PropertiesView,
- * and PageBrowser.
+ * hover:bg-accent/50` pattern used across TagList and PageBrowser.
  *
  * Supports `asChild` polymorphism (Radix `Slot`) so consumers can render
  * the chrome as an `<a>` for navigable lists while keeping the default

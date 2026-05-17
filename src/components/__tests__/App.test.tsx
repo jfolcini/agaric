@@ -1639,7 +1639,7 @@ describe('App', () => {
   // makes the tablist visible across every sidebar destination — not just
   // inside page-editor.
   describe('FEAT-7 shell-level TabBar hoist', () => {
-    const shellViews: Array<Exclude<import('../../stores/navigation').View, 'properties'>> = [
+    const shellViews: Array<import('../../stores/navigation').View> = [
       'journal',
       'pages',
       'tags',

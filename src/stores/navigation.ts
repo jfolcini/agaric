@@ -47,7 +47,6 @@ export type View =
   | 'search'
   | 'pages'
   | 'tags'
-  | 'properties'
   | 'trash'
   | 'status'
   | 'history'

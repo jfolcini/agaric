@@ -49,9 +49,6 @@ const GraphView = lazy(() => import('./GraphView').then((m) => ({ default: m.Gra
 const HistoryView = lazy(() => import('./HistoryView').then((m) => ({ default: m.HistoryView })))
 const PageBrowser = lazy(() => import('./PageBrowser').then((m) => ({ default: m.PageBrowser })))
 const PageEditor = lazy(() => import('./PageEditor').then((m) => ({ default: m.PageEditor })))
-const PropertiesView = lazy(() =>
-  import('./PropertiesView').then((m) => ({ default: m.PropertiesView })),
-)
 const SearchPanel = lazy(() => import('./SearchPanel').then((m) => ({ default: m.SearchPanel })))
 const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })))
 const StatusPanel = lazy(() => import('./StatusPanel').then((m) => ({ default: m.StatusPanel })))
@@ -184,14 +181,6 @@ export function ViewDispatcher({
         <FeatureErrorBoundary name="Trash">
           <Suspense fallback={<ViewFallback />}>
             <TrashView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'properties':
-      return (
-        <FeatureErrorBoundary name="Properties">
-          <Suspense fallback={<ViewFallback />}>
-            <PropertiesView />
           </Suspense>
         </FeatureErrorBoundary>
       )
