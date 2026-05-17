@@ -52,9 +52,33 @@ Every change must:
 
 ## Licensing and sign-off
 
-Agaric is released under **GPL-3.0-or-later**. By submitting a patch you agree to license your contribution under the same terms.
+Agaric is released under **GPL-3.0-or-later** (see [`LICENSE`](LICENSE)). By submitting a patch you agree to license your contribution under the same terms.
 
-A Developer Certificate of Origin (DCO) sign-off is **not currently required**. If the project adopts DCO or CLA in the future (likely on receiving the first substantial outside contribution), this document will be updated and contributors will be asked to sign off on previously-merged patches if necessary.
+### Developer Certificate of Origin (DCO)
+
+Every commit on a non-trivial contribution **MUST** carry a `Signed-off-by:` trailer asserting that the contributor has the right to submit the change under the project's existing license. This is the [Developer Certificate of Origin (DCO) v1.1](https://developercertificate.org/), the same mechanism the Linux kernel uses.
+
+To sign off on a commit, use the `-s` flag:
+
+```bash
+git commit -s -m "your commit message"
+```
+
+Git will append a line like `Signed-off-by: Your Name <your@email>` to the commit message. The name and email must match the commit author and be a real identity (no pseudonyms, but pseudonymous accounts are fine if consistently used). Per the DCO text:
+
+> By making a contribution to this project, I certify that:
+>
+> 1. The contribution was created in whole or in part by me and I have the right to submit it under the open source license indicated in the file; or
+> 2. The contribution is based upon previous work that, to the best of my knowledge, is covered under an appropriate open source license and I have the right under that license to submit that work with modifications, whether created in whole or in part by me, under the same open source license (unless I am permitted to submit under a different license), as indicated in the file; or
+> 3. The contribution was provided directly to me by some other person who certified (a), (b) or (c) and I have not modified it.
+> 4. I understand and agree that this project and the contribution are public and that a record of the contribution (including all personal information I submit with it, including my sign-off) is maintained indefinitely and may be redistributed consistent with this project or the open source license(s) involved.
+
+The project deliberately uses DCO instead of a Contributor License Agreement (CLA). The reason is explicit: a CLA would let the maintainer unilaterally relicense the project (including to a non-FLOSS license — the "rugpull" pattern). DCO is a lightweight per-commit assertion that does not transfer copyright; any future relicense would require obtaining permission from every individual contributor. That is the GPL family's standard guard against governance capture, and Agaric preserves it on purpose. See [`GOVERNANCE.md`](GOVERNANCE.md) for the broader rationale.
+
+If you forgot the sign-off on a commit:
+
+- For your most recent commit: `git commit --amend -s --no-edit && git push --force-with-lease`.
+- For earlier commits: `git rebase --signoff <base-sha>` then force-push.
 
 ## Maintainer workflow
 
