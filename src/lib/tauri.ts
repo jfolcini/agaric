@@ -587,12 +587,18 @@ export async function searchBlocks(params: {
   cursor?: string | undefined
   limit?: SafeLimit | undefined
   spaceId: string
+  /** PEND-54 — page-name glob include list. See `SearchFilter`. */
+  includePageGlobs?: string[] | undefined
+  /** PEND-54 — page-name glob exclude list. See `SearchFilter`. */
+  excludePageGlobs?: string[] | undefined
 }): Promise<PageResponse<SearchBlockRow>> {
   return unwrap(
     await commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
       parentId: params.parentId ?? null,
       tagIds: params.tagIds ?? [],
       spaceId: params.spaceId,
+      includePageGlobs: params.includePageGlobs ?? [],
+      excludePageGlobs: params.excludePageGlobs ?? [],
     }),
   )
 }

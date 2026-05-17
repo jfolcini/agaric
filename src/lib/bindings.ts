@@ -1480,6 +1480,22 @@ export type SearchFilter = {
 	 *  pass `''`.
 	 */
 	spaceId?: string | null,
+	/**
+	 *  PEND-54 — page-name glob include list. Each entry may use
+	 *  SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
+	 *  expansion. Bare tokens are wrapped with `*…*` for a
+	 *  substring match. Resolved against `pages_cache.title` with
+	 *  `LOWER(...)` for case-insensitive matching. See
+	 *  `fts::glob_filter::prepare_globs` for the parsing pipeline.
+	 */
+	includePageGlobs?: string[],
+	/**
+	 *  PEND-54 — page-name glob exclude list. Same shape as
+	 *  [`Self::include_page_globs`]; AND-joined into a `NOT IN (...)`
+	 *  sub-select. A page matching both include and exclude is
+	 *  excluded.
+	 */
+	excludePageGlobs?: string[],
 };
 
 /**

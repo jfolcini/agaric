@@ -4,6 +4,7 @@ pub mod common;
 mod compaction_cmd_tests;
 mod edge_case_tests;
 mod gcal_hook_tests;
+mod glob_filter_tests;
 mod history_cmd_tests;
 mod page_cmd_tests;
 mod property_cmd_tests;

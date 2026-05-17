@@ -14,6 +14,7 @@
 //! - `fts_optimize` — run FTS5 segment merge
 //! - `search_fts` — FTS5 MATCH query with cursor-based pagination
 
+pub(crate) mod glob_filter;
 mod index;
 mod search;
 pub(crate) mod strip;

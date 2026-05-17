@@ -1,0 +1,65 @@
+import fc from 'fast-check'
+import { describe, expect, it } from 'vitest'
+import { parse } from '../classify'
+import { addFilter, removeFilterAt, serialize, tokenSource } from '../serialize'
+
+describe('serialize round-trip', () => {
+  const canonicalInputs = [
+    'tag:#urgent',
+    'tag:#urgent tag:#followup',
+    'path:Journal/* tag:#urgent',
+    'not-path:Archive/** path:Journal/*',
+    'tag:#urgent hello world',
+    'path:{Journal,Archive}/* tag:#meeting',
+    'tag:#日本語',
+  ]
+
+  for (const s of canonicalInputs) {
+    it(`canonical: serialize(parse('${s}')) === ('${s}')`, () => {
+      const round = serialize(parse(s))
+      // Reconstructed AST should be equivalent — chips and freetext
+      // are order-preserving by their classification rules.
+      expect(parse(round)).toEqual(parse(s))
+    })
+  }
+
+  it('idempotency: parse(serialize(parse(s))) === parse(s)', () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(
+          fc.constantFrom('tag:#urgent', 'path:Journal/*', '#followup', 'hello world'),
+          fc.string({ minLength: 0, maxLength: 30 }),
+        ),
+        (s) => {
+          const once = parse(s)
+          const twice = parse(serialize(once))
+          // Filters and freeText must match (key-by-key).
+          if (once.freeText !== twice.freeText) return false
+          if (once.filters.length !== twice.filters.length) return false
+          for (let i = 0; i < once.filters.length; i++) {
+            const a = once.filters[i]
+            const b = twice.filters[i]
+            if (!a || !b) return false
+            if (a.kind !== b.kind) return false
+            if (tokenSource(a) !== tokenSource(b)) return false
+          }
+          return true
+        },
+      ),
+      { numRuns: 200 },
+    )
+  })
+
+  it('removeFilterAt drops the requested token', () => {
+    const ast = parse('tag:#a tag:#b tag:#c')
+    const next = removeFilterAt(ast, 1)
+    expect(next.filters).toHaveLength(2)
+    expect(serialize(next)).toBe('tag:#a tag:#c')
+  })
+
+  it('addFilter appends to the end', () => {
+    const ast = parse('tag:#a hello')
+    const next = addFilter(ast, { kind: 'pathInclude', value: 'X/*', span: [0, 0] })
+    expect(serialize(next)).toBe('tag:#a path:X/* hello')
+  })
+})

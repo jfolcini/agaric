@@ -7,7 +7,7 @@ Agaric ships with three complementary search surfaces:
 - **Find across pages (`Ctrl+Shift+F`)** — the full-text-search view that scans every block and page title in the current space.
 - **Palette (`Cmd/Ctrl+K`)** — quick navigation across pages, tags, and recent blocks. (Reserved for PEND-51.)
 
-For the across-pages surface: open the panel from the sidebar (or with `Ctrl+Shift+F`), type a query of three or more characters, and results stream in grouped by page. Matches inside snippets are highlighted; the page header doubles as a navigation target so you can jump straight to the parent. The same panel exposes the legacy `+ Page` and `+ Tag` filter chips while the inline filter syntax is in flight.
+For the across-pages surface: open the panel from the sidebar (or with `Ctrl+Shift+F`), type a query of three or more characters, and results stream in grouped by page. Matches inside snippets are highlighted; the page header doubles as a navigation target so you can jump straight to the parent. Structured filters can be typed directly into the input (`tag:#urgent path:Journal/*`) or added via the `+ Filter ▾` button above the chip row — see [Filter syntax](#filter-syntax) below.
 
 For an in-app reference, click the `?` button in the search toolbar — it opens a help dialog mirroring the section list below.
 
@@ -63,7 +63,54 @@ Pattern portability between the two surfaces is roughly the intersection of thes
 
 ## Filter syntax
 
-<!-- Section reserved for PEND-54 (inline filter syntax + glob/tag). -->
+The find-across-pages view supports a small filter vocabulary that mixes freely with free-text and the FTS5 boolean operators. The query string is the canonical model — every chip the UI renders is a projection of the parsed AST, and copy-pasting a query reproduces every filter exactly.
+
+### Token vocabulary
+
+| Token | Meaning | Notes |
+|---|---|---|
+| `tag:#name` | Block carries the tag `name`. | Repeats AND-combine. |
+| `#name` | Bare alias for `tag:#name`. | Equivalent shape. |
+| `path:GLOB` | Page-name glob include. | Comma-separated entries OR-combine inside one token. |
+| `not-path:GLOB` | Page-name glob exclude. | AND-joined with `path:`. |
+| `"phrase"` | Quoted phrase passed verbatim to FTS5. | Bypasses the trigram length filter. |
+| `AND` / `OR` / `NOT` | Boolean operators (uppercase, FTS5 syntax). | Outside filter tokens. |
+
+### Glob matching
+
+Page-name globs use SQLite's native `GLOB` syntax against `pages_cache.title`:
+
+- `*` — zero or more characters.
+- `?` — exactly one character.
+- `[abc]` / `[a-z]` — character class.
+- `{a,b,c}` — top-level brace expansion (no nesting; max 64 expanded patterns per token).
+
+Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `*Journal*` for a substring match. Globs are **case-insensitive** by default — the SQL clause uses `LOWER(pages_cache.title) GLOB LOWER(?)`.
+
+### Worked examples
+
+| Query | Effect |
+|---|---|
+| `TODO path:Journal/2026-* tag:#urgent` | TODO mentions in 2026-Journal pages, tagged urgent. |
+| `tag:#meeting not-path:Archive/**` | Meetings outside the archive subtree. |
+| `path:{Journal,Notes}/*` | Pages in either `Journal/` or `Notes/`. |
+
+### Behavioural error states
+
+- `path:[unclosed` → invalid chip with `InvalidGlob: unbalanced bracket`.
+- `path:{a,{b,c}}` → invalid chip with `InvalidGlob: brace nesting not supported`.
+- `tag:` (no value) → invalid chip with `tag: value required`.
+- `foo:bar` (unknown prefix) → invalid chip with `unknown filter key 'foo:'`.
+
+Invalid chips render with destructive styling, an `aria-invalid` marker, and the typed error as the hover tooltip. The frontend keys on the `InvalidGlob:` prefix returned by the backend so the same message can also originate from a server-side rejection.
+
+### Migrating from the old chip UI
+
+PEND-54 replaced the legacy `+ Page` and `+ Tag` popover chips. There is one **documented behavioural change**:
+
+- The old `+ Page` chip filtered by a single exact page ULID. The new `path:` filter matches against the page **title** with substring semantics by default. `path:Project Alpha` matches `Project Alpha`, `Project Alpha 2`, and `Old Project Alpha`. To preserve exact-page-filter semantics, use the page's inline link form `[[Project Alpha]]` in the query (FTS5 matches verbatim) or pair `path:` with a unique substring.
+
+The new model is a strict superset of every other previous use case — copy-paste of a query string round-trips, and the chip row is recomputed from the AST on every keystroke.
 
 ## Toggles
 

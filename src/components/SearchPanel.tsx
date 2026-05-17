@@ -28,14 +28,22 @@
 
 import { Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
 import { CardButton } from '@/components/ui/card-button'
 import { PAGINATION_LIMIT } from '@/lib/constants'
-import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
+import type { FilterToken } from '@/lib/search-query'
+import {
+  addFilter,
+  astToFilterProjection,
+  parse,
+  removeFilterAt,
+  serialize,
+  tokenKey,
+} from '@/lib/search-query'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -43,11 +51,10 @@ import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { reportIpcError } from '../lib/report-ipc-error'
-import type { BlockRow, SearchBlockRow, TagCacheRow } from '../lib/tauri'
+import type { BlockRow, SearchBlockRow } from '../lib/tauri'
 import {
   batchResolve,
   getBlock,
-  listAllPagesInSpace,
   listTagsByPrefix,
   paginationLimit,
   searchBlocks,
@@ -56,13 +63,15 @@ import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { EmptyState } from './EmptyState'
 import { ResultCard } from './ResultCard'
-import { SearchFilters } from './SearchPanel/SearchFilters'
 import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
-import { INITIAL_SEARCH_FILTER_STATE, searchFilterReducer } from './SearchPanel/searchFilterReducer'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
-import { usePopoverEntity } from './SearchPanel/usePopoverEntity'
+import { FilterChipRow } from './search/FilterChipRow'
+import { FilterHelperPopover } from './search/FilterHelperPopover'
 import { groupResultsByPage, SearchResultGroups } from './search/SearchResultGroups'
+
+/** localStorage key for the PEND-54 one-time migration toast. */
+const FILTER_SYNTAX_INTRO_TOAST_FLAG = 'agaric:searchFilterSyntaxToast:v1'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -94,92 +103,96 @@ export function SearchPanel(): React.ReactElement {
   const [recentPages, setRecentPages] = useState<RecentPage[]>([])
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
 
-  // PEND-30 D-3 — applied-filter state moved to a typed reducer.
-  const [filterState, dispatchFilter] = useReducer(searchFilterReducer, INITIAL_SEARCH_FILTER_STATE)
-  const { filterPageId, filterTagIds } = filterState
+  // PEND-54 — the query string is the canonical filter state. The
+  // AST is derived state recomputed on every keystroke via `useMemo`.
+  const ast = useMemo(() => parse(query), [query])
+  // The debounced query is also parsed so the IPC sees the filters
+  // that match the rendered chips.
+  const debouncedAst = useMemo(() => parse(debouncedQuery), [debouncedQuery])
+  const debouncedProjection = useMemo(() => astToFilterProjection(debouncedAst), [debouncedAst])
+  // Resolve tag names → tag_ids before firing the IPC. This is a
+  // best-effort lookup: unknown names produce no tag_id (the SQL
+  // path then matches nothing for that tag, which is correct).
+  const [tagNameMap, setTagNameMap] = useState<Map<string, string>>(new Map())
+  const tagIds = useMemo(() => {
+    const out: string[] = []
+    for (const name of debouncedProjection.tagNames) {
+      const id = tagNameMap.get(name.toLowerCase())
+      if (id) out.push(id)
+    }
+    return out
+  }, [debouncedProjection.tagNames, tagNameMap])
 
-  // PEND-30 D-3 / limit-clamp-followup row `SearchPanel.tsx:138` —
-  // page picker: scoped to the current space. Mirrors the
-  // `useBlockResolve.searchPages` dispatcher precedent (short vs long
-  // query branches) so the picker can find pages past the previous
-  // hardcoded 20-row clamp.
-  //
-  //  - Short queries (≤2 chars): `list_all_pages_in_space` returns the
-  //    full unbounded set of pages (no pagination, no clamp). We
-  //    project the `PageHeading` rows into the `BlockRow` shape the
-  //    popover renderer expects (only `id`/`content` are read
-  //    downstream — see `renderItem`/`keyExtractor`/`handleSelectPage`
-  //    below — so the remaining `BlockRow` fields are stub values
-  //    sufficient to satisfy the type). UX-248 Unicode-aware folding
-  //    (`matchesSearchFolded`) still runs client-side for `İstanbul`
-  //    ↔ `istanbul` parity with PageBrowser and HighlightMatch.
-  //  - Long queries (>2 chars): `searchBlocks` (FTS5) returns
-  //    relevance-ranked results filtered to `block_type === 'page'`.
-  //    FTS5 has its own tokenizer so we drop the JS folding here.
-  const pagePopover = usePopoverEntity<BlockRow>({
-    logLabel: 'page',
-    extraDeps: [currentSpaceId],
-    searchFn: async (q) => {
-      const trimmed = q.trim()
-      // FEAT-3 Phase 4 — both IPCs require `spaceId`. `?? ''` is
-      // the pre-bootstrap no-match fallback (see SearchPanel main
-      // `queryFn`).
-      const spaceId = currentSpaceId ?? ''
-      if (trimmed.length <= 2) {
-        const pages = await listAllPagesInSpace(spaceId)
-        const projected: BlockRow[] = pages.map((p) => ({
-          id: p.id,
-          block_type: 'page',
-          content: p.content,
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-          todo_state: p.todo_state,
-          priority: p.priority,
-          due_date: p.due_date,
-          scheduled_date: p.scheduled_date,
-          page_id: null,
-        }))
-        return trimmed
-          ? projected.filter((b) => matchesSearchFolded(b.content ?? '', trimmed))
-          : projected
-      }
-      const res = await searchBlocks({
-        query: trimmed,
-        limit: paginationLimit(20),
-        spaceId,
+  // Resolve tag names in `ast.filters` to ids via the prefix lookup.
+  useEffect(() => {
+    const names = debouncedProjection.tagNames.filter((n) => !tagNameMap.has(n.toLowerCase()))
+    if (names.length === 0) return
+    let cancelled = false
+    Promise.all(
+      names.map((name) =>
+        listTagsByPrefix({ prefix: name, limit: paginationLimit(20) }).catch(() => []),
+      ),
+    )
+      .then((batches) => {
+        if (cancelled) return
+        setTagNameMap((prev) => {
+          const next = new Map(prev)
+          for (let i = 0; i < names.length; i++) {
+            const name = names[i]
+            const batch = batches[i]
+            if (!name || !batch) continue
+            const lower = name.toLowerCase()
+            const exact = batch.find((t) => t.name.toLowerCase() === lower)
+            if (exact) next.set(lower, exact.tag_id)
+          }
+          return next
+        })
       })
-      return res.items.filter((b) => b.block_type === 'page')
-    },
-  })
-
-  // PEND-30 D-3 — tag picker: server-side prefix matching, no extra deps.
-  const tagPopover = usePopoverEntity<TagCacheRow>({
-    logLabel: 'tag',
-    searchFn: (q) => listTagsByPrefix({ prefix: q, limit: paginationLimit(20) }),
-  })
+      .catch((err) => logger.warn('SearchPanel', 'tag resolution failed', undefined, err))
+    return () => {
+      cancelled = true
+    }
+  }, [debouncedProjection.tagNames, tagNameMap])
 
   // Load recent pages from localStorage on mount
   useEffect(() => {
     setRecentPages(getRecentPages())
   }, [])
 
+  // PEND-54 — one-time migration toast pointing users at the help
+  // dialog so they discover the inline filter syntax.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(FILTER_SYNTAX_INTRO_TOAST_FLAG)) return
+      notify(t('search.filterSyntaxIntro'))
+      localStorage.setItem(FILTER_SYNTAX_INTRO_TOAST_FLAG, '1')
+    } catch {
+      // localStorage may be unavailable in tests / private mode.
+    }
+  }, [t])
+
   const queryFn = useCallback(
     (cursor?: string) =>
       // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
       // fallback is intentional pre-bootstrap behaviour: empty string
       // forces a no-match SQL filter (returning empty results) rather
-      // than a runtime null deref. The `enabled: spaceIsReady` gate
-      // below normally prevents this branch from firing.
+      // than a runtime null deref.
       searchBlocks({
-        query: debouncedQuery,
-        parentId: filterPageId ?? undefined,
-        tagIds: filterTagIds.length > 0 ? filterTagIds : undefined,
+        query: debouncedAst.freeText,
+        tagIds: tagIds.length > 0 ? tagIds : undefined,
+        includePageGlobs:
+          debouncedProjection.includePageGlobs.length > 0
+            ? debouncedProjection.includePageGlobs
+            : undefined,
+        excludePageGlobs:
+          debouncedProjection.excludePageGlobs.length > 0
+            ? debouncedProjection.excludePageGlobs
+            : undefined,
         cursor,
         limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId ?? '',
       }),
-    [debouncedQuery, filterPageId, filterTagIds, currentSpaceId],
+    [debouncedAst.freeText, tagIds, debouncedProjection, currentSpaceId],
   )
 
   const {
@@ -190,7 +203,10 @@ export function SearchPanel(): React.ReactElement {
     error,
     setItems,
   } = usePaginatedQuery(queryFn, {
-    enabled: spaceIsReady && debouncedQuery.length > 0,
+    // PEND-54 — the AST's free-text may be empty when the user has only
+    // typed structured filter tokens (`tag:#urgent`). We still want to
+    // run the query in that case so filters apply on their own.
+    enabled: spaceIsReady && (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
     onError: t('search.failed'),
   })
 
@@ -218,7 +234,13 @@ export function SearchPanel(): React.ReactElement {
   }, [results])
 
   // PEND-30 D-3 — alias resolution lifted into its own hook.
-  const { aliasMatch, aliasQuery } = useAliasResolution(debouncedQuery, results, currentSpaceId)
+  // PEND-54 — alias-match runs against the free-text portion so a
+  // query like `[[Alpha]] tag:#x` resolves the alias correctly.
+  const { aliasMatch, aliasQuery } = useAliasResolution(
+    debouncedAst.freeText,
+    results,
+    currentSpaceId,
+  )
 
   const debounced = useDebouncedCallback((value: string) => {
     setTyping(false)
@@ -353,19 +375,31 @@ export function SearchPanel(): React.ReactElement {
     [navigateToPage],
   )
 
-  function handleSelectPage(page: BlockRow) {
-    dispatchFilter({
-      type: 'set-page-filter',
-      pageId: page.id,
-      pageTitle: page.content ?? 'Untitled',
-    })
-    pagePopover.reset()
+  // PEND-54 — chip / helper handlers. Each appends a filter token
+  // to the AST and re-serialises the canonical query string.
+  function patchQuery(next: (currentAst: typeof ast) => typeof ast) {
+    setQuery((curr) => serialize(next(parse(curr))))
   }
-
-  function handleSelectTag(tag: TagCacheRow) {
-    dispatchFilter({ type: 'add-tag-filter', tagId: tag.tag_id, tagName: tag.name })
-    tagPopover.reset()
+  function handleRemoveFilter(index: number) {
+    patchQuery((a) => removeFilterAt(a, index))
   }
+  function handleClearAllFilters() {
+    setQuery(debouncedAst.freeText)
+  }
+  function handleAddTag(name: string) {
+    const token: FilterToken = { kind: 'tag', value: name, span: [0, 0] }
+    patchQuery((a) => addFilter(a, token))
+  }
+  function handleAddPathInclude(glob: string) {
+    const token: FilterToken = { kind: 'pathInclude', value: glob, span: [0, 0] }
+    patchQuery((a) => addFilter(a, token))
+  }
+  function handleAddPathExclude(glob: string) {
+    const token: FilterToken = { kind: 'pathExclude', value: glob, span: [0, 0] }
+    patchQuery((a) => addFilter(a, token))
+  }
+  // Stable key — used by callers that want the same chip-key strategy.
+  void tokenKey
 
   // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so
   // we never fire a `searchBlocks` call with an unresolved `spaceId`.
@@ -402,15 +436,18 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* PEND-30 Phase 3b — chip bar lifted into `SearchFilters`. */}
-      <SearchFilters
-        filterState={filterState}
-        dispatchFilter={dispatchFilter}
-        pagePopover={pagePopover}
-        tagPopover={tagPopover}
-        onSelectPage={handleSelectPage}
-        onSelectTag={handleSelectTag}
-        t={t}
+      {/* PEND-54 — chip row projected from the parsed AST. */}
+      <FilterChipRow
+        filters={ast.filters}
+        onRemove={handleRemoveFilter}
+        onClearAll={handleClearAllFilters}
+        trailing={
+          <FilterHelperPopover
+            onAddTag={handleAddTag}
+            onAddPathInclude={handleAddPathInclude}
+            onAddPathExclude={handleAddPathExclude}
+          />
+        }
       />
 
       {query.trim().length > 0 && query.trim().length < 3 && (

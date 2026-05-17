@@ -59,12 +59,26 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
         parent_id: Some("PAGE_X".into()),
         tag_ids: vec!["TAG_1".into(), "TAG_2".into()],
         space_id: Some("01TESTSPACE000000000000001".into()),
+        include_page_globs: vec!["Journal/*".into()],
+        exclude_page_globs: vec!["Archive/**".into()],
     };
     let json = serde_json::to_value(&original).unwrap();
     let decoded: SearchFilter = serde_json::from_value(json).unwrap();
     assert_eq!(decoded.parent_id, original.parent_id);
     assert_eq!(decoded.tag_ids, original.tag_ids);
     assert_eq!(decoded.space_id, original.space_id);
+    assert_eq!(decoded.include_page_globs, original.include_page_globs);
+    assert_eq!(decoded.exclude_page_globs, original.exclude_page_globs);
+}
+
+#[test]
+fn search_filter_glob_fields_default_to_empty_vec() {
+    // PEND-54: include/exclude page globs MUST default to empty
+    // (the wire shape is "absent → no filter applied"); old
+    // frontends that don't know about the fields keep working.
+    let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
+    assert!(filter.include_page_globs.is_empty());
+    assert!(filter.exclude_page_globs.is_empty());
 }
 
 // ---------------------------------------------------------------------

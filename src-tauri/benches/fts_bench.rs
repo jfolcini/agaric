@@ -86,7 +86,7 @@ fn bench_search_fts(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt)
-                .iter(|| search_fts(&pool, "benchmark", &page, None, None, None));
+                .iter(|| search_fts(&pool, "benchmark", &page, None, None, None, &[], &[]));
         });
     }
     group.finish();

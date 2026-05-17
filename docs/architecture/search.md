@@ -100,6 +100,37 @@ The search result tree uses a per-group listbox arrangement, not a single tree, 
 
 Cross-group keyboard traversal (arrow keys flowing from the last row of group N to the first row of group N+1) is an extension `useListKeyboardNavigation` carries; it flattens the visible-row set across listbox children. The flattening recomputes on every expand/collapse so a collapsed group's rows are not reachable by arrow-key.
 
+## Inline filter syntax (PEND-54)
+
+The query string is the canonical model of search state. Chips and IPC fields are projections of a parsed AST. The pipeline is:
+
+```text
+input string ──tokenize──▶ raw tokens ──classify──▶ SearchQueryAST {filters, freeText}
+                                                          │
+                                                          ├──▶ chip projection (FilterChipRow)
+                                                          ├──▶ autocomplete (caret offset)
+                                                          └──▶ astToFilterProjection ──▶ SearchFilter IPC
+```
+
+Three pure modules under `src/lib/search-query/`:
+
+- `tokenize.ts` — lexes whitespace-delimited words and `"…"` quoted phrases, attaching `[startCol, endCol)` spans. Mirrors the FTS5 sanitiser's quoting rules so the parser doesn't pre-process operator syntax.
+- `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; PEND-53 will register `state:`, `priority:`, `due:`, etc. without touching the core parser.
+- `classify.ts` — walks the raw token stream, asks the registry, and stitches the surviving free-text spans into `freeText`.
+
+The round-trip invariant — `parse(serialize(parse(s))) === parse(s)` for any `s` — is enforced by `fast-check` property tests in `__tests__/serialize.test.ts`. Direct equality `serialize(parse(s)) === s` only holds for canonical inputs (the `#tag` bare alias normalises to `tag:#tag` on the way out, by design).
+
+Validation errors come in two flavours:
+
+- **Frontend-cheap**: glob shape checks (unbalanced brackets, nested braces, escape sequences) run inside `register.ts`'s parsers and surface as `invalid` chips with `InvalidGlob:`-prefixed error strings. The chip renders red with the typed message as the tooltip.
+- **Backend authoritative**: `src-tauri/src/fts/glob_filter.rs` re-validates and brace-expands. Failures return `AppError::Validation("InvalidGlob: …")` so the frontend keys on the same prefix regardless of which side caught the error.
+
+### AST → SQL projection
+
+Page-name globs resolve against `pages_cache.title` (the dedicated title-lookup table — much smaller scan target than `blocks WHERE block_type='page'`). The dynamic SQL emits one `LOWER(pages_cache.title) GLOB ?` clause per pattern, OR-joined inside an `IN (...)` sub-select. `LOWER(...)` is applied on both sides for case-insensitive matching; the bound pattern is lowercased in Rust before binding (one `LOWER` per row, one constant `LOWER(?)` at parse time). The scale boundary is "low thousands of pages" — no covering index for `GLOB` is needed at that size.
+
+Brace expansion is hand-rolled (no `glob` crate dependency) and capped at 64 patterns per token. Comma-separated values are split at top level (commas inside `{...}` belong to brace alternatives, not the separator).
+
 ## Related files
 
 - `src/components/SearchPanel.tsx` — orchestrator: input, debounce, IPC call, group + render.
@@ -109,4 +140,8 @@ Cross-group keyboard traversal (arrow keys flowing from the last row of group N 
 - `src/components/help/SearchHelpDialog.tsx` — in-app `?` help.
 - `src-tauri/src/commands/queries.rs` — `SearchFilter`, `SearchBlockRow`, `search_blocks_inner`.
 - `src-tauri/src/fts/search.rs` — FTS5 query construction + `snippet()` projection.
+- `src-tauri/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion (PEND-54).
 - `src-tauri/migrations/0006_fts5_trigram.sql` — index definition + tokenizer config.
+- `src/lib/search-query/` — inline filter syntax parser, AST, serialiser, autocomplete (PEND-54).
+- `src/components/search/FilterChipRow.tsx` — AST → chip projection (PEND-54).
+- `src/components/search/FilterHelperPopover.tsx` — `+ Filter ▾` picker (PEND-54).

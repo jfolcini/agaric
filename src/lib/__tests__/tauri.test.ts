@@ -603,6 +603,9 @@ describe('searchBlocks', () => {
         parentId: null,
         tagIds: [],
         spaceId: 'TEST_SPACE_01',
+        // PEND-54 — additive fields default to empty arrays.
+        includePageGlobs: [],
+        excludePageGlobs: [],
       },
     })
     expect(result).toEqual(emptyPage)
@@ -642,6 +645,9 @@ describe('searchBlocks', () => {
         parentId: null,
         tagIds: [],
         spaceId: 'TEST_SPACE_01',
+        // PEND-54 — additive fields default to empty arrays.
+        includePageGlobs: [],
+        excludePageGlobs: [],
       },
     })
     expect(result).toEqual(pageResp)
@@ -671,6 +677,9 @@ describe('searchBlocks', () => {
         parentId: 'PAGE1',
         tagIds: ['TAG1', 'TAG2'],
         spaceId: 'SPACE_42',
+        // PEND-54 — additive fields default to empty arrays.
+        includePageGlobs: [],
+        excludePageGlobs: [],
       },
     })
   })

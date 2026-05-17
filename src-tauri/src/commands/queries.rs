@@ -154,6 +154,20 @@ pub struct SearchFilter {
     /// pass `''`.
     #[serde(default)]
     pub space_id: Option<String>,
+    /// PEND-54 — page-name glob include list. Each entry may use
+    /// SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
+    /// expansion. Bare tokens are wrapped with `*…*` for a
+    /// substring match. Resolved against `pages_cache.title` with
+    /// `LOWER(...)` for case-insensitive matching. See
+    /// `fts::glob_filter::prepare_globs` for the parsing pipeline.
+    #[serde(default)]
+    pub include_page_globs: Vec<String>,
+    /// PEND-54 — page-name glob exclude list. Same shape as
+    /// [`Self::include_page_globs`]; AND-joined into a `NOT IN (...)`
+    /// sub-select. A page matching both include and exclude is
+    /// excluded.
+    #[serde(default)]
+    pub exclude_page_globs: Vec<String>,
 }
 
 /// Response row for [`search_blocks_inner`].
@@ -233,6 +247,10 @@ pub async fn search_blocks_inner(
     } else {
         Some(filter.tag_ids.as_slice())
     };
+    // PEND-54 — brace-expand and validate page-name globs in Rust so
+    // we surface `InvalidGlob:` typed errors at the IPC boundary.
+    let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
+    let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
     fts::search_fts(
         pool,
         &query,
@@ -240,6 +258,8 @@ pub async fn search_blocks_inner(
         filter.parent_id.as_deref(),
         tag_ids_slice,
         filter.space_id.as_deref(),
+        &include_globs,
+        &exclude_globs,
     )
     .await
 }

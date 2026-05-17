@@ -672,6 +672,11 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             // shape changed to a `SearchFilter` struct but the MCP
             // contract is unchanged.
             space_id: Some(args.space_id),
+            // PEND-54 — the MCP tool does not (yet) accept inline
+            // filter syntax; defaults preserve the pre-PEND-54
+            // behaviour.
+            include_page_globs: Vec::new(),
+            exclude_page_globs: Vec::new(),
         },
     )
     .await?;

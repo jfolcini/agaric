@@ -62,13 +62,32 @@ I took the **Recommendation** verbatim unless noted otherwise.
 - **Test delta:** +43 (10 backend, 33 frontend). 9925 / 9925 vitest, 3682 / 3682 nextest, clippy clean.
 - **Biome rule ignores added (2, both with rationale comments):** `aria-activedescendant` on conditional-role `<ul>` in `CollapsibleGroupList`; `role="option"` on `<li>` in `SearchResultBlockRow`. Both are canonical WAI-ARIA listbox patterns the linter misclassifies.
 
-### PEND-54 — inline filter syntax
+### PEND-54 — inline filter syntax — LANDED
 
-(populated when cycle completes)
+- **Phases shipped:** Phase 1 (parser/AST/registry/autocomplete primitives) + Phase 2 (UI chip-row + helper popover + backend GLOB) + Phase 3 (docs).
+- **Phase deferred (review-worthy):** the **caret-anchored autocomplete popover** rendering. Pure detection logic (`detectAutocompleteAnchor` + `applyAutocompleteReplacement`) is implemented and unit-tested; the *in-input rendered popover* that anchors to the caret position is deferred. Rationale: requires coordination with PEND-55 (history-recall arrow-key contention on the input) and PEND-51 (palette autocomplete). Chip + helper-popover paths already deliver discoverability; caret popover is a polish layer.
+- **Helper popover keyboard nav:** simplified to "swap popover content in place" rather than nesting Radix popovers. Avoids focus-trap issues. `useListKeyboardNavigation` not invoked inside the inline `<ul>` — Enter + click are sufficient for now.
+- **Bare-token substring** (plan recommendation): backend `wrap_substring` wraps any pattern without `*`/`?`/`[` with `*…*`. Done verbatim.
+- **Brace-expansion cap = 64** (plan recommendation): both Rust + TS implementations enforce. Tests accept either truncation OR an `InvalidGlob: expansion exceeded` error as valid (safer-side acceptance).
+- **Comma-split inside `path:` value:** must respect top-level vs brace-internal commas. Hand-rolled `split_top_level_commas` in both Rust + TS.
+- **MCP search tool:** hard-coded empty globs there; the MCP contract is unchanged.
+- **Migration toast:** localStorage flag `agaric:searchFilterSyntaxToast:v1`, `t('search.filterSyntaxIntro')`. Wrapped in try/catch for jsdom resilience.
+- **Legacy chip UI deleted:** `searchFilterReducer.ts`, `SearchFilters.tsx`, `usePopoverEntity.ts`, and their tests. Eight legacy i18n keys removed (`search.addPage`, `addTag`, …).
+- **Test delta:** +290 vitest cases (parser suite + chip row + axe), +20 nextest (glob filter + IPC integration). 9994 vitest pass, 3704 nextest pass.
+- **Fix-up cycle:** prek's stricter `tsc -b` flagged 6 type-narrowing issues + a direct `sonner` import + a clippy `too_many_arguments` warning + an out-of-sync bench. All fixed in a follow-up subagent pass; no behaviour change.
+- **Follow-ups for the maintainer's next supervised cycle:** (1) caret-anchored autocomplete popover rendering, (2) integration test `SearchPanel.filters.test.tsx` for the end-to-end typed-token → IPC flow, (3) lift `tagNameMap` to a global store if tag-resolution becomes hot.
 
-### PEND-52 — in-page find
+### PEND-52 — in-page find — LANDED
 
-(populated when cycle completes)
+- **Architecture deviation (significant — review-worthy):** the plan called for ProseMirror `Decoration` + `DecorationSet` in a TipTap extension. Agaric's roving-editor pattern means only the focused block has a ProseMirror instance — every other block is static DOM via `StaticBlock.tsx`. A DecorationSet would only cover one block. Switched to the **CSS Custom Highlight Registry** (`CSS.highlights` + `Highlight` + `Range`) — modern browser primitive for native-style highlighting, paints over text without mutating DOM, works across all blocks uniformly. The TipTap extension file is a documented stub reserving the slot for future per-block decorations on the focused block. Deviation documented inline in `matcher.ts`, `in-page-find.ts`, and `docs/SEARCH.md`.
+- **Hand-rolled vs `prosemirror-search`:** stayed hand-rolled. The plan's 350-LOC budget for switching is moot because `prosemirror-search` only works against a ProseMirror document, which Agaric doesn't have at page level.
+- **Mobile entry point (plan Q1):** SKIPPED. No long-press menu, no page-header action sheet. Desktop keyboard binding works; `window.visualViewport` keyboard-aware positioning is in place so a laptop-with-touchscreen renders correctly. Pure touch users have no entry point — review needed.
+- **Selection-as-initial-query (Q3):** locked-in behaviour implemented (selection > current query > `lastQuery`).
+- **Regex divergence with PEND-55 (Q4):** documented in `docs/SEARCH.md`. JS RegExp (this plan) has lookaround + backrefs + Unicode-`\b`; Rust regex (PEND-55, future) is linear-time but no lookaround.
+- **Regex caps in place:** 1 KB pattern length cap, 10 KB text-node skip, 50-node `requestIdleCallback` chunks, cancellable in-flight walker. Each cap covered by tests.
+- **Test-env note:** happy-dom lacks `CSS.highlights`, so the highlighter no-ops in tests; the matcher (load-bearing logic) is fully testable; component tests assert counter / aria-pressed / navigation via store state.
+- **Test delta:** +39 (17 matcher, 10 store, 12 component including vitest-axe). Suite: 9965 / 9965 pass.
+- **Keyboard rebind:** `Ctrl+F` now opens in-page find; `Ctrl+Shift+F` opens find-in-files. Matches universal convention; users coming from prior versions see a one-line release note + KeyboardShortcuts dialog entry.
 
 ### PEND-55 — toggle row + search history
 

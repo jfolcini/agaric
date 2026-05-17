@@ -230,6 +230,7 @@ struct FtsSearchRow {
 /// queries shorter than 3 characters return no results.  Earlier
 /// versions of this module used the default `unicode61` tokenizer, which
 /// split CJK incorrectly; the trigram switch is what fixes that.
+#[allow(clippy::too_many_arguments)] // PEND-54 added include/exclude path glob params; refactor to a struct lives in PEND-58.
 pub async fn search_fts(
     pool: &SqlitePool,
     query: &str,
@@ -237,6 +238,8 @@ pub async fn search_fts(
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
     space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
@@ -363,6 +366,41 @@ pub async fn search_fts(
         None
     };
 
+    // PEND-54 — page-name glob include / exclude filters. Each entry
+    // has already been brace-expanded, lowercased and substring-
+    // wrapped by `prepare_globs`; we bind one parameter per pattern
+    // and OR-join inside each `IN (...)` sub-select. `LOWER(title)`
+    // is applied SQL-side (cheap on the small `pages_cache` table).
+    let include_glob_param_start = if !include_page_globs.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..include_page_globs.len())
+            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
+            .collect();
+        sql.push_str(&format!(
+            "\n           AND b.page_id IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
+            placeholders.join(" OR ")
+        ));
+        next_param += include_page_globs.len();
+        Some(start)
+    } else {
+        None
+    };
+
+    let exclude_glob_param_start = if !exclude_page_globs.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..exclude_page_globs.len())
+            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
+            .collect();
+        sql.push_str(&format!(
+            "\n           AND b.page_id NOT IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
+            placeholders.join(" OR ")
+        ));
+        next_param += exclude_page_globs.len();
+        Some(start)
+    } else {
+        None
+    };
+
     // Suppress unused variable warnings — these indices are used only when
     // the corresponding filter is active, but the compiler cannot see that
     // through the dynamic query-building logic.
@@ -371,6 +409,8 @@ pub async fn search_fts(
         tag_param_start,
         tag_count_param_idx,
         space_param_idx,
+        include_glob_param_start,
+        exclude_glob_param_start,
         next_param,
     );
 
@@ -398,6 +438,14 @@ pub async fn search_fts(
     }
     if let Some(sid) = space_id {
         db_query = db_query.bind(sid);
+    }
+    // PEND-54 — bind include / exclude glob patterns in declaration
+    // order to match the placeholder indices appended above.
+    for pat in include_page_globs {
+        db_query = db_query.bind(pat);
+    }
+    for pat in exclude_page_globs {
+        db_query = db_query.bind(pat);
     }
 
     let rows = db_query.fetch_all(pool).await.map_err(|e| {
