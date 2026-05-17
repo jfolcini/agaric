@@ -1,0 +1,81 @@
+name: CodeQL
+
+# Why this workflow exists:
+#   * Closes Scorecard "SAST" check (alert #33, score 0/10 → 10/10): Scorecard
+#     detects SAST by looking for `github/codeql-action` in a workflow. Since
+#     this repo merges no PRs (solo, direct push to main), the PR-history
+#     detection path can never fire — a workflow is the only signal.
+#   * Adds a second independent static-analysis tool alongside zizmor / clippy
+#     / biome / eslint. CodeQL ships GitHub's curated queries (CWE coverage,
+#     supply-chain, taint analysis) that the others don't replicate.
+#
+# Why these triggers:
+#   * push to main: re-scan immediately when shipping (matches scorecard.yml).
+#   * pull_request to main: catch regressions before merge (future external
+#     contributors).
+#   * schedule (weekly): rescan against updated CodeQL query packs even when
+#     code is idle. Tuesday 06:00 UTC — staggered from scorecard.yml's Monday.
+#   * workflow_dispatch: manual re-run for debugging.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-24.04
+    # CodeQL JS/TS + Actions analyses typically run in 5–10 min on a repo this
+    # size; Rust (build-mode: none) is similar. +50% headroom + round up → 30
+    # min. Bump only if observed runs cross ~20 min.
+    timeout-minutes: 30
+    permissions:
+      # Required: upload SARIF results to GitHub Code Scanning (Security tab).
+      security-events: write
+      # Required by codeql-action when analyzing the `actions` language so it
+      # can resolve action references against their source repos.
+      packages: read
+      # Default: read the repo contents to analyze them.
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # build-mode: none lets CodeQL analyze without invoking a build —
+        # avoids pulling Tauri's system deps (libwebkit2gtk-4.1-dev, etc.)
+        # just to satisfy the extractor. Rust GA'd build-mode:none in 2025.
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: rust
+            build-mode: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # security-and-quality = security-extended + maintainability/reliability
+          # queries. The marginal noise on a small repo is acceptable; flip to
+          # security-extended if the maintainability queries become noisy.
+          queries: security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          category: '/language:${{ matrix.language }}'
