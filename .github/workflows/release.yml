@@ -148,7 +148,7 @@ jobs:
     # PEND-41 R1 — based on ci.yml build observations (run 25966040732,
     # 2026-05-16, n=1) + ~10 min signing/attest/upload overhead per platform:
     # linux 50 + 10 = 60, macos 50 + 10 = 60, windows 65 + 10 = 75.
-    timeout-minutes: ${{ matrix.platform == 'windows-2025' && 75 || 60 }}
+    timeout-minutes: ${{ matrix.platform == 'windows-2025-vs2026' && 75 || 60 }}
     permissions:
       contents: write  # tauri-action uploads release bundles
       id-token: write  # actions/attest-build-provenance — Sigstore OIDC token
@@ -159,15 +159,21 @@ jobs:
         include:
           - platform: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          # Explicit version pins (`windows-2025` GA Q1 2026,
+          # Explicit version pins (`windows-2025-vs2026` GA mid-2026,
           # `macos-15` GA late 2025) instead of `*-latest` aliases —
           # the floating tags move silently and have caused
           # actions-side deprecation warnings + image-rebuild lag on
           # past transitions. Pinning lets Dependabot bump us
           # explicitly when the next major image cuts.
-          # windows-2025 cuts ~15-25% off WiX bundler + Rust release
-          # builds vs windows-2022 per the runner-image release notes.
-          - platform: windows-2025
+          # windows-2025-vs2026 cuts ~15-25% off WiX bundler + Rust
+          # release builds vs windows-2022 per the runner-image release
+          # notes. The plain `windows-2025` label is being redirected
+          # to `windows-2025-vs2026` by 2026-06-15 (announced as a job
+          # NOTICE annotation on every windows-2025 run on 2026-05-17);
+          # we pin to the destination label now so any vs2026
+          # compatibility breakage lands in CI before the redirect cuts
+          # over, not in a release on 2026-06-16.
+          - platform: windows-2025-vs2026
             target: x86_64-pc-windows-msvc
           # macos-15 is Apple Silicon natively. The x86_64-apple-darwin
           # target stays a cross-compile via the SDK (Rosetta-free),
@@ -499,7 +505,7 @@ jobs:
             ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
 
       - name: Attest desktop bundles (Windows)
-        if: matrix.platform == 'windows-2025'
+        if: matrix.platform == 'windows-2025-vs2026'
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: |

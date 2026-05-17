@@ -35,6 +35,14 @@ src-tauri/dev.db
 src-tauri/dev.db-*
 src-tauri/.env
 coverage/
+# Per-shard vitest coverage dirs + the merged output produced by
+# scripts/merge-vitest-coverage.mjs (CI consumes them as artifacts;
+# local runs leave them in the tree).
+coverage-shard-*/
+coverage-merged/
+# Rust llvm-cov outputs (cargo llvm-cov writes them under src-tauri/).
+src-tauri/coverage.lcov
+src-tauri/coverage-summary.json
 
 # Playwright
 test-results/

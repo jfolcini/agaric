@@ -56,16 +56,22 @@ jobs:
         include:
           - os: ubuntu-24.04
             label: linux
-          # Explicit version pins (`windows-2025` GA Q1 2026,
+          # Explicit version pins (`windows-2025-vs2026` GA mid-2026,
           # `macos-15` GA late 2025) instead of `*-latest` aliases:
           # the floating tags move silently and have caused
           # actions-side deprecation warnings + image-rebuild lag on
           # past transitions. Pinning lets Dependabot bump us
           # explicitly when the next major image cuts.
-          # windows-2025 runs ~15-25% faster than windows-2022 on
-          # Rust toolchain + Tauri's WiX bundler workload per the
-          # GitHub runner image release notes.
-          - os: windows-2025
+          # windows-2025-vs2026 runs ~15-25% faster than windows-2022
+          # on Rust toolchain + Tauri's WiX bundler workload per the
+          # GitHub runner image release notes. The plain
+          # `windows-2025` label is being redirected to
+          # `windows-2025-vs2026` by 2026-06-15 (announced as a job
+          # NOTICE annotation on every windows-2025 run on 2026-05-17)
+          # — we pin to the destination label now so we land any
+          # vs2026 compatibility breakage in CI rather than in
+          # production at the redirect cutoff.
+          - os: windows-2025-vs2026
             label: windows
           # macos-15 is Apple Silicon by default (M1 hardware);
           # macOS 14 was the transition runner. Apple-Silicon runs

@@ -210,10 +210,12 @@ jobs:
   vitest:
     runs-on: ubuntu-24.04
     # PEND-41 R1 — per-shard wall-clock 2.2 min max (run 25966040732, n=1
-    # post-PEND-39-split). +50% headroom + 5-min floor → 5 min. Shard 1
-    # additionally runs with `--coverage` (PEND-41 R17), which adds ~2 min
-    # of v8 instrumentation overhead — bump that one cell to 8 min.
-    timeout-minutes: ${{ matrix.shard == 1 && 8 || 5 }}
+    # post-PEND-39-split). +50% headroom + 5-min floor → 5 min. All three
+    # shards now run with `--coverage` so the post-shards merge job has
+    # complete data to aggregate; v8 instrumentation adds ~2 min per
+    # shard, so each cell gets the 8-min budget that was previously
+    # shard-1-only.
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
@@ -232,26 +234,89 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Vitest (shard ${{ matrix.shard }}/3${{ matrix.shard == 1 && ', with coverage' || '' }})
-        # PEND-41 R17 — shard 1 runs with `--coverage` so the summary
-        # step below has data to render. The other shards skip
-        # instrumentation to preserve their tight 5-min timeout budgets.
-        # Thresholds in `vitest.config.ts` apply to FULL-suite runs
-        # (the local `npm run test:coverage` invocation); on this partial
-        # shard, ~⅔ of the codebase is unreached by design, so we override
-        # each threshold to 0 — the step is informational coverage, not a
-        # gate. Full-suite coverage is a follow-up.
-        run: npx vitest run --shard ${{ matrix.shard }}/3 ${{ matrix.shard == 1 && '--coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0' || '' }}
+      - name: Vitest (shard ${{ matrix.shard }}/3, with coverage)
+        # Every shard runs with `--coverage` writing into a per-shard
+        # output directory; the `vitest-coverage` job below downloads
+        # all three and merges them into a unified summary. Thresholds
+        # in `vitest.config.ts` apply to FULL-suite runs; on a partial
+        # shard ~⅔ of the codebase is unreached by design, so we
+        # override each threshold to 0 here — the gate runs against the
+        # merged report, not against individual shards.
+        run: |
+          npx vitest run --shard ${{ matrix.shard }}/3 \
+            --coverage \
+            --coverage.reportsDirectory=coverage-shard-${{ matrix.shard }} \
+            --coverage.reporter=json \
+            --coverage.reporter=json-summary \
+            --coverage.thresholds.lines=0 \
+            --coverage.thresholds.functions=0 \
+            --coverage.thresholds.statements=0 \
+            --coverage.thresholds.branches=0
 
-      - name: Coverage summary (shard 1 only)
-        # PEND-41 R17 — render the aggregated coverage totals from
-        # `coverage/coverage-summary.json` (emitted by vitest's
-        # `json-summary` reporter) as a markdown table on the job's
-        # step-summary page. No Codecov / third-party dependency.
-        if: matrix.shard == 1 && hashFiles('coverage/coverage-summary.json') != ''
+      - name: Upload shard coverage artifact
+        # Each shard's raw coverage-final.json is what `merge-vitest-coverage.mjs`
+        # consumes via `istanbul-lib-coverage`'s CoverageMap.merge() — the
+        # canonical way to combine v8/istanbul-shape JSONs without
+        # double-counting overlapping lines. The merge job below picks
+        # all three up as a single download.
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v6.0.0
+        with:
+          name: vitest-coverage-shard-${{ matrix.shard }}
+          path: coverage-shard-${{ matrix.shard }}/coverage-final.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # vitest-coverage — merge the three vitest shards' coverage maps into one,
+  # render a step-summary table, and re-upload the aggregate so downstream
+  # tooling (future Codecov, gh-pages badge, etc.) can consume a single artifact.
+  # `if: !cancelled()` runs even if a shard failed — partial coverage is
+  # better than no coverage when a single shard's tests went red.
+  # ---------------------------------------------------------------------------
+  vitest-coverage:
+    runs-on: ubuntu-24.04
+    needs: vitest
+    if: ${{ !cancelled() && needs.vitest.result != 'cancelled' }}
+    # PEND-41 R1 — pure download + node merge + jq render. No instrumentation,
+    # no test execution. 5-min budget is generous.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        # `merge-vitest-coverage.mjs` depends on `istanbul-lib-coverage`
+        # (transitive via `@vitest/coverage-v8`). `npm ci` brings the
+        # full devDependency tree so the script can resolve it.
+        run: npm ci
+
+      - name: Download per-shard coverage artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b6d4d764dffaa53ec5b27e8e # v6.0.0
+        with:
+          pattern: vitest-coverage-shard-*
+          path: ./coverage-shards
+          merge-multiple: false
+
+      - name: Merge coverage maps
+        id: merge
+        run: |
+          node scripts/merge-vitest-coverage.mjs \
+            coverage-shards/vitest-coverage-shard-1/coverage-final.json \
+            coverage-shards/vitest-coverage-shard-2/coverage-final.json \
+            coverage-shards/vitest-coverage-shard-3/coverage-final.json
+
+      - name: Coverage summary (merged)
+        if: hashFiles('coverage-merged/coverage-summary.json') != ''
         run: |
           {
-            echo "## Coverage (shard 1, partial — PEND-41 R17)"
+            echo "## Coverage (merged across vitest shards)"
             echo
             echo "| Metric | % | Covered / Total |"
             echo "| --- | --- | --- |"
@@ -261,11 +326,23 @@ jobs:
               "| Statements | \(.statements.pct)% | \(.statements.covered) / \(.statements.total) |",
               "| Functions  | \(.functions.pct)% | \(.functions.covered) / \(.functions.total) |",
               "| Branches   | \(.branches.pct)% | \(.branches.covered) / \(.branches.total) |"
-            ' coverage/coverage-summary.json
+            ' coverage-merged/coverage-summary.json
             echo
             echo "_Thresholds in \`vitest.config.ts\`: lines/functions/statements >= 80%, branches >= 75%._"
-            echo "_This is shard-1 partial coverage; a future change can promote to full-suite coverage as a dedicated job._"
+            echo "_Merged from 3 vitest shards via \`scripts/merge-vitest-coverage.mjs\` (istanbul-lib-coverage CoverageMap.merge)._"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged coverage artifact
+        # The merged artifact is what downstream Codecov / badge tooling
+        # would consume. Retained 30 days (vs 7 for the per-shard
+        # inputs) because cross-run trend comparisons live longer than
+        # the inputs that produced them.
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v6.0.0
+        with:
+          name: vitest-coverage-merged
+          path: coverage-merged/
+          if-no-files-found: error
+          retention-days: 30
 
   # ---------------------------------------------------------------------------
   # playwright — E2E browser tests, sharded 2-ways (PEND-39 C8). Per-shard
@@ -325,9 +402,11 @@ jobs:
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 22.6 min (run 25966040732, 2026-05-16,
     # n=1 post-PEND-39-split). Slowest single validate job; cargo nextest
-    # dominates. +50% headroom + round up → 35 min. Bump if cold-cache
-    # misses push it over.
-    timeout-minutes: 35
+    # dominates. +50% headroom + round up → 35 min. cargo-llvm-cov adds
+    # ~30% instrumentation overhead on top of plain nextest, so bump to
+    # 45 min to keep the headroom margin. Tighten back to 35 once we have
+    # n>=5 instrumented runs to size against.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -383,14 +462,62 @@ jobs:
         # build below replaces this placeholder with the real binary.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
-      - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
+      - name: Install cargo-nextest + cargo-llvm-cov via prebuilt binary (PEND-39 C1)
+        # `cargo-llvm-cov` wraps LLVM's source-based coverage instrumentation
+        # — the gold standard for Rust coverage. It composes with
+        # `cargo nextest` natively (`cargo llvm-cov nextest ...`), so we
+        # don't have to swap runners. Output is lcov (industry standard,
+        # consumable by Codecov / coveralls / VSCode coverage gutters) plus
+        # a JSON summary the step below renders as a markdown table.
         uses: taiki-e/install-action@3771e22aa892e03fd35585fae288baad1755695c # v2.78.2
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest,cargo-llvm-cov
 
-      - name: Cargo test (nextest, full suite)
+      - name: Cargo test (nextest, full suite, with llvm-cov)
         working-directory: src-tauri
-        run: cargo nextest run --profile ci
+        # `--lcov --output-path coverage.lcov` writes the canonical lcov
+        # report for downstream consumers; `--json --summary-only` to a
+        # second path drives the step-summary table without re-reading
+        # the lcov. `--no-fail-fast` mirrors plain `nextest`'s behaviour
+        # (don't abort the suite on first failure) so the coverage map
+        # we produce is the same shape regardless of pass/fail.
+        run: |
+          cargo llvm-cov nextest --profile ci --no-fail-fast --no-report
+          cargo llvm-cov report --lcov --output-path coverage.lcov
+          cargo llvm-cov report --json --summary-only --output-path coverage-summary.json
+
+      - name: Coverage summary (rust)
+        if: hashFiles('src-tauri/coverage-summary.json') != ''
+        working-directory: src-tauri
+        run: |
+          {
+            echo "## Coverage (rust, full suite via cargo-llvm-cov)"
+            echo
+            echo "| Metric | % | Covered / Total |"
+            echo "| --- | --- | --- |"
+            jq -r '
+              .data[0].totals |
+              "| Lines      | \(.lines.percent)% | \(.lines.covered) / \(.lines.count) |",
+              "| Functions  | \(.functions.percent)% | \(.functions.covered) / \(.functions.count) |",
+              "| Regions    | \(.regions.percent)% | \(.regions.covered) / \(.regions.count) |"
+            ' coverage-summary.json
+            echo
+            echo "_LLVM source-based coverage (\`cargo llvm-cov\` over \`cargo nextest run --profile ci\`)._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload rust coverage artifact
+        # lcov is the canonical interchange format (Codecov, coveralls,
+        # VSCode coverage gutters, lcov-summary tooling all consume it).
+        # Retained 30 days for cross-run trend comparison.
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v6.0.0
+        if: hashFiles('src-tauri/coverage.lcov') != ''
+        with:
+          name: rust-coverage-lcov
+          path: |
+            src-tauri/coverage.lcov
+            src-tauri/coverage-summary.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Build agaric-mcp binary (I-MCP-9)
         working-directory: src-tauri
