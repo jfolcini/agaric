@@ -9,7 +9,8 @@
 | Surface | Open via | Job | Filters | Toggles | Result cap | Pagination |
 |---|---|---|---|---|---|---|
 | **Palette dialog** (this plan) | `Cmd/Ctrl+K` | Quick navigation jump | none | none | 8 page-groups × 2 matches | none (top-N) |
-| **Find-in-files view** (PEND-50) | `Ctrl+F` *(unchanged)* | Systematic search | PEND-50's glob include/exclude | `Aa` / `Ab\|` / `.*` | unbounded | flat cursor `(rank, block_id)` |
+| **Find-in-files view** (PEND-50 foundation + PEND-54 chips + PEND-55 toggles) | `Ctrl+Shift+F` *(rebind via PEND-52)* | Systematic search | PEND-54's inline syntax + chips | PEND-55's `Aa` / `Ab\|` / `.*` | unbounded | flat cursor `(rank, block_id)` |
+| **In-page find** (PEND-52) | `Ctrl+F` *(reclaimed)* | Find inside current page | none | matching `Aa` / `Ab\|` / `.*` (per-page) | n/a | `F3` / `Shift+F3` |
 
 Both surfaces:
 
@@ -57,7 +58,7 @@ The "Search in all pages with toggles →" footer in the palette is the **escala
 
 **Locked-in design choices** (the eight Q's from the original draft, resolved):
 
-1. **Keyboard binding.** `Cmd/Ctrl+K` opens the palette. `Ctrl+F` keeps opening the find-in-files view, **unchanged**. Coexistence, no migration cost for existing users.
+1. **Keyboard binding.** `Cmd/Ctrl+K` opens the palette. **`Ctrl+F` is reclaimed by PEND-52 for in-page find; the find-in-files view moves to `Ctrl+Shift+F`** (matching VSCode). PEND-52 owns the rebind; this plan only references the post-rebind state in the keyboard table and escalation footer.
 2. **Filters in palette.** **None.** No filter chips, no sigil syntax. Filters and toggles live exclusively in PEND-50's view. The palette stays minimal — type, see results, jump.
 3. **Result shape.** Page-grouped (shared with PEND-50). Ordering within the grouped list: **exact title match → prefix title match → contains-in-title → content-only match, FTS rank within each band.**
 4. **Pagination.** **Two parallel capped queries**, merged client-side. No cursor in the palette; no "Load more". Escalation to the view is the answer to "I need more depth".
@@ -78,26 +79,77 @@ Both surfaces render `<SearchResultGroup>` from PEND-50 Phase 0:
 - **Palette caps the total page-group count at 8.** Surplus pages are not rendered; the escalation footer is the user's path to more.
 - Expanded by default in both surfaces. Palette collapse state is **ephemeral** — resets on close. View collapse state lives in component state for the current search session (PEND-50 spec).
 
-### Backend pagination — two parallel capped queries
+### Input debounce — palette deviates from the 300 ms canonical
 
-On every (debounced) input change:
+The view uses `useDebouncedCallback(300ms)`, the canonical debounce enshrined at `AGENTS.md:195` after PERF-28. The palette **overrides this to ~80 ms** because palette UX is type-ahead — the user types `alp` and expects "Alpha" to appear in <100 ms, not a third of a second later. **Deviation justification, to land in AGENTS.md alongside the 300 ms rule**:
 
-```text
-Promise.all([
-  searchBlocks({ query, blockTypeFilter: 'page', limit: 8, cursor: null }),  // page hits
-  searchBlocks({ query, limit: 40, cursor: null }),                          // block hits
-])
+> The 300 ms canonical applies to *deliberate* search where each keystroke is a query refinement. Palette UX is *type-ahead navigation* where the user is composing a single instruction and the result list is part of the visual feedback. Linear / Raycast / VSCode `Cmd+P` all run sub-100 ms debounces; matching their feel is the design goal. The palette's `search_blocks_partitioned` IPC adds the stale-response guard (gen counter) so faster-than-IPC typing doesn't surface stale results.
+
+The palette's 80 ms is **measured in CI** before locking it in: a benchmark asserts p99 round-trip latency stays under 50 ms on the trigram index for representative vault sizes. PERF-28 should not silently regress.
+
+### Fuzzy ranking on top of FTS
+
+The FTS5 trigram tokenizer matches *substrings* but is not edit-distance-tolerant — a typo like `alfa` (transposed/missing letter) doesn't match `Alpha`. Palettes (Linear, Raycast, VSCode's `Cmd+P`) feel telepathic specifically because they forgive typos. Add a post-FTS fuzzy re-score using **`match-sorter`** (already imported at `package.json:83`, used by `useBlockResolve`, `slash-commands`, `CodeLanguageSelector`):
+
+- After `search_blocks_partitioned` returns, run `matchSorter(candidates, query, { keys: ['content', 'title'], threshold: matchSorter.rankings.CONTAINS })`.
+- **Fuzzy is an additive scorer, not a filter.** Candidates that FTS already matched stay in; `match-sorter`'s ranking groups (`EQUAL`, `STARTS_WITH`, `WORD_STARTS_WITH`, `CONTAINS`, `ACRONYM`, `MATCHES`) blend with the FTS rank to reorder. Items FTS didn't match are not surfaced.
+- **`match-sorter`'s rank groups map 1:1 to the 4-band ordering** (exact title → prefix → contains → content-only): EQUAL → exact, STARTS_WITH → prefix, CONTAINS → contains.
+- **No backend change.** Pure frontend post-pass. **No new dep** — `match-sorter` is already in the bundle.
+
+### `[[page]]` autocomplete trigger
+
+When the user types `[[` followed by ≥ 1 character, the palette switches into **page-resolver mode**: only the pages query fires (skip the blocks query), and the input renders a thin "linking to page" badge so the user knows they're in a different mode. Pressing `Enter` inserts the resolved page as a `[[Page Title]]` link into the **previously focused block**, then closes the palette — this is Roam/Obsidian's standard pattern.
+
+- Triggered by literal `[[` at the start of input (or after a space — TBD; start strict).
+- Cancelled by `Esc` or by deleting back to before the `[[`.
+- If no page matches, the palette shows "No page named `<query>` — create page?" as a single actionable row (matches Notion's pattern).
+- **Requires a previously-focused block context** — if the palette is opened cold (no editor focus), the `[[page]]` mode is disabled with a tooltip "Open a page to insert a link." Phase 3 work; not blocking the core palette ship.
+
+### Backend — one new command, one FTS round-trip
+
+**Problem with two parallel `searchBlocks` calls**: both run FTS5 MATCH on the same query string, which is the expensive part. The blocks query's result set is a superset of the pages query's. Running both wastes ~half the FTS work and doubles SQLite pool pressure.
+
+**Solution**: one new Tauri command `search_blocks_partitioned` returns both sets in a single round-trip:
+
+```rust
+#[tauri::command]
+#[specta::specta]
+pub async fn search_blocks_partitioned(
+    pool: tauri::State<'_, SqlitePool>,
+    query: String,
+    page_limit: u32,
+    block_limit: u32,
+    filter: SearchFilter,
+) -> Result<PartitionedSearchResult, AppError> { ... }
+
+pub struct PartitionedSearchResult {
+    pub pages: Vec<SearchBlockRow>,
+    pub blocks: Vec<SearchBlockRow>,
+}
 ```
 
-Merge client-side by `page_id`:
+Inside, one FTS MATCH yields a candidate set; the function partitions by `block_type` and applies the two caps. Single SQL, single pool acquire, single sanitisation.
 
-1. For each page hit, create a `<SearchResultGroup>` (matches list initially empty).
-2. For each block hit, append to the existing group keyed by `block.page_id`; if no group exists for that page, create one (this is the "content-only match" case).
-3. Sort the groups by the 4-band ordering rule above.
+The frontend palette consumes:
+
+```typescript
+const result = await searchBlocksPartitioned({
+  query,
+  pageLimit: 8,
+  blockLimit: 40,
+  filter: {},  // empty SearchFilter — palette has no filters by design
+})
+```
+
+Then merges client-side by `page_id`:
+
+1. For each row in `result.pages`, create a `<SearchResultGroup>` (matches list initially empty).
+2. For each row in `result.blocks`, append to the existing group keyed by `block.page_id`; if no group exists, create one (content-only match).
+3. Sort groups by the 4-band ordering rule above.
 4. Slice to the top 8 groups.
-5. Within each group, slice block matches to the top 2 (the `cap` prop on `<SearchResultGroup>` handles the "+N more" pill).
+5. Within each group, slice matches to the top 2 (`cap` prop renders "+N more" pill).
 
-**No new IPC command.** Reuses `searchBlocks`. The pages-first query needs one new optional field on `SearchFilter`: `block_type_filter: Option<String>` — added by this plan's Phase 1, `#[serde(default)]` so existing callers (including PEND-50's view) are unaffected. Frontend uses `block_type_filter: Some("page")` for the pages query and `None` for the blocks query. The new field auto-flows through `tauri-specta` into `src/lib/bindings.ts`.
+**Stale-response guard**: a generation counter (incremented per keystroke) is checked on response; stale responses are discarded. Pattern matches `hooks/usePaginatedQuery.ts:75-122`'s `requestIdRef`.
 
 ### Keyboard
 
@@ -114,40 +166,42 @@ Focus management: the first page-group's header is auto-focused on mount; arrow 
 
 ### Component layout
 
-- **New** `src/components/SearchDialog.tsx` — top-level container, mounted at App shell. Wraps `useDialogOrSheet()` for desktop/mobile shape.
+- **New** `src/components/SearchDialog.tsx` — top-level container, mounted at App shell. Wraps `useDialogOrSheet('dialog')` (the `'dialog'` discriminator, not `'alert'` — palette is dismissible, not action-confirming).
 - **Reuses** `SearchInput` from the view's chain (same component, mounted in two surfaces).
-- **Renders** `<SearchResultList>` → a stack of `<SearchResultGroup>` instances (PEND-50 Phase 0 component), all driven by the merged result list.
-- **State** in a new `useSearchDialogStore` (Zustand): `{ open: boolean, query: string, prefillQueryOnEscalate: (query) => void }`. The store is minimal; query lives here only so the escalation handoff to the view can read it.
-- **Keyboard binding** in `src/hooks/useAppKeyboardShortcuts.ts:221` — bind `Cmd/Ctrl+K` to `useSearchDialogStore.getState().open()`. Existing `Ctrl+F` → view binding stays.
+- **Renders** a stack of `CollapsibleGroupList` instances (PEND-50's reused grouped renderer) wrapping `<SearchResultBlockRow>` (PEND-50), with `cap={{ matchesPerGroup: 2 }}` enforced client-side before construction.
+- **State** in a new `useSearchDialogStore` (Zustand): `{ open: boolean, query: string, pendingViewQuery: string | null }`. Minimal; the transient `pendingViewQuery` slot powers escalation handoff.
+- **Keyboard binding** in `src/hooks/useAppKeyboardShortcuts.ts:221` — bind `Cmd/Ctrl+K` to `useSearchDialogStore.getState().open()`. PEND-52 carries the `Ctrl+F` rebind (to in-page find) and the new `Ctrl+Shift+F` binding for the view.
 
 ### Escalation to the find-in-files view
 
-When the user clicks the "Search in all pages with toggles →" footer (or presses `Ctrl+F` while the palette is open):
+When the user clicks the "Search in all pages with toggles →" footer (or presses `Ctrl+Shift+F` while the palette is open):
 
 1. Read the current query from `useSearchDialogStore`.
-2. Close the palette (`setOpen(false)`).
-3. `useNavigationStore.setView('search')` (existing path).
-4. Pre-fill the view's input with the query.
-5. View opens with toggles default-off and glob filter section collapsed (PEND-50 default).
+2. Write the query into a **transient handoff slot** on `useSearchDialogStore` (`pendingViewQuery: string | null`). The view reads and clears this slot on mount via `useEffect`.
+3. Close the palette (`setOpen(false)`).
+4. `useNavigationStore.getState().setView('search')` (the `'search'` case is at `ViewDispatcher.tsx:142`).
+5. `SearchPanel` on mount checks `useSearchDialogStore.getState().pendingViewQuery`; if non-null, calls `setQuery(pendingViewQuery)` and clears the slot.
+6. View opens with toggles default-off and the chip row reflecting any filter syntax in the handed-off query.
 
-This is the seam that makes the two surfaces feel like one workflow. The user can start in the palette ("just typing to find a page") and graduate to the view ("I need regex / filters") without losing their query.
+**Why the transient handoff slot instead of lifting `SearchPanel`'s `useState`**: lifting the view's query into Zustand would change PEND-54's "query lives in `SearchPanel.useState`" decision and force every chip/autocomplete component to consume the store. The handoff slot is a one-shot affordance — written by the palette, consumed by the view exactly once, then cleared. No global query state, no shared reactivity surface.
 
 ## Phase split
 
-### Phase 0 — Shared `<SearchResultGroup>` component (S, ~2-3 h)
+**Pre-requisite: PEND-50 must land first** (it provides `CollapsibleGroupList`-driven grouped rendering + `<SearchResultBlockRow>` + the `SearchFilter` IPC struct that this plan defaults). No Phase 0 in this plan — the foundation is PEND-50's deliverable.
 
-**Owned by PEND-50 OR this plan, whoever ships first.** See PEND-50 Phase 0 for the contract. Both plans inherit it.
-
-### Phase 1 — Palette dialog core (M, ~6-9 h)
+### Phase 1 — Palette dialog core (M, ~7-10 h)
 
 - `SearchDialog.tsx` + `useSearchDialogStore` + `useAppKeyboardShortcuts` binding for `Cmd/Ctrl+K`.
-- Two-parallel-query merge logic (client-side `block_type` partitioning until PEND-50 lands a `block_type_filter` IPC param).
-- Recent-pages empty state (reuse the existing `recentPages` data path from `SearchPanel`).
-- `useDialogOrSheet()` integration for the desktop/mobile shape.
-- Result list rendering using Phase 0's `<SearchResultGroup>` with `cap={{ matchesPerGroup: 2 }}`.
-- Escalation footer button + handoff to the view with query pre-fill.
+- **New backend command** `search_blocks_partitioned` (one FTS round-trip, returns `{ pages, blocks }`); frontend caller via `src/lib/tauri.ts` wrapper.
+- Stale-response guard via generation counter (matches `hooks/usePaginatedQuery.ts:75-122` pattern).
+- Recent-pages empty state (reuse existing `recentPages` data path from `src/lib/recent-pages.ts`).
+- `useDialogOrSheet('dialog')` integration for the desktop/mobile shape.
+- Result list rendering reuses PEND-50's `CollapsibleGroupList` + `<SearchResultBlockRow>` with `cap={{ matchesPerGroup: 2 }}` and "+N more" pill.
+- `match-sorter` re-scorer on the merged candidate set (no new dep; already imported).
+- Escalation footer button + transient `pendingViewQuery` handoff to the view.
+- `[[page]]` mode trigger (Phase 3 work; not in Phase 1).
 - Keyboard navigation through the result tree (arrow keys, Enter, Cmd-Enter).
-- Tests: open / close / Esc / Enter / Cmd-Enter / arrow nav / Sheet on mobile breakpoint / empty state shows recents / escalation pre-fills view input / page-grouped rendering / cap=2 with "+N more" pill.
+- Tests: open / close / Esc / Enter / Cmd-Enter / arrow nav / Sheet on mobile breakpoint / empty state shows recents / escalation pre-fills view input / page-grouped rendering / cap=2 with "+N more" pill / stale-response guard discards old responses.
 
 ### Phase 2 — Docs (S, ~0.5 h)
 
@@ -167,8 +221,9 @@ This is the seam that makes the two surfaces feel like one workflow. The user ca
 |---|---|---|
 | `<SearchResultGroup>` render component | Phase 0 (shared) | Both |
 | Page-grouped result shape (4-band ordering) | Spec'd identically in both plans | Both |
-| `searchBlocks` IPC command | Existing; both plans add optional `#[serde(default)]` fields to its `SearchFilter` input struct (PEND-50: `include_page_globs` / `exclude_page_globs` / `case_sensitive` / `whole_word` / `is_regex`; this plan: `block_type_filter`). No new commands. | Both |
-| `SearchFilterError` typed errors | PEND-50 adds `InvalidGlob(String)` + `InvalidRegex(String)`; this plan adds none | Both via `src/lib/bindings.ts` (auto-regenerated via tauri-specta) |
+| `SearchFilter` struct + `SearchBlockRow` struct | Owned by PEND-50 (foundation); palette uses defaults (no filters) | Both |
+| `search_blocks_partitioned` command | **New** — owned by this plan. Single FTS round-trip; returns `{ pages, blocks }`. | Palette only; view uses `search_blocks` |
+| `AppError` `{kind, message}` shape | Existing (`error.rs:152-165`); validation errors flow through with `kind: "validation"` and a `<Variant>:` message prefix | All plans (PEND-54 uses `InvalidGlob:`, PEND-55 uses `InvalidRegex:`) |
 | `useDialogOrSheet()` mobile pattern | Existing (`ConfirmDialog`) | This plan only |
 | `recentPages` data path | Existing | Both surfaces' empty state |
 
