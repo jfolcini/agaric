@@ -307,11 +307,17 @@ fn app_error_to_rmcp(err: &AppError) -> ErrorData {
     use rmcp::model::ErrorCode;
     let msg = err.to_string();
     match err {
-        AppError::NotFound(_) => ErrorData::new(
-            ErrorCode(super::server::JSONRPC_RESOURCE_NOT_FOUND as i32),
-            msg,
-            None,
-        ),
+        AppError::NotFound(_) => {
+            // The constant is `i64` (JSON-RPC error codes are spec'd as
+            // signed 32-bit but our hand-rolled module stores them as
+            // `i64` for arithmetic ergonomics). The value is statically
+            // -32001 which fits in `i32`; the `try_from + unwrap`
+            // makes the round-trip explicit so clippy does not flag
+            // a hidden cast.
+            let code = i32::try_from(super::server::JSONRPC_RESOURCE_NOT_FOUND)
+                .expect("JSONRPC_RESOURCE_NOT_FOUND fits in i32");
+            ErrorData::new(ErrorCode(code), msg, None)
+        }
         AppError::Validation(_) | AppError::InvalidOperation(_) => {
             ErrorData::invalid_params(msg, None)
         }
