@@ -259,7 +259,7 @@ jobs:
         # canonical way to combine v8/istanbul-shape JSONs without
         # double-counting overlapping lines. The merge job below picks
         # all three up as a single download.
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: vitest-coverage-shard-${{ matrix.shard }}
           path: coverage-shard-${{ matrix.shard }}/coverage-final.json
@@ -298,7 +298,7 @@ jobs:
         run: npm ci
 
       - name: Download per-shard coverage artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b6d4d764dffaa53ec5b27e8e # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: vitest-coverage-shard-*
           path: ./coverage-shards
@@ -337,7 +337,7 @@ jobs:
         # would consume. Retained 30 days (vs 7 for the per-shard
         # inputs) because cross-run trend comparisons live longer than
         # the inputs that produced them.
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: vitest-coverage-merged
           path: coverage-merged/
@@ -509,7 +509,7 @@ jobs:
         # lcov is the canonical interchange format (Codecov, coveralls,
         # VSCode coverage gutters, lcov-summary tooling all consume it).
         # Retained 30 days for cross-run trend comparison.
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: hashFiles('src-tauri/coverage.lcov') != ''
         with:
           name: rust-coverage-lcov
