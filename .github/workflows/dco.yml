@@ -1,0 +1,101 @@
+# DCO check — every commit in a pull request MUST carry a Signed-off-by:
+# trailer whose email matches the commit author's email. Implements the
+# Developer Certificate of Origin policy documented in
+# CONTRIBUTING.md § Developer Certificate of Origin and GOVERNANCE.md §
+# Licensing. Wire-protocol level enforcement of what those docs say.
+#
+# Why this workflow and not a third-party action:
+#   - Self-contained, no external dependency to audit (the Linux-kernel
+#     equivalents use a similar shell pattern).
+#   - Uses `gh api repos/.../pulls/N/commits` which is paginated and
+#     scoped to the PR — no broad ACL, no token-permission widening
+#     beyond `pull-requests: read`.
+#   - Renders a per-commit "ok / missing sign-off / email mismatch"
+#     summary on the run page so a contributor can fix in one re-push.
+#
+# Maintainer direct pushes to main are unaffected: this workflow runs
+# only on the `pull_request` trigger and the maintainer-bypass actor on
+# the branch ruleset means direct-pushed commits don't enter this code
+# path. Required-status-checks for PRs is updated separately to include
+# `dco` so the gate is enforced server-side.
+name: DCO
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Verify Signed-off-by on every PR commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Paginated; each entry has .sha, .commit.message, .commit.author.{name,email}.
+          # Compact-JSON one-commit-per-line so awk/jq can stream.
+          mapfile -t commits < <(
+            gh api -X GET \
+              "repos/${REPO}/pulls/${PR_NUMBER}/commits" \
+              --paginate \
+              --jq '.[] | {sha, msg: .commit.message, name: .commit.author.name, email: .commit.author.email} | @base64'
+          )
+
+          fail=0
+          {
+            echo "## DCO sign-off check"
+            echo
+            echo "| Commit | Author | Status |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for c in "${commits[@]}"; do
+            json=$(printf '%s' "$c" | base64 -d)
+            sha=$(printf '%s' "$json" | jq -r .sha)
+            msg=$(printf '%s' "$json" | jq -r .msg)
+            name=$(printf '%s' "$json" | jq -r .name)
+            email=$(printf '%s' "$json" | jq -r .email)
+
+            # Match any `Signed-off-by: NAME <EMAIL>` trailer (case-insensitive
+            # on the key per RFC 5322 conventions). The trailer value must
+            # contain the author's email — typo'd emails are rejected so a
+            # forgotten `git commit -s` after a `git config user.email` change
+            # surfaces as a failure rather than silently passing.
+            short_sha="${sha:0:8}"
+            cell_msg=$(printf '%s' "$msg" | head -1 | cut -c1-60)
+            label="\`${short_sha}\` ${cell_msg}"
+
+            if printf '%s' "$msg" | grep -qiE "^[[:space:]]*signed-off-by:[[:space:]]*.+<${email}>[[:space:]]*$"; then
+              echo "| ${label} | ${name} <${email}> | ✓ signed off |" >> "$GITHUB_STEP_SUMMARY"
+            elif printf '%s' "$msg" | grep -qiE "^[[:space:]]*signed-off-by:[[:space:]]"; then
+              echo "::error file=PR commit ${sha}::DCO sign-off present but email does not match commit author ${email}. Re-sign with \`git commit --amend -s --no-edit && git push --force-with-lease\` (or \`git rebase --signoff <base>\` for older commits)."
+              echo "| ${label} | ${name} <${email}> | ✗ email mismatch on Signed-off-by |" >> "$GITHUB_STEP_SUMMARY"
+              fail=1
+            else
+              echo "::error file=PR commit ${sha}::Missing Signed-off-by trailer. Run \`git commit --amend -s --no-edit && git push --force-with-lease\` (or \`git rebase --signoff <base>\` for older commits) per CONTRIBUTING.md § Developer Certificate of Origin."
+              echo "| ${label} | ${name} <${email}> | ✗ missing sign-off |" >> "$GITHUB_STEP_SUMMARY"
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            {
+              echo
+              echo "**One or more commits are missing a valid \`Signed-off-by\` trailer.**"
+              echo
+              echo "See [CONTRIBUTING.md § Developer Certificate of Origin](https://github.com/${REPO}/blob/main/CONTRIBUTING.md#developer-certificate-of-origin-dco) for the fix recipe."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "All ${#commits[@]} commit(s) carry a valid Signed-off-by trailer."
