@@ -2,10 +2,46 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 774 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 775 (latest entry 2026-05-17).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1202+ REVIEW-LATER items across 774 sessions.
+- **Previously-resolved counter:** 1202+ REVIEW-LATER items across 775 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+## Session 775 — MAINT-111 M2a: rmcp spike call_tool dispatches every tool (2026-05-17)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 |
+| **Subagents** | orchestrator-direct |
+| **Items closed** | — (MAINT-111 stays open; M2a is one sub-step). |
+| **Items modified** | MAINT-111 — M2a landed. The spike's `RmcpReadOnlyAdapter::call_tool` drops the `SEARCH_TOOL_NAME` guard and now routes every tool name through `ToolRegistry::call_tool` with `app_error_to_rmcp` mirroring the hand-rolled `app_error_to_jsonrpc` mapping. Unknown tool names now flow through the registry's `AppError::NotFound` → -32001 path (was -32601 method-not-found), and failure-branch activity emission fires for unknown-tool calls too. Both fixes restore parity with the hand-rolled `handle_tools_call`. |
+| **Tests added** | 1 negative-path test rotated (unknown-tool → resource-not-found + activity entry, replacing the previous "method-not-found, no activity" assertion that masked a parity divergence). |
+| **Files touched** | 1 (`src-tauri/src/mcp/rmcp_spike.rs`). |
+
+**Summary:** Started MAINT-111 M2 per the user's "only then take on maint 111" instruction. Landed the spike-side dispatcher work (M2a): the registry-generic call_tool path + correct AppError → ErrorData mapping. Negative-path parity test rotated. Production traffic still on the hand-rolled path (M2c flip + M3 framing deletion remain).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 22 → 22 (no top-level item closed; MAINT-111 still tracks remaining work)
+- **Previously resolved:** 1202+ → 1202+ (M2a is sub-milestone progress, not a top-level close)
+
+**Files touched (this session):**
+- `src-tauri/src/mcp/rmcp_spike.rs` (+53 / −44).
+
+**Verification:**
+- `cargo nextest run --features mcp_rmcp_spike rmcp_spike` — 4/4 pass.
+- `cargo check --tests --features mcp_rmcp_spike` — clean.
+
+**Remaining MAINT-111 scope:**
+- M2b: byte-equivalent parity tests across the full RO + RW tool surface (~20+ tools). Each test drives both `handle_tools_call` and `RmcpReadOnlyAdapter::call_tool`, asserts wire equivalence.
+- M2c: delete `handle_tools_call` body, route production through the spike. Conditional on M2b green.
+- M3: delete the hand-rolled framing (`parse_request`, `make_*`, `handle_initialize`, `handle_notification`, `dispatch`, `truncate_params_preview`, JSON-RPC error code constants); replace `handle_connection`'s body with `adapter.serve(stream)`; delete the `mcp_rmcp_spike` Cargo feature.
+
+**Process notes:**
+- Discovered while writing M2 that the M1 spike was actually divergent from the hand-rolled path on unknown-tool handling: returning `-32601 method-not-found` instead of `-32001 resource-not-found` (the spec distinction is "JSON-RPC method doesn't exist" vs "tool name doesn't exist"), and suppressing activity emission. The M1 guard had masked both gaps. Surfacing them is a small parity win in its own right.
+
+**Commit plan:** single commit `d3a0953a`.
+
+---
+
 ## Session 774 — MAINT-113 closed: AGENTS.md invariant #9 + REVIEW-LATER entry deleted (2026-05-17)
 
 | Metadata | Value |
