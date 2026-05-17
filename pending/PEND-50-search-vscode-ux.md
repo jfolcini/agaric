@@ -23,7 +23,7 @@
 
 ### UX (matches VSCode *Find in Files* one-to-one)
 
-```
+```text
 ┌───────────────────────────────────────────────────┐
 │  [search…                              ] [Aa Ab| .*]  │  ← input + toggles
 ├───────────────────────────────────────────────────┤
@@ -184,11 +184,11 @@ This plan is the first time Agaric ships query syntax beyond plain text, so the 
 
 ### Internal
 
-4. **`AGENTS.md`** — add an entry under the existing "Search & FTS" invariants section:
+1. **`AGENTS.md`** — add an entry under the existing "Search & FTS" invariants section:
    - Sanitiser is skipped in regex mode; trust the `regex` crate's `size_limit` instead.
    - `case_sensitive` toggle forces the post-filter path because the FTS index is `case_sensitive 0`.
    - Page-name glob filters use SQLite native `GLOB` via a sub-select; do not materialise the matching page-ID list in Rust.
-5. **`docs/architecture/search.md`** (new, ~50 lines) or a new section in an existing arch doc — the data-flow diagram for the new pipeline: input → sanitise-or-skip → FTS → page-glob sub-select → toggle post-filter → cursor → response. Pair this with a small ASCII diagram of how toggles compose into the post-filter regex.
+2. **`docs/architecture/search.md`** (new, ~50 lines) or a new section in an existing arch doc — the data-flow diagram for the new pipeline: input → sanitise-or-skip → FTS → page-glob sub-select → toggle post-filter → cursor → response. Pair this with a small ASCII diagram of how toggles compose into the post-filter regex.
 
 ## Phase split
 

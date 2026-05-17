@@ -74,6 +74,7 @@ These four are the actual cost of Silver. Listed in the recommended order (cheap
 **What's needed:** a documented "security review performed within the last 5 years" — for the bestpractices.dev form to flip to Met, this must be a *structured* review, not an aggregate of continuous-coverage tooling.
 
 **Current continuous-coverage tooling** (does **not** qualify on its own per the form's wording, but is the evidence the review draws from):
+
 - `cargo-deny` + `cargo audit` + RUSTSEC ignore-with-rationale (`src-tauri/deny.toml`)
 - `zizmor` workflow lints
 - `clippy` + `biome` + `gitleaks` + `prek` hook chain

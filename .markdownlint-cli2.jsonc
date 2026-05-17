@@ -6,7 +6,13 @@
       "allowed_elements": ["br", "sub", "sup", "kbd", "details", "summary", "p", "img", "a"]
     },
     "MD041": false,
-    "MD024": { "siblings_only": true }
+    "MD024": { "siblings_only": true },
+    // MD060 (table-column-style) is too noisy for the project: long-form
+    // tables in pending/* tend to mix "aligned" and "compact" styles
+    // depending on cell content, and forcing one or the other is
+    // bikeshedding. Disable so contributors don't have to hand-pad pipes
+    // every time the longest cell grows.
+    "MD060": false
   },
   "ignores": [
     "SESSION-LOG.md",

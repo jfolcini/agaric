@@ -111,17 +111,24 @@ test.describe('Editor lifecycle', () => {
   })
 
   test('navigates between sidebar views', async ({ page }) => {
+    // Use the dedicated `header-label` testid (the App.tsx shell header)
+    // so the assertions are unambiguous — TrashView, StatusPanel, and
+    // friends now render their own `<header>` via `FeaturePageHeader`,
+    // which made the previous `locator('header').getByText(...)` race
+    // against an `<h1>` carrying the same text inside a sibling `<header>`.
+    const headerLabel = page.getByTestId('header-label')
+
     // Navigate to Tags
     await page.getByRole('button', { name: 'Tags', exact: true }).click()
-    await expect(page.locator('header').getByText('Tags')).toBeVisible()
+    await expect(headerLabel).toHaveText('Tags')
 
     // Navigate to Trash
     await page.getByRole('button', { name: /^Trash/ }).click()
-    await expect(page.locator('header').getByText('Trash')).toBeVisible()
+    await expect(headerLabel).toHaveText('Trash')
 
     // Navigate to Status
     await page.getByRole('button', { name: 'Status', exact: true }).click()
-    await expect(page.locator('header').getByText('Status')).toBeVisible()
+    await expect(headerLabel).toHaveText('Status')
 
     // (Conflicts nav-item removed in Session 700 / PEND-09 Phase 5.)
 
@@ -132,7 +139,7 @@ test.describe('Editor lifecycle', () => {
 
   test('pages view allows creating a new page', async ({ page }) => {
     await page.getByRole('button', { name: 'Pages', exact: true }).click()
-    await expect(page.locator('header').getByText('Pages')).toBeVisible()
+    await expect(page.getByTestId('header-label')).toHaveText('Pages')
 
     const input = page.getByPlaceholder('New page name...')
     await input.fill('E2E Test Page')

@@ -25,7 +25,7 @@ The "Search in all pages with toggles →" footer in the palette is the **escala
 
 **Empty state** (palette opened, no query yet):
 
-```
+```text
 ┌────────────────────────────────────────────────────────┐
 │  🔍  Type to search a page or a block…                 │
 ├────────────────────────────────────────────────────────┤
@@ -38,7 +38,7 @@ The "Search in all pages with toggles →" footer in the palette is the **escala
 
 **With query**:
 
-```
+```text
 ┌────────────────────────────────────────────────────────┐
 │  🔍  alpha                                              │
 ├────────────────────────────────────────────────────────┤
