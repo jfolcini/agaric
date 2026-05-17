@@ -27,7 +27,7 @@ Items flagged during development that need revisiting. Organized by section with
 | SQL-M-8 | PERF | Snapshot restore streaming — DEFERRED until Android profiling justifies. `snapshot::restore::apply_snapshot` materialises the full parsed `SnapshotData` in RAM. The docstring claims memory is bounded, but the *parsed struct* (not the compressed bytes nor decompressed CBOR stream) is fully in-memory. On desktop, fine. On Android (24 MB heap), potentially OOM under large snapshots — let the future Android profile produce concrete numbers before sizing the fix. Fix: stream-decode CBOR per-table into batch INSERTs against the open tx. | L | Android profiling showing the OOM is real |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L | Design review |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L | — |
-| MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6. **M1 LANDED** — `RmcpReadOnlyAdapter` advertises every RO tool, parity test pins byte-for-byte equivalence with the hand-rolled `handle_tools_list`. M2 (route `tools/call` through rmcp, ~6h) + M3 (drop hand-rolled framing, ~3h) remain, both behind the `mcp_rmcp_spike` feature flag. | M-L | — |
+| MAINT-111 | MAINT | Production-grade testing follow-up for the rmcp MCP server. Production path now flips through `RmcpReadOnlyAdapter::serve` (commit `5fd225d2`). 23 wire-level integration tests in `mcp/server/tests.rs` are marked `#[ignore]` and need rewriting against a real rmcp client; the dead hand-rolled framing helpers (`parse_request` / `dispatch` / `handle_*` / `truncate_params_preview`) need deletion once those tests no longer pin them alive. **Detail entry has a 7-step plan with per-step time estimates and acceptance criteria.** | M (~4.5–5.5h) | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-208 | MAINT | PEND-25 M1 deferred — deferrable `block_on` calls in `src-tauri/src/lib.rs` (in the `recover_at_boot`, `bootstrap_spaces`, and gcal-migration setup paths; the file currently has 6 `block_on` sites total, of which the PEND-25 plan classed 3 as deferrable). Per the PEND-25 plan body, only act if Android boot profile shows >100 ms cumulative cost; on desktop the headroom is irrelevant. Profile `adb shell am start -W` with `tracing::info!` instrumentation before refactoring; if confirmed, defer to a post-window-show task. Conditional. | M (4-7h) | Android boot profile data |
 | MAINT-209 | MAINT | PEND-25 L15 + L16 deferred — gcal connector channel + agenda fetch hygiene. (L15) `mpsc::UnboundedSender<DirtyEvent>` in `src-tauri/src/gcal_push/connector.rs` (carried on the connector struct + spawn arg; the channel is constructed via `mpsc::unbounded_channel::<DirtyEvent>()` near the connector init) is unbounded; defensive bounded channel + `try_send` only matters if a fast producer overruns the consumer (no observed instance today). (L16) `connector.rs::push_date` is called per-date in a loop instead of one `list_projected_agenda_inner(min_date, max_date)` call; only matters when the gcal push window grows beyond a handful of days. Both are speculative — only pursue if profiling shows a concrete need. | S-M (~3h together) | Profiling data showing gcal contention |
@@ -139,22 +139,55 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 
 ## MAINT — Maintenance / cleanup
 
-### MAINT-111 — Migrate MCP server JSON-RPC framing onto `rmcp` (official Rust MCP SDK)
+### MAINT-111 — Production-grade testing follow-up for the rmcp MCP server
 
-**Status:** **M1 LANDED.** Reference adapter `RmcpReadOnlyAdapter` lives in `src-tauri/src/mcp/rmcp_spike.rs` (gated behind the off-by-default `mcp_rmcp_spike` Cargo feature) and now advertises every RO tool. The parity test `rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte` pins byte-for-byte equivalence with the hand-rolled `handle_tools_list`. Detailed assessment in `src-tauri/src/mcp/rmcp_spike.md`. The hand-rolled path is still the production code path; M3 flips that.
+**Status:** Production path flipped to the rmcp adapter (commit `5fd225d2`). `handle_connection` is a thin wrapper over `RmcpReadOnlyAdapter::serve`. M1 + M2a + M2b + M2c + M3-partial landed. The remaining work is **purely testing**: rewrite the 23 ignored integration tests with a real rmcp client + delete the dead hand-rolled framing they pin alive.
 
-**Migration plan (2 milestones remaining):**
+**What's currently green (good coverage):**
 
-1. **Milestone 2 (M, ~6h):** route `tools/call` through `rmcp` — override `ServerHandler::call_tool` with the spike's pattern (`ACTOR.scope`, `LAST_APPEND.scope`, `emit_tool_completion` per call); add `AppError → ErrorData` translation. Remove the hand-rolled `dispatch` / `handle_tools_call` body once the new path passes every `mcp/server/tests.rs` / `tools_ro/tests.rs` / `tools_rw/tests.rs` byte-equivalent assertion. The current `call_tool` in the spike still early-returns `method_not_found` for any name other than `search`; M2 drops that guard.
-2. **Milestone 3 (S, ~3h):** drop hand-rolled framing — delete `parse_request` / `make_success` / `make_error` / `handle_initialize` / `handle_notification` / `dispatch` / `truncate_params_preview` / JSON-RPC error code constants; replace the `handle_connection` body with `adapter.serve(stream)`. Delete the `mcp_rmcp_spike` Cargo feature once the migration is the default path.
+- `mcp::rmcp_spike::tests` — 6 tests covering adapter capability advertisement, byte-for-byte `tools/list` parity, search round-trip with ACTOR + activity scopes, unknown-tool returning resource-not-found with activity, success-envelope byte parity, error-mapping byte parity.
+- `mcp::tools_ro::tests` + `mcp::tools_rw::tests` — every individual RO/RW tool's input validation + happy path + at least one error path. Unchanged by the flip.
+- Lifecycle/accept-loop tests still pass — `shutdown_*`, `re_enable_rebinds_listener_after_shutdown`, `lifecycle_shutdown_clears_enabled_and_fires_signal` exercise the FEAT-4e gate + listener re-bind logic that wraps (rather than replaces) `handle_connection`.
+- 3693 / 3693 backend tests pass. `cargo clippy --all-targets -- -D warnings` clean.
 
-**Functions that stay agaric-specific** (rmcp has nothing to say about them): `serve_unix` / `serve_pipe` / `serve` (Unix socket / Windows pipe + M-83 successor management + H-2 lifecycle gate), `run_connection` (L-113 grace period + RAII counter guard), `app_error_to_jsonrpc` (application-level error mapping).
+**What's deferred behind `#[ignore]` (23 tests):**
 
-**Risk-mitigation suggestion** (from the spike): a behind-flag shadow-mode (run both adapters in parallel, compare responses) during milestone 2 so any wire-format drift surfaces in CI before the hand-rolled path is removed.
+Wire-level integration tests in `src-tauri/src/mcp/server/tests.rs` that drove `handle_connection` over a `tokio::net::UnixStream` with raw newline-delimited JSON-RPC bytes:
 
-**Cost:** M-L (~9h remaining across M2 + M3).
-**Risk:** Medium — wire format is identical (rmcp targets the same MCP spec we hand-roll) but every existing `mcp/server/tests.rs` / `tools_ro/tests.rs` / `tools_rw/tests.rs` test must still pass byte-equivalent.
-**Impact:** Medium — reduces framing boilerplate, tracks the MCP spec upstream rather than reimplementing it, and unlocks several spec features we currently stub (protocol-version negotiation, listChanged, cancel/progress, _meta, ping, structuredContent).
+- Handshake (`initialize_handshake_returns_server_info`, `initialize_returns_2025_06_18_protocol_version_m86`)
+- `tools/list` empty / non-empty (`tools_list_returns_empty_array_in_feat_4a`, `tools_list_dispatches_through_registry`)
+- `tools/call` success envelope (`tools_call_success_returns_calltoolresult_envelope`, `tools_call_success_text_content_is_parseable_json`)
+- `tools/call` error mappings (`tools_call_returns_resource_not_found`, `tools_call_maps_registry_not_found_to_32001`, `tools_call_maps_registry_validation_to_32602`, `tools_call_with_missing_name_returns_invalid_params`, `tools_call_not_found_still_returns_minus_32001_error`, `tools_call_validation_error_still_returns_minus_32602_error`)
+- `tools/call` actor-context propagation (`tools_call_scopes_actor_context_to_client_name`, `tools_call_without_handshake_uses_unknown_agent_name`, `tools_call_each_invocation_gets_fresh_request_id`)
+- Notifications (`notifications_initialized_has_no_response`)
+- Protocol errors (`unknown_method_returns_method_not_found`, `malformed_json_returns_parse_error`)
+- Connection lifecycle (`handle_connection_returns_ok_on_eof`, `serve_accepts_multiple_sequential_connections`, `handle_connection_emits_activity_on_placeholder_error_tools_call`)
+- **FEAT-4e disconnect grace period** — `disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113`, `disconnect_signal_drops_after_grace_period_when_call_hangs_l113`. These are the most load-bearing of the bunch — they pin the L-113 wire-level grace-period contract under `run_connection`'s `select!` + `tokio::time::timeout`.
+
+Each is marked `#[ignore = "MAINT-111 M3: production path now rmcp; rewrite with rmcp client"]`. The behaviours they cover are mostly redundant with `rmcp_spike::tests`, but the FEAT-4e tests and a handful of the protocol-error tests have no direct equivalent.
+
+**Production-grade testing plan:**
+
+1. **Port the 2 FEAT-4e disconnect-grace tests first** (highest load-bearing). Use the rmcp `ClientInfo::serve(client_io)` pattern from `rmcp_spike::tests`. The grace-period assertion translates cleanly: drive `client.call_tool("slow", ...).await` while `lifecycle.disconnect_all()` fires mid-call, then assert the response arrives within `MCP_DISCONNECT_GRACE_PERIOD + ε`. The rmcp `RunningService::close_with_timeout` API in `service.rs` is the rmcp-native way to express the same shape `run_connection`'s `select!` uses today. Estimated 1.5 h.
+2. **Port the protocol-error tests** that don't have spike equivalents: `unknown_method_returns_method_not_found` (drive a raw `client.send_request(...)` for a method like `tools/nonexistent`, assert `-32601`); `malformed_json_returns_parse_error` (rmcp's framer should already reject malformed input — assert the connection terminates without panic). Estimated 0.5 h.
+3. **Delete the rest** (~19 tests) — their behavioural coverage is provided by the `rmcp_spike::tests` already in place. Drop them along with their helpers (`connect_pair`, `connect_pair_with_registry`, `send_line`, `read_line`) and any unit tests that exercise the to-be-deleted hand-rolled framing helpers (`parse_request_*`, `handle_notification_*`, `truncate_params_preview_*`, `wrap_tool_result_success_shape`, `handle_tools_call_*`, `err_clip_*`, `truncate_chars_*`). Estimated 0.5 h.
+4. **Delete the dead hand-rolled framing helpers** in `mcp/server.rs`: `truncate_chars`, `make_success`, `make_error`, `ParsedRequest`, `IncomingRequest`, `IncomingNotification`, `parse_request`, `handle_initialize`, `handle_tools_list`, `handle_tools_call`, `dispatch`, `handle_notification`, `truncate_params_preview`, plus the `UNKNOWN_NOTIFICATION_PARAMS_PREVIEW_LEN` constant and the `JSONRPC_PARSE_ERROR` / `JSONRPC_INVALID_REQUEST` / `JSONRPC_METHOD_NOT_FOUND` / `JSONRPC_INVALID_PARAMS` / `JSONRPC_INTERNAL_ERROR` constants that are no longer referenced. Keep `JSONRPC_RESOURCE_NOT_FOUND` (used by `app_error_to_rmcp`) + `ERROR_CLIP_CAP` (used by the rmcp adapter) + `MCP_DISCONNECT_GRACE_PERIOD` (used by `run_connection`). Estimated 0.5 h.
+5. **Decide on `wrap_tool_result_success` + `app_error_to_jsonrpc`** — currently kept alive only by the M2b wrapper-parity tests in `rmcp_spike::tests`. Either (a) keep them as `pub(crate)` fixtures permanently with a comment explaining they are reference shapes pinning the wire format, or (b) inline their bodies as hardcoded JSON literals in the parity tests and delete the production functions. Option (b) is cleaner; option (a) is faster. Recommend (b). Estimated 0.5 h.
+6. **Re-enable `cargo clippy --all-targets -- -D warnings` without the `#[allow(dead_code)]` attributes** that the M2c flip needed to add to the dead helpers — once step 4 lands, those attributes can be removed too.
+7. **Stretch: cancellation-token tests.** rmcp's `serve_with_ct` takes a `CancellationToken` we don't currently use. Adding a test that asserts the cancellation token propagates into in-flight `tools/call` invocations would unlock graceful agent-initiated cancellation in the future. Estimated 1 h.
+
+**Total estimated effort:** ~4.5 h focused work (steps 1–6) for a clean, production-grade end state; +1 h for the optional stretch.
+
+**Acceptance criteria for "done":**
+
+- `cargo nextest run --profile ci` — same 3693 tests pass, **zero `#[ignore]` markers** referencing MAINT-111.
+- `cargo clippy --all-targets -- -D warnings` — clean **without `#[allow(dead_code)]` on `mcp/server.rs` items**.
+- `wc -l src-tauri/src/mcp/server.rs` drops from ~1000 to ~250 (the listener accept-loop + lifecycle wrapper + the new thin `handle_connection`).
+- `wc -l src-tauri/src/mcp/server/tests.rs` drops from ~2400 to ~400 (lifecycle tests + ~2 rewritten FEAT-4e tests + ~3 protocol-error tests).
+
+**Cost remaining:** M (~4.5–5.5 h).
+**Risk:** Low — the production path is already flipped; this is test-and-cleanup hygiene.
+**Impact:** Medium — closes the loop on MAINT-111, removes ~1500 lines of dead code, restores `-D dead_code` to its strict default, and lifts the FEAT-4e grace-period contract back into the live test suite.
 
 ### MAINT-168 — Sync trigger / scheduler dual-backoff unification
 
