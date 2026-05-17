@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-21 open items in the summary table; 21 detail entries (FE-* sub-tables don't appear in the summary).
+26 open items in the summary table; 26 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -42,6 +42,11 @@ Items flagged during development that need revisiting. Organized by section with
 | OSSF-2 | MAINT | Scorecard `Code-Review` score = 0 because changesets pushed directly to `main` by the solo maintainer count as "0/N approved" — the asymmetric maintainer-bypass ruleset (R12, see `docs/architecture/ci-and-tooling.md` §13) is by design. The score auto-improves the moment any external maintainer lands, because their PRs route through `validate-all` + at least one review. **Revisit trigger:** first external maintainer onboarded → flip the ruleset to symmetric (require review for everyone, drop the maintainer bypass), or accept a permanent 0 here and document the design choice in the public security posture. | S (decision) → M (ruleset flip + bypass test plan) | First external maintainer joining the repo |
 | OSSF-3 | MAINT | Scorecard `Vulnerabilities` score = 0 because of 23 RUSTSEC advisories, the bulk of which are atk/gtk3 "no longer maintained" notices (`RUSTSEC-2024-04xx`) reaching us transitively via `wry → tauri`. All are documented in `src-tauri/deny.toml [advisories].ignore` with rationale and the upstream tracking issue. The score will recover automatically when `tauri`/`wry` finish migrating off gtk3 (already in progress upstream — wry's webkit2gtk backend is the only remaining gtk3 user, and the gtk4 work is on their roadmap). **Revisit trigger:** Tauri release notes announce gtk4 migration complete → drop the relevant `deny.toml` ignore entries + re-run Scorecard to confirm the score lifts. Tracking item: <https://github.com/tauri-apps/wry/issues/802>. | S (delete ignore entries + verify) | Upstream wry/tauri gtk4 migration |
 | OSSF-4 | MAINT | Scorecard `Maintained` score = 0 because the repository was created within the last 90 days. Time-based check — it auto-recovers once the repo passes the threshold. **Revisit trigger:** if it has not recovered by 2026-08-14 (90 days from repo creation 2026-05-16), investigate whether commit cadence or branch-protection metadata is dragging the score. Until then no action. | trivial (verify only) | 90 days of repo age |
+| PEND-44 | TEST | Push vitest coverage to OpenSSF Silver thresholds — branches 78.99% → ≥80%, statements 87% → ≥90%. Plan at `pending/PEND-44-coverage-90.md`. Flips `test_branch_coverage80` + `test_statement_coverage90` to Met on bestpractices.dev project 12870. | S–M (2–6h) | — |
+| PEND-45 | MAINT | Publish support-window matrix in SECURITY.md — adds a per-version-range table with EOL trigger + security-update duration. Plan at `pending/PEND-45-support-window-matrix.md`. Flips `OSPS-DO-04.01` + `OSPS-DO-05.01` to Met. | S (~30min) | — |
+| PEND-46 | MAINT | Formal threat-model document at `docs/architecture/threat-model.md` — STRIDE-per-trust-boundary table + data-flow diagram restructured from the existing prose in SECURITY.md + AGENTS.md. Plan at `pending/PEND-46-threat-model-formal.md`. Flips `OSPS-SA-03.02` to Met. | M (2–3h) | — |
+| PEND-47 | MAINT | Publish OpenVEX 0.2.0 statements on each release — generator script reads `src-tauri/deny.toml` `[advisories].ignore` rationale, emits OpenVEX JSON per release, attested under SLSA. Plan at `pending/PEND-47-vex-statements.md`. Flips `OSPS-VM-04.02` to Met. | M (2–3h) | — |
+| PEND-48 | MAINT | Verify reproducible builds end-to-end — build the release matrix twice from a clean state, diff hashes, identify and eliminate sources of non-determinism (timestamps, sort order, embedded build env). Flips `build_reproducible` to Met on bestpractices.dev Silver tier. Heavier than the other PEND-44/45/46/47 items because non-determinism sources can hide in any build step. | L (multi-week) | — |
 
 ### Quick wins (S-cost, ready to grab)
 

@@ -7,6 +7,7 @@
   <a href="https://github.com/jfolcini/agaric/releases"><img alt="Release" src="https://img.shields.io/github/v/release/jfolcini/agaric?include_prereleases"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/jfolcini/agaric"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/jfolcini/agaric/badge"></a>
+  <a href="https://www.bestpractices.dev/projects/12870"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/12870/badge"></a>
   <a href="https://slsa.dev"><img alt="SLSA 3" src="https://slsa.dev/images/gh-badge-level3.svg"></a>
   <a href="https://v2.tauri.app"><img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=white"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey">
