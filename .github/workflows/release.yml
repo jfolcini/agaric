@@ -494,6 +494,7 @@ jobs:
           echo "No secret patterns matched in release bundles."
 
       - name: Attest desktop bundles (Linux)
+        id: attest_linux
         if: matrix.platform == 'ubuntu-24.04'
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
@@ -505,6 +506,7 @@ jobs:
             ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
 
       - name: Attest desktop bundles (Windows)
+        id: attest_windows
         if: matrix.platform == 'windows-2025-vs2026'
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
@@ -517,6 +519,7 @@ jobs:
             ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
 
       - name: Attest desktop bundles (macOS)
+        id: attest_macos
         if: matrix.platform == 'macos-15'
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
@@ -525,6 +528,63 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
             ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
             ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
+
+      # OpenSSF Scorecard's `Signed-Releases` check only inspects the
+      # release-page asset list — it does not query the Sigstore
+      # transparency log. So `attest-build-provenance` alone gets us
+      # Sigstore-verifiable provenance (which `gh attestation verify`
+      # consumes) but a 0/10 on the score, because the heuristic looks
+      # for `*.sigstore.json` / `*.intoto.jsonl` / `*.sig` files
+      # attached to the release.
+      #
+      # The Attest steps above expose a `bundle-path` output pointing at
+      # the local Sigstore bundle they just published. We copy it to a
+      # per-platform name (so Linux/Windows/macOS bundles don't clash on
+      # the same release asset slot) and `gh release upload` it.
+      # End users gain a one-click verification artifact; Scorecard's
+      # heuristic flips 0 → 10. `gh attestation verify` continues to
+      # work via the Sigstore log; this is purely additive.
+      - name: Upload SLSA attestation bundle to release (Linux)
+        if: matrix.platform == 'ubuntu-24.04' && steps.attest_linux.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pull the action output into env: rather than inlining the
+          # ${{ }} expression in the `run:` body — defuses zizmor's
+          # template-injection rule by construction (R18 pattern).
+          BUNDLE_SRC: ${{ steps.attest_linux.outputs.bundle-path }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/agaric-${TARGET}.sigstore.json"
+          cp "$BUNDLE_SRC" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
+      - name: Upload SLSA attestation bundle to release (Windows)
+        if: matrix.platform == 'windows-2025-vs2026' && steps.attest_windows.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_windows.outputs.bundle-path }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/agaric-${TARGET}.sigstore.json"
+          cp "$BUNDLE_SRC" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
+      - name: Upload SLSA attestation bundle to release (macOS)
+        if: matrix.platform == 'macos-15' && steps.attest_macos.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_macos.outputs.bundle-path }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/agaric-${TARGET}.sigstore.json"
+          cp "$BUNDLE_SRC" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
       # PEND-41 R9 — attach the per-platform SBOMs to the draft release
       # so downstream consumers (Flathub, Homebrew, Nix, security scanners)
@@ -761,12 +821,30 @@ jobs:
       # `gh attestation verify <apk> --repo jfolcini/agaric`.
       # PEND-41 R9 — same attest now also covers the SBOM files.
       - name: Attest Android APK
+        id: attest_android
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: |
             ${{ steps.sign_apk.outputs.apk }}
             ${{ runner.temp }}/agaric-android-aarch64.spdx.json
             ${{ runner.temp }}/agaric-android-aarch64.cyclonedx.json
+
+      # Mirror the desktop pattern (see same step in the build-and-release
+      # job): attach the Sigstore bundle as a release asset so Scorecard's
+      # `Signed-Releases` heuristic, which scans the release asset list
+      # (not the Sigstore log), detects the signature. `gh attestation
+      # verify` continues to work via the Sigstore log; this is additive.
+      - name: Upload SLSA attestation bundle to release (Android)
+        if: steps.attest_android.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_android.outputs.bundle-path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/agaric-android-aarch64.sigstore.json"
+          cp "$BUNDLE_SRC" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
       - name: Upload Android APK to release
         env:
