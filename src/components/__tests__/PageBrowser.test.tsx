@@ -232,12 +232,17 @@ describe('PageBrowser', () => {
       })
     })
 
-    // Both pages should be rendered (accumulated). Use `findByText` for
-    // BOTH so the second mocked IPC resolves before the assertion; the
-    // earlier `getByText('Page 2')` synchronous check raced the
-    // accumulator update and flaked on slow CI runners.
-    expect(await screen.findByText('Page 1')).toBeInTheDocument()
-    expect(await screen.findByText('Page 2')).toBeInTheDocument()
+    // Both pages should be rendered (accumulated). Wait for both inside
+    // a single `waitFor` with a generous timeout so a slow CI runner that
+    // takes longer than the default 1 s findByText timeout between the
+    // second IPC resolving and the accumulator render no longer flakes.
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Page 1')).toBeInTheDocument()
+        expect(screen.queryByText('Page 2')).toBeInTheDocument()
+      },
+      { timeout: 5000 },
+    )
 
     // Load More should disappear after last page
     await waitFor(() => {
