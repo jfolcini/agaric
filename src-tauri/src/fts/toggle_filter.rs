@@ -471,9 +471,11 @@ async fn regex_mode_query(
     for pat in exclude_page_globs {
         db_query = db_query.bind(pat);
     }
-    // PEND-53 — bind metadata values in declaration order.
+    // PEND-53 / PEND-64 — bind metadata values in declaration order;
+    // PEND-64 widened the bind type to `MetaBind` to carry nullable
+    // number / date / ref variants for `prop:` four-column matching.
     for v in &metadata_binds {
-        db_query = db_query.bind(v);
+        db_query = v.bind(db_query);
     }
     db_query = db_query.bind(REGEX_PRE_FILTER_CAP);
 

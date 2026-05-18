@@ -342,6 +342,22 @@ pub struct SearchFilter {
     /// `NOT EXISTS (...)` sub-select.
     #[serde(default)]
     pub excluded_property_filters: Vec<SearchPropertyFilter>,
+    /// PEND-63 — `blocks.todo_state IS NULL OR todo_state NOT IN
+    /// (...)`. Each entry is matched verbatim against the column. The
+    /// inversion intentionally includes NULL: a "blocks not in DONE"
+    /// query should return blocks with no state set at all, not
+    /// exclude them. The literal keyword `none` (case-insensitive)
+    /// flips to `todo_state IS NOT NULL` (the `not-state:none` token);
+    /// a custom state literally called `"none"` is treated as the
+    /// sentinel — documented in `docs/SEARCH.md`. Empty list = no
+    /// filter (preserves pre-PEND-63 wire compat).
+    #[serde(default)]
+    pub excluded_state_filter: Vec<String>,
+    /// PEND-63 — `blocks.priority IS NULL OR priority NOT IN (...)`.
+    /// Same `none` sentinel behaviour as
+    /// [`Self::excluded_state_filter`].
+    #[serde(default)]
+    pub excluded_priority_filter: Vec<String>,
 }
 
 /// Match span emitted by the PEND-55 toggle pipeline.

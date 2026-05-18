@@ -125,17 +125,36 @@ if ! node scripts/prepare-external-bins.mjs --placeholder-only > /dev/null 2>&1;
 fi
 echo "  ✓ externalBin placeholder"
 
-# ── Phase 2: parallel blocking checks ──────────────────────────────
-# These run independently; failures are aggregated and printed at the
-# end so a single failed check doesn't hide the rest.
+# ── Phase 2a: parallel CPU-bound checks (vitest + cargo) ───────────
+# vitest and cargo nextest spawn many parallel workers each but their
+# resource footprints compose cleanly (node vs. rustc); failures are
+# aggregated so a single failed check doesn't hide the rest.
 
-echo "→ Phase 2: parallel blocking checks (vitest + playwright + rust stack)"
+echo "→ Phase 2a: parallel checks (vitest + cargo)"
 launch 'vitest (full)' \
     npx vitest run
-launch 'playwright (full e2e)' \
-    npx playwright test
 launch 'cargo (nextest + agaric-mcp + sqlx-prepare)' \
     bash -c 'cd src-tauri && cargo nextest run --profile ci && cargo build --bin agaric-mcp && cargo sqlx prepare --check -- --tests'
+
+if ! wait_all; then
+    echo ""
+    echo "✗ Pre-push verification FAILED. Push aborted."
+    echo "  Re-run a single check with the command shown above to iterate."
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY=1 git push"
+    exit 1
+fi
+
+# ── Phase 2b: playwright (serialized) ──────────────────────────────
+# Playwright owns the vite dev server (started via webServer config) and
+# spawns its own browser workers. Running it alongside vitest+cargo
+# overloads the box: vite's startup probe loses to CPU contention,
+# Playwright sees ERR_CONNECTION_REFUSED on localhost:5173, and a wave
+# of unrelated tests fail with flaky-looking errors. Serializing here
+# trades a few minutes of wall time for deterministic e2e results.
+
+echo "→ Phase 2b: playwright e2e (serial)"
+launch 'playwright (full e2e)' \
+    npx playwright test
 
 if ! wait_all; then
     echo ""

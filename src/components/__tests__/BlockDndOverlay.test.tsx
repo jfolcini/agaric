@@ -2,12 +2,11 @@
  * Tests for BlockDndOverlay component.
  *
  * Validates:
- *  - Renders drag overlay when activeBlock is provided
+ *  - Renders the tiny cursor-following marker when activeBlock is provided
+ *  - Marker is empty (no content) so list reflow is visible underneath
  *  - Renders nothing inside DragOverlay when activeBlock is null
  *  - Renders SR live region when activeId + projected are set
  *  - Does not render SR live region when activeId is null
- *  - Truncates long content to 80 chars
- *  - Shows "Empty block" for blocks with empty content
  *  - Axe a11y audit passes
  */
 
@@ -25,7 +24,7 @@ vi.mock('@dnd-kit/core', () => ({
 import { BlockDndOverlay } from '../block-tree/BlockDndOverlay'
 
 describe('BlockDndOverlay', () => {
-  it('renders the overlay preview when activeBlock is provided', () => {
+  it('renders the marker when activeBlock is provided', () => {
     render(
       <BlockDndOverlay
         activeBlock={{ content: 'Hello world' }}
@@ -35,7 +34,18 @@ describe('BlockDndOverlay', () => {
     )
 
     expect(screen.getByTestId('sortable-block-overlay')).toBeInTheDocument()
-    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Hello world')
+  })
+
+  it('marker has no text content (so list reflow stays visible)', () => {
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: 'Hello world' }}
+        projected={{ depth: 1 }}
+        activeId="BLK001"
+      />,
+    )
+
+    expect(screen.getByTestId('sortable-block-overlay').textContent).toBe('')
   })
 
   it('renders nothing inside DragOverlay when activeBlock is null', () => {
@@ -62,28 +72,6 @@ describe('BlockDndOverlay', () => {
     render(<BlockDndOverlay activeBlock={null} projected={null} activeId={null} />)
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
-  })
-
-  it('truncates content longer than 80 chars', () => {
-    const longContent = 'A'.repeat(120)
-    render(
-      <BlockDndOverlay activeBlock={{ content: longContent }} projected={null} activeId="BLK001" />,
-    )
-
-    const overlay = screen.getByTestId('sortable-block-overlay')
-    expect(overlay.textContent).toHaveLength(80)
-  })
-
-  it('shows placeholder for blocks with empty content', () => {
-    render(<BlockDndOverlay activeBlock={{ content: '' }} projected={null} activeId="BLK001" />)
-
-    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Type / for commands...')
-  })
-
-  it('shows placeholder for blocks with null content', () => {
-    render(<BlockDndOverlay activeBlock={{ content: null }} projected={null} activeId="BLK001" />)
-
-    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Type / for commands...')
   })
 
   it('has no a11y violations', async () => {

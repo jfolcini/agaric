@@ -111,12 +111,12 @@ The find-across-pages view supports a small filter vocabulary that mixes freely 
 | `path:GLOB` | Page-name glob include. | Comma-separated entries OR-combine inside one token. |
 | `not-path:GLOB` | Page-name glob exclude. | AND-joined with `path:`. |
 | `state:VALUE` | Block's `todo_state` is `VALUE`. | Repeats OR-combine (`state IN (…)`). Custom states allowed. `state:none` matches `todo_state IS NULL`. |
-| `not-state:VALUE` | Reserved for symmetry with `not-tag:` / `not-path:`. | v1 ships as a visual chip with no IPC effect. |
+| `not-state:VALUE` | Block's `todo_state` is **not** `VALUE`. | NULL-inclusive inversion: `(todo_state IS NULL OR todo_state NOT IN (…))`. Repeats AND-extend the exclusion set. `not-state:none` flips to `todo_state IS NOT NULL`. |
 | `priority:VALUE` | Block's `priority` is `VALUE`. | Repeats OR-combine. `priority:none` matches `priority IS NULL`. |
-| `not-priority:VALUE` | Reserved for symmetry. | v1 ships as a visual chip with no IPC effect. |
+| `not-priority:VALUE` | Block's `priority` is **not** `VALUE`. | Symmetric to `not-state:` — NULL-inclusive inversion. |
 | `due:RANGE` | Block's `due_date` matches `RANGE`. | See *Date predicates* below. |
 | `scheduled:RANGE` | Block's `scheduled_date` matches `RANGE`. | Same shape as `due:`. |
-| `prop:KEY=VALUE` | Block has property `KEY` with `value_text=VALUE`. | Multiple `prop:` tokens AND-combine. `prop:KEY=` (empty value) matches "block has the key at all". |
+| `prop:KEY=VALUE` | Block has property `KEY` with the given value (matches across `value_text` / `value_num` / `value_date` / `value_ref`). | Multiple `prop:` tokens AND-combine. `prop:KEY=` (empty value) matches "block has the key at all". |
 | `not-prop:KEY=VALUE` | Block does NOT have that property/value. | AND-joined exclusion. |
 | `"phrase"` | Quoted phrase passed verbatim to FTS5. | Bypasses the trigram length filter. |
 | `AND` / `OR` / `NOT` | Boolean operators (uppercase, FTS5 syntax). | Outside filter tokens. |
@@ -131,11 +131,16 @@ The find-across-pages view supports a small filter vocabulary that mixes freely 
 
 Invalid dates surface as a red chip with the typed error `InvalidDateFilter: …`.
 
-### Property filter limitations
+### Property filter typing (PEND-64)
 
-v1 matches `block_properties.value_text` only. The table carries five mutually-exclusive value columns (`value_text`, `value_num`, `value_date`, `value_ref`, `value_bool`) per migration `0062`'s CHECK; numeric / date / reference / boolean properties are NOT searchable in the inline filter syntax yet.
+`prop:KEY=VALUE` matches across the four user-facing typed columns automatically (`value_text`, `value_num`, `value_date`, `value_ref`). The backend parses `VALUE` into each variant and binds `NULL` for the variants that don't parse, so only intentional matches fire:
 
-Workaround: if you want a numeric property to be searchable through `prop:`, store the canonical form as `value_text` (e.g. `prop:effort=8` works if the property is text-typed).
+- `prop:priority=1` matches `value_num = 1`.
+- `prop:due-date=2026-05-17` matches `value_date = '2026-05-17'`.
+- `prop:author=01HKQ2RWWWGM34RTGFE9XCRYZ4` matches `value_ref = '01HKQ…'` (ULID column, uppercased at bind time).
+- `prop:status=draft` matches `value_text = 'draft'` (v1 behaviour).
+
+The mutually-exclusive `exactly_one_value` CHECK on `block_properties` (migration `0062`) means at most one branch ever fires per row. `value_bool` is internal (not user-typed) and remains out of scope.
 
 **Property keys are case-sensitive** — `block_properties.PRIMARY KEY (block_id, key)` has no `COLLATE NOCASE`. `prop:Foo=...` and `prop:foo=...` are distinct queries. Autocomplete shows keys verbatim.
 
@@ -163,6 +168,7 @@ Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `
 | `path:{Journal,Notes}/*` | Pages in either `Journal/` or `Notes/`. |
 | `state:TODO priority:1 due:this-week` | High-priority open tasks due this week. |
 | `state:TODO state:DOING due:overdue` | Anything overdue that isn't done. |
+| `not-state:DONE due:overdue` | Overdue items that haven't shipped, including no-state blocks. |
 | `scheduled:none state:TODO` | Open tasks with no schedule yet. |
 | `prop:status=blocked not-prop:archived=true` | Blocked items, excluding archived. |
 | `prop:assignee=` | Blocks that carry an `assignee` property (any value). |

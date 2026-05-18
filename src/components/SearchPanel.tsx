@@ -106,6 +106,8 @@ type SearchFilterParams = {
   excludePageGlobs?: string[] | undefined
   stateFilter?: string[] | undefined
   priorityFilter?: string[] | undefined
+  excludedStateFilter?: string[] | undefined
+  excludedPriorityFilter?: string[] | undefined
   dueFilter?:
     | { kind: 'named'; name: string }
     | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
@@ -125,6 +127,8 @@ function regexModeFilterParams(): SearchFilterParams {
     excludePageGlobs: undefined,
     stateFilter: undefined,
     priorityFilter: undefined,
+    excludedStateFilter: undefined,
+    excludedPriorityFilter: undefined,
     dueFilter: null,
     scheduledFilter: null,
     propertyFilters: undefined,
@@ -144,6 +148,12 @@ function astFilterParams(
       projection.excludePageGlobs.length === 0 ? undefined : projection.excludePageGlobs,
     stateFilter: projection.stateFilter.length === 0 ? undefined : projection.stateFilter,
     priorityFilter: projection.priorityFilter.length === 0 ? undefined : projection.priorityFilter,
+    excludedStateFilter:
+      projection.excludedStateFilter.length === 0 ? undefined : projection.excludedStateFilter,
+    excludedPriorityFilter:
+      projection.excludedPriorityFilter.length === 0
+        ? undefined
+        : projection.excludedPriorityFilter,
     dueFilter: projection.dueFilter,
     scheduledFilter: projection.scheduledFilter,
     propertyFilters:

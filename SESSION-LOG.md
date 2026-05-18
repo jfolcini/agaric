@@ -2,10 +2,65 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 779 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 780 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1209+ REVIEW-LATER items across 779 sessions.
+- **Previously-resolved counter:** 1212+ REVIEW-LATER items across 780 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 780 — PEND-63 + PEND-64 + PEND-65 (search post-review backend cycle) (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | orchestrator-direct (1 Explore subagent for the initial code-location map; everything else inline) |
+| **Items closed** | PEND-63 (not-state / not-priority inversion), PEND-64 (`prop:` four-column matching), PEND-65 (MCP `search` tool full `SearchFilter`) |
+| **Items modified** | `pending/README.md` (3 rows removed; PEND-59 → 66 paragraph updated) |
+| **Tests added** | +5 backend metadata-filter unit tests (PEND-63 SQL) + 10 backend metadata-filter unit tests (PEND-64 prop binds + parse_ulid) + 8 commands integration tests (PEND-63 NULL-inclusive inversion across 4 cases; PEND-64 fixture-based matching across all 4 typed columns + text regression guard) + 5 MCP integration tests (PEND-65 filter passthrough + unknown-field rejection) = **+28 backend nextest**. +4 frontend vitest (`to-search-filter` projection of `not-state:` / `not-priority:` / dedup / compound). |
+| **Files touched** | 18 (8 Rust + 5 TS/test + 3 docs + 1 snapshot + pending/README.md) |
+
+**Summary:** Shipped the three-PEND post-review backend cycle the autonomous loop's reviewer flagged as misleading: `not-state:` / `not-priority:` chips now wire to a NULL-inclusive `(col IS NULL OR col NOT IN (…))` inversion (PEND-63), `prop:KEY=VALUE` matches across `value_text` / `value_num` / `value_date` / `value_ref` with type-coerced bind variants (PEND-64), and the MCP `search` tool accepts the full structured `SearchFilter` via an optional `filter` arg (PEND-65). All three were scoped as a single small backend cycle in `pending/README.md`'s recommended batching.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 15 → 12 (three PENDs deleted from `pending/`)
+- **Previously resolved:** 1209+ → 1212+ across 779 → 780 sessions.
+
+**Files touched (this session):**
+- `src-tauri/src/commands/queries.rs` (+19) — `SearchFilter::excluded_state_filter` / `excluded_priority_filter`.
+- `src-tauri/src/fts/metadata_filter.rs` (+260) — `MetaBind` enum, `MetadataPredicates::excluded_state_*`, NULL-inclusive `append_text_not_in_or_not_null`, four-column `append_property_match` + `parse_prop_value` / `parse_ulid` + 12 new unit tests.
+- `src-tauri/src/fts/search.rs`, `src-tauri/src/fts/toggle_filter.rs` — call-site update (`v.bind(db_query)` instead of `db_query.bind(v)` since binds are now typed).
+- `src-tauri/src/commands/tests/metadata_filter_tests.rs` (+190) — 8 new integration tests + `seed_property_num` / `seed_property_date` / `seed_property_ref` helpers.
+- `src-tauri/src/mcp/tools_ro.rs` (+120) — `SearchFilterArgs` + extended tool schema + handler passthrough.
+- `src-tauri/src/mcp/tools_ro/tests.rs` (+170) — 5 new PEND-65 tests covering omitted filter / state narrowing / excluded-state NULL-inclusion / property four-column passthrough / unknown-field rejection.
+- `src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap` (+75) — accepted new schema fields.
+- `src/lib/search-query/to-search-filter.ts` (+22 / -16) — `excludedStateFilter` / `excludedPriorityFilter` projection from `notState` / `notPriority` chips.
+- `src/lib/search-query/__tests__/to-search-filter.test.ts` (+22) — replaced "reserved for symmetry" assertion with three new cases.
+- `src/lib/tauri.ts` (+13) — wrapper accepts new fields; pass through.
+- `src/lib/bindings.ts` (regenerated via `cargo test -- specta_tests --ignored`).
+- `src/components/SearchPanel.tsx` (+10) — pipe new fields through `SearchFilterParams` and `astFilterParams` / `regexModeFilterParams`.
+- `src/components/__tests__/SearchPanel.test.tsx`, `src/lib/__tests__/tauri.test.ts` — payload-shape fixtures gained `excludedStateFilter: []` / `excludedPriorityFilter: []` (replace_all).
+- `docs/SEARCH.md` — `not-state:` / `not-priority:` table rows rewritten; "Property filter limitations" section replaced with "Property filter typing (PEND-64)"; one worked example added.
+- `docs/architecture/search.md` — PEND-53 paragraph extended to PEND-63 fields; "Property column mapping" section rewritten for PEND-64; "Excluded states / priorities" section now describes the landed inversion.
+- `docs/architecture/integrations.md` — MCP `search` tool's structured `filter` arg documented.
+- `pending/README.md` — three rows removed; PEND-59 → 66 paragraph notes the small backend cycle shipped 2026-05-18.
+
+**Verification:**
+- `cd src-tauri && cargo nextest run --lib` — **3747 / 3747** tests passed (1 slow > 30s — `journal_for_date_finds_existing_page_via_either_pool`, pre-existing, unrelated).
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **10123 / 10123** tests passed.
+- `prek run --all-files` — pending below.
+
+**Process notes:**
+- The work was orchestrator-direct rather than parallel subagents. Estimate was ~340 LOC across 9 interrelated files (queries.rs / metadata_filter.rs both touched by PEND-63 and PEND-64; PEND-65 references PEND-63's new fields); the natural splits had heavy file overlap, so the per-subagent setup cost would have outweighed the parallelism. PROMPT.md's "5-6 concurrent" target makes sense for batches with genuinely independent file boundaries — when the batch has only 2-3 natural splits AND those splits overlap on a single file, orchestrator-direct is faster.
+- LSP diagnostics in the editor occasionally claimed `bindings.ts` exports were missing right after a `cargo test -- specta_tests --ignored` regen — `npx tsc --noEmit` consistently disagreed and resolved cleanly. Treat LSP-only "no exported member" errors as transient cache issues unless tsc agrees.
+- `parse_ulid` initially used the strict Crockford alphabet (rejecting `I/L/O/U`). The seed test fixtures use ULID-shaped strings containing `L` (consistent with the codebase's existing lenient `normalize_ulid_arg`, which accepts any 26-char alphanumeric). Aligned `parse_ulid` with the existing convention rather than tightening seed fixtures.
+
+**Lessons learned (for future sessions):**
+- When extending a typed `Vec<String>` bind list to a polymorphic shape (different SQLite affinities per element), an enum with an `impl bind(query)` method that dispatches to `query.bind(...)` is cleaner than threading an outer `Encode` impl — sqlx's `Encode` trait wants `&T: Encode` and `T: Type` which is awkward to satisfy for a sum type without extra glue.
+- For property-match SQL that must handle multiple typed columns, **NULL-binding the non-matching variants** (e.g. `value_date = NULL` for non-date inputs) is safer than relying on SQLite's affinity-conversion rules — affinity gets `value_num` right but `value_date` (TEXT column) would false-positive on stored text that happens to equal the user's input.
+
+**Commit plan:** single commit; not pushed (let maintainer decide).
+
+---
 
 ## Session 779 — Search overhaul (6 PENDs in one autonomous loop) (2026-05-17/18)
 

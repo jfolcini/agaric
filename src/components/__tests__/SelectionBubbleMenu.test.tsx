@@ -451,14 +451,12 @@ describe('SelectionBubbleMenu', () => {
     it('opens link popover when clicking External link button', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       const linkBtn = screen.getByRole('button', { name: t('toolbar.link') })
-      const popover = linkBtn.closest('[data-popover]') as HTMLElement
+      const popover = document.querySelector('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'false')
 
       fireEvent.pointerDown(linkBtn)
 
-      const popoverAfter = screen
-        .getByRole('button', { name: t('toolbar.link') })
-        .closest('[data-popover]') as HTMLElement
+      const popoverAfter = document.querySelector('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
 
@@ -500,8 +498,7 @@ describe('SelectionBubbleMenu', () => {
     it('opens popover on Ctrl+K custom event from editor DOM', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
 
-      const linkBtn = screen.getByRole('button', { name: t('toolbar.link') })
-      const popover = linkBtn.closest('[data-popover]') as HTMLElement
+      const popover = document.querySelector('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'false')
 
       // Simulate the custom event dispatched by the ExternalLink extension
@@ -509,9 +506,7 @@ describe('SelectionBubbleMenu', () => {
         mockEditorDom.dispatchEvent(new CustomEvent('open-link-popover', { bubbles: true }))
       })
 
-      const popoverAfter = screen
-        .getByRole('button', { name: t('toolbar.link') })
-        .closest('[data-popover]') as HTMLElement
+      const popoverAfter = document.querySelector('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
 
@@ -527,8 +522,7 @@ describe('SelectionBubbleMenu', () => {
         )
       })
 
-      const linkBtn = screen.getByRole('button', { name: t('toolbar.link') })
-      const popoverAfter = linkBtn.closest('[data-popover]') as HTMLElement
+      const popoverAfter = document.querySelector('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
 
       const popoverMock = screen.getByTestId('link-edit-popover-mock')

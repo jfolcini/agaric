@@ -35,12 +35,86 @@ expression: wire
       - page_id
     type: object
   name: get_page
-- description: Full-text search across block content (FTS5). Returns BlockRow records; content is truncated to 512 chars per result.
+- description: "Full-text search across block content (FTS5). Returns BlockRow records; content is truncated to 512 chars per result. PEND-65 — pass `filter` for structured narrowing (state / priority / due / scheduled / property / page-name globs / block-type / case-sensitive / whole-word / regex toggles)."
   inputSchema:
     additionalProperties: false
     properties:
       cursor:
         type: string
+      filter:
+        additionalProperties: false
+        description: "PEND-65 — structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search)."
+        properties:
+          block_type_filter:
+            description: "PEND-51 — restrict to a single `blocks.block_type` value (e.g. `'page'`)."
+            type: string
+          case_sensitive:
+            type: boolean
+          due_filter:
+            description: "PEND-53 — date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`."
+            type: object
+          exclude_page_globs:
+            description: PEND-54 — page-name glob exclude list.
+            items:
+              type: string
+            type: array
+          excluded_priority_filter:
+            items:
+              type: string
+            type: array
+          excluded_property_filters:
+            items:
+              properties:
+                key:
+                  type: string
+                value:
+                  type: string
+              required:
+                - key
+                - value
+              type: object
+            type: array
+          excluded_state_filter:
+            description: "PEND-63 — `(todo_state IS NULL OR todo_state NOT IN (...))`. Literal `'none'` flips to `todo_state IS NOT NULL`."
+            items:
+              type: string
+            type: array
+          include_page_globs:
+            description: "PEND-54 — page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`."
+            items:
+              type: string
+            type: array
+          is_regex:
+            description: "PEND-55 — treat `query` as a regex (FTS5 bypassed)."
+            type: boolean
+          priority_filter:
+            items:
+              type: string
+            type: array
+          property_filters:
+            description: "PEND-53 — AND-joined property predicates. PEND-64 matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion."
+            items:
+              properties:
+                key:
+                  type: string
+                value:
+                  type: string
+              required:
+                - key
+                - value
+              type: object
+            type: array
+          scheduled_filter:
+            description: "PEND-53 — same shape as `due_filter` but on `blocks.scheduled_date`."
+            type: object
+          state_filter:
+            description: "PEND-53 — `todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`."
+            items:
+              type: string
+            type: array
+          whole_word:
+            type: boolean
+        type: object
       limit:
         description: Max results per response (capped at 50).
         maximum: 50

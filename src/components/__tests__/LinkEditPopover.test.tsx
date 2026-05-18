@@ -142,10 +142,10 @@ describe('LinkEditPopover', () => {
       expect(input).toHaveFocus()
     })
 
-    // UX-307: Ctrl+K with a text selection pre-fills the label, so focus
-    // should land on the label input instead of the URL input. Without a
-    // selection, focus stays on the URL input (the original behavior).
-    it('focuses label input when opened with a selection, URL input otherwise', () => {
+    // Ctrl+K with a selection still focuses the URL input — when the user
+    // highlights text and presses Ctrl+K, the label is pre-filled from the
+    // selection and the URL is what they intend to type next.
+    it('focuses URL input even when opened with a pre-filled label', () => {
       const { unmount } = render(
         <LinkEditPopover
           editor={makeEditor()}
@@ -156,8 +156,8 @@ describe('LinkEditPopover', () => {
           savedSelection={{ from: 5, to: 18 }}
         />,
       )
-      expect(screen.getByTestId('link-label-input')).toHaveFocus()
-      expect(screen.getByTestId('link-url-input')).not.toHaveFocus()
+      expect(screen.getByTestId('link-url-input')).toHaveFocus()
+      expect(screen.getByTestId('link-label-input')).not.toHaveFocus()
       unmount()
 
       render(

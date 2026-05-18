@@ -45,7 +45,7 @@ function die(code, msg) {
 
 const inputs = process.argv.slice(2)
 if (inputs.length < 2) {
-  die(1, 'expected at least 2 input coverage-final.json paths; got ' + inputs.length)
+  die(1, `expected at least 2 input coverage-final.json paths; got ${inputs.length}`)
 }
 
 const map = istanbul.createCoverageMap({})

@@ -622,6 +622,14 @@ export async function searchBlocks(params: {
   propertyFilters?: { key: string; value: string }[] | undefined
   /** PEND-53 — AND-joined property exclusions. */
   excludedPropertyFilters?: { key: string; value: string }[] | undefined
+  /**
+   * PEND-63 — `not-state:` projection. Backend emits
+   * `(todo_state IS NULL OR todo_state NOT IN (...))` — NULL-inclusive
+   * inversion. Literal `'none'` flips to `todo_state IS NOT NULL`.
+   */
+  excludedStateFilter?: string[] | undefined
+  /** PEND-63 — `not-priority:` projection. Symmetric to `excludedStateFilter`. */
+  excludedPriorityFilter?: string[] | undefined
 }): Promise<PageResponse<SearchBlockRow>> {
   return unwrap(
     await commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
@@ -640,6 +648,8 @@ export async function searchBlocks(params: {
       scheduledFilter: marshalDateFilter(params.scheduledFilter ?? null),
       propertyFilters: params.propertyFilters ?? [],
       excludedPropertyFilters: params.excludedPropertyFilters ?? [],
+      excludedStateFilter: params.excludedStateFilter ?? [],
+      excludedPriorityFilter: params.excludedPriorityFilter ?? [],
     }),
   )
 }

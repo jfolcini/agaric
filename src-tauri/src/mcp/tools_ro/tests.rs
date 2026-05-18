@@ -590,6 +590,229 @@ async fn search_truncates_long_content() {
     );
 }
 
+// -------------------------------------------------------------------
+// PEND-65 — MCP `search` tool: `filter` arg threads through to
+// `SearchFilter`. The structured-filter shape mirrors the Tauri
+// command surface; the inline `tag:` / `state:` / `prop:` syntax is
+// NOT parsed at the MCP boundary (agents pass structured args).
+// -------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_filter_omitted_preserves_pre_pend65_behavior() {
+    // No `filter` arg = the wide query (every match across content)
+    // exactly as before PEND-65.
+    let (tools, mat, _dir) = mk_tools().await;
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle one".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle two".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let result = tools
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .expect("happy path");
+    let items = result["items"].as_array().expect("items");
+    assert_eq!(items.len(), 2, "both blocks match without filter");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_filter_state_narrows_results() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let b1 = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle TODO row".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let _b2 = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle done row".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    // Promote b1 to todo_state = 'TODO' so the state_filter narrows
+    // to it. `create_block_inner` does not take state/priority, so a
+    // direct UPDATE is the simplest fixture path here (no
+    // user-visible API exposed for this in v1).
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind(b1.id.as_str())
+        .execute(&tools.pool)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let result = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "state_filter": ["TODO"] },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("filter must narrow not error");
+    let items = result["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "only the TODO block survives");
+    assert_eq!(items[0]["id"].as_str().unwrap(), b1.id.as_str());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_filter_excluded_state_includes_no_state_rows() {
+    // PEND-63 fields exposed through MCP: `excluded_state_filter`
+    // with NULL-inclusive inversion.
+    let (tools, mat, _dir) = mk_tools().await;
+    let b_done = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle done row".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let _b_nostate = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle nostate row".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = ?")
+        .bind(b_done.id.as_str())
+        .execute(&tools.pool)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let result = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "excluded_state_filter": ["DONE"] },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("excluded_state must narrow");
+    let items = result["items"].as_array().expect("items");
+    let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+    assert!(!ids.contains(&b_done.id.as_str()), "DONE excluded");
+    assert_eq!(ids.len(), 1, "only the no-state block survives");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_filter_property_filters_threaded_through() {
+    // PEND-53 property_filters + PEND-64 four-column matching ride
+    // through the MCP wire. Numeric value matches `value_num`.
+    let (tools, mat, _dir) = mk_tools().await;
+    let b1 = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle priority row".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'score', 1.0)")
+        .bind(b1.id.as_str())
+        .execute(&tools.pool)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let result = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "filter": {
+                    "property_filters": [{ "key": "score", "value": "1" }],
+                },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("property filter must narrow");
+    let items = result["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "value_num=1.0 matched by prop:score=1");
+    assert_eq!(items[0]["id"].as_str().unwrap(), b1.id.as_str());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_filter_unknown_field_rejected() {
+    // `deny_unknown_fields` on `SearchFilterArgs` keeps the MCP
+    // boundary strict — a typo in an agent's call surfaces as a
+    // validation error, not a silent no-op.
+    let (tools, _mat, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "anything",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "not_a_real_filter": true },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("unknown filter field must fail validation");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "got {err:?} — expected AppError::Validation"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_block_happy_path() {
     let (tools, mat, _dir) = mk_tools().await;

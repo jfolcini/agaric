@@ -13,13 +13,13 @@
  * the editor; active marks get `aria-pressed="true"` + `bg-accent`.
  */
 
-import { getMarkRange } from '@tiptap/core'
+import { getMarkRange, posToDOMRect } from '@tiptap/core'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Link2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
@@ -97,6 +97,38 @@ export function SelectionBubbleMenu({
   const { t } = useTranslation()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [savedSelection, setSavedSelection] = useState<{ from: number; to: number } | null>(null)
+  // Snapshot of the existing link captured when the popover opens via Ctrl+K
+  // on a link. `state.link` (from useEditorState) can lag or read false at
+  // popover-render time when the cursor sits at a link-mark boundary or when
+  // Radix's focus management transiently disturbs the editor selection. The
+  // snapshot is the source of truth for edit-mode rendering until the
+  // popover closes.
+  const [editingLinkSnapshot, setEditingLinkSnapshot] = useState<{
+    url: string
+    label: string
+  } | null>(null)
+
+  // Anchor the link popover to the editor's selection rect rather than to the
+  // bubble-menu button. The button lives inside the BubbleMenu plugin's
+  // detached `menuEl` until the plugin's debounced `show()` runs, so anchoring
+  // there parks the popover at a viewport corner when Ctrl+K fires before the
+  // bubble menu is laid out (or with no selection at all).
+  const virtualAnchorRef = useRef<{ getBoundingClientRect: () => DOMRect }>({
+    getBoundingClientRect: () => new DOMRect(),
+  })
+  virtualAnchorRef.current = {
+    getBoundingClientRect: () => {
+      const range = savedSelection ?? {
+        from: editor.state.selection.from,
+        to: editor.state.selection.to,
+      }
+      if (range.from !== range.to) {
+        return posToDOMRect(editor.view, range.from, range.to)
+      }
+      const coords = editor.view.coordsAtPos(range.from)
+      return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top)
+    },
+  }
 
   const state = useEditorState({
     editor,
@@ -122,15 +154,24 @@ export function SelectionBubbleMenu({
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ from: number; to: number }>).detail
 
-      if (editor.isActive('link')) {
-        const range = getLinkMarkRange(editor)
-        if (range) {
-          setSavedSelection(range)
-          setLinkPopoverOpen(true)
-          return
+      // Probe for a link mark via getMarkRange — works even when the cursor
+      // is at a mark boundary (where editor.isActive('link') can be false).
+      const range = getLinkMarkRange(editor)
+      if (range) {
+        const url = (editor.getAttributes('link')['href'] as string) ?? ''
+        let label = ''
+        try {
+          label = editor.state.doc.textBetween(range.from, range.to)
+        } catch {
+          // Stale range
         }
+        setEditingLinkSnapshot({ url, label })
+        setSavedSelection(range)
+        setLinkPopoverOpen(true)
+        return
       }
 
+      setEditingLinkSnapshot(null)
       if (detail && detail.from !== detail.to) {
         setSavedSelection(detail)
       } else {
@@ -142,7 +183,12 @@ export function SelectionBubbleMenu({
     return () => dom.removeEventListener('open-link-popover', handler)
   }, [editor])
 
-  const currentUrl = state.link ? ((editor.getAttributes('link')['href'] as string) ?? '') : ''
+  // Edit-mode rendering uses state.link (reactive, picks up live changes) OR
+  // the snapshot captured when the popover was opened on an existing link.
+  const isEditingLink = state.link || editingLinkSnapshot !== null
+  const currentUrl = state.link
+    ? ((editor.getAttributes('link')['href'] as string) ?? '')
+    : (editingLinkSnapshot?.url ?? '')
 
   let currentLabel = ''
   if (state.link) {
@@ -154,6 +200,8 @@ export function SelectionBubbleMenu({
         // Document boundary
       }
     }
+  } else if (editingLinkSnapshot) {
+    currentLabel = editingLinkSnapshot.label
   } else if (savedSelection && savedSelection.from !== savedSelection.to) {
     try {
       currentLabel = editor.state.doc.textBetween(savedSelection.from, savedSelection.to)
@@ -164,6 +212,7 @@ export function SelectionBubbleMenu({
 
   const handleLinkPopoverClose = useCallback(() => {
     setSavedSelection(null)
+    setEditingLinkSnapshot(null)
     setLinkPopoverOpen(false)
   }, [])
 
@@ -207,28 +256,34 @@ export function SelectionBubbleMenu({
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
+        <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.link')}
+            aria-pressed={state.link}
+            className={cn(state.link && toolbarActiveClass)}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              if (!linkPopoverOpen) {
+                if (state.link) {
+                  const range = getLinkMarkRange(editor)
+                  if (range) setSavedSelection(range)
+                } else if (!editor.state.selection.empty) {
+                  setSavedSelection({
+                    from: editor.state.selection.from,
+                    to: editor.state.selection.to,
+                  })
+                }
+              }
+              setLinkPopoverOpen((prev) => !prev)
+            }}
+          >
+            <Link2 className="h-3.5 w-3.5" />
+          </Button>
+        </Tip>
         <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-          <PopoverAnchor asChild>
-            <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('toolbar.link')}
-                aria-pressed={state.link}
-                className={cn(state.link && toolbarActiveClass)}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  if (!linkPopoverOpen && state.link) {
-                    const range = getLinkMarkRange(editor)
-                    if (range) setSavedSelection(range)
-                  }
-                  setLinkPopoverOpen((prev) => !prev)
-                }}
-              >
-                <Link2 className="h-3.5 w-3.5" />
-              </Button>
-            </Tip>
-          </PopoverAnchor>
+          <PopoverAnchor virtualRef={virtualAnchorRef} />
           <PopoverContent
             align="start"
             className="w-72 max-w-[calc(100vw-2rem)] p-3"
@@ -236,7 +291,7 @@ export function SelectionBubbleMenu({
           >
             <LinkEditPopover
               editor={editor}
-              isEditing={state.link}
+              isEditing={isEditingLink}
               initialUrl={currentUrl}
               initialLabel={currentLabel}
               onClose={handleLinkPopoverClose}
