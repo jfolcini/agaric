@@ -2,10 +2,200 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 780 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 785 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 781 sessions.
+- **Previously-resolved counter:** 1214+ REVIEW-LATER items across 785 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 785 — PEND-60 Phase 3 e2e + docs + UX polish (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | 2 build (Playwright + docs) + orchestrator-direct polish |
+| **Items closed** | PEND-60 (plan deleted from `pending/`; feature complete across Phases 1 / 1.5 / 2 / 3) |
+| **Items modified** | `pending/README.md` (PEND-60 row removed; recommended-order copy updated) |
+| **Tests added** | +2 frontend unit (path-history junk filter + popover loading hint) / +2 frontend integration (caret-sync after history recall + the e2e covers the rest) / +5 Playwright e2e / +0 backend |
+| **Files touched** | 9 (1 new e2e + 1 modified docs + 1 modified README + 1 deleted PEND + 4 source edits + 1 session-log) |
+
+**Summary:** Closed PEND-60 by shipping Phase 3 (Playwright e2e + `docs/SEARCH.md` autocomplete subsection) and folding in three UX polish items flagged in Session 784's review:
+
+- **Loading hint** — `useAutocompleteSources`'s `loading` field now flows into `AutocompletePopover`; when items are empty and a dynamic source is in-flight (currently only `tag:`) the popover renders a "Searching…" status row instead of staying hidden.
+- **Path-history junk filter** — `recordPathHistory` rejects globs shorter than 2 chars or that are pure punctuation, so accidental submits like `path:*` or `path:a` don't pollute the per-space MRU.
+- **Caret-sync after external `setQuery`** — new `setQueryAndCaret` helper wraps every non-typing setter (history recall, palette handoff, filter-chip adds, autocomplete pick, clear-all). The helper writes the target offset to `pendingCaretRef` so the existing `[query]` effect syncs `input.selectionStart` + `caretPos` after React commits. Closes the stale-caret hazard where history recall could briefly re-open autocomplete against the previous caret position.
+
+The Playwright spec at `e2e/autocomplete.spec.ts` covers the plan's headline scenario (type `state:` → see popover → click TODO → input is `state:TODO `) plus keyboard nav, Escape dismissal, and the ARIA combobox-with-listbox wiring landed in Phase 1.5.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER row touched).
+- **Previously resolved:** 1213+ → 1214+ across 784 → 785 sessions (PEND-60 is a `pending/` plan, not a REVIEW-LATER row — the counter convention bumps when a `pending/` plan or REVIEW-LATER row closes).
+
+**Files touched (this session):**
+- `e2e/autocomplete.spec.ts` (+116 LOC, new) — 5 Chromium tests against the Vite dev server + mock backend. All pass on first real run (~13s total).
+- `docs/SEARCH.md` (+~50 lines) — new `### Autocomplete` subsection between Token vocabulary and Date predicates. Covers triggers, per-prefix value sources table, keyboard model, history-recall precedence, regex-mode disable, ARIA semantics, mobile note (defers to PEND-62), and the anchor caveat.
+- `src/components/search/AutocompletePopover.tsx` — adds `loading?` + `loadingLabel?` props; renders a `<div role="status">` hint when items is empty and loading is true; updated the early-return gate so the popover stays mounted during loading.
+- `src/components/__tests__/AutocompletePopover.test.tsx` — +1 test for the loading hint.
+- `src/lib/path-history.ts` — adds `isMeaningfulGlob` gate (rejects `length < 2` and pure-punctuation strings); `recordPathHistory` runs it before storing.
+- `src/lib/__tests__/path-history.test.ts` — +1 test for the junk filter; dedup test changed sentinel values from `'A'`/`'B'` to `'Alpha'`/`'Bravo'` (the old single-char values would now be rejected).
+- `src/components/SearchPanel.tsx` — adds `setQueryAndCaret` helper; rewires `cycling`, palette handoff, `handlePickHistory`, `handleAutocompleteSelect`, `patchQuery`, `handleClearAllFilters` through it; forwards `loading` + `loadingLabel={t('search.searching')}` to the popover; updates `autocompleteOpen` gate to include `loading` so the hint stays visible.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` — +1 integration test verifying caret lands at end of recalled history entry and no spurious popover fires.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — **deleted** (plan complete per `pending/README.md` convention).
+- `pending/README.md` — PEND-60 row removed; the "Search post-review follow-ups" copy updated to note PEND-60 shipped.
+
+**Verification:**
+- `npx vitest run` — 10131+ frontend tests pass (the per-feature suite — `SearchPanel.test.tsx` + `SearchPanel.autocomplete.test.tsx` + `AutocompletePopover.test.tsx` + `caret-anchor.test.ts` + `path-history.test.ts` + `useAutocompleteSources.test.ts` — runs 119/119).
+- `npx playwright test e2e/autocomplete.spec.ts` — 5/5 pass (~13s).
+- `npx tsc --noEmit` — clean.
+- `./node_modules/.bin/biome check <files>` — clean.
+
+**Process notes:**
+- Build subagents ran in parallel against non-overlapping files (Playwright spec + docs subsection). Polish was orchestrator-direct because each item was small (5-30 LOC) and they touched overlapping surfaces in `SearchPanel.tsx` (the `setQueryAndCaret` introduction touched the same paths the autocomplete-pick already uses).
+- The path-history junk filter's regex (`/[/*?[{]/` OR `/[A-Za-z0-9]{2}/`) keeps bare-word globs like `Journal` (the backend wraps them to `*Journal*`) while rejecting single chars and pure-symbol queries. The dedup test broke until I bumped the sentinels from `'A'`/`'B'` to two-character strings — flagged as a lesson below.
+- The loading-hint gate touches two coupled places: the `AutocompletePopover` early-return now allows `items.length === 0 && loading`, AND the `SearchPanel` `autocompleteOpen` boolean ORs `autocompleteLoading` into the mount condition. Either one alone wouldn't surface the hint.
+
+**Lessons learned (for future sessions):**
+- When tightening a validation rule on a utility, grep the existing tests for sentinel values that may incidentally fail. Single-character `'A'` / `'B'` are common test placeholders but are also exactly the shape of pathological real inputs the rule should reject.
+- Stale-caret bugs in controlled inputs are silent: `<input value={state}>` doesn't sync `selectionStart` when `state` changes. Any code path that writes to the state via something other than the input's own `onChange` needs to also push the caret target. Wrapping `setQuery` in a `setQueryAndCaret(value, caret?)` helper is the right shape — making the wrapper the only external setter eliminates the class of bugs.
+- The Phase 2 UX review's "discard `loading`" finding looked like a small forwarding job but actually required coupled changes (popover gate + parent open-state) to be observable. Worth surfacing the full coupling in the review next time so the orchestrator can size the fix correctly.
+
+**Commit plan:** Single commit on `pend-60-phase1-caret-autocomplete` bundling Phase 3 + 3 polish items. Branch will hold 4 commits total (Phase 1, 1.5, 2, 3+polish); PR-ready.
+
+---
+
+## Session 784 — PEND-60 Phase 2 dynamic value sources (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | 2 build + 2 review |
+| **Items closed** | — (PEND-60 Phase 2 only; Phase 3 — Playwright e2e + docs — remains open) |
+| **Items modified** | PEND-60 (status note refreshed) |
+| **Tests added** | +25 frontend (10 path-history + 11 hook + 4 SearchPanel integration) / +0 backend |
+| **Files touched** | 6 (4 new + 2 modified) |
+
+**Summary:** Wired dynamic value sources for caret-anchored autocomplete: typing `tag:#<query>` calls `listTagsByPrefix` (150 ms debounce + request-id cancellation), typing `prop:` calls `listPropertyKeys` (session-scoped cache), and typing `path:` / `not-path:` surfaces per-space localStorage MRU entries (recorded on submit). Static value lists for `state:` / `priority:` / `due:` / `scheduled:` moved from `SearchPanel.tsx` into the new `useAutocompleteSources` hook, which is the single source of truth for "items for this anchor."
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER row touched).
+- **Previously resolved:** 1213+ → 1213+ across 783 → 784 sessions.
+
+**Files touched (this session):**
+- `src/lib/path-history.ts` (+55 LOC, new) — per-space localStorage MRU at key `agaric:pathHistory:v1:<spaceId>`. Exports `PATH_HISTORY_LIMIT=30`, `getPathHistory`, `recordPathHistory`, `clearPathHistory`. Storage failures (private mode / quota) silently no-op.
+- `src/lib/__tests__/path-history.test.ts` (+113 LOC, new) — 10 cases: empty / record / newest-first / dedup-jump-to-top / per-space partition / trim-at-limit / no-op-on-empty-id / clear / corrupted-storage / clear-no-op.
+- `src/hooks/useAutocompleteSources.ts` (~180 LOC, new) — hook returning `{ items, loading }` per anchor. Owns `STATE_VALUES` / `PRIORITY_VALUES` / `DATE_BUCKET_VALUES`. Tag source debounced + request-id-guarded against stale responses (request id also bumps when leaving the `tag` anchor so a slow IPC can't strand stale items). PropKey source consumes the existing MAINT-189 cache (`src/lib/property-keys-cache.ts`) via `fetchPropertyKeysOnce` + `useSyncExternalStore` — space-keyed, invalidates on `block:properties-changed`, shared with `BacklinkFilterBuilder` / `PropertyValuePicker`. The fetch is lazy (only fires when the user actually opens `prop:`) so the SearchPanel doesn't trigger an IPC on every mount. Path source synchronous via `getPathHistory`. All IPC rejections route through `logger.warn`; the hook never throws.
+- `src/hooks/__tests__/useAutocompleteSources.test.ts` (~240 LOC, new) — 12 cases including debounce, stale-response cancellation, propKey lazy-fetch + cache reuse, pathInclude / pathExclude parity, error path. Test isolation uses `_resetPropertyKeysCacheForTest` from the shared cache module.
+- `src/components/SearchPanel.tsx` (~30 LOC net delta: −40 static-lists / `itemsForAnchor`, +10 hook + path-history) — replaces the static useMemo with `useAutocompleteSources({ anchor: currentAnchor, spaceId: currentSpaceId })`. `handleSubmit` now iterates `ast.filters` and calls `recordPathHistory(currentSpaceId, filter.value)` for each `pathInclude` / `pathExclude`.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` (+76 LOC) — 4 new integration tests covering tag suggestions via `list_tags_by_prefix` mock + 150 ms debounce flush, path MRU surfacing via `recordPathHistory` setup, path recording on submit verified via `getPathHistory`, and property-key suggestions via `list_property_keys` mock.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — status note refreshed to reflect Phase 2 complete; Phase 3 still open.
+
+**Verification:**
+- `npx vitest run` — 10131/10131 (plus the 25 new tests).
+- `npx tsc --noEmit` — clean (one pre-existing `'FormEvent' is deprecated` diagnostic in `SearchPanel.tsx:597`, unchanged from main).
+- `./node_modules/.bin/biome check <6 files>` — clean.
+
+**Process notes:**
+- The backend `list_property_keys` IPC + `listPropertyKeys()` wrapper already existed (added in a prior session); the planned "new ~30 LOC backend" turned out to be zero. Cut subagent A entirely; the work compressed to two pure-frontend parallel subagents (path-history MRU + hook) plus orchestrator wire-up + integration tests.
+- Parallel subagents touched non-overlapping files (`src/lib/path-history.ts` vs `src/hooks/useAutocompleteSources.ts`); no worktree needed. The hook subagent imported from `@/lib/path-history` assuming the sibling would land — both completed before TS check ran so the import resolved cleanly.
+- Tech review found a **real blocker**: the hook subagent rolled its own module-scope propKey cache, duplicating the existing MAINT-189 cache at `src/lib/property-keys-cache.ts`. The bespoke cache was global (not space-keyed) and never invalidated, so switching spaces leaked keys + property edits didn't refresh the popover. Refactored to consume the shared cache via `fetchPropertyKeysOnce` + `useSyncExternalStore`, with a lazy fetch gated on `anchor.active === 'propKey'` (avoids triggering an IPC on every SearchPanel mount, which would have broken the pre-existing `SearchPanel.test.tsx` mock sequence). Dropped the `_resetAutocompleteCaches` test helper export — tests now use `_resetPropertyKeysCacheForTest` from the shared module.
+- Tech review also flagged a stale-tag-write hazard (an in-flight `listTagsByPrefix` promise resolving after the user moved off the `tag:` anchor could strand stale items for a future return-to-tag). Fix: bump `tagRequestIdRef` whenever `active !== 'tag'` so resolutions check fails. Added the missing `pathExclude` coverage test.
+
+**Lessons learned (for future sessions):**
+- Re-verify the existence of "planned new IPCs" before spawning a backend subagent. A quick `grep -n` of the proposed command name in the existing codebase can collapse a multi-file batch to a one-file batch — saves a worktree + a binding regen + a Rust test run.
+- **Before introducing a module-scope cache, grep for an existing one with the same shape.** The MAINT-189 cache for property keys had the exact contract this hook needed (space-keyed, in-flight-dedup, invalidation-aware) and a working React adapter — reinventing it cost a tech-reviewer round-trip. Pattern: `git grep -l "fetch.*Once\|invalidate.*Cache"` covers the standard cache surface in this repo.
+- When a hook subscribes to a shared cache, gate the *fetch* on actual need (e.g. anchor type) but keep the *subscription* unconditional. Eager subscription is cheap (one `useSyncExternalStore`); eager fetch breaks any test that asserts a tight IPC call sequence.
+
+**Commit plan:** Single additional commit on `pend-60-phase1-caret-autocomplete`. PR bundles Phase 1 + 1.5 + 2 (three commits total).
+
+---
+
+## Session 783 — PEND-60 Phase 1.5 ARIA combobox polish (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | — (PEND-60 Phase 1 a11y follow-up flagged in Session 782 UX review) |
+| **Items modified** | PEND-60 (status note refreshed) |
+| **Tests added** | +1 frontend (integration) / +0 backend |
+| **Files touched** | 5 (3 modified + 1 new test case + plan + log) |
+
+**Summary:** Wired the full ARIA 1.1 combobox-with-listbox pattern on the search input flagged in Session 782's UX review. The input now carries `role="combobox"` plus `aria-autocomplete="list"` / `aria-haspopup="listbox"` / `aria-expanded` / `aria-controls` / `aria-activedescendant`, with the latter two pointing at the live cmdk-generated DOM ids (cmdk owns its `useId()`-generated ids and ignores caller-supplied `id` props, so the wiring goes through a `useCommandState`-backed bridge inside `<Command>` that re-emits the ids whenever cmdk's internal `selectedItemId` changes).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER row touched; the gap was tracked inline in Session 782's notes).
+- **Previously resolved:** 1213+ → 1213+ across 782 → 783 sessions.
+
+**Files touched (this session):**
+- `src/components/search/AutocompletePopover.tsx` (+50 LOC) — new `AutocompleteAriaIds` export, `onAriaIdsChange` prop, internal `SelectedItemBridge` component (uses `cmdk.useCommandState` to subscribe to `selectedItemId`), and a DOM-querying `syncAriaIds` helper guarded by a memoised key-ref to prevent render loops.
+- `src/components/SearchPanel.tsx` (+~25 LOC) — adds `autocompleteAriaIds` state and `inputComboboxAttrs` memo; passes `onAriaIdsChange={setAutocompleteAriaIds}` to the popover and `comboboxAttrs={inputComboboxAttrs}` to the header. `aria-expanded` is gated on both `autocompleteOpen && ariaIds != null` so axe's "aria-controls required when expanded" rule never sees a one-frame inconsistent state.
+- `src/components/SearchPanel/SearchHeader.tsx` (+~5 LOC) — new optional `comboboxAttrs?` prop, spread onto the `SearchInput` after its existing aria attrs.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` (+~35 LOC) — new test "wires ARIA combobox attrs and updates aria-activedescendant with the highlight" verifies closed-state defaults, open-state ids point at real DOM, and ArrowDown advances the active-descendant id.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — Phase 1.5 status note replaces the prior Phase 1-only note.
+
+**Verification:**
+- `npx vitest run` — 10131/10131 (plus the 1 new test).
+- `npx tsc --noEmit` — clean.
+- `./node_modules/.bin/biome check <files>` — clean.
+
+**Process notes:**
+- First attempt assumed cmdk would accept caller-supplied `id` props on `<CommandList>` / `<CommandItem>`. cmdk explicitly overrides these via internal `useId()` and `composeRefs` — confirmed by reading `node_modules/cmdk/dist/index.js`. The fix is to query the live DOM after cmdk renders and emit the ids upward.
+- Second attempt synced ids in an effect that ran once per `AutocompletePopover` render. cmdk batches `selectedItemId` updates via its internal `et()` scheduler, so the outer effect ran before the DOM reflected the new aria-selected. Final fix uses a `SelectedItemBridge` child of `<Command>` that subscribes to `selectedItemId` via `useCommandState`, guaranteeing the sync runs after cmdk's internal commit.
+- axe-core 4.11 enforces "aria-controls required when `aria-expanded="true"` on combobox" — gating `aria-expanded` on `ariaIds != null` avoids the one-frame inconsistency where the popover wants to open but the ids haven't synced yet.
+
+**Lessons learned (for future sessions):**
+- When wiring ARIA combobox to a cmdk listbox, the only correct approach is to read the live DOM ids and propagate upward. Don't try to inject ids — cmdk owns them.
+- Use `useCommandState` inside a child of `<Command>` to react to cmdk's internal store changes; outer parent effects race the cmdk scheduler.
+
+**Commit plan:** Additional commit on the same `pend-60-phase1-caret-autocomplete` branch as Session 782. PR will bundle both commits.
+
+---
+
+## Session 782 — PEND-60 Phase 1 caret-anchored autocomplete (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | 2 build + 2 review |
+| **Items closed** | — (PEND-60 Phase 1 only; Phases 2-3 remain open) |
+| **Items modified** | PEND-60 (status note added; Phase 1 shipped) |
+| **Tests added** | +26 frontend (7 unit + 9 component + 10 integration) / +0 backend |
+| **Files touched** | 6 (5 new + 1 modified) |
+
+**Summary:** Shipped Phase 1 of PEND-60: caret-anchored value autocomplete in the SearchPanel input. Typing `state:` / `priority:` / `due:` / `scheduled:` opens a Radix-portaled cmdk popover anchored at the caret pixel position; ArrowUp/Down moves the highlight, Enter / Tab applies the value with a trailing space, Escape dismisses, and PEND-55's history recall correctly yields while the popover is open. Phase 1 ships static value lists only — dynamic sources for `tag:` / `prop:` / `path:` and a Playwright e2e land in Phases 2-3.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER items closed; PEND-60 Phase 1 is a `pending/` plan, not a REVIEW-LATER row).
+- **Previously resolved:** 1213+ → 1213+ across 781 → 782 sessions.
+
+**Files touched (this session):**
+- `src/lib/caret-anchor.ts` (+80 LOC, new) — pure caret-anchor utility for single-line inputs. Computes a viewport-relative `DOMRect` from input geometry + canvas-measured text width before the cursor. DI-injectable measurer so tests can deterministically supply widths in happy-dom (where `canvas.getContext('2d')` returns null).
+- `src/lib/__tests__/caret-anchor.test.ts` (+123 LOC, new) — 7 cases: caret-at-start, caret-at-end (measurer args), out-of-range clamp, empty input, `line-height: normal` fallback, scrollLeft offset, defaultMeasureText sanity.
+- `src/components/search/AutocompletePopover.tsx` (+117 LOC, new) — Radix Popover with `virtualRef` to a `Measurable` whose `getBoundingClientRect` returns the caret rect, containing a cmdk `<Command shouldFilter={false}>` driven entirely by props (`selectedValue` controls highlight, `onSelect` fires on click).
+- `src/components/__tests__/AutocompletePopover.test.tsx` (+210 LOC, new) — 9 cases including 3 hidden-state guards, item rendering, click `onSelect`, hover `onSelectedValueChange`, controlled `aria-selected`, listbox `aria-label`, and vitest-axe audit.
+- `src/components/SearchPanel.tsx` (+216 LOC) — wires the popover into the input. New state for caret position / dismissal / highlight / anchor rect, four effects (dismissal reset on query change, highlight default to first item, caret-rect recompute on anchor change, pending-caret apply after `setQuery`), three callbacks (`handleAutocompleteSelect`, `moveAutocompleteHighlight`, `dismissAutocomplete`), and extended `handleInputKeyDown` with autocomplete-key precedence over history recall. Native event listeners (`select`/`keyup`/`click`/`focus`) on the input ref track caret moves without threading new props through `SearchHeader` → `SearchInput` → `Input`.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` (+217 LOC, new) — 10 cases: open on `state:`, filter on partial query, click insert + trailing space, Esc close, Enter applies highlight (form does NOT submit), ArrowDown then Enter applies DOING (proves history recall doesn't fire), regex mode disables autocomplete, axe audit on host container, Tab applies highlight (UX convention), and dismissal-re-arm on next keystroke.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — Phase 1 status note added at top.
+
+**Verification:**
+- `npx vitest run` — 10131/10131 tests pass.
+- `npx tsc --noEmit` — clean (one pre-existing `'FormEvent' is deprecated` diagnostic on line 609 is unchanged from main).
+- `./node_modules/.bin/biome check <6 files>` — clean.
+- `bash scripts/check-axe-presence.sh` — 150/150 component test files have axe coverage.
+- `node scripts/check-ipc-error-path.mjs` — clean for changed components.
+
+**Process notes:**
+- Build subagents A (caret-anchor) and B (popover) ran in parallel with non-overlapping file targets; no worktree needed. Orchestrator pre-read SearchPanel + i18n keys + AGENTS.md conventions while subagents built, then wired the popover and added the integration test once both subagents returned. Tech and UX reviewers ran in parallel after build; UX returned "ship" with one non-blocker (ARIA combobox wiring on the input), tech made tactical fixes (sorted import + 2 biome-ignore comments for `useExhaustiveDependencies` on trigger-only effects) directly in-tree.
+- Biome's `noExcessiveCognitiveComplexity` caught `handleInputKeyDown` at 36 (max 25) after the wire-up; orchestrator extracted `moveAutocompleteHighlight` and `dismissAutocomplete` into named callbacks to bring it back under the cap. Net LOC delta unchanged.
+- The integration test file initially shipped a `document.body`-scoped axe audit; that timed out at 5s under happy-dom load. Narrowed to `container` scope (the popover's own axe scan in `AutocompletePopover.test.tsx` already covers the portaled content), keeping `axe-presence` satisfied.
+
+**Lessons learned (for future sessions):**
+- For caret-anchored UIs in single-line inputs, the canvas-measureText + computed-style approach is simpler than the textbook mirror-span hack and survives happy-dom (which returns null from `getContext('2d')`) cleanly via a DI-injectable measurer.
+- When a hook-dep array is a trigger-not-a-read, biome flags it as `useExhaustiveDependencies` excess; the right move is a `biome-ignore` with a one-line "trigger, not a body-read dep" justification (already convention in this repo — see `SearchPanel.tsx:741`).
+- ARIA combobox wiring (`role="combobox"` + `aria-expanded` / `aria-controls` / `aria-activedescendant`) is a known gap when grafting an autocomplete popover onto an existing search input. Fold into Phase 2's a11y pass rather than backfilling Phase 1.
+
+**Commit plan:** Single commit on branch `pend-60-phase1-caret-autocomplete`. Open PR for review — Phase 1 is a self-contained chunk; Phases 2 and 3 ship as separate PRs.
+
+---
 
 ## Session 781 — DnD overlay polish + release prep + DCO hook + PEND-59 cmdk foundation (2026-05-18)
 
