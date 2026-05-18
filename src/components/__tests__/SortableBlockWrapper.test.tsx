@@ -75,7 +75,8 @@ function makeProps(
     anyBlockHasChildren: false,
     isCollapsed: false,
     isAnimating: false,
-    siblingAria: { setsize: 1, posinset: 1 },
+    siblingSetsize: 1,
+    siblingPosinset: 1,
     properties: undefined,
     ...overrides,
   }
@@ -140,7 +141,8 @@ describe('SortableBlockWrapper', () => {
     const { container } = renderInList(
       makeProps({
         block,
-        siblingAria: { setsize: 5, posinset: 3 },
+        siblingSetsize: 5,
+        siblingPosinset: 3,
       }),
     )
 
@@ -150,8 +152,10 @@ describe('SortableBlockWrapper', () => {
     expect(li).toHaveAttribute('aria-posinset', '3')
   })
 
-  it('omits aria-setsize / aria-posinset when siblingAria is undefined', () => {
-    const { container } = renderInList(makeProps({ siblingAria: undefined }))
+  it('omits aria-setsize / aria-posinset when sibling props are undefined', () => {
+    const { container } = renderInList(
+      makeProps({ siblingSetsize: undefined, siblingPosinset: undefined }),
+    )
 
     const li = container.querySelector('li[data-block-id="BLK001"]')
     expect(li).not.toHaveAttribute('aria-setsize')
@@ -309,7 +313,8 @@ describe('SortableBlockWrapper', () => {
     const { container } = renderInList(
       makeProps({
         hasChildren: true,
-        siblingAria: { setsize: 2, posinset: 1 },
+        siblingSetsize: 2,
+        siblingPosinset: 1,
       }),
     )
 
@@ -328,7 +333,8 @@ describe('SortableBlockWrapper', () => {
         viewport,
         hasChildren: true,
         isCollapsed: false,
-        siblingAria: { setsize: 1, posinset: 1 },
+        siblingSetsize: 1,
+        siblingPosinset: 1,
       }),
     )
 

@@ -191,4 +191,99 @@ describe('useBlockPropertiesBatch', () => {
     expect(result.current['NEW']).toEqual([{ key: 'effort', value: 'new' }])
     expect(result.current['OLD']).toBeUndefined()
   })
+
+  it('does NOT refire the IPC when the outer blocks array identity changes but the id set is the same (perf invariant)', async () => {
+    mockedGetBatchProperties.mockResolvedValue({
+      B1: [row({ key: 'effort', value_text: '2h' })],
+    })
+
+    const { rerender } = renderHook(
+      ({ blocks }: { blocks: Array<{ id: string }> }) => useBlockPropertiesBatch(blocks),
+      { initialProps: { blocks: [{ id: 'B1' }] } },
+    )
+
+    await waitFor(() => {
+      expect(mockedGetBatchProperties).toHaveBeenCalledTimes(1)
+    })
+
+    // Re-render with a structurally-equivalent but reference-different
+    // outer array (mimics the page-store's reorder/indent/dedent path,
+    // which clones the outer `blocks` array on every mutation even when
+    // the same ids are present).
+    rerender({ blocks: [{ id: 'B1' }] })
+    rerender({ blocks: [{ id: 'B1' }] })
+
+    // No additional fetches — the id-signature is unchanged, so the
+    // effect's dep stays stable.
+    await new Promise<void>((r) => queueMicrotask(r))
+    expect(mockedGetBatchProperties).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves per-block array identity across a no-op refetch (perf invariant)', async () => {
+    const payload = {
+      B1: [row({ key: 'effort', value_text: '2h' })],
+    }
+    mockedGetBatchProperties.mockResolvedValue(payload)
+
+    const { result, rerender } = renderHook(
+      ({ blocks }: { blocks: Array<{ id: string }> }) => useBlockPropertiesBatch(blocks),
+      { initialProps: { blocks: [{ id: 'B1' }] } },
+    )
+
+    await waitFor(() => {
+      expect(result.current['B1']).toEqual([{ key: 'effort', value: '2h' }])
+    })
+    const firstArray = result.current['B1']
+
+    // Force a refetch by changing the id set, then reverting to it —
+    // both transitions land on a payload that matches B1's prior value.
+    rerender({ blocks: [{ id: 'B1' }, { id: 'B2' }] })
+    await waitFor(() => {
+      // The two-id signature triggered a refetch.
+      expect(mockedGetBatchProperties).toHaveBeenCalledWith(['B1', 'B2'])
+    })
+
+    rerender({ blocks: [{ id: 'B1' }] })
+    await waitFor(() => {
+      expect(mockedGetBatchProperties).toHaveBeenLastCalledWith(['B1'])
+    })
+
+    // After the refetch B1's content is identical, so the prior array
+    // reference is reused — the `SortableBlockWrapper` `React.memo`
+    // bypass survives.
+    expect(result.current['B1']).toBe(firstArray)
+  })
+
+  it('logs a warning and leaves state untouched when the IPC returns a non-record payload', async () => {
+    // First land a valid payload so we can assert "state untouched".
+    mockedGetBatchProperties.mockResolvedValueOnce({
+      B1: [row({ key: 'effort', value_text: '2h' })],
+    })
+    const { result, rerender } = renderHook(
+      ({ blocks }: { blocks: Array<{ id: string }> }) => useBlockPropertiesBatch(blocks),
+      { initialProps: { blocks: [{ id: 'B1' }] } },
+    )
+    await waitFor(() => {
+      expect(result.current['B1']).toEqual([{ key: 'effort', value: '2h' }])
+    })
+    const priorState = result.current
+
+    // Now refetch with a broken-shape payload.
+    mockedGetBatchProperties.mockResolvedValueOnce(
+      null as unknown as Awaited<ReturnType<typeof getBatchProperties>>,
+    )
+    rerender({ blocks: [{ id: 'B1' }, { id: 'B2' }] })
+
+    await waitFor(() => {
+      expect(mockedLoggerWarn).toHaveBeenCalledWith(
+        'BlockTree',
+        'get_batch_properties returned an unexpected payload shape',
+        expect.objectContaining({ actual: 'object' }),
+      )
+    })
+
+    // State for the previously-resolved B1 is preserved (we surface
+    // backend regressions via the logger instead of nuking the UI).
+    expect(result.current).toBe(priorState)
+  })
 })
