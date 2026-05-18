@@ -44,3 +44,25 @@ PEND-51 adds `[[` autocomplete in the **palette** for inserting a page link into
 ### Semantic / AI-augmented search
 
 Outside-scope for the current direction (local-first, no cloud), but worth a note: if a future direction adds local embedding models, semantic search ranks results by meaning rather than substring match. Would compose cleanly with the existing FTS5 pipeline as a re-rank step on the top-N candidates. Cost: large (model packaging, on-device inference, embedding storage). Not now.
+
+---
+
+## Editing surface
+
+### Emoji picker + emoji support
+
+A `:` trigger inside the editor opens an emoji picker that filters by shortcode prefix (`:smi` → 😀 😁 😃 …); Enter inserts the picked emoji at the caret. Plus a small palette-style overflow button for browsing/searching by category. Matches the universal pattern from Slack / Discord / GitHub / Notion. Likely fits as a TipTap Suggestion extension alongside the existing `[[` page-link suggestion path.
+
+Sub-scope to think about before committing to a plan:
+
+- **Picker UI shape.** Inline popover anchored at the caret (matches `[[`); separate Cmd-shortcut palette (matches `Cmd+E` in some apps); both. The inline one is the load-bearing surface; the palette is nice-to-have.
+- **Emoji set + storage.** Use the Unicode emoji set as-is (no custom emoji in v1). Skin-tone modifier handling (`:thumbsup::skin-tone-3:` style) is its own design question — defer.
+- **Search index.** Either bundle a static `shortcode → codepoint` map (a few hundred KB JSON) or pull a small dep (`emoji-mart-data` is the canonical one; ~150 KB gzipped). Bundle size is the trade-off.
+- **Storage.** Emojis are just Unicode codepoints; no schema change. They round-trip through TipTap as text nodes the same as any other char.
+- **Mobile.** OS native emoji keyboards work today (no Agaric work). The picker is a desktop affordance; on mobile the Cmd+E palette can still surface the search-by-name UX for users who don't remember an emoji's shape.
+- **Tag interaction.** Tag pills use emoji freely today (a tag named `🔥 hot` already works). The picker should NOT interfere with the tag-input path — `:` mid-tag-typing is ambiguous and the tag input has its own suggestion machinery.
+- **Activity-feed / search.** Indexed naturally as Unicode text; FTS5 trigram tokenizer handles emoji as multi-byte glyphs without special handling. No backend work.
+
+Cost (if pursued): S-M (~6-10 h frontend) for the inline-picker Suggestion extension with a bundled shortcode map. M (~3 h on top) if the Cmd+E palette is added.
+
+Revisit when typing emoji becomes a recurring friction point (mostly on desktop without OS-native shortcuts).
