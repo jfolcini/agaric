@@ -35,7 +35,10 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 | **docs/ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search |
 | **[docs/FEATURE-MAP.md](docs/FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
 | [`src-tauri/tests/AGENTS.md`](src-tauri/tests/AGENTS.md) | Rust test patterns, fixtures, pitfalls |
-| [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md) | Frontend test patterns, mocking, a11y |
+| [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md) | Frontend test orientation + cross-links to per-test-type splits |
+| [`src/components/__tests__/AGENTS.md`](src/components/__tests__/AGENTS.md) | Component test patterns (querying, mocks, axe, React 19 timing, checklist) |
+| [`src/stores/__tests__/AGENTS.md`](src/stores/__tests__/AGENTS.md) | Zustand store testing (global / per-page / undo store) |
+| [`e2e/AGENTS.md`](e2e/AGENTS.md) | Playwright e2e patterns (mock backend, portal-scoped helpers, undo/redo helpers) |
 | [`src-tauri/migrations/AGENTS.md`](src-tauri/migrations/AGENTS.md) | SQL migration rules (append-only, STRICT tables, index timing) |
 | [`src-tauri/src/commands/AGENTS.md`](src-tauri/src/commands/AGENTS.md) | Tauri command patterns (`_inner` split, `CommandTx`, `MAX_BATCH_BLOCK_IDS`, `LAST_APPEND`, `AppError` prefixes) |
 | [`src-tauri/src/mcp/AGENTS.md`](src-tauri/src/mcp/AGENTS.md) | MCP server rules (rmcp adapter, `ACTOR.scope`, activity-feed emission, `MCP_DISCONNECT_GRACE_PERIOD`, RO/RW split) |
