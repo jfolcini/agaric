@@ -35,9 +35,104 @@ jobs:
   # Lint, format, audit, type-check, test — the same checks `prek run
   # --all-files` runs locally, plus the full test/E2E/bundle smoke suites.
   # Source of truth: prek.toml.
+  #
+  # Always runs — `validate` includes markdownlint + lychee, which
+  # docs-only PRs still benefit from.
   # ---------------------------------------------------------------------------
   validate:
     uses: ./.github/workflows/_validate.yml
+
+  # ---------------------------------------------------------------------------
+  # Skip-the-heavy-bits gate. Inspects the diff and emits `code=true`
+  # when at least one non-docs path changed. The `build` and
+  # `android-build` jobs key off this so docs-only / pending-only / log-
+  # only PRs short-circuit to a fast pass instead of paying the ~24 min
+  # Linux smoke build (and ~28 min Android slot on push). Skipped jobs
+  # count as success for branch protection per GitHub's docs, so this
+  # is safe to wire on required checks.
+  #
+  # Implemented inline with `git diff` (no extra action dependency) so
+  # the workflow has no new SHA-pin to maintain. The base ref for the
+  # comparison comes from the pull-request payload or `github.event.before`
+  # for push events; new-branch / force-push edge cases fall back to
+  # "assume code changed" to avoid masking real diffs.
+  # ---------------------------------------------------------------------------
+  detect-changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # `fetch-depth: 2` is the minimum that lets `git diff HEAD~1 HEAD`
+          # work for the push case. Pull-request events use the base/head
+          # SHAs from the payload and don't need extra history.
+          fetch-depth: 2
+          persist-credentials: false
+      - id: diff
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+          else
+            base="$PUSH_BEFORE"
+            head="$PUSH_AFTER"
+          fi
+
+          # New-branch / orphan-push: github.event.before is all-zeros and
+          # there's nothing to diff against. Treat as "code changed" so we
+          # never silently skip the first push of a new branch.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "Base sha unresolved — assuming code changed."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Force-pushes can leave `base` unreachable in the runner clone
+          # (the old tip was rewritten upstream). `git cat-file -e` confirms
+          # the object is reachable; if not, conservatively run the build.
+          if ! git cat-file -e "$base" 2>/dev/null; then
+            echo "Base sha $base unreachable in shallow clone — assuming code changed."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mapfile -t changed < <(git diff --name-only "$base" "$head")
+
+          if [ "${#changed[@]}" -eq 0 ]; then
+            echo "Empty diff — skipping build."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed files:"
+          printf '  %s\n' "${changed[@]}"
+
+          # Docs-only paths. Match against a single regex so adding a new
+          # docs surface is one line. Anything outside this set counts as
+          # "code changed" and triggers the build.
+          docs_re='^(docs/|pending/|.*\.md$|LICENSE$|SESSION-LOG\.md$|\.github/CODEOWNERS$|\.github/ISSUE_TEMPLATE/)'
+
+          code=false
+          for f in "${changed[@]}"; do
+            if ! [[ "$f" =~ $docs_re ]]; then
+              code=true
+              break
+            fi
+          done
+
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # Linux smoke build. Catches Tauri-config drift early without burning
@@ -45,6 +140,9 @@ jobs:
   # full desktop matrix is built only at release time by `release.yml`
   # on tag push, which is the only place macOS/Windows artifacts must
   # actually ship.
+  #
+  # Gated on `detect-changes.outputs.code == 'true'` — docs-only diffs
+  # skip the ~24 min runner slot entirely.
   #
   # If a Tauri / wry / cargo-tauri bump breaks a non-Linux target, the
   # tag-push release will surface it — the solo maintainer tagging the
@@ -54,7 +152,8 @@ jobs:
   # nightly job (see the README for the rationale).
   # ---------------------------------------------------------------------------
   build:
-    needs: validate
+    needs: [validate, detect-changes]
+    if: needs.detect-changes.outputs.code == 'true'
     # PEND-41 R1 — observed Linux wall-clock 24.3 min (run 25966040732,
     # 2026-05-16, n=1). +50% headroom + round up → 50.
     timeout-minutes: 50
@@ -173,8 +272,8 @@ jobs:
   # Android artifact at tag time independently.
   # ---------------------------------------------------------------------------
   android-build:
-    needs: validate
-    if: github.event_name != 'pull_request'
+    needs: [validate, detect-changes]
+    if: github.event_name != 'pull_request' && needs.detect-changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.
