@@ -119,9 +119,23 @@ I took the **Recommendation** verbatim unless noted otherwise.
 - **Test delta:** +29 (15 SearchPalette, 9 jaro-winkler, 5 store). Suite: 10067 / 10067 vitest, 3728 / 3728 nextest.
 - **Fix-up cycle:** docs typos corrected (one in SEARCH.md, one in the JW test), cargo fmt, added an IPC error-path test (the prek hook requires every component-that-invokes to carry one).
 
-### PEND-53 — property filters
+### PEND-53 — property filters — LANDED
 
-(populated when cycle completes)
+- **Backend `SearchFilter` extensions:** `state_filter`, `priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters` (every field `#[serde(default)]`). New `DateFilter` and `SearchPropertyFilter` types.
+- **`SearchPropertyFilter` struct name** (deviation): the plan called it `PropertyFilter` but there's an existing `PropertyFilter` in `queries.rs` (typed-value operator carrier). Disambiguated to `SearchPropertyFilter` for the inline `prop:` token's simple `(key, value)` shape.
+- **`not-state:` / `not-priority:` are visual-only in v1:** chips render but project nothing to IPC (a literal `NOT state IN (...)` would invert the OR-set semantics dangerously). Documented in `to-search-filter.ts` and `docs/SEARCH.md`. Follow-up plan can wire excluded-state if real demand surfaces.
+- **`state:none` / `priority:none` sentinel:** split from values, emitted as `IS NULL` disjunction. A literal `"none"` state value is treated as the sentinel (case-insensitive).
+- **Date-range vocabulary:** `today, yesterday, overdue, this-week, this-month, next-week, older, none`. Final set documented.
+- **`DateOp` wire shape:** Rust enum uses `lt/lte/eq/gte/gt` strings via `#[serde(rename_all = "lowercase")]`; frontend AST uses `<`/`<=`/`=`/`>=`/`>`. `searchBlocks` wrapper translates at the IPC boundary.
+- **Last-write-wins for duplicate `due:` tokens** — `due:today due:this-week` sends only `this-week`. Documented.
+- **`prop:key=` empty value** = "block has this key at all" (omits `value_text=?` in the EXISTS).
+- **`MetadataPredicates` is `pub`** (not `pub(crate)`) because `benches/fts_bench.rs` is an external crate and needs to construct a default value.
+- **Phases deferred (review-worthy):**
+  1. `+ Filter ▾` popover extension — Phase 2 of the plan listed adding categories (`+ State`, `+ Priority`, `+ Date`, `+ Property…`) to `FilterHelperPopover`. Scaffolding's in place but only the original 3 categories render. Users type tokens directly; autocomplete catches `state:`/`priority:`/`due:`/`prop:` prefixes. Caret popover for value lists still deferred (carry-over from PEND-54).
+  2. `SearchablePopover`-style autocomplete UI for `state:` / `prop:` — `detectAutocompleteAnchor` returns the right shape; the renderer is still deferred (PEND-54 carry-over).
+  3. `scheduled:` semantics for repeating tasks — `b.scheduled_date` literal column only; documented limitation.
+  4. Numeric / date / reference property values — `prop:KEY=VALUE` matches `value_text` only. Plan to add `propnum:` / `propdate:` tokens for the other typed columns deferred.
+- **Test delta:** +74 vitest, +25 nextest. Suite: 10121 / 10121 vitest, 3758 / 3758 nextest, all 49 prek hooks pass.
 
 ## State at end of autonomous cycle
 

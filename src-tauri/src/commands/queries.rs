@@ -121,6 +121,115 @@ pub async fn get_status_inner(
 // PEND-50 Phase 0 — `search_blocks` IPC struct migration
 // ---------------------------------------------------------------------------
 
+/// PEND-53 — Date-filter shape used by [`SearchFilter::due_filter`] /
+/// [`SearchFilter::scheduled_filter`].
+///
+/// Two variants:
+///
+/// - [`DateFilter::Named`] — bucket keyword resolved at query time
+///   against `chrono::Local::today()` (or the cell-injected clock in
+///   tests). Vocabulary: `overdue`, `today`, `yesterday`, `this-week`,
+///   `this-month`, `next-week`, `older`, `none`. Unknown keywords are
+///   rejected as `Validation("InvalidDateFilter: …")`.
+/// - [`DateFilter::Op`] — explicit comparison operator (`<`, `<=`, `=`,
+///   `>=`, `>`) followed by an ISO `YYYY-MM-DD` date. The frontend
+///   parser accepts the same shape (`due:>=2026-01-01`).
+///
+/// `#[serde(rename_all = "camelCase")]` on the enum variants keeps the
+/// wire shape ergonomic for the TS side: the AST projection emits
+/// `{ named: "today" }` or `{ op: { op: "gte", date: "2026-01-01" } }`.
+#[derive(Debug, Clone, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum DateFilter {
+    /// Named bucket — resolved to a date predicate at query time.
+    Named(NamedDateRange),
+    /// Explicit comparison operator + ISO date.
+    Op {
+        /// One of [`DateOp::Lt`] / [`DateOp::Lte`] / [`DateOp::Eq`] /
+        /// [`DateOp::Gte`] / [`DateOp::Gt`].
+        op: DateOp,
+        /// ISO `YYYY-MM-DD`. Calendar-validated at the SQL composition
+        /// boundary; invalid dates yield `Validation("InvalidDateFilter:
+        /// …")`.
+        date: String,
+    },
+}
+
+/// PEND-53 — Named date buckets recognised by [`DateFilter::Named`].
+///
+/// Resolution semantics (today = `chrono::Local::today()`):
+///
+/// - `Overdue`   → column `< today AND column IS NOT NULL`.
+/// - `Today`     → column `= today`.
+/// - `Yesterday` → column `= today - 1d`.
+/// - `ThisWeek`  → column `BETWEEN start_of_week AND end_of_week` (Mon..Sun).
+/// - `ThisMonth` → column `BETWEEN start_of_month AND end_of_month`.
+/// - `NextWeek`  → column `BETWEEN start_of_next_week AND end_of_next_week`.
+/// - `Older`     → column `< today - 30d AND column IS NOT NULL`.
+/// - `None`      → column `IS NULL`. Used by `state:none` analogue —
+///   "show blocks with no scheduled/due date".
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NamedDateRange {
+    Overdue,
+    Today,
+    Yesterday,
+    ThisWeek,
+    ThisMonth,
+    NextWeek,
+    Older,
+    None,
+}
+
+/// PEND-53 — Comparison operator for [`DateFilter::Op`]. Mirrors the
+/// frontend parser shape (`<`, `<=`, `=`, `>=`, `>`).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DateOp {
+    Lt,
+    Lte,
+    Eq,
+    Gte,
+    Gt,
+}
+
+impl DateOp {
+    /// SQL operator string.
+    #[must_use]
+    pub fn as_sql(self) -> &'static str {
+        match self {
+            DateOp::Lt => "<",
+            DateOp::Lte => "<=",
+            DateOp::Eq => "=",
+            DateOp::Gte => ">=",
+            DateOp::Gt => ">",
+        }
+    }
+}
+
+/// PEND-53 — Property predicate for [`SearchFilter::property_filters`] /
+/// [`SearchFilter::excluded_property_filters`].
+///
+/// Named separately from the (existing) [`PropertyFilter`] struct used by
+/// `filtered_blocks_query` — that one carries five typed value fields and
+/// a comparison operator; this one is the simpler `(key, value_text)`
+/// shape the inline `prop:key=value` token produces.
+///
+/// `value` is matched against `block_properties.value_text` (the
+/// most-common case for user-typed properties; locked in by the plan's
+/// "Locked-in decisions" #4). An empty `value` matches "block has this
+/// key at all" (`block_properties.value_text IS NOT NULL` is NOT
+/// required — only the key presence).
+#[derive(Debug, Clone, Deserialize, Serialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPropertyFilter {
+    /// Property key — case-sensitive (locked in by plan #1).
+    pub key: String,
+    /// Property value — matched against `block_properties.value_text`.
+    /// Empty string treated as "key presence only".
+    pub value: String,
+}
+
 /// Optional filter bundle for [`search_blocks_inner`].
 ///
 /// PEND-50 Phase 0 collapses the previous positional `parent_id` /
@@ -204,6 +313,35 @@ pub struct SearchFilter {
     /// unchanged.
     #[serde(default)]
     pub block_type_filter: Option<String>,
+    /// PEND-53 — restrict matches to blocks with `blocks.todo_state IN
+    /// (...)`. Each entry is matched verbatim — the column is a
+    /// free-form `TEXT` so custom states are allowed. The literal
+    /// keyword `none` (case-insensitive) selects `todo_state IS NULL`
+    /// (the `state:none` token); a custom state literally called
+    /// `"none"` is still matched correctly because the AST projects
+    /// `state:none` into a distinct sentinel (see the SQL composition).
+    #[serde(default)]
+    pub state_filter: Vec<String>,
+    /// PEND-53 — `blocks.priority IN (...)`. Same `none` sentinel
+    /// behaviour as `state_filter`.
+    #[serde(default)]
+    pub priority_filter: Vec<String>,
+    /// PEND-53 — date predicate on `blocks.due_date`. `None` means
+    /// "no filter".
+    #[serde(default)]
+    pub due_filter: Option<DateFilter>,
+    /// PEND-53 — date predicate on `blocks.scheduled_date`.
+    #[serde(default)]
+    pub scheduled_filter: Option<DateFilter>,
+    /// PEND-53 — AND-joined property filters. Each entry adds an
+    /// `EXISTS (SELECT 1 FROM block_properties …)` sub-select against
+    /// `value_text` (locked in by plan #4).
+    #[serde(default)]
+    pub property_filters: Vec<SearchPropertyFilter>,
+    /// PEND-53 — AND-joined property exclusions. Each entry adds a
+    /// `NOT EXISTS (...)` sub-select.
+    #[serde(default)]
+    pub excluded_property_filters: Vec<SearchPropertyFilter>,
 }
 
 /// Match span emitted by the PEND-55 toggle pipeline.
@@ -330,6 +468,12 @@ pub async fn search_blocks_inner(
         is_regex: filter.is_regex,
     };
 
+    // PEND-53 — resolve state / priority / due / scheduled / property
+    // metadata against today's date. Invalid dates / unknown bucket
+    // keywords surface as `AppError::Validation` with the
+    // `InvalidDateFilter:` prefix the frontend keys on.
+    let metadata = fts::metadata_filter::prepare_metadata(&filter)?;
+
     fts::search_with_toggles(
         pool,
         &query,
@@ -341,6 +485,7 @@ pub async fn search_blocks_inner(
         &exclude_globs,
         toggles,
         filter.block_type_filter.as_deref(),
+        &metadata,
     )
     .await
 }

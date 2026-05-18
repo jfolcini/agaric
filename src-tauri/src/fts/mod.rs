@@ -16,6 +16,7 @@
 
 pub(crate) mod glob_filter;
 mod index;
+pub mod metadata_filter;
 mod search;
 pub(crate) mod strip;
 mod toggle_filter;

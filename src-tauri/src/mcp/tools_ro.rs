@@ -687,6 +687,16 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             // defaults preserve the pre-PEND-51 "all block types"
             // behaviour.
             block_type_filter: None,
+            // PEND-53 — MCP tools do not yet expose state / priority /
+            // date / property filters; defaults preserve the pre-PEND-53
+            // "no metadata filter" behaviour. A follow-up plan extends
+            // the MCP search tool with this surface.
+            state_filter: Vec::new(),
+            priority_filter: Vec::new(),
+            due_filter: None,
+            scheduled_filter: None,
+            property_filters: Vec::new(),
+            excluded_property_filters: Vec::new(),
         },
     )
     .await?;

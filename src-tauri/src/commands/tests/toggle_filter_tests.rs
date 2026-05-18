@@ -47,6 +47,9 @@ fn filter_with(case_sensitive: bool, whole_word: bool, is_regex: bool) -> Search
         // PEND-51 — toggle tests don't exercise block-type filtering;
         // `None` preserves the pre-PEND-51 candidate set semantics.
         block_type_filter: None,
+        // PEND-53 — toggle tests don't exercise metadata filters either;
+        // defaults preserve the pre-PEND-53 "no metadata filter" shape.
+        ..Default::default()
     }
 }
 

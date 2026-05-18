@@ -12,6 +12,20 @@ describe('serialize round-trip', () => {
     'tag:#urgent hello world',
     'path:{Journal,Archive}/* tag:#meeting',
     'tag:#日本語',
+    // PEND-53 — new token kinds round-trip cleanly.
+    'state:TODO',
+    'not-state:DONE',
+    'priority:1 priority:2',
+    'not-priority:none',
+    'due:today',
+    'due:this-week',
+    'due:>=2026-01-01',
+    'scheduled:none',
+    'scheduled:2026-05-17',
+    'prop:status=done',
+    'not-prop:archived=true',
+    'prop:tag=',
+    'state:TODO priority:1 due:today prop:status=blocked hello world',
   ]
 
   for (const s of canonicalInputs) {

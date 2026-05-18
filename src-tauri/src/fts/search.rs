@@ -9,6 +9,8 @@ use crate::commands::SearchBlockRow;
 use crate::error::AppError;
 use crate::pagination::{Cursor, PageRequest, PageResponse};
 
+use super::metadata_filter::MetadataPredicates;
+
 // ---------------------------------------------------------------------------
 // FTS5 search
 // ---------------------------------------------------------------------------
@@ -241,6 +243,7 @@ pub async fn search_fts(
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
@@ -416,6 +419,13 @@ pub async fn search_fts(
         None
     };
 
+    // PEND-53 — state / priority / due / scheduled / property
+    // metadata predicates. `append_metadata_sql` mutates both `sql`
+    // and `next_param` and returns the bind values in declaration
+    // order. The caller binds them after the existing parameters.
+    let metadata_binds =
+        super::metadata_filter::append_metadata_sql(&mut sql, &mut next_param, metadata, "b");
+
     // Suppress unused variable warnings — these indices are used only when
     // the corresponding filter is active, but the compiler cannot see that
     // through the dynamic query-building logic.
@@ -467,6 +477,11 @@ pub async fn search_fts(
     // index matches the order it was appended to the SQL above.
     if let Some(bt) = block_type_filter {
         db_query = db_query.bind(bt);
+    }
+    // PEND-53 — bind metadata values in the same order as
+    // `append_metadata_sql` declared them.
+    for v in &metadata_binds {
+        db_query = db_query.bind(v);
     }
 
     let rows = db_query.fetch_all(pool).await.map_err(|e| {

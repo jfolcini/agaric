@@ -56,6 +56,8 @@ use crate::pagination::{PageRequest, PageResponse};
 use regex::{Regex, RegexBuilder};
 use sqlx::SqlitePool;
 
+use super::metadata_filter::MetadataPredicates;
+
 /// Bundle of the three PEND-55 search toggles.
 ///
 /// The all-false value reproduces the pre-PEND-55 FTS-only behaviour
@@ -131,6 +133,7 @@ pub async fn search_with_toggles(
     exclude_page_globs: &[String],
     toggles: SearchToggles,
     block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     if toggles.is_regex {
         // Regex-mode bypasses FTS entirely — empty query short-circuits
@@ -154,6 +157,7 @@ pub async fn search_with_toggles(
             include_page_globs,
             exclude_page_globs,
             toggles,
+            metadata,
         )
         .await?;
         // PEND-51 — `block_type_filter` post-narrow for the regex path.
@@ -178,6 +182,7 @@ pub async fn search_with_toggles(
         include_page_globs,
         exclude_page_globs,
         block_type_filter,
+        metadata,
     )
     .await?;
 
@@ -321,6 +326,7 @@ async fn regex_mode_query(
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
+    metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // Compose the final regex. `case_sensitive` flips the (?i) flag;
     // `whole_word` wraps in `(?-u:\b)`. The user's input is the regex
@@ -423,6 +429,10 @@ async fn regex_mode_query(
         None
     };
 
+    // PEND-53 — metadata predicates (same shape as `search_fts`).
+    let metadata_binds =
+        super::metadata_filter::append_metadata_sql(&mut sql, &mut next_param, metadata, "b");
+
     let cap_idx = next_param;
     // PEND-55 — ULID prefixes are monotonically time-sortable, so
     // `ORDER BY b.id DESC` yields most-recent-first without a
@@ -460,6 +470,10 @@ async fn regex_mode_query(
     }
     for pat in exclude_page_globs {
         db_query = db_query.bind(pat);
+    }
+    // PEND-53 — bind metadata values in declaration order.
+    for v in &metadata_binds {
+        db_query = db_query.bind(v);
     }
     db_query = db_query.bind(REGEX_PRE_FILTER_CAP);
 

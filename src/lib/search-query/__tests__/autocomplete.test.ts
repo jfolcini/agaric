@@ -46,6 +46,49 @@ describe('detectAutocompleteAnchor', () => {
     expect(detectAutocompleteAnchor('tag:#x', 999)).toMatchObject({ active: 'tag', query: 'x' })
     expect(detectAutocompleteAnchor('tag:#x', -10)).toBeNull()
   })
+
+  // PEND-53 — state / priority / due / scheduled / prop autocomplete.
+
+  it('opens on state:', () => {
+    const a = detectAutocompleteAnchor('state:TO', 8)
+    expect(a).toMatchObject({ active: 'state', query: 'TO' })
+  })
+
+  it('opens on not-state: (longer prefix wins)', () => {
+    const a = detectAutocompleteAnchor('not-state:DO', 12)
+    expect(a).toMatchObject({ active: 'state', query: 'DO' })
+  })
+
+  it('opens on priority:', () => {
+    const a = detectAutocompleteAnchor('priority:1', 10)
+    expect(a).toMatchObject({ active: 'priority', query: '1' })
+  })
+
+  it('opens on due:', () => {
+    const a = detectAutocompleteAnchor('due:tod', 7)
+    expect(a).toMatchObject({ active: 'due', query: 'tod' })
+  })
+
+  it('opens on scheduled:', () => {
+    const a = detectAutocompleteAnchor('scheduled:>=', 12)
+    expect(a).toMatchObject({ active: 'scheduled', query: '>=' })
+  })
+
+  it('opens on prop: key portion', () => {
+    const a = detectAutocompleteAnchor('prop:sta', 8)
+    expect(a).toMatchObject({ active: 'propKey', query: 'sta' })
+  })
+
+  it('opens on prop:key= value portion', () => {
+    const input = 'prop:status=don'
+    const a = detectAutocompleteAnchor(input, input.length)
+    expect(a).toMatchObject({ active: 'propValue', key: 'status', query: 'don' })
+  })
+
+  it('opens on not-prop: (longer prefix wins)', () => {
+    const a = detectAutocompleteAnchor('not-prop:archive', 16)
+    expect(a).toMatchObject({ active: 'propKey', query: 'archive' })
+  })
 })
 
 describe('applyAutocompleteReplacement', () => {

@@ -90,6 +90,71 @@ const DEFAULT_SEARCH_TOGGLES: SearchToggleState = {
   isRegex: false,
 }
 
+/**
+ * PEND-53 — Filter-param bundle the SearchPanel hands to `searchBlocks`.
+ *
+ * Split out of the `queryFn` callback so the closure stays under
+ * biome's complexity cap. `regexModeFilterParams()` returns the
+ * regex-mode no-filter bundle; `astFilterParams(projection, tagIds)`
+ * returns the AST-projected bundle for the non-regex path. Both
+ * shapes are accepted by `searchBlocks` as `Partial<…>` extension
+ * fields (each entry is `T | undefined`).
+ */
+type SearchFilterParams = {
+  tagIds?: string[] | undefined
+  includePageGlobs?: string[] | undefined
+  excludePageGlobs?: string[] | undefined
+  stateFilter?: string[] | undefined
+  priorityFilter?: string[] | undefined
+  dueFilter?:
+    | { kind: 'named'; name: string }
+    | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
+    | null
+  scheduledFilter?:
+    | { kind: 'named'; name: string }
+    | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
+    | null
+  propertyFilters?: { key: string; value: string }[] | undefined
+  excludedPropertyFilters?: { key: string; value: string }[] | undefined
+}
+
+function regexModeFilterParams(): SearchFilterParams {
+  return {
+    tagIds: undefined,
+    includePageGlobs: undefined,
+    excludePageGlobs: undefined,
+    stateFilter: undefined,
+    priorityFilter: undefined,
+    dueFilter: null,
+    scheduledFilter: null,
+    propertyFilters: undefined,
+    excludedPropertyFilters: undefined,
+  }
+}
+
+function astFilterParams(
+  projection: ReturnType<typeof astToFilterProjection>,
+  tagIds: string[],
+): SearchFilterParams {
+  return {
+    tagIds: tagIds.length === 0 ? undefined : tagIds,
+    includePageGlobs:
+      projection.includePageGlobs.length === 0 ? undefined : projection.includePageGlobs,
+    excludePageGlobs:
+      projection.excludePageGlobs.length === 0 ? undefined : projection.excludePageGlobs,
+    stateFilter: projection.stateFilter.length === 0 ? undefined : projection.stateFilter,
+    priorityFilter: projection.priorityFilter.length === 0 ? undefined : projection.priorityFilter,
+    dueFilter: projection.dueFilter,
+    scheduledFilter: projection.scheduledFilter,
+    propertyFilters:
+      projection.propertyFilters.length === 0 ? undefined : projection.propertyFilters,
+    excludedPropertyFilters:
+      projection.excludedPropertyFilters.length === 0
+        ? undefined
+        : projection.excludedPropertyFilters,
+  }
+}
+
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
   return /[\u4E00-\u9FFF\u3400-\u4DBF\u3000-\u303F\u30A0-\u30FF\u3040-\u309F\uAC00-\uD7AF]/.test(
@@ -225,6 +290,16 @@ export function SearchPanel(): React.ReactElement {
   // PEND-55 — in regex mode the user's input is the regex verbatim;
   // skip PEND-54's filter projection so `tag:` / `path:` aren't
   // parsed as syntax. The full debouncedQuery is forwarded.
+  //
+  // PEND-53 — metadata fields (state / priority / due / scheduled /
+  // prop) are also skipped in regex mode. The `searchFilterFromAst`
+  // helper centralises the regex-mode short-circuit so the callback
+  // body stays under biome's complexity cap.
+  const filterParams = useMemo(
+    () =>
+      toggles.isRegex ? regexModeFilterParams() : astFilterParams(debouncedProjection, tagIds),
+    [toggles.isRegex, debouncedProjection, tagIds],
+  )
   const queryFn = useCallback(
     (cursor?: string) =>
       // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
@@ -233,15 +308,7 @@ export function SearchPanel(): React.ReactElement {
       // than a runtime null deref.
       searchBlocks({
         query: toggles.isRegex ? debouncedQuery : debouncedAst.freeText,
-        tagIds: toggles.isRegex || tagIds.length === 0 ? undefined : tagIds,
-        includePageGlobs:
-          toggles.isRegex || debouncedProjection.includePageGlobs.length === 0
-            ? undefined
-            : debouncedProjection.includePageGlobs,
-        excludePageGlobs:
-          toggles.isRegex || debouncedProjection.excludePageGlobs.length === 0
-            ? undefined
-            : debouncedProjection.excludePageGlobs,
+        ...filterParams,
         cursor,
         limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId ?? '',
@@ -252,8 +319,7 @@ export function SearchPanel(): React.ReactElement {
     [
       debouncedAst.freeText,
       debouncedQuery,
-      tagIds,
-      debouncedProjection,
+      filterParams,
       currentSpaceId,
       toggles.caseSensitive,
       toggles.wholeWord,

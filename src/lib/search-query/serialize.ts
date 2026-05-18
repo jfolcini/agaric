@@ -24,6 +24,22 @@ export function tokenSource(t: FilterToken): string {
       return `path:${t.value}`
     case 'pathExclude':
       return `not-path:${t.value}`
+    case 'state':
+      return `state:${t.value}`
+    case 'notState':
+      return `not-state:${t.value}`
+    case 'priority':
+      return `priority:${t.value}`
+    case 'notPriority':
+      return `not-priority:${t.value}`
+    case 'due':
+      return `due:${t.raw}`
+    case 'scheduled':
+      return `scheduled:${t.raw}`
+    case 'prop':
+      return `prop:${t.key}=${t.value}`
+    case 'notProp':
+      return `not-prop:${t.key}=${t.value}`
     case 'invalid':
       return t.source
   }

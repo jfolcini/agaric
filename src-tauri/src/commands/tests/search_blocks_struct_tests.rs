@@ -67,6 +67,8 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
         is_regex: false,
         // PEND-51
         block_type_filter: Some("page".into()),
+        // PEND-53 — additive wire compat; defaults left at empty.
+        ..Default::default()
     };
     let json = serde_json::to_value(&original).unwrap();
     let decoded: SearchFilter = serde_json::from_value(json).unwrap();
@@ -210,4 +212,86 @@ fn search_block_row_match_offsets_defaults_to_empty_vec() {
     // The unused json_in handle silences an unused-let warning; the
     // shape it documents is exactly the post-PEND-50 wire row.
     let _ = json_in;
+}
+
+// ---------------------------------------------------------------------
+// PEND-53 — state / priority / due / scheduled / property wire shape
+// ---------------------------------------------------------------------
+
+#[test]
+fn search_filter_pend53_fields_default_to_empty() {
+    // Old frontends that don't know about the new fields keep working;
+    // every PEND-53 field carries `#[serde(default)]`.
+    let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
+    assert!(filter.state_filter.is_empty());
+    assert!(filter.priority_filter.is_empty());
+    assert!(filter.due_filter.is_none());
+    assert!(filter.scheduled_filter.is_none());
+    assert!(filter.property_filters.is_empty());
+    assert!(filter.excluded_property_filters.is_empty());
+}
+
+#[test]
+fn search_filter_pend53_state_priority_roundtrip() {
+    let filter: SearchFilter = serde_json::from_value(json!({
+        "stateFilter": ["TODO", "DOING"],
+        "priorityFilter": ["1", "none"],
+    }))
+    .unwrap();
+    assert_eq!(
+        filter.state_filter,
+        vec!["TODO".to_string(), "DOING".into()]
+    );
+    assert_eq!(filter.priority_filter, vec!["1".to_string(), "none".into()]);
+}
+
+#[test]
+fn search_filter_pend53_due_filter_named_today() {
+    let filter: SearchFilter = serde_json::from_value(json!({
+        "dueFilter": { "named": "today" },
+    }))
+    .unwrap();
+    let df = filter.due_filter.expect("dueFilter must deserialise");
+    use crate::commands::queries::{DateFilter, NamedDateRange};
+    match df {
+        DateFilter::Named(NamedDateRange::Today) => {}
+        other => panic!("expected Named(Today), got {other:?}"),
+    }
+}
+
+#[test]
+fn search_filter_pend53_due_filter_op_form() {
+    let filter: SearchFilter = serde_json::from_value(json!({
+        "dueFilter": { "op": { "op": "gte", "date": "2026-01-01" } },
+    }))
+    .unwrap();
+    let df = filter.due_filter.expect("dueFilter must deserialise");
+    use crate::commands::queries::{DateFilter, DateOp};
+    match df {
+        DateFilter::Op { op, date } => {
+            assert_eq!(op, DateOp::Gte);
+            assert_eq!(date, "2026-01-01");
+        }
+        other => panic!("expected Op, got {other:?}"),
+    }
+}
+
+#[test]
+fn search_filter_pend53_property_filters_roundtrip() {
+    let filter: SearchFilter = serde_json::from_value(json!({
+        "propertyFilters": [
+            { "key": "status", "value": "done" },
+        ],
+        "excludedPropertyFilters": [
+            { "key": "archived", "value": "" },
+        ],
+    }))
+    .unwrap();
+    assert_eq!(filter.property_filters.len(), 1);
+    assert_eq!(filter.property_filters[0].key, "status");
+    assert_eq!(filter.property_filters[0].value, "done");
+    assert_eq!(filter.excluded_property_filters.len(), 1);
+    assert_eq!(filter.excluded_property_filters[0].key, "archived");
+    // Empty value = "has the key at all" — documented in docs/SEARCH.md.
+    assert_eq!(filter.excluded_property_filters[0].value, "");
 }

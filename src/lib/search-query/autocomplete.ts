@@ -26,6 +26,16 @@ export type AutocompleteAnchor =
   | { active: 'tag'; query: string; anchor: number }
   | { active: 'pathInclude'; query: string; anchor: number }
   | { active: 'pathExclude'; query: string; anchor: number }
+  // PEND-53 — state: / priority: value autocomplete.
+  | { active: 'state'; query: string; anchor: number }
+  | { active: 'priority'; query: string; anchor: number }
+  // PEND-53 — due: / scheduled: bucket-keyword + ISO-date autocomplete.
+  | { active: 'due'; query: string; anchor: number }
+  | { active: 'scheduled'; query: string; anchor: number }
+  // PEND-53 — prop:key autocomplete (before `=`); prop:key=value
+  // autocomplete (after `=`).
+  | { active: 'propKey'; query: string; anchor: number }
+  | { active: 'propValue'; key: string; query: string; anchor: number }
   | null
 
 /**
@@ -88,7 +98,92 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
       anchor: start + 'path:'.length,
     }
   }
+  // PEND-53 — `not-prop:` must come before `prop:` (longer prefix
+  // wins) and before `not-state:` / `not-priority:` (each handled
+  // separately below — disjoint prefixes).
+  if (slice.startsWith('not-prop:')) {
+    return propAutocomplete(slice, start, 'not-prop:')
+  }
+  if (slice.startsWith('prop:')) {
+    return propAutocomplete(slice, start, 'prop:')
+  }
+  // PEND-53 — state / priority / due / scheduled value autocomplete.
+  if (slice.startsWith('not-state:')) {
+    return {
+      active: 'state',
+      query: slice.slice('not-state:'.length),
+      anchor: start + 'not-state:'.length,
+    }
+  }
+  if (slice.startsWith('state:')) {
+    return {
+      active: 'state',
+      query: slice.slice('state:'.length),
+      anchor: start + 'state:'.length,
+    }
+  }
+  if (slice.startsWith('not-priority:')) {
+    return {
+      active: 'priority',
+      query: slice.slice('not-priority:'.length),
+      anchor: start + 'not-priority:'.length,
+    }
+  }
+  if (slice.startsWith('priority:')) {
+    return {
+      active: 'priority',
+      query: slice.slice('priority:'.length),
+      anchor: start + 'priority:'.length,
+    }
+  }
+  if (slice.startsWith('scheduled:')) {
+    return {
+      active: 'scheduled',
+      query: slice.slice('scheduled:'.length),
+      anchor: start + 'scheduled:'.length,
+    }
+  }
+  if (slice.startsWith('due:')) {
+    return {
+      active: 'due',
+      query: slice.slice('due:'.length),
+      anchor: start + 'due:'.length,
+    }
+  }
   return null
+}
+
+/**
+ * PEND-53 — `prop:` / `not-prop:` two-step autocomplete.
+ *
+ * Before the user has typed `=`, the popover lists known property
+ * keys. After `=`, the popover lists known values for the
+ * already-typed key. The anchor follows the section the user is
+ * editing so caret-position-relative popovers don't drift on
+ * key→value transition.
+ */
+function propAutocomplete(
+  slice: string,
+  start: number,
+  prefix: 'prop:' | 'not-prop:',
+): AutocompleteAnchor {
+  const tail = slice.slice(prefix.length)
+  const eq = tail.indexOf('=')
+  if (eq < 0) {
+    return {
+      active: 'propKey',
+      query: tail,
+      anchor: start + prefix.length,
+    }
+  }
+  const key = tail.slice(0, eq)
+  const valuePartStart = start + prefix.length + eq + 1
+  return {
+    active: 'propValue',
+    key,
+    query: tail.slice(eq + 1),
+    anchor: valuePartStart,
+  }
 }
 
 /**

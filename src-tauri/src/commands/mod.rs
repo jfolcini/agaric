@@ -143,8 +143,9 @@ pub use queries::{
     list_backlinks_grouped, list_backlinks_grouped_inner, list_unfinished_tasks,
     list_unfinished_tasks_inner, list_unlinked_references, list_unlinked_references_inner,
     query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
-    query_by_property_inner, search_blocks, search_blocks_inner, MatchOffset, PropertyFilter,
-    SearchBlockRow, SearchFilter, TagFilterExpr,
+    query_by_property_inner, search_blocks, search_blocks_inner, DateFilter, DateOp, MatchOffset,
+    NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter, SearchPropertyFilter,
+    TagFilterExpr,
 };
 pub use spaces::{
     create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,

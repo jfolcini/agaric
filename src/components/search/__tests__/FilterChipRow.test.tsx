@@ -64,4 +64,50 @@ describe('FilterChipRow', () => {
     const pill = screen.getByText('path:[unclosed').closest('[data-slot="filter-pill"]')
     expect(pill).toHaveAttribute('title', 'InvalidGlob: unbalanced bracket')
   })
+
+  // PEND-53 — new token kinds render via tokenSource(), no special branch.
+
+  it('renders state / priority chips with the canonical label', () => {
+    const filters: FilterToken[] = [
+      { kind: 'state', value: 'TODO', span: [0, 10] },
+      { kind: 'priority', value: '1', span: [11, 21] },
+      { kind: 'notState', value: 'DONE', span: [22, 36] },
+      { kind: 'notPriority', value: 'none', span: [37, 53] },
+    ]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    expect(screen.getByText('state:TODO')).toBeInTheDocument()
+    expect(screen.getByText('priority:1')).toBeInTheDocument()
+    expect(screen.getByText('not-state:DONE')).toBeInTheDocument()
+    expect(screen.getByText('not-priority:none')).toBeInTheDocument()
+  })
+
+  it('renders due / scheduled chips for both named and op forms', () => {
+    const filters: FilterToken[] = [
+      {
+        kind: 'due',
+        raw: 'today',
+        value: { kind: 'named', name: 'today' },
+        span: [0, 9],
+      },
+      {
+        kind: 'scheduled',
+        raw: '>=2026-01-01',
+        value: { kind: 'op', op: '>=', date: '2026-01-01' },
+        span: [10, 32],
+      },
+    ]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    expect(screen.getByText('due:today')).toBeInTheDocument()
+    expect(screen.getByText('scheduled:>=2026-01-01')).toBeInTheDocument()
+  })
+
+  it('renders prop / not-prop chips with key=value', () => {
+    const filters: FilterToken[] = [
+      { kind: 'prop', key: 'status', value: 'done', span: [0, 17] },
+      { kind: 'notProp', key: 'archived', value: 'true', span: [18, 41] },
+    ]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    expect(screen.getByText('prop:status=done')).toBeInTheDocument()
+    expect(screen.getByText('not-prop:archived=true')).toBeInTheDocument()
+  })
 })

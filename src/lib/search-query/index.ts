@@ -31,5 +31,13 @@ export type { AstFilterProjection } from './to-search-filter'
 export { astToFilterProjection } from './to-search-filter'
 export type { RawToken } from './tokenize'
 export { tokenize } from './tokenize'
-export type { FilterKind, FilterToken, SearchQueryAST } from './types'
+export type {
+  DateFilterValue,
+  DateOp,
+  FilterKind,
+  FilterToken,
+  NamedDateRange,
+  SearchPropertyFilter,
+  SearchQueryAST,
+} from './types'
 export { tokenKey } from './types'

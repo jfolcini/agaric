@@ -992,6 +992,49 @@ export type CreateBlockSpec = {
 	properties?: { [key in string]: string },
 };
 
+/**
+ *  PEND-53 — Date-filter shape used by [`SearchFilter::due_filter`] /
+ *  [`SearchFilter::scheduled_filter`].
+ *
+ *  Two variants:
+ *
+ *  - [`DateFilter::Named`] — bucket keyword resolved at query time
+ *    against `chrono::Local::today()` (or the cell-injected clock in
+ *    tests). Vocabulary: `overdue`, `today`, `yesterday`, `this-week`,
+ *    `this-month`, `next-week`, `older`, `none`. Unknown keywords are
+ *    rejected as `Validation("InvalidDateFilter: …")`.
+ *  - [`DateFilter::Op`] — explicit comparison operator (`<`, `<=`, `=`,
+ *    `>=`, `>`) followed by an ISO `YYYY-MM-DD` date. The frontend
+ *    parser accepts the same shape (`due:>=2026-01-01`).
+ *
+ *  `#[serde(rename_all = "camelCase")]` on the enum variants keeps the
+ *  wire shape ergonomic for the TS side: the AST projection emits
+ *  `{ named: "today" }` or `{ op: { op: "gte", date: "2026-01-01" } }`.
+ */
+export type DateFilter =
+/**  Named bucket — resolved to a date predicate at query time. */
+({ named: NamedDateRange }) & { op?: never } |
+/**  Explicit comparison operator + ISO date. */
+({ op: {
+	/**
+	 *  One of [`DateOp::Lt`] / [`DateOp::Lte`] / [`DateOp::Eq`] /
+	 *  [`DateOp::Gte`] / [`DateOp::Gt`].
+	 */
+	op: DateOp,
+	/**
+	 *  ISO `YYYY-MM-DD`. Calendar-validated at the SQL composition
+	 *  boundary; invalid dates yield `Validation("InvalidDateFilter:
+	 *  …")`.
+	 */
+	date: string,
+} }) & { named?: never };
+
+/**
+ *  PEND-53 — Comparison operator for [`DateFilter::Op`]. Mirrors the
+ *  frontend parser shape (`<`, `<=`, `=`, `>=`, `>`).
+ */
+export type DateOp = "lt" | "lte" | "eq" | "gte" | "gt";
+
 /**  A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format. */
 export type DateRange = {
 	start: string,
@@ -1229,6 +1272,23 @@ export type MoveResponse = {
 	new_parent_id: string | null,
 	new_position: number,
 };
+
+/**
+ *  PEND-53 — Named date buckets recognised by [`DateFilter::Named`].
+ *
+ *  Resolution semantics (today = `chrono::Local::today()`):
+ *
+ *  - `Overdue`   → column `< today AND column IS NOT NULL`.
+ *  - `Today`     → column `= today`.
+ *  - `Yesterday` → column `= today - 1d`.
+ *  - `ThisWeek`  → column `BETWEEN start_of_week AND end_of_week` (Mon..Sun).
+ *  - `ThisMonth` → column `BETWEEN start_of_month AND end_of_month`.
+ *  - `NextWeek`  → column `BETWEEN start_of_next_week AND end_of_next_week`.
+ *  - `Older`     → column `< today - 30d AND column IS NOT NULL`.
+ *  - `None`      → column `IS NULL`. Used by `state:none` analogue —
+ *    "show blocks with no scheduled/due date".
+ */
+export type NamedDateRange = "overdue" | "today" | "yesterday" | "this-week" | "this-month" | "next-week" | "older" | "none";
 
 /**  Reference to a specific op in the log. */
 export type OpRef = {
@@ -1569,6 +1629,64 @@ export type SearchFilter = {
 	 *  unchanged.
 	 */
 	blockTypeFilter?: string | null,
+	/**
+	 *  PEND-53 — restrict matches to blocks with `blocks.todo_state IN
+	 *  (...)`. Each entry is matched verbatim — the column is a
+	 *  free-form `TEXT` so custom states are allowed. The literal
+	 *  keyword `none` (case-insensitive) selects `todo_state IS NULL`
+	 *  (the `state:none` token); a custom state literally called
+	 *  `"none"` is still matched correctly because the AST projects
+	 *  `state:none` into a distinct sentinel (see the SQL composition).
+	 */
+	stateFilter?: string[],
+	/**
+	 *  PEND-53 — `blocks.priority IN (...)`. Same `none` sentinel
+	 *  behaviour as `state_filter`.
+	 */
+	priorityFilter?: string[],
+	/**
+	 *  PEND-53 — date predicate on `blocks.due_date`. `None` means
+	 *  "no filter".
+	 */
+	dueFilter?: DateFilter | null,
+	/**  PEND-53 — date predicate on `blocks.scheduled_date`. */
+	scheduledFilter?: DateFilter | null,
+	/**
+	 *  PEND-53 — AND-joined property filters. Each entry adds an
+	 *  `EXISTS (SELECT 1 FROM block_properties …)` sub-select against
+	 *  `value_text` (locked in by plan #4).
+	 */
+	propertyFilters?: SearchPropertyFilter[],
+	/**
+	 *  PEND-53 — AND-joined property exclusions. Each entry adds a
+	 *  `NOT EXISTS (...)` sub-select.
+	 */
+	excludedPropertyFilters?: SearchPropertyFilter[],
+};
+
+/**
+ *  PEND-53 — Property predicate for [`SearchFilter::property_filters`] /
+ *  [`SearchFilter::excluded_property_filters`].
+ *
+ *  Named separately from the (existing) [`PropertyFilter`] struct used by
+ *  `filtered_blocks_query` — that one carries five typed value fields and
+ *  a comparison operator; this one is the simpler `(key, value_text)`
+ *  shape the inline `prop:key=value` token produces.
+ *
+ *  `value` is matched against `block_properties.value_text` (the
+ *  most-common case for user-typed properties; locked in by the plan's
+ *  "Locked-in decisions" #4). An empty `value` matches "block has this
+ *  key at all" (`block_properties.value_text IS NOT NULL` is NOT
+ *  required — only the key presence).
+ */
+export type SearchPropertyFilter = {
+	/**  Property key — case-sensitive (locked in by plan #1). */
+	key: string,
+	/**
+	 *  Property value — matched against `block_properties.value_text`.
+	 *  Empty string treated as "key presence only".
+	 */
+	value: string,
 };
 
 /**

@@ -83,6 +83,32 @@ function FilterSyntaxBody() {
             <td>Page-name glob exclude.</td>
           </tr>
           <tr>
+            <td className="pr-3">state:VALUE</td>
+            <td>Block&apos;s todo_state = VALUE. Repeats OR-combine. state:none = IS NULL.</td>
+          </tr>
+          <tr>
+            <td className="pr-3">priority:VALUE</td>
+            <td>Block&apos;s priority = VALUE. Repeats OR-combine. priority:none = IS NULL.</td>
+          </tr>
+          <tr>
+            <td className="pr-3">due:RANGE</td>
+            <td>
+              Bucket (today, this-week, overdue, …), ISO date, or comparison form (&gt;=2026-01-01).
+            </td>
+          </tr>
+          <tr>
+            <td className="pr-3">scheduled:RANGE</td>
+            <td>Same shape as due: but on scheduled_date.</td>
+          </tr>
+          <tr>
+            <td className="pr-3">prop:KEY=VALUE</td>
+            <td>Block has property KEY with value_text=VALUE. Empty value = key-presence-only.</td>
+          </tr>
+          <tr>
+            <td className="pr-3">not-prop:KEY=VALUE</td>
+            <td>Block does NOT have that property/value.</td>
+          </tr>
+          <tr>
             <td className="pr-3">"phrase"</td>
             <td>Quoted phrase — passed to FTS5 verbatim.</td>
           </tr>
@@ -92,6 +118,19 @@ function FilterSyntaxBody() {
           </tr>
         </tbody>
       </table>
+      <p>
+        <strong>Date predicates</strong>: bucket keywords are{' '}
+        <span className="font-mono">today</span>, <span className="font-mono">yesterday</span>,{' '}
+        <span className="font-mono">overdue</span>, <span className="font-mono">this-week</span>,{' '}
+        <span className="font-mono">this-month</span>, <span className="font-mono">next-week</span>,{' '}
+        <span className="font-mono">older</span>, <span className="font-mono">none</span>. Weeks
+        start on Monday.
+      </p>
+      <p>
+        <strong>Property filters</strong>: v1 matches <span className="font-mono">value_text</span>{' '}
+        only — numeric / date / reference values are not yet searchable via{' '}
+        <span className="font-mono">prop:</span>. Property keys are <strong>case-sensitive</strong>.
+      </p>
       <p>
         Glob filters are <strong>case-insensitive</strong> and match against the page title. A bare
         token like <span className="font-mono">path:Journal</span> wraps to{' '}

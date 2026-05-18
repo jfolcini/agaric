@@ -612,6 +612,13 @@ describe('searchBlocks', () => {
         isRegex: false,
         // PEND-51 — additive `block_type_filter` defaults to null.
         blockTypeFilter: null,
+        // PEND-53 — additive metadata fields default to empty / null.
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
       },
     })
     expect(result).toEqual(emptyPage)
@@ -660,6 +667,13 @@ describe('searchBlocks', () => {
         isRegex: false,
         // PEND-51 — additive `block_type_filter` defaults to null.
         blockTypeFilter: null,
+        // PEND-53 — additive metadata fields default to empty / null.
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
       },
     })
     expect(result).toEqual(pageResp)
@@ -698,6 +712,13 @@ describe('searchBlocks', () => {
         isRegex: false,
         // PEND-51 — additive `block_type_filter` defaults to null.
         blockTypeFilter: null,
+        // PEND-53 — additive metadata fields default to empty / null.
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
       },
     })
   })

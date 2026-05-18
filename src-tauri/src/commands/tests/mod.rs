@@ -6,6 +6,7 @@ mod edge_case_tests;
 mod gcal_hook_tests;
 mod glob_filter_tests;
 mod history_cmd_tests;
+mod metadata_filter_tests;
 mod page_cmd_tests;
 mod property_cmd_tests;
 mod query_cmd_tests;

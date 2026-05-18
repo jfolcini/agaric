@@ -160,6 +160,12 @@ describe('SearchPanel', () => {
           wholeWord: false,
           isRegex: false,
           blockTypeFilter: null,
+          stateFilter: [],
+          priorityFilter: [],
+          dueFilter: null,
+          scheduledFilter: null,
+          propertyFilters: [],
+          excludedPropertyFilters: [],
         },
       })
     })
@@ -202,6 +208,12 @@ describe('SearchPanel', () => {
           wholeWord: false,
           isRegex: false,
           blockTypeFilter: null,
+          stateFilter: [],
+          priorityFilter: [],
+          dueFilter: null,
+          scheduledFilter: null,
+          propertyFilters: [],
+          excludedPropertyFilters: [],
         },
       })
     })
@@ -280,6 +292,12 @@ describe('SearchPanel', () => {
           wholeWord: false,
           isRegex: false,
           blockTypeFilter: null,
+          stateFilter: [],
+          priorityFilter: [],
+          dueFilter: null,
+          scheduledFilter: null,
+          propertyFilters: [],
+          excludedPropertyFilters: [],
         },
       })
     })
@@ -331,6 +349,12 @@ describe('SearchPanel', () => {
         wholeWord: false,
         isRegex: false,
         blockTypeFilter: null,
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
       },
     })
   })
@@ -691,6 +715,12 @@ describe('SearchPanel', () => {
           wholeWord: false,
           isRegex: false,
           blockTypeFilter: null,
+          stateFilter: [],
+          priorityFilter: [],
+          dueFilter: null,
+          scheduledFilter: null,
+          propertyFilters: [],
+          excludedPropertyFilters: [],
         },
       })
     })
@@ -723,6 +753,12 @@ describe('SearchPanel', () => {
           wholeWord: false,
           isRegex: false,
           blockTypeFilter: null,
+          stateFilter: [],
+          priorityFilter: [],
+          dueFilter: null,
+          scheduledFilter: null,
+          propertyFilters: [],
+          excludedPropertyFilters: [],
         },
       })
     })
@@ -776,6 +812,12 @@ describe('SearchPanel', () => {
         wholeWord: false,
         isRegex: false,
         blockTypeFilter: null,
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
       },
     })
   })

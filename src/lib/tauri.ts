@@ -605,6 +605,23 @@ export async function searchBlocks(params: {
    * See `SearchFilter.block_type_filter`.
    */
   blockTypeFilter?: string | undefined
+  /** PEND-53 — `blocks.todo_state IN (...)`. See `SearchFilter`. */
+  stateFilter?: string[] | undefined
+  /** PEND-53 — `blocks.priority IN (...)`. See `SearchFilter`. */
+  priorityFilter?: string[] | undefined
+  /**
+   * PEND-53 — date predicate on `blocks.due_date`. The frontend AST
+   * carries `DateFilterValue` with operators `< <= = >= >`; this
+   * wrapper translates to the wire shape `{ named: ... } | { op: {
+   * op: 'lt' | 'lte' | 'eq' | 'gte' | 'gt', date } }`.
+   */
+  dueFilter?: DateFilterValueInput | null | undefined
+  /** PEND-53 — same shape as `dueFilter` but on `blocks.scheduled_date`. */
+  scheduledFilter?: DateFilterValueInput | null | undefined
+  /** PEND-53 — AND-joined property filters; see `SearchPropertyFilter`. */
+  propertyFilters?: { key: string; value: string }[] | undefined
+  /** PEND-53 — AND-joined property exclusions. */
+  excludedPropertyFilters?: { key: string; value: string }[] | undefined
 }): Promise<PageResponse<SearchBlockRow>> {
   return unwrap(
     await commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
@@ -617,8 +634,44 @@ export async function searchBlocks(params: {
       wholeWord: params.wholeWord ?? false,
       isRegex: params.isRegex ?? false,
       blockTypeFilter: params.blockTypeFilter ?? null,
+      stateFilter: params.stateFilter ?? [],
+      priorityFilter: params.priorityFilter ?? [],
+      dueFilter: marshalDateFilter(params.dueFilter ?? null),
+      scheduledFilter: marshalDateFilter(params.scheduledFilter ?? null),
+      propertyFilters: params.propertyFilters ?? [],
+      excludedPropertyFilters: params.excludedPropertyFilters ?? [],
     }),
   )
+}
+
+/**
+ * PEND-53 — frontend-side `DateFilter` input shape. Mirrors the
+ * `DateFilterValue` union in `src/lib/search-query/types.ts` (the
+ * shape the AST projection emits). The IPC wrapper translates this
+ * to the wire shape (`DateFilter`) at the IPC boundary so the rest
+ * of the frontend doesn't need to know about specta's `lt`/`lte`/…
+ * string codes.
+ */
+export type DateFilterValueInput =
+  | { kind: 'named'; name: string }
+  | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
+
+/** Translate a frontend `DateFilterValueInput` to the wire shape. */
+function marshalDateFilter(v: DateFilterValueInput | null): import('./bindings').DateFilter | null {
+  if (v == null) return null
+  if (v.kind === 'named') {
+    // The wire shape uses kebab-case for the `NamedDateRange` enum;
+    // the input shape already matches.
+    return { named: v.name as import('./bindings').NamedDateRange }
+  }
+  const opMap: Record<'<' | '<=' | '=' | '>=' | '>', import('./bindings').DateOp> = {
+    '<': 'lt',
+    '<=': 'lte',
+    '=': 'eq',
+    '>=': 'gte',
+    '>': 'gt',
+  }
+  return { op: { op: opMap[v.op], date: v.date } }
 }
 
 /** Get materializer queue status and metrics. */

@@ -1190,10 +1190,20 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
 
     // Sanity: pre-recovery the new marker is not in the index.
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let stale_hits =
-        crate::fts::search_fts(&pool, "pineapple", &page, None, None, None, &[], &[], None)
-            .await
-            .unwrap();
+    let stale_hits = crate::fts::search_fts(
+        &pool,
+        "pineapple",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         stale_hits.items.len(),
         0,
@@ -1211,10 +1221,20 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
     );
 
     // Confirm the stale window exists before the fix kicks in.
-    let stale_after_recovery =
-        crate::fts::search_fts(&pool, "pineapple", &page, None, None, None, &[], &[], None)
-            .await
-            .unwrap();
+    let stale_after_recovery = crate::fts::search_fts(
+        &pool,
+        "pineapple",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         stale_after_recovery.items.len(),
         0,
@@ -1228,10 +1248,20 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         .await
         .unwrap();
 
-    let fresh_hits =
-        crate::fts::search_fts(&pool, "pineapple", &page, None, None, None, &[], &[], None)
-            .await
-            .unwrap();
+    let fresh_hits = crate::fts::search_fts(
+        &pool,
+        "pineapple",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         fresh_hits.items.len(),
         1,

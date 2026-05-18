@@ -135,4 +135,154 @@ describe('classify / parse', () => {
     const span = tok.span
     expect(input.slice(span[0], span[1])).toBe('tag:#urgent')
   })
+
+  // -------------------------------------------------------------------
+  // PEND-53 — state / priority / due / scheduled / prop tokens
+  // -------------------------------------------------------------------
+
+  it('recognises state: tokens', () => {
+    const ast = parse('state:TODO state:DOING')
+    expect(ast.filters).toHaveLength(2)
+    expect(ast.filters[0]).toMatchObject({ kind: 'state', value: 'TODO' })
+    expect(ast.filters[1]).toMatchObject({ kind: 'state', value: 'DOING' })
+  })
+
+  it('recognises not-state: tokens', () => {
+    const ast = parse('not-state:DONE')
+    expect(ast.filters[0]).toMatchObject({ kind: 'notState', value: 'DONE' })
+  })
+
+  it('recognises priority: tokens with none sentinel', () => {
+    const ast = parse('priority:1 priority:none')
+    expect(ast.filters).toHaveLength(2)
+    expect(ast.filters[0]).toMatchObject({ kind: 'priority', value: '1' })
+    expect(ast.filters[1]).toMatchObject({ kind: 'priority', value: 'none' })
+  })
+
+  it('recognises due: bucket keywords', () => {
+    const ast = parse('due:today due:this-week due:overdue due:none')
+    expect(ast.filters).toHaveLength(4)
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'due',
+      value: { kind: 'named', name: 'today' },
+    })
+    expect(ast.filters[1]).toMatchObject({
+      kind: 'due',
+      value: { kind: 'named', name: 'this-week' },
+    })
+    expect(ast.filters[3]).toMatchObject({
+      kind: 'due',
+      value: { kind: 'named', name: 'none' },
+    })
+  })
+
+  it('recognises scheduled: comparison form', () => {
+    const ast = parse('scheduled:>=2026-01-01 scheduled:<2026-06-01')
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'scheduled',
+      value: { kind: 'op', op: '>=', date: '2026-01-01' },
+    })
+    expect(ast.filters[1]).toMatchObject({
+      kind: 'scheduled',
+      value: { kind: 'op', op: '<', date: '2026-06-01' },
+    })
+  })
+
+  it('recognises bare ISO date as = form', () => {
+    const ast = parse('due:2026-05-17')
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'due',
+      value: { kind: 'op', op: '=', date: '2026-05-17' },
+    })
+  })
+
+  it('flags unknown date bucket as invalid', () => {
+    const ast = parse('due:tomorrowish')
+    const tok = ast.filters[0]
+    if (tok && tok.kind === 'invalid') {
+      expect(tok.error).toMatch(/^InvalidDateFilter:/)
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
+  it('flags unparseable date in op form as invalid', () => {
+    const ast = parse('due:>=2026-13-99')
+    const tok = ast.filters[0]
+    if (tok && tok.kind === 'invalid') {
+      expect(tok.error).toMatch(/^InvalidDateFilter:/)
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
+  it('recognises prop:key=value tokens', () => {
+    const ast = parse('prop:status=done not-prop:archived=true')
+    expect(ast.filters).toHaveLength(2)
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'prop',
+      key: 'status',
+      value: 'done',
+    })
+    expect(ast.filters[1]).toMatchObject({
+      kind: 'notProp',
+      key: 'archived',
+      value: 'true',
+    })
+  })
+
+  it('accepts prop:key= (empty value = key-presence-only)', () => {
+    const ast = parse('prop:status=')
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'prop',
+      key: 'status',
+      value: '',
+    })
+  })
+
+  it('flags prop without = as invalid', () => {
+    const ast = parse('prop:status')
+    const tok = ast.filters[0]
+    if (tok && tok.kind === 'invalid') {
+      expect(tok.error).toContain('key=value')
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
+  it('flags prop with empty key as invalid', () => {
+    const ast = parse('prop:=value')
+    const tok = ast.filters[0]
+    if (tok && tok.kind === 'invalid') {
+      expect(tok.error).toContain('key cannot be empty')
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
+  it('serialise round-trip preserves PEND-53 token shapes', () => {
+    // Canonical form is reproduced verbatim.
+    const inputs = [
+      'state:TODO',
+      'not-state:DONE',
+      'priority:1',
+      'not-priority:none',
+      'due:today',
+      'due:>=2026-01-01',
+      'scheduled:none',
+      'prop:status=done',
+      'not-prop:archived=true',
+      'prop:tag=', // key-presence-only
+    ]
+    for (const input of inputs) {
+      const ast = parse(input)
+      expect(ast.filters).toHaveLength(1)
+      // Round-trip invariant: re-parsing serialise(parse(input)) yields
+      // the same filter list — guards the registry-source-string
+      // invariant. The actual round-trip is exercised in
+      // `serialize.test.ts`; here we just assert each shape is
+      // recognised in isolation.
+      expect(ast.filters[0]?.kind).not.toBe('invalid')
+    }
+  })
 })

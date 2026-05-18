@@ -85,8 +85,21 @@ fn bench_search_fts(c: &mut Criterion) {
         rt.block_on(seed_blocks_with_fts(&pool, count));
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            b.to_async(&rt)
-                .iter(|| search_fts(&pool, "benchmark", &page, None, None, None, &[], &[], None));
+            let meta = agaric_lib::fts::metadata_filter::MetadataPredicates::default();
+            b.to_async(&rt).iter(|| {
+                search_fts(
+                    &pool,
+                    "benchmark",
+                    &page,
+                    None,
+                    None,
+                    None,
+                    &[],
+                    &[],
+                    None,
+                    &meta,
+                )
+            });
         });
     }
     group.finish();

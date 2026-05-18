@@ -93,8 +93,38 @@ The find-across-pages view supports a small filter vocabulary that mixes freely 
 | `#name` | Bare alias for `tag:#name`. | Equivalent shape. |
 | `path:GLOB` | Page-name glob include. | Comma-separated entries OR-combine inside one token. |
 | `not-path:GLOB` | Page-name glob exclude. | AND-joined with `path:`. |
+| `state:VALUE` | Block's `todo_state` is `VALUE`. | Repeats OR-combine (`state IN (…)`). Custom states allowed. `state:none` matches `todo_state IS NULL`. |
+| `not-state:VALUE` | Reserved for symmetry with `not-tag:` / `not-path:`. | v1 ships as a visual chip with no IPC effect. |
+| `priority:VALUE` | Block's `priority` is `VALUE`. | Repeats OR-combine. `priority:none` matches `priority IS NULL`. |
+| `not-priority:VALUE` | Reserved for symmetry. | v1 ships as a visual chip with no IPC effect. |
+| `due:RANGE` | Block's `due_date` matches `RANGE`. | See *Date predicates* below. |
+| `scheduled:RANGE` | Block's `scheduled_date` matches `RANGE`. | Same shape as `due:`. |
+| `prop:KEY=VALUE` | Block has property `KEY` with `value_text=VALUE`. | Multiple `prop:` tokens AND-combine. `prop:KEY=` (empty value) matches "block has the key at all". |
+| `not-prop:KEY=VALUE` | Block does NOT have that property/value. | AND-joined exclusion. |
 | `"phrase"` | Quoted phrase passed verbatim to FTS5. | Bypasses the trigram length filter. |
 | `AND` / `OR` / `NOT` | Boolean operators (uppercase, FTS5 syntax). | Outside filter tokens. |
+
+### Date predicates
+
+`due:` and `scheduled:` accept three shapes:
+
+- **Bucket keyword** — one of `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none`. Resolved against today's date in Rust at query time; week starts on Monday (mirrors the agenda view's convention).
+- **Absolute ISO date** — `due:2026-05-17` is equivalent to `due:=2026-05-17` (calendar-validated).
+- **Comparison form** — `<`, `<=`, `=`, `>=`, `>` followed by an ISO date: `due:>=2026-01-01`.
+
+Invalid dates surface as a red chip with the typed error `InvalidDateFilter: …`.
+
+### Property filter limitations
+
+v1 matches `block_properties.value_text` only. The table carries five mutually-exclusive value columns (`value_text`, `value_num`, `value_date`, `value_ref`, `value_bool`) per migration `0062`'s CHECK; numeric / date / reference / boolean properties are NOT searchable in the inline filter syntax yet.
+
+Workaround: if you want a numeric property to be searchable through `prop:`, store the canonical form as `value_text` (e.g. `prop:effort=8` works if the property is text-typed).
+
+**Property keys are case-sensitive** — `block_properties.PRIMARY KEY (block_id, key)` has no `COLLATE NOCASE`. `prop:Foo=...` and `prop:foo=...` are distinct queries. Autocomplete shows keys verbatim.
+
+### Scheduled-date semantics for repeating tasks
+
+`scheduled:` matches the literal `blocks.scheduled_date` column. Repeating-task `next_repeat` resolution is owned by the agenda projection; threading the dynamically-computed occurrence into search would duplicate that logic and is deferred to a follow-up plan. Today: a task with a literal `scheduled_date = 2026-05-17` matches `scheduled:this-week` only when 2026-05-17 falls in this week.
 
 ### Glob matching
 
@@ -114,6 +144,11 @@ Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `
 | `TODO path:Journal/2026-* tag:#urgent` | TODO mentions in 2026-Journal pages, tagged urgent. |
 | `tag:#meeting not-path:Archive/**` | Meetings outside the archive subtree. |
 | `path:{Journal,Notes}/*` | Pages in either `Journal/` or `Notes/`. |
+| `state:TODO priority:1 due:this-week` | High-priority open tasks due this week. |
+| `state:TODO state:DOING due:overdue` | Anything overdue that isn't done. |
+| `scheduled:none state:TODO` | Open tasks with no schedule yet. |
+| `prop:status=blocked not-prop:archived=true` | Blocked items, excluding archived. |
+| `prop:assignee=` | Blocks that carry an `assignee` property (any value). |
 
 ### Behavioural error states
 
@@ -121,6 +156,10 @@ Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `
 - `path:{a,{b,c}}` → invalid chip with `InvalidGlob: brace nesting not supported`.
 - `tag:` (no value) → invalid chip with `tag: value required`.
 - `foo:bar` (unknown prefix) → invalid chip with `unknown filter key 'foo:'`.
+- `due:tomorrowish` → invalid chip with `InvalidDateFilter: unknown date 'tomorrowish'`.
+- `due:>=2026-13-99` → invalid chip with `InvalidDateFilter: expected YYYY-MM-DD …`.
+- `prop:status` (no `=`) → invalid chip with `prop: expected 'key=value'`.
+- `prop:=value` (empty key) → invalid chip with `prop: key cannot be empty`.
 
 Invalid chips render with destructive styling, an `aria-invalid` marker, and the typed error as the hover tooltip. The frontend keys on the `InvalidGlob:` prefix returned by the backend so the same message can also originate from a server-side rejection.
 
