@@ -85,9 +85,12 @@ test.describe('Search', () => {
     await input.fill('Welcome')
     await input.press('Enter')
 
-    // Verify search results appear
-    await expect(page.locator('[data-testid="search-results"]')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('[data-testid="search-results"] button').first()).toBeVisible()
+    // Verify the page-grouped result tree renders (PEND-50). Each match is
+    // bucketed under a `<SearchResultGroup>` — one group per page hit, each
+    // with a header row and indented block rows.
+    const region = page.getByTestId('search-result-region')
+    await expect(region).toBeVisible({ timeout: 5000 })
+    await expect(region.locator('[data-testid^="search-result-group-"]').first()).toBeVisible()
   })
 })
 

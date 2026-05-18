@@ -77,7 +77,7 @@ Caret position → screen coordinates via a hidden `<span>` mirror of the input 
 ### Phase 3 — Tests + docs (S, ~1-2 h)
 
 - Component tests: open/close/select/Esc/arrow/Tab; axe audit; precedence with history recall.
-- E2E (Playwright): type `state:`, see popover with TODO/DOING/DONE, click TODO, assert input now reads `state:TODO `.
+- E2E (Playwright): type `state:`, see popover with TODO/DOING/DONE, click TODO, assert input now reads `"state:TODO "` (with the trailing space).
 - `docs/SEARCH.md` filter syntax section: add "Autocomplete" subsection.
 
 ## Tests

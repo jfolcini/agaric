@@ -54,6 +54,18 @@ import { useSearchPaletteStore } from '../stores/useSearchPaletteStore'
 // every piece of keyboard-shortcut behaviour).
 // ---------------------------------------------------------------------------
 
+/**
+ * Returns true when the event target sits inside a TipTap / ProseMirror
+ * editor surface (any `.ProseMirror` ancestor OR any `[contenteditable]`
+ * ancestor). Used by the context-aware Cmd+K routing — Cmd+K inside the
+ * editor is the link command (TipTap's own keymap); Cmd+K outside is the
+ * palette.
+ */
+function isFocusInsideEditor(target: HTMLElement | null): boolean {
+  if (!target) return false
+  return !!target.closest('.ProseMirror, [contenteditable="true"]')
+}
+
 /** Returns true when the event target is an editable input/textarea/contentEditable. */
 function isTypingInField(target: HTMLElement | null): boolean {
   if (!target) return false
@@ -254,7 +266,18 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       // PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Distinct
       // from `focusSearch` (the find-in-files view): the palette is a
       // dialog overlay, the view is a full-screen surface.
+      //
+      // Context-aware: when focus is inside a TipTap / ProseMirror surface
+      // (any contenteditable subtree), Cmd+K is the editor's link command
+      // — yield to TipTap by NOT calling preventDefault, so the editor
+      // extension's own keymap dispatches `open-link-popover`. VSCode does
+      // the same thing for Cmd+P (palette outside editor, navigate-symbol
+      // inside).
       if (matchesShortcutBinding(e, 'paletteOpen')) {
+        if (isFocusInsideEditor(e.target as HTMLElement | null)) {
+          // Yield to the editor's own Cmd+K handler; don't preventDefault.
+          return
+        }
         e.preventDefault()
         useSearchPaletteStore.getState().open$()
         return

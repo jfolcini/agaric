@@ -36,6 +36,9 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 | **[docs/FEATURE-MAP.md](docs/FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
 | [`src-tauri/tests/AGENTS.md`](src-tauri/tests/AGENTS.md) | Rust test patterns, fixtures, pitfalls |
 | [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md) | Frontend test patterns, mocking, a11y |
+| [`src-tauri/migrations/AGENTS.md`](src-tauri/migrations/AGENTS.md) | SQL migration rules (append-only, STRICT tables, index timing) |
+| [`src-tauri/src/commands/AGENTS.md`](src-tauri/src/commands/AGENTS.md) | Tauri command patterns (`_inner` split, `CommandTx`, `MAX_BATCH_BLOCK_IDS`, `LAST_APPEND`, `AppError` prefixes) |
+| [`src-tauri/src/mcp/AGENTS.md`](src-tauri/src/mcp/AGENTS.md) | MCP server rules (rmcp adapter, `ACTOR.scope`, activity-feed emission, `MCP_DISCONNECT_GRACE_PERIOD`, RO/RW split) |
 | `REVIEW-LATER.md` | Deferred items, tech debt backlog, future features |
 
 ## Build Commands

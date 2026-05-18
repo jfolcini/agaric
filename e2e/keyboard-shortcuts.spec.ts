@@ -332,14 +332,40 @@ test.describe('Global shortcuts', () => {
     await waitForBoot(page)
   })
 
-  test('Ctrl+F opens search view', async ({ page }) => {
-    // Press Ctrl+F while on the journal view
+  test('Ctrl+F opens in-page find toolbar', async ({ page }) => {
+    // PEND-52 rebind — Ctrl+F now opens the in-page find toolbar (browser
+    // convention). Find-in-files moved to Ctrl+Shift+F.
     await page.keyboard.down('Control')
     await page.keyboard.press('f')
     await page.keyboard.up('Control')
 
-    // Verify the search view is active (header shows Search label)
-    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible()
+    // In-page find toolbar is visible at the top of the editor.
+    await expect(page.getByRole('toolbar', { name: /find/i })).toBeVisible()
+  })
+
+  test('Ctrl+Shift+F opens search view', async ({ page }) => {
+    // PEND-52 rebind — find-in-files moved from Ctrl+F to Ctrl+Shift+F.
+    await page.keyboard.down('Control')
+    await page.keyboard.down('Shift')
+    await page.keyboard.press('f')
+    await page.keyboard.up('Shift')
+    await page.keyboard.up('Control')
+
+    await expect(page.getByTestId('header-label')).toHaveText('Search')
+  })
+
+  test('Ctrl+K opens search palette when focus is outside the editor', async ({ page }) => {
+    // PEND-51 — Cmd/Ctrl+K opens the quick-nav palette. Context-aware:
+    // only fires when focus is OUTSIDE any TipTap/ProseMirror surface.
+    // Click on the sidebar to take focus out of the editor.
+    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await expect(page.getByTestId('header-label')).toHaveText('Pages')
+
+    await page.keyboard.down('Control')
+    await page.keyboard.press('k')
+    await page.keyboard.up('Control')
+
+    await expect(page.getByTestId('search-palette-input')).toBeVisible()
   })
 
   test('Ctrl+N creates new page', async ({ page }) => {
@@ -457,16 +483,17 @@ test.describe('Link shortcuts', () => {
     await waitForBoot(page)
   })
 
-  test('Ctrl+K opens link popover', async ({ page }) => {
+  test('Ctrl+K opens link popover when focus is inside the editor', async ({ page }) => {
+    // Context-aware Cmd+K — focus is inside the editor (TipTap), so
+    // useAppKeyboardShortcuts yields to TipTap's own keymap instead of
+    // opening the palette. PEND-51 + PEND-66.
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    // Press Ctrl+K to open the link popover
     await page.keyboard.down('Control')
     await page.keyboard.press('k')
     await page.keyboard.up('Control')
 
-    // Verify the link edit popover opens
     await expect(page.getByTestId('link-edit-popover')).toBeVisible()
     await expect(page.getByPlaceholder('https://...')).toBeVisible()
   })
