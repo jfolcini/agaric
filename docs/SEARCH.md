@@ -65,6 +65,23 @@ Because JavaScript's `RegExp` is backtracking-based, an adversarial pattern coul
 
 For long pages, anchor your regex (`^foo`, `bar$`, or `\bword\b`) to keep matches fast.
 
+### Browser compatibility for visual highlighting
+
+The yellow highlight that paints over matches is rendered via the **CSS Custom Highlight Registry** (`CSS.highlights` + `Highlight` + `Range`). It's the modern, DOM-mutation-free way to paint over text. The matcher, counter, and `F3` / `Shift+F3` navigation work on every supported platform; only the visual highlight depends on the Custom Highlight API.
+
+| Platform | Min Agaric version | WebView | Highlight visible? |
+|---|---|---|---|
+| Windows 10 1803+ | yes | WebView2 (auto-updates) | yes |
+| macOS 11 Big Sur | yes | Safari 14–16.6 | **no** |
+| macOS 12 Monterey | yes | Safari 15 (or 17.4 on macOS 12.3+ via update) | maybe |
+| macOS 13 Ventura | yes | Safari 17.4+ available | yes |
+| macOS 14 Sonoma+ | yes | Safari 17.4+ shipped | yes |
+| Ubuntu 22.04 / Debian 12 | yes | webkit2gtk 2.40 | **no** |
+| Ubuntu 24.04 / Fedora 39+ | yes | webkit2gtk 2.46+ | yes |
+| Android (Chrome WebView) | yes | Chrome 105+ on 2020+ devices | yes |
+
+Users on the **no**-highlight rows still get a fully functional in-page find: the counter updates, `F3` cycles matches, the editor scrolls to each match. The yellow background just doesn't paint. Updating the OS or distribution to a recent version (or installing a current Safari) restores the highlight.
+
 ### Regex differences between surfaces
 
 The in-page find toolbar and the find-across-pages view use different regex engines, with different feature sets. **This is a known limitation.** Patterns may behave differently in the two surfaces:

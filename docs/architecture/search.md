@@ -170,6 +170,38 @@ The recency-ordered scan reuses the same parent / tag / space / path-glob filter
 
 Per-space MRU list at `agaric:search-history` (Zustand persist). Dedupes on insert; cap 20. Submission triggers `push`; the dropdown surfaces entries when the input is focused AND empty. The cycling hook (`useSearchHistoryCycling`) owns the `↑`/`↓` browse-mode state machine; precedence with PEND-54's autocomplete and the result-list nav is documented in AGENTS.md.
 
+## PEND-53 — Property / metadata filters
+
+The `state:`, `priority:`, `due:`, `scheduled:`, `prop:` token family adds six fields to `SearchFilter`: `state_filter`, `priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`. All carry `#[serde(default)]`. They compile to `EXISTS` sub-selects against `block_properties` and to direct comparisons on `blocks.todo_state` / `blocks.priority` / `blocks.due_date` / `blocks.scheduled_date`.
+
+### Date filter resolution
+
+`due:today` / `due:this-week` etc. are resolved against `chrono::Local::now().date_naive()` inside `fts::metadata_filter::prepare_metadata`. The SQL only ever sees concrete date bounds. Week starts on **Monday** (matches the agenda view's convention). Test-injected `today` is threaded through `prepare_metadata_with_today` so date-clock churn doesn't flake snapshot tests.
+
+Bucket vocabulary is locked at: `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none`. Unknown buckets or unparseable dates surface as `AppError::Validation("InvalidDateFilter: …")`; the frontend keys on the message prefix.
+
+### `state:none` / `priority:none` semantics
+
+A literal `none` value (case-insensitive) in `state_filter` / `priority_filter` is split out in `prepare_metadata` and emitted as a `column IS NULL` branch in the SQL disjunction. **A custom state literally named `"none"` would match the `IS NULL` shadow** — documented limitation; a real custom state must be named differently to avoid that overlap.
+
+### Property column mapping (v1)
+
+`prop:KEY=VALUE` matches `block_properties.value_text` only. The five typed columns (`value_text`, `value_num`, `value_date`, `value_ref`, `value_bool`) are mutually exclusive per migration `0062`'s CHECK constraint. The autonomous review session decided to fix this — PEND-64 will extend the match to all four user-facing columns (`value_text` OR `value_num` OR `value_date` OR `value_ref`) with type coercion at SQL bind time.
+
+Property keys are case-sensitive (`block_properties` PK is `(block_id, key)` with no `COLLATE NOCASE`).
+
+### Excluded states / priorities
+
+`not-state:` / `not-priority:` in v1 render as chips but project nothing to IPC (the autonomous review found this misleading). PEND-63 will wire the inversion properly: `state IS NULL OR state NOT IN (…)`. Until that lands, document the discrepancy.
+
+## PEND-54 — Path globs
+
+`path:` filters resolve against `pages_cache.title` with `LOWER(...)` for case-insensitive matching. SQLite native `GLOB` (no regex extension), with brace expansion + substring-wrap applied in Rust before binding. Validation failures surface through `AppError::Validation` with an `InvalidGlob:` message prefix — the frontend keys on the prefix string rather than a new error variant (avoids reshaping the `{kind, message}` wire shape at `error.rs`).
+
+### `↑` / `↓` precedence in the search input
+
+When ambiguity exists, autocomplete-open wins, then history recall (PEND-55), then result-list navigation. Document any new precedence-claiming surface here.
+
 ## Related files
 
 - `src/components/SearchPanel.tsx` — orchestrator: input, debounce, IPC call, group + render.
