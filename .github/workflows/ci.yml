@@ -1,11 +1,17 @@
 name: CI
 
 on:
-  # Run validation + a Linux smoke build on every push to any branch.
+  # Push to main is the post-merge sanity check (linux smoke + android).
+  # Feature-branch CI runs through the pull_request trigger below — this
+  # keeps GitHub from dispatching two parallel workflow runs on the same
+  # SHA every time a feature branch is pushed while its PR is open, and
+  # gives outside-contributor forks a CI signal (push events from forks
+  # don't trigger workflows in the parent repo).
+  #
   # Tag pushes are handled by release.yml (which owns the full
   # macOS/Windows/Android matrix and produces shippable artifacts).
   push:
-    branches: ['**']
+    branches: [main]
     tags-ignore: ['**']
   pull_request:
     branches: [main]
