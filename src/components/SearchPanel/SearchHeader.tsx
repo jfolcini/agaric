@@ -39,6 +39,11 @@ export interface SearchHeaderProps {
   /** PEND-55 — focus / blur tracking for the history dropdown. */
   onInputFocus?: () => void
   onInputBlur?: () => void
+  /** PEND-60 Phase 1 a11y — ARIA combobox-with-listbox attrs applied
+   *  to the input (role / aria-expanded / aria-controls /
+   *  aria-activedescendant / aria-autocomplete / aria-haspopup).
+   *  Computed by the orchestrator from autocomplete-popover state. */
+  comboboxAttrs?: React.AriaAttributes & { role?: 'combobox' }
 }
 
 export function SearchHeader({
@@ -56,6 +61,7 @@ export function SearchHeader({
   invalid,
   onInputFocus,
   onInputBlur,
+  comboboxAttrs,
 }: SearchHeaderProps): React.ReactElement {
   return (
     <ViewHeader>
@@ -78,6 +84,7 @@ export function SearchHeader({
           aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
           className="flex-1"
           autoFocus
+          {...comboboxAttrs}
         />
         {toggleRow}
         <Button type="submit" variant="outline" disabled={!query.trim()}>

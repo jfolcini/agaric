@@ -2,10 +2,52 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 782 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 783 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 782 sessions.
+- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 783 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 783 — PEND-60 Phase 1.5 ARIA combobox polish (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | — (PEND-60 Phase 1 a11y follow-up flagged in Session 782 UX review) |
+| **Items modified** | PEND-60 (status note refreshed) |
+| **Tests added** | +1 frontend (integration) / +0 backend |
+| **Files touched** | 5 (3 modified + 1 new test case + plan + log) |
+
+**Summary:** Wired the full ARIA 1.1 combobox-with-listbox pattern on the search input flagged in Session 782's UX review. The input now carries `role="combobox"` plus `aria-autocomplete="list"` / `aria-haspopup="listbox"` / `aria-expanded` / `aria-controls` / `aria-activedescendant`, with the latter two pointing at the live cmdk-generated DOM ids (cmdk owns its `useId()`-generated ids and ignores caller-supplied `id` props, so the wiring goes through a `useCommandState`-backed bridge inside `<Command>` that re-emits the ids whenever cmdk's internal `selectedItemId` changes).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER row touched; the gap was tracked inline in Session 782's notes).
+- **Previously resolved:** 1213+ → 1213+ across 782 → 783 sessions.
+
+**Files touched (this session):**
+- `src/components/search/AutocompletePopover.tsx` (+50 LOC) — new `AutocompleteAriaIds` export, `onAriaIdsChange` prop, internal `SelectedItemBridge` component (uses `cmdk.useCommandState` to subscribe to `selectedItemId`), and a DOM-querying `syncAriaIds` helper guarded by a memoised key-ref to prevent render loops.
+- `src/components/SearchPanel.tsx` (+~25 LOC) — adds `autocompleteAriaIds` state and `inputComboboxAttrs` memo; passes `onAriaIdsChange={setAutocompleteAriaIds}` to the popover and `comboboxAttrs={inputComboboxAttrs}` to the header. `aria-expanded` is gated on both `autocompleteOpen && ariaIds != null` so axe's "aria-controls required when expanded" rule never sees a one-frame inconsistent state.
+- `src/components/SearchPanel/SearchHeader.tsx` (+~5 LOC) — new optional `comboboxAttrs?` prop, spread onto the `SearchInput` after its existing aria attrs.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` (+~35 LOC) — new test "wires ARIA combobox attrs and updates aria-activedescendant with the highlight" verifies closed-state defaults, open-state ids point at real DOM, and ArrowDown advances the active-descendant id.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — Phase 1.5 status note replaces the prior Phase 1-only note.
+
+**Verification:**
+- `npx vitest run` — 10131/10131 (plus the 1 new test).
+- `npx tsc --noEmit` — clean.
+- `./node_modules/.bin/biome check <files>` — clean.
+
+**Process notes:**
+- First attempt assumed cmdk would accept caller-supplied `id` props on `<CommandList>` / `<CommandItem>`. cmdk explicitly overrides these via internal `useId()` and `composeRefs` — confirmed by reading `node_modules/cmdk/dist/index.js`. The fix is to query the live DOM after cmdk renders and emit the ids upward.
+- Second attempt synced ids in an effect that ran once per `AutocompletePopover` render. cmdk batches `selectedItemId` updates via its internal `et()` scheduler, so the outer effect ran before the DOM reflected the new aria-selected. Final fix uses a `SelectedItemBridge` child of `<Command>` that subscribes to `selectedItemId` via `useCommandState`, guaranteeing the sync runs after cmdk's internal commit.
+- axe-core 4.11 enforces "aria-controls required when `aria-expanded="true"` on combobox" — gating `aria-expanded` on `ariaIds != null` avoids the one-frame inconsistency where the popover wants to open but the ids haven't synced yet.
+
+**Lessons learned (for future sessions):**
+- When wiring ARIA combobox to a cmdk listbox, the only correct approach is to read the live DOM ids and propagate upward. Don't try to inject ids — cmdk owns them.
+- Use `useCommandState` inside a child of `<Command>` to react to cmdk's internal store changes; outer parent effects race the cmdk scheduler.
+
+**Commit plan:** Additional commit on the same `pend-60-phase1-caret-autocomplete` branch as Session 782. PR will bundle both commits.
+
+---
 
 ## Session 782 — PEND-60 Phase 1 caret-anchored autocomplete (2026-05-18)
 

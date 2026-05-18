@@ -76,7 +76,11 @@ import { ResultCard } from './ResultCard'
 import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
-import { type AutocompleteItem, AutocompletePopover } from './search/AutocompletePopover'
+import {
+  type AutocompleteAriaIds,
+  type AutocompleteItem,
+  AutocompletePopover,
+} from './search/AutocompletePopover'
 import { FilterChipRow } from './search/FilterChipRow'
 import { FilterHelperPopover } from './search/FilterHelperPopover'
 import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
@@ -253,6 +257,7 @@ export function SearchPanel(): React.ReactElement {
   const [autocompleteSelected, setAutocompleteSelected] = useState<string | null>(null)
   const [autocompleteRect, setAutocompleteRect] = useState<DOMRect | null>(null)
   const [autocompleteDismissed, setAutocompleteDismissed] = useState(false)
+  const [autocompleteAriaIds, setAutocompleteAriaIds] = useState<AutocompleteAriaIds | null>(null)
   const pendingCaretRef = useRef<number | null>(null)
   // UX-335 — `cleared` is true iff the user emptied the search input AFTER a
   // search had been performed. Used to surface a `t('search.statusCleared')`
@@ -519,6 +524,29 @@ export function SearchPanel(): React.ReactElement {
   const autocompleteItems = useMemo(() => itemsForAnchor(currentAnchor), [currentAnchor])
   const autocompleteOpen =
     inputFocused && !autocompleteDismissed && autocompleteItems.length > 0 && currentAnchor != null
+  // ARIA 1.1 combobox-with-listbox attrs for the search input. The role
+  // and supporting attrs are stable; `aria-expanded` flips true only
+  // once the popover has reported its live cmdk-generated ids (axe
+  // requires `aria-controls` whenever expanded=true on a combobox, and
+  // those ids land one effect-tick after `autocompleteOpen` toggles).
+  const expanded = autocompleteOpen && autocompleteAriaIds != null
+  const inputComboboxAttrs = useMemo(
+    () => ({
+      role: 'combobox' as const,
+      'aria-autocomplete': 'list' as const,
+      'aria-haspopup': 'listbox' as const,
+      'aria-expanded': expanded,
+      ...(expanded && autocompleteAriaIds != null
+        ? {
+            'aria-controls': autocompleteAriaIds.listboxId,
+            ...(autocompleteAriaIds.activeDescendantId != null
+              ? { 'aria-activedescendant': autocompleteAriaIds.activeDescendantId }
+              : {}),
+          }
+        : {}),
+    }),
+    [expanded, autocompleteAriaIds],
+  )
   // Dismissal is cleared on every keystroke — typing again re-opens.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger, not a body-read dep — re-arm on every new keystroke.
   useEffect(() => {
@@ -837,6 +865,7 @@ export function SearchPanel(): React.ReactElement {
         }}
         invalid={!!regexError}
         inlineError={regexError}
+        comboboxAttrs={inputComboboxAttrs}
         toggleRow={<SearchToggleRow toggles={toggles} onChange={setToggles} />}
         historyDropdown={
           <SearchHistoryDropdown
@@ -858,6 +887,7 @@ export function SearchPanel(): React.ReactElement {
         onSelectedValueChange={setAutocompleteSelected}
         onSelect={handleAutocompleteSelect}
         label={t('search.autocompleteListLabel')}
+        onAriaIdsChange={setAutocompleteAriaIds}
       />
 
       {/* UX-269 — CJK limitation notice sits directly below the input so

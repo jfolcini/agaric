@@ -199,6 +199,46 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     })
   })
 
+  it('wires ARIA combobox attrs and updates aria-activedescendant with the highlight', async () => {
+    render(<SearchPanel />)
+    const input = getInput()
+    input.focus()
+
+    // Closed state: combobox role + aria-expanded=false, no aria-controls
+    // / aria-activedescendant yet.
+    expect(input.getAttribute('role')).toBe('combobox')
+    expect(input.getAttribute('aria-autocomplete')).toBe('list')
+    expect(input.getAttribute('aria-haspopup')).toBe('listbox')
+    expect(input.getAttribute('aria-expanded')).toBe('false')
+    expect(input).not.toHaveAttribute('aria-controls')
+    expect(input).not.toHaveAttribute('aria-activedescendant')
+
+    typeFull(input, 'state:')
+    const popover = await screen.findByTestId('autocomplete-popover')
+
+    // Open: aria-expanded=true and aria-controls / aria-activedescendant
+    // point at real DOM ids inside the popover.
+    await waitFor(() => {
+      expect(input.getAttribute('aria-expanded')).toBe('true')
+    })
+    const listboxId = input.getAttribute('aria-controls')
+    expect(listboxId).toBeTruthy()
+    expect(popover.querySelector(`#${listboxId}`)).not.toBeNull()
+    const activeId = input.getAttribute('aria-activedescendant')
+    expect(activeId).toBeTruthy()
+    const active = document.getElementById(activeId ?? '')
+    expect(active?.getAttribute('aria-selected')).toBe('true')
+
+    // Moving the highlight updates aria-activedescendant to the new id.
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    await waitFor(() => {
+      const nextActive = input.getAttribute('aria-activedescendant')
+      expect(nextActive).toBeTruthy()
+      expect(nextActive).not.toBe(activeId)
+      expect(document.getElementById(nextActive ?? '')?.getAttribute('aria-selected')).toBe('true')
+    })
+  })
+
   it('typing after Escape re-opens the popover (dismissal is single-event)', async () => {
     render(<SearchPanel />)
     const input = getInput()
