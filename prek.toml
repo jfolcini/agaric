@@ -39,6 +39,23 @@ hooks = [
     { id = "conventional-pre-commit", stages = ["commit-msg"], args = [] },
 ]
 
+# DCO sign-off auto-append. Mirrors `git commit -s` so the DCO check on
+# CI (.github/workflows/dco.yml) never rejects a PR for a forgotten
+# `-s`. Runs at prepare-commit-msg so the trailer lands before the
+# editor opens (or before the commit lands for `-m`). The framework
+# passes the commit message file as the single argument when
+# `pass_filenames = true` at this stage.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "dco-signoff"
+name = "DCO sign-off (auto-append)"
+entry = "bash scripts/dco-signoff.sh"
+language = "system"
+stages = ["prepare-commit-msg"]
+pass_filenames = true
+always_run = true
+
 # GitHub Actions workflow lint (catches missing `permissions:` blocks,
 # bad uses syntax, deprecated set-output usage, etc.). Closes the
 # `actions/missing-workflow-permissions` class of CodeQL findings
