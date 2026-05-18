@@ -13,13 +13,21 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { addRecentPage, getRecentPages } from '../recent-pages'
+import { __resetMigrationFlagForTests, addRecentPage, getRecentPages } from '../recent-pages'
 
-const STORAGE_KEY = 'recent_pages'
+// Per FEAT-3 Phase 3 the key is namespaced by the active space. Tests run
+// with `useSpaceStore.currentSpaceId == null`, so the active-space slot is
+// `__legacy__`.
+const STORAGE_KEY = 'recent_pages:__legacy__'
+const LEGACY_UNSCOPED_KEY = 'recent_pages'
 const MAX_RECENT = 10
 
 beforeEach(() => {
   localStorage.clear()
+  // Reset the one-shot migration guard so each test starts from a
+  // clean slate (otherwise the first test to trigger migration shuts
+  // it off for the rest of the file).
+  __resetMigrationFlagForTests()
 })
 
 describe('recent-pages', () => {
@@ -190,6 +198,81 @@ describe('recent-pages', () => {
       const pages = getRecentPages()
       expect(pages).toHaveLength(1)
       expect(pages[0]?.title).toBe('New title')
+    })
+
+    it('does not crash on localStorage quota errors', () => {
+      const orig = Storage.prototype.setItem
+      Storage.prototype.setItem = vi.fn(() => {
+        throw new DOMException('QuotaExceededError', 'QuotaExceededError')
+      })
+      try {
+        expect(() => addRecentPage('PAGE_A', 'First')).not.toThrow()
+      } finally {
+        Storage.prototype.setItem = orig
+      }
+    })
+  })
+
+  describe('legacy-key migration', () => {
+    it('moves a pre-FEAT-3 unscoped `recent_pages` entry into the `__legacy__` slot on first read', () => {
+      const raw = JSON.stringify([
+        { id: 'OLD_A', title: 'From before', visitedAt: '2024-01-01T00:00:00.000Z' },
+      ])
+      localStorage.setItem(LEGACY_UNSCOPED_KEY, raw)
+
+      const pages = getRecentPages()
+
+      expect(pages).toEqual([
+        { id: 'OLD_A', title: 'From before', visitedAt: '2024-01-01T00:00:00.000Z' },
+      ])
+      // Migrated INTO the legacy slot…
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(raw)
+      // …and the old unscoped key is removed.
+      expect(localStorage.getItem(LEGACY_UNSCOPED_KEY)).toBeNull()
+    })
+
+    it('does NOT clobber an existing `__legacy__` slot with stale unscoped data', () => {
+      const fresh = JSON.stringify([
+        { id: 'NEW', title: 'Fresh', visitedAt: '2026-01-01T00:00:00.000Z' },
+      ])
+      const stale = JSON.stringify([
+        { id: 'OLD', title: 'Stale', visitedAt: '2024-01-01T00:00:00.000Z' },
+      ])
+      localStorage.setItem(STORAGE_KEY, fresh)
+      localStorage.setItem(LEGACY_UNSCOPED_KEY, stale)
+
+      const pages = getRecentPages()
+
+      // Fresh data wins.
+      expect(pages).toEqual([{ id: 'NEW', title: 'Fresh', visitedAt: '2026-01-01T00:00:00.000Z' }])
+      // The unscoped key is still cleared (it was migrated away — its
+      // data is just not the source of truth).
+      expect(localStorage.getItem(LEGACY_UNSCOPED_KEY)).toBeNull()
+    })
+
+    it('is idempotent: re-running migration is a no-op once the unscoped key is gone', () => {
+      localStorage.setItem(
+        LEGACY_UNSCOPED_KEY,
+        JSON.stringify([{ id: 'OLD', title: 'Stale', visitedAt: '2024-01-01T00:00:00.000Z' }]),
+      )
+      // First read migrates.
+      getRecentPages()
+      __resetMigrationFlagForTests()
+      // Second read should find nothing to migrate (legacy key cleared).
+      expect(() => getRecentPages()).not.toThrow()
+      expect(localStorage.getItem(LEGACY_UNSCOPED_KEY)).toBeNull()
+    })
+
+    it('survives a localStorage that throws during migration', () => {
+      const orig = Storage.prototype.getItem
+      Storage.prototype.getItem = vi.fn(() => {
+        throw new DOMException('SecurityError', 'SecurityError')
+      })
+      try {
+        expect(() => getRecentPages()).not.toThrow()
+      } finally {
+        Storage.prototype.getItem = orig
+      }
     })
   })
 })

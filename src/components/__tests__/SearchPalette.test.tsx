@@ -150,7 +150,7 @@ describe('SearchPalette — visibility', () => {
 describe('SearchPalette — empty state', () => {
   it('shows recent pages when no query is typed', () => {
     localStorage.setItem(
-      'recent_pages',
+      'recent_pages:SPACE_TEST',
       JSON.stringify([
         { id: 'PAGE_RECENT', title: 'Recent Project', visitedAt: '2026-05-01T00:00:00Z' },
       ]),
