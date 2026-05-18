@@ -2,10 +2,55 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 778 (latest entry 2026-05-17).
+- **This file:** sessions 401 – 779 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1203+ REVIEW-LATER items across 778 sessions.
+- **Previously-resolved counter:** 1209+ REVIEW-LATER items across 779 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 779 — Search overhaul (6 PENDs in one autonomous loop) (2026-05-17/18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-17 / 2026-05-18 (overnight autonomous loop) |
+| **Subagents** | 1 orchestrator + 8 build subagents (PEND-50: 3, PEND-52: 1, PEND-54: 2 including fix-up, PEND-55: 1, PEND-51: 1, PEND-53: 1; plus prek-driven inline fixups) |
+| **Items closed** | PEND-50, PEND-51, PEND-52, PEND-53, PEND-54, PEND-55 (six pending plans shipped + deleted) |
+| **Items modified** | pending/README.md (6 rows removed); pending/NOTES-AUTONOMOUS-2026-05-17.md (created — decision log) |
+| **Tests added** | +280 frontend vitest; +60 backend nextest. Suite at session end: 10121 / 10121 vitest, 3758 / 3758 cargo nextest |
+| **Files touched** | ~85 across 6 commits (95a55773, c6646da4, a4271358, 8bb5f669, c9c44eb8, e7cc00bd) |
+
+**Summary:** The maintainer asked for an autonomous overnight loop through `pending/`; this session shipped the entire search-overhaul trilogy of trilogies in dependency order. PEND-50 lays the foundation (IPC struct migration to `SearchFilter` + `SearchBlockRow`, page-grouped renderer reusing `<CollapsibleGroupList>`, FTS5 `snippet()` highlighting via React-node rendering — no `dangerouslySetInnerHTML`). PEND-52 reclaims `Ctrl+F` for in-page find via the CSS Custom Highlight Registry (deviation from the plan's ProseMirror-Decoration design — the roving-editor pattern only has one ProseMirror instance at a time). PEND-54 replaces the legacy `+ Page` / `+ Tag` chip UI with a parsed-AST filter syntax framework + caret autocomplete primitives + backend GLOB filters. PEND-55 adds the `Aa` / `Ab|` / `.*` toggle row + Rust `regex` post-FTS filter (linear-time, size-limited) + per-space history dropdown. PEND-51 lands the Cmd+K palette dialog with parallel `searchBlocks` calls, Jaro-Winkler fuzzy rescorer, `[[page]]` autocomplete, escalation footer. PEND-53 extends PEND-54's parser with `state:` / `priority:` / `due:` / `scheduled:` / `prop:` property tokens + EXISTS sub-selects against `block_properties`.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 21 → 15 (six PENDs deleted from `pending/`)
+- **Previously resolved:** 1203+ → 1209+ across 778 → 779 sessions.
+
+**Files touched (this session):**
+- New code: ~6000 LOC across the 6 commits (parser + chip projections + palette + history + property filters + toolbar + matcher).
+- New docs: `docs/SEARCH.md`, `docs/architecture/search.md`, `src/components/help/SearchHelpDialog.tsx` (skeleton + section fills).
+- AGENTS.md gained ~12 new invariants under a "Search & FTS" section.
+
+**Verification (every commit):**
+- `cargo nextest run --profile ci` clean.
+- `cargo clippy --all-targets -- -D warnings` clean.
+- `npx vitest run` clean.
+- `npx tsc -b --noEmit` clean (the stricter mode prek uses).
+- `npx biome check src/` clean.
+- `prek run --all-files` clean (all 49 hooks).
+
+**Process notes:**
+- Each cycle followed PROMPT.md: PLAN (read PEND file) → BUILD (parallel subagent dispatch) → TEST (subagent verification gate) → COMMIT (prek `--all-files` + signed commit) → LOG (NOTES file update). Some cycles needed a fix-up subagent pass when prek's stricter `tsc -b` flagged what `tsc --noEmit` accepted.
+- The maintainer was sleeping; every cycle's "open questions" were resolved with the plan's "Recommendation:" answers where present, or pragmatic defaults (logged in `pending/NOTES-AUTONOMOUS-2026-05-17.md`).
+- The `pending/PEND-NN-*.md` file was deleted after each cycle landed; pending/README.md index was updated in the wrap-up commit.
+- The autonomous loop deliberately did NOT touch PEND-10 (multi-week, external dependencies), PEND-36 (3 open maintainer decisions), PEND-49 (form-fill), or the Pages-view trio (PEND-56/57/58 — substantial scope, freshly authored in the prior session, deferred to supervised cycle).
+
+**Lessons learned (for future sessions):**
+- Subagents reporting "tsc --noEmit clean" don't always satisfy `tsc -b --noEmit` (the stricter mode prek runs); inline fix-ups for `exactOptionalPropertyTypes` / index-signature accesses cost ~1 prek cycle each. Future autonomous prompts should require `tsc -b --noEmit` as the verification gate, not `tsc --noEmit`.
+- Pre-flight constraint lists ("axe-presence in every component test", "IPC-error-path test in every invoking component") consistently catch one or two issues per cycle; document these in subagent prompts upfront.
+- Plans that defer a rendering layer (caret-anchored popover from PEND-54) cascade — the next dependent plan inherits the deferral. Note in NOTES so it's visible to the next supervised cycle.
+
+**Commit plan:** six feature commits + one wrap-up docs commit, all pushed to `main` via `--no-verify` (per the standing maintainer-direct-push pattern). Tagged release not bumped — the maintainer decides when to cut 0.1.36.
+
+---
 
 ## Session 778 — MAINT-111 M3 close-out + CI green-up (2026-05-17)
 

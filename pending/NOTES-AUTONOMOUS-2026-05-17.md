@@ -139,5 +139,47 @@ I took the **Recommendation** verbatim unless noted otherwise.
 
 ## State at end of autonomous cycle
 
-(populated when the loop terminates — final commit, final CI status, what's
-landed vs. what's not, anything red the maintainer needs to triage)
+**Six cycles landed in dependency order:**
+
+| Cycle | PEND | Commit | Headline |
+|---|---|---|---|
+| 1 | PEND-50 | `95a55773` | IPC struct migration + page-grouped renderer + FTS5 snippet highlighting |
+| 2 | PEND-52 | `c6646da4` | In-page find (`Ctrl+F`) + keyboard rebind |
+| 3 | PEND-54 | `a4271358` | Inline filter syntax framework + glob/tag filters |
+| 4 | PEND-55 | `8bb5f669` | Toggle row (`Aa` / `Ab\|` / `.*`) + Rust regex + per-space history |
+| 5 | PEND-51 | `c9c44eb8` | Cmd/Ctrl+K palette dialog |
+| 6 | PEND-53 | `e7cc00bd` | Property/metadata filters (state / priority / due / scheduled / prop:) |
+
+**Final test count:** 10121 / 10121 vitest, 3758 / 3758 cargo nextest. All clippy / biome / TypeScript / prek hooks pass on every commit.
+
+**What's still in `pending/`** (deliberately not touched):
+
+- **PEND-10** — iroh transport adoption (multi-week; needs maintainer iroh-stability spike decision).
+- **PEND-36** — Play Store publishing (3 open maintainer decisions D1-D3).
+- **PEND-49** — OpenSSF Silver roadmap (requires the maintainer to fill in the self-assessment form).
+- **PEND-56/57/58** — Pages view trio (~55-67 h combined; freshly authored in the same session; deferred to the maintainer's next supervised cycle).
+- `design-system-perf-review-2026-05-09.md` — two open items, not autonomously scoped.
+
+**Aggregate review-worthy decisions** (consolidated; full per-cycle detail above):
+
+1. **PEND-52 — CSS Custom Highlight Registry instead of ProseMirror Decorations.** Architectural — Agaric's roving-editor pattern means only the focused block has a ProseMirror instance. Documented inline + in `docs/SEARCH.md`. **This is the biggest single deviation; please review.**
+2. **PEND-52 — mobile entry point skipped.** Pure-touch users have no way to open in-page find (desktop keyboard binding works, including on laptop-with-touchscreen). Needs UX research before adding.
+3. **PEND-54 — caret-anchored autocomplete popover rendering deferred.** Pure detection/replacement primitives are landed and tested; the *anchored popover* that renders suggestions next to the caret is unimplemented. Carried through PEND-55 (history-recall arrow-key contention) and PEND-53 (value list for `state:` / `prop:` etc.).
+4. **PEND-51 — two parallel `searchBlocks` calls instead of a new `search_blocks_partitioned` IPC.** One extra FTS scan per palette keystroke; cap is small (`MAX_PAGE_GROUPS = 8`). Backend optimisation deferred.
+5. **PEND-55 — toggle state persisted to localStorage** (plan was ambiguous; pre-flight resolved as persisted).
+6. **PEND-55 — regex-mode ordering uses `b.id DESC`** (no `created_at` column; ULIDs sort time-wise).
+7. **PEND-53 — `not-state:` / `not-priority:` are visual-only in v1.** Chips render, IPC receives nothing; preserves OR-set semantics safely until a real use case demands the inversion.
+8. **PEND-53 — `prop:KEY=VALUE` matches `value_text` only.** Numeric/date/ref-typed property values need dedicated tokens (`propnum:` / `propdate:` / `propref:`) — not designed in this autonomous pass.
+9. **`AGENTS.md` extended without explicit per-section approval.** Pre-flight authorised additive edits in the "Documentation deliverables" tables of each plan. Five new invariant sections were appended under "Search & FTS"; review when convenient and prune anything that doesn't earn its keep.
+
+**CI status:** every commit pushed to `main` via `--no-verify` (per the maintainer's standing `--no-verify-on-main` pattern for solo maintainer pushes). Each commit went through full local `prek run --all-files` before push.
+
+**Follow-ups consolidated for the next supervised cycle:**
+
+1. Caret-anchored autocomplete popover rendering (carries through PEND-54 → 55 → 53).
+2. `+ Filter ▾` popover extension: add `+ State` / `+ Priority` / `+ Date` / `+ Property…` categories to `FilterHelperPopover`.
+3. Backend `search_blocks_partitioned` IPC if palette-keystroke FTS load becomes a perf concern.
+4. `propnum:` / `propdate:` / `propref:` tokens for typed property values.
+5. Mobile entry point for in-page find (long-press menu / page-header action sheet).
+6. Pages view trio (PEND-56/57/58) — start with PEND-56 foundation.
+7. `not-state:` / `not-priority:` IPC wiring if demand surfaces.
