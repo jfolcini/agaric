@@ -102,7 +102,7 @@ export function FilterHelperPopover({
         {mode === 'menu' && (
           <div data-testid="filter-helper-menu" role="menu">
             <PopoverMenuItem
-              onSelect={() => {
+              onClick={() => {
                 setMode('tag')
                 void fetchTags('')
               }}
@@ -110,11 +110,11 @@ export function FilterHelperPopover({
               <span className="font-medium">{t('search.filterCategory.tag')}</span>
               <span className="ml-2 text-xs text-muted-foreground">tag:#name</span>
             </PopoverMenuItem>
-            <PopoverMenuItem onSelect={() => setMode('pathInclude')}>
+            <PopoverMenuItem onClick={() => setMode('pathInclude')}>
               <span className="font-medium">{t('search.filterCategory.pathInclude')}</span>
               <span className="ml-2 text-xs text-muted-foreground">path:Journal/*</span>
             </PopoverMenuItem>
-            <PopoverMenuItem onSelect={() => setMode('pathExclude')}>
+            <PopoverMenuItem onClick={() => setMode('pathExclude')}>
               <span className="font-medium">{t('search.filterCategory.pathExclude')}</span>
               <span className="ml-2 text-xs text-muted-foreground">not-path:Archive/**</span>
             </PopoverMenuItem>
