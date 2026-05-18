@@ -35,10 +35,10 @@ describe('path-history', () => {
   })
 
   it('deduplicates by jumping the repeated entry to the top', () => {
-    recordPathHistory('SPACE_A', 'A')
-    recordPathHistory('SPACE_A', 'B')
-    recordPathHistory('SPACE_A', 'A')
-    expect(getPathHistory('SPACE_A')).toEqual(['A', 'B'])
+    recordPathHistory('SPACE_A', 'Alpha')
+    recordPathHistory('SPACE_A', 'Bravo')
+    recordPathHistory('SPACE_A', 'Alpha')
+    expect(getPathHistory('SPACE_A')).toEqual(['Alpha', 'Bravo'])
   })
 
   it('partitions history per space', () => {
@@ -94,6 +94,24 @@ describe('path-history', () => {
     clearPathHistory(null)
     clearPathHistory('')
     expect(getPathHistory('SPACE_A')).toEqual(['A/*'])
+  })
+
+  it('rejects single-character / punctuation-only globs as junk', () => {
+    recordPathHistory('SPACE_A', 'a')
+    recordPathHistory('SPACE_A', '*')
+    recordPathHistory('SPACE_A', '/')
+    recordPathHistory('SPACE_A', '?')
+    expect(getPathHistory('SPACE_A')).toEqual([])
+
+    // Two-character bare words still qualify (substring-match queries).
+    recordPathHistory('SPACE_A', 'Wo')
+    expect(getPathHistory('SPACE_A')).toEqual(['Wo'])
+
+    // Two-character globs with `/` or `*` qualify.
+    recordPathHistory('SPACE_A', 'A/')
+    expect(getPathHistory('SPACE_A')).toEqual(['A/', 'Wo'])
+    recordPathHistory('SPACE_A', '*B')
+    expect(getPathHistory('SPACE_A')).toEqual(['*B', 'A/', 'Wo'])
   })
 
   it('returns [] when the stored value is corrupted', () => {

@@ -2,10 +2,65 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 784 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 785 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 784 sessions.
+- **Previously-resolved counter:** 1214+ REVIEW-LATER items across 785 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 785 — PEND-60 Phase 3 e2e + docs + UX polish (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | 2 build (Playwright + docs) + orchestrator-direct polish |
+| **Items closed** | PEND-60 (plan deleted from `pending/`; feature complete across Phases 1 / 1.5 / 2 / 3) |
+| **Items modified** | `pending/README.md` (PEND-60 row removed; recommended-order copy updated) |
+| **Tests added** | +2 frontend unit (path-history junk filter + popover loading hint) / +2 frontend integration (caret-sync after history recall + the e2e covers the rest) / +5 Playwright e2e / +0 backend |
+| **Files touched** | 9 (1 new e2e + 1 modified docs + 1 modified README + 1 deleted PEND + 4 source edits + 1 session-log) |
+
+**Summary:** Closed PEND-60 by shipping Phase 3 (Playwright e2e + `docs/SEARCH.md` autocomplete subsection) and folding in three UX polish items flagged in Session 784's review:
+
+- **Loading hint** — `useAutocompleteSources`'s `loading` field now flows into `AutocompletePopover`; when items are empty and a dynamic source is in-flight (currently only `tag:`) the popover renders a "Searching…" status row instead of staying hidden.
+- **Path-history junk filter** — `recordPathHistory` rejects globs shorter than 2 chars or that are pure punctuation, so accidental submits like `path:*` or `path:a` don't pollute the per-space MRU.
+- **Caret-sync after external `setQuery`** — new `setQueryAndCaret` helper wraps every non-typing setter (history recall, palette handoff, filter-chip adds, autocomplete pick, clear-all). The helper writes the target offset to `pendingCaretRef` so the existing `[query]` effect syncs `input.selectionStart` + `caretPos` after React commits. Closes the stale-caret hazard where history recall could briefly re-open autocomplete against the previous caret position.
+
+The Playwright spec at `e2e/autocomplete.spec.ts` covers the plan's headline scenario (type `state:` → see popover → click TODO → input is `state:TODO `) plus keyboard nav, Escape dismissal, and the ARIA combobox-with-listbox wiring landed in Phase 1.5.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER row touched).
+- **Previously resolved:** 1213+ → 1214+ across 784 → 785 sessions (PEND-60 is a `pending/` plan, not a REVIEW-LATER row — the counter convention bumps when a `pending/` plan or REVIEW-LATER row closes).
+
+**Files touched (this session):**
+- `e2e/autocomplete.spec.ts` (+116 LOC, new) — 5 Chromium tests against the Vite dev server + mock backend. All pass on first real run (~13s total).
+- `docs/SEARCH.md` (+~50 lines) — new `### Autocomplete` subsection between Token vocabulary and Date predicates. Covers triggers, per-prefix value sources table, keyboard model, history-recall precedence, regex-mode disable, ARIA semantics, mobile note (defers to PEND-62), and the anchor caveat.
+- `src/components/search/AutocompletePopover.tsx` — adds `loading?` + `loadingLabel?` props; renders a `<div role="status">` hint when items is empty and loading is true; updated the early-return gate so the popover stays mounted during loading.
+- `src/components/__tests__/AutocompletePopover.test.tsx` — +1 test for the loading hint.
+- `src/lib/path-history.ts` — adds `isMeaningfulGlob` gate (rejects `length < 2` and pure-punctuation strings); `recordPathHistory` runs it before storing.
+- `src/lib/__tests__/path-history.test.ts` — +1 test for the junk filter; dedup test changed sentinel values from `'A'`/`'B'` to `'Alpha'`/`'Bravo'` (the old single-char values would now be rejected).
+- `src/components/SearchPanel.tsx` — adds `setQueryAndCaret` helper; rewires `cycling`, palette handoff, `handlePickHistory`, `handleAutocompleteSelect`, `patchQuery`, `handleClearAllFilters` through it; forwards `loading` + `loadingLabel={t('search.searching')}` to the popover; updates `autocompleteOpen` gate to include `loading` so the hint stays visible.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` — +1 integration test verifying caret lands at end of recalled history entry and no spurious popover fires.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — **deleted** (plan complete per `pending/README.md` convention).
+- `pending/README.md` — PEND-60 row removed; the "Search post-review follow-ups" copy updated to note PEND-60 shipped.
+
+**Verification:**
+- `npx vitest run` — 10131+ frontend tests pass (the per-feature suite — `SearchPanel.test.tsx` + `SearchPanel.autocomplete.test.tsx` + `AutocompletePopover.test.tsx` + `caret-anchor.test.ts` + `path-history.test.ts` + `useAutocompleteSources.test.ts` — runs 119/119).
+- `npx playwright test e2e/autocomplete.spec.ts` — 5/5 pass (~13s).
+- `npx tsc --noEmit` — clean.
+- `./node_modules/.bin/biome check <files>` — clean.
+
+**Process notes:**
+- Build subagents ran in parallel against non-overlapping files (Playwright spec + docs subsection). Polish was orchestrator-direct because each item was small (5-30 LOC) and they touched overlapping surfaces in `SearchPanel.tsx` (the `setQueryAndCaret` introduction touched the same paths the autocomplete-pick already uses).
+- The path-history junk filter's regex (`/[/*?[{]/` OR `/[A-Za-z0-9]{2}/`) keeps bare-word globs like `Journal` (the backend wraps them to `*Journal*`) while rejecting single chars and pure-symbol queries. The dedup test broke until I bumped the sentinels from `'A'`/`'B'` to two-character strings — flagged as a lesson below.
+- The loading-hint gate touches two coupled places: the `AutocompletePopover` early-return now allows `items.length === 0 && loading`, AND the `SearchPanel` `autocompleteOpen` boolean ORs `autocompleteLoading` into the mount condition. Either one alone wouldn't surface the hint.
+
+**Lessons learned (for future sessions):**
+- When tightening a validation rule on a utility, grep the existing tests for sentinel values that may incidentally fail. Single-character `'A'` / `'B'` are common test placeholders but are also exactly the shape of pathological real inputs the rule should reject.
+- Stale-caret bugs in controlled inputs are silent: `<input value={state}>` doesn't sync `selectionStart` when `state` changes. Any code path that writes to the state via something other than the input's own `onChange` needs to also push the caret target. Wrapping `setQuery` in a `setQueryAndCaret(value, caret?)` helper is the right shape — making the wrapper the only external setter eliminates the class of bugs.
+- The Phase 2 UX review's "discard `loading`" finding looked like a small forwarding job but actually required coupled changes (popover gate + parent open-state) to be observable. Worth surfacing the full coupling in the review next time so the orchestrator can size the fix correctly.
+
+**Commit plan:** Single commit on `pend-60-phase1-caret-autocomplete` bundling Phase 3 + 3 polish items. Branch will hold 4 commits total (Phase 1, 1.5, 2, 3+polish); PR-ready.
+
+---
 
 ## Session 784 — PEND-60 Phase 2 dynamic value sources (2026-05-18)
 

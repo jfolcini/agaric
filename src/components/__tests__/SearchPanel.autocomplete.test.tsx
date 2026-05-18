@@ -16,6 +16,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
 import { clearPathHistory, getPathHistory, recordPathHistory } from '../../lib/path-history'
+import { useSearchHistoryStore } from '../../stores/search-history'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
@@ -36,6 +37,7 @@ beforeEach(() => {
   localStorage.clear()
   _resetPropertyKeysCacheForTest()
   clearPathHistory('SPACE_TEST')
+  useSearchHistoryStore.setState({ bySpace: {} })
   mockedInvoke.mockResolvedValue(emptyPage)
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
@@ -315,6 +317,24 @@ describe('SearchPanel autocomplete dynamic sources (PEND-60 Phase 2)', () => {
     await waitFor(() => {
       expect(getPathHistory('SPACE_TEST')).toContain('Notes/*')
     })
+  })
+
+  it('syncs caret to end-of-query after history recall', async () => {
+    useSearchHistoryStore.getState().push('SPACE_TEST', 'state:DONE older')
+    render(<SearchPanel />)
+    const input = getInput()
+    input.focus()
+    // Input is empty -> ArrowUp recalls the most-recent entry through
+    // `useSearchHistoryCycling`. Without caret sync the controlled
+    // input's selectionStart would lag at 0, causing the autocomplete
+    // detector to misread the active anchor.
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    await waitFor(() => {
+      expect(input.value).toBe('state:DONE older')
+    })
+    expect(input.selectionStart).toBe(input.value.length)
+    // No spurious popover (caret sits past whitespace -> no anchor).
+    expect(screen.queryByTestId('autocomplete-popover')).not.toBeInTheDocument()
   })
 
   it('surfaces property-key suggestions from listPropertyKeys when typing `prop:`', async () => {

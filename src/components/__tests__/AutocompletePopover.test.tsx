@@ -77,6 +77,30 @@ describe('AutocompletePopover', () => {
     expect(screen.queryByTestId('autocomplete-popover')).not.toBeInTheDocument()
   })
 
+  it('renders the loading hint when items=[] but loading=true', async () => {
+    render(
+      <AutocompletePopover
+        open
+        anchorRect={SAMPLE_RECT}
+        items={[]}
+        selectedValue={null}
+        onSelectedValueChange={vi.fn()}
+        onSelect={vi.fn()}
+        label="Values"
+        loading
+        loadingLabel="Searching tags…"
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('autocomplete-popover')).toBeInTheDocument()
+    })
+    const hint = screen.getByTestId('autocomplete-loading')
+    expect(hint).toHaveTextContent('Searching tags…')
+    expect(hint).toHaveAttribute('role', 'status')
+    // No selectable items rendered while loading with empty list.
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+  })
+
   it('renders all items as options when open + anchored + non-empty', async () => {
     render(
       <AutocompletePopover

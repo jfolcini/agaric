@@ -216,6 +216,18 @@ export function SearchPanel(): React.ReactElement {
   const [autocompleteDismissed, setAutocompleteDismissed] = useState(false)
   const [autocompleteAriaIds, setAutocompleteAriaIds] = useState<AutocompleteAriaIds | null>(null)
   const pendingCaretRef = useRef<number | null>(null)
+  // Used by every "external" `setQuery` call (history recall, palette
+  // handoff, filter-chip adds, autocomplete pick, …). Stores the target
+  // caret in `pendingCaretRef` so the `[query]` effect can sync
+  // `input.selectionStart` + `caretPos` after React commits the new
+  // value. Without this, the input's caret stays at its previous
+  // position (the input is controlled), which makes the autocomplete
+  // detector fire against a stale offset and can briefly re-open the
+  // popover with the wrong anchor.
+  const setQueryAndCaret = useCallback((value: string, caret?: number): void => {
+    pendingCaretRef.current = caret ?? value.length
+    setQuery(value)
+  }, [])
   // UX-335 — `cleared` is true iff the user emptied the search input AFTER a
   // search had been performed. Used to surface a `t('search.statusCleared')`
   // announcement in the aria-live status region (separate from pre-search).
@@ -294,12 +306,12 @@ export function SearchPanel(): React.ReactElement {
   useEffect(() => {
     const pending = useSearchPaletteStore.getState().pendingViewQuery
     if (pending != null && pending.length > 0) {
-      setQuery(pending)
+      setQueryAndCaret(pending)
       setDebouncedQuery(pending)
       setSearched(true)
       useSearchPaletteStore.getState().setPendingViewQuery(null)
     }
-  }, [])
+  }, [setQueryAndCaret])
 
   // PEND-54 — one-time migration toast pointing users at the help
   // dialog so they discover the inline filter syntax.
@@ -469,7 +481,7 @@ export function SearchPanel(): React.ReactElement {
   const historyEntries = useSearchHistoryStore((s) => selectHistoryForSpace(s, currentSpaceId))
   const pushHistory = useSearchHistoryStore((s) => s.push)
   const clearHistory = useSearchHistoryStore((s) => s.clear)
-  const cycling = useSearchHistoryCycling(historyEntries, query, setQuery)
+  const cycling = useSearchHistoryCycling(historyEntries, query, setQueryAndCaret)
 
   // PEND-60 Phase 1 — caret-anchored autocomplete.
   // The active anchor is suppressed in regex mode so structured-filter
@@ -478,12 +490,15 @@ export function SearchPanel(): React.ReactElement {
     () => (toggles.isRegex ? null : detectAutocompleteAnchor(query, caretPos)),
     [toggles.isRegex, query, caretPos],
   )
-  const { items: autocompleteItems } = useAutocompleteSources({
+  const { items: autocompleteItems, loading: autocompleteLoading } = useAutocompleteSources({
     anchor: currentAnchor,
     spaceId: currentSpaceId,
   })
   const autocompleteOpen =
-    inputFocused && !autocompleteDismissed && autocompleteItems.length > 0 && currentAnchor != null
+    inputFocused &&
+    !autocompleteDismissed &&
+    currentAnchor != null &&
+    (autocompleteItems.length > 0 || autocompleteLoading)
   // ARIA 1.1 combobox-with-listbox attrs for the search input. The role
   // and supporting attrs are stable; `aria-expanded` flips true only
   // once the popover has reported its live cmdk-generated ids (axe
@@ -561,8 +576,7 @@ export function SearchPanel(): React.ReactElement {
         currentAnchor,
         value,
       )
-      pendingCaretRef.current = nextCaret
-      setQuery(nextValue)
+      setQueryAndCaret(nextValue, nextCaret)
       setAutocompleteSelected(null)
       setAutocompleteDismissed(true)
       debounced.cancel()
@@ -570,7 +584,7 @@ export function SearchPanel(): React.ReactElement {
       setTyping(true)
       debounced.schedule(nextValue)
     },
-    [currentAnchor, query, caretPos, debounced],
+    [currentAnchor, query, caretPos, debounced, setQueryAndCaret],
   )
 
   // PEND-60 Phase 1 — autocomplete keyboard helpers. Extracted to keep
@@ -618,14 +632,14 @@ export function SearchPanel(): React.ReactElement {
 
   const handlePickHistory = useCallback(
     (entry: string) => {
-      setQuery(entry)
+      setQueryAndCaret(entry)
       setDebouncedQuery(entry)
       setSearched(true)
       pushHistory(currentSpaceId, entry)
       debounced.cancel()
       setTyping(false)
     },
-    [currentSpaceId, debounced, pushHistory],
+    [currentSpaceId, debounced, pushHistory, setQueryAndCaret],
   )
 
   const handleClearHistory = useCallback(() => {
@@ -776,15 +790,18 @@ export function SearchPanel(): React.ReactElement {
   )
 
   // PEND-54 — chip / helper handlers. Each appends a filter token
-  // to the AST and re-serialises the canonical query string.
+  // to the AST and re-serialises the canonical query string. The
+  // serialised result becomes the new caret-end so autocomplete fires
+  // against the right anchor on the next render.
   function patchQuery(next: (currentAst: typeof ast) => typeof ast) {
-    setQuery((curr) => serialize(next(parse(curr))))
+    const nextValue = serialize(next(parse(query)))
+    setQueryAndCaret(nextValue)
   }
   function handleRemoveFilter(index: number) {
     patchQuery((a) => removeFilterAt(a, index))
   }
   function handleClearAllFilters() {
-    setQuery(debouncedAst.freeText)
+    setQueryAndCaret(debouncedAst.freeText)
   }
   function handleAddTag(name: string) {
     const token: FilterToken = { kind: 'tag', value: name, span: [0, 0] }
@@ -855,6 +872,8 @@ export function SearchPanel(): React.ReactElement {
         onSelectedValueChange={setAutocompleteSelected}
         onSelect={handleAutocompleteSelect}
         label={t('search.autocompleteListLabel')}
+        loading={autocompleteLoading}
+        loadingLabel={t('search.searching')}
         onAriaIdsChange={setAutocompleteAriaIds}
       />
 

@@ -55,6 +55,16 @@ export interface AutocompletePopoverProps {
   onSelect: (value: string) => void
   /** ARIA label for the listbox. */
   label: string
+  /** True while a dynamic source (currently `tag:`) is awaiting an
+   *  IPC roundtrip. When loading is true and items is empty the
+   *  popover stays mounted with a "loading" hint instead of hiding so
+   *  the user gets a "fetching suggestions" affordance rather than
+   *  dead air. Ignored when items is non-empty (stale-while-loading
+   *  keeps the previous results visible). */
+  loading?: boolean
+  /** Text shown in the loading hint row. Defaults to `'Loading…'`;
+   *  pass a translated string in production. */
+  loadingLabel?: string
   /** Fires after each render with the live cmdk-generated listbox id
    *  and active-option id. Caller forwards these to the owning input's
    *  `aria-controls` / `aria-activedescendant`. `null` on unmount. */
@@ -88,6 +98,8 @@ export function AutocompletePopover({
   onSelectedValueChange,
   onSelect,
   label,
+  loading = false,
+  loadingLabel = 'Loading…',
   onAriaIdsChange,
 }: AutocompletePopoverProps): React.ReactElement | null {
   // virtualRef must remain stable across renders; only its `current`
@@ -141,7 +153,10 @@ export function AutocompletePopover({
     [onAriaIdsChange],
   )
 
-  if (!open || anchorRect == null || items.length === 0) {
+  // Keep the popover mounted when loading even with no items yet, so
+  // the "Searching…" hint surfaces. Hide only when there's genuinely
+  // nothing to show.
+  if (!open || anchorRect == null || (items.length === 0 && !loading)) {
     return null
   }
 
@@ -168,16 +183,27 @@ export function AutocompletePopover({
         >
           <SelectedItemBridge onSync={syncAriaIds} />
           <CommandList label={label}>
-            {items.map((item) => (
-              <CommandItem
-                key={item.value}
-                value={item.value}
-                onSelect={() => onSelect(item.value)}
-                data-testid={`autocomplete-item-${item.value}`}
+            {items.length === 0 && loading ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="px-3 py-2 text-sm text-muted-foreground"
+                data-testid="autocomplete-loading"
               >
-                {item.label ?? item.value}
-              </CommandItem>
-            ))}
+                {loadingLabel}
+              </div>
+            ) : (
+              items.map((item) => (
+                <CommandItem
+                  key={item.value}
+                  value={item.value}
+                  onSelect={() => onSelect(item.value)}
+                  data-testid={`autocomplete-item-${item.value}`}
+                >
+                  {item.label ?? item.value}
+                </CommandItem>
+              ))
+            )}
           </CommandList>
         </Command>
       </PopoverContent>
