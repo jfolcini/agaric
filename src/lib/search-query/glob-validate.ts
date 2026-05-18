@@ -99,7 +99,6 @@ function parseSegments(pattern: string): Segment[] {
       const end = pattern.indexOf('}', i + 1)
       if (end === -1) {
         buf = pattern.slice(i)
-        i = pattern.length
         break
       }
       const alts = pattern
