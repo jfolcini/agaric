@@ -97,6 +97,16 @@ export function SelectionBubbleMenu({
   const { t } = useTranslation()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [savedSelection, setSavedSelection] = useState<{ from: number; to: number } | null>(null)
+  // Snapshot of the existing link captured when the popover opens via Ctrl+K
+  // on a link. `state.link` (from useEditorState) can lag or read false at
+  // popover-render time when the cursor sits at a link-mark boundary or when
+  // Radix's focus management transiently disturbs the editor selection. The
+  // snapshot is the source of truth for edit-mode rendering until the
+  // popover closes.
+  const [editingLinkSnapshot, setEditingLinkSnapshot] = useState<{
+    url: string
+    label: string
+  } | null>(null)
 
   // Anchor the link popover to the editor's selection rect rather than to the
   // bubble-menu button. The button lives inside the BubbleMenu plugin's
@@ -144,15 +154,24 @@ export function SelectionBubbleMenu({
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ from: number; to: number }>).detail
 
-      if (editor.isActive('link')) {
-        const range = getLinkMarkRange(editor)
-        if (range) {
-          setSavedSelection(range)
-          setLinkPopoverOpen(true)
-          return
+      // Probe for a link mark via getMarkRange — works even when the cursor
+      // is at a mark boundary (where editor.isActive('link') can be false).
+      const range = getLinkMarkRange(editor)
+      if (range) {
+        const url = (editor.getAttributes('link')['href'] as string) ?? ''
+        let label = ''
+        try {
+          label = editor.state.doc.textBetween(range.from, range.to)
+        } catch {
+          // Stale range
         }
+        setEditingLinkSnapshot({ url, label })
+        setSavedSelection(range)
+        setLinkPopoverOpen(true)
+        return
       }
 
+      setEditingLinkSnapshot(null)
       if (detail && detail.from !== detail.to) {
         setSavedSelection(detail)
       } else {
@@ -164,7 +183,12 @@ export function SelectionBubbleMenu({
     return () => dom.removeEventListener('open-link-popover', handler)
   }, [editor])
 
-  const currentUrl = state.link ? ((editor.getAttributes('link')['href'] as string) ?? '') : ''
+  // Edit-mode rendering uses state.link (reactive, picks up live changes) OR
+  // the snapshot captured when the popover was opened on an existing link.
+  const isEditingLink = state.link || editingLinkSnapshot !== null
+  const currentUrl = state.link
+    ? ((editor.getAttributes('link')['href'] as string) ?? '')
+    : (editingLinkSnapshot?.url ?? '')
 
   let currentLabel = ''
   if (state.link) {
@@ -176,6 +200,8 @@ export function SelectionBubbleMenu({
         // Document boundary
       }
     }
+  } else if (editingLinkSnapshot) {
+    currentLabel = editingLinkSnapshot.label
   } else if (savedSelection && savedSelection.from !== savedSelection.to) {
     try {
       currentLabel = editor.state.doc.textBetween(savedSelection.from, savedSelection.to)
@@ -186,6 +212,7 @@ export function SelectionBubbleMenu({
 
   const handleLinkPopoverClose = useCallback(() => {
     setSavedSelection(null)
+    setEditingLinkSnapshot(null)
     setLinkPopoverOpen(false)
   }, [])
 
@@ -264,7 +291,7 @@ export function SelectionBubbleMenu({
           >
             <LinkEditPopover
               editor={editor}
-              isEditing={state.link}
+              isEditing={isEditingLink}
               initialUrl={currentUrl}
               initialLabel={currentLabel}
               onClose={handleLinkPopoverClose}
