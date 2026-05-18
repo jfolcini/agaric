@@ -17,6 +17,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 import { renderRichContent } from './RichContentRenderer'
 
 export interface ResultCardProps {
@@ -44,6 +45,11 @@ export function ResultCard({
     useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
 
+  // The resolve callbacks are stable identities backed by a mutable cache
+  // ref; without subscribing to `version` the memo would render the
+  // `[[ULID]]` fallback indefinitely after a space-switch preload completes.
+  const resolveVersion = useResolveStore((s) => s.version)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
   const richContent = useMemo(
     () =>
       block.content
@@ -66,6 +72,7 @@ export function ResultCard({
       resolveBlockStatus,
       resolveTagName,
       resolveTagStatus,
+      resolveVersion,
     ],
   )
 

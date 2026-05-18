@@ -23,6 +23,7 @@ import { announce } from '../lib/announcer'
 import { dueDateColor, formatCompactDate, formatDate, getTodayString } from '../lib/date-utils'
 import { priorityColor } from '../lib/priority-color'
 import { reportIpcError } from '../lib/report-ipc-error'
+import { useResolveStore } from '../stores/resolve'
 import { DateChipEditor } from './DateChipEditor'
 import { DependencyIndicator } from './DependencyIndicator'
 import { PageLink } from './PageLink'
@@ -323,16 +324,45 @@ function BlockListItemInner({
   dataIndex,
 }: BlockListItemProps): React.ReactElement {
   const { t } = useTranslation()
-  const callbacks = useRichContentCallbacks()
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } =
+    useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
   const [popoverOpen, setPopoverOpen] = useState(false)
   const { reschedule } = useBlockReschedule()
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks are stable (ref-backed) — only content drives the rendered output
+  // The resolve callbacks are stable identities (`useCallback` with empty
+  // deps inside `useRichContentCallbacks`) backed by a mutable cache ref,
+  // so the memo would never recompute on cache repopulation by itself.
+  // Subscribe to `version` (bumped by preload / set / clearAllForSpace)
+  // and include it in the deps so links re-resolve once the space-switch
+  // preload lands — otherwise we render the `[[ULID]]` fallback
+  // indefinitely after a switch. The callbacks themselves are listed
+  // explicitly (rather than biome-ignored) so a future regression that
+  // makes them non-stable surfaces as a memo recompute instead of stale
+  // rendered output.
+  const resolveVersion = useResolveStore((s) => s.version)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
   const richContent = useMemo(
     () =>
-      content ? renderRichContent(content, { interactive: true, onTagClick, ...callbacks }) : null,
-    [content],
+      content
+        ? renderRichContent(content, {
+            interactive: true,
+            onTagClick,
+            resolveBlockTitle,
+            resolveBlockStatus,
+            resolveTagName,
+            resolveTagStatus,
+          })
+        : null,
+    [
+      content,
+      onTagClick,
+      resolveBlockTitle,
+      resolveBlockStatus,
+      resolveTagName,
+      resolveTagStatus,
+      resolveVersion,
+    ],
   )
 
   const handleDateSelect = useCallback(

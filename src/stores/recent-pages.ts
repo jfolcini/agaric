@@ -52,19 +52,33 @@ interface RecentPagesState {
 type RecentState = RecentPagesState
 
 /**
+ * Stable empty fallback used by `selectRecentPagesForSpace`. Returning a
+ * fresh `[]` from a zustand selector each call retriggers every
+ * `useSyncExternalStore` consumer (Object.is equality), which compounded
+ * into a `Maximum update depth exceeded` in App-level tests. Keep the
+ * reference stable so the selector is idempotent.
+ *
+ * Cast to mutable `PageRef[]` at the consumer boundary is safe — the
+ * selector contract is read-only; every consumer treats the returned
+ * array as immutable. We don't widen the public return type to
+ * `readonly PageRef[]` to avoid a TS ripple across every consumer
+ * (`RecentPagesStrip`, `App.tsx`, tests).
+ */
+const EMPTY_PAGE_REFS: readonly PageRef[] = Object.freeze([])
+
+/**
  * Per-space MRU selector. Pass `currentSpaceId` from `useSpaceStore`.
  *
- * Reads the per-space slice keyed by `spaceId`, falling back to the flat
- * `state.recentPages` field when the slice is missing. The flat field is
- * the active-space mirror — `recordVisit` writes both, and the space-
- * switch subscriber swaps the flat field on `currentSpaceId` change. The
- * fall-back lets a partial `setState({ recentPages })` (common in tests)
- * still render through this selector while the per-space slice
- * partitions data between non-active spaces.
+ * Reads the per-space slice keyed by `spaceId`. When `spaceId` is null
+ * (pre-bootstrap), falls back to the flat `recentPages` mirror so the
+ * boot path still renders something. For a real space with no slice
+ * yet, returns the shared empty array — the flat field may still hold
+ * a different space's mirror if the space-switch subscriber hasn't run,
+ * so falling back to it would leak cross-space entries into the strip.
  */
 export function selectRecentPagesForSpace(state: RecentState, spaceId: string | null): PageRef[] {
   if (spaceId == null) return state.recentPages
-  return state.recentPagesBySpace[spaceId] ?? state.recentPages
+  return state.recentPagesBySpace[spaceId] ?? (EMPTY_PAGE_REFS as PageRef[])
 }
 
 export const useRecentPagesStore = create<RecentPagesState>()(
@@ -129,15 +143,20 @@ export const useRecentPagesStore = create<RecentPagesState>()(
  *
  * MAINT-122: subscription mechanics + diff detection live in
  * `createSpaceSubscriber`; this site only owns the recent-pages flush /
- * pull logic. On first fire (`prevKey === newKey`) we seed
- * `recentPagesBySpace[newKey]` from the rehydrated flat list if it's
- * missing, so a returning user migrated from version 0 retains their MRU
- * under the active space.
+ * pull logic. On first fire (`prevKey === newKey`) we only seed the
+ * legacy slot from the rehydrated flat list — seeding a real space's
+ * slice from the flat field is a cross-space leak vector (the flat
+ * field is whichever space was last active when persistence ran).
+ * Real spaces accrue their slice naturally via `recordVisit`.
  */
 createSpaceSubscriber((prevKey, newKey) => {
   const recentState = useRecentPagesStore.getState()
   if (prevKey === newKey) {
-    if (recentState.recentPagesBySpace[newKey] === undefined) {
+    if (
+      newKey === LEGACY_SPACE_KEY &&
+      recentState.recentPagesBySpace[newKey] === undefined &&
+      recentState.recentPages.length > 0
+    ) {
       useRecentPagesStore.setState({
         recentPagesBySpace: {
           ...recentState.recentPagesBySpace,

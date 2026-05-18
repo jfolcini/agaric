@@ -17,6 +17,7 @@ import { logger } from '../lib/logger'
 import { openUrl } from '../lib/open-url'
 import { getProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
+import { useResolveStore } from '../stores/resolve'
 import { AttachmentRenderer } from './AttachmentRenderer'
 import { ImageLightbox } from './ImageLightbox'
 import { QueryResult } from './QueryResult'
@@ -78,7 +79,20 @@ function StaticBlockInner({
   const onTagClickRef = useRef(onTagClick)
   onTagClickRef.current = onTagClick
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: onNavigate captured via ref — see comment above
+  // The resolve callbacks are wired through stable refs (so the memo's
+  // identity doesn't churn even when the consumer passes a fresh closure
+  // each render), but they read a mutable cache. Subscribe to `version`
+  // (bumped by preload / set / clearAllForSpace) so the memo recomputes
+  // once the space-switch preload lands — otherwise inline page-link
+  // chips stay stuck on the `[[ULID]]` fallback after a switch.
+  //
+  // `onNavigate` is the only prop that ALSO affects the produced output
+  // (it gates a `undefined` vs wrapper-fn branch), so it's listed
+  // explicitly. The other resolve props feed unconditional wrappers and
+  // are intentionally captured via refs — listing them would invalidate
+  // the memo on every parent render and defeat the optimization.
+  const resolveVersion = useResolveStore((s) => s.version)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
   const richContent = useMemo(
     () =>
       content
@@ -92,7 +106,7 @@ function StaticBlockInner({
             resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
           })
         : null,
-    [content],
+    [content, onNavigate, resolveVersion],
   )
 
   // MAINT-131 StaticBlock half: read from the BatchAttachmentsProvider

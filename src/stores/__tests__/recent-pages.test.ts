@@ -225,16 +225,40 @@ describe('useRecentPagesStore', () => {
       expect(state.recentPages).toHaveLength(2)
     })
 
-    it('selectRecentPagesForSpace falls back to flat list when slice is missing', () => {
+    it('selectRecentPagesForSpace returns flat only for null space; unknown space yields []', () => {
       useRecentPagesStore.setState({
         recentPages: [{ pageId: 'A', title: 'Alpha' }],
         recentPagesBySpace: {},
       })
       const state = useRecentPagesStore.getState()
-      // Null space → flat
+      // Null space → flat (pre-bootstrap fallback).
       expect(selectRecentPagesForSpace(state, null)).toHaveLength(1)
-      // Unknown space → fall back to flat (per-space slice missing)
-      expect(selectRecentPagesForSpace(state, 'space-unknown')).toHaveLength(1)
+      // Unknown real space → [] (do NOT leak the flat mirror, which
+      // holds whichever space was last active before the swap).
+      expect(selectRecentPagesForSpace(state, 'space-unknown')).toHaveLength(0)
+    })
+
+    it('switching from __legacy__ to a fresh real space does NOT seed the real space slot from the flat mirror', () => {
+      // Start under the legacy space and record two visits there.
+      useSpaceStore.setState({ currentSpaceId: null })
+      useRecentPagesStore.getState().recordVisit({ pageId: 'L1', title: 'Legacy 1' })
+      useRecentPagesStore.getState().recordVisit({ pageId: 'L2', title: 'Legacy 2' })
+
+      expect(useRecentPagesStore.getState().recentPagesBySpace['__legacy__']).toHaveLength(2)
+
+      // Switch to a real space that has never been visited. The
+      // subscriber must flush the legacy mirror into the legacy slot
+      // and pull an empty list into the active mirror — without
+      // seeding `recentPagesBySpace['SPACE_X']` from the flat field,
+      // which is the cross-space leak vector the strip's
+      // `selectRecentPagesForSpace` used to fall through to.
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_X' })
+
+      const state = useRecentPagesStore.getState()
+      expect(state.recentPagesBySpace['SPACE_X']).toBeUndefined()
+      expect(state.recentPages).toEqual([])
+      // Legacy slot retained (no data lost).
+      expect(state.recentPagesBySpace['__legacy__']).toHaveLength(2)
     })
   })
 })
