@@ -61,12 +61,24 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
-      - name: Configure git author for the bump commit
-        # GitHub's bot identity — same convention used by Dependabot,
-        # release-please, and GitHub's own auto-merge commits.
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Import GPG signing key
+        # `bump-version.sh` does `git commit -S` + `git tag -s` because
+        # main has a `required_signatures` ruleset (a bypass would defeat
+        # the rule). The runner has no GPG identity by default, so we
+        # import the maintainer's key from repo secrets (GPG_PRIVATE_KEY
+        # + GPG_PASSPHRASE — see docs/architecture/ci-and-tooling.md for
+        # the setup steps). The action also configures git user.name /
+        # user.email from the key's UID and points commit.gpgsign at it,
+        # so we no longer need the explicit `git config user.*` step that
+        # used the github-actions[bot] identity (which would have made
+        # the signature's author and the commit's author mismatch).
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_tag_gpgsign: true
       - name: Run scripts/bump-version.sh with --commit --tag --push
         # Pass `inputs.version` via env: rather than direct ${{ }}
         # interpolation in the script body — defuses zizmor's
