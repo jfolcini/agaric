@@ -187,7 +187,9 @@ function SortableBlockInner({
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.7 : 1,
+    // Fade the source row hard during drag so it reads as a "lifted"
+    // placeholder rather than competing with the new position.
+    opacity: isDragging ? 0.35 : 1,
     paddingLeft: depth > 0 ? `calc(var(--indent-width) * ${depth})` : undefined,
   }
 
@@ -210,6 +212,9 @@ function SortableBlockInner({
           // desktop text-selection within static blocks still works.
           '[@media(pointer:coarse)]:[-webkit-touch-callout:none]',
           isFocused && 'block-active',
+          // Lifted-placeholder affordance: dashed outline marks the
+          // source row's origin while the overlay floats elsewhere.
+          isDragging && 'outline-dashed outline-1 outline-border rounded-sm',
         )}
         onTouchStart={(e) => {
           handleTouchStart(e)

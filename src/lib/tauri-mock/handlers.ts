@@ -2109,16 +2109,18 @@ export const HANDLERS: Record<string, Handler> = {
     return null
   },
 
-  // PEND-34 — prefix-indexed alias autocomplete used by the [[ picker.
-  // Returns `[page_id, alias, title]` rows ordered shortest-alias first
-  // (then alphabetical), capped at `limit` (default 50). When the IPC
-  // arg's `scope` is `{ kind: 'active', space_id }` (PEND-18 Phase 3),
-  // restricts matches to aliases pointing at pages whose `space`
-  // property equals the wrapped ULID. Mirrors the backend's
+  // Substring alias autocomplete used by the [[ picker. The IPC name
+  // (`prefix`) is historical — matching is now case-insensitive
+  // substring (`LIKE '%q%'`) so aliases behave like FTS-backed page
+  // titles. Returns `[page_id, alias, title]` rows ordered
+  // shortest-alias first (then alphabetical), capped at `limit`
+  // (default 50). When the IPC arg's `scope` is `{ kind: 'active',
+  // space_id }`, restricts matches to aliases pointing at pages whose
+  // `space` property equals the wrapped ULID. Mirrors the backend's
   // `list_page_aliases_by_prefix_inner` shape.
   list_page_aliases_by_prefix: (args) => {
     const a = args as Record<string, unknown>
-    const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
+    const query = ((a['prefix'] as string) ?? '').toLowerCase()
     const limit = (a['limit'] as number | null) ?? 50
     // PEND-18 Phase 3 — IPC arg shape: `scope: SpaceScope`. Recover the
     // legacy `spaceId | null` shape for the active-space-scoping branch.
@@ -2139,7 +2141,7 @@ export const HANDLERS: Record<string, Handler> = {
       }
       const title = (page['content'] as string | null) ?? null
       for (const alias of aliases) {
-        if (alias.toLowerCase().startsWith(prefix)) {
+        if (alias.toLowerCase().includes(query)) {
           rows.push([pid, alias, title])
         }
       }

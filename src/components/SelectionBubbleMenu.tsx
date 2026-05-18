@@ -13,13 +13,13 @@
  * the editor; active marks get `aria-pressed="true"` + `bg-accent`.
  */
 
-import { getMarkRange } from '@tiptap/core'
+import { getMarkRange, posToDOMRect } from '@tiptap/core'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Link2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
@@ -97,6 +97,28 @@ export function SelectionBubbleMenu({
   const { t } = useTranslation()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [savedSelection, setSavedSelection] = useState<{ from: number; to: number } | null>(null)
+
+  // Anchor the link popover to the editor's selection rect rather than to the
+  // bubble-menu button. The button lives inside the BubbleMenu plugin's
+  // detached `menuEl` until the plugin's debounced `show()` runs, so anchoring
+  // there parks the popover at a viewport corner when Ctrl+K fires before the
+  // bubble menu is laid out (or with no selection at all).
+  const virtualAnchorRef = useRef<{ getBoundingClientRect: () => DOMRect }>({
+    getBoundingClientRect: () => new DOMRect(),
+  })
+  virtualAnchorRef.current = {
+    getBoundingClientRect: () => {
+      const range = savedSelection ?? {
+        from: editor.state.selection.from,
+        to: editor.state.selection.to,
+      }
+      if (range.from !== range.to) {
+        return posToDOMRect(editor.view, range.from, range.to)
+      }
+      const coords = editor.view.coordsAtPos(range.from)
+      return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top)
+    },
+  }
 
   const state = useEditorState({
     editor,
@@ -207,28 +229,34 @@ export function SelectionBubbleMenu({
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
+        <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.link')}
+            aria-pressed={state.link}
+            className={cn(state.link && toolbarActiveClass)}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              if (!linkPopoverOpen) {
+                if (state.link) {
+                  const range = getLinkMarkRange(editor)
+                  if (range) setSavedSelection(range)
+                } else if (!editor.state.selection.empty) {
+                  setSavedSelection({
+                    from: editor.state.selection.from,
+                    to: editor.state.selection.to,
+                  })
+                }
+              }
+              setLinkPopoverOpen((prev) => !prev)
+            }}
+          >
+            <Link2 className="h-3.5 w-3.5" />
+          </Button>
+        </Tip>
         <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-          <PopoverAnchor asChild>
-            <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('toolbar.link')}
-                aria-pressed={state.link}
-                className={cn(state.link && toolbarActiveClass)}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  if (!linkPopoverOpen && state.link) {
-                    const range = getLinkMarkRange(editor)
-                    if (range) setSavedSelection(range)
-                  }
-                  setLinkPopoverOpen((prev) => !prev)
-                }}
-              >
-                <Link2 className="h-3.5 w-3.5" />
-              </Button>
-            </Tip>
-          </PopoverAnchor>
+          <PopoverAnchor virtualRef={virtualAnchorRef} />
           <PopoverContent
             align="start"
             className="w-72 max-w-[calc(100vw-2rem)] p-3"

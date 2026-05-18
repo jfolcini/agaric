@@ -470,6 +470,46 @@ async fn list_page_aliases_by_prefix_inner_orders_shortest_first() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_matches_substring() {
+    // Picker parity (this commit) — alias matching uses LIKE '%q%' so a
+    // non-prefix substring query surfaces the alias the same way FTS
+    // surfaces a page whose title contains the query. Without this, a
+    // user with an alias `personal-projects` who types `[[proj` sees the
+    // page "Personal Projects" (via FTS title match) but not the alias.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE_PP", "page", "Personal Projects", None, Some(0)).await;
+    insert_block(&pool, "PAGE_X", "page", "Unrelated", None, Some(0)).await;
+
+    set_page_aliases_inner(&pool, "PAGE_PP", vec!["personal-projects".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "PAGE_X", vec!["other".into()])
+        .await
+        .unwrap();
+
+    let result = list_page_aliases_by_prefix_inner(&pool, "proj", None, &SpaceScope::Global)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.len(),
+        1,
+        "substring query must match middle-of-alias"
+    );
+    assert_eq!(result[0].0, "PAGE_PP");
+    assert_eq!(result[0].1, "personal-projects");
+
+    // Case-insensitive substring match parity — `PROJ` matches the same
+    // way as `proj`.
+    let upper = list_page_aliases_by_prefix_inner(&pool, "PROJ", None, &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(upper.len(), 1);
+    assert_eq!(upper[0].1, "personal-projects");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_escapes_like_metachars() {
     // Mirrors PERF-27's `filter_property_text_contains_pushed_into_sql`:
     // a literal `_` in the query must be matched as a literal, not as

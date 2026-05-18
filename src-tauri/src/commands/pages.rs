@@ -168,14 +168,21 @@ struct PageAliasPrefixRow {
     title: Option<String>,
 }
 
-/// List page aliases whose alias starts with `prefix` (case-insensitive,
-/// `COLLATE NOCASE` matches the index on `page_aliases.alias`).
+/// List page aliases whose alias *contains* `prefix` as a substring
+/// (case-insensitive, `COLLATE NOCASE` matches the index on
+/// `page_aliases.alias`).
+///
+/// The `prefix` parameter name is historical — the function originally
+/// did prefix-only matching (`LIKE 'q%'`). It now uses substring
+/// matching (`LIKE '%q%'`) so the picker mirrors the FTS-backed
+/// page-title behaviour: a user typing `[[oj` resolves an alias like
+/// `projects` the same way it would resolve a page titled "Projects".
 ///
 /// Returns `(page_id, alias, title)` rows so the frontend can render
 /// "Page Title (alias: pp)" without a second round trip per match.
 ///
 /// Bounded by [`MAX_PAGE_ALIASES_PREFIX`] to keep the popup responsive
-/// even if a user has hundreds of single-letter-prefixed aliases.
+/// even if a user has hundreds of substring-matched aliases.
 ///
 /// `scope` (FEAT-3p4 / PEND-34) — [`SpaceScope::Active`] restricts the
 /// result set to aliases pointing at pages whose `space` property
@@ -184,12 +191,11 @@ struct PageAliasPrefixRow {
 /// `pagination::list_by_tag` and friends. [`SpaceScope::Global`] keeps
 /// the cross-space behaviour for callers that span every space.
 ///
-/// Ordering: `length(alias), alias` puts the exact match (typed in
-/// full) at the top, then alphabetical. SQLite cannot satisfy this
-/// ordering directly from `idx_page_aliases_alias` (the index is
-/// keyed on alias only, not its length), so an in-memory sort runs
-/// over the LIKE-prefix candidate set; the `LIMIT` keeps that set
-/// small (≤ 50) so the sort is effectively free.
+/// Ordering: `length(alias), alias` puts the shortest match at the
+/// top (so a typed-in-full exact alias bubbles up over longer
+/// neighbours that merely contain the query), then alphabetical. The
+/// in-memory sort runs over the LIKE candidate set; the `LIMIT` keeps
+/// that set small (≤ 50) so the sort is effectively free.
 #[instrument(skip(pool), err)]
 pub async fn list_page_aliases_by_prefix_inner(
     pool: &SqlitePool,
@@ -197,7 +203,7 @@ pub async fn list_page_aliases_by_prefix_inner(
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<Vec<(String, String, Option<String>)>, AppError> {
-    let like_pattern = format!("{}%", crate::sql_utils::escape_like(prefix));
+    let like_pattern = format!("%{}%", crate::sql_utils::escape_like(prefix));
     let effective_limit = limit.unwrap_or(MAX_PAGE_ALIASES_PREFIX);
     let space_filter = scope.as_filter_param();
     let rows = sqlx::query_as!(

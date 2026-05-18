@@ -1,16 +1,16 @@
 /**
- * BlockDndOverlay — drag overlay preview for the active dragged block.
+ * BlockDndOverlay — drag overlay marker for the active dragged block.
  *
  * Renders:
  *   - An SR-only live region announcing the projected drop depth
- *   - A floating preview card of the dragged block content
+ *   - A small cursor-following pill (no content) so the list reflow
+ *     underneath stays visible.
  *
  * Extracted from BlockTree.tsx for file organization (F-22).
  */
 
 import { DragOverlay } from '@dnd-kit/core'
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 interface BlockDndOverlayProps {
   activeBlock: { content?: string | null } | null
@@ -23,7 +23,6 @@ export function BlockDndOverlay({
   projected,
   activeId,
 }: BlockDndOverlayProps): React.ReactElement {
-  const { t } = useTranslation()
   return (
     <>
       {/* SR announcement for DnD projected drop position */}
@@ -32,16 +31,16 @@ export function BlockDndOverlay({
           {`Moving to depth ${projected.depth}`}
         </div>
       )}
-      {/* Drag overlay: floating preview of the dragged block */}
+      {/* Drag overlay: tiny pill follows the cursor. No content so the
+          user can see the list reflow underneath as the drop projection
+          changes. */}
       <DragOverlay dropAnimation={null}>
         {activeBlock ? (
           <div
-            className="sortable-block-overlay rounded border bg-background/90 px-3 py-1.5 shadow-lg text-sm opacity-80"
+            className="sortable-block-overlay h-1.5 w-20 rounded-full bg-primary/70 shadow-sm pointer-events-none"
             data-testid="sortable-block-overlay"
-            style={{ maxWidth: 320 }}
-          >
-            {(activeBlock.content ?? '').slice(0, 80) || t('block.emptyPlaceholder')}
-          </div>
+            aria-hidden="true"
+          />
         ) : null}
       </DragOverlay>
     </>
