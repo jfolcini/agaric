@@ -5,11 +5,31 @@ Agaric ships with three complementary search surfaces:
 
 - **In-page find (`Ctrl+F`)** — browser-style find-in-page toolbar that highlights matches in the current page (this surface; see [In-page find](#in-page-find) below).
 - **Find across pages (`Ctrl+Shift+F`)** — the full-text-search view that scans every block and page title in the current space.
-- **Palette (`Cmd/Ctrl+K`)** — quick navigation across pages, tags, and recent blocks. (Reserved for PEND-51.)
+- **Palette (`Cmd/Ctrl+K`)** — quick navigation across pages and recent blocks (see [Quick palette](#quick-palette) below).
 
 For the across-pages surface: open the panel from the sidebar (or with `Ctrl+Shift+F`), type a query of three or more characters, and results stream in grouped by page. Matches inside snippets are highlighted; the page header doubles as a navigation target so you can jump straight to the parent. Structured filters can be typed directly into the input (`tag:#urgent path:Journal/*`) or added via the `+ Filter ▾` button above the chip row — see [Filter syntax](#filter-syntax) below.
 
 For an in-app reference, click the `?` button in the search toolbar — it opens a help dialog mirroring the section list below.
+
+## Quick palette
+
+`Cmd/Ctrl+K` opens a lightweight dialog (Sheet on mobile) for fast navigation. It complements the find-across-pages view: the palette is for jumping to a page or block you already have in mind; the view is for systematic searches. The palette intentionally has no filter chips and no `Aa` / `Ab|` / `.*` toggles — type, see results, jump.
+
+Behaviour:
+
+- **Empty input** surfaces your recent pages (the same list `SearchPanel` shows). Selecting one navigates to it.
+- **Typed query** fires two parallel `searchBlocks` calls in one keystroke window:
+  1. A page-only query (`blockTypeFilter = 'page'`, cap 8) that anchors the result groups by page name.
+  2. An unrestricted blocks query (cap 40) that supplies content matches.
+  The frontend merges them by `page_id`, caps each group at 2 block matches, and caps the total to 8 page groups. Surplus matches inside a group surface as a "+N more in this page" pill; surplus pages do not render — the escalation footer is the user's path to more.
+- **Ranking** uses the FTS5 candidate set, then post-FTS reorders by a 4-band rule (exact title → prefix title → contains-in-title → content-only) blended with a hand-rolled Jaro-Winkler similarity on the page title (`0.7 * band + 0.3 * JW`). The JW boost forgives typos like `alfa` → `Alpha` without filtering anything out — fuzzy is additive.
+- **Click behaviour.** Plain click navigates the active tab; `Cmd/Ctrl+click` (or middle-click) opens the target in a new tab.
+- **Keyboard.** `↑` / `↓` walk the flattened result list (page header → its block hits → next page header). `Enter` activates; `Cmd/Ctrl+Enter` activates in a new tab. `Esc` closes.
+- **`[[page]]` autocomplete.** Typing `[[` followed by ≥ 1 character switches the palette into page-link mode: only the pages query fires, and `Enter` inserts `[[Page Title]]` into the **previously focused block** (the editor block that had focus when Cmd+K opened) and closes the palette. If there's no editor focus when the palette opens, the link-insertion path silently no-ops; you still get to navigate. If no page matches, the palette surfaces an inline "No page named …" hint.
+- **Debounce** is ~80 ms (palette UX is type-ahead — VSCode's `Cmd+P`, Linear, Raycast all run sub-100 ms). The find-across-pages view's 300 ms debounce is deliberately different — it's a deliberate-refinement surface, not a type-ahead one.
+- **Escalation footer.** "Search in all pages with toggles → Ctrl+Shift+F" — clicking opens the find-across-pages view with the current query pre-filled. Note that the binding is `Ctrl+Shift+F` (PEND-52 reclaimed `Ctrl+F` for in-page find).
+
+The palette does not surface tags, parentless blocks, or recent blocks (only recent **pages**). Future iterations may extend this — see PEND-51 §"Phase split" for the locked-in scope of v1.
 
 ## In-page find
 

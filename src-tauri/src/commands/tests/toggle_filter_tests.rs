@@ -44,6 +44,9 @@ fn filter_with(case_sensitive: bool, whole_word: bool, is_regex: bool) -> Search
         case_sensitive,
         whole_word,
         is_regex,
+        // PEND-51 — toggle tests don't exercise block-type filtering;
+        // `None` preserves the pre-PEND-51 candidate set semantics.
+        block_type_filter: None,
     }
 }
 

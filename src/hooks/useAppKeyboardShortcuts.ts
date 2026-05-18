@@ -47,6 +47,7 @@ import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '../stores/tabs'
 import { useInPageFindStore } from '../stores/useInPageFindStore'
+import { useSearchPaletteStore } from '../stores/useSearchPaletteStore'
 
 // ---------------------------------------------------------------------------
 // Helpers and dispatch tables (moved verbatim from App.tsx so the hook owns
@@ -248,6 +249,14 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
         e.preventDefault()
         useNavigationStore.getState().setView('search')
         announce(t('announce.searchOpened'))
+        return
+      }
+      // PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Distinct
+      // from `focusSearch` (the find-in-files view): the palette is a
+      // dialog overlay, the view is a full-screen surface.
+      if (matchesShortcutBinding(e, 'paletteOpen')) {
+        e.preventDefault()
+        useSearchPaletteStore.getState().open$()
         return
       }
       if (matchesShortcutBinding(e, 'createNewPage')) {

@@ -159,6 +159,7 @@ describe('SearchPanel', () => {
           caseSensitive: false,
           wholeWord: false,
           isRegex: false,
+          blockTypeFilter: null,
         },
       })
     })
@@ -200,6 +201,7 @@ describe('SearchPanel', () => {
           caseSensitive: false,
           wholeWord: false,
           isRegex: false,
+          blockTypeFilter: null,
         },
       })
     })
@@ -277,6 +279,7 @@ describe('SearchPanel', () => {
           caseSensitive: false,
           wholeWord: false,
           isRegex: false,
+          blockTypeFilter: null,
         },
       })
     })
@@ -327,6 +330,7 @@ describe('SearchPanel', () => {
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
+        blockTypeFilter: null,
       },
     })
   })
@@ -686,6 +690,7 @@ describe('SearchPanel', () => {
           caseSensitive: false,
           wholeWord: false,
           isRegex: false,
+          blockTypeFilter: null,
         },
       })
     })
@@ -717,6 +722,7 @@ describe('SearchPanel', () => {
           caseSensitive: false,
           wholeWord: false,
           isRegex: false,
+          blockTypeFilter: null,
         },
       })
     })
@@ -769,6 +775,7 @@ describe('SearchPanel', () => {
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
+        blockTypeFilter: null,
       },
     })
   })

@@ -130,6 +130,7 @@ pub async fn search_with_toggles(
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
+    block_type_filter: Option<&str>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     if toggles.is_regex {
         // Regex-mode bypasses FTS entirely — empty query short-circuits
@@ -143,7 +144,7 @@ pub async fn search_with_toggles(
                 total_count: None,
             });
         }
-        return regex_mode_query(
+        let mut response = regex_mode_query(
             pool,
             query,
             page,
@@ -154,7 +155,16 @@ pub async fn search_with_toggles(
             exclude_page_globs,
             toggles,
         )
-        .await;
+        .await?;
+        // PEND-51 — `block_type_filter` post-narrow for the regex path.
+        // The regex SQL scan doesn't push the filter into the WHERE
+        // clause (it's a hot path; keep the SQL stable), so we trim
+        // the candidate rows here. The cap above (`REGEX_PRE_FILTER_CAP`)
+        // already bounds the worst-case size of `response.items`.
+        if let Some(bt) = block_type_filter {
+            response.items.retain(|row| row.block_type == bt);
+        }
+        return Ok(response);
     }
 
     // FTS5 candidate set (today's path).
@@ -167,6 +177,7 @@ pub async fn search_with_toggles(
         space_id,
         include_page_globs,
         exclude_page_globs,
+        block_type_filter,
     )
     .await?;
 

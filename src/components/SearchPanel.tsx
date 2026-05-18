@@ -64,6 +64,7 @@ import {
 import { selectHistoryForSpace, useSearchHistoryStore } from '../stores/search-history'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
+import { useSearchPaletteStore } from '../stores/useSearchPaletteStore'
 import { EmptyState } from './EmptyState'
 import { ResultCard } from './ResultCard'
 import { SearchHeader } from './SearchPanel/SearchHeader'
@@ -188,6 +189,25 @@ export function SearchPanel(): React.ReactElement {
   // Load recent pages from localStorage on mount
   useEffect(() => {
     setRecentPages(getRecentPages())
+  }, [])
+
+  // PEND-51 — consume the palette's transient `pendingViewQuery`
+  // handoff slot. When the user clicks "Search in all pages with
+  // toggles → Ctrl+Shift+F" in the palette, the palette writes the
+  // current query into the store and flips the navigation view to
+  // `'search'`. This effect reads-and-clears the slot exactly once on
+  // mount, then triggers the IPC by seeding both `query` and
+  // `debouncedQuery`. We deliberately read via `getState()` so no
+  // subscription is created and the effect's empty-dep array stays
+  // honest.
+  useEffect(() => {
+    const pending = useSearchPaletteStore.getState().pendingViewQuery
+    if (pending != null && pending.length > 0) {
+      setQuery(pending)
+      setDebouncedQuery(pending)
+      setSearched(true)
+      useSearchPaletteStore.getState().setPendingViewQuery(null)
+    }
   }, [])
 
   // PEND-54 — one-time migration toast pointing users at the help

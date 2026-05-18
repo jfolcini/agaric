@@ -597,6 +597,14 @@ export async function searchBlocks(params: {
   wholeWord?: boolean | undefined
   /** PEND-55 — regex-mode (bypasses FTS5). See `SearchFilter`. */
   isRegex?: boolean | undefined
+  /**
+   * PEND-51 — restrict to a specific `blocks.block_type` (e.g. `'page'`).
+   * The Cmd+K palette fires a page-only query in parallel with an
+   * unrestricted blocks query so the FE only has to merge by `page_id`.
+   * `undefined` preserves the pre-PEND-51 "all block types" behaviour.
+   * See `SearchFilter.block_type_filter`.
+   */
+  blockTypeFilter?: string | undefined
 }): Promise<PageResponse<SearchBlockRow>> {
   return unwrap(
     await commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
@@ -608,6 +616,7 @@ export async function searchBlocks(params: {
       caseSensitive: params.caseSensitive ?? false,
       wholeWord: params.wholeWord ?? false,
       isRegex: params.isRegex ?? false,
+      blockTypeFilter: params.blockTypeFilter ?? null,
     }),
   )
 }

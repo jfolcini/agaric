@@ -252,4 +252,18 @@ export const references: Record<string, string> = {
   'search.history.clear': 'Clear history',
   'search.history.entryLabel': 'Run search: {{query}}',
   'search.invalidRegex': '{{message}}',
+  // PEND-51 — Cmd+K palette dialog.
+  'palette.dialogLabel': 'Quick search',
+  'palette.dialogTitle': 'Search palette',
+  'palette.placeholder': 'Type to search a page or a block…',
+  'palette.inputLabel': 'Search pages and blocks',
+  'palette.resultsLabel': 'Palette results',
+  'palette.recentTitle': 'Recent',
+  'palette.titleMatchTag': 'in title',
+  'palette.linkModeBadge': 'Linking to page — Enter inserts',
+  'palette.noPageMatch': 'No page named “{{query}}”. Type more to refine.',
+  'palette.escalateLabel': 'Search in all pages with toggles → Ctrl+Shift+F',
+  'palette.groupMatchesLabel': 'Matches in {{pageTitle}}',
+  'palette.moreInThisPage_one': '+{{count}} more in this page',
+  'palette.moreInThisPage_other': '+{{count}} more in this page',
 }

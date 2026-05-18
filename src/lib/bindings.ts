@@ -1556,6 +1556,19 @@ export type SearchFilter = {
 	 *  [`AppError::Validation`] with an `InvalidRegex:` prefix.
 	 */
 	isRegex?: boolean,
+	/**
+	 *  PEND-51 — restrict matches to a specific `blocks.block_type`
+	 *  value (e.g. `"page"`). `None` (the default) preserves the
+	 *  existing "no filter" behaviour. Empty string is rejected at the
+	 *  SQL layer the same way as any other no-match equality. The
+	 *  palette uses this to fire a separate page-only query in
+	 *  parallel with the unrestricted blocks query so the page-group
+	 *  rendering on the FE only needs to merge by `page_id`.
+	 *  `#[serde(default)]` keeps the wire shape additive — pre-PEND-51
+	 *  frontends omit the field and observe today's behaviour
+	 *  unchanged.
+	 */
+	blockTypeFilter?: string | null,
 };
 
 /**

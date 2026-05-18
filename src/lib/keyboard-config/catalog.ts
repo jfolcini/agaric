@@ -308,6 +308,16 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.focusSearch',
   },
+  // PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Distinct
+  // from `focusSearch` (the find-in-files view) and `findInPage` (the
+  // in-page find toolbar) — the three keyboard surfaces map 1:1 to the
+  // three search surfaces.
+  {
+    id: 'paletteOpen',
+    keys: 'Ctrl + K',
+    category: 'keyboard.category.global',
+    description: 'keyboard.paletteOpen',
+  },
   // PEND-52 — F3 / Shift+F3 cycle matches in the in-page-find toolbar.
   // The matcher is responsible for actually wiring these (it listens
   // while the toolbar is open); listing them here makes them discoverable

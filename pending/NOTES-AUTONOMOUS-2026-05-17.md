@@ -106,9 +106,18 @@ I took the **Recommendation** verbatim unless noted otherwise.
 - **Test delta:** +53 vitest cases (toggle/history/cycling/integration), +15 nextest cases (Rust toggle filter + IPC integration). Suite: 10037 / 10037 vitest, 3728 / 3728 nextest.
 - **Fix-up cycle for prek-stricter `tsc -b`:** 8 TS4111 errors in `SearchPanel.toggles.test.tsx` (index-signature access via `['key']`), 1 TS4104 in `search-history.ts` (return type made `ReadonlyArray<string>` to match the `EMPTY_HISTORY` sentinel), added an axe audit (axe-presence hook requires every component test to carry one), cargo fmt.
 
-### PEND-51 — Cmd+K palette
+### PEND-51 — Cmd+K palette — LANDED
 
-(populated when cycle completes)
+- **All phases shipped.** Dialog/Sheet palette opens via Cmd/Ctrl+K, fuzzy-rescored page-grouped results, `[[page]]` autocomplete, escalation footer to find-in-files (now `Ctrl+Shift+F` post-PEND-52), recent-pages empty state, Cmd-click new-tab.
+- **Backend `SearchFilter` extension:** new `block_type_filter: Option<String>` (`#[serde(default)]`). Wire-compat additive.
+- **Skipped the new `search_blocks_partitioned` Tauri command** the plan specced — used **two parallel `searchBlocks` calls** instead per the task brief. One extra FTS scan per palette keystroke; `MAX_PAGE_GROUPS = 8` keeps the page-only query trivial. Adding the dedicated command later is a pure backend optimisation.
+- **Fuzzy ranking:** hand-rolled Jaro-Winkler (`src/lib/jaro-winkler.ts`, 40 LOC). `match-sorter` is in deps but JW gives the prefix-boost the palette UX wants. Blend 0.7 band-ordering + 0.3 JW; bands wide enough that JW only reorders within bands (never promotes content-only above exact-title).
+- **`[[page]]` insertion** uses `document.execCommand('insertText', false, value)` for contenteditable (preserves editor undo history) and direct selection mutation + synthetic `input` event for `<input>`/`<textarea>`. Detached / no-prior-focus → silent no-op. (Note: `execCommand` is deprecated; replacement uses Selection/Range APIs, but execCommand is still the only way to preserve undo history in contenteditable.)
+- **Mobile virtual-keyboard handling deferred** — palette renders via `useDialogOrSheet('dialog')` which uses Radix Sheet on mobile; Sheet handles keyboard offsets natively via dvh + inset. No `visualViewport` handler.
+- **Stale-response guard:** `generationRef` counter per keystroke; promise resolvers check snapshot.
+- **Surplus "+N more" pill escalates to find-in-files** (same handoff as the explicit footer button). Cleaner than a no-op scroll.
+- **Test delta:** +29 (15 SearchPalette, 9 jaro-winkler, 5 store). Suite: 10067 / 10067 vitest, 3728 / 3728 nextest.
+- **Fix-up cycle:** docs typos corrected (one in SEARCH.md, one in the JW test), cargo fmt, added an IPC error-path test (the prek hook requires every component-that-invokes to carry one).
 
 ### PEND-53 — property filters
 

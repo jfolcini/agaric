@@ -240,6 +240,7 @@ pub async fn search_fts(
     space_id: Option<&str>,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
+    block_type_filter: Option<&str>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
@@ -401,6 +402,20 @@ pub async fn search_fts(
         None
     };
 
+    // PEND-51 — optional `block_type` equality filter. The palette
+    // fires a page-only query (`block_type_filter = Some("page")`)
+    // alongside the unrestricted blocks query so the FE only has to
+    // merge by `page_id`. `None` preserves the today's no-filter
+    // behaviour.
+    let block_type_param_idx = if block_type_filter.is_some() {
+        let idx = next_param;
+        sql.push_str(&format!("\n           AND b.block_type = ?{idx}"));
+        next_param += 1;
+        Some(idx)
+    } else {
+        None
+    };
+
     // Suppress unused variable warnings — these indices are used only when
     // the corresponding filter is active, but the compiler cannot see that
     // through the dynamic query-building logic.
@@ -411,6 +426,7 @@ pub async fn search_fts(
         space_param_idx,
         include_glob_param_start,
         exclude_glob_param_start,
+        block_type_param_idx,
         next_param,
     );
 
@@ -446,6 +462,11 @@ pub async fn search_fts(
     }
     for pat in exclude_page_globs {
         db_query = db_query.bind(pat);
+    }
+    // PEND-51 — bind `block_type` filter value last so the placeholder
+    // index matches the order it was appended to the SQL above.
+    if let Some(bt) = block_type_filter {
+        db_query = db_query.bind(bt);
     }
 
     let rows = db_query.fetch_all(pool).await.map_err(|e| {

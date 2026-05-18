@@ -610,6 +610,8 @@ describe('searchBlocks', () => {
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
+        // PEND-51 — additive `block_type_filter` defaults to null.
+        blockTypeFilter: null,
       },
     })
     expect(result).toEqual(emptyPage)
@@ -656,6 +658,8 @@ describe('searchBlocks', () => {
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
+        // PEND-51 — additive `block_type_filter` defaults to null.
+        blockTypeFilter: null,
       },
     })
     expect(result).toEqual(pageResp)
@@ -692,6 +696,8 @@ describe('searchBlocks', () => {
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
+        // PEND-51 — additive `block_type_filter` defaults to null.
+        blockTypeFilter: null,
       },
     })
   })

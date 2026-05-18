@@ -683,6 +683,10 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             case_sensitive: false,
             whole_word: false,
             is_regex: false,
+            // PEND-51 — MCP tools do not yet expose a block-type filter;
+            // defaults preserve the pre-PEND-51 "all block types"
+            // behaviour.
+            block_type_filter: None,
         },
     )
     .await?;

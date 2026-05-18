@@ -65,6 +65,8 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
         case_sensitive: true,
         whole_word: true,
         is_regex: false,
+        // PEND-51
+        block_type_filter: Some("page".into()),
     };
     let json = serde_json::to_value(&original).unwrap();
     let decoded: SearchFilter = serde_json::from_value(json).unwrap();
@@ -76,6 +78,7 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
     assert_eq!(decoded.case_sensitive, original.case_sensitive);
     assert_eq!(decoded.whole_word, original.whole_word);
     assert_eq!(decoded.is_regex, original.is_regex);
+    assert_eq!(decoded.block_type_filter, original.block_type_filter);
 }
 
 #[test]
