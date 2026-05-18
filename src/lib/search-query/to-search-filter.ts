@@ -16,20 +16,14 @@
  *
  * PEND-53 — repeating `state:` / `priority:` tokens OR-fan-out (the
  * SQL emits `state IN (?, ?, ...)`); repeating `prop:` tokens
- * AND-fan-out (each becomes its own EXISTS sub-select). `not-state:`
- * and `not-priority:` simply add their values to the same `IN`
- * disjunction — there is no separate "excluded state" backend field,
- * because the SQL is a single `state IN (...)` so a `not-state:X` is
- * naturally expressed as "include everything else". v1 keeps the
- * projection simple by treating `not-state:X` as a chip with no IPC
- * effect *yet*; the plan deliberately leaves that semantic open
- * pending real demand (documented in `docs/SEARCH.md`).
+ * AND-fan-out (each becomes its own EXISTS sub-select).
  *
- * Wait — re-read the plan: PEND-53 does not currently call for a
- * `state_filter` exclusion. The token is reserved for symmetry with
- * `not-tag:` and `not-path:` so the syntax matches; v1 wires it as a
- * no-op IPC projection (the chip is purely visual). Same for
- * `not-priority:`. Both behaviours are documented.
+ * PEND-63 — `not-state:` / `not-priority:` are now wired:
+ * `excluded_state_filter` / `excluded_priority_filter` populate
+ * dedicated `SearchFilter` fields, and the backend emits
+ * `(col IS NULL OR col NOT IN (...))` — NULL-inclusive inversion so
+ * blocks with no state aren't accidentally excluded from a "not DONE"
+ * query. The `not-state:none` chip flips to `col IS NOT NULL`.
  */
 
 import type { DateFilterValue, SearchPropertyFilter, SearchQueryAST } from './types'
@@ -41,6 +35,11 @@ export interface AstFilterProjection {
   // PEND-53 — metadata filter projection.
   stateFilter: string[]
   priorityFilter: string[]
+  // PEND-63 — `not-state:` / `not-priority:` chips now project to
+  // dedicated excluded fields so the backend can emit the proper
+  // `(col IS NULL OR col NOT IN (...))` inversion.
+  excludedStateFilter: string[]
+  excludedPriorityFilter: string[]
   dueFilter: DateFilterValue | null
   scheduledFilter: DateFilterValue | null
   propertyFilters: SearchPropertyFilter[]
@@ -53,6 +52,8 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
   const excludePageGlobs: string[] = []
   const stateFilter: string[] = []
   const priorityFilter: string[] = []
+  const excludedStateFilter: string[] = []
+  const excludedPriorityFilter: string[] = []
   let dueFilter: DateFilterValue | null = null
   let scheduledFilter: DateFilterValue | null = null
   const propertyFilters: SearchPropertyFilter[] = []
@@ -75,14 +76,16 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
         if (!stateFilter.includes(f.value)) stateFilter.push(f.value)
         break
       case 'notState':
-        // Reserved for symmetry; no IPC projection in v1.
-        // Documented in docs/SEARCH.md.
+        // PEND-63 — project to `excluded_state_filter`; the backend
+        // emits `(todo_state IS NULL OR todo_state NOT IN (...))`.
+        if (!excludedStateFilter.includes(f.value)) excludedStateFilter.push(f.value)
         break
       case 'priority':
         if (!priorityFilter.includes(f.value)) priorityFilter.push(f.value)
         break
       case 'notPriority':
-        // Reserved for symmetry; no IPC projection in v1.
+        // PEND-63 — symmetric to `notState`.
+        if (!excludedPriorityFilter.includes(f.value)) excludedPriorityFilter.push(f.value)
         break
       case 'due':
         // Last `due:` token wins (a future revision can collapse to a
@@ -109,6 +112,8 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
     excludePageGlobs,
     stateFilter,
     priorityFilter,
+    excludedStateFilter,
+    excludedPriorityFilter,
     dueFilter,
     scheduledFilter,
     propertyFilters,

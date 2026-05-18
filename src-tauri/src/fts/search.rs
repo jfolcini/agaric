@@ -478,10 +478,13 @@ pub async fn search_fts(
     if let Some(bt) = block_type_filter {
         db_query = db_query.bind(bt);
     }
-    // PEND-53 — bind metadata values in the same order as
-    // `append_metadata_sql` declared them.
+    // PEND-53 / PEND-64 — bind metadata values in the same order as
+    // `append_metadata_sql` declared them. PEND-64 widened the bind
+    // type to `MetaBind` so nullable `value_num` / `value_date` /
+    // `value_ref` variants can carry SQL `NULL` for non-parseable
+    // user inputs.
     for v in &metadata_binds {
-        db_query = db_query.bind(v);
+        db_query = v.bind(db_query);
     }
 
     let rows = db_query.fetch_all(pool).await.map_err(|e| {

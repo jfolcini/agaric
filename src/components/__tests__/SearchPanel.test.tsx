@@ -166,6 +166,8 @@ describe('SearchPanel', () => {
           scheduledFilter: null,
           propertyFilters: [],
           excludedPropertyFilters: [],
+          excludedStateFilter: [],
+          excludedPriorityFilter: [],
         },
       })
     })
@@ -214,6 +216,8 @@ describe('SearchPanel', () => {
           scheduledFilter: null,
           propertyFilters: [],
           excludedPropertyFilters: [],
+          excludedStateFilter: [],
+          excludedPriorityFilter: [],
         },
       })
     })
@@ -298,6 +302,8 @@ describe('SearchPanel', () => {
           scheduledFilter: null,
           propertyFilters: [],
           excludedPropertyFilters: [],
+          excludedStateFilter: [],
+          excludedPriorityFilter: [],
         },
       })
     })
@@ -355,6 +361,8 @@ describe('SearchPanel', () => {
         scheduledFilter: null,
         propertyFilters: [],
         excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
       },
     })
   })
@@ -721,6 +729,8 @@ describe('SearchPanel', () => {
           scheduledFilter: null,
           propertyFilters: [],
           excludedPropertyFilters: [],
+          excludedStateFilter: [],
+          excludedPriorityFilter: [],
         },
       })
     })
@@ -759,6 +769,8 @@ describe('SearchPanel', () => {
           scheduledFilter: null,
           propertyFilters: [],
           excludedPropertyFilters: [],
+          excludedStateFilter: [],
+          excludedPriorityFilter: [],
         },
       })
     })
@@ -818,6 +830,8 @@ describe('SearchPanel', () => {
         scheduledFilter: null,
         propertyFilters: [],
         excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
       },
     })
   })

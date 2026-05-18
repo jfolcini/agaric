@@ -619,6 +619,8 @@ describe('searchBlocks', () => {
         scheduledFilter: null,
         propertyFilters: [],
         excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
       },
     })
     expect(result).toEqual(emptyPage)
@@ -674,6 +676,8 @@ describe('searchBlocks', () => {
         scheduledFilter: null,
         propertyFilters: [],
         excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
       },
     })
     expect(result).toEqual(pageResp)
@@ -719,6 +723,8 @@ describe('searchBlocks', () => {
         scheduledFilter: null,
         propertyFilters: [],
         excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
       },
     })
   })

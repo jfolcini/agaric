@@ -172,7 +172,7 @@ Per-space MRU list at `agaric:search-history` (Zustand persist). Dedupes on inse
 
 ## PEND-53 — Property / metadata filters
 
-The `state:`, `priority:`, `due:`, `scheduled:`, `prop:` token family adds six fields to `SearchFilter`: `state_filter`, `priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`. All carry `#[serde(default)]`. They compile to `EXISTS` sub-selects against `block_properties` and to direct comparisons on `blocks.todo_state` / `blocks.priority` / `blocks.due_date` / `blocks.scheduled_date`.
+The `state:`, `priority:`, `due:`, `scheduled:`, `prop:` token family adds six fields to `SearchFilter`: `state_filter`, `priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`. PEND-63 appends two more for the `not-state:` / `not-priority:` inversion: `excluded_state_filter`, `excluded_priority_filter`. All carry `#[serde(default)]`. They compile to `EXISTS` sub-selects against `block_properties` and to direct comparisons on `blocks.todo_state` / `blocks.priority` / `blocks.due_date` / `blocks.scheduled_date`.
 
 ### Date filter resolution
 
@@ -184,15 +184,15 @@ Bucket vocabulary is locked at: `today`, `yesterday`, `overdue`, `this-week`, `t
 
 A literal `none` value (case-insensitive) in `state_filter` / `priority_filter` is split out in `prepare_metadata` and emitted as a `column IS NULL` branch in the SQL disjunction. **A custom state literally named `"none"` would match the `IS NULL` shadow** — documented limitation; a real custom state must be named differently to avoid that overlap.
 
-### Property column mapping (v1)
+### Property column mapping (PEND-64)
 
-`prop:KEY=VALUE` matches `block_properties.value_text` only. The five typed columns (`value_text`, `value_num`, `value_date`, `value_ref`, `value_bool`) are mutually exclusive per migration `0062`'s CHECK constraint. The autonomous review session decided to fix this — PEND-64 will extend the match to all four user-facing columns (`value_text` OR `value_num` OR `value_date` OR `value_ref`) with type coercion at SQL bind time.
+`prop:KEY=VALUE` matches across the four user-facing typed columns (`value_text`, `value_num`, `value_date`, `value_ref`) with type coercion at SQL bind time. The composer in `fts::metadata_filter::append_property_match` emits a four-way `OR` with `NULL`-bound branches for variants that don't parse — so `prop:priority=1` binds `value_num = 1.0` and `NULL` for the other three, while `prop:status=draft` binds `value_text = 'draft'` and `NULL` for the rest. The `exactly_one_value` CHECK on `block_properties` (migration `0062`) ensures at most one branch can ever fire per row. `value_bool` is internal (not user-typed) and remains out of scope.
 
-Property keys are case-sensitive (`block_properties` PK is `(block_id, key)` with no `COLLATE NOCASE`).
+Property keys are case-sensitive (`block_properties` PK is `(block_id, key)` with no `COLLATE NOCASE`). ULID values matched against `value_ref` are normalised to uppercase at bind time per Agaric's storage convention.
 
-### Excluded states / priorities
+### Excluded states / priorities (PEND-63)
 
-`not-state:` / `not-priority:` in v1 render as chips but project nothing to IPC (the autonomous review found this misleading). PEND-63 will wire the inversion properly: `state IS NULL OR state NOT IN (…)`. Until that lands, document the discrepancy.
+`not-state:VALUE` / `not-priority:VALUE` chips project to `excluded_state_filter` / `excluded_priority_filter`. The SQL composer emits `(column IS NULL OR column NOT IN (…))` — **NULL-inclusive inversion by design**: a "blocks not in DONE" query returns blocks with no state set at all, not excludes them. The `not-state:none` sentinel flips to `column IS NOT NULL`.
 
 ## PEND-54 — Path globs
 

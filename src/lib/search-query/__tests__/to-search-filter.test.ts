@@ -46,9 +46,24 @@ describe('astToFilterProjection — PEND-53 (metadata)', () => {
     expect(p.stateFilter).toEqual(['TODO'])
   })
 
-  it('does not project not-state into stateFilter (reserved for symmetry)', () => {
+  it('projects not-state tokens into excludedStateFilter (PEND-63)', () => {
     const p = project('not-state:DONE state:TODO')
+    // `state:TODO` still populates stateFilter; `not-state:DONE` is a
+    // separate field the backend uses to emit the NULL-inclusive
+    // `(todo_state IS NULL OR todo_state NOT IN (...))` inversion.
     expect(p.stateFilter).toEqual(['TODO'])
+    expect(p.excludedStateFilter).toEqual(['DONE'])
+  })
+
+  it('dedups excluded state values (PEND-63)', () => {
+    const p = project('not-state:DONE not-state:DONE not-state:CANCELLED')
+    expect(p.excludedStateFilter).toEqual(['DONE', 'CANCELLED'])
+  })
+
+  it('projects not-priority into excludedPriorityFilter (PEND-63)', () => {
+    const p = project('not-priority:1 priority:2')
+    expect(p.priorityFilter).toEqual(['2'])
+    expect(p.excludedPriorityFilter).toEqual(['1'])
   })
 
   it('projects priority tokens into priorityFilter', () => {
@@ -109,10 +124,12 @@ describe('astToFilterProjection — PEND-53 (metadata)', () => {
 
   it('compound query — every metadata field populated', () => {
     const p = project(
-      'state:TODO state:DOING priority:1 due:this-week scheduled:>=2026-05-01 prop:status=blocked not-prop:archived=true hello',
+      'state:TODO state:DOING priority:1 not-state:DONE not-priority:3 due:this-week scheduled:>=2026-05-01 prop:status=blocked not-prop:archived=true hello',
     )
     expect(p.stateFilter).toEqual(['TODO', 'DOING'])
     expect(p.priorityFilter).toEqual(['1'])
+    expect(p.excludedStateFilter).toEqual(['DONE'])
+    expect(p.excludedPriorityFilter).toEqual(['3'])
     expect(p.dueFilter).toEqual({ kind: 'named', name: 'this-week' })
     expect(p.scheduledFilter).toEqual({
       kind: 'op',

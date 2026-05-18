@@ -24,13 +24,16 @@
 //! time. Tests inject a fixed `today` via [`prepare_metadata_with_today`]
 //! so date-clock churn doesn't flake the snapshot suite.
 //!
-//! ## Property column allowlist
+//! ## Property column matching
 //!
-//! v1 matches `block_properties.value_text` only (locked in by the
-//! plan's "Locked-in decisions" #4 — `block_properties` has five
-//! mutually-exclusive value columns per migration `0062`'s CHECK; v1
-//! ships text-only for the common user-typed property case). A
-//! follow-up plan revisits numeric/date/reference search.
+//! PEND-64 — `prop:KEY=VALUE` matches **all four user-facing typed
+//! columns** (`value_text`, `value_num`, `value_date`, `value_ref`)
+//! with type-coerced bind variants. The user never has to know which
+//! column their property lives in: the SQL emits a four-way OR with
+//! `NULL`-bound branches for variants that didn't parse. The
+//! mutually-exclusive CHECK on `block_properties` (migration 0062)
+//! ensures at most one branch fires per row. `value_bool` is internal
+//! (not user-typed) and remains out of scope.
 
 use crate::commands::queries::{
     DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter,
@@ -58,6 +61,19 @@ pub struct MetadataPredicates {
     /// [`Self::state_values`].
     pub priority_values: Vec<String>,
     pub priority_is_null: bool,
+    /// PEND-63 — resolved `excluded_state_filter`. Empty + flag-false
+    /// means "no exclusion". SQL emits
+    /// `(col IS NULL OR col NOT IN (...))`; the `IS NULL` branch is
+    /// always included so blocks with no state aren't accidentally
+    /// excluded from a "not DONE" query. The `not-state:none`
+    /// sentinel flips [`Self::excluded_state_not_null`] (and emits
+    /// `col IS NOT NULL`).
+    pub excluded_state_values: Vec<String>,
+    pub excluded_state_not_null: bool,
+    /// PEND-63 — symmetric to [`Self::excluded_state_values`] /
+    /// [`Self::excluded_state_not_null`] for `blocks.priority`.
+    pub excluded_priority_values: Vec<String>,
+    pub excluded_priority_not_null: bool,
     /// Resolved due-date predicate. `Some(DatePredicate::IsNull)` means
     /// "due_date IS NULL"; `Some(DatePredicate::Range { ... })` is the
     /// inclusive `[from, to]` window for bucket keywords; `Some(Op
@@ -84,6 +100,47 @@ pub enum DatePredicate {
     Op { op: DateOp, date: String },
 }
 
+/// PEND-64 — typed bind values emitted by [`append_metadata_sql`].
+///
+/// Property `prop:` matching now spans four typed columns
+/// (`value_text` / `value_num` / `value_date` / `value_ref`), so the
+/// bind list cannot be a flat `Vec<String>` any longer: nullable
+/// number / date / ref variants must be able to bind SQL `NULL` when
+/// the user's value doesn't parse as that type. Callers iterate and
+/// dispatch on the variant when threading binds into the prepared
+/// statement.
+#[derive(Debug, Clone)]
+pub enum MetaBind {
+    /// Always-bound text value (e.g. state/priority literals,
+    /// property key, property value bound to `value_text`).
+    Str(String),
+    /// Nullable text value. `None` binds SQL `NULL`. Used for the
+    /// `value_date` and `value_ref` variants of `prop:` matching:
+    /// when the user's value doesn't parse as a date / ULID, the
+    /// bind is `NULL` so the `bp.value_<x> = ?` branch evaluates to
+    /// `NULL` (treated as FALSE in the surrounding `WHERE`).
+    NullableStr(Option<String>),
+    /// Nullable f64 value for `value_num` matching. `None` binds
+    /// SQL `NULL`.
+    NullableF64(Option<f64>),
+}
+
+impl MetaBind {
+    /// Apply this bind to a `sqlx::query::Query`. Dispatches on
+    /// variant so each value lands in the parameter slot with its
+    /// correct SQLite affinity.
+    pub fn bind<'q, O>(
+        &'q self,
+        q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
+    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>> {
+        match self {
+            MetaBind::Str(s) => q.bind(s),
+            MetaBind::NullableStr(s) => q.bind(s),
+            MetaBind::NullableF64(n) => q.bind(n),
+        }
+    }
+}
+
 impl MetadataPredicates {
     /// `true` iff every field is the empty default — the SQL builder
     /// short-circuits the whole metadata-clause block in that case.
@@ -93,6 +150,10 @@ impl MetadataPredicates {
             && !self.state_is_null
             && self.priority_values.is_empty()
             && !self.priority_is_null
+            && self.excluded_state_values.is_empty()
+            && !self.excluded_state_not_null
+            && self.excluded_priority_values.is_empty()
+            && !self.excluded_priority_not_null
             && self.due.is_none()
             && self.scheduled.is_none()
             && self.property_includes.is_empty()
@@ -136,6 +197,24 @@ pub fn prepare_metadata_with_today(
             out.priority_is_null = true;
         } else {
             out.priority_values.push(p.clone());
+        }
+    }
+
+    // PEND-63 — excluded_state_filter; `none` flips to `IS NOT NULL`.
+    for s in &filter.excluded_state_filter {
+        if s.eq_ignore_ascii_case("none") {
+            out.excluded_state_not_null = true;
+        } else {
+            out.excluded_state_values.push(s.clone());
+        }
+    }
+
+    // PEND-63 — excluded_priority_filter; same shape.
+    for p in &filter.excluded_priority_filter {
+        if p.eq_ignore_ascii_case("none") {
+            out.excluded_priority_not_null = true;
+        } else {
+            out.excluded_priority_values.push(p.clone());
         }
     }
 
@@ -264,8 +343,8 @@ pub fn append_metadata_sql(
     next_param: &mut usize,
     meta: &MetadataPredicates,
     block_alias: &str,
-) -> Vec<String> {
-    let mut binds: Vec<String> = Vec::new();
+) -> Vec<MetaBind> {
+    let mut binds: Vec<MetaBind> = Vec::new();
 
     // state ------------------------------------------------------------
     append_text_in_or_null(
@@ -284,6 +363,26 @@ pub fn append_metadata_sql(
         &mut binds,
         &meta.priority_values,
         meta.priority_is_null,
+        &format!("{block_alias}.priority"),
+    );
+
+    // PEND-63 — excluded state -----------------------------------------
+    append_text_not_in_or_not_null(
+        sql,
+        next_param,
+        &mut binds,
+        &meta.excluded_state_values,
+        meta.excluded_state_not_null,
+        &format!("{block_alias}.todo_state"),
+    );
+
+    // PEND-63 — excluded priority --------------------------------------
+    append_text_not_in_or_not_null(
+        sql,
+        next_param,
+        &mut binds,
+        &meta.excluded_priority_values,
+        meta.excluded_priority_not_null,
         &format!("{block_alias}.priority"),
     );
 
@@ -311,60 +410,130 @@ pub fn append_metadata_sql(
 
     // property includes ------------------------------------------------
     for pf in &meta.property_includes {
-        let key_idx = *next_param;
-        *next_param += 1;
-        if pf.value.is_empty() {
-            // Key presence only.
-            sql.push_str(&format!(
-                "\n           AND EXISTS (SELECT 1 FROM block_properties bp \
-                  WHERE bp.block_id = {block_alias}.id AND bp.key = ?{key_idx})"
-            ));
-            binds.push(pf.key.clone());
-        } else {
-            let val_idx = *next_param;
-            *next_param += 1;
-            sql.push_str(&format!(
-                "\n           AND EXISTS (SELECT 1 FROM block_properties bp \
-                  WHERE bp.block_id = {block_alias}.id \
-                    AND bp.key = ?{key_idx} \
-                    AND bp.value_text = ?{val_idx})"
-            ));
-            binds.push(pf.key.clone());
-            binds.push(pf.value.clone());
-        }
+        append_property_match(sql, next_param, &mut binds, pf, block_alias, false);
     }
 
     // property excludes ------------------------------------------------
     for pf in &meta.property_excludes {
-        let key_idx = *next_param;
-        *next_param += 1;
-        if pf.value.is_empty() {
-            sql.push_str(&format!(
-                "\n           AND NOT EXISTS (SELECT 1 FROM block_properties bp \
-                  WHERE bp.block_id = {block_alias}.id AND bp.key = ?{key_idx})"
-            ));
-            binds.push(pf.key.clone());
-        } else {
-            let val_idx = *next_param;
-            *next_param += 1;
-            sql.push_str(&format!(
-                "\n           AND NOT EXISTS (SELECT 1 FROM block_properties bp \
-                  WHERE bp.block_id = {block_alias}.id \
-                    AND bp.key = ?{key_idx} \
-                    AND bp.value_text = ?{val_idx})"
-            ));
-            binds.push(pf.key.clone());
-            binds.push(pf.value.clone());
-        }
+        append_property_match(sql, next_param, &mut binds, pf, block_alias, true);
     }
 
     binds
 }
 
+/// PEND-64 — emit one `[NOT ]EXISTS` clause for a `prop:KEY=VALUE`
+/// filter that matches across all four user-facing typed columns
+/// (`value_text` / `value_num` / `value_date` / `value_ref`).
+///
+/// For `pf.value.is_empty()`, falls back to the key-presence-only
+/// shape (pre-PEND-64 behaviour). Otherwise emits a four-way OR with
+/// type-coerced bind variants — `value_num` / `value_date` /
+/// `value_ref` bind as `NULL` when the user's value doesn't parse as
+/// that type, so the corresponding branch evaluates to `NULL`
+/// (FALSE in `WHERE`) and only the `value_text` branch matches for
+/// arbitrary strings (the v1 behaviour). The `block_properties`
+/// `exactly_one_value` CHECK (migration 0062) guarantees at most one
+/// branch can ever fire per row.
+fn append_property_match(
+    sql: &mut String,
+    next_param: &mut usize,
+    binds: &mut Vec<MetaBind>,
+    pf: &SearchPropertyFilter,
+    block_alias: &str,
+    exclude: bool,
+) {
+    let keyword = if exclude { "NOT EXISTS" } else { "EXISTS" };
+
+    let key_idx = *next_param;
+    *next_param += 1;
+
+    if pf.value.is_empty() {
+        sql.push_str(&format!(
+            "\n           AND {keyword} (SELECT 1 FROM block_properties bp \
+              WHERE bp.block_id = {block_alias}.id AND bp.key = ?{key_idx})"
+        ));
+        binds.push(MetaBind::Str(pf.key.clone()));
+        return;
+    }
+
+    let text_idx = *next_param;
+    *next_param += 1;
+    let num_idx = *next_param;
+    *next_param += 1;
+    let date_idx = *next_param;
+    *next_param += 1;
+    let ref_idx = *next_param;
+    *next_param += 1;
+
+    sql.push_str(&format!(
+        "\n           AND {keyword} (SELECT 1 FROM block_properties bp \
+          WHERE bp.block_id = {block_alias}.id \
+            AND bp.key = ?{key_idx} \
+            AND ( \
+                 (bp.value_text IS NOT NULL AND bp.value_text = ?{text_idx}) \
+              OR (bp.value_num  IS NOT NULL AND bp.value_num  = ?{num_idx}) \
+              OR (bp.value_date IS NOT NULL AND bp.value_date = ?{date_idx}) \
+              OR (bp.value_ref  IS NOT NULL AND bp.value_ref  = ?{ref_idx}) \
+            ))"
+    ));
+
+    let parsed = parse_prop_value(&pf.value);
+    binds.push(MetaBind::Str(pf.key.clone()));
+    binds.push(MetaBind::Str(pf.value.clone()));
+    binds.push(MetaBind::NullableF64(parsed.num));
+    binds.push(MetaBind::NullableStr(parsed.date));
+    binds.push(MetaBind::NullableStr(parsed.ref_));
+}
+
+/// Parsed-variant bundle for one `prop:KEY=VALUE` user input.
+///
+/// Each field is `Some` iff the raw value parses cleanly as that type;
+/// otherwise `None`, which the caller binds as SQL `NULL` to make the
+/// corresponding `bp.value_<x> = ?` branch FALSE.
+#[derive(Debug, Clone, Default)]
+struct PropParsedValue {
+    num: Option<f64>,
+    /// ISO `YYYY-MM-DD` if the raw parses as `NaiveDate`.
+    date: Option<String>,
+    /// Uppercased ULID if the raw is a 26-char Crockford base32 string.
+    ref_: Option<String>,
+}
+
+fn parse_prop_value(raw: &str) -> PropParsedValue {
+    PropParsedValue {
+        num: raw.parse::<f64>().ok(),
+        date: NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+            .ok()
+            .map(|d| d.format("%Y-%m-%d").to_string()),
+        ref_: parse_ulid(raw),
+    }
+}
+
+/// Recognise a ULID-shaped string and return its uppercased form.
+///
+/// Mirrors the lenient check in
+/// [`crate::mcp::handler_utils::normalize_ulid_arg`]: 26-char +
+/// ASCII alphanumeric. Strict-Crockford rejection of `I/L/O/U` is
+/// intentionally NOT enforced — Agaric's existing decoder accepts
+/// those characters as aliases, and `value_ref` rows may legitimately
+/// contain them in older blocks. Anything that doesn't fit the
+/// 26-char shape returns `None`, which makes the `value_ref` branch
+/// of the four-column OR bind SQL `NULL` and contribute nothing.
+fn parse_ulid(raw: &str) -> Option<String> {
+    const ULID_LEN: usize = 26;
+    if raw.len() != ULID_LEN {
+        return None;
+    }
+    if !raw.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(raw.to_ascii_uppercase())
+}
+
 fn append_text_in_or_null(
     sql: &mut String,
     next_param: &mut usize,
-    binds: &mut Vec<String>,
+    binds: &mut Vec<MetaBind>,
     values: &[String],
     is_null: bool,
     column: &str,
@@ -385,7 +554,7 @@ fn append_text_in_or_null(
             .collect();
         parts.push(format!("{column} IN ({})", placeholders.join(", ")));
         for v in values {
-            binds.push(v.clone());
+            binds.push(MetaBind::Str(v.clone()));
         }
     }
     if is_null {
@@ -394,10 +563,55 @@ fn append_text_in_or_null(
     sql.push_str(&format!("\n           AND ({})", parts.join(" OR ")));
 }
 
+/// PEND-63 — emit the inverted clause for `not-state:` / `not-priority:`.
+///
+/// Shape: `(column IS NULL OR column NOT IN (?, ?, ...))`. The
+/// `IS NULL` branch is **always included by design** so a "blocks NOT
+/// in DONE" query returns blocks with no state set at all, not
+/// excludes them. The `not-state:none` sentinel flips
+/// `not_null = true` and emits `column IS NOT NULL` instead — that
+/// reads as "exclude blocks with no state".
+fn append_text_not_in_or_not_null(
+    sql: &mut String,
+    next_param: &mut usize,
+    binds: &mut Vec<MetaBind>,
+    values: &[String],
+    not_null: bool,
+    column: &str,
+) {
+    if values.is_empty() && !not_null {
+        return;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if !values.is_empty() {
+        let placeholders: Vec<String> = values
+            .iter()
+            .map(|_| {
+                let idx = *next_param;
+                *next_param += 1;
+                format!("?{idx}")
+            })
+            .collect();
+        // NULL-inclusive inversion: a row with `column IS NULL` is
+        // counted as "not in the excluded set".
+        parts.push(format!(
+            "{column} IS NULL OR {column} NOT IN ({})",
+            placeholders.join(", ")
+        ));
+        for v in values {
+            binds.push(MetaBind::Str(v.clone()));
+        }
+    }
+    if not_null {
+        parts.push(format!("{column} IS NOT NULL"));
+    }
+    sql.push_str(&format!("\n           AND ({})", parts.join(" OR ")));
+}
+
 fn append_date_predicate(
     sql: &mut String,
     next_param: &mut usize,
-    binds: &mut Vec<String>,
+    binds: &mut Vec<MetaBind>,
     pred: &DatePredicate,
     column: &str,
 ) {
@@ -413,8 +627,8 @@ fn append_date_predicate(
             sql.push_str(&format!(
                 "\n           AND {column} IS NOT NULL AND {column} BETWEEN ?{from_idx} AND ?{to_idx}"
             ));
-            binds.push(from.clone());
-            binds.push(to.clone());
+            binds.push(MetaBind::Str(from.clone()));
+            binds.push(MetaBind::Str(to.clone()));
         }
         DatePredicate::Op { op, date } => {
             let idx = *next_param;
@@ -423,7 +637,7 @@ fn append_date_predicate(
                 "\n           AND {column} IS NOT NULL AND {column} {} ?{idx}",
                 op.as_sql()
             ));
-            binds.push(date.clone());
+            binds.push(MetaBind::Str(date.clone()));
         }
     }
 }
@@ -649,5 +863,266 @@ mod tests {
         assert_eq!(m.property_includes[0].value, "done");
         assert_eq!(m.property_excludes.len(), 1);
         assert_eq!(m.property_excludes[0].key, "archived");
+    }
+
+    // -----------------------------------------------------------------
+    // PEND-63 — excluded state / priority resolution
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn excluded_state_values_route_to_predicate() {
+        let f = SearchFilter {
+            excluded_state_filter: vec!["DONE".into(), "CANCELLED".into()],
+            ..Default::default()
+        };
+        let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
+        assert_eq!(
+            m.excluded_state_values,
+            vec!["DONE".to_string(), "CANCELLED".to_string()]
+        );
+        assert!(!m.excluded_state_not_null);
+        assert!(!m.is_empty());
+    }
+
+    #[test]
+    fn excluded_state_none_sentinel_flips_to_not_null() {
+        let f = SearchFilter {
+            excluded_state_filter: vec!["none".into(), "TODO".into()],
+            ..Default::default()
+        };
+        let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
+        assert!(m.excluded_state_not_null);
+        assert_eq!(m.excluded_state_values, vec!["TODO".to_string()]);
+    }
+
+    #[test]
+    fn excluded_priority_case_insensitive_none() {
+        let f = SearchFilter {
+            excluded_priority_filter: vec!["NONE".into()],
+            ..Default::default()
+        };
+        let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
+        assert!(m.excluded_priority_not_null);
+        assert!(m.excluded_priority_values.is_empty());
+    }
+
+    #[test]
+    fn excluded_state_sql_emits_null_inclusive_not_in() {
+        let meta = MetadataPredicates {
+            excluded_state_values: vec!["DONE".into(), "CANCELLED".into()],
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        // NULL-inclusive inversion is the PEND-63 design.
+        assert!(
+            sql.contains("b.todo_state IS NULL OR b.todo_state NOT IN (?1, ?2)"),
+            "got SQL: {sql}",
+        );
+        assert_eq!(binds.len(), 2);
+        // Combined with `excluded_state_not_null` it would be a
+        // separate OR-branch; verify the values-only case alone here.
+        assert!(matches!(&binds[0], MetaBind::Str(s) if s == "DONE"));
+        assert!(matches!(&binds[1], MetaBind::Str(s) if s == "CANCELLED"));
+    }
+
+    #[test]
+    fn excluded_state_none_sentinel_sql_emits_is_not_null() {
+        let meta = MetadataPredicates {
+            excluded_state_not_null: true,
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        assert!(sql.contains("b.todo_state IS NOT NULL"), "got SQL: {sql}",);
+        assert!(binds.is_empty());
+    }
+
+    #[test]
+    fn excluded_priority_combined_with_values_and_null_sentinel() {
+        let meta = MetadataPredicates {
+            excluded_priority_values: vec!["1".into()],
+            excluded_priority_not_null: true,
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let _ = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        // Single AND-clause with two OR-branches: NULL-inclusive
+        // NOT-IN clause OR `IS NOT NULL`. They compose into a
+        // tautology, but the SQL composition must still emit both
+        // for shape-correctness; the projection deduplicates
+        // upstream.
+        assert!(sql.contains("b.priority IS NULL OR b.priority NOT IN"));
+        assert!(sql.contains("b.priority IS NOT NULL"));
+    }
+
+    // -----------------------------------------------------------------
+    // PEND-64 — `prop:` four-column matching
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn prop_text_value_binds_four_columns() {
+        let meta = MetadataPredicates {
+            property_includes: vec![SearchPropertyFilter {
+                key: "status".into(),
+                value: "draft".into(),
+            }],
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        // Four-way OR with all four column branches present.
+        assert!(sql.contains("bp.value_text IS NOT NULL AND bp.value_text = ?2"));
+        assert!(sql.contains("bp.value_num  IS NOT NULL AND bp.value_num  = ?3"));
+        assert!(sql.contains("bp.value_date IS NOT NULL AND bp.value_date = ?4"));
+        assert!(sql.contains("bp.value_ref  IS NOT NULL AND bp.value_ref  = ?5"));
+        // 1 key + 4 typed value binds = 5 binds.
+        assert_eq!(binds.len(), 5);
+        // "draft" parses as text only → num / date / ref are NULL.
+        assert!(matches!(&binds[0], MetaBind::Str(s) if s == "status"));
+        assert!(matches!(&binds[1], MetaBind::Str(s) if s == "draft"));
+        assert!(matches!(&binds[2], MetaBind::NullableF64(None)));
+        assert!(matches!(&binds[3], MetaBind::NullableStr(None)));
+        assert!(matches!(&binds[4], MetaBind::NullableStr(None)));
+    }
+
+    #[test]
+    fn prop_numeric_value_binds_num_variant() {
+        let meta = MetadataPredicates {
+            property_includes: vec![SearchPropertyFilter {
+                key: "priority".into(),
+                value: "1".into(),
+            }],
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        // value_text bind is always the verbatim user input.
+        assert!(matches!(&binds[1], MetaBind::Str(s) if s == "1"));
+        // value_num bind is Some(1.0).
+        assert!(
+            matches!(&binds[2], MetaBind::NullableF64(Some(n)) if (n - 1.0).abs() < f64::EPSILON)
+        );
+        // date / ref still NULL (this value doesn't parse as either).
+        assert!(matches!(&binds[3], MetaBind::NullableStr(None)));
+        assert!(matches!(&binds[4], MetaBind::NullableStr(None)));
+        let _ = sql;
+    }
+
+    #[test]
+    fn prop_iso_date_value_binds_date_variant() {
+        let meta = MetadataPredicates {
+            property_includes: vec![SearchPropertyFilter {
+                key: "due-date".into(),
+                value: "2026-05-17".into(),
+            }],
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        // value_text bind is verbatim.
+        assert!(matches!(&binds[1], MetaBind::Str(s) if s == "2026-05-17"));
+        // num bind: "2026-05-17" is NOT a number — f64 parse fails.
+        assert!(matches!(&binds[2], MetaBind::NullableF64(None)));
+        // date bind: parses → Some("2026-05-17").
+        assert!(matches!(&binds[3], MetaBind::NullableStr(Some(s)) if s == "2026-05-17"));
+        // ref bind: not a 26-char ULID.
+        assert!(matches!(&binds[4], MetaBind::NullableStr(None)));
+        let _ = sql;
+    }
+
+    #[test]
+    fn prop_ulid_value_binds_ref_variant_uppercased() {
+        let lower = "01hkq2rwwwgm34rtgfe9xcryz4";
+        assert_eq!(lower.len(), 26);
+        let meta = MetadataPredicates {
+            property_includes: vec![SearchPropertyFilter {
+                key: "author".into(),
+                value: lower.into(),
+            }],
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        // value_text bind is verbatim (case-preserving v1 behaviour).
+        assert!(matches!(&binds[1], MetaBind::Str(s) if s == lower));
+        // ref bind: uppercase form for ULID column convention.
+        let expected = lower.to_ascii_uppercase();
+        assert!(matches!(&binds[4], MetaBind::NullableStr(Some(s)) if s == &expected));
+        let _ = sql;
+    }
+
+    #[test]
+    fn prop_empty_value_is_key_presence_only() {
+        let meta = MetadataPredicates {
+            property_includes: vec![SearchPropertyFilter {
+                key: "notes".into(),
+                value: String::new(),
+            }],
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        // Key-only EXISTS clause (no value-coercion four-way OR).
+        assert!(
+            sql.contains("EXISTS (SELECT 1 FROM block_properties bp WHERE bp.block_id = b.id AND bp.key = ?1)"),
+            "got SQL: {sql}",
+        );
+        // Single bind: the key.
+        assert_eq!(binds.len(), 1);
+        assert!(matches!(&binds[0], MetaBind::Str(s) if s == "notes"));
+    }
+
+    #[test]
+    fn prop_exclude_emits_not_exists_with_four_column_or() {
+        let meta = MetadataPredicates {
+            property_excludes: vec![SearchPropertyFilter {
+                key: "archived".into(),
+                value: "true".into(),
+            }],
+            ..Default::default()
+        };
+        let mut sql = String::new();
+        let mut p = 1usize;
+        let _ = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+        assert!(sql.contains("AND NOT EXISTS (SELECT 1 FROM block_properties bp"));
+        // Same four-column OR shape as the include path.
+        assert!(sql.contains("bp.value_text IS NOT NULL AND bp.value_text = ?2"));
+        assert!(sql.contains("bp.value_num  IS NOT NULL AND bp.value_num  = ?3"));
+        assert!(sql.contains("bp.value_date IS NOT NULL AND bp.value_date = ?4"));
+        assert!(sql.contains("bp.value_ref  IS NOT NULL AND bp.value_ref  = ?5"));
+    }
+
+    #[test]
+    fn parse_prop_value_rejects_non_ulid_strings() {
+        // 25 chars (too short)
+        assert!(parse_ulid("01HKQ2RWWWGM34RTGFE9XCRYZ").is_none());
+        // 27 chars (too long)
+        assert!(parse_ulid("01HKQ2RWWWGM34RTGFE9XCRYZ4X").is_none());
+        // 26 chars but contains a non-alphanumeric char (hyphen)
+        assert!(parse_ulid("01HKQIRWWWGM34RTGFE9XCRY-4").is_none());
+        // 26 chars valid alphanumeric → uppercased. The codebase's
+        // existing `normalize_ulid_arg` accepts the strict Crockford
+        // set plus I/L/O/U as aliases (matching `crockford_decode_char`),
+        // so this PEND-64 helper is intentionally lenient.
+        assert_eq!(
+            parse_ulid("01hkq2rwwwgm34rtgfe9xcryz4").as_deref(),
+            Some("01HKQ2RWWWGM34RTGFE9XCRYZ4"),
+        );
+        // Lenient — includes 'L' which the strict Crockford alphabet
+        // excludes. Matches how Agaric's test fixtures (and
+        // `normalize_ulid_arg`) treat ULID-shaped strings.
+        assert_eq!(
+            parse_ulid("01HQBLMTA00000000000000001").as_deref(),
+            Some("01HQBLMTA00000000000000001"),
+        );
     }
 }

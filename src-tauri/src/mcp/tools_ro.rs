@@ -148,6 +148,56 @@ struct SearchArgs {
     /// yet track a "current space" must pick one explicitly (typically
     /// the first space surfaced via `list_spaces`).
     space_id: String,
+    /// PEND-65 — optional structured filter set mirroring the
+    /// `SearchFilter` user-facing surface. Omitted = the agent runs a
+    /// query-string-only search (the pre-PEND-65 contract). When
+    /// present, the handler maps each field 1:1 onto the underlying
+    /// `SearchFilter` and dispatches as the Tauri command path does.
+    /// Inline filter syntax (`tag:` / `state:` / `prop:`…) is NOT
+    /// parsed from `query` at the MCP boundary — agents pass
+    /// structured arguments instead.
+    #[serde(default)]
+    filter: Option<SearchFilterArgs>,
+}
+
+/// PEND-65 — JSON wire shape for the MCP `search.filter` argument.
+///
+/// Mirrors [`crate::commands::queries::SearchFilter`] field-for-field
+/// (minus `parent_id` / `tag_ids` / `space_id`, which the existing
+/// top-level arg slots already carry). Every field is
+/// `#[serde(default)]` so an agent can pass any subset; the handler
+/// folds the provided fields into the constructed `SearchFilter`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+struct SearchFilterArgs {
+    #[serde(default)]
+    include_page_globs: Vec<String>,
+    #[serde(default)]
+    exclude_page_globs: Vec<String>,
+    #[serde(default)]
+    case_sensitive: bool,
+    #[serde(default)]
+    whole_word: bool,
+    #[serde(default)]
+    is_regex: bool,
+    #[serde(default)]
+    block_type_filter: Option<String>,
+    #[serde(default)]
+    state_filter: Vec<String>,
+    #[serde(default)]
+    priority_filter: Vec<String>,
+    #[serde(default)]
+    excluded_state_filter: Vec<String>,
+    #[serde(default)]
+    excluded_priority_filter: Vec<String>,
+    #[serde(default)]
+    due_filter: Option<crate::commands::queries::DateFilter>,
+    #[serde(default)]
+    scheduled_filter: Option<crate::commands::queries::DateFilter>,
+    #[serde(default)]
+    property_filters: Vec<crate::commands::queries::SearchPropertyFilter>,
+    #[serde(default)]
+    excluded_property_filters: Vec<crate::commands::queries::SearchPropertyFilter>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,9 +462,12 @@ fn tool_desc_get_page() -> ToolDescription {
 fn tool_desc_search() -> ToolDescription {
     ToolDescription {
         name: TOOL_SEARCH.to_string(),
-        description: "Full-text search across block content (FTS5). Returns BlockRow records; \
-                      content is truncated to 512 chars per result."
-            .to_string(),
+        description:
+            "Full-text search across block content (FTS5). Returns BlockRow records; content \
+             is truncated to 512 chars per result. PEND-65 — pass `filter` for structured \
+             narrowing (state / priority / due / scheduled / property / page-name globs / \
+             block-type / case-sensitive / whole-word / regex toggles)."
+                .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -437,6 +490,70 @@ fn tool_desc_search() -> ToolDescription {
                 "space_id": {
                     "type": "string",
                     "description": "FEAT-3p4 — ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`.",
+                },
+                "filter": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "PEND-65 — structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search).",
+                    "properties": {
+                        "include_page_globs": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "PEND-54 — page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`.",
+                        },
+                        "exclude_page_globs": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "PEND-54 — page-name glob exclude list.",
+                        },
+                        "case_sensitive": { "type": "boolean" },
+                        "whole_word": { "type": "boolean" },
+                        "is_regex": { "type": "boolean", "description": "PEND-55 — treat `query` as a regex (FTS5 bypassed)." },
+                        "block_type_filter": { "type": "string", "description": "PEND-51 — restrict to a single `blocks.block_type` value (e.g. `'page'`)." },
+                        "state_filter": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "PEND-53 — `todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`.",
+                        },
+                        "priority_filter": { "type": "array", "items": { "type": "string" } },
+                        "excluded_state_filter": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "PEND-63 — `(todo_state IS NULL OR todo_state NOT IN (...))`. Literal `'none'` flips to `todo_state IS NOT NULL`.",
+                        },
+                        "excluded_priority_filter": { "type": "array", "items": { "type": "string" } },
+                        "due_filter": {
+                            "type": "object",
+                            "description": "PEND-53 — date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`.",
+                        },
+                        "scheduled_filter": {
+                            "type": "object",
+                            "description": "PEND-53 — same shape as `due_filter` but on `blocks.scheduled_date`.",
+                        },
+                        "property_filters": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": { "type": "string" },
+                                    "value": { "type": "string" },
+                                },
+                                "required": ["key", "value"],
+                            },
+                            "description": "PEND-53 — AND-joined property predicates. PEND-64 matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion.",
+                        },
+                        "excluded_property_filters": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": { "type": "string" },
+                                    "value": { "type": "string" },
+                                },
+                                "required": ["key", "value"],
+                            },
+                        },
+                    },
                 },
             },
         }),
@@ -658,6 +775,14 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     let tag_ids = args
         .tag_ids
         .map(|v| v.iter().map(|s| normalize_ulid_arg(s)).collect());
+    // PEND-65 — fold the optional structured `filter` arg into the
+    // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
+    // preserves the pre-PEND-65 contract (no metadata / glob / toggle
+    // filters applied). FEAT-3p4 — `space_id` is always required and
+    // comes from the top-level arg; `parent_id` / `tag_ids` likewise
+    // stay at the top level to keep the existing wire contract
+    // backward-compatible.
+    let f = args.filter.unwrap_or_default();
     let mut resp = search_blocks_inner(
         pool,
         args.query,
@@ -666,37 +791,21 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         crate::commands::SearchFilter {
             parent_id,
             tag_ids: tag_ids.unwrap_or_default(),
-            // FEAT-3p4 — `search_blocks_inner` requires a space ULID;
-            // the agent threads its active space (see
-            // `SearchArgs::space_id`). PEND-50 Phase 0 — the wire
-            // shape changed to a `SearchFilter` struct but the MCP
-            // contract is unchanged.
             space_id: Some(args.space_id),
-            // PEND-54 — the MCP tool does not (yet) accept inline
-            // filter syntax; defaults preserve the pre-PEND-54
-            // behaviour.
-            include_page_globs: Vec::new(),
-            exclude_page_globs: Vec::new(),
-            // PEND-55 — MCP tools default to all-toggles-off so agent
-            // calls reproduce the FTS-only candidate set; future MCP
-            // tool variants can opt into regex.
-            case_sensitive: false,
-            whole_word: false,
-            is_regex: false,
-            // PEND-51 — MCP tools do not yet expose a block-type filter;
-            // defaults preserve the pre-PEND-51 "all block types"
-            // behaviour.
-            block_type_filter: None,
-            // PEND-53 — MCP tools do not yet expose state / priority /
-            // date / property filters; defaults preserve the pre-PEND-53
-            // "no metadata filter" behaviour. A follow-up plan extends
-            // the MCP search tool with this surface.
-            state_filter: Vec::new(),
-            priority_filter: Vec::new(),
-            due_filter: None,
-            scheduled_filter: None,
-            property_filters: Vec::new(),
-            excluded_property_filters: Vec::new(),
+            include_page_globs: f.include_page_globs,
+            exclude_page_globs: f.exclude_page_globs,
+            case_sensitive: f.case_sensitive,
+            whole_word: f.whole_word,
+            is_regex: f.is_regex,
+            block_type_filter: f.block_type_filter,
+            state_filter: f.state_filter,
+            priority_filter: f.priority_filter,
+            due_filter: f.due_filter,
+            scheduled_filter: f.scheduled_filter,
+            property_filters: f.property_filters,
+            excluded_property_filters: f.excluded_property_filters,
+            excluded_state_filter: f.excluded_state_filter,
+            excluded_priority_filter: f.excluded_priority_filter,
         },
     )
     .await?;
