@@ -2,10 +2,56 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 783 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 784 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 783 sessions.
+- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 784 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 784 — PEND-60 Phase 2 dynamic value sources (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | 2 build + 2 review |
+| **Items closed** | — (PEND-60 Phase 2 only; Phase 3 — Playwright e2e + docs — remains open) |
+| **Items modified** | PEND-60 (status note refreshed) |
+| **Tests added** | +25 frontend (10 path-history + 11 hook + 4 SearchPanel integration) / +0 backend |
+| **Files touched** | 6 (4 new + 2 modified) |
+
+**Summary:** Wired dynamic value sources for caret-anchored autocomplete: typing `tag:#<query>` calls `listTagsByPrefix` (150 ms debounce + request-id cancellation), typing `prop:` calls `listPropertyKeys` (session-scoped cache), and typing `path:` / `not-path:` surfaces per-space localStorage MRU entries (recorded on submit). Static value lists for `state:` / `priority:` / `due:` / `scheduled:` moved from `SearchPanel.tsx` into the new `useAutocompleteSources` hook, which is the single source of truth for "items for this anchor."
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER row touched).
+- **Previously resolved:** 1213+ → 1213+ across 783 → 784 sessions.
+
+**Files touched (this session):**
+- `src/lib/path-history.ts` (+55 LOC, new) — per-space localStorage MRU at key `agaric:pathHistory:v1:<spaceId>`. Exports `PATH_HISTORY_LIMIT=30`, `getPathHistory`, `recordPathHistory`, `clearPathHistory`. Storage failures (private mode / quota) silently no-op.
+- `src/lib/__tests__/path-history.test.ts` (+113 LOC, new) — 10 cases: empty / record / newest-first / dedup-jump-to-top / per-space partition / trim-at-limit / no-op-on-empty-id / clear / corrupted-storage / clear-no-op.
+- `src/hooks/useAutocompleteSources.ts` (~180 LOC, new) — hook returning `{ items, loading }` per anchor. Owns `STATE_VALUES` / `PRIORITY_VALUES` / `DATE_BUCKET_VALUES`. Tag source debounced + request-id-guarded against stale responses (request id also bumps when leaving the `tag` anchor so a slow IPC can't strand stale items). PropKey source consumes the existing MAINT-189 cache (`src/lib/property-keys-cache.ts`) via `fetchPropertyKeysOnce` + `useSyncExternalStore` — space-keyed, invalidates on `block:properties-changed`, shared with `BacklinkFilterBuilder` / `PropertyValuePicker`. The fetch is lazy (only fires when the user actually opens `prop:`) so the SearchPanel doesn't trigger an IPC on every mount. Path source synchronous via `getPathHistory`. All IPC rejections route through `logger.warn`; the hook never throws.
+- `src/hooks/__tests__/useAutocompleteSources.test.ts` (~240 LOC, new) — 12 cases including debounce, stale-response cancellation, propKey lazy-fetch + cache reuse, pathInclude / pathExclude parity, error path. Test isolation uses `_resetPropertyKeysCacheForTest` from the shared cache module.
+- `src/components/SearchPanel.tsx` (~30 LOC net delta: −40 static-lists / `itemsForAnchor`, +10 hook + path-history) — replaces the static useMemo with `useAutocompleteSources({ anchor: currentAnchor, spaceId: currentSpaceId })`. `handleSubmit` now iterates `ast.filters` and calls `recordPathHistory(currentSpaceId, filter.value)` for each `pathInclude` / `pathExclude`.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` (+76 LOC) — 4 new integration tests covering tag suggestions via `list_tags_by_prefix` mock + 150 ms debounce flush, path MRU surfacing via `recordPathHistory` setup, path recording on submit verified via `getPathHistory`, and property-key suggestions via `list_property_keys` mock.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — status note refreshed to reflect Phase 2 complete; Phase 3 still open.
+
+**Verification:**
+- `npx vitest run` — 10131/10131 (plus the 25 new tests).
+- `npx tsc --noEmit` — clean (one pre-existing `'FormEvent' is deprecated` diagnostic in `SearchPanel.tsx:597`, unchanged from main).
+- `./node_modules/.bin/biome check <6 files>` — clean.
+
+**Process notes:**
+- The backend `list_property_keys` IPC + `listPropertyKeys()` wrapper already existed (added in a prior session); the planned "new ~30 LOC backend" turned out to be zero. Cut subagent A entirely; the work compressed to two pure-frontend parallel subagents (path-history MRU + hook) plus orchestrator wire-up + integration tests.
+- Parallel subagents touched non-overlapping files (`src/lib/path-history.ts` vs `src/hooks/useAutocompleteSources.ts`); no worktree needed. The hook subagent imported from `@/lib/path-history` assuming the sibling would land — both completed before TS check ran so the import resolved cleanly.
+- Tech review found a **real blocker**: the hook subagent rolled its own module-scope propKey cache, duplicating the existing MAINT-189 cache at `src/lib/property-keys-cache.ts`. The bespoke cache was global (not space-keyed) and never invalidated, so switching spaces leaked keys + property edits didn't refresh the popover. Refactored to consume the shared cache via `fetchPropertyKeysOnce` + `useSyncExternalStore`, with a lazy fetch gated on `anchor.active === 'propKey'` (avoids triggering an IPC on every SearchPanel mount, which would have broken the pre-existing `SearchPanel.test.tsx` mock sequence). Dropped the `_resetAutocompleteCaches` test helper export — tests now use `_resetPropertyKeysCacheForTest` from the shared module.
+- Tech review also flagged a stale-tag-write hazard (an in-flight `listTagsByPrefix` promise resolving after the user moved off the `tag:` anchor could strand stale items for a future return-to-tag). Fix: bump `tagRequestIdRef` whenever `active !== 'tag'` so resolutions check fails. Added the missing `pathExclude` coverage test.
+
+**Lessons learned (for future sessions):**
+- Re-verify the existence of "planned new IPCs" before spawning a backend subagent. A quick `grep -n` of the proposed command name in the existing codebase can collapse a multi-file batch to a one-file batch — saves a worktree + a binding regen + a Rust test run.
+- **Before introducing a module-scope cache, grep for an existing one with the same shape.** The MAINT-189 cache for property keys had the exact contract this hook needed (space-keyed, in-flight-dedup, invalidation-aware) and a working React adapter — reinventing it cost a tech-reviewer round-trip. Pattern: `git grep -l "fetch.*Once\|invalidate.*Cache"` covers the standard cache surface in this repo.
+- When a hook subscribes to a shared cache, gate the *fetch* on actual need (e.g. anchor type) but keep the *subscription* unconditional. Eager subscription is cheap (one `useSyncExternalStore`); eager fetch breaks any test that asserts a tight IPC call sequence.
+
+**Commit plan:** Single additional commit on `pend-60-phase1-caret-autocomplete`. PR bundles Phase 1 + 1.5 + 2 (three commits total).
+
+---
 
 ## Session 783 — PEND-60 Phase 1.5 ARIA combobox polish (2026-05-18)
 

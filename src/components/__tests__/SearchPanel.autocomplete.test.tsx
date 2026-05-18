@@ -14,6 +14,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
+import { clearPathHistory, getPathHistory, recordPathHistory } from '../../lib/path-history'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
@@ -32,6 +34,8 @@ const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: 
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  _resetPropertyKeysCacheForTest()
+  clearPathHistory('SPACE_TEST')
   mockedInvoke.mockResolvedValue(emptyPage)
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
@@ -257,5 +261,76 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     typeFull(input, 'state:T')
     await screen.findByTestId('autocomplete-popover')
     expect(screen.getByTestId('autocomplete-item-TODO')).toBeInTheDocument()
+  })
+})
+
+describe('SearchPanel autocomplete dynamic sources (PEND-60 Phase 2)', () => {
+  it('surfaces tag suggestions from listTagsByPrefix when typing `tag:#`', async () => {
+    vi.useFakeTimers()
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_tags_by_prefix') {
+        return [
+          { tag_id: 'TAG1', name: 'project-x', color: null },
+          { tag_id: 'TAG2', name: 'project-y', color: null },
+        ]
+      }
+      return emptyPage
+    })
+
+    render(<SearchPanel />)
+    const input = getInput()
+    input.focus()
+    typeFull(input, 'tag:#pro')
+
+    // Flush the 150 ms debounce inside `useAutocompleteSources`.
+    await vi.advanceTimersByTimeAsync(200)
+    vi.useRealTimers()
+
+    await screen.findByTestId('autocomplete-popover')
+    expect(screen.getByTestId('autocomplete-item-project-x')).toBeInTheDocument()
+    expect(screen.getByTestId('autocomplete-item-project-y')).toBeInTheDocument()
+  })
+
+  it('surfaces recently-used path globs when typing `path:`', async () => {
+    recordPathHistory('SPACE_TEST', 'Journal/*')
+    recordPathHistory('SPACE_TEST', 'Archive/2024')
+
+    render(<SearchPanel />)
+    const input = getInput()
+    input.focus()
+    typeFull(input, 'path:')
+
+    await screen.findByTestId('autocomplete-popover')
+    expect(screen.getByTestId('autocomplete-item-Journal/*')).toBeInTheDocument()
+    expect(screen.getByTestId('autocomplete-item-Archive/2024')).toBeInTheDocument()
+  })
+
+  it('records path globs in the per-space MRU on submit', async () => {
+    render(<SearchPanel />)
+    const input = getInput()
+    input.focus()
+    typeFull(input, 'path:Notes/* hello')
+    fireEvent.submit(input.closest('form') as HTMLFormElement)
+
+    await waitFor(() => {
+      expect(getPathHistory('SPACE_TEST')).toContain('Notes/*')
+    })
+  })
+
+  it('surfaces property-key suggestions from listPropertyKeys when typing `prop:`', async () => {
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_property_keys') return ['status', 'effort', 'owner']
+      return emptyPage
+    })
+
+    render(<SearchPanel />)
+    const input = getInput()
+    input.focus()
+    typeFull(input, 'prop:')
+
+    await screen.findByTestId('autocomplete-popover')
+    expect(screen.getByTestId('autocomplete-item-status')).toBeInTheDocument()
+    expect(screen.getByTestId('autocomplete-item-effort')).toBeInTheDocument()
+    expect(screen.getByTestId('autocomplete-item-owner')).toBeInTheDocument()
   })
 })

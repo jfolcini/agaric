@@ -50,6 +50,7 @@ import {
   applyAutocompleteReplacement,
   detectAutocompleteAnchor,
 } from '@/lib/search-query/autocomplete'
+import { useAutocompleteSources } from '../hooks/useAutocompleteSources'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
@@ -57,6 +58,7 @@ import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useSearchHistoryCycling } from '../hooks/useSearchHistoryCycling'
 import { logger } from '../lib/logger'
+import { recordPathHistory } from '../lib/path-history'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow, SearchBlockRow } from '../lib/tauri'
@@ -76,11 +78,7 @@ import { ResultCard } from './ResultCard'
 import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
-import {
-  type AutocompleteAriaIds,
-  type AutocompleteItem,
-  AutocompletePopover,
-} from './search/AutocompletePopover'
+import { type AutocompleteAriaIds, AutocompletePopover } from './search/AutocompletePopover'
 import { FilterChipRow } from './search/FilterChipRow'
 import { FilterHelperPopover } from './search/FilterHelperPopover'
 import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
@@ -181,47 +179,6 @@ function hasCJK(text: string): boolean {
   return /[\u4E00-\u9FFF\u3400-\u4DBF\u3000-\u303F\u30A0-\u30FF\u3040-\u309F\uAC00-\uD7AF]/.test(
     text,
   )
-}
-
-/**
- * PEND-60 Phase 1 — Static value lists for caret-anchored autocomplete.
- *
- * Tag / path / property dynamic sources land in Phase 2. The vocabulary
- * here mirrors the parser's accepted values for `state:`, `priority:`,
- * `due:` / `scheduled:` (see `src/lib/search-query/types.ts` and the
- * PEND-53 plan).
- */
-const STATE_VALUES = ['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED', 'none'] as const
-const PRIORITY_VALUES = ['A', 'B', 'C', 'none'] as const
-const DATE_BUCKET_VALUES = [
-  'today',
-  'yesterday',
-  'overdue',
-  'this-week',
-  'this-month',
-  'next-week',
-  'older',
-  'none',
-] as const
-
-function itemsForAnchor(anchor: AutocompleteAnchor): AutocompleteItem[] {
-  if (anchor == null) return []
-  const lowered = anchor.query.toLowerCase()
-  const project = (values: readonly string[]): AutocompleteItem[] =>
-    values.filter((v) => v.toLowerCase().startsWith(lowered)).map((v) => ({ value: v }))
-  switch (anchor.active) {
-    case 'state':
-      return project(STATE_VALUES)
-    case 'priority':
-      return project(PRIORITY_VALUES)
-    case 'due':
-    case 'scheduled':
-      return project(DATE_BUCKET_VALUES)
-    default:
-      // PEND-60 Phase 2 — tag / path / propKey / propValue sources land
-      // there. Phase 1 ships static lists only.
-      return []
-  }
 }
 
 export function SearchPanel(): React.ReactElement {
@@ -521,7 +478,10 @@ export function SearchPanel(): React.ReactElement {
     () => (toggles.isRegex ? null : detectAutocompleteAnchor(query, caretPos)),
     [toggles.isRegex, query, caretPos],
   )
-  const autocompleteItems = useMemo(() => itemsForAnchor(currentAnchor), [currentAnchor])
+  const { items: autocompleteItems } = useAutocompleteSources({
+    anchor: currentAnchor,
+    spaceId: currentSpaceId,
+  })
   const autocompleteOpen =
     inputFocused && !autocompleteDismissed && autocompleteItems.length > 0 && currentAnchor != null
   // ARIA 1.1 combobox-with-listbox attrs for the search input. The role
@@ -645,6 +605,14 @@ export function SearchPanel(): React.ReactElement {
       // PEND-55 — push on submit, not on every keystroke. Per-space
       // partitioning is owned by the store.
       pushHistory(currentSpaceId, trimmed)
+      // PEND-60 Phase 2 — record each path glob (include + exclude) in
+      // the per-space MRU so the next caret-anchored `path:` /
+      // `not-path:` autocomplete surfaces them.
+      for (const filter of ast.filters) {
+        if (filter.kind === 'pathInclude' || filter.kind === 'pathExclude') {
+          recordPathHistory(currentSpaceId, filter.value)
+        }
+      }
     }
   }
 

@@ -1,6 +1,13 @@
 # PEND-60 — Caret-anchored autocomplete on cmdk
 
-> **Status (2026-05-18):** Phase 1 + ARIA combobox polish shipped on branch `pend-60-phase1-caret-autocomplete`. Caret-anchor utility (`src/lib/caret-anchor.ts`), popover component (`src/components/search/AutocompletePopover.tsx`), SearchPanel wire-up, static value lists for `state:` / `priority:` / `due:` / `scheduled:`, and full ARIA 1.1 combobox-with-listbox wiring on the input (role / aria-autocomplete / aria-haspopup / aria-expanded / aria-controls / aria-activedescendant) are landed with 27 frontend tests (7 unit + 9 component + 11 integration). Phases 2 (dynamic sources for `tag:` / `prop:` / `path:`) and 3 (Playwright e2e + `docs/SEARCH.md` update) remain open.
+> **Status (2026-05-18):** Phase 1 + ARIA combobox polish + Phase 2 shipped on branch `pend-60-phase1-caret-autocomplete`. The full feature now ships:
+>
+> - Caret-anchor utility (`src/lib/caret-anchor.ts`), popover component (`src/components/search/AutocompletePopover.tsx`), SearchPanel wire-up.
+> - Static value lists for `state:` / `priority:` / `due:` / `scheduled:`.
+> - Full ARIA 1.1 combobox-with-listbox wiring on the input (role / aria-autocomplete / aria-haspopup / aria-expanded / aria-controls / aria-activedescendant).
+> - Dynamic value sources: `tag:` (via existing `listTagsByPrefix` IPC, 150 ms debounce + request-id cancellation), `prop:` (via existing `listPropertyKeys` IPC, session-scoped cache), and `path:` / `not-path:` (per-space localStorage MRU recorded on submit).
+>
+> 51 frontend tests cover the surface (7 caret-anchor unit + 10 path-history unit + 11 useAutocompleteSources unit + 9 popover component + 14 SearchPanel integration). Phase 3 (Playwright e2e + `docs/SEARCH.md` autocomplete subsection) remains open.
 >
 > Ships the autocomplete popover that **PEND-54 deferred**. When the user types `tag:`, `state:`, `priority:`, `prop:`, etc. in the SearchPanel input, a small popover anchors next to the caret showing value suggestions; Enter / click inserts the value via the existing `applyAutocompleteReplacement` helper (already shipped + unit-tested). PEND-55's history-recall arrow keys and PEND-53's value lists both consume the same popover.
 >
