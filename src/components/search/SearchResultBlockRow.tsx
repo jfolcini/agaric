@@ -17,10 +17,11 @@
  */
 
 import type React from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
-import type { SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
+import type { MatchOffset, SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 import { SnippetHighlight } from './SnippetHighlight'
 
@@ -34,6 +35,42 @@ export interface SearchResultBlockRowProps {
   id?: string
 }
 
+/**
+ * PEND-55 — split `content` into alternating plain spans and `<mark>`
+ * highlight runs from a list of UTF-16 offset pairs. NO
+ * `dangerouslySetInnerHTML`; React renders each fragment as its own
+ * node so axe + react-dom escape every span.
+ *
+ * Out-of-range / overlapping / inverted offsets are skipped defensively
+ * — the backend caps the offset count and sorts in match order, but a
+ * malformed payload (e.g. from an older bundle) must never throw.
+ */
+function renderOffsetHighlights(content: string, offsets: ReadonlyArray<MatchOffset>) {
+  const len = content.length
+  const out: React.ReactNode[] = []
+  let cursor = 0
+  for (let i = 0; i < offsets.length; i++) {
+    const o = offsets[i]
+    if (!o) continue
+    const start = Math.max(0, Math.min(len, o.start))
+    const end = Math.max(start, Math.min(len, o.end))
+    if (end <= cursor || start === end) continue
+    if (start > cursor) {
+      out.push(<span key={`p${cursor}`}>{content.slice(cursor, start)}</span>)
+    }
+    out.push(
+      <mark key={`m${start}`} className="rounded-sm bg-yellow-200/70 dark:bg-yellow-500/30">
+        {content.slice(start, end)}
+      </mark>,
+    )
+    cursor = end
+  }
+  if (cursor < len) {
+    out.push(<span key={`p${cursor}`}>{content.slice(cursor)}</span>)
+  }
+  return out
+}
+
 export function SearchResultBlockRow({
   row,
   isFocused,
@@ -42,8 +79,16 @@ export function SearchResultBlockRow({
   id,
 }: SearchResultBlockRowProps): React.ReactElement {
   const { t } = useTranslation()
-  const hasSnippet = row.snippet != null && row.snippet.length > 0
+  const hasOffsets =
+    row.match_offsets != null && row.match_offsets.length > 0 && row.content != null
+  const hasSnippet = !hasOffsets && row.snippet != null && row.snippet.length > 0
   const fallback = row.content && row.content.length > 0 ? row.content : t('common.empty')
+  // PEND-55 — derive the offset-driven React nodes once per row.
+  // Inputs change only when the row identity / offsets change.
+  const offsetNodes = useMemo(() => {
+    if (!hasOffsets || row.content == null) return null
+    return renderOffsetHighlights(row.content, row.match_offsets ?? [])
+  }, [hasOffsets, row.content, row.match_offsets])
 
   function handleClick() {
     if (loading) return
@@ -75,7 +120,13 @@ export function SearchResultBlockRow({
       data-testid={`search-result-row-${row.id}`}
     >
       <span className="flex-1 text-sm line-clamp-2">
-        {hasSnippet ? <SnippetHighlight snippet={row.snippet} /> : fallback}
+        {hasOffsets ? (
+          offsetNodes
+        ) : hasSnippet ? (
+          <SnippetHighlight snippet={row.snippet} />
+        ) : (
+          fallback
+        )}
       </span>
       {loading && <Spinner className="shrink-0 text-muted-foreground" />}
       {(row.block_type === 'tag' || row.block_type === 'page') && (

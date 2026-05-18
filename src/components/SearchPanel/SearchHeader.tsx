@@ -26,6 +26,19 @@ export interface SearchHeaderProps {
   searchLoading: boolean
   typing: boolean
   t: TFunction
+  /** PEND-55 — onKeyDown handler that consumes `↑`/`↓` for history recall. */
+  onInputKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  /** PEND-55 — toggle row rendered next to the input. */
+  toggleRow?: React.ReactNode
+  /** PEND-55 — history dropdown rendered beneath the input. */
+  historyDropdown?: React.ReactNode
+  /** PEND-55 — visible inline error (e.g. invalid regex pattern). */
+  inlineError?: string | null
+  /** PEND-55 — controls the input's `aria-invalid` attribute. */
+  invalid?: boolean
+  /** PEND-55 — focus / blur tracking for the history dropdown. */
+  onInputFocus?: () => void
+  onInputBlur?: () => void
 }
 
 export function SearchHeader({
@@ -36,6 +49,13 @@ export function SearchHeader({
   searchLoading,
   typing,
   t,
+  onInputKeyDown,
+  toggleRow,
+  historyDropdown,
+  inlineError,
+  invalid,
+  onInputFocus,
+  onInputBlur,
 }: SearchHeaderProps): React.ReactElement {
   return (
     <ViewHeader>
@@ -49,11 +69,17 @@ export function SearchHeader({
           ref={inputRef}
           value={query}
           onChange={onInputChange}
+          onKeyDown={onInputKeyDown}
+          onFocus={onInputFocus}
+          onBlur={onInputBlur}
           placeholder={t('search.searchPlaceholder')}
           aria-label={t('search.searchLabel')}
+          aria-invalid={invalid ? true : undefined}
+          aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
           className="flex-1"
           autoFocus
         />
+        {toggleRow}
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           {t('search.searchButton')}
         </Button>
@@ -70,6 +96,17 @@ export function SearchHeader({
           </span>
         ) : null}
       </form>
+      {inlineError ? (
+        <p
+          id="search-inline-error"
+          role="alert"
+          data-testid="search-inline-error"
+          className="mt-1 text-xs text-destructive"
+        >
+          {inlineError}
+        </p>
+      ) : null}
+      {historyDropdown}
     </ViewHeader>
   )
 }

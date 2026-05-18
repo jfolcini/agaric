@@ -10,6 +10,7 @@ items:
     deleted_at: ~
     due_date: ~
     id: "[ULID]"
+    match_offsets: []
     page_id: "[ULID]"
     parent_id: ~
     position: 1

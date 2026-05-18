@@ -89,9 +89,22 @@ I took the **Recommendation** verbatim unless noted otherwise.
 - **Test delta:** +39 (17 matcher, 10 store, 12 component including vitest-axe). Suite: 9965 / 9965 pass.
 - **Keyboard rebind:** `Ctrl+F` now opens in-page find; `Ctrl+Shift+F` opens find-in-files. Matches universal convention; users coming from prior versions see a one-line release note + KeyboardShortcuts dialog entry.
 
-### PEND-55 — toggle row + search history
+### PEND-55 — toggle row + search history — LANDED
 
-(populated when cycle completes)
+- **All three phases shipped:** backend toggle/regex pipeline + frontend toggle row + history dropdown + cycling hook + docs.
+- **Backend `SearchFilter` extensions:** `case_sensitive`, `whole_word`, `is_regex` (all `#[serde(default)]`). `SearchBlockRow` gains `match_offsets: Vec<MatchOffset>`. Wire-compat additive — old frontends keep working.
+- **Regex engine:** Rust `regex` crate (linear-time, no lookaround); `size_limit(10 MB)`. Pattern length cap, result count cap (`MAX_OFFSETS_PER_BLOCK = 50`). Inline errors via `AppError::Validation("InvalidRegex: …")` prefix (same convention as PEND-54's `InvalidGlob:`).
+- **Toggle persistence (deliberate deviation from plan ambiguity):** persisted to localStorage `agaric:searchToggles:v1`. Plan was ambiguous; pre-flight instructions resolved it as persisted.
+- **Regex-mode ordering** (open Q3): `b.id DESC` (ULID = time-sortable) since the `blocks` table has no `created_at` column. Same recency-first behaviour without a schema change. Documented.
+- **`MAX_HISTORY = 20`** (open Q2 — plan recommendation).
+- **Per-space history** (open Q1 — plan recommendation; safer since `tag:` / `path:` references are space-specific).
+- **`is_regex` skips PEND-54's filter projection.** In regex mode, the typed string IS the regex; the chip parser is bypassed. Structural filters (parent, tag, space, glob) still apply via the regex-mode SQL path. Documented in `docs/SEARCH.md` Tips.
+- **History dropdown role:** `<div role="listbox">` instead of `<ul>` to satisfy Biome's `noNoninteractiveElementToInteractiveRole` rule cleanly.
+- **Defensive offset clamping:** frontend renderer guards out-of-range / inverted / overlapping offsets; backend guarantees ordered + capped, but the renderer must never throw on a stale bundle.
+- **Snippet cleared when `match_offsets` populated** (post-filter path) — prevents double-rendering on pre-PEND-55 frontends.
+- **Inline regex error UX:** parses `InvalidRegex:` prefix; renders red border + tooltip on the input.
+- **Test delta:** +53 vitest cases (toggle/history/cycling/integration), +15 nextest cases (Rust toggle filter + IPC integration). Suite: 10037 / 10037 vitest, 3728 / 3728 nextest.
+- **Fix-up cycle for prek-stricter `tsc -b`:** 8 TS4111 errors in `SearchPanel.toggles.test.tsx` (index-signature access via `['key']`), 1 TS4104 in `search-history.ts` (return type made `ReadonlyArray<string>` to match the `EMPTY_HISTORY` sentinel), added an axe audit (axe-presence hook requires every component test to carry one), cargo fmt.
 
 ### PEND-51 — Cmd+K palette
 

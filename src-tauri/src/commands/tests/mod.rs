@@ -14,4 +14,5 @@ mod snapshot_tests;
 mod status_cmd_tests;
 mod sync_cmd_tests;
 mod tag_cmd_tests;
+mod toggle_filter_tests;
 mod undo_redo_tests;

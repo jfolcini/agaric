@@ -606,6 +606,10 @@ describe('searchBlocks', () => {
         // PEND-54 — additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
+        // PEND-55 — additive toggle fields default to false.
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
       },
     })
     expect(result).toEqual(emptyPage)
@@ -648,6 +652,10 @@ describe('searchBlocks', () => {
         // PEND-54 — additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
+        // PEND-55 — additive toggle fields default to false.
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
       },
     })
     expect(result).toEqual(pageResp)
@@ -680,6 +688,10 @@ describe('searchBlocks', () => {
         // PEND-54 — additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
+        // PEND-55 — additive toggle fields default to false.
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
       },
     })
   })

@@ -46,8 +46,10 @@ import {
 } from '@/lib/search-query'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
+import { useSearchHistoryCycling } from '../hooks/useSearchHistoryCycling'
 import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { reportIpcError } from '../lib/report-ipc-error'
@@ -59,6 +61,7 @@ import {
   paginationLimit,
   searchBlocks,
 } from '../lib/tauri'
+import { selectHistoryForSpace, useSearchHistoryStore } from '../stores/search-history'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { EmptyState } from './EmptyState'
@@ -68,10 +71,23 @@ import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
 import { FilterChipRow } from './search/FilterChipRow'
 import { FilterHelperPopover } from './search/FilterHelperPopover'
+import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
 import { groupResultsByPage, SearchResultGroups } from './search/SearchResultGroups'
+import { SearchToggleRow, type SearchToggleState } from './search/SearchToggleRow'
 
 /** localStorage key for the PEND-54 one-time migration toast. */
 const FILTER_SYNTAX_INTRO_TOAST_FLAG = 'agaric:searchFilterSyntaxToast:v1'
+
+/** PEND-55 — localStorage key for the toggle state (component-local but
+ * persisted across reloads so power users don't re-click on every
+ * session). Per plan: persists in localStorage. */
+const SEARCH_TOGGLE_STORAGE_KEY = 'agaric:searchToggles:v1'
+
+const DEFAULT_SEARCH_TOGGLES: SearchToggleState = {
+  caseSensitive: false,
+  wholeWord: false,
+  isRegex: false,
+}
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -93,6 +109,21 @@ export function SearchPanel(): React.ReactElement {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searched, setSearched] = useState(false)
+  // PEND-55 — toggle state. Persisted via localStorage so re-opening
+  // the app preserves the user's preference (the plan calls this an
+  // opt-in default; persisting is a UX win and the cost is one
+  // serialise per change).
+  const [toggles, setToggles] = useLocalStoragePreference<SearchToggleState>(
+    SEARCH_TOGGLE_STORAGE_KEY,
+    DEFAULT_SEARCH_TOGGLES,
+  )
+  // PEND-55 — surface invalid-regex errors inline next to the input.
+  // Backend returns `AppError::Validation` with the `InvalidRegex:`
+  // prefix; the frontend strips the prefix for display.
+  const [regexError, setRegexError] = useState<string | null>(null)
+  // PEND-55 — history dropdown visibility. Shown when the input is
+  // focused AND empty (matches the plan's UX mock).
+  const [inputFocused, setInputFocused] = useState(false)
   // UX-335 — `cleared` is true iff the user emptied the search input AFTER a
   // search had been performed. Used to surface a `t('search.statusCleared')`
   // announcement in the aria-live status region (separate from pre-search).
@@ -171,6 +202,9 @@ export function SearchPanel(): React.ReactElement {
     }
   }, [t])
 
+  // PEND-55 — in regex mode the user's input is the regex verbatim;
+  // skip PEND-54's filter projection so `tag:` / `path:` aren't
+  // parsed as syntax. The full debouncedQuery is forwarded.
   const queryFn = useCallback(
     (cursor?: string) =>
       // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
@@ -178,21 +212,33 @@ export function SearchPanel(): React.ReactElement {
       // forces a no-match SQL filter (returning empty results) rather
       // than a runtime null deref.
       searchBlocks({
-        query: debouncedAst.freeText,
-        tagIds: tagIds.length > 0 ? tagIds : undefined,
+        query: toggles.isRegex ? debouncedQuery : debouncedAst.freeText,
+        tagIds: toggles.isRegex || tagIds.length === 0 ? undefined : tagIds,
         includePageGlobs:
-          debouncedProjection.includePageGlobs.length > 0
-            ? debouncedProjection.includePageGlobs
-            : undefined,
+          toggles.isRegex || debouncedProjection.includePageGlobs.length === 0
+            ? undefined
+            : debouncedProjection.includePageGlobs,
         excludePageGlobs:
-          debouncedProjection.excludePageGlobs.length > 0
-            ? debouncedProjection.excludePageGlobs
-            : undefined,
+          toggles.isRegex || debouncedProjection.excludePageGlobs.length === 0
+            ? undefined
+            : debouncedProjection.excludePageGlobs,
         cursor,
         limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId ?? '',
+        caseSensitive: toggles.caseSensitive,
+        wholeWord: toggles.wholeWord,
+        isRegex: toggles.isRegex,
       }),
-    [debouncedAst.freeText, tagIds, debouncedProjection, currentSpaceId],
+    [
+      debouncedAst.freeText,
+      debouncedQuery,
+      tagIds,
+      debouncedProjection,
+      currentSpaceId,
+      toggles.caseSensitive,
+      toggles.wholeWord,
+      toggles.isRegex,
+    ],
   )
 
   const {
@@ -206,9 +252,35 @@ export function SearchPanel(): React.ReactElement {
     // PEND-54 — the AST's free-text may be empty when the user has only
     // typed structured filter tokens (`tag:#urgent`). We still want to
     // run the query in that case so filters apply on their own.
-    enabled: spaceIsReady && (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
+    // PEND-55 — in regex mode, the typed query (not the AST) is the
+    // pattern; gate on debouncedQuery length so an in-progress regex
+    // edit still fires the IPC.
+    enabled:
+      spaceIsReady &&
+      (toggles.isRegex
+        ? debouncedQuery.length > 0
+        : debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
     onError: t('search.failed'),
   })
+
+  // PEND-55 — parse `AppError::Validation("InvalidRegex: …")` from the
+  // IPC error and surface it inline. Otherwise the panel error reads
+  // as a generic "Failed to search" which doesn't tell the user how
+  // to fix their regex.
+  useEffect(() => {
+    if (!error) {
+      setRegexError(null)
+      return
+    }
+    const msg = typeof error === 'string' ? error : ''
+    const prefix = 'InvalidRegex:'
+    const idx = msg.indexOf(prefix)
+    if (idx >= 0) {
+      setRegexError(t('search.invalidRegex', { message: msg.slice(idx + prefix.length).trim() }))
+    } else {
+      setRegexError(null)
+    }
+  }, [error, t])
 
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
@@ -280,15 +352,48 @@ export function SearchPanel(): React.ReactElement {
     searchInputRef.current?.focus()
   }, [])
 
+  // PEND-55 — history store + cycling hook
+  const historyEntries = useSearchHistoryStore((s) => selectHistoryForSpace(s, currentSpaceId))
+  const pushHistory = useSearchHistoryStore((s) => s.push)
+  const clearHistory = useSearchHistoryStore((s) => s.clear)
+  const cycling = useSearchHistoryCycling(historyEntries, query, setQuery)
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     debounced.cancel()
     setTyping(false)
-    if (query.trim()) {
-      setDebouncedQuery(query.trim())
+    const trimmed = query.trim()
+    if (trimmed) {
+      setDebouncedQuery(trimmed)
       setSearched(true)
+      // PEND-55 — push on submit, not on every keystroke. Per-space
+      // partitioning is owned by the store.
+      pushHistory(currentSpaceId, trimmed)
     }
   }
+
+  const handlePickHistory = useCallback(
+    (entry: string) => {
+      setQuery(entry)
+      setDebouncedQuery(entry)
+      setSearched(true)
+      pushHistory(currentSpaceId, entry)
+      debounced.cancel()
+      setTyping(false)
+    },
+    [currentSpaceId, debounced, pushHistory],
+  )
+
+  const handleClearHistory = useCallback(() => {
+    clearHistory(currentSpaceId)
+  }, [clearHistory, currentSpaceId])
+
+  const handleInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      cycling.handleKeyDown(e)
+    },
+    [cycling],
+  )
 
   const handleResultClick = useCallback(
     async (block: BlockRow | SearchBlockRow) => {
@@ -414,6 +519,7 @@ export function SearchPanel(): React.ReactElement {
   return (
     <div className="search-panel space-y-4">
       {/* PEND-30 Phase 3b — input form lifted into `SearchHeader`. */}
+      {/* PEND-55 — append toggle row + history dropdown + regex error slot. */}
       <SearchHeader
         inputRef={searchInputRef}
         query={query}
@@ -422,6 +528,25 @@ export function SearchPanel(): React.ReactElement {
         searchLoading={searchLoading}
         typing={typing}
         t={t}
+        onInputKeyDown={handleInputKeyDown}
+        onInputFocus={() => setInputFocused(true)}
+        onInputBlur={() => {
+          // Defer blur so a click on a history row registers before the
+          // dropdown unmounts. 150ms matches Radix-popover's standard
+          // outside-click grace window.
+          window.setTimeout(() => setInputFocused(false), 150)
+        }}
+        invalid={!!regexError}
+        inlineError={regexError}
+        toggleRow={<SearchToggleRow toggles={toggles} onChange={setToggles} />}
+        historyDropdown={
+          <SearchHistoryDropdown
+            entries={historyEntries}
+            visible={inputFocused && query.length === 0 && historyEntries.length > 0}
+            onPick={handlePickHistory}
+            onClear={handleClearHistory}
+          />
+        }
       />
 
       {/* UX-269 — CJK limitation notice sits directly below the input so

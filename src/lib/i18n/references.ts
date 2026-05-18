@@ -242,4 +242,14 @@ export const references: Record<string, string> = {
   'search.groupCollapsedLabel': 'Show matches in {{pageTitle}}',
   'search.groupExpandedLabel': 'Hide matches in {{pageTitle}}',
   'search.helpButtonLabel': 'Search help',
+  // PEND-55 — toggle row (`Aa` / `Ab|` / `.*`) + search history.
+  'search.toggle.caseSensitive': 'Case-sensitive (Aa)',
+  'search.toggle.wholeWord': 'Whole word (Ab|)',
+  'search.toggle.regex': 'Regex (.*)',
+  'search.toggle.toolbarLabel': 'Search modes',
+  'search.history.title': 'Recent searches',
+  'search.history.empty': 'No recent searches',
+  'search.history.clear': 'Clear history',
+  'search.history.entryLabel': 'Run search: {{query}}',
+  'search.invalidRegex': '{{message}}',
 }

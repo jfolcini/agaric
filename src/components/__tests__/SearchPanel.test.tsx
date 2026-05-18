@@ -156,6 +156,9 @@ describe('SearchPanel', () => {
           spaceId: 'SPACE_TEST',
           includePageGlobs: [],
           excludePageGlobs: [],
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
         },
       })
     })
@@ -194,6 +197,9 @@ describe('SearchPanel', () => {
           spaceId: 'SPACE_TEST',
           includePageGlobs: [],
           excludePageGlobs: [],
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
         },
       })
     })
@@ -268,6 +274,9 @@ describe('SearchPanel', () => {
           spaceId: 'SPACE_TEST',
           includePageGlobs: [],
           excludePageGlobs: [],
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
         },
       })
     })
@@ -315,6 +324,9 @@ describe('SearchPanel', () => {
         spaceId: 'SPACE_TEST',
         includePageGlobs: [],
         excludePageGlobs: [],
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
       },
     })
   })
@@ -671,6 +683,9 @@ describe('SearchPanel', () => {
           spaceId: 'SPACE_TEST',
           includePageGlobs: [],
           excludePageGlobs: [],
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
         },
       })
     })
@@ -699,6 +714,9 @@ describe('SearchPanel', () => {
           spaceId: 'SPACE_TEST',
           includePageGlobs: [],
           excludePageGlobs: [],
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
         },
       })
     })
@@ -748,6 +766,9 @@ describe('SearchPanel', () => {
         spaceId: 'SPACE_TEST',
         includePageGlobs: [],
         excludePageGlobs: [],
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
       },
     })
   })

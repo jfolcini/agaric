@@ -1179,6 +1179,26 @@ export type LogFileEntry = {
 };
 
 /**
+ *  Match span emitted by the PEND-55 toggle pipeline.
+ *
+ *  The `start` / `end` indices are **UTF-16 code-unit offsets** into the
+ *  block's content string — chosen to match JavaScript's native string
+ *  indexing (`.length`, `.substring`, `.charCodeAt`). Rust's `regex`
+ *  crate reports byte offsets into a UTF-8 buffer; the post-filter
+ *  pipeline converts to UTF-16 before serialising so the frontend can
+ *  slice `row.content` directly. ASCII content has identical byte /
+ *  UTF-16 indices; CJK and emoji content does not. See
+ *  `pending/PEND-55-search-toggles-history.md` (UTF-8 → UTF-16 section)
+ *  for the rationale and the conversion helper.
+ */
+export type MatchOffset = {
+	/**  UTF-16 code-unit offset (matches JavaScript string indexing). */
+	start: number,
+	/**  UTF-16 code-unit offset (matches JavaScript string indexing). */
+	end: number,
+};
+
+/**
  *  Snapshot of the MCP **read-write** server state surfaced to the
  *  Settings tab. Identical fields to [`McpStatus`] but a distinct type so
  *  the Tauri command surface stays RO / RW symmetric and the frontend
@@ -1417,9 +1437,10 @@ export type RestoreToOpResult = {
  *  `dangerouslySetInnerHTML`); see `pending/PEND-50-search-vscode-ux.md`
  *  for the renderer contract.
  *
- *  PEND-55 will append `match_offsets: Vec<MatchOffset>` for the
- *  regex/whole-word offset rendering path, also with
- *  `#[serde(default)]`.
+ *  PEND-55 appends `match_offsets: Vec<MatchOffset>` for the
+ *  regex/whole-word offset rendering path; `#[serde(default)]` keeps
+ *  the wire shape additive (pre-PEND-55 frontends see an empty array
+ *  from absent payloads and fall through to the snippet path).
  *
  *  [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
  */
@@ -1444,6 +1465,18 @@ export type SearchBlockRow = {
 	 *  `dangerouslySetInnerHTML`.
 	 */
 	snippet?: string | null,
+	/**
+	 *  PEND-55 — UTF-16 code-unit match offsets for the toggle
+	 *  pipeline. Populated when any of the three search toggles
+	 *  (`case_sensitive` / `whole_word` / `is_regex`) is on and the
+	 *  post-FTS regex pass produced matches; empty otherwise. The
+	 *  frontend prefers offsets over the snippet when both are
+	 *  present, splitting `content` into React nodes (no
+	 *  `dangerouslySetInnerHTML`). Capped at
+	 *  `MAX_OFFSETS_PER_BLOCK` per row to bound IPC payload size on
+	 *  pathological patterns (e.g. `.` against a long block).
+	 */
+	match_offsets?: MatchOffset[],
 };
 
 /**
@@ -1496,6 +1529,33 @@ export type SearchFilter = {
 	 *  excluded.
 	 */
 	excludePageGlobs?: string[],
+	/**
+	 *  PEND-55 — case-sensitive search toggle. When `true`, results are
+	 *  narrowed by a post-FTS regex pass that asserts case-sensitive
+	 *  match against `fts_blocks.stripped`. The FTS5 trigram tokenizer
+	 *  is `case_sensitive 0`, so the candidate set is still
+	 *  case-insensitive; this toggle forces the post-filter even when
+	 *  the other toggles are off (documented cost). `#[serde(default)]`
+	 *  keeps the wire shape additive — pre-PEND-55 frontends omit the
+	 *  field and observe today's behaviour unchanged.
+	 */
+	caseSensitive?: boolean,
+	/**
+	 *  PEND-55 — whole-word search toggle. ASCII-only via the regex
+	 *  crate's `(?-u:\b)` predicate. CJK content does NOT match `\b`
+	 *  (no ASCII word boundary inside CJK runs); v1 documents this and
+	 *  a future plan revisits Unicode whole-word.
+	 */
+	wholeWord?: boolean,
+	/**
+	 *  PEND-55 — regex-mode search toggle. The query string is treated
+	 *  as a Rust [`regex`] pattern verbatim; the FTS5 MATCH path is
+	 *  **bypassed entirely** (FTS5 cannot accept a regex) and the
+	 *  candidate set comes from a recency-ordered scan of
+	 *  structurally-filtered blocks. Compile failures surface as
+	 *  [`AppError::Validation`] with an `InvalidRegex:` prefix.
+	 */
+	isRegex?: boolean,
 };
 
 /**

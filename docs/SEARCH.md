@@ -114,16 +114,73 @@ The new model is a strict superset of every other previous use case — copy-pas
 
 ## Toggles
 
-<!-- Section reserved for PEND-55 (toggle row + history). -->
+The toggle row sits to the right of the search input — three pressable buttons matching VS Code's find-in-files family:
+
+| Toggle | Icon | Effect |
+|---|---|---|
+| **Case-sensitive** | `Aa` | The post-FTS filter narrows results to case-sensitive matches. The FTS5 trigram index is `case_sensitive 0`, so enabling this toggle forces a regex pass over the candidate set even when no other toggle is on — i.e. it has a non-zero cost on every keystroke. |
+| **Whole word** | `Ab\|` | The post-FTS filter wraps the query in ASCII word boundaries (`(?-u:\b)`). **CJK content does NOT match** — CJK characters are not ASCII word characters, so the boundary never asserts. Documented v1 limitation. |
+| **Regex** | `.*` | The query string is treated as a Rust [`regex`] pattern verbatim. The FTS5 MATCH path is **bypassed entirely** — there's no FTS-index acceleration; wall-time scales with the structurally-filtered block count. |
+
+Toggle state persists in `localStorage` (`agaric:searchToggles:v1`) so opening a fresh window restores your preference. State does NOT survive a save — a saved search is `(query, toggles)`, not just `(query)`.
 
 ## Regex syntax
 
-<!-- Section reserved for PEND-55 (toggle row + history). -->
+The find-across-pages view uses the Rust [`regex`] crate. Key differences from JavaScript's `RegExp`:
+
+- **Linear-time guarantees** — there is no catastrophic backtracking.
+- **No lookaround** — `(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)` are not supported.
+- **No backreferences** — `\1`, `\k<name>` are not supported.
+- **`\b` is ASCII-only by default.** Use `(?u:\b)` for Unicode word boundaries. The whole-word toggle wraps the query in the ASCII variant.
+- **Inline flags** `(?i)` / `(?m)` / `(?s)` / `(?x)` work as expected. The case-sensitive toggle injects `(?i)` (disabled) or `(?-i)` (enabled) at the start of the composed pattern.
+- **Unicode classes** like `\p{Han}` work; precompile UCD tables ship with the binary.
+
+### Regex caps
+
+To bound worst-case compile time and matched-output size, the backend applies four caps:
+
+| Cap | Value | Reason |
+|---|---|---|
+| Pattern length | 1 KiB | Rejected up-front before invoking `RegexBuilder`. Surfaces as `AppError::Validation("InvalidRegex: pattern length N exceeds cap 1024")`. |
+| `RegexBuilder::size_limit` | 10 MiB | Bounds the compiled regex's in-memory size. Surfaces as `AppError::Validation("InvalidRegex: …")`. |
+| `RegexBuilder::dfa_size_limit` | 10 MiB | Bounds the lazy-DFA cache at runtime. |
+| Match offsets per block | 50 | Caps per-row IPC payload. A `.` regex against a long block returns the first 50 matches; trailing matches are silently dropped. |
+| Pre-filter row count | 1000 | Bounds the regex-mode SQL scan. Most-recent-first ordering by `b.id DESC` (ULID prefixes are time-sortable; the `blocks` table doesn't carry `created_at`). |
+
+Regex compile errors surface inline next to the input with a red border; the error message follows the `InvalidRegex:` prefix.
+
+### Regex-mode trade-off
+
+In regex mode the FTS5 candidate set is unused; the SQL scan returns the 1000 most-recent blocks (within the structural filters: tags, paths, space) and the regex is applied to each. **Recommend a literal seed term (≥3 chars) for tight queries.** Without a seed, the regex runs over the full 1000 candidates.
+
+### Regex differences between surfaces
+
+See [Regex differences between surfaces](#regex-differences-between-surfaces) above for the in-page find vs find-across-pages comparison. The summary:
+
+- **In-page find** uses JavaScript `RegExp` (lookaround + backreferences supported, backtracking).
+- **Find across pages** uses the Rust `regex` crate (linear-time, no lookaround / backreferences).
+
+For portable patterns, stick to the intersection: literal text, anchors (`^`, `$`), character classes, quantifiers, alternation, ASCII-only `\b`.
 
 ## Boolean operators
 
-<!-- Section reserved for PEND-55 (toggle row + history). -->
+Non-regex queries pass through the FTS5 sanitiser, which preserves three operators (case-insensitive on input, uppercase on the wire):
+
+- `AND` — explicit intersection (FTS5's default, but useful for clarity).
+- `OR` — union, e.g. `cats OR dogs`.
+- `NOT` — negation, requires a following token: `meeting NOT cancelled`.
+
+Quoted phrases bypass the trigram length filter: `"sprint plan"` matches the exact phrase, including 2-char tokens (`OR`, `2x`) that would otherwise be dropped.
+
+Boolean operators **don't work inside regex mode** — there the entire query is the regex pattern; `AND` / `OR` are matched as literal text.
 
 ## Tips
 
-<!-- Section reserved for PEND-55 and later follow-ups. -->
+- **Recall recent queries with `↑` / `↓`.** When the input is empty and focused, the history dropdown surfaces the last 20 submitted queries (most-recent first). `↑` walks backward, `↓` forward; pressing past the newest entry clears the input. Per-space partitioning — queries from another space stay invisible.
+- **History dedupes.** Submitting the same query twice doesn't accumulate duplicates; the existing entry moves to the front.
+- **Clear history.** The dropdown's footer wipes the per-space MRU list. Other spaces stay untouched.
+- **Toggle state persists, history is per-space.** A `tag:` reference is space-specific, so cross-space recall would silently no-match. Toggle preferences are global because their effect (case / whole-word / regex semantics) is space-agnostic.
+- **Filter syntax is sanitiser-friendly.** `tag:#name` survives a literal-mode round-trip; recalling a `tag:` query from history rebuilds the chip row exactly.
+- **Inline filter syntax is not regex-aware.** In regex mode, `tag:#urgent` is interpreted as a literal regex pattern (the `:` is a literal colon). Filter chips and regex compose at the *query* level, not inside the regex pattern. To use filters + regex together, type the filters first, then prepend the regex (e.g. `tag:#urgent ^TODO` with the `.*` toggle on — the FTS bypass keeps the `tag:` filter ineffective, **the structural filters still apply via the regex-mode SQL path**; this is a known sharp edge).
+
+[`regex`]: https://docs.rs/regex/latest/regex/

@@ -131,15 +131,59 @@ Page-name globs resolve against `pages_cache.title` (the dedicated title-lookup 
 
 Brace expansion is hand-rolled (no `glob` crate dependency) and capped at 64 patterns per token. Comma-separated values are split at top level (commas inside `{...}` belong to brace alternatives, not the separator).
 
+## PEND-55 — Toggle row pipeline
+
+The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. The dispatch is binary:
+
+- **`is_regex == false`** → `search_fts` (today's FTS5 path) is called first; if `case_sensitive` or `whole_word` is on, the result rows are passed through `apply_post_filter` with a literal-escaped regex. The filter narrows matches and attaches `match_offsets`; rows without a match are dropped.
+- **`is_regex == true`** → `search_fts` is **bypassed entirely** (FTS5 MATCH cannot accept a regex). A separate recency-ordered scan over `blocks` (filtered by tags / space / path globs) returns up to `REGEX_PRE_FILTER_CAP = 1000` candidates; each is matched against the user's regex.
+
+### Caps (all locked-in via module constants)
+
+| Constant | Value | Reason |
+|---|---|---|
+| `MAX_PATTERN_LEN` | 1024 | Rejected before `RegexBuilder` to bound parser work. Pattern length > 1 KiB → typed `InvalidRegex:` error. |
+| `REGEX_SIZE_LIMIT_BYTES` | 10 MiB | `RegexBuilder::size_limit`. Bounds compiled-regex memory; degenerate patterns fail compilation rather than OOM. |
+| `REGEX_DFA_SIZE_LIMIT_BYTES` | 10 MiB | `RegexBuilder::dfa_size_limit`. Bounds the lazy-DFA cache at runtime. |
+| `MAX_OFFSETS_PER_BLOCK` | 50 | Per-row offset count. `.` regex against a long block returns 50 offsets max; trailing matches dropped. |
+| `REGEX_PRE_FILTER_CAP` | 1000 | Regex-mode SQL scan limit. `MAX_SEARCH_RESULTS = 100` is the post-cap; 10× headroom for sparse-match patterns. |
+
+### UTF-16 offset emission
+
+`regex::Match::{start,end}` returns byte offsets into a UTF-8 buffer. JavaScript strings are UTF-16 code units (`.length`, `.charCodeAt`, `.substring` all use UTF-16 indices). The conversion happens in Rust before serialising, via `byte_to_utf16_offsets` (one walk of the string, builds a `byte → utf16` table on the fly). Frontend renderers MUST treat `MatchOffset.start` / `end` as JS string indices — no further conversion.
+
+ASCII passthrough is free (`len_utf16 == 1`, `byte == utf16_index`). CJK (3 bytes UTF-8, 1 UTF-16 unit per char) and emoji (4 bytes UTF-8, 2 UTF-16 units = surrogate pair) diverge; the test suite exercises both.
+
+### Regex composition
+
+`compose_literal_pattern` (non-regex path) escapes user input via `regex::escape` so a user typing `a.b*c` searches for the literal `a.b*c`, not the regex `a<any>b<repeat>c`. The regex-mode path takes the user's input verbatim. Whole-word toggles wrap the pattern in `(?-u:\b)` — the **ASCII** word boundary; documented v1 behaviour that CJK runs don't match (no ASCII word chars inside CJK).
+
+### Regex-mode SQL path
+
+The recency-ordered scan reuses the same parent / tag / space / path-glob filters as `search_fts`. Ordering is `b.id DESC` — ULID prefixes are time-sortable, and `blocks` doesn't carry a `created_at` column. The cursor field on the response is always `None` because there's no rank to encode; "Load more" is disabled in regex mode (the candidate set is already capped at `REGEX_PRE_FILTER_CAP`).
+
+### Frontend rendering
+
+`SearchResultBlockRow` prefers `row.match_offsets` over `row.snippet` when both are present (the toggle pipeline clears the snippet to avoid double-rendering). `renderOffsetHighlights` splits the content into alternating `<span>` and `<mark>` React nodes — never `dangerouslySetInnerHTML`. Defensive clamping handles malformed offsets (out-of-range / inverted / overlapping) without throwing.
+
+### History store
+
+Per-space MRU list at `agaric:search-history` (Zustand persist). Dedupes on insert; cap 20. Submission triggers `push`; the dropdown surfaces entries when the input is focused AND empty. The cycling hook (`useSearchHistoryCycling`) owns the `↑`/`↓` browse-mode state machine; precedence with PEND-54's autocomplete and the result-list nav is documented in AGENTS.md.
+
 ## Related files
 
 - `src/components/SearchPanel.tsx` — orchestrator: input, debounce, IPC call, group + render.
-- `src/components/search/SearchResultBlockRow.tsx` — snippet → React-node renderer.
+- `src/components/search/SearchResultBlockRow.tsx` — snippet / offset → React-node renderer.
 - `src/components/search/ResultCountSummary.tsx` — "N matches in M pages" header.
+- `src/components/search/SearchToggleRow.tsx` — three toggle buttons (PEND-55).
+- `src/components/search/SearchHistoryDropdown.tsx` — recent-queries listbox (PEND-55).
 - `src/components/CollapsibleGroupList.tsx` — the grouped-list primitive (reused, never forked).
 - `src/components/help/SearchHelpDialog.tsx` — in-app `?` help.
-- `src-tauri/src/commands/queries.rs` — `SearchFilter`, `SearchBlockRow`, `search_blocks_inner`.
+- `src/stores/search-history.ts` — Zustand-persisted per-space history (PEND-55).
+- `src/hooks/useSearchHistoryCycling.ts` — `↑`/`↓` browse state machine (PEND-55).
+- `src-tauri/src/commands/queries.rs` — `SearchFilter`, `SearchBlockRow`, `MatchOffset`, `search_blocks_inner`.
 - `src-tauri/src/fts/search.rs` — FTS5 query construction + `snippet()` projection.
+- `src-tauri/src/fts/toggle_filter.rs` — `SearchToggles`, `search_with_toggles`, regex pipeline (PEND-55).
 - `src-tauri/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion (PEND-54).
 - `src-tauri/migrations/0006_fts5_trigram.sql` — index definition + tokenizer config.
 - `src/lib/search-query/` — inline filter syntax parser, AST, serialiser, autocomplete (PEND-54).

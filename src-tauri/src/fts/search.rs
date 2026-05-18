@@ -496,6 +496,9 @@ pub async fn search_fts(
             scheduled_date: r.scheduled_date,
             page_id: r.page_id,
             snippet: r.snippet,
+            // PEND-55 — the FTS-only path emits no offsets; the toggle
+            // pipeline (`fts::toggle_filter`) is the only producer.
+            match_offsets: Vec::new(),
         })
         .collect();
 

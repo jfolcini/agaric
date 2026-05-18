@@ -677,6 +677,12 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             // behaviour.
             include_page_globs: Vec::new(),
             exclude_page_globs: Vec::new(),
+            // PEND-55 — MCP tools default to all-toggles-off so agent
+            // calls reproduce the FTS-only candidate set; future MCP
+            // tool variants can opt into regex.
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: false,
         },
     )
     .await?;

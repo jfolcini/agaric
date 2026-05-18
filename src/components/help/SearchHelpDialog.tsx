@@ -43,30 +43,11 @@ interface HelpSection {
   placeholder: string
 }
 
-const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
-  // PEND-54 — Filter syntax is now populated; the body is rendered
-  // inline below (see `FilterSyntaxBody`).
-  {
-    id: 'toggles',
-    title: 'Toggles',
-    placeholder: 'Coming soon — see pending/PEND-55-search-toggles-history.md.',
-  },
-  {
-    id: 'regex-syntax',
-    title: 'Regex syntax',
-    placeholder: 'Coming soon — see pending/PEND-55-search-toggles-history.md.',
-  },
-  {
-    id: 'boolean-operators',
-    title: 'Boolean operators',
-    placeholder: 'Coming soon — see pending/PEND-55-search-toggles-history.md.',
-  },
-  {
-    id: 'tips',
-    title: 'Tips',
-    placeholder: 'Coming soon — see pending/PEND-55-search-toggles-history.md.',
-  },
-]
+// PEND-54 sees its content rendered inline (see `FilterSyntaxBody`).
+// PEND-55 populates Toggles / Regex syntax / Boolean operators / Tips
+// the same way — each section's body is rendered as its own component
+// so the help dialog stays an additive scroll surface.
+const HELP_SECTIONS: ReadonlyArray<HelpSection> = []
 
 /** PEND-54 — Filter syntax section body. */
 function FilterSyntaxBody() {
@@ -138,6 +119,154 @@ function FilterSyntaxBody() {
   )
 }
 
+/** PEND-55 — Toggles section body. */
+function TogglesBody() {
+  return (
+    <div className="text-muted-foreground text-sm space-y-2">
+      <p>
+        Three pressable buttons sit to the right of the input. Click a toggle to flip its mode (icon
+        glows when active). State persists across sessions in localStorage.
+      </p>
+      <table className="w-full text-xs font-mono">
+        <thead>
+          <tr className="text-left">
+            <th className="pr-3">Icon</th>
+            <th className="pr-3">Mode</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="pr-3">Aa</td>
+            <td className="pr-3">Case-sensitive</td>
+            <td>Forces a post-FTS pass — has a cost even when other toggles are off.</td>
+          </tr>
+          <tr>
+            <td className="pr-3">Ab|</td>
+            <td className="pr-3">Whole word</td>
+            <td>ASCII-only word boundary. CJK content does not match.</td>
+          </tr>
+          <tr>
+            <td className="pr-3">.*</td>
+            <td className="pr-3">Regex</td>
+            <td>Bypasses the FTS index — the entire query becomes a Rust regex pattern.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** PEND-55 — Regex syntax section body. */
+function RegexSyntaxBody() {
+  return (
+    <div className="text-muted-foreground text-sm space-y-2">
+      <p>
+        Regex mode uses the Rust <span className="font-mono">regex</span> crate (linear-time, no
+        backtracking).
+      </p>
+      <ul className="list-disc pl-5">
+        <li>
+          <strong>No lookaround</strong>: <span className="font-mono">(?=…)</span>,{' '}
+          <span className="font-mono">(?!…)</span>, <span className="font-mono">(?&lt;=…)</span>,{' '}
+          <span className="font-mono">(?&lt;!…)</span> are not supported.
+        </li>
+        <li>
+          <strong>No backreferences</strong>: <span className="font-mono">\1</span>,{' '}
+          <span className="font-mono">\k&lt;name&gt;</span> are not supported.
+        </li>
+        <li>
+          <strong>ASCII boundaries by default</strong>: <span className="font-mono">\b</span> only
+          asserts between ASCII word chars. Use <span className="font-mono">(?u:\b)</span> for
+          Unicode word boundaries.
+        </li>
+        <li>
+          Inline flags <span className="font-mono">(?i)</span> /{' '}
+          <span className="font-mono">(?m)</span> / <span className="font-mono">(?s)</span> /{' '}
+          <span className="font-mono">(?x)</span> are supported.
+        </li>
+        <li>
+          Caps: pattern length 1 KiB, compiled size 10 MiB, DFA cache 10 MiB, 50 match-offsets per
+          block, 1000 pre-filter rows.
+        </li>
+      </ul>
+      <p>
+        Regex mode <strong>bypasses the FTS index</strong>: wall-time scales with the
+        structurally-filtered block count, not the FTS candidate count. Anchor your regex (
+        <span className="font-mono">^foo</span>, <span className="font-mono">bar$</span>,{' '}
+        <span className="font-mono">\bword\b</span>) for tight queries.
+      </p>
+      <p>
+        See{' '}
+        <a className="underline" href="https://docs.rs/regex/latest/regex/#syntax">
+          Rust regex syntax
+        </a>{' '}
+        for the full grammar. The in-page find (<span className="font-mono">Ctrl+F</span>) uses
+        JavaScript&apos;s native <span className="font-mono">RegExp</span> instead — patterns may
+        behave differently between the two surfaces; see{' '}
+        <span className="font-mono">docs/SEARCH.md</span> for the cross-link.
+      </p>
+    </div>
+  )
+}
+
+/** PEND-55 — Boolean operators section body. */
+function BooleanOperatorsBody() {
+  return (
+    <div className="text-muted-foreground text-sm space-y-2">
+      <p>
+        Non-regex queries support three FTS5 boolean operators (uppercase on the wire, case-
+        insensitive on input):
+      </p>
+      <ul className="list-disc pl-5">
+        <li>
+          <span className="font-mono">AND</span> — explicit intersection (the default).
+        </li>
+        <li>
+          <span className="font-mono">OR</span> — union, e.g.{' '}
+          <span className="font-mono">cats OR dogs</span>.
+        </li>
+        <li>
+          <span className="font-mono">NOT</span> — negation,{' '}
+          <span className="font-mono">meeting NOT cancelled</span>.
+        </li>
+      </ul>
+      <p>
+        Quoted phrases bypass the trigram length filter:{' '}
+        <span className="font-mono">&quot;sprint plan&quot;</span> matches the literal phrase
+        including 2-char tokens.
+      </p>
+      <p>Boolean operators do NOT apply inside regex mode (everything is treated as the regex).</p>
+    </div>
+  )
+}
+
+/** PEND-55 — Tips section body. */
+function TipsBody() {
+  return (
+    <div className="text-muted-foreground text-sm space-y-2">
+      <p>
+        <strong>Recall recent queries with</strong>{' '}
+        <kbd className="rounded border px-1 font-mono text-xs">↑</kbd> /{' '}
+        <kbd className="rounded border px-1 font-mono text-xs">↓</kbd> when the input is empty.
+      </p>
+      <ul className="list-disc pl-5">
+        <li>History dedupes — re-submitting the same query moves it to the front.</li>
+        <li>Per-space partitioning — recall stays inside the current space.</li>
+        <li>
+          The dropdown surfaces the last 20 submitted queries; pressing past the newest entry clears
+          the input.
+        </li>
+        <li>
+          Clear the per-space history via the footer button below the dropdown — other spaces stay
+          untouched.
+        </li>
+        <li>Toggle state survives reloads (stored in localStorage).</li>
+      </ul>
+    </div>
+  )
+}
+
 export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) {
   const { t } = useTranslation()
 
@@ -158,6 +287,38 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
             </h3>
             <FilterSyntaxBody />
           </section>
+          {/* PEND-55 — Toggles. */}
+          <section aria-labelledby="search-help-toggles">
+            <h3 id="search-help-toggles" className="text-base font-semibold leading-tight">
+              Toggles
+            </h3>
+            <TogglesBody />
+          </section>
+          {/* PEND-55 — Regex syntax. */}
+          <section aria-labelledby="search-help-regex-syntax">
+            <h3 id="search-help-regex-syntax" className="text-base font-semibold leading-tight">
+              Regex syntax
+            </h3>
+            <RegexSyntaxBody />
+          </section>
+          {/* PEND-55 — Boolean operators. */}
+          <section aria-labelledby="search-help-boolean-operators">
+            <h3
+              id="search-help-boolean-operators"
+              className="text-base font-semibold leading-tight"
+            >
+              Boolean operators
+            </h3>
+            <BooleanOperatorsBody />
+          </section>
+          {/* PEND-55 — Tips. */}
+          <section aria-labelledby="search-help-tips">
+            <h3 id="search-help-tips" className="text-base font-semibold leading-tight">
+              Tips
+            </h3>
+            <TipsBody />
+          </section>
+          {/* Backfill from `HELP_SECTIONS` for any deferred section. */}
           {HELP_SECTIONS.map((section) => (
             <section key={section.id} aria-labelledby={`search-help-${section.id}`}>
               <h3

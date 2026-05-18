@@ -168,6 +168,50 @@ pub struct SearchFilter {
     /// excluded.
     #[serde(default)]
     pub exclude_page_globs: Vec<String>,
+    /// PEND-55 — case-sensitive search toggle. When `true`, results are
+    /// narrowed by a post-FTS regex pass that asserts case-sensitive
+    /// match against `fts_blocks.stripped`. The FTS5 trigram tokenizer
+    /// is `case_sensitive 0`, so the candidate set is still
+    /// case-insensitive; this toggle forces the post-filter even when
+    /// the other toggles are off (documented cost). `#[serde(default)]`
+    /// keeps the wire shape additive — pre-PEND-55 frontends omit the
+    /// field and observe today's behaviour unchanged.
+    #[serde(default)]
+    pub case_sensitive: bool,
+    /// PEND-55 — whole-word search toggle. ASCII-only via the regex
+    /// crate's `(?-u:\b)` predicate. CJK content does NOT match `\b`
+    /// (no ASCII word boundary inside CJK runs); v1 documents this and
+    /// a future plan revisits Unicode whole-word.
+    #[serde(default)]
+    pub whole_word: bool,
+    /// PEND-55 — regex-mode search toggle. The query string is treated
+    /// as a Rust [`regex`] pattern verbatim; the FTS5 MATCH path is
+    /// **bypassed entirely** (FTS5 cannot accept a regex) and the
+    /// candidate set comes from a recency-ordered scan of
+    /// structurally-filtered blocks. Compile failures surface as
+    /// [`AppError::Validation`] with an `InvalidRegex:` prefix.
+    #[serde(default)]
+    pub is_regex: bool,
+}
+
+/// Match span emitted by the PEND-55 toggle pipeline.
+///
+/// The `start` / `end` indices are **UTF-16 code-unit offsets** into the
+/// block's content string — chosen to match JavaScript's native string
+/// indexing (`.length`, `.substring`, `.charCodeAt`). Rust's `regex`
+/// crate reports byte offsets into a UTF-8 buffer; the post-filter
+/// pipeline converts to UTF-16 before serialising so the frontend can
+/// slice `row.content` directly. ASCII content has identical byte /
+/// UTF-16 indices; CJK and emoji content does not. See
+/// `pending/PEND-55-search-toggles-history.md` (UTF-8 → UTF-16 section)
+/// for the rationale and the conversion helper.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchOffset {
+    /// UTF-16 code-unit offset (matches JavaScript string indexing).
+    pub start: u32,
+    /// UTF-16 code-unit offset (matches JavaScript string indexing).
+    pub end: u32,
 }
 
 /// Response row for [`search_blocks_inner`].
@@ -180,9 +224,10 @@ pub struct SearchFilter {
 /// `dangerouslySetInnerHTML`); see `pending/PEND-50-search-vscode-ux.md`
 /// for the renderer contract.
 ///
-/// PEND-55 will append `match_offsets: Vec<MatchOffset>` for the
-/// regex/whole-word offset rendering path, also with
-/// `#[serde(default)]`.
+/// PEND-55 appends `match_offsets: Vec<MatchOffset>` for the
+/// regex/whole-word offset rendering path; `#[serde(default)]` keeps
+/// the wire shape additive (pre-PEND-55 frontends see an empty array
+/// from absent payloads and fall through to the snippet path).
 ///
 /// [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
 #[derive(Debug, Clone, Serialize, Type)]
@@ -206,6 +251,17 @@ pub struct SearchBlockRow {
     /// `dangerouslySetInnerHTML`.
     #[serde(default)]
     pub snippet: Option<String>,
+    /// PEND-55 — UTF-16 code-unit match offsets for the toggle
+    /// pipeline. Populated when any of the three search toggles
+    /// (`case_sensitive` / `whole_word` / `is_regex`) is on and the
+    /// post-FTS regex pass produced matches; empty otherwise. The
+    /// frontend prefers offsets over the snippet when both are
+    /// present, splitting `content` into React nodes (no
+    /// `dangerouslySetInnerHTML`). Capped at
+    /// `MAX_OFFSETS_PER_BLOCK` per row to bound IPC payload size on
+    /// pathological patterns (e.g. `.` against a long block).
+    #[serde(default)]
+    pub match_offsets: Vec<MatchOffset>,
 }
 
 /// Full-text search across block content using FTS5.
@@ -251,7 +307,18 @@ pub async fn search_blocks_inner(
     // we surface `InvalidGlob:` typed errors at the IPC boundary.
     let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
     let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
-    fts::search_fts(
+
+    // PEND-55 — bundle the three toggle flags into a single value
+    // threaded through the FTS / regex-mode pipelines. The default
+    // (all-off) value reproduces the pre-PEND-55 FTS-only behaviour so
+    // existing callers / older frontends are unaffected.
+    let toggles = fts::SearchToggles {
+        case_sensitive: filter.case_sensitive,
+        whole_word: filter.whole_word,
+        is_regex: filter.is_regex,
+    };
+
+    fts::search_with_toggles(
         pool,
         &query,
         &page,
@@ -260,6 +327,7 @@ pub async fn search_blocks_inner(
         filter.space_id.as_deref(),
         &include_globs,
         &exclude_globs,
+        toggles,
     )
     .await
 }

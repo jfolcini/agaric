@@ -591,6 +591,12 @@ export async function searchBlocks(params: {
   includePageGlobs?: string[] | undefined
   /** PEND-54 — page-name glob exclude list. See `SearchFilter`. */
   excludePageGlobs?: string[] | undefined
+  /** PEND-55 — case-sensitive post-FTS filter. See `SearchFilter`. */
+  caseSensitive?: boolean | undefined
+  /** PEND-55 — ASCII whole-word post-FTS filter. See `SearchFilter`. */
+  wholeWord?: boolean | undefined
+  /** PEND-55 — regex-mode (bypasses FTS5). See `SearchFilter`. */
+  isRegex?: boolean | undefined
 }): Promise<PageResponse<SearchBlockRow>> {
   return unwrap(
     await commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
@@ -599,6 +605,9 @@ export async function searchBlocks(params: {
       spaceId: params.spaceId,
       includePageGlobs: params.includePageGlobs ?? [],
       excludePageGlobs: params.excludePageGlobs ?? [],
+      caseSensitive: params.caseSensitive ?? false,
+      wholeWord: params.wholeWord ?? false,
+      isRegex: params.isRegex ?? false,
     }),
   )
 }

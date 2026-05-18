@@ -18,6 +18,7 @@ pub(crate) mod glob_filter;
 mod index;
 mod search;
 pub(crate) mod strip;
+mod toggle_filter;
 
 #[cfg(test)]
 mod tests;
@@ -30,6 +31,7 @@ pub use index::{
 };
 pub use search::search_fts;
 pub use strip::strip_for_fts;
+pub use toggle_filter::{search_with_toggles, SearchToggles};
 
 // Re-export crate-internal API
 pub(crate) use search::sanitize_fts_query;
