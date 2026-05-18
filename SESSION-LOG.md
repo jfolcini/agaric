@@ -4,8 +4,51 @@
 
 - **This file:** sessions 401 – 780 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1212+ REVIEW-LATER items across 780 sessions.
+- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 781 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 781 — DnD overlay polish + release prep + DCO hook + PEND-59 cmdk foundation (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | orchestrator + 1 Explore (initial DnD code location) |
+| **Items closed** | PEND-59 (cmdk foundation); CodeQL alert #113 (js/useless-assignment-to-local) |
+| **Items modified** | pending/README.md (PEND-59 row removed + Recommended order updated) |
+| **Tests added** | +9 frontend (command wrapper) / +0 backend |
+| **Files touched** | 22 across three PRs (#23 release-prep, #24 CodeQL #113, #25 PEND-59) |
+
+**Summary:** Shipped DnD overlay UX polish (tiny pill marker, faded source row + dashed outline so list reflow underneath stays visible) bundled with a release-prep PR that also fixed a CTRL+K link-popover regression introduced by the pre-existing `SelectionBubbleMenu` rework, serialized Playwright in `verify-ci-equivalent.sh` for deterministic pre-push results, and wired a `prepare-commit-msg` hook that auto-appends `Signed-off-by` so the CI DCO check never rejects again. Then a one-line CodeQL #113 fix (dead `i = pattern.length` before `break` in `glob-validate.ts`). Finally PEND-59 (cmdk foundation): added cmdk, shipped `src/components/ui/command.tsx` with seven Tailwind-styled primitives, migrated `HasTagFilterForm` (the only real `SearchablePopover` caller — the plan's `FilterHelperPopover` claim was stale after PEND-54), deleted `SearchablePopover.tsx` (193 LOC) + its 17-case test.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 12 → 11 (PEND-59 deleted from `pending/`; PEND-60/61/62 dependency notes updated)
+- **Previously resolved:** 1212+ → 1213+ across 780 → 781 sessions.
+
+**Files touched (this session):**
+- PR #23 (`dnd-overlay-polish`): `src/components/block-tree/BlockDndOverlay.tsx`, `src/components/SortableBlock.tsx`, `src/components/SelectionBubbleMenu.tsx`, `src/components/LinkEditPopover.tsx`, `src-tauri/src/commands/pages.rs` (alias substring matching), `src/lib/tauri-mock/handlers.ts`, `scripts/verify-ci-equivalent.sh` (Phase 2 split into 2a vitest+cargo / 2b playwright serial), `scripts/dco-signoff.sh` (new), `prek.toml` (prepare-commit-msg hook).
+- PR #24 (`fix-codeql-113`): `src/lib/search-query/glob-validate.ts` (-1 LOC).
+- PR #25 (`pend-59-cmdk-foundation`): `src/components/ui/command.tsx` (+125 LOC, new), `src/components/ui/__tests__/command.test.tsx` (+155 LOC, new), `src/components/backlink-filter/categories/HasTagFilterForm.tsx` (rewritten), `src/components/__tests__/BacklinkFilterBuilder.test.tsx` (-69 LOC mock removed), `src/components/SearchablePopover.tsx` (-193 LOC, deleted), `src/components/__tests__/SearchablePopover.test.tsx` (deleted), `pending/README.md`, `pending/PEND-59-cmdk-foundation.md` (deleted), `package.json` / `package-lock.json` (+cmdk@1.1.1 MIT).
+
+**Verification:**
+- PR #23: full local `verify-ci-equivalent` passed after the serialization fix (vitest 10121/10121, cargo nextest 3758/3758, playwright e2e 530+/530+). DCO + PR checks green.
+- PR #24: `npx vitest run src/lib/search-query/` — 110/110 pass. DCO green.
+- PR #25: `npx vitest run src/components/ui/__tests__/command.test.tsx src/components/__tests__/BacklinkFilterBuilder.test.tsx` — 84/84 pass.
+
+**Process notes:**
+- Pre-existing dirty-tree files in the working copy at session start (`LinkEditPopover.tsx`, `SelectionBubbleMenu.tsx`, `pages.rs`, etc.) were folded into PR #23 per the maintainer's choice. The `SelectionBubbleMenu` rework had a Ctrl+K regression (popover opened in CREATE mode on existing link); caught only after running `verify-ci-equivalent` locally — pre-existing changes don't get the same scrutiny as new code.
+- Initial push to `main` was blocked by the pre-push `no-commit-to-branch` hook; the project enforces PR-based merges. Switched to per-feature branches + PRs.
+- Pre-push `verify-ci-equivalent.sh` was unreliable on dev hardware: vitest + playwright + cargo nextest in parallel exhausted CPU, vite lost its startup probe, ~273 Playwright tests failed with `ERR_CONNECTION_REFUSED`. Fixed by splitting Phase 2 into 2a (vitest + cargo parallel) and 2b (playwright serial). Trade: a few extra minutes wall time, deterministic e2e.
+- DCO check rejected the first push of PR #23 because none of the four commits carried `Signed-off-by`. Fixed retroactively via `git rebase --signoff origin/main` + force-push; then wired `scripts/dco-signoff.sh` + a prek `prepare-commit-msg` hook so the trailer auto-appears on every future commit (matches `git commit -s`, idempotent on amend).
+- PEND-59 scope deviation: the plan claimed `FilterHelperPopover` was a `SearchablePopover` caller. Grep showed it never imported the component — PEND-54 had already replaced its tag list with an inline implementation. Skipped that phase; noted in commit message and the plan was deleted on close.
+
+**Lessons learned (for future sessions):**
+- Don't bundle uninspected dirty-tree files into a "release prep" commit without a quick sniff test — the Ctrl+K regression was sitting in those files and shipped as part of PR #23.
+- Local pre-push CI parity wants real isolation: anything that boots its own process tree (vite via Playwright webServer, ipython/jupyter kernels, etc.) should run serially after the CPU-bound test runners.
+- A `prepare-commit-msg` hook is the right place to enforce DCO sign-off for solo-maintainer workflows — `git commit -s` is invisible to muscle memory, but a hook that mirrors it costs nothing per commit.
+
+**Commit plan:** Three PRs, all pushed, none merged at session end: [#23 release-prep](https://github.com/jfolcini/agaric/pull/23), [#24 CodeQL #113](https://github.com/jfolcini/agaric/pull/24), [#25 PEND-59](https://github.com/jfolcini/agaric/pull/25). Merge order recommended: #24 → #25 → #23 (smallest blast radius first; #23 is the release branch and re-bases cleanly).
+
+---
 
 ## Session 780 — PEND-63 + PEND-64 + PEND-65 (search post-review backend cycle) (2026-05-18)
 

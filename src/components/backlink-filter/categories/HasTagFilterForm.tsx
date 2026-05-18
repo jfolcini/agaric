@@ -1,17 +1,29 @@
 /**
  * HasTagFilterForm — searchable tag picker for the `has-tag` filter
- * category.  Owns the tag-search popover state and the debounced
- * `listTagsByPrefix` IPC (B-72).
+ * category. Owns the tag-search popover state and the debounced
+ * `listTagsByPrefix` IPC. Renders a Radix Popover shell around the
+ * cmdk-based `<Command>` wrapper with `shouldFilter={false}` — the
+ * backend prefix query is the source of truth, not client rescoring.
  */
 
 import type React from 'react'
 import { useEffect, useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
+import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { listTagsByPrefix } from '../../../lib/tauri'
-import { SearchablePopover } from '../../SearchablePopover'
 import type { FilterFormHandle } from './types'
 
 export interface HasTagFilterFormProps {
@@ -51,29 +63,56 @@ export function HasTagFilterForm({ tags, ref }: HasTagFilterFormProps): React.Re
     }
   }, [tagSearchQuery, tagSearchOpen, debouncedTagSearch])
 
+  const items = tagSearchResults.length > 0 ? tagSearchResults : tags
+  const triggerLabel = tagValue
+    ? (tags.find((tg) => tg.id === tagValue)?.name ??
+      tagSearchResults.find((tg) => tg.id === tagValue)?.name ??
+      tagValue)
+    : t('backlink.selectTag')
+
+  function handleSelect(tagId: string) {
+    setTagValue(tagId)
+    setTagSearchOpen(false)
+  }
+
   return (
-    <SearchablePopover
-      open={tagSearchOpen}
-      onOpenChange={setTagSearchOpen}
-      items={tagSearchResults.length > 0 ? tagSearchResults : tags}
-      isLoading={tagSearchLoading}
-      onSelect={(tag) => {
-        setTagValue(tag.id)
-        setTagSearchOpen(false)
-      }}
-      renderItem={(tag) => tag.name}
-      keyExtractor={(tag) => tag.id}
-      searchValue={tagSearchQuery}
-      onSearchChange={setTagSearchQuery}
-      searchPlaceholder={t('backlink.searchTagPlaceholder')}
-      emptyMessage={t('backlink.noTagsFound')}
-      triggerLabel={
-        tagValue
-          ? (tags.find((tg) => tg.id === tagValue)?.name ??
-            tagSearchResults.find((tg) => tg.id === tagValue)?.name ??
-            tagValue)
-          : t('backlink.selectTag')
-      }
-    />
+    <Popover open={tagSearchOpen} onOpenChange={setTagSearchOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={triggerLabel}
+          data-testid="tag-search-popover"
+        >
+          {triggerLabel}
+        </Button>
+      </PopoverTrigger>
+      <MenuPopoverContent className="p-0" align="start">
+        <Command shouldFilter={false} label={t('backlink.searchTagPlaceholder')}>
+          <CommandInput
+            value={tagSearchQuery}
+            onValueChange={setTagSearchQuery}
+            placeholder={t('backlink.searchTagPlaceholder')}
+            aria-label={t('backlink.searchTagPlaceholder')}
+          />
+          <CommandList>
+            {tagSearchLoading && (
+              <div className="p-2">
+                <Spinner className="mx-auto text-muted-foreground" />
+              </div>
+            )}
+            {!tagSearchLoading && items.length === 0 && (
+              <CommandEmpty>{t('backlink.noTagsFound')}</CommandEmpty>
+            )}
+            {!tagSearchLoading &&
+              items.map((tag) => (
+                <CommandItem key={tag.id} value={tag.id} onSelect={() => handleSelect(tag.id)}>
+                  {tag.name}
+                </CommandItem>
+              ))}
+          </CommandList>
+        </Command>
+      </MenuPopoverContent>
+    </Popover>
   )
 }
