@@ -33,6 +33,7 @@ import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
 import { CardButton } from '@/components/ui/card-button'
+import { getCaretRect } from '@/lib/caret-anchor'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 import type { FilterToken } from '@/lib/search-query'
@@ -44,6 +45,11 @@ import {
   serialize,
   tokenKey,
 } from '@/lib/search-query'
+import {
+  type AutocompleteAnchor,
+  applyAutocompleteReplacement,
+  detectAutocompleteAnchor,
+} from '@/lib/search-query/autocomplete'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
@@ -70,6 +76,7 @@ import { ResultCard } from './ResultCard'
 import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
+import { type AutocompleteItem, AutocompletePopover } from './search/AutocompletePopover'
 import { FilterChipRow } from './search/FilterChipRow'
 import { FilterHelperPopover } from './search/FilterHelperPopover'
 import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
@@ -172,6 +179,47 @@ function hasCJK(text: string): boolean {
   )
 }
 
+/**
+ * PEND-60 Phase 1 — Static value lists for caret-anchored autocomplete.
+ *
+ * Tag / path / property dynamic sources land in Phase 2. The vocabulary
+ * here mirrors the parser's accepted values for `state:`, `priority:`,
+ * `due:` / `scheduled:` (see `src/lib/search-query/types.ts` and the
+ * PEND-53 plan).
+ */
+const STATE_VALUES = ['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED', 'none'] as const
+const PRIORITY_VALUES = ['A', 'B', 'C', 'none'] as const
+const DATE_BUCKET_VALUES = [
+  'today',
+  'yesterday',
+  'overdue',
+  'this-week',
+  'this-month',
+  'next-week',
+  'older',
+  'none',
+] as const
+
+function itemsForAnchor(anchor: AutocompleteAnchor): AutocompleteItem[] {
+  if (anchor == null) return []
+  const lowered = anchor.query.toLowerCase()
+  const project = (values: readonly string[]): AutocompleteItem[] =>
+    values.filter((v) => v.toLowerCase().startsWith(lowered)).map((v) => ({ value: v }))
+  switch (anchor.active) {
+    case 'state':
+      return project(STATE_VALUES)
+    case 'priority':
+      return project(PRIORITY_VALUES)
+    case 'due':
+    case 'scheduled':
+      return project(DATE_BUCKET_VALUES)
+    default:
+      // PEND-60 Phase 2 — tag / path / propKey / propValue sources land
+      // there. Phase 1 ships static lists only.
+      return []
+  }
+}
+
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
 
@@ -200,6 +248,12 @@ export function SearchPanel(): React.ReactElement {
   // PEND-55 — history dropdown visibility. Shown when the input is
   // focused AND empty (matches the plan's UX mock).
   const [inputFocused, setInputFocused] = useState(false)
+  // PEND-60 Phase 1 — caret-anchored autocomplete state.
+  const [caretPos, setCaretPos] = useState(0)
+  const [autocompleteSelected, setAutocompleteSelected] = useState<string | null>(null)
+  const [autocompleteRect, setAutocompleteRect] = useState<DOMRect | null>(null)
+  const [autocompleteDismissed, setAutocompleteDismissed] = useState(false)
+  const pendingCaretRef = useRef<number | null>(null)
   // UX-335 — `cleared` is true iff the user emptied the search input AFTER a
   // search had been performed. Used to surface a `t('search.statusCleared')`
   // announcement in the aria-live status region (separate from pre-search).
@@ -419,6 +473,7 @@ export function SearchPanel(): React.ReactElement {
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value
     setQuery(value)
+    setCaretPos(e.target.selectionStart ?? value.length)
 
     debounced.cancel()
 
@@ -454,6 +509,103 @@ export function SearchPanel(): React.ReactElement {
   const clearHistory = useSearchHistoryStore((s) => s.clear)
   const cycling = useSearchHistoryCycling(historyEntries, query, setQuery)
 
+  // PEND-60 Phase 1 — caret-anchored autocomplete.
+  // The active anchor is suppressed in regex mode so structured-filter
+  // prefixes inside the regex aren't treated as autocompletable tokens.
+  const currentAnchor = useMemo<AutocompleteAnchor>(
+    () => (toggles.isRegex ? null : detectAutocompleteAnchor(query, caretPos)),
+    [toggles.isRegex, query, caretPos],
+  )
+  const autocompleteItems = useMemo(() => itemsForAnchor(currentAnchor), [currentAnchor])
+  const autocompleteOpen =
+    inputFocused && !autocompleteDismissed && autocompleteItems.length > 0 && currentAnchor != null
+  // Dismissal is cleared on every keystroke — typing again re-opens.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger, not a body-read dep — re-arm on every new keystroke.
+  useEffect(() => {
+    setAutocompleteDismissed(false)
+  }, [query])
+  // Default the highlight to the first item; preserve a stale selection
+  // when it survives the new items list.
+  useEffect(() => {
+    if (!autocompleteOpen) {
+      setAutocompleteSelected(null)
+      return
+    }
+    setAutocompleteSelected((prev) =>
+      prev != null && autocompleteItems.some((i) => i.value === prev)
+        ? prev
+        : (autocompleteItems[0]?.value ?? null),
+    )
+  }, [autocompleteOpen, autocompleteItems])
+  // Recompute caret rect when the anchor changes. The rect anchors the
+  // popover to the start of the *value* portion (after the `state:` /
+  // `priority:` prefix), so the popover stays put as the user types
+  // more characters of the value.
+  useEffect(() => {
+    if (!autocompleteOpen || currentAnchor == null) {
+      setAutocompleteRect(null)
+      return
+    }
+    const input = searchInputRef.current
+    if (input == null) return
+    setAutocompleteRect(getCaretRect(input, currentAnchor.anchor))
+  }, [autocompleteOpen, currentAnchor])
+  // Apply pending caret position after a `setQuery` triggered by item
+  // selection. React doesn't sync controlled `<input>` selectionStart
+  // with the new value automatically.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger — we want this to fire after React has reconciled the new value into the DOM.
+  useEffect(() => {
+    if (pendingCaretRef.current == null) return
+    const input = searchInputRef.current
+    if (input == null) return
+    const pos = pendingCaretRef.current
+    input.setSelectionRange(pos, pos)
+    setCaretPos(pos)
+    pendingCaretRef.current = null
+  }, [query])
+
+  const handleAutocompleteSelect = useCallback(
+    (value: string) => {
+      if (currentAnchor == null) return
+      const { nextValue, nextCaret } = applyAutocompleteReplacement(
+        query,
+        caretPos,
+        currentAnchor,
+        value,
+      )
+      pendingCaretRef.current = nextCaret
+      setQuery(nextValue)
+      setAutocompleteSelected(null)
+      setAutocompleteDismissed(true)
+      debounced.cancel()
+      setCleared(false)
+      setTyping(true)
+      debounced.schedule(nextValue)
+    },
+    [currentAnchor, query, caretPos, debounced],
+  )
+
+  // PEND-60 Phase 1 — autocomplete keyboard helpers. Extracted to keep
+  // `handleInputKeyDown` under biome's cognitive-complexity cap.
+  const moveAutocompleteHighlight = useCallback(
+    (direction: 1 | -1) => {
+      if (autocompleteItems.length === 0) return
+      const idx =
+        autocompleteSelected != null
+          ? autocompleteItems.findIndex((it) => it.value === autocompleteSelected)
+          : -1
+      const startIdx = idx === -1 ? (direction > 0 ? -1 : 0) : idx
+      const nextIdx = (startIdx + direction + autocompleteItems.length) % autocompleteItems.length
+      const next = autocompleteItems[nextIdx]
+      if (next) setAutocompleteSelected(next.value)
+    },
+    [autocompleteItems, autocompleteSelected],
+  )
+  const dismissAutocomplete = useCallback(() => {
+    setAutocompleteDismissed(true)
+    setAutocompleteSelected(null)
+  }, [])
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     debounced.cancel()
@@ -486,10 +638,61 @@ export function SearchPanel(): React.ReactElement {
 
   const handleInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
+      // Autocomplete keys win over history recall when the popover is open.
+      if (autocompleteOpen && autocompleteItems.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          moveAutocompleteHighlight(1)
+          return
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          moveAutocompleteHighlight(-1)
+          return
+        }
+        if ((e.key === 'Enter' || e.key === 'Tab') && autocompleteSelected != null) {
+          e.preventDefault()
+          handleAutocompleteSelect(autocompleteSelected)
+          return
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          dismissAutocomplete()
+          return
+        }
+      }
       cycling.handleKeyDown(e)
     },
-    [cycling],
+    [
+      autocompleteOpen,
+      autocompleteItems,
+      autocompleteSelected,
+      moveAutocompleteHighlight,
+      dismissAutocomplete,
+      handleAutocompleteSelect,
+      cycling,
+    ],
   )
+
+  // PEND-60 Phase 1 — caret-position tracker. `onChange` covers typing;
+  // these native listeners cover everything else (arrow-key moves,
+  // click, focus, selection drag) without threading 4 props through
+  // `SearchHeader` → `SearchInput` → `Input`.
+  useEffect(() => {
+    const input = searchInputRef.current
+    if (input == null) return
+    const sync = () => setCaretPos(input.selectionStart ?? input.value.length)
+    input.addEventListener('select', sync)
+    input.addEventListener('keyup', sync)
+    input.addEventListener('click', sync)
+    input.addEventListener('focus', sync)
+    return () => {
+      input.removeEventListener('select', sync)
+      input.removeEventListener('keyup', sync)
+      input.removeEventListener('click', sync)
+      input.removeEventListener('focus', sync)
+    }
+  }, [])
 
   const handleResultClick = useCallback(
     async (block: BlockRow | SearchBlockRow) => {
@@ -643,6 +846,18 @@ export function SearchPanel(): React.ReactElement {
             onClear={handleClearHistory}
           />
         }
+      />
+      {/* PEND-60 Phase 1 — caret-anchored value autocomplete. Portals
+          to body via Radix, so its placement in the tree is positional
+          only. */}
+      <AutocompletePopover
+        open={autocompleteOpen}
+        anchorRect={autocompleteRect}
+        items={autocompleteItems}
+        selectedValue={autocompleteSelected}
+        onSelectedValueChange={setAutocompleteSelected}
+        onSelect={handleAutocompleteSelect}
+        label={t('search.autocompleteListLabel')}
       />
 
       {/* UX-269 — CJK limitation notice sits directly below the input so

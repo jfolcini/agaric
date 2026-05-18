@@ -2,10 +2,57 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 780 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 782 (latest entry 2026-05-18).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 781 sessions.
+- **Previously-resolved counter:** 1213+ REVIEW-LATER items across 782 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 782 — PEND-60 Phase 1 caret-anchored autocomplete (2026-05-18)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-18 |
+| **Subagents** | 2 build + 2 review |
+| **Items closed** | — (PEND-60 Phase 1 only; Phases 2-3 remain open) |
+| **Items modified** | PEND-60 (status note added; Phase 1 shipped) |
+| **Tests added** | +26 frontend (7 unit + 9 component + 10 integration) / +0 backend |
+| **Files touched** | 6 (5 new + 1 modified) |
+
+**Summary:** Shipped Phase 1 of PEND-60: caret-anchored value autocomplete in the SearchPanel input. Typing `state:` / `priority:` / `due:` / `scheduled:` opens a Radix-portaled cmdk popover anchored at the caret pixel position; ArrowUp/Down moves the highlight, Enter / Tab applies the value with a trailing space, Escape dismisses, and PEND-55's history recall correctly yields while the popover is open. Phase 1 ships static value lists only — dynamic sources for `tag:` / `prop:` / `path:` and a Playwright e2e land in Phases 2-3.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 11 → 11 (no REVIEW-LATER items closed; PEND-60 Phase 1 is a `pending/` plan, not a REVIEW-LATER row).
+- **Previously resolved:** 1213+ → 1213+ across 781 → 782 sessions.
+
+**Files touched (this session):**
+- `src/lib/caret-anchor.ts` (+80 LOC, new) — pure caret-anchor utility for single-line inputs. Computes a viewport-relative `DOMRect` from input geometry + canvas-measured text width before the cursor. DI-injectable measurer so tests can deterministically supply widths in happy-dom (where `canvas.getContext('2d')` returns null).
+- `src/lib/__tests__/caret-anchor.test.ts` (+123 LOC, new) — 7 cases: caret-at-start, caret-at-end (measurer args), out-of-range clamp, empty input, `line-height: normal` fallback, scrollLeft offset, defaultMeasureText sanity.
+- `src/components/search/AutocompletePopover.tsx` (+117 LOC, new) — Radix Popover with `virtualRef` to a `Measurable` whose `getBoundingClientRect` returns the caret rect, containing a cmdk `<Command shouldFilter={false}>` driven entirely by props (`selectedValue` controls highlight, `onSelect` fires on click).
+- `src/components/__tests__/AutocompletePopover.test.tsx` (+210 LOC, new) — 9 cases including 3 hidden-state guards, item rendering, click `onSelect`, hover `onSelectedValueChange`, controlled `aria-selected`, listbox `aria-label`, and vitest-axe audit.
+- `src/components/SearchPanel.tsx` (+216 LOC) — wires the popover into the input. New state for caret position / dismissal / highlight / anchor rect, four effects (dismissal reset on query change, highlight default to first item, caret-rect recompute on anchor change, pending-caret apply after `setQuery`), three callbacks (`handleAutocompleteSelect`, `moveAutocompleteHighlight`, `dismissAutocomplete`), and extended `handleInputKeyDown` with autocomplete-key precedence over history recall. Native event listeners (`select`/`keyup`/`click`/`focus`) on the input ref track caret moves without threading new props through `SearchHeader` → `SearchInput` → `Input`.
+- `src/components/__tests__/SearchPanel.autocomplete.test.tsx` (+217 LOC, new) — 10 cases: open on `state:`, filter on partial query, click insert + trailing space, Esc close, Enter applies highlight (form does NOT submit), ArrowDown then Enter applies DOING (proves history recall doesn't fire), regex mode disables autocomplete, axe audit on host container, Tab applies highlight (UX convention), and dismissal-re-arm on next keystroke.
+- `pending/PEND-60-caret-autocomplete-cmdk.md` — Phase 1 status note added at top.
+
+**Verification:**
+- `npx vitest run` — 10131/10131 tests pass.
+- `npx tsc --noEmit` — clean (one pre-existing `'FormEvent' is deprecated` diagnostic on line 609 is unchanged from main).
+- `./node_modules/.bin/biome check <6 files>` — clean.
+- `bash scripts/check-axe-presence.sh` — 150/150 component test files have axe coverage.
+- `node scripts/check-ipc-error-path.mjs` — clean for changed components.
+
+**Process notes:**
+- Build subagents A (caret-anchor) and B (popover) ran in parallel with non-overlapping file targets; no worktree needed. Orchestrator pre-read SearchPanel + i18n keys + AGENTS.md conventions while subagents built, then wired the popover and added the integration test once both subagents returned. Tech and UX reviewers ran in parallel after build; UX returned "ship" with one non-blocker (ARIA combobox wiring on the input), tech made tactical fixes (sorted import + 2 biome-ignore comments for `useExhaustiveDependencies` on trigger-only effects) directly in-tree.
+- Biome's `noExcessiveCognitiveComplexity` caught `handleInputKeyDown` at 36 (max 25) after the wire-up; orchestrator extracted `moveAutocompleteHighlight` and `dismissAutocomplete` into named callbacks to bring it back under the cap. Net LOC delta unchanged.
+- The integration test file initially shipped a `document.body`-scoped axe audit; that timed out at 5s under happy-dom load. Narrowed to `container` scope (the popover's own axe scan in `AutocompletePopover.test.tsx` already covers the portaled content), keeping `axe-presence` satisfied.
+
+**Lessons learned (for future sessions):**
+- For caret-anchored UIs in single-line inputs, the canvas-measureText + computed-style approach is simpler than the textbook mirror-span hack and survives happy-dom (which returns null from `getContext('2d')`) cleanly via a DI-injectable measurer.
+- When a hook-dep array is a trigger-not-a-read, biome flags it as `useExhaustiveDependencies` excess; the right move is a `biome-ignore` with a one-line "trigger, not a body-read dep" justification (already convention in this repo — see `SearchPanel.tsx:741`).
+- ARIA combobox wiring (`role="combobox"` + `aria-expanded` / `aria-controls` / `aria-activedescendant`) is a known gap when grafting an autocomplete popover onto an existing search input. Fold into Phase 2's a11y pass rather than backfilling Phase 1.
+
+**Commit plan:** Single commit on branch `pend-60-phase1-caret-autocomplete`. Open PR for review — Phase 1 is a self-contained chunk; Phases 2 and 3 ship as separate PRs.
+
+---
 
 ## Session 781 — DnD overlay polish + release prep + DCO hook + PEND-59 cmdk foundation (2026-05-18)
 
