@@ -1,9 +1,9 @@
 name: CI
 
 on:
-  # Run validation + per-platform builds on every push to any branch. Tag
-  # pushes are handled by release.yml (which also runs the full validation
-  # via the shared _validate.yml callable).
+  # Run validation + a Linux smoke build on every push to any branch.
+  # Tag pushes are handled by release.yml (which owns the full
+  # macOS/Windows/Android matrix and produces shippable artifacts).
   push:
     branches: ['**']
     tags-ignore: ['**']
@@ -40,52 +40,31 @@ jobs:
     uses: ./.github/workflows/_validate.yml
 
   # ---------------------------------------------------------------------------
-  # Desktop build matrix — Linux (.deb, .AppImage), Windows (.msi, .nsis),
-  # macOS (.dmg, .app). Ensures the app compiles and bundles on all platforms.
+  # Linux smoke build. Catches Tauri-config drift early without burning
+  # macOS/Windows runner minutes (~10× the Linux cost) on every PR. The
+  # full desktop matrix is built only at release time by `release.yml`
+  # on tag push, which is the only place macOS/Windows artifacts must
+  # actually ship.
+  #
+  # If a Tauri / wry / cargo-tauri bump breaks a non-Linux target, the
+  # tag-push release will surface it — the solo maintainer tagging the
+  # release notices immediately and either patches forward or rolls
+  # back the bump. Multi-maintainer projects that want PR-time signal
+  # on non-Linux platforms can add a label-gated re-add or a scheduled
+  # nightly job (see the README for the rationale).
   # ---------------------------------------------------------------------------
   build:
     needs: validate
-    # PEND-41 R1 — observed wall-clock per OS (run 25966040732, 2026-05-16,
-    # n=1): linux 24.3 min, macos 31.5 min, windows 41.4 min. +50% headroom
-    # + round up → 50 (linux/macos) / 65 (windows). Per-matrix-cell timeout
-    # via the expression below.
-    timeout-minutes: ${{ matrix.label == 'windows' && 65 || 50 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            label: linux
-          # Explicit version pins (`windows-2025-vs2026` GA mid-2026,
-          # `macos-15` GA late 2025) instead of `*-latest` aliases:
-          # the floating tags move silently and have caused
-          # actions-side deprecation warnings + image-rebuild lag on
-          # past transitions. Pinning lets Dependabot bump us
-          # explicitly when the next major image cuts.
-          # windows-2025-vs2026 runs ~15-25% faster than windows-2022
-          # on Rust toolchain + Tauri's WiX bundler workload per the
-          # GitHub runner image release notes. The plain
-          # `windows-2025` label is being redirected to
-          # `windows-2025-vs2026` by 2026-06-15 (announced as a job
-          # NOTICE annotation on every windows-2025 run on 2026-05-17)
-          # — we pin to the destination label now so we land any
-          # vs2026 compatibility breakage in CI rather than in
-          # production at the redirect cutoff.
-          - os: windows-2025-vs2026
-            label: windows
-          # macos-15 is Apple Silicon by default (M1 hardware);
-          # macOS 14 was the transition runner. Apple-Silicon runs
-          # build ≈2-3× faster than the Intel slots for Rust workloads.
-          - os: macos-15
-            label: macos
-    runs-on: ${{ matrix.os }}
+    # PEND-41 R1 — observed Linux wall-clock 24.3 min (run 25966040732,
+    # 2026-05-16, n=1). +50% headroom + round up → 50.
+    timeout-minutes: 50
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Install system dependencies (Linux)
-        if: matrix.label == 'linux'
+      - name: Install system dependencies
         # patchelf and libappindicator3-dev are required for the AppImage
         # bundling step (linuxdeploy uses patchelf to rewrite RPATH on the
         # bundled .so files). Without patchelf, tauri-bundler fails the
@@ -108,7 +87,6 @@ jobs:
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
-        if: matrix.label == 'linux'
         run: |
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
@@ -123,8 +101,8 @@ jobs:
           # PEND-39 C6: shared with _validate.yml's `rust-deps` key.
           # Swatinem segregates the cache by runner.os internally, so the
           # Linux validate slot and the Linux desktop build slot share a
-          # cache while macOS / Windows entries in this matrix get their
-          # own per-OS cache (no cross-OS poisoning).
+          # cache. The Android job below uses a separate `rust-android`
+          # shared-key (different cross-compile targets).
           shared-key: rust-deps
           # Only `main` writes to the cache (other branches read it
           # without saving) to stop feature-branch churn from evicting
@@ -153,20 +131,17 @@ jobs:
         run: cargo tauri build -v
 
       - name: Fix AppImage icon symlinks
-        if: matrix.label == 'linux'
         run: bash scripts/fix-appimage-icons.sh
 
       # ---------------------------------------------------------------------
       # FEAT-4f — verify the `agaric-mcp` sidecar binary is staged for, and
-      # landed in, the bundled artifact on each desktop target. Missing on
-      # any platform breaks MCP clients that rely on the installed stub.
+      # landed in, the bundled artifact. Missing here breaks MCP clients
+      # that rely on the installed stub.
       # ---------------------------------------------------------------------
-      - name: Verify externalBin staging (Linux)
-        if: matrix.label == 'linux'
+      - name: Verify externalBin staging
         run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
 
       - name: Verify agaric-mcp inside .deb
-        if: matrix.label == 'linux'
         run: |
           # Use a glob (instead of `ls | head -n 1`) so shellcheck SC2012 is happy
           # and filenames with spaces / newlines parse correctly. Bundle dir
@@ -181,27 +156,7 @@ jobs:
           echo "Inspecting $deb"
           dpkg-deb -c "$deb" | grep -E '(^|/)agaric-mcp( |$)'
 
-      - name: Verify externalBin staging (macOS)
-        if: matrix.label == 'macos'
-        run: |
-          # The host triple on the macOS runner determines the filename.
-          triple=$(rustc -vV | awk '/^host: /{print $2}')
-          test -x "src-tauri/binaries/agaric-mcp-$triple"
-
-      - name: Verify agaric-mcp inside .app
-        if: matrix.label == 'macos'
-        run: test -x "src-tauri/target/release/bundle/macos/Agaric.app/Contents/MacOS/agaric-mcp"
-
-      - name: Verify externalBin staging (Windows)
-        if: matrix.label == 'windows'
-        shell: pwsh
-        run: |
-          $triple = (rustc -vV | Select-String '^host: ').Line.Split(' ')[1]
-          $path = "src-tauri/binaries/agaric-mcp-$triple.exe"
-          if (-not (Test-Path $path)) { throw "Missing staged binary: $path" }
-
       - name: Upload Linux bundles
-        if: matrix.label == 'linux'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bundle-linux
@@ -209,26 +164,17 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
 
-      - name: Upload Windows bundles
-        if: matrix.label == 'windows'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bundle-windows
-          path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
-
-      - name: Upload macOS bundles
-        if: matrix.label == 'macos'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bundle-macos
-          path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app
-
+  # ---------------------------------------------------------------------------
+  # Android APK build. Skipped on `pull_request` events — the typical
+  # frontend PR doesn't touch Android-specific paths and the ~28-min
+  # Android slot dominates PR wall-clock. Pushes (including the merge
+  # commit on `main` and feature-branch pushes) still run it, so
+  # Android-related branches keep CI signal. `release.yml` builds the
+  # Android artifact at tag time independently.
+  # ---------------------------------------------------------------------------
   android-build:
     needs: validate
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.
