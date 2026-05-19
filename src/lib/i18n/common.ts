@@ -99,6 +99,8 @@ export const common: Record<string, string> = {
   'announce.jumpedToToday': 'Jumped to today',
   'announce.searchOpened': 'Search opened',
   'announce.newPageCreated': 'New page created',
+  // PEND-67 Phase 8 — runLastCommand global shortcut announcement.
+  'announce.ranLastCommand': 'Re-ran last command',
   'announce.overlaysClosed': 'Overlays closed',
   'announce.editingBlock': 'Editing block: {{preview}}',
   'announce.emptyBlock': 'empty block',

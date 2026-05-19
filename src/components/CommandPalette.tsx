@@ -26,19 +26,7 @@
  * deferred to PEND-62; this file ships the desktop-first surface.
  */
 
-import {
-  ArrowLeftRight,
-  Clock,
-  FileSearch,
-  FileText,
-  Hash,
-  HelpCircle,
-  type LucideIcon,
-  RotateCcw,
-  Settings as SettingsIcon,
-  Tag as TagIcon,
-  Trash2,
-} from 'lucide-react'
+import { ArrowLeftRight, Clock, FileText, Hash, HelpCircle, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -57,6 +45,7 @@ import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
+import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/lib/palette-commands'
 import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
 import { addRecentPage, getRecentPages, type RecentPage } from '@/lib/recent-pages'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
@@ -1001,91 +990,22 @@ function CommandsModeBody({
   const query = useCommandPaletteStore((s) => s.query)
   const filter = query.toLowerCase().trim()
 
-  // Static registry. Keyed by `id` for stable React keys + cmdk
-  // `value`. `category` drives the visible group heading. `icon`
-  // provides a leading Lucide glyph — matches the iconography used
-  // across the rest of Agaric (Raycast/Linear convention).
-  //
-  // PEND-67 Phase 1 — `shortcutId` optionally references a binding in
-  // `keyboard-config/catalog.ts`. When present, `ShortcutChips`
-  // renders the chord as right-aligned `<kbd>` chips, read live so a
-  // rebind takes effect on the next render.
-  const commands: ReadonlyArray<{
-    id: string
+  // PEND-67 Phase 8 — registry hoisted to `lib/palette-commands.ts`
+  // so the global `runLastCommand` shortcut can execute by id without
+  // mounting the palette body. Here we adapt each spec into the
+  // shape the rest of the body expects: a flat `label` (resolved via
+  // `t()`) + a 0-arg `run` closed over `onClose` / `onEscalate`.
+  type RenderedCommand = Omit<PaletteCommandSpec, 'labelKey' | 'run'> & {
     label: string
-    category: 'navigate' | 'action'
-    icon: LucideIcon
-    shortcutId?: string
     run: () => void
-  }> = useMemo(
-    () => [
-      {
-        id: 'go-pages',
-        label: t('palette.cmdGoPages'),
-        category: 'navigate',
-        icon: FileText,
-        run: () => {
-          useNavigationStore.getState().setView('pages')
-          onClose()
-        },
-      },
-      {
-        id: 'go-tags',
-        label: t('palette.cmdGoTags'),
-        category: 'navigate',
-        icon: TagIcon,
-        run: () => {
-          useNavigationStore.getState().setView('tags')
-          onClose()
-        },
-      },
-      {
-        id: 'go-trash',
-        label: t('palette.cmdGoTrash'),
-        category: 'navigate',
-        icon: Trash2,
-        run: () => {
-          useNavigationStore.getState().setView('trash')
-          onClose()
-        },
-      },
-      {
-        id: 'go-history',
-        label: t('palette.cmdGoHistory'),
-        category: 'navigate',
-        icon: Clock,
-        run: () => {
-          useNavigationStore.getState().setView('history')
-          onClose()
-        },
-      },
-      {
-        id: 'go-settings',
-        label: t('palette.cmdGoSettings'),
-        category: 'navigate',
-        icon: SettingsIcon,
-        run: () => {
-          useNavigationStore.getState().setView('settings')
-          onClose()
-        },
-      },
-      {
-        id: 'search-everywhere',
-        label: t('palette.cmdSearchEverywhere'),
-        category: 'action',
-        icon: FileSearch,
-        // PEND-67 Phase 1 — `focusSearch` is the find-in-files chord
-        // (Ctrl+Shift+F by default). This command produces the same
-        // outcome from the palette, so showing the chord here helps
-        // power users skip the palette next time.
-        shortcutId: 'focusSearch',
-        run: () => {
-          // Escalate with an empty seed — SearchPanel mounts with its
-          // input ready for the user to type, same as Ctrl+Shift+F.
-          onEscalate('')
-        },
-      },
-    ],
+  }
+  const commands: ReadonlyArray<RenderedCommand> = useMemo(
+    () =>
+      PALETTE_COMMANDS.map((c) => ({
+        ...c,
+        label: t(c.labelKey),
+        run: () => c.run({ onClose, onEscalate }),
+      })),
     [t, onEscalate, onClose],
   )
 

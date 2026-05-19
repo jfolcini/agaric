@@ -93,6 +93,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.showKeyboardShortcuts': 'Show keyboard shortcuts',
   'keyboard.exportPageMarkdown': 'Export page as Markdown',
   'keyboard.closeOverlays': 'Close overlays, cancel editing, clear selection',
+  'keyboard.runLastCommand': 'Re-run last palette command',
   'keyboard.category.pageEditor': 'Page Editor',
   'keyboard.condition.inPageEditor': 'When viewing a page',
   'keyboard.zoomOut': 'Zoom out to page root',
