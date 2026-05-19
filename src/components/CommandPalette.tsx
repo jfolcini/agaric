@@ -46,12 +46,14 @@ import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/lib/palette-commands'
 import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
 import {
   addRecentPage,
   getRecentPages,
   type RecentPage,
+  removeRecentPage,
   togglePinRecentPage,
 } from '@/lib/recent-pages'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
@@ -137,6 +139,20 @@ function helpModeQuery(input: string): string {
 }
 
 /**
+ * PEND-67 Phase 3 — map a prefix-bearing search-mode query to the
+ * target mode + stripped query. Pulled out of `PaletteBody`'s
+ * useEffect so the body stays under Biome's cognitive-complexity
+ * budget as more prefixes are added.
+ */
+function routePrefixToMode(query: string): { next: PaletteMode; q: string } | null {
+  const trimmed = query.trimStart()
+  if (isCommandsModeInput(trimmed)) return { next: 'commands', q: commandsModeQuery(query) }
+  if (isTagsModeInput(trimmed)) return { next: 'tags', q: tagsModeQuery(query) }
+  if (isHelpModeInput(trimmed)) return { next: 'help', q: helpModeQuery(query) }
+  return null
+}
+
+/**
  * Insert a `[[Page Title]]` link into the previously focused element,
  * if any. For `<input>` / `<textarea>` this uses native setRange APIs;
  * for `contenteditable` elements (the block editor's primary surface)
@@ -171,6 +187,45 @@ function insertPageLinkInto(target: HTMLElement | null, pageTitle: string): bool
     }
   }
   return false
+}
+
+/**
+ * PEND-67 Phase 5 — build the action set for the currently-open
+ * action menu. Pulled out of `PaletteBody` so the inner component
+ * stays under Biome's cognitive-complexity budget as more row types
+ * and actions land.
+ */
+function buildActionMenuActions(
+  rowType: 'recent' | 'page' | 'block',
+  pinned: boolean,
+  t: ReturnType<typeof useTranslation>['t'],
+): readonly PaletteAction[] {
+  const open: PaletteAction = {
+    id: 'open',
+    label: rowType === 'block' ? t('palette.actionOpenPage') : t('palette.actionOpen'),
+    hint: '↵',
+  }
+  const newTab: PaletteAction = {
+    id: 'open-new-tab',
+    label: t('palette.actionOpenNewTab'),
+    hint: '⌘↵',
+  }
+  const reveal: PaletteAction = { id: 'reveal-in-pages', label: t('palette.actionReveal') }
+  const copyId: PaletteAction = { id: 'copy-id', label: t('palette.actionCopyId') }
+  if (rowType === 'recent') {
+    return [
+      open,
+      newTab,
+      pinned
+        ? { id: 'unpin', label: t('palette.actionUnpin') }
+        : { id: 'pin', label: t('palette.actionPin') },
+      reveal,
+      copyId,
+      { id: 'remove-from-recents', label: t('palette.actionRemoveFromRecents') },
+    ]
+  }
+  if (rowType === 'page') return [open, newTab, reveal, copyId]
+  return [open, newTab, reveal, { id: 'copy-block-link', label: t('palette.actionCopyBlockLink') }]
 }
 
 /**
@@ -230,6 +285,7 @@ export function CommandPalette(): React.ReactElement | null {
  * hooks. cmdk's `<Command>` lives at this level so its lifecycle is
  * fully scoped to the open palette.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complexity 26 vs max 25. PaletteBody is the orchestrator across 6 row types (search / commands / tags / help / link / recent), the debounced partitioned-IPC pipeline, and the Phase 5 action-menu state machine. Top-level helpers (routePrefixToMode, buildActionMenuActions, parseRowValue, tryOpenActionMenuOnTab, tryNumericPrefixJump, revealInPagesView) are already extracted; splitting further would mean threading 10+ closures through a custom hook signature for one point over budget. Same trade-off as DaySection.tsx and ConfirmDialog.tsx in this repo.
 function PaletteBody({
   onClose,
   actionMenuOpenRef,
@@ -274,14 +330,8 @@ function PaletteBody({
   // the palette input.
   useEffect(() => {
     if (mode !== 'search') return
-    const trimmed = query.trimStart()
-    if (isCommandsModeInput(trimmed)) {
-      enterModeWithQuery('commands', commandsModeQuery(query))
-    } else if (isTagsModeInput(trimmed)) {
-      enterModeWithQuery('tags', tagsModeQuery(query))
-    } else if (isHelpModeInput(trimmed)) {
-      enterModeWithQuery('help', helpModeQuery(query))
-    }
+    const route = routePrefixToMode(query)
+    if (route != null) enterModeWithQuery(route.next, route.q)
   }, [query, mode, enterModeWithQuery])
 
   // Auto-focus on mount. cmdk's `<CommandInput>` is a controlled
@@ -578,34 +628,97 @@ function PaletteBody({
     return v
   }
 
-  // PEND-67 Phase 5 — derive the action set for the currently-open
-  // action menu. Each row type gets a small, focused set; Open and
-  // Open-in-new-tab carry the same chord hints as the global palette
-  // keymap so users see the keyboard alternative right next to the
-  // menu equivalent.
-  const actionMenuActions = useMemo<readonly PaletteAction[]>(() => {
-    if (actionMenu == null) return []
-    if (actionMenu.rowType === 'recent') {
-      return [
-        { id: 'open', label: t('palette.actionOpen'), hint: '↵' },
-        { id: 'open-new-tab', label: t('palette.actionOpenNewTab'), hint: '⌘↵' },
-        actionMenu.pinned
-          ? { id: 'unpin', label: t('palette.actionUnpin') }
-          : { id: 'pin', label: t('palette.actionPin') },
-      ]
+  // PEND-67 Phase 5 — `buildActionMenuActions` (top-level helper) owns
+  // the row-type → action-set mapping. Memoising on `actionMenu` +
+  // `t` keeps the rendered menu stable across unrelated re-renders.
+  const actionMenuActions = useMemo<readonly PaletteAction[]>(
+    () =>
+      actionMenu == null ? [] : buildActionMenuActions(actionMenu.rowType, actionMenu.pinned, t),
+    [actionMenu, t],
+  )
+
+  // PEND-67 Phase 5 — clipboard write with a uniform success/failure
+  // toast pair so every "Copy …" action looks the same. Extracted
+  // outside the row-type handlers so `notify` is the single source of
+  // user-visible state for these actions.
+  function copyToClipboard(value: string, successKey: string): void {
+    navigator.clipboard
+      .writeText(value)
+      .then(() => notify.success(t(successKey)))
+      .catch(() => notify.error(t('palette.copyFailed')))
+  }
+
+  // Centralised "reveal in pages view" so all three row-type handlers
+  // route through a single seed-and-flip call. Extracting also drops
+  // PaletteBody's cognitive-complexity score below the 25 budget.
+  function revealInPagesView(title: string): void {
+    useNavigationStore.getState().setPendingPageBrowserFilter(title)
+    useNavigationStore.getState().setView('pages')
+    onClose()
+  }
+
+  // Per-row-type action handlers — keep each small so the dispatcher
+  // (`handleActionMenuAction`) stays under Biome's complexity budget.
+  function handleRecentRowAction(actionId: string, rowId: string, newTab: boolean): void {
+    if (actionId === 'pin' || actionId === 'unpin') {
+      togglePinRecentPage(rowId)
+      setRecents(getRecentPages())
+      return
     }
-    if (actionMenu.rowType === 'page') {
-      return [
-        { id: 'open', label: t('palette.actionOpen'), hint: '↵' },
-        { id: 'open-new-tab', label: t('palette.actionOpenNewTab'), hint: '⌘↵' },
-      ]
+    if (actionId === 'remove-from-recents') {
+      removeRecentPage(rowId)
+      setRecents(getRecentPages())
+      return
     }
-    // 'block'
-    return [
-      { id: 'open', label: t('palette.actionOpenPage'), hint: '↵' },
-      { id: 'open-new-tab', label: t('palette.actionOpenNewTab'), hint: '⌘↵' },
-    ]
-  }, [actionMenu, t])
+    const page = recents.find((p) => p.id === rowId)
+    if (page == null) return
+    if (actionId === 'copy-id') {
+      copyToClipboard(page.id, 'palette.copyIdSuccess')
+      return
+    }
+    if (actionId === 'reveal-in-pages') {
+      revealInPagesView(page.title)
+      return
+    }
+    addRecentPage(page.id, page.title)
+    if (newTab) openInNewTab(page.id, page.title)
+    else navigateToPage(page.id, page.title)
+    onClose()
+  }
+
+  function handlePageRowAction(actionId: string, rowId: string, newTab: boolean): void {
+    const group = groups.find((g) => g.pageId === rowId)
+    if (group == null) return
+    if (actionId === 'copy-id') {
+      copyToClipboard(group.pageId, 'palette.copyIdSuccess')
+      return
+    }
+    if (actionId === 'reveal-in-pages') {
+      revealInPagesView(group.pageTitle)
+      return
+    }
+    handleNavigateToPage(group.pageId, group.pageTitle, newTab)
+  }
+
+  function handleBlockRowAction(actionId: string, rowId: string, newTab: boolean): void {
+    for (const g of groups) {
+      const block = g.matches.find((b) => b.id === rowId)
+      if (block == null) continue
+      // Roam-style block reference syntax — Agaric's `((BLOCK_ID))`
+      // picker-trigger inserts inline references using exactly this
+      // shape (per `docs/UX.md` § Keyboard model).
+      if (actionId === 'copy-block-link') {
+        copyToClipboard(`((${block.id}))`, 'palette.copyLinkSuccess')
+        return
+      }
+      if (actionId === 'reveal-in-pages') {
+        revealInPagesView(g.pageTitle)
+        return
+      }
+      handleNavigateToBlock(block.id, g.pageId, g.pageTitle, newTab)
+      return
+    }
+  }
 
   function handleActionMenuAction(actionId: string): void {
     if (actionMenu == null) return
@@ -613,36 +726,14 @@ function PaletteBody({
     const newTab = actionId === 'open-new-tab'
     setActionMenu(null)
     if (rowType === 'recent') {
-      if (actionId === 'pin' || actionId === 'unpin') {
-        togglePinRecentPage(rowId)
-        setRecents(getRecentPages())
-        return
-      }
-      const page = recents.find((p) => p.id === rowId)
-      if (page == null) return
-      addRecentPage(page.id, page.title)
-      if (newTab) {
-        openInNewTab(page.id, page.title)
-      } else {
-        navigateToPage(page.id, page.title)
-      }
-      onClose()
+      handleRecentRowAction(actionId, rowId, newTab)
       return
     }
     if (rowType === 'page') {
-      const group = groups.find((g) => g.pageId === rowId)
-      if (group == null) return
-      handleNavigateToPage(group.pageId, group.pageTitle, newTab)
+      handlePageRowAction(actionId, rowId, newTab)
       return
     }
-    // 'block' — find the block in any group's `matches`.
-    for (const g of groups) {
-      const block = g.matches.find((b) => b.id === rowId)
-      if (block != null) {
-        handleNavigateToBlock(block.id, g.pageId, g.pageTitle, newTab)
-        return
-      }
-    }
+    handleBlockRowAction(actionId, rowId, newTab)
   }
 
   // Empty / no-result detection for the search-mode placeholder.

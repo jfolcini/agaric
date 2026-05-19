@@ -316,6 +316,97 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
     expect(screen.queryByTestId('palette-action-menu')).toBeNull()
   })
 
+  it('selecting "Copy page ULID" writes the page id to clipboard (PEND-67 Phase 5 expansion)', async () => {
+    seedRecents()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const orig = navigator.clipboard
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    try {
+      render(<CommandPalette />)
+      openPalette()
+      const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+      recentRow.setAttribute('aria-selected', 'true')
+      fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+      fireEvent.click(await screen.findByTestId('palette-action-copy-id'))
+      expect(writeText).toHaveBeenCalledWith('PAGE_R')
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { value: orig, configurable: true })
+    }
+  })
+
+  it('selecting "Remove from recents" deletes the entry (PEND-67 Phase 5 expansion)', async () => {
+    seedRecents()
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-remove-from-recents'))
+    const raw = localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]'
+    const parsed = JSON.parse(raw) as Array<{ id: string }>
+    expect(parsed.length).toBe(0)
+    // Action ran, menu closed; palette stays open (not a navigation).
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+  })
+
+  it('selecting "Reveal in Pages view" seeds the filter and flips the view (PEND-67 Phase 5 expansion)', async () => {
+    seedRecents()
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-reveal-in-pages'))
+    expect(useNavigationStore.getState().pendingPageBrowserFilter).toBe('Recent')
+    expect(useNavigationStore.getState().currentView).toBe('pages')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('block-row menu surfaces "Copy block link" with the Roam syntax (PEND-67 Phase 5 expansion)', async () => {
+    mockedSearchBlocksPartitioned.mockResolvedValue(
+      partitionedResp(
+        [makePageRow('PAGE_X', 'Alpha')],
+        [makeBlockRow('BLOCK_42', 'alpha note', 'PAGE_X', 'alpha <mark>note</mark>')],
+      ),
+    )
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const orig = navigator.clipboard
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    try {
+      render(<CommandPalette />)
+      openPalette()
+      fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'alpha' } })
+      // Wait for the IPC to fire AND the search results to render before
+      // looking for the block row — without this the findByTestId can
+      // time out on a cold mock pipeline.
+      await waitFor(() => {
+        expect(mockedSearchBlocksPartitioned).toHaveBeenCalled()
+      })
+      const blockRow = await waitFor(() => screen.getByTestId('palette-block-BLOCK_42'), {
+        timeout: 2000,
+      })
+      // Strip selection off any other row and set it on the block row so
+      // the Tab handler picks the block as the focused target. cmdk
+      // assigns aria-selected to the first item by default; we override
+      // for this test.
+      for (const item of document.querySelectorAll('[cmdk-item]')) {
+        item.setAttribute('aria-selected', 'false')
+      }
+      blockRow.setAttribute('aria-selected', 'true')
+      fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+      fireEvent.click(await screen.findByTestId('palette-action-copy-block-link'))
+      expect(writeText).toHaveBeenCalledWith('((BLOCK_42))')
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { value: orig, configurable: true })
+    }
+  })
+
   it('arrow-down inside the menu advances focus through the actions', async () => {
     seedRecents()
     render(<CommandPalette />)

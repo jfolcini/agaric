@@ -167,6 +167,21 @@ export function addRecentPage(id: string, title: string): void {
 }
 
 /**
+ * PEND-67 Phase 5 follow-up — remove a single entry from the recents
+ * list (any partition). Returns true if the id was found and removed,
+ * false otherwise. Pinned status does not affect removal — the action
+ * menu surfaces this as "Remove from recents" and a pinned entry can
+ * still be removed if the user explicitly chooses.
+ */
+export function removeRecentPage(id: string): boolean {
+  const all = readRawRecentPages()
+  const next = all.filter((p) => p.id !== id)
+  if (next.length === all.length) return false
+  writeRecentPages(next)
+  return true
+}
+
+/**
  * PEND-67 Phase 4 — toggle the pinned state of a recents entry. Returns
  * the new pinned state, or `null` if the id was not found.
  *

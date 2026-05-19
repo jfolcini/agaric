@@ -17,6 +17,7 @@ import {
   __resetMigrationFlagForTests,
   addRecentPage,
   getRecentPages,
+  removeRecentPage,
   togglePinRecentPage,
 } from '../recent-pages'
 
@@ -345,6 +346,28 @@ describe('recent-pages', () => {
       expect(result[0]?.id).toBe('PAGE_A')
       expect(result[0]?.pinned).toBe(true)
       expect(result[0]?.title).toBe('Alpha (updated title)')
+    })
+  })
+
+  describe('removeRecentPage (PEND-67 Phase 5 follow-up)', () => {
+    it('removes a matching entry and returns true', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      addRecentPage('PAGE_B', 'Bravo')
+      expect(removeRecentPage('PAGE_A')).toBe(true)
+      expect(getRecentPages().map((p) => p.id)).toEqual(['PAGE_B'])
+    })
+
+    it('returns false when the id is not present', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      expect(removeRecentPage('PAGE_GHOST')).toBe(false)
+      expect(getRecentPages().map((p) => p.id)).toEqual(['PAGE_A'])
+    })
+
+    it('removes a pinned entry too (pin status does not block removal)', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      togglePinRecentPage('PAGE_A')
+      expect(removeRecentPage('PAGE_A')).toBe(true)
+      expect(getRecentPages()).toEqual([])
     })
   })
 })

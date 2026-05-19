@@ -62,6 +62,15 @@ interface NavigationStore {
   currentViewBySpace: Record<string, View>
   /** Optional block ID to highlight/scroll to after navigation. */
   selectedBlockId: string | null
+  /**
+   * PEND-67 Phase 5 follow-up — transient handoff slot consumed by
+   * `PageBrowser` on mount. Written by `CommandPalette`'s
+   * "Reveal in Pages view" action so the user lands on a pages list
+   * already filtered to the page in question. The view reads and
+   * clears this slot exactly once (same pattern as
+   * `useCommandPaletteStore.pendingViewQuery`).
+   */
+  pendingPageBrowserFilter: string | null
 
   /** Switch sidebar view. DON'T touch tabs (preserve them across view changes). */
   setView: (view: View) => void
@@ -69,6 +78,8 @@ interface NavigationStore {
   setSelectedBlockId: (id: string | null) => void
   /** Clear the selectedBlockId. */
   clearSelection: () => void
+  /** Write or clear the pending Pages-view filter handoff slot. */
+  setPendingPageBrowserFilter: (q: string | null) => void
 }
 
 type NavigationState = NavigationStore
@@ -96,6 +107,7 @@ export const useNavigationStore = create<NavigationStore>()(
       currentView: 'journal',
       currentViewBySpace: {},
       selectedBlockId: null,
+      pendingPageBrowserFilter: null,
 
       setView: (view: View) => {
         const state = get()
@@ -112,6 +124,10 @@ export const useNavigationStore = create<NavigationStore>()(
 
       clearSelection: () => {
         set({ selectedBlockId: null })
+      },
+
+      setPendingPageBrowserFilter: (q: string | null) => {
+        set({ pendingPageBrowserFilter: q })
       },
     }),
     {
