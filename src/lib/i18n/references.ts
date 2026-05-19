@@ -319,4 +319,10 @@ export const references: Record<string, string> = {
   // PEND-67 Phase 4 — pin / unpin affordance on the recents rows.
   'palette.pinRecent': 'Pin {{title}} to recents',
   'palette.unpinRecent': 'Unpin {{title}} from recents',
+  // PEND-67 Phase 5 — per-row action menu labels.
+  'palette.actionOpen': 'Open',
+  'palette.actionOpenPage': 'Open page',
+  'palette.actionOpenNewTab': 'Open in new tab',
+  'palette.actionPin': 'Pin to recents',
+  'palette.actionUnpin': 'Unpin from recents',
 }

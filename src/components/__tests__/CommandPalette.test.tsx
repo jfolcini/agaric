@@ -235,6 +235,104 @@ describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
   })
 })
 
+describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
+  function seedRecents() {
+    localStorage.setItem(
+      'recent_pages:SPACE_TEST',
+      JSON.stringify([{ id: 'PAGE_R', title: 'Recent', visitedAt: '2026-05-19T00:00:00Z' }]),
+    )
+  }
+
+  it('Tab on a focused recent row opens the action menu', async () => {
+    seedRecents()
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    // Seed cmdk's aria-selected so the Tab handler can find the row.
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    expect(await screen.findByTestId('palette-action-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-action-open')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-action-open-new-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-action-pin')).toBeInTheDocument()
+  })
+
+  it('Escape closes the action menu without closing the palette', async () => {
+    seedRecents()
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    const menu = await screen.findByTestId('palette-action-menu')
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    expect(screen.queryByTestId('palette-action-menu')).toBeNull()
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+  })
+
+  it('selecting "Open in new tab" calls openInNewTab and closes', async () => {
+    seedRecents()
+    const openInNewTabSpy = vi.fn()
+    useTabsStore.setState({ openInNewTab: openInNewTabSpy } as never, true)
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+    })
+    // Re-set openInNewTab after the partial setState above which clobbers the spy.
+    useTabsStore.setState({ openInNewTab: openInNewTabSpy } as never)
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-open-new-tab'))
+    expect(openInNewTabSpy).toHaveBeenCalledWith('PAGE_R', 'Recent')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('selecting "Pin" toggles the pinned state', async () => {
+    seedRecents()
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-pin'))
+    const raw = localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]'
+    const parsed = JSON.parse(raw) as Array<{ id: string; pinned?: boolean }>
+    expect(parsed[0]?.pinned).toBe(true)
+    // Action ran, menu closed; palette stays open because pin is not a nav action.
+    expect(screen.queryByTestId('palette-action-menu')).toBeNull()
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+  })
+
+  it('Tab on a command-row is a no-op (no menu for command rows in v1)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    const cmd = await screen.findByTestId('palette-cmd-go-pages')
+    cmd.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    expect(screen.queryByTestId('palette-action-menu')).toBeNull()
+  })
+
+  it('arrow-down inside the menu advances focus through the actions', async () => {
+    seedRecents()
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    const menu = await screen.findByTestId('palette-action-menu')
+    // First action is auto-focused on mount.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByTestId('palette-action-open'))
+    })
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(screen.getByTestId('palette-action-open-new-tab'))
+  })
+})
+
 describe('CommandPalette — partitioned query', () => {
   it('fires a single searchBlocksPartitioned call per keystroke', async () => {
     mockedSearchBlocksPartitioned.mockResolvedValue(

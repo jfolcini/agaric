@@ -30,6 +30,7 @@ import { ArrowLeftRight, Clock, FileText, Hash, HelpCircle, Pin, RotateCcw } fro
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { type PaletteAction, PaletteActionMenu } from '@/components/palette/PaletteActionMenu'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import {
   Command,
@@ -184,6 +185,14 @@ export function CommandPalette(): React.ReactElement | null {
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Title } = parts
 
+  // PEND-67 Phase 5 — Radix attaches its Escape handler at `document`
+  // with `capture: true`, so it fires BEFORE the action menu's React
+  // bubble-phase keydown handler. When the action menu is open we
+  // intercept Escape via Radix's `onEscapeKeyDown` prop and let the
+  // menu handle Escape itself. The ref is the bridge — PaletteBody
+  // sets it whenever its `actionMenu` state changes.
+  const actionMenuOpenRef = useRef(false)
+
   if (!open) return null
 
   return (
@@ -198,12 +207,18 @@ export function CommandPalette(): React.ReactElement | null {
         // Stop the dialog from auto-focusing its close button on open;
         // we want focus on the input.
         onOpenAutoFocus={(e: Event) => e.preventDefault()}
+        // PEND-67 Phase 5 — preventDefault when the action menu owns
+        // Escape; the menu's own keydown handler will close itself,
+        // leaving the palette open.
+        onEscapeKeyDown={(e: KeyboardEvent) => {
+          if (actionMenuOpenRef.current) e.preventDefault()
+        }}
         data-testid="command-palette"
         role="dialog"
         aria-label={t('palette.dialogLabel')}
       >
         <Title className="sr-only">{t('palette.dialogTitle')}</Title>
-        <PaletteBody onClose={closeStore} />
+        <PaletteBody onClose={closeStore} actionMenuOpenRef={actionMenuOpenRef} />
       </Content>
     </Root>
   )
@@ -215,7 +230,13 @@ export function CommandPalette(): React.ReactElement | null {
  * hooks. cmdk's `<Command>` lives at this level so its lifecycle is
  * fully scoped to the open palette.
  */
-function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
+function PaletteBody({
+  onClose,
+  actionMenuOpenRef,
+}: {
+  onClose: () => void
+  actionMenuOpenRef: React.RefObject<boolean>
+}): React.ReactElement {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -457,6 +478,82 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
   function handleListClickCapture(e: React.MouseEvent<HTMLDivElement>) {
     newTabRef.current = e.metaKey || e.ctrlKey
   }
+
+  // ── PEND-67 Phase 5 — per-row action menu ────────────────────────
+  // Tab on the focused row opens this menu; mouse users can also
+  // open it via the `…` button rendered at row-right (Phase 4
+  // already exposes a pin button there for recents). The menu
+  // closes on Escape, click-outside, or after selecting an action.
+  interface ActionMenuState {
+    rowType: 'recent' | 'page' | 'block'
+    rowId: string
+    /** Pinned state captured at open-time; affects the recent-row action label. */
+    pinned: boolean
+    /** Row bounding rect at open-time — the menu positions itself below this. */
+    rect: DOMRect
+  }
+  const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null)
+
+  // Mirror open state into the outer ref so the dialog's
+  // onEscapeKeyDown can preventDefault when the menu owns Escape.
+  useEffect(() => {
+    actionMenuOpenRef.current = actionMenu != null
+  }, [actionMenu, actionMenuOpenRef])
+
+  // Parse a cmdk row's `data-value` like "recent:PAGE_A" or
+  // "page:PAGE_B" into its type + id.
+  function parseRowValue(value: string): { type: string; id: string } | null {
+    const idx = value.indexOf(':')
+    if (idx < 0) return null
+    return { type: value.slice(0, idx), id: value.slice(idx + 1) }
+  }
+
+  // PEND-67 Phase 5 — extracted out of `handleListKeyDown` so the
+  // top-level dispatcher stays under Biome's cognitive-complexity
+  // budget (≤ 25). Returns true if the Tab was consumed (caller
+  // should `return` early).
+  function tryOpenActionMenuOnTab(e: React.KeyboardEvent<HTMLDivElement>): boolean {
+    if (e.key !== 'Tab' || e.shiftKey || actionMenu != null) return false
+    const active = document.querySelector<HTMLElement>('[cmdk-item][aria-selected="true"]')
+    if (active == null) return false
+    const parsed = parseRowValue(active.getAttribute('data-value') ?? '')
+    if (parsed == null) return false
+    if (parsed.type !== 'recent' && parsed.type !== 'page' && parsed.type !== 'block') {
+      // No action menu for `more:`, `__escalate__`, `cmd:`, `tag:`,
+      // `help:` rows in v1 — their behaviour is already a single
+      // action (Enter). Future phases can wire them in.
+      return false
+    }
+    e.preventDefault()
+    const isPinned =
+      parsed.type === 'recent' && recents.find((p) => p.id === parsed.id)?.pinned === true
+    setActionMenu({
+      rowType: parsed.type,
+      rowId: parsed.id,
+      pinned: isPinned,
+      rect: active.getBoundingClientRect(),
+    })
+    return true
+  }
+
+  // PEND-67 Phase 7 — extracted alongside `tryOpenActionMenuOnTab` so
+  // the dispatcher reads as a flat list of "try X branch" calls.
+  function tryNumericPrefixJump(e: React.KeyboardEvent<HTMLDivElement>): boolean {
+    if (query.length > 0) return false
+    if (e.metaKey || e.ctrlKey || e.altKey) return false
+    if (e.key < '1' || e.key > '9') return false
+    const dialog = (e.currentTarget as HTMLElement).closest<HTMLElement>(
+      '[data-testid="command-palette"]',
+    )
+    if (dialog == null) return false
+    const items = dialog.querySelectorAll<HTMLElement>('[cmdk-item]')
+    const target = items[Number(e.key) - 1]
+    if (target == null) return false
+    e.preventDefault()
+    target.click()
+    return true
+  }
+
   function handleListKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Enter') {
       newTabRef.current = e.metaKey || e.ctrlKey
@@ -472,35 +569,80 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
       }
       return
     }
-    // PEND-67 Phase 7 — `1`-`9` jumps to the Nth visible cmdk item
-    // when the input is empty. Modifier keys are ignored (Ctrl+1 must
-    // stay free for other handlers). With a non-empty input the digit
-    // is typed normally (`2023-budget` searches as expected) — the
-    // `query.length === 0` guard handles this.
-    if (
-      query.length === 0 &&
-      !e.metaKey &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      e.key >= '1' &&
-      e.key <= '9'
-    ) {
-      const dialog = (e.currentTarget as HTMLElement).closest<HTMLElement>(
-        '[data-testid="command-palette"]',
-      )
-      if (dialog == null) return
-      const items = dialog.querySelectorAll<HTMLElement>('[cmdk-item]')
-      const idx = Number(e.key) - 1
-      const target = items[idx]
-      if (target == null) return
-      e.preventDefault()
-      target.click()
-    }
+    if (tryOpenActionMenuOnTab(e)) return
+    tryNumericPrefixJump(e)
   }
   function consumeNewTab(): boolean {
     const v = newTabRef.current
     newTabRef.current = false
     return v
+  }
+
+  // PEND-67 Phase 5 — derive the action set for the currently-open
+  // action menu. Each row type gets a small, focused set; Open and
+  // Open-in-new-tab carry the same chord hints as the global palette
+  // keymap so users see the keyboard alternative right next to the
+  // menu equivalent.
+  const actionMenuActions = useMemo<readonly PaletteAction[]>(() => {
+    if (actionMenu == null) return []
+    if (actionMenu.rowType === 'recent') {
+      return [
+        { id: 'open', label: t('palette.actionOpen'), hint: '↵' },
+        { id: 'open-new-tab', label: t('palette.actionOpenNewTab'), hint: '⌘↵' },
+        actionMenu.pinned
+          ? { id: 'unpin', label: t('palette.actionUnpin') }
+          : { id: 'pin', label: t('palette.actionPin') },
+      ]
+    }
+    if (actionMenu.rowType === 'page') {
+      return [
+        { id: 'open', label: t('palette.actionOpen'), hint: '↵' },
+        { id: 'open-new-tab', label: t('palette.actionOpenNewTab'), hint: '⌘↵' },
+      ]
+    }
+    // 'block'
+    return [
+      { id: 'open', label: t('palette.actionOpenPage'), hint: '↵' },
+      { id: 'open-new-tab', label: t('palette.actionOpenNewTab'), hint: '⌘↵' },
+    ]
+  }, [actionMenu, t])
+
+  function handleActionMenuAction(actionId: string): void {
+    if (actionMenu == null) return
+    const { rowType, rowId } = actionMenu
+    const newTab = actionId === 'open-new-tab'
+    setActionMenu(null)
+    if (rowType === 'recent') {
+      if (actionId === 'pin' || actionId === 'unpin') {
+        togglePinRecentPage(rowId)
+        setRecents(getRecentPages())
+        return
+      }
+      const page = recents.find((p) => p.id === rowId)
+      if (page == null) return
+      addRecentPage(page.id, page.title)
+      if (newTab) {
+        openInNewTab(page.id, page.title)
+      } else {
+        navigateToPage(page.id, page.title)
+      }
+      onClose()
+      return
+    }
+    if (rowType === 'page') {
+      const group = groups.find((g) => g.pageId === rowId)
+      if (group == null) return
+      handleNavigateToPage(group.pageId, group.pageTitle, newTab)
+      return
+    }
+    // 'block' — find the block in any group's `matches`.
+    for (const g of groups) {
+      const block = g.matches.find((b) => b.id === rowId)
+      if (block != null) {
+        handleNavigateToBlock(block.id, g.pageId, g.pageTitle, newTab)
+        return
+      }
+    }
   }
 
   // Empty / no-result detection for the search-mode placeholder.
@@ -732,6 +874,14 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
         )}
       </CommandList>
       {mode === 'search' && !linkMode && <PaletteFooterHint t={t} />}
+      {actionMenu != null && (
+        <PaletteActionMenu
+          anchor={actionMenu.rect}
+          actions={actionMenuActions}
+          onAction={handleActionMenuAction}
+          onClose={() => setActionMenu(null)}
+        />
+      )}
     </Command>
   )
 }
