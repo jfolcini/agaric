@@ -32,6 +32,7 @@ import {
   FileSearch,
   FileText,
   type LucideIcon,
+  RotateCcw,
   Settings as SettingsIcon,
   Tag as TagIcon,
   Trash2,
@@ -53,6 +54,7 @@ import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import { logger } from '@/lib/logger'
+import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
 import { addRecentPage, getRecentPages, type RecentPage } from '@/lib/recent-pages'
 import type { SearchBlockRow } from '@/lib/tauri'
 import { paginationLimit, searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
@@ -924,7 +926,35 @@ function CommandsModeBody({
     [commands, filter],
   )
 
-  if (filtered.length === 0) {
+  // PEND-67 Phase 2 — Recent commands strip. Only rendered when the
+  // filter is empty (typed input hides it so the registry filter has
+  // the floor). Read once on mount; the list is small and the palette
+  // re-mounts every open.
+  const [recents, setRecents] = useState<ReturnType<typeof getRecentCommands>>([])
+  useEffect(() => {
+    setRecents(getRecentCommands())
+  }, [])
+
+  // Build the visible recent rows by joining ids against the registry.
+  // Recents whose command id no longer exists in the registry (stale
+  // localStorage from an older build) are silently skipped.
+  const recentRows = useMemo(() => {
+    if (filter.length > 0) return []
+    const byId = new Map(commands.map((c) => [c.id, c]))
+    return recents
+      .map((r) => byId.get(r.id))
+      .filter((c): c is (typeof commands)[number] => c != null)
+  }, [recents, commands, filter])
+
+  // Wrap each `run` so the command id is recorded before the handler
+  // closes the palette. The store is module-level state, so a re-render
+  // inside `setRecents` from a closed palette is harmless.
+  const runWithTracking = (c: (typeof commands)[number]) => () => {
+    addRecentCommand(c.id)
+    c.run()
+  }
+
+  if (filtered.length === 0 && recentRows.length === 0) {
     return (
       <CommandEmpty data-testid="palette-commands-empty">{t('palette.commandsEmpty')}</CommandEmpty>
     )
@@ -935,6 +965,28 @@ function CommandsModeBody({
 
   return (
     <>
+      {recentRows.length > 0 && (
+        <CommandGroup
+          heading={t('palette.recentCommandsTitle')}
+          data-testid="palette-commands-recent"
+        >
+          {recentRows.map((c) => (
+            <CommandItem
+              key={`recent-${c.id}`}
+              value={`cmd-recent:${c.id}`}
+              onSelect={runWithTracking(c)}
+              data-testid={`palette-cmd-recent-${c.id}`}
+              className="gap-2"
+            >
+              <RotateCcw
+                className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <span className="truncate">{c.label}</span>
+            </CommandItem>
+          ))}
+        </CommandGroup>
+      )}
       {navigateItems.length > 0 && (
         <CommandGroup
           heading={t('palette.cmdGroupNavigate')}
@@ -944,7 +996,7 @@ function CommandsModeBody({
             <CommandItem
               key={c.id}
               value={`cmd:${c.id}`}
-              onSelect={c.run}
+              onSelect={runWithTracking(c)}
               data-testid={`palette-cmd-${c.id}`}
               className="gap-2"
             >
@@ -960,7 +1012,7 @@ function CommandsModeBody({
             <CommandItem
               key={c.id}
               value={`cmd:${c.id}`}
-              onSelect={c.run}
+              onSelect={runWithTracking(c)}
               data-testid={`palette-cmd-${c.id}`}
               className="gap-2"
             >

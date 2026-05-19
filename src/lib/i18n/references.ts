@@ -297,4 +297,7 @@ export const references: Record<string, string> = {
   'palette.cmdGoSettings': 'Open Settings',
   'palette.cmdSearchEverywhere': 'Search across all pages…',
   'palette.commandsEmpty': 'No commands match — clear the input to see all.',
+  // PEND-67 Phase 2 — recent commands strip rendered above Navigate/Actions
+  // when the commands-mode filter is empty.
+  'palette.recentCommandsTitle': 'Recent',
 }

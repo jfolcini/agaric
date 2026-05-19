@@ -554,6 +554,81 @@ describe('CommandPalette — commands mode', () => {
   })
 })
 
+describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', () => {
+  it('does NOT render the Recent group on a cold open with no run history', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-commands-navigate')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('palette-commands-recent')).toBeNull()
+  })
+
+  it('records run history under the active space and surfaces it on re-open', async () => {
+    // Seed: act as if go-settings was previously run in SPACE_TEST.
+    localStorage.setItem(
+      'recent_commands:SPACE_TEST',
+      JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-commands-recent')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('palette-cmd-recent-go-settings')).toBeInTheDocument()
+  })
+
+  it('hides the Recent group while the user is filtering (non-empty input)', async () => {
+    localStorage.setItem(
+      'recent_commands:SPACE_TEST',
+      JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-commands-recent')).toBeInTheDocument()
+    })
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'tag' } })
+    await waitFor(() => {
+      expect(screen.queryByTestId('palette-commands-recent')).toBeNull()
+    })
+  })
+
+  it('writes to the active-space slot when a command runs', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-tags')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-go-tags'))
+    const raw = localStorage.getItem('recent_commands:SPACE_TEST') ?? '[]'
+    const parsed = JSON.parse(raw) as Array<{ id: string }>
+    expect(parsed[0]?.id).toBe('go-tags')
+  })
+
+  it('silently skips stale command ids that no longer exist in the registry', async () => {
+    localStorage.setItem(
+      'recent_commands:SPACE_TEST',
+      JSON.stringify([
+        { id: 'go-vanished', runAt: '2026-05-19T00:00:00Z' },
+        { id: 'go-pages', runAt: '2026-05-19T00:01:00Z' },
+      ]),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-commands-recent')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('palette-cmd-recent-go-pages')).toBeInTheDocument()
+    expect(screen.queryByTestId('palette-cmd-recent-go-vanished')).toBeNull()
+  })
+})
+
 describe('CommandPalette — a11y', () => {
   it('does not crash when searchBlocksPartitioned rejects', async () => {
     // IPC error-path coverage per AGENTS.md:198 — the palette must
