@@ -153,6 +153,20 @@ fi
 # trades a few minutes of wall time for deterministic e2e results.
 
 echo "→ Phase 2b: playwright e2e (serial)"
+# Self-heal the browser cache. `playwright install chromium` is
+# idempotent — when the matching revision is already in
+# `~/.cache/ms-playwright/` it exits in ~1s without downloading.
+# When `@playwright/test` was bumped (e.g. via `npm install`) and the
+# expected chromium revision has changed, this fetches the new one
+# before the e2e job launches — otherwise the verifier fails with
+# "Executable doesn't exist" pointing at the new revision.
+# `--with-deps` is intentionally omitted here: it would attempt apt
+# installs which require sudo (CI handles that path separately in
+# `_validate.yml`).
+echo "  ↳ ensuring chromium binary matches @playwright/test revision"
+if ! npx playwright install chromium >/dev/null 2>&1; then
+    echo "    (playwright install chromium failed — continuing; e2e may surface a clearer error)"
+fi
 launch 'playwright (full e2e)' \
     npx playwright test
 
