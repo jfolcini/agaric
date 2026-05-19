@@ -53,6 +53,7 @@ import {
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { jaroWinkler } from '@/lib/jaro-winkler'
+import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
 import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
 import { addRecentPage, getRecentPages, type RecentPage } from '@/lib/recent-pages'
@@ -817,6 +818,75 @@ function SearchModeGroups({
 // ───────────────────────────────────────────────────────────────────
 
 /**
+ * PEND-67 Phase 1 — split a catalog keys string ("Ctrl + Shift + F")
+ * into a list of chord chip tokens with platform-typical glyphs.
+ *
+ * The catalog stores chord names as "Modifier + Modifier + Key"
+ * (`src/lib/keyboard-config/catalog.ts`). We map a small allow-list
+ * of common modifier names to single-glyph chips so they read as
+ * keyboard shortcuts at a glance (Raycast / Linear / VSCode parity).
+ * Unknown tokens fall through verbatim (uppercased) so a future
+ * catalog addition does not silently render blank.
+ */
+function formatChordTokens(keys: string): string[] {
+  if (keys.length === 0) return []
+  const GLYPHS: Record<string, string> = {
+    ctrl: '⌃',
+    control: '⌃',
+    shift: '⇧',
+    cmd: '⌘',
+    command: '⌘',
+    meta: '⌘',
+    alt: '⌥',
+    option: '⌥',
+    enter: '↵',
+    return: '↵',
+    escape: 'esc',
+    esc: 'esc',
+    space: '␣',
+    tab: '⇥',
+    backspace: '⌫',
+  }
+  return keys
+    .split('+')
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((t) => GLYPHS[t.toLowerCase()] ?? t.toUpperCase())
+}
+
+/**
+ * Right-aligned chord chip group rendered inside a `<CommandItem>`.
+ * Reads live from `getShortcutKeys` so a rebind takes effect on the
+ * next render. Returns null when the binding is empty (e.g. a command
+ * without a `shortcutId` or a deleted-then-not-rebound binding) so the
+ * row layout stays consistent — no empty `<span>` placeholder.
+ */
+function ShortcutChips({ shortcutId }: { shortcutId: string }): React.ReactElement | null {
+  const keys = getShortcutKeys(shortcutId)
+  const tokens = formatChordTokens(keys)
+  if (tokens.length === 0) return null
+  return (
+    <span
+      className="ml-auto inline-flex items-center gap-1"
+      aria-hidden="true"
+      data-testid={`palette-cmd-shortcut-${shortcutId}`}
+    >
+      {tokens.map((tok) => (
+        // Tokens within a chord are unique in practice (Ctrl+Shift+F,
+        // not Ctrl+Ctrl+F). Using `tok` as key avoids the index-as-key
+        // lint while staying stable across rebind re-renders.
+        <kbd
+          key={tok}
+          className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]"
+        >
+          {tok}
+        </kbd>
+      ))}
+    </span>
+  )
+}
+
+/**
  * Commands-mode body — v1 ships a small static registry of
  * navigation + action commands. Future modes (`nav`, `spaces`,
  * `agents`, `settings`) move into their own files; the registry is
@@ -849,11 +919,17 @@ function CommandsModeBody({
   // `value`. `category` drives the visible group heading. `icon`
   // provides a leading Lucide glyph — matches the iconography used
   // across the rest of Agaric (Raycast/Linear convention).
+  //
+  // PEND-67 Phase 1 — `shortcutId` optionally references a binding in
+  // `keyboard-config/catalog.ts`. When present, `ShortcutChips`
+  // renders the chord as right-aligned `<kbd>` chips, read live so a
+  // rebind takes effect on the next render.
   const commands: ReadonlyArray<{
     id: string
     label: string
     category: 'navigate' | 'action'
     icon: LucideIcon
+    shortcutId?: string
     run: () => void
   }> = useMemo(
     () => [
@@ -912,6 +988,11 @@ function CommandsModeBody({
         label: t('palette.cmdSearchEverywhere'),
         category: 'action',
         icon: FileSearch,
+        // PEND-67 Phase 1 — `focusSearch` is the find-in-files chord
+        // (Ctrl+Shift+F by default). This command produces the same
+        // outcome from the palette, so showing the chord here helps
+        // power users skip the palette next time.
+        shortcutId: 'focusSearch',
         run: () => {
           // Escalate with an empty seed — SearchPanel mounts with its
           // input ready for the user to type, same as Ctrl+Shift+F.
@@ -987,6 +1068,7 @@ function CommandsModeBody({
                 aria-hidden="true"
               />
               <span className="truncate">{c.label}</span>
+              {c.shortcutId != null && <ShortcutChips shortcutId={c.shortcutId} />}
             </CommandItem>
           ))}
         </CommandGroup>
@@ -1006,6 +1088,7 @@ function CommandsModeBody({
             >
               <c.icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <span>{c.label}</span>
+              {c.shortcutId != null && <ShortcutChips shortcutId={c.shortcutId} />}
             </CommandItem>
           ))}
         </CommandGroup>
@@ -1022,6 +1105,7 @@ function CommandsModeBody({
             >
               <c.icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <span>{c.label}</span>
+              {c.shortcutId != null && <ShortcutChips shortcutId={c.shortcutId} />}
             </CommandItem>
           ))}
         </CommandGroup>

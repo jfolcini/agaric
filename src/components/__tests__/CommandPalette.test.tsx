@@ -671,6 +671,54 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().query).toBe('')
   })
 
+  it('renders an inline shortcut chip for commands with a shortcutId (PEND-67 Phase 1)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-search-everywhere')).toBeInTheDocument()
+    })
+    // search-everywhere is wired to `focusSearch` (Ctrl+Shift+F) → 3 tokens.
+    const chips = screen.getByTestId('palette-cmd-shortcut-focusSearch')
+    expect(chips).toBeInTheDocument()
+    const kbds = chips.querySelectorAll('kbd')
+    expect(kbds.length).toBe(3)
+    // Modifiers map to glyphs; the letter stays uppercase.
+    const labels = Array.from(kbds).map((k) => k.textContent)
+    expect(labels).toEqual(['⌃', '⇧', 'F'])
+  })
+
+  it('omits the chord chip for commands without a shortcutId', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
+    })
+    // go-pages has no shortcutId — no chord chip should render.
+    expect(screen.queryByTestId('palette-cmd-shortcut-go-pages')).toBeNull()
+  })
+
+  it('picks up a rebound shortcut on the next render (PEND-67 Phase 1)', async () => {
+    // Seed an override BEFORE the palette opens — `getShortcutKeys`
+    // reads localStorage on every call, so a rebind takes effect on
+    // the next render without forcing a remount.
+    localStorage.setItem(
+      'agaric-keyboard-shortcuts',
+      JSON.stringify({ focusSearch: 'Ctrl + Alt + K' }),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-shortcut-focusSearch')).toBeInTheDocument()
+    })
+    const labels = Array.from(
+      screen.getByTestId('palette-cmd-shortcut-focusSearch').querySelectorAll('kbd'),
+    ).map((k) => k.textContent)
+    expect(labels).toEqual(['⌃', '⌥', 'K'])
+  })
+
   it('silently skips stale command ids that no longer exist in the registry', async () => {
     localStorage.setItem(
       'recent_commands:SPACE_TEST',
