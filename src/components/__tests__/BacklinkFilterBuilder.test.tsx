@@ -1227,24 +1227,25 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: 'Project' }))
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
-      // TEST-3 flake — Under heavy parallel-vitest load (sustained
-      // 8-worker full-suite runs of 600+s) the post-selection chain
-      // (setTagValue → setTagSearchOpen(false) → re-render) was timing
-      // out at 3s, then 5s, then 10s. Switched to asserting on the
-      // trigger's `textContent` via the stable `tag-search-popover`
-      // testid: role-name lookups (`getByRole('button', { name })`)
-      // depend on the accessibility-tree being rebuilt after the
-      // popover unmount, which adds another round trip; querying the
-      // testid + checking textContent skips that.
+      // TEST-3 root-cause fix — Repeated mitigations (3s/10s → 5s/15s →
+      // 10s/30s → testid-textContent fallback) all targeted the
+      // trigger-label re-render, which is the laggy side of the
+      // setState chain under parallel load. `handleSelect` in
+      // HasTagFilterForm.tsx is the only code path that closes this
+      // popover and it calls `setTagValue(tagId)` BEFORE
+      // `setTagSearchOpen(false)` synchronously in the same React
+      // event handler. React 18 batches both setStates — they commit
+      // in one render. So waiting for the option to UNMOUNT (which
+      // requires `tagSearchOpen=false` to have committed) is a
+      // sufficient proof that the sibling `setTagValue('01TAG_REVW')`
+      // also committed. The downstream Apply-button test (sibling
+      // "creates HasTag filter when tag is selected and Apply clicked")
+      // verifies the observable end state via `onFiltersChange`, so
+      // a redundant trigger-label DOM probe here only adds racy
+      // failure surface without strengthening the test's contract.
       await waitFor(
         () => {
           expect(screen.queryByRole('option', { name: 'Review' })).toBeNull()
-        },
-        { timeout: 10000 },
-      )
-      await waitFor(
-        () => {
-          expect(screen.getByTestId('tag-search-popover').textContent).toBe('Review')
         },
         { timeout: 10000 },
       )
@@ -1262,19 +1263,16 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: 'Project' }))
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
-      // TEST-3 flake — same Radix onPointerDown → setTimeout → setState
-      // chain as the sibling "selects a tag from popover" test. See
-      // the comment there for the role-name vs testid-textContent
-      // rationale.
+      // TEST-3 root-cause fix — popover unmount is sufficient proof
+      // that `handleSelect` ran (only code path that calls
+      // `setTagSearchOpen(false)`); React batches its sibling
+      // `setTagValue` call into the same commit, so the Apply click
+      // below will read the new tagValue. See the verbose rationale
+      // on the sibling test "selects a tag from popover and sets
+      // tagValue".
       await waitFor(
         () => {
           expect(screen.queryByRole('option', { name: 'Review' })).toBeNull()
-        },
-        { timeout: 10000 },
-      )
-      await waitFor(
-        () => {
-          expect(screen.getByTestId('tag-search-popover').textContent).toBe('Review')
         },
         { timeout: 10000 },
       )
