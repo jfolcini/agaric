@@ -132,10 +132,11 @@ jobs:
         # invalidated by `Cargo.lock` changes — only by the explicit `@v2`
         # tag bump or a tool-version pin change. cargo-nextest lives on
         # the cargo-tests job (the only consumer); this job needs the
-        # lint/audit set.
+        # lint/audit set. `prek` joined the manifest list upstream so it
+        # moved off the cargo-install fallback below.
         uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2.79.1
         with:
-          tool: cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli
+          tool: cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli,prek
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # sqlx-cli with the right features set isn't covered by
@@ -144,14 +145,6 @@ jobs:
         # only recompiles when Cargo.lock invalidates that cache.
         run: |
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
-
-      - name: Install prek
-        # prek is a Rust reimplementation of pre-commit; not yet covered by
-        # taiki-e/install-action's binary list, so falls back to cargo install
-        # + Swatinem cache-bin persistence. Source-of-truth for the checks
-        # lives in prek.toml.
-        run: |
-          if ! command -v prek >/dev/null; then cargo install --locked prek; fi
 
       - name: Restore lychee link-check cache
         # Persist the lychee URL cache across runs so we don't re-hit the
@@ -374,8 +367,30 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+      - name: Restore Playwright browser cache
+        # Browser binaries live in ~/.cache/ms-playwright and are stable
+        # for a given playwright version. Keying on package-lock.json's
+        # hash catches the version pin; restore-keys lets a partial hit
+        # serve as a base layer (`playwright install` below is idempotent
+        # and pulls only what's missing, so a stale restore is safe).
+        id: playwright-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright system deps (always)
+        # `install-deps` is apt-side state which the actions/cache above
+        # doesn't (and shouldn't) persist — fast (~10s) on a warm apt
+        # cache. Browser binaries are handled separately by the next step
+        # so a cache hit skips that ~30-60s download entirely.
+        run: npx playwright install-deps chromium
+
+      - name: Install Playwright browser binaries (on cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
 
       - name: Playwright E2E tests (shard ${{ matrix.shard }}/2)
         id: playwright
@@ -601,18 +616,18 @@ jobs:
         # placeholder with the real binary.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
-      - name: Build agaric-mcp binary (I-MCP-9)
-        working-directory: src-tauri
-        run: cargo build --bin agaric-mcp
+      - name: Build agaric-mcp stub binary (FEAT-4f)
+        # Build the release binary first so the I-MCP-9 smoke test below
+        # can exec it (the test searches `target/{debug,release}/` for
+        # the binary; we used to debug-build and then release-build in
+        # series — ~3:48 wasted re-compiling the same code with a
+        # different profile). The release build also satisfies the
+        # FEAT-4f externalBin staging check at the end.
+        run: node scripts/prepare-external-bins.mjs
 
       - name: MCP stub-binary smoke test (I-MCP-9)
         working-directory: src-tauri
         run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_roundtrips_initialize_over_uds)'
-
-      - name: Build agaric-mcp stub binary (FEAT-4f)
-        # Smoke-check that the `agaric-mcp` sidecar still compiles and lands
-        # at the externalBin path Tauri's bundler expects.
-        run: node scripts/prepare-external-bins.mjs
 
       - name: Verify agaric-mcp smoke (--version)
         run: src-tauri/target/release/agaric-mcp --version
