@@ -1230,13 +1230,12 @@ describe('BacklinkFilterBuilder', () => {
       // TEST-3 flake — Under heavy parallel-vitest load (sustained
       // 8-worker full-suite runs of 600+s) the post-selection chain
       // (setTagValue → setTagSearchOpen(false) → re-render) was timing
-      // out at 3s, then 5s. Bumped 5s/15s → 10s/30s on the PEND-67
-      // pre-push verifier flake (full-suite re-run, 2026-05-19).
-      //
-      // Also added an explicit wait for the option to UNMOUNT first —
-      // that's the closer-to-true signal that the popover state machine
-      // settled. Asserting the trigger label after the option is gone
-      // narrows the remaining wait window to a single React commit.
+      // out at 3s, then 5s, then 10s. Switched to asserting on the
+      // trigger's `textContent` via the stable `tag-search-popover`
+      // testid: role-name lookups (`getByRole('button', { name })`)
+      // depend on the accessibility-tree being rebuilt after the
+      // popover unmount, which adds another round trip; querying the
+      // testid + checking textContent skips that.
       await waitFor(
         () => {
           expect(screen.queryByRole('option', { name: 'Review' })).toBeNull()
@@ -1245,7 +1244,7 @@ describe('BacklinkFilterBuilder', () => {
       )
       await waitFor(
         () => {
-          expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+          expect(screen.getByTestId('tag-search-popover').textContent).toBe('Review')
         },
         { timeout: 10000 },
       )
@@ -1264,10 +1263,9 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
       // TEST-3 flake — same Radix onPointerDown → setTimeout → setState
-      // chain as the sibling "selects a tag from popover" test. Bumped
-      // 5s/15s → 10s/30s on the PEND-67 verifier flake; added the
-      // option-unmount wait first to narrow the trigger-label wait to a
-      // single React commit window.
+      // chain as the sibling "selects a tag from popover" test. See
+      // the comment there for the role-name vs testid-textContent
+      // rationale.
       await waitFor(
         () => {
           expect(screen.queryByRole('option', { name: 'Review' })).toBeNull()
@@ -1276,7 +1274,7 @@ describe('BacklinkFilterBuilder', () => {
       )
       await waitFor(
         () => {
-          expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+          expect(screen.getByTestId('tag-search-popover').textContent).toBe('Review')
         },
         { timeout: 10000 },
       )
