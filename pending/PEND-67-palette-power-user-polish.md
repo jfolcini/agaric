@@ -4,6 +4,10 @@
 >
 > Depends on PEND-61 (shipped 2026-05-19). Out of scope of PEND-62 (mobile / touch), which carries its own punch list (numeric prefix on touch + per-mode persistent query were originally proposed there but moved here because they're keyboard-centric polish).
 
+## Status
+
+- **2026-05-19** — Phases **1, 2, 6, 7 shipped** (cheap-wins batch per the original README ordering). Remaining: Phases 3, 4, 5, 8.
+
 ## TL;DR
 
 - 8 small phases, each 1-4 h, total ~14-20 h. None block each other; each is independently shippable.
@@ -22,7 +26,7 @@
 
 ## Phases
 
-### Phase 1 — Inline per-command keyboard shortcuts (S, ~2 h)
+### Phase 1 — Inline per-command keyboard shortcuts (S, ~2 h) — **SHIPPED 2026-05-19** (commit `dc08ee32`)
 
 **Why:** VSCode / Raycast / Linear all render the shortcut next to each command (e.g. `Open Settings ⌘,`). Power users scan keystrokes faster than labels. Currently every command in `commands` mode is text-only.
 
@@ -43,7 +47,7 @@
 - A command without a `shortcutId` renders without a trailing chip (no empty span).
 - Re-rendering after a rebind shows the new chord.
 
-### Phase 2 — Recent commands tracking (S, ~2-3 h)
+### Phase 2 — Recent commands tracking (S, ~2-3 h) — **SHIPPED 2026-05-19** (commit `ff37696e`)
 
 **Why:** Recent pages exist; recent commands don't. Power users repeatedly run the same 1-2 commands (e.g. "Search across all pages") — surfacing them as a "Recent" group in commands mode lifts the experience to Raycast parity.
 
@@ -130,7 +134,7 @@
 - Each row-type renders the correct action set.
 - Action menu meets the 44 px touch floor (per `docs/UX.md`).
 
-### Phase 6 — Per-mode persistent query (S, ~1-2 h)
+### Phase 6 — Per-mode persistent query (S, ~1-2 h) — **SHIPPED 2026-05-19** (commit `5a6381c8`)
 
 **Why:** VSCode's Cmd+P remembers the last query per mode (Cmd+P search query, Cmd+Shift+P command query). Today switching modes via the chip clears the query (`ModeChipRow.toggleMode` calls `setQueryStore('')`). Per-mode memory makes mode toggling feel responsive instead of destructive.
 
@@ -147,7 +151,7 @@
 - Type "alpha" in search mode → chip-toggle to commands → query becomes "" → toggle back → query restores "alpha".
 - `close()` clears `queryByMode` entirely.
 
-### Phase 7 — Numeric prefix shortcut (1-9 jump) (S, ~1 h)
+### Phase 7 — Numeric prefix shortcut (1-9 jump) (S, ~1 h) — **SHIPPED 2026-05-19** (commit `43f6363c`)
 
 **Why:** Raycast and many CLI palettes let the user press 1-9 to jump to the Nth visible item. Cheap on desktop, even cheaper on touch (PEND-62 carries the touch variant).
 

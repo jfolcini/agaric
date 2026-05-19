@@ -2,10 +2,64 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 785 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 786 (latest entry 2026-05-19).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1214+ REVIEW-LATER items across 785 sessions.
+- **Previously-resolved counter:** 1214+ REVIEW-LATER items across 786 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 786 — PEND-61 squash forward + PEND-67 cheap-wins batch (2026-05-19)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-19 |
+| **Subagents** | orchestrator-only (all 4 PEND-67 phases overlap on `CommandPalette.tsx`; subagents would have hard-conflicted on the same file) |
+| **Items closed** | — (PEND-67 is partial; phases 1, 2, 6, 7 done; 3, 4, 5, 8 remain) |
+| **Items modified** | PEND-61 (squash-forwarded onto a fresh branch off main); PEND-67 (4/8 phases shipped); `pending/README.md` (PEND-61 row removed, PEND-67 status updated) |
+| **Tests added** | +21 frontend (10 lib `recent-commands` + 5 component recents integration + 4 store `queryByMode` + 3 component shortcut chips + 4 component numeric prefix; net of overlapping fixtures) / +0 backend |
+| **Files touched** | 10 (CommandPalette.tsx, CommandPalette.test.tsx, useCommandPaletteStore.ts, useCommandPaletteStore.test.ts, recent-commands.ts, recent-commands.test.ts, references.ts, pending/README.md, pending/PEND-67-…md, SESSION-LOG.md) |
+
+**Summary:** Branched fresh from origin/main as `pend-67-palette-polish`, squash-forwarded the unmerged PEND-61 work (5 commits on the abandoned `fix/playwright-binary-autoinstall` branch) into one combined commit, then layered the four cheap-wins phases of PEND-67 in commit order 2 → 6 → 1 → 7:
+
+- **Phase 2** — `Recent` commands strip rendered above Navigate/Actions in commands mode when the filter is empty. New `src/lib/recent-commands.ts` mirrors `recent-pages.ts` but is brand-new and space-scoped from day one (no legacy global key to migrate). MRU dedup, cap 5, silent quota tolerance, malformed-JSON tolerance. Each `c.run()` is wrapped to record the id before the handler closes the palette.
+- **Phase 6** — `queryByMode: Record<PaletteMode, string>` on `useCommandPaletteStore`; `setQuery` mirrors into the active slot; `setMode` restores the new mode's slot; `close()` resets the map. New action `enterModeWithQuery(next, q)` clears the outgoing slot atomically so the `>` prefix router doesn't infinite-loop on a chip-toggle back.
+- **Phase 1** — `ShortcutChips` reads `getShortcutKeys(shortcutId)` live so a rebind takes effect on the next render; `formatChordTokens` maps the catalog "Ctrl + Shift + F" string to glyph chips (⌃ ⇧ F). Wired `search-everywhere` → `focusSearch`.
+- **Phase 7** — `1`-`9` on an empty input fires the Nth `[cmdk-item]` via `.click()`. Trap-door guards: non-empty input → digit types through; modifier-decorated digits skipped; `0` no-op; query lookup scoped via `closest('[data-testid=command-palette]')`.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count:** unchanged (PEND-67 lives in `pending/`, not REVIEW-LATER).
+- **Previously resolved:** 1214+ across 785 → 786 sessions.
+
+**Files touched (this session):**
+
+- `src/components/CommandPalette.tsx` (+~170 LOC: ShortcutChips, Recent group, runWithTracking, numeric-prefix branch in handleListKeyDown; mode-router uses enterModeWithQuery; ModeChipRow drops the setQuery clear)
+- `src/components/__tests__/CommandPalette.test.tsx` (+12 tests covering all four phases)
+- `src/stores/useCommandPaletteStore.ts` (+ queryByMode, + enterModeWithQuery; setMode restores from slot; setQuery mirrors)
+- `src/stores/__tests__/useCommandPaletteStore.test.ts` (+4 tests for per-mode slot semantics)
+- `src/lib/recent-commands.ts` (new, ~60 LOC)
+- `src/lib/__tests__/recent-commands.test.ts` (new, 10 tests)
+- `src/lib/i18n/references.ts` (+ `palette.recentCommandsTitle`)
+- `pending/README.md` (PEND-61 removed, PEND-67 partial-shipped row, suggested-order copy updated)
+- `pending/PEND-67-palette-power-user-polish.md` (4 phase headers struck with commit hashes; new Status block at top)
+
+**Verification:**
+
+- `npx vitest run src/components/__tests__/CommandPalette.test.tsx src/stores/__tests__/useCommandPaletteStore.test.ts src/lib/__tests__/recent-commands.test.ts` — all green.
+- `prek run --all-files` — clean on every commit in this session.
+
+**Process notes:**
+
+- All 4 phases overlap on `CommandPalette.tsx`, so this was orchestrator-direct rather than parallel-subagent. Per PROMPT.md's "kitchen-sink refactors" guidance, file-boundary conflicts make subagent splits worse than serial execution here.
+- The PEND-61 squash hit one forward-port issue: PR #31's recent-pages refactor made the storage key space-scoped (`recent_pages:<spaceId>`). The CommandPalette test was seeding the old global key, so updated it to seed `recent_pages:SPACE_TEST`.
+- Phase 6's mode router needed a new store action because `setMode` + `setQuery` in sequence is not atomic — the intermediate state would re-fire the router on the `>` prefix and loop. `enterModeWithQuery` is the single-shot transition that clears the outgoing slot.
+
+**Lessons learned (for future sessions):**
+
+- When extending an action that mutates state shared with a `useEffect` watcher, check the watcher's deps for a possible re-trigger loop. A single combined action sidesteps the React batching question entirely.
+
+**Commit plan:** 6 commits on `pend-67-palette-polish` (PEND-61 squash + PEND-67 plan + 4 phase commits); not pushed.
+
+---
 
 ## Session 785 — PEND-60 Phase 3 e2e + docs + UX polish (2026-05-18)
 
