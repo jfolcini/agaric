@@ -69,10 +69,73 @@ describe('useCommandPaletteStore — open / close', () => {
     expect(useCommandPaletteStore.getState().pendingViewQuery).toBeNull()
   })
 
-  it('setMode swaps mode without affecting other state', () => {
-    useCommandPaletteStore.setState({ query: 'keep me' })
+  it('setMode swaps the active mode', () => {
     useCommandPaletteStore.getState().setMode('commands')
     expect(useCommandPaletteStore.getState().mode).toBe('commands')
-    expect(useCommandPaletteStore.getState().query).toBe('keep me')
+    useCommandPaletteStore.getState().setMode('search')
+    expect(useCommandPaletteStore.getState().mode).toBe('search')
+  })
+})
+
+describe('useCommandPaletteStore — per-mode persistent query (PEND-67 Phase 6)', () => {
+  beforeEach(() => {
+    useCommandPaletteStore.setState({
+      open: true,
+      mode: 'search',
+      query: '',
+      queryByMode: {
+        search: '',
+        commands: '',
+        nav: '',
+        spaces: '',
+        agents: '',
+        settings: '',
+      },
+      pendingViewQuery: null,
+      previousFocusedElement: null,
+    })
+  })
+
+  it('setQuery mirrors into queryByMode[mode]', () => {
+    useCommandPaletteStore.getState().setQuery('alpha')
+    expect(useCommandPaletteStore.getState().query).toBe('alpha')
+    expect(useCommandPaletteStore.getState().queryByMode.search).toBe('alpha')
+    expect(useCommandPaletteStore.getState().queryByMode.commands).toBe('')
+  })
+
+  it('setMode restores the remembered query for the new mode', () => {
+    useCommandPaletteStore.getState().setQuery('alpha')
+    useCommandPaletteStore.getState().setMode('commands')
+    expect(useCommandPaletteStore.getState().mode).toBe('commands')
+    expect(useCommandPaletteStore.getState().query).toBe('')
+
+    useCommandPaletteStore.getState().setQuery('open')
+    useCommandPaletteStore.getState().setMode('search')
+    expect(useCommandPaletteStore.getState().query).toBe('alpha')
+
+    useCommandPaletteStore.getState().setMode('commands')
+    expect(useCommandPaletteStore.getState().query).toBe('open')
+  })
+
+  it('enterModeWithQuery clears the previous slot and seeds the new one', () => {
+    useCommandPaletteStore.getState().setQuery('>alpha')
+    expect(useCommandPaletteStore.getState().queryByMode.search).toBe('>alpha')
+
+    useCommandPaletteStore.getState().enterModeWithQuery('commands', 'alpha')
+    expect(useCommandPaletteStore.getState().mode).toBe('commands')
+    expect(useCommandPaletteStore.getState().query).toBe('alpha')
+    expect(useCommandPaletteStore.getState().queryByMode.search).toBe('')
+    expect(useCommandPaletteStore.getState().queryByMode.commands).toBe('alpha')
+  })
+
+  it('close() resets queryByMode to all-empty', () => {
+    useCommandPaletteStore.getState().setQuery('alpha')
+    useCommandPaletteStore.getState().setMode('commands')
+    useCommandPaletteStore.getState().setQuery('open')
+    useCommandPaletteStore.getState().close()
+    const state = useCommandPaletteStore.getState()
+    expect(state.queryByMode.search).toBe('')
+    expect(state.queryByMode.commands).toBe('')
+    expect(state.query).toBe('')
   })
 })

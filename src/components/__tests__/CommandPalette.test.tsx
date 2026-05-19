@@ -610,6 +610,67 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(parsed[0]?.id).toBe('go-tags')
   })
 
+  it('preserves the search query when chip-toggling to commands and back (PEND-67 Phase 6)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    const input = screen.getByTestId('command-palette-input') as HTMLInputElement
+
+    fireEvent.change(input, { target: { value: 'alpha' } })
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().query).toBe('alpha')
+    })
+
+    // Toggle to commands — query slot for commands is empty.
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('commands')
+    })
+    expect(useCommandPaletteStore.getState().query).toBe('')
+
+    // Type something in commands mode.
+    fireEvent.change(input, { target: { value: 'set' } })
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().query).toBe('set')
+    })
+
+    // Toggle back — search query restored, commands query preserved
+    // in the per-mode slot.
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('search')
+    })
+    expect(useCommandPaletteStore.getState().query).toBe('alpha')
+
+    // Toggle to commands again — its slot still has "set".
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('commands')
+    })
+    expect(useCommandPaletteStore.getState().query).toBe('set')
+  })
+
+  it('does not loop when the `>` prefix routes to commands mode (PEND-67 Phase 6)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    const input = screen.getByTestId('command-palette-input')
+
+    // Typing `>set` flips to commands mode with stripped query "set"
+    // AND clears the search slot so chip-toggle back does not re-fire
+    // the mode router.
+    fireEvent.change(input, { target: { value: '>set' } })
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('commands')
+    })
+    expect(useCommandPaletteStore.getState().query).toBe('set')
+
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('search')
+    })
+    // Search slot is empty — no `>set` leftover, no router loop.
+    expect(useCommandPaletteStore.getState().query).toBe('')
+  })
+
   it('silently skips stale command ids that no longer exist in the registry', async () => {
     localStorage.setItem(
       'recent_commands:SPACE_TEST',

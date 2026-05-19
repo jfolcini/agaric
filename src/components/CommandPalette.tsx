@@ -209,6 +209,7 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
   const setQueryStore = useCommandPaletteStore((s) => s.setQuery)
   const mode = useCommandPaletteStore((s) => s.mode)
   const setMode = useCommandPaletteStore((s) => s.setMode)
+  const enterModeWithQuery = useCommandPaletteStore((s) => s.enterModeWithQuery)
   const setPendingViewQuery = useCommandPaletteStore((s) => s.setPendingViewQuery)
   const previousFocusedElement = useCommandPaletteStore((s) => s.previousFocusedElement)
 
@@ -220,12 +221,16 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
   // chip (toggle) — not by backspacing the input. This removes the
   // round-trip where the chip click had to fake-type a literal `'> '`
   // into the query.
+  //
+  // PEND-67 Phase 6 — `enterModeWithQuery` (vs setMode + setQuery)
+  // clears the search slot's `queryByMode` entry as part of the
+  // transition. Without that, a chip-toggle back to search would
+  // restore the original `>set` text and re-fire this router → loop.
   useEffect(() => {
     if (mode === 'search' && isCommandsModeInput(query.trimStart())) {
-      setMode('commands')
-      setQueryStore(commandsModeQuery(query))
+      enterModeWithQuery('commands', commandsModeQuery(query))
     }
-  }, [query, mode, setMode, setQueryStore])
+  }, [query, mode, enterModeWithQuery])
 
   // Auto-focus on mount. cmdk's `<CommandInput>` is a controlled
   // primitive but doesn't auto-focus by default in our shell.
@@ -475,7 +480,7 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
     // produced the visible list; cmdk's fuzzy rescore would double-
     // filter and re-order in ways that fight the page-group cap.
     <Command shouldFilter={false} loop className="search-palette flex flex-col">
-      <ModeChipRow mode={mode} setMode={setMode} setQueryStore={setQueryStore} t={t} />
+      <ModeChipRow mode={mode} setMode={setMode} t={t} />
       <div className="relative">
         <CommandInput
           ref={inputRef}
@@ -629,16 +634,19 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
  * writing to the input. The `>` input prefix remains a one-way entry
  * shortcut (handled by the mode router in `PaletteBody`); the chip is
  * the way back to search.
+ *
+ * PEND-67 Phase 6 — toggling no longer clears the query. The store
+ * remembers a query per mode (`queryByMode`); `setMode` restores it
+ * so flipping back to the previous mode feels responsive, not
+ * destructive (VSCode Cmd+P / Cmd+Shift+P parity).
  */
 function ModeChipRow({
   mode,
   setMode,
-  setQueryStore,
   t,
 }: {
   mode: PaletteMode
   setMode: (m: PaletteMode) => void
-  setQueryStore: (q: string) => void
   t: ReturnType<typeof useTranslation>['t']
 }): React.ReactElement {
   function toggleMode() {
@@ -647,10 +655,6 @@ function ModeChipRow({
     } else {
       setMode('commands')
     }
-    // Clear the input on either direction so the new mode starts fresh
-    // (e.g. switching from commands → search doesn't leave a stale
-    // partial command name in the search box).
-    setQueryStore('')
   }
   const label = mode === 'commands' ? t('palette.modeCommands') : t('palette.modeSearch')
   return (

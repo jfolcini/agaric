@@ -34,13 +34,37 @@ import { create } from 'zustand'
  */
 export type PaletteMode = 'search' | 'commands' | 'nav' | 'spaces' | 'agents' | 'settings'
 
+/**
+ * Per-mode query memory (PEND-67 Phase 6).
+ *
+ * VSCode's Cmd+P / Cmd+Shift+P remembers a separate query per mode so
+ * toggling modes feels responsive instead of destructive. `setQuery`
+ * writes to BOTH the flat `query` field and `queryByMode[mode]`;
+ * `setMode` restores the flat `query` from `queryByMode[next]`.
+ * `close()` resets the map.
+ */
+type QueryByMode = Record<PaletteMode, string>
+
+function emptyQueryByMode(): QueryByMode {
+  return {
+    search: '',
+    commands: '',
+    nav: '',
+    spaces: '',
+    agents: '',
+    settings: '',
+  }
+}
+
 interface CommandPaletteState {
   /** Whether the palette dialog is mounted. */
   open: boolean
   /** Active mode. See `PaletteMode`. */
   mode: PaletteMode
-  /** Current input string. */
+  /** Current input string (mirrors `queryByMode[mode]`). */
   query: string
+  /** Per-mode query memory — see `QueryByMode` block above. */
+  queryByMode: QueryByMode
   /**
    * Transient handoff slot powering escalation to the find-in-files
    * view. Written by the palette on escalation; consumed by
@@ -59,10 +83,19 @@ interface CommandPaletteState {
   open$: () => void
   /** Close the palette; clears `query`, `mode`, and `previousFocusedElement`. */
   close: () => void
-  /** Set the input query string. */
+  /** Set the input query string for the current mode. */
   setQuery: (q: string) => void
-  /** Switch palette mode without closing the dialog. */
+  /** Switch palette mode without closing the dialog; restores that mode's remembered query. */
   setMode: (mode: PaletteMode) => void
+  /**
+   * PEND-67 Phase 6 helper for the mode router. Atomically:
+   *  - switches `mode` to `next`,
+   *  - sets the flat `query` AND `queryByMode[next]` to `q`,
+   *  - clears `queryByMode[mode]` (the prefix character was a shortcut,
+   *    not a real query — leaving it in the slot would loop the router
+   *    on a chip-toggle back).
+   */
+  enterModeWithQuery: (next: PaletteMode, q: string) => void
   /**
    * Escalate the current query to the find-in-files view: writes
    * `pendingViewQuery`, closes the palette, and (caller) flips the
@@ -71,10 +104,11 @@ interface CommandPaletteState {
   setPendingViewQuery: (q: string | null) => void
 }
 
-export const useCommandPaletteStore = create<CommandPaletteState>((set) => ({
+export const useCommandPaletteStore = create<CommandPaletteState>((set, get) => ({
   open: false,
   mode: 'search',
   query: '',
+  queryByMode: emptyQueryByMode(),
   pendingViewQuery: null,
   previousFocusedElement: null,
 
@@ -85,19 +119,45 @@ export const useCommandPaletteStore = create<CommandPaletteState>((set) => ({
     // `null` or the `<body>` when nothing is focused.
     const active = document.activeElement
     const focused = active instanceof HTMLElement && active !== document.body ? active : null
-    set({ open: true, mode: 'search', query: '', previousFocusedElement: focused })
+    set({
+      open: true,
+      mode: 'search',
+      query: '',
+      queryByMode: emptyQueryByMode(),
+      previousFocusedElement: focused,
+    })
   },
 
   close: () => {
-    set({ open: false, mode: 'search', query: '', previousFocusedElement: null })
+    set({
+      open: false,
+      mode: 'search',
+      query: '',
+      queryByMode: emptyQueryByMode(),
+      previousFocusedElement: null,
+    })
   },
 
   setQuery: (q) => {
-    set({ query: q })
+    // Mirror the flat field into the per-mode slot so a later
+    // `setMode` round-trip restores this query verbatim.
+    const { mode, queryByMode } = get()
+    set({ query: q, queryByMode: { ...queryByMode, [mode]: q } })
   },
 
   setMode: (mode) => {
-    set({ mode })
+    const { queryByMode } = get()
+    // Restore the remembered query for the new mode (default '').
+    set({ mode, query: queryByMode[mode] ?? '' })
+  },
+
+  enterModeWithQuery: (next, q) => {
+    const { mode, queryByMode } = get()
+    set({
+      mode: next,
+      query: q,
+      queryByMode: { ...queryByMode, [mode]: '', [next]: q },
+    })
   },
 
   setPendingViewQuery: (q) => {
