@@ -287,7 +287,6 @@ export const references: Record<string, string> = {
   'palette.modeSearch': 'Search',
   'palette.modeCommands': 'Commands',
   'palette.modeChipLabel': 'Switch palette mode (current: {{mode}})',
-  'palette.modeHint': 'Type > for commands',
   'palette.cmdGroupNavigate': 'Navigate',
   'palette.cmdGroupAction': 'Actions',
   'palette.cmdGoPages': 'Open Pages view',
@@ -300,4 +299,21 @@ export const references: Record<string, string> = {
   // PEND-67 Phase 2 — recent commands strip rendered above Navigate/Actions
   // when the commands-mode filter is empty.
   'palette.recentCommandsTitle': 'Recent',
+  // PEND-67 Phase 3 — `#` (tags) and `?` (help) prefix modes.
+  'palette.modeTags': 'Tags',
+  'palette.modeHelp': 'Help',
+  // Compact hint showing the prefix vocabulary on the search-mode chip
+  // row. With three prefixes the long form ("Type > for commands")
+  // doesn't fit; we abbreviate to the glyphs.
+  'palette.modeHint': '> commands · # tags · ? help',
+  // Hint shown when the user is INSIDE a non-search mode — the chip
+  // is the way back.
+  'palette.modeBackHint': 'Click chip to return to search',
+  // Tags mode placeholder + status messages.
+  'palette.tagsTitle': 'Tags',
+  'palette.tagsWelcomeEmpty': 'Type to filter tags. Enter opens the tag in Search.',
+  'palette.tagsNoResults': 'No tags match.',
+  'palette.tagsUnnamed': '(unnamed)',
+  // Help mode placeholder.
+  'palette.helpEmpty': 'No shortcuts match the filter.',
 }

@@ -693,6 +693,85 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
+  it('typing `#alpha` flips to tags mode, strips prefix, fires IPC (PEND-67 Phase 3)', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [makePageRow('TAG_ALPHA', 'alpha')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    render(<CommandPalette />)
+    openPalette()
+    const input = screen.getByTestId('command-palette-input')
+    fireEvent.change(input, { target: { value: '#alpha' } })
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('tags')
+    })
+    expect(useCommandPaletteStore.getState().query).toBe('alpha')
+    await waitFor(() => {
+      const call = mockedSearchBlocks.mock.calls.at(-1)?.[0]
+      expect(call?.query).toBe('alpha')
+      expect(call?.blockTypeFilter).toBe('tag')
+    })
+  })
+
+  it('selecting a tag escalates with `tag:#<name>` to the search view (PEND-67 Phase 3)', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [makePageRow('TAG_URGENT', 'urgent')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '#u' } })
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-tag-TAG_URGENT')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-tag-TAG_URGENT'))
+    expect(useCommandPaletteStore.getState().pendingViewQuery).toBe('tag:#urgent')
+    expect(useNavigationStore.getState().currentView).toBe('search')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('typing `?` flips to help mode and renders the shortcut catalog (PEND-67 Phase 3)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '?' } })
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('help')
+    })
+    // `focusSearch` is one of the seeded catalog ids and should render.
+    expect(screen.getByTestId('palette-help-focusSearch')).toBeInTheDocument()
+  })
+
+  it('help mode filters by description text (PEND-67 Phase 3)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), {
+      target: { value: '?palette' },
+    })
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('help')
+    })
+    expect(useCommandPaletteStore.getState().query).toBe('palette')
+    // `paletteOpen` (description "Open quick search palette") survives.
+    expect(screen.getByTestId('palette-help-paletteOpen')).toBeInTheDocument()
+    // `focusSearch` (description "Search across all pages") does not.
+    expect(screen.queryByTestId('palette-help-focusSearch')).toBeNull()
+  })
+
+  it('mode chip returns to search from tags / help in one click (PEND-67 Phase 3)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '?' } })
+    await waitFor(() => {
+      expect(useCommandPaletteStore.getState().mode).toBe('help')
+    })
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    expect(useCommandPaletteStore.getState().mode).toBe('search')
+  })
+
   it('numeric prefix is ignored with modifier keys (PEND-67 Phase 7)', async () => {
     render(<CommandPalette />)
     openPalette()

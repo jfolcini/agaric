@@ -28,11 +28,24 @@
 import { create } from 'zustand'
 
 /**
- * Closed enum of palette modes. v1 ships `'search'` and `'commands'`;
- * the rest are reserved so callers can early-narrow on future
- * additions without re-wiring the type.
+ * Closed enum of palette modes.
+ *
+ *  - v1 (PEND-61) ships `'search'` and `'commands'`.
+ *  - v2 (PEND-67 Phase 3) adds `'tags'` (`#` prefix → block_type=tag
+ *    search) and `'help'` (`?` prefix → keyboard-shortcut catalog).
+ *  - `'nav' | 'spaces' | 'agents' | 'settings'` remain reserved slots
+ *    for future phases so callers can early-narrow on future
+ *    additions without re-wiring the type.
  */
-export type PaletteMode = 'search' | 'commands' | 'nav' | 'spaces' | 'agents' | 'settings'
+export type PaletteMode =
+  | 'search'
+  | 'commands'
+  | 'tags'
+  | 'help'
+  | 'nav'
+  | 'spaces'
+  | 'agents'
+  | 'settings'
 
 /**
  * Per-mode query memory (PEND-67 Phase 6).
@@ -49,6 +62,8 @@ function emptyQueryByMode(): QueryByMode {
   return {
     search: '',
     commands: '',
+    tags: '',
+    help: '',
     nav: '',
     spaces: '',
     agents: '',

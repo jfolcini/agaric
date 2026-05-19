@@ -31,6 +31,8 @@ import {
   Clock,
   FileSearch,
   FileText,
+  Hash,
+  HelpCircle,
   type LucideIcon,
   RotateCcw,
   Settings as SettingsIcon,
@@ -53,10 +55,11 @@ import {
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { jaroWinkler } from '@/lib/jaro-winkler'
-import { getShortcutKeys } from '@/lib/keyboard-config/storage'
+import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
 import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
 import { addRecentPage, getRecentPages, type RecentPage } from '@/lib/recent-pages'
+import { renderKeys } from '@/lib/render-keyboard-shortcut'
 import type { SearchBlockRow } from '@/lib/tauri'
 import { paginationLimit, searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
@@ -115,6 +118,26 @@ function isCommandsModeInput(input: string): boolean {
 
 /** Extract the commands-mode filter query after the `>` prefix. */
 function commandsModeQuery(input: string): string {
+  return input.slice(1).trimStart()
+}
+
+/** PEND-67 Phase 3 — `#` prefix enters tags mode (block_type=tag search). */
+function isTagsModeInput(input: string): boolean {
+  return input.startsWith('#')
+}
+
+/** Extract the tags-mode filter query after the `#` prefix. */
+function tagsModeQuery(input: string): string {
+  return input.slice(1).trimStart()
+}
+
+/** PEND-67 Phase 3 — `?` prefix enters help mode (shortcut catalog). */
+function isHelpModeInput(input: string): boolean {
+  return input.startsWith('?')
+}
+
+/** Extract the help-mode filter query after the `?` prefix. */
+function helpModeQuery(input: string): string {
   return input.slice(1).trimStart()
 }
 
@@ -227,9 +250,22 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
   // clears the search slot's `queryByMode` entry as part of the
   // transition. Without that, a chip-toggle back to search would
   // restore the original `>set` text and re-fire this router → loop.
+  //
+  // PEND-67 Phase 3 — `#` enters tags mode (block_type=tag search)
+  // and `?` enters help mode (keyboard-shortcut catalog). Same
+  // prefix-strip-and-restore semantics as `>`. Picker-trigger chars
+  // (`/`, `@`, `[[`, `((`, `::`) remain owned by the editor and
+  // never enter palette modes — they're scoped to the editor, not
+  // the palette input.
   useEffect(() => {
-    if (mode === 'search' && isCommandsModeInput(query.trimStart())) {
+    if (mode !== 'search') return
+    const trimmed = query.trimStart()
+    if (isCommandsModeInput(trimmed)) {
       enterModeWithQuery('commands', commandsModeQuery(query))
+    } else if (isTagsModeInput(trimmed)) {
+      enterModeWithQuery('tags', tagsModeQuery(query))
+    } else if (isHelpModeInput(trimmed)) {
+      enterModeWithQuery('help', helpModeQuery(query))
     }
   }, [query, mode, enterModeWithQuery])
 
@@ -567,6 +603,10 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
       >
         {mode === 'commands' ? (
           <CommandsModeBody onEscalate={escalate} onClose={onClose} t={t} />
+        ) : mode === 'tags' ? (
+          <TagsModeBody onEscalate={escalate} t={t} />
+        ) : mode === 'help' ? (
+          <HelpModeBody onClose={onClose} t={t} />
         ) : (
           <>
             {showRecents && (
@@ -667,6 +707,15 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
  * remembers a query per mode (`queryByMode`); `setMode` restores it
  * so flipping back to the previous mode feels responsive, not
  * destructive (VSCode Cmd+P / Cmd+Shift+P parity).
+ *
+ * PEND-67 Phase 3 — with 4 modes (search / commands / tags / help)
+ * a 4-cycle on the chip would force users to click 3 times to escape
+ * any non-search mode. The plan suggested a cycle but Open Question 1
+ * acknowledges this is awkward; we choose single-step exit semantics
+ * instead. From search the chip enters commands (the original
+ * affordance); from any other mode it returns to search. Tags and
+ * help are entered via the `#` / `?` prefixes, surfaced in the
+ * `modeHint` text on the search-mode chip row.
  */
 function ModeChipRow({
   mode,
@@ -678,13 +727,23 @@ function ModeChipRow({
   t: ReturnType<typeof useTranslation>['t']
 }): React.ReactElement {
   function toggleMode() {
-    if (mode === 'commands') {
-      setMode('search')
-    } else {
+    if (mode === 'search') {
       setMode('commands')
+    } else {
+      setMode('search')
     }
   }
-  const label = mode === 'commands' ? t('palette.modeCommands') : t('palette.modeSearch')
+  const label =
+    mode === 'commands'
+      ? t('palette.modeCommands')
+      : mode === 'tags'
+        ? t('palette.modeTags')
+        : mode === 'help'
+          ? t('palette.modeHelp')
+          : t('palette.modeSearch')
+  // Only the search-mode hint surfaces the prefix vocabulary —
+  // other modes don't benefit from showing it.
+  const hint = mode === 'search' ? t('palette.modeHint') : t('palette.modeBackHint')
   return (
     <div
       className="flex items-center justify-between border-b px-3 py-1.5 text-xs"
@@ -704,9 +763,9 @@ function ModeChipRow({
         {label}
       </button>
       {/* PEND-61 CR — drop `aria-hidden` so SR users can discover the
-          `>` prefix shortcut. The hint is short and informational, so
-          it lives in the visible header rather than a tooltip. */}
-      <span className="text-muted-foreground">{t('palette.modeHint')}</span>
+          prefix shortcuts. The hint is short and informational, so it
+          lives in the visible header rather than a tooltip. */}
+      <span className="text-muted-foreground">{hint}</span>
     </div>
   )
 }
@@ -1137,6 +1196,184 @@ function CommandsModeBody({
           ))}
         </CommandGroup>
       )}
+    </>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Tags mode (PEND-67 Phase 3 — `#` prefix → block_type=tag search)
+// ───────────────────────────────────────────────────────────────────
+
+/** Backend cap for the tags-mode partition. */
+const TAGS_QUERY_LIMIT = 40
+
+/**
+ * Tags-mode body — debounced `searchBlocks({ blockTypeFilter: 'tag' })`
+ * with on-select escalation to the search view seeded by
+ * `tag:#<name>` (PEND-54 inline filter syntax). The escalation keeps
+ * the palette out of the navigation business and reuses the existing
+ * find-in-files surface for tag filtering.
+ */
+function TagsModeBody({
+  onEscalate,
+  t,
+}: {
+  onEscalate: (q: string) => void
+  t: ReturnType<typeof useTranslation>['t']
+}): React.ReactElement {
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const spaceIsReady = useSpaceStore((s) => s.isReady)
+  const query = useCommandPaletteStore((s) => s.query)
+  const filter = query.trim()
+
+  const [tags, setTags] = useState<SearchBlockRow[]>([])
+  const [loading, setLoading] = useState(false)
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const generationRef = useRef(0)
+  const debounced = useDebouncedCallback((value: string) => {
+    setDebouncedQuery(value)
+  }, PALETTE_DEBOUNCE_MS)
+
+  useEffect(() => {
+    debounced.cancel()
+    debounced.schedule(filter)
+  }, [filter, debounced])
+
+  useEffect(() => {
+    if (!spaceIsReady) return
+    generationRef.current += 1
+    const gen = generationRef.current
+    setLoading(true)
+    searchBlocks({
+      query: debouncedQuery,
+      blockTypeFilter: 'tag',
+      limit: paginationLimit(TAGS_QUERY_LIMIT),
+      spaceId: currentSpaceId ?? '',
+    })
+      .then((resp) => {
+        if (gen !== generationRef.current) return
+        setTags(resp.items)
+        setLoading(false)
+      })
+      .catch((err) => {
+        if (gen !== generationRef.current) return
+        logger.warn('CommandPalette', 'tags search failed', { query: debouncedQuery }, err)
+        setTags([])
+        setLoading(false)
+      })
+  }, [debouncedQuery, currentSpaceId, spaceIsReady])
+
+  if (!loading && tags.length === 0) {
+    return (
+      <CommandEmpty data-testid="palette-tags-empty">
+        {filter.length === 0 ? t('palette.tagsWelcomeEmpty') : t('palette.tagsNoResults')}
+      </CommandEmpty>
+    )
+  }
+
+  return (
+    <CommandGroup heading={t('palette.tagsTitle')} data-testid="palette-tags-group">
+      {tags.map((tag) => {
+        const name = tag.content ?? ''
+        return (
+          <CommandItem
+            key={tag.id}
+            value={`tag:${tag.id}`}
+            onSelect={() => onEscalate(`tag:#${name}`)}
+            data-testid={`palette-tag-${tag.id}`}
+            className="gap-2"
+          >
+            <Hash className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            <span className="truncate">{name.length > 0 ? name : t('palette.tagsUnnamed')}</span>
+          </CommandItem>
+        )
+      })}
+    </CommandGroup>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Help mode (PEND-67 Phase 3 — `?` prefix → keyboard shortcut catalog)
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * Help-mode body — renders the keyboard shortcut catalog grouped by
+ * category. Reads `getCurrentShortcuts()` once on mount (the catalog
+ * is static; user overrides are picked up on next palette open since
+ * the palette re-mounts every time it opens).
+ *
+ * Selecting a row closes the palette — there is no "run this
+ * shortcut from here" action because some shortcuts only fire in
+ * context-bound conditions (e.g. only inside the editor, only with
+ * the date picker open).
+ */
+function HelpModeBody({
+  onClose,
+  t,
+}: {
+  onClose: () => void
+  t: ReturnType<typeof useTranslation>['t']
+}): React.ReactElement {
+  const query = useCommandPaletteStore((s) => s.query)
+  const filter = query.toLowerCase().trim()
+
+  const shortcuts = useMemo(() => getCurrentShortcuts(), [])
+  const filtered = useMemo(() => {
+    if (filter.length === 0) return shortcuts
+    return shortcuts.filter(
+      (s) =>
+        t(s.description).toLowerCase().includes(filter) || s.keys.toLowerCase().includes(filter),
+    )
+  }, [shortcuts, filter, t])
+
+  // Group by category preserving first-seen order so the visible
+  // ordering tracks the catalog's authoring order.
+  const grouped = useMemo(() => {
+    const groups = new Map<string, typeof filtered>()
+    for (const s of filtered) {
+      const arr = groups.get(s.category) ?? []
+      arr.push(s)
+      groups.set(s.category, arr)
+    }
+    return Array.from(groups.entries())
+  }, [filtered])
+
+  if (filtered.length === 0) {
+    return <CommandEmpty data-testid="palette-help-empty">{t('palette.helpEmpty')}</CommandEmpty>
+  }
+
+  return (
+    <>
+      {grouped.map(([category, items]) => (
+        <CommandGroup
+          key={category}
+          heading={t(category)}
+          data-testid={`palette-help-group-${category}`}
+        >
+          {items.map((s) => (
+            <CommandItem
+              key={s.id}
+              value={`help:${s.id}`}
+              onSelect={onClose}
+              data-testid={`palette-help-${s.id}`}
+              className="gap-2"
+            >
+              <HelpCircle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="flex-1 truncate">{t(s.description)}</span>
+              {/* Use the shared `renderKeys` helper because catalog
+                  bindings include `/`-alternatives (e.g. `Arrow Up /
+                  Left`) and multi-word tokens (`Arrow Up`) that the
+                  glyph-mapping `ShortcutChips` does not handle. The
+                  styling matches the standalone KeyboardShortcuts
+                  dialog so users moving between surfaces see one
+                  consistent chord layout. */}
+              <span className="ml-auto inline-flex items-center" aria-hidden="true">
+                {renderKeys(s.keys)}
+              </span>
+            </CommandItem>
+          ))}
+        </CommandGroup>
+      ))}
     </>
   )
 }

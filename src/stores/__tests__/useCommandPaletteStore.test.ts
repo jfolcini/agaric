@@ -86,6 +86,8 @@ describe('useCommandPaletteStore — per-mode persistent query (PEND-67 Phase 6)
       queryByMode: {
         search: '',
         commands: '',
+        tags: '',
+        help: '',
         nav: '',
         spaces: '',
         agents: '',
