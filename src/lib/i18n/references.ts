@@ -316,4 +316,7 @@ export const references: Record<string, string> = {
   'palette.tagsUnnamed': '(unnamed)',
   // Help mode placeholder.
   'palette.helpEmpty': 'No shortcuts match the filter.',
+  // PEND-67 Phase 4 — pin / unpin affordance on the recents rows.
+  'palette.pinRecent': 'Pin {{title}} to recents',
+  'palette.unpinRecent': 'Unpin {{title}} from recents',
 }

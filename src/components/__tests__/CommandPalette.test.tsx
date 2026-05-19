@@ -195,6 +195,46 @@ describe('CommandPalette — empty state', () => {
   })
 })
 
+describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
+  it('clicking the pin button toggles the pinned state without navigating', async () => {
+    localStorage.setItem(
+      'recent_pages:SPACE_TEST',
+      JSON.stringify([{ id: 'PAGE_A', title: 'Alpha', visitedAt: '2026-05-19T00:00:00Z' }]),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    const pin = await screen.findByTestId('palette-recent-pin-PAGE_A')
+    fireEvent.click(pin)
+    // Persisted as pinned.
+    const raw = localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]'
+    const parsed = JSON.parse(raw) as Array<{ id: string; pinned?: boolean }>
+    expect(parsed[0]?.pinned).toBe(true)
+    // The palette did NOT navigate away on the pin click.
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+  })
+
+  it('pinned recents sort above unpinned recents', async () => {
+    localStorage.setItem(
+      'recent_pages:SPACE_TEST',
+      JSON.stringify([
+        { id: 'PAGE_OLD', title: 'OldPinned', visitedAt: '2026-01-01T00:00:00Z', pinned: true },
+        { id: 'PAGE_NEW', title: 'NewUnpinned', visitedAt: '2026-05-19T00:00:00Z' },
+      ]),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    // Find both recent rows by data-testid.
+    const old = await screen.findByTestId('palette-recent-PAGE_OLD')
+    const fresh = await screen.findByTestId('palette-recent-PAGE_NEW')
+    // The pinned row's DOM ordering comes before the unpinned one
+    // (compareDocumentPosition: 4 == DOCUMENT_POSITION_FOLLOWING).
+    // eslint-disable-next-line no-bitwise
+    expect(old.compareDocumentPosition(fresh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(old.getAttribute('data-pinned')).toBe('true')
+    expect(fresh.getAttribute('data-pinned')).toBeNull()
+  })
+})
+
 describe('CommandPalette — partitioned query', () => {
   it('fires a single searchBlocksPartitioned call per keystroke', async () => {
     mockedSearchBlocksPartitioned.mockResolvedValue(
