@@ -301,4 +301,32 @@ Boolean operators **don't work inside regex mode** — there the entire query is
 - **Filter syntax is sanitiser-friendly.** `tag:#name` survives a literal-mode round-trip; recalling a `tag:` query from history rebuilds the chip row exactly.
 - **Inline filter syntax is not regex-aware.** In regex mode, `tag:#urgent` is interpreted as a literal regex pattern (the `:` is a literal colon). Filter chips and regex compose at the *query* level, not inside the regex pattern. To use filters + regex together, type the filters first, then prepend the regex (e.g. `tag:#urgent ^TODO` with the `.*` toggle on — the FTS bypass keeps the `tag:` filter ineffective, **the structural filters still apply via the regex-mode SQL path**; this is a known sharp edge).
 
+## Mobile
+
+Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-page find, `Cmd/Ctrl+K` opens the palette, `Ctrl+Shift+F` opens the find-in-files view. Touch devices can't reach any of those on their own. PEND-62 collapses all three into a single Sheet behind one icon (`<SearchSheetTrigger />`, magnifying-glass, top-right of the header). The icon only mounts when `useIsMobile()` is true (viewport `< 768 px`); desktop keeps its keybindings.
+
+The Sheet has two segments rendered as a Radix `ToggleGroup`:
+
+- **In this page** — embeds the PEND-52 find-in-page toolbar (`<InPageFind variant="embedded" />`). Same matcher, same highlight pipeline; only the chrome differs from the desktop overlay.
+- **Across all pages** — embeds the PEND-61 palette search mode (`<CommandPalette variant="embedded" />`). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
+
+The default segment is context-aware: `defaultModeForView()` returns `'in-page'` for the Journal and page-editor views (the user is reading a page), `'all-pages'` everywhere else.
+
+### Lifecycle
+
+The Sheet owns a `useSearchSheetStore` (`open`, `mode`, `query`). A single `useEffect` bridges to the two embedded stores:
+
+- Open in `'in-page'` mode → `useInPageFindStore.open$()`, palette stays closed.
+- Open in `'all-pages'` mode → `useCommandPaletteStore.open$()`, in-page-find stays closed.
+- Sheet close or segment switch → cleanup closes whichever store was active; the next entry re-opens cleanly.
+
+Two safety nets:
+
+- The `if (!open) return` guard prevents the mount-time effect from clobbering a pre-existing desktop session (Ctrl+F or Cmd+K opened *before* the Sheet was first activated).
+- Both the in-page-find toolbar and the palette body have `variant` props (`'overlay'` vs `'embedded'`). The overlay variants return `null` when the Sheet is open in their respective modes, so matcher / IPC effects never run twice for the same surface.
+
+### Known limitations
+
+- **Tablet / hardware-keyboard detection (PEND-68 — follow-up).** The trigger is gated on the same `< 768 px` viewport check the rest of the app uses. An iPad in portrait without a keyboard sees the desktop UI by accident — they can't open Cmd+K but the touch icon doesn't render either. PEND-68 plans the `navigator.keyboard` + first-keydown probe.
+
 [`regex`]: https://docs.rs/regex/latest/regex/
