@@ -113,7 +113,13 @@ const CommandItem = ({
   <CommandPrimitive.Item
     data-slot="command-item"
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none aria-selected:bg-accent aria-selected:text-accent-foreground data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 [@media(pointer:coarse)]:py-2.5 [@media(pointer:coarse)]:text-base",
+      // PEND-61 CR — `aria-selected:bg-accent` collides with
+      // `.search-result-mark`'s own `bg-accent`, hiding FTS5 snippet
+      // highlights on the currently-focused row. /40 alpha lifts the
+      // mark out of the row background while still signalling the
+      // active item. Selection contrast against the row remains > 3:1
+      // in both light and dark themes.
+      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none aria-selected:bg-accent/40 aria-selected:text-accent-foreground data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 [@media(pointer:coarse)]:py-2.5 [@media(pointer:coarse)]:text-base",
       className,
     )}
     {...props}

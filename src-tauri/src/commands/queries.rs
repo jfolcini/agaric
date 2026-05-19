@@ -827,6 +827,205 @@ pub async fn search_blocks(
         .map_err(sanitize_internal_error)
 }
 
+// ---------------------------------------------------------------------------
+// PEND-61 Phase 1 — `search_blocks_partitioned` IPC
+// ---------------------------------------------------------------------------
+
+/// Response envelope for [`search_blocks_partitioned`].
+///
+/// Carries two partitions of the same FTS scan in one IPC round-trip:
+///
+/// - `pages` — rows where `block_type == "page"`, capped at the
+///   caller's `page_limit`.
+/// - `blocks` — the **unrestricted** rank-ordered set (may include
+///   page-typed rows alongside content), capped at the caller's
+///   `block_limit`. The palette intentionally shows both together in
+///   this partition; the dedicated `pages` partition is for the
+///   page-group rendering.
+///
+/// Neither partition emits a cursor (the palette doesn't paginate) and
+/// `total_count` is always `None`. The `has_more` flag is set per
+/// partition — see [`search_blocks_partitioned`] for the exact
+/// semantics.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PartitionedSearchResponse {
+    /// Rows with `block_type = 'page'`, capped at `page_limit`.
+    pub pages: PageResponse<SearchBlockRow>,
+    /// Unrestricted rank-ordered rows (any `block_type`), capped at
+    /// `block_limit`. May overlap with [`Self::pages`] — the palette
+    /// merges them client-side.
+    pub blocks: PageResponse<SearchBlockRow>,
+}
+
+/// PEND-61 Phase 1 — partitioned search inner.
+///
+/// One FTS5 scan, two partitions:
+///
+/// 1. **`pages`** — rows where `block_type == "page"`, capped at
+///    `page_limit`.
+/// 2. **`blocks`** — ALL rows in rank order (no `block_type` filter),
+///    capped at `block_limit`.
+///
+/// Both partitions preserve rank order within themselves; the same row
+/// may appear in both partitions (a page-typed hit is in `pages` AND
+/// in `blocks`). The palette merges them client-side.
+///
+/// `filter.block_type_filter` is **ignored** — partitioning by
+/// `block_type` IS what this function does. The field is left on the
+/// wire for `SearchFilter` compat and is silently dropped.
+///
+/// All other `SearchFilter` fields are honoured exactly as
+/// [`search_blocks_inner`] honours them.
+///
+/// ## `has_more` semantics
+///
+/// - `pages.has_more = true` iff the `pages` partition filled to
+///   `page_limit` AND either (a) more page-typed rows existed in the
+///   fetched set, or (b) the combined fetch hit
+///   [`fts::search::MAX_SEARCH_RESULTS`].
+/// - `blocks.has_more = true` iff the `blocks` partition filled to
+///   `block_limit` AND either (a) at least one additional row existed
+///   in the fetched set, or (b) the combined fetch hit
+///   [`fts::search::MAX_SEARCH_RESULTS`].
+/// - `next_cursor = None` for both (palette doesn't paginate).
+/// - `total_count = None` for both.
+///
+/// Empty / whitespace queries short-circuit to two empty partitions —
+/// mirrors the [`search_blocks_inner`] short-circuit.
+#[instrument(skip(pool, filter), err)]
+pub async fn search_blocks_partitioned_inner(
+    pool: &SqlitePool,
+    query: String,
+    page_limit: u32,
+    block_limit: u32,
+    filter: SearchFilter,
+) -> Result<PartitionedSearchResponse, AppError> {
+    // Mirror `search_blocks_inner`'s empty-query short-circuit so callers
+    // observe the same wire shape on empty input.
+    if query.trim().is_empty() {
+        return Ok(PartitionedSearchResponse {
+            pages: empty_partition(),
+            blocks: empty_partition(),
+        });
+    }
+
+    let tag_ids_slice: Option<&[String]> = if filter.tag_ids.is_empty() {
+        None
+    } else {
+        Some(filter.tag_ids.as_slice())
+    };
+
+    // Bug-for-bug compat with `search_blocks_inner`: brace-expand and
+    // validate page-name globs, bundle toggles, resolve metadata.
+    let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
+    let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
+    let toggles = fts::SearchToggles {
+        case_sensitive: filter.case_sensitive,
+        whole_word: filter.whole_word,
+        is_regex: filter.is_regex,
+    };
+    let metadata = fts::metadata_filter::prepare_metadata(&filter)?;
+
+    // One FTS scan. `filter.block_type_filter` is intentionally dropped
+    // here — the partitioning is the entire point of this IPC.
+    let scan = fts::search_with_toggles_partitioned(
+        pool,
+        &query,
+        page_limit,
+        block_limit,
+        filter.parent_id.as_deref(),
+        tag_ids_slice,
+        filter.space_id.as_deref(),
+        &include_globs,
+        &exclude_globs,
+        toggles,
+        &metadata,
+    )
+    .await?;
+
+    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+
+    // Partition in Rust. Pre-scan the count of page-typed rows so we can
+    // compute `pages.has_more` without re-scanning the (capped) set.
+    let total_pages_in_scan = scan.rows.iter().filter(|r| r.block_type == "page").count();
+    let total_rows_in_scan = scan.rows.len();
+
+    let pages_items: Vec<SearchBlockRow> = scan
+        .rows
+        .iter()
+        .filter(|r| r.block_type == "page")
+        .take(page_limit_usize)
+        .cloned()
+        .collect();
+    // `blocks` is unrestricted — every row, capped at `block_limit`.
+    let blocks_items: Vec<SearchBlockRow> = scan.rows.into_iter().take(block_limit_usize).collect();
+
+    let pages_filled = pages_items.len() == page_limit_usize && page_limit_usize > 0;
+    let pages_overflow = total_pages_in_scan > pages_items.len();
+    // Pages partition: more to show iff we filled AND (more pages
+    // exist beyond the cap, OR the SQL ceiling clipped the scan).
+    let pages_has_more = pages_filled && (pages_overflow || scan.ceiling_hit);
+
+    let blocks_filled = blocks_items.len() == block_limit_usize && block_limit_usize > 0;
+    let blocks_overflow = total_rows_in_scan > blocks_items.len();
+    let blocks_has_more = blocks_filled && (blocks_overflow || scan.ceiling_hit);
+
+    Ok(PartitionedSearchResponse {
+        pages: PageResponse {
+            items: pages_items,
+            next_cursor: None,
+            has_more: pages_has_more,
+            total_count: None,
+        },
+        blocks: PageResponse {
+            items: blocks_items,
+            next_cursor: None,
+            has_more: blocks_has_more,
+            total_count: None,
+        },
+    })
+}
+
+/// Build an empty [`PageResponse`] for the partitioned-search empty-query
+/// short-circuit. Inline because the project doesn't have a generic
+/// `empty_page()` helper today.
+fn empty_partition() -> PageResponse<SearchBlockRow> {
+    PageResponse {
+        items: Vec::new(),
+        next_cursor: None,
+        has_more: false,
+        total_count: None,
+    }
+}
+
+/// Tauri command: PEND-61 partitioned full-text search. Returns two
+/// partitions of the same FTS scan (pages-only + unrestricted) in a
+/// single round-trip, replacing the palette's two parallel
+/// [`search_blocks`] calls.
+///
+/// `filter.block_type_filter` is **ignored** by this command — the
+/// partitioning IS the block-type split. The field stays on the wire
+/// for [`SearchFilter`] compat.
+///
+/// See [`search_blocks_partitioned_inner`] for the partition + `has_more`
+/// contract.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn search_blocks_partitioned(
+    pool: State<'_, ReadPool>,
+    query: String,
+    page_limit: u32,
+    block_limit: u32,
+    filter: SearchFilter,
+) -> Result<PartitionedSearchResponse, AppError> {
+    search_blocks_partitioned_inner(&pool.0, query, page_limit, block_limit, filter)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 /// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
 ///
 /// All push-down filters (`exclude_parent_id`, `content_non_empty`,

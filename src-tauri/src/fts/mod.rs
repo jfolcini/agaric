@@ -34,6 +34,14 @@ pub use search::search_fts;
 pub use strip::strip_for_fts;
 pub use toggle_filter::{search_with_toggles, SearchToggles};
 
+// PEND-61 Phase 1 — partitioned FTS scan for the multi-mode palette.
+// `search_with_toggles_partitioned` is the single entry-point; it
+// dispatches into `search_fts_partitioned` or `regex_mode_query` based
+// on the toggle bundle. `pub(crate)` because the return type
+// `FtsPartitionedScan` is also `pub(crate)` — the IPC wrapper unpacks
+// it before returning to clients.
+pub(crate) use toggle_filter::search_with_toggles_partitioned;
+
 // Re-export crate-internal API
 pub(crate) use search::sanitize_fts_query;
 pub(crate) use strip::{load_ref_maps, PAGE_LINK_RE, TAG_REF_RE};

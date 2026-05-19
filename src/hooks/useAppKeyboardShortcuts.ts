@@ -46,8 +46,8 @@ import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '../stores/tabs'
+import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { useInPageFindStore } from '../stores/useInPageFindStore'
-import { useSearchPaletteStore } from '../stores/useSearchPaletteStore'
 
 // ---------------------------------------------------------------------------
 // Helpers and dispatch tables (moved verbatim from App.tsx so the hook owns
@@ -279,7 +279,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
           return
         }
         e.preventDefault()
-        useSearchPaletteStore.getState().open$()
+        useCommandPaletteStore.getState().open$()
         return
       }
       if (matchesShortcutBinding(e, 'createNewPage')) {

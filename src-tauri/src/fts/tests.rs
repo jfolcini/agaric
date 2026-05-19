@@ -4105,3 +4105,551 @@ async fn snippet_window_constant_produces_readable_output_on_representative_samp
         "snippet must include non-empty trailing context: {snippet:?}"
     );
 }
+
+// ======================================================================
+// PEND-61 Phase 1 — `search_blocks_partitioned` tests
+// ======================================================================
+//
+// Exercise the new IPC's one-scan-two-partition contract end-to-end.
+// The helper bypasses the `tauri::command` wrapper and drives
+// `search_blocks_partitioned_inner` directly so we can use the same
+// `test_pool()` + `insert_block` + `rebuild_fts_index` fixtures the
+// rest of this module already uses.
+
+/// Ten distinct ULID-style block IDs for the partitioned tests. The
+/// `insert_block` helper requires unique IDs per row; the rest of
+/// the file reuses 4-5 constants per case which isn't enough for the
+/// 5+5 fixture below. For tests that need > 5 rows of either kind
+/// (e.g. the `MAX_SEARCH_RESULTS` ceiling case), use [`pt_block_id`]
+/// to generate unique 26-char IDs on the fly.
+const PT_PAGE_IDS: [&str; 5] = [
+    "01HQPART01PAGE000000000P01",
+    "01HQPART02PAGE000000000P02",
+    "01HQPART03PAGE000000000P03",
+    "01HQPART04PAGE000000000P04",
+    "01HQPART05PAGE000000000P05",
+];
+const PT_BLOCK_IDS: [&str; 5] = [
+    "01HQPART01BANK000000000B01",
+    "01HQPART02BANK000000000B02",
+    "01HQPART03BANK000000000B03",
+    "01HQPART04BANK000000000B04",
+    "01HQPART05BANK000000000B05",
+];
+
+/// Generate a unique 26-character ULID-shaped id under the
+/// `01HQPART…` namespace for partitioned tests that need more rows
+/// than the fixed `PT_*` arrays carry. The shape is not a valid
+/// Crockford ULID but `insert_block` only requires uniqueness — see
+/// the constants' docstring above.
+fn pt_block_id(index: u32) -> String {
+    format!("01HQPARTGEN{index:015}")
+}
+
+/// Seed `n_pages` page blocks and `n_blocks` content blocks, all
+/// matching the FTS keyword `partitioned`. Returns when the FTS
+/// index is up to date.
+async fn seed_partitioned_fixture(pool: &SqlitePool, n_pages: usize, n_blocks: usize) {
+    assert!(n_pages <= PT_PAGE_IDS.len(), "n_pages exceeds fixture ids");
+    assert!(
+        n_blocks <= PT_BLOCK_IDS.len(),
+        "n_blocks exceeds fixture ids"
+    );
+    for (i, id) in PT_PAGE_IDS.iter().take(n_pages).enumerate() {
+        // Pages carry the search keyword in their title so the FTS
+        // hit is a page-title-only match.
+        insert_block(
+            pool,
+            id,
+            "page",
+            &format!("partitioned page title {i}"),
+            None,
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await;
+    }
+    for (i, id) in PT_BLOCK_IDS.iter().take(n_blocks).enumerate() {
+        // Content blocks live under the first page so their `page_id`
+        // resolves to a real row — keeps space-filter joins happy.
+        let parent = if n_pages > 0 {
+            Some(PT_PAGE_IDS[0])
+        } else {
+            None
+        };
+        insert_block(
+            pool,
+            id,
+            "content",
+            &format!("partitioned block content {i}"),
+            parent,
+            Some(i64::try_from(i + n_pages).unwrap()),
+        )
+        .await;
+    }
+    rebuild_fts_index(pool).await.unwrap();
+}
+
+#[tokio::test]
+async fn partitioned_happy_path_pages_and_blocks_within_caps() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 5, 5).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        2,
+        3,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.pages.items.len(),
+        2,
+        "pages partition must cap at page_limit"
+    );
+    assert_eq!(
+        resp.blocks.items.len(),
+        3,
+        "blocks partition must cap at block_limit"
+    );
+    // Pages partition contains only page-typed rows.
+    for row in &resp.pages.items {
+        assert_eq!(
+            row.block_type, "page",
+            "pages partition must contain only block_type='page' rows"
+        );
+    }
+    // Neither partition emits a cursor.
+    assert!(resp.pages.next_cursor.is_none());
+    assert!(resp.blocks.next_cursor.is_none());
+    assert!(resp.pages.total_count.is_none());
+    assert!(resp.blocks.total_count.is_none());
+}
+
+#[tokio::test]
+async fn partitioned_pages_partition_is_page_typed_only_with_mixed_types() {
+    let (pool, _dir) = test_pool().await;
+    // Mixed: 3 pages, 5 content blocks.
+    seed_partitioned_fixture(&pool, 3, 5).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.pages.items.len(),
+        3,
+        "pages partition must surface all 3 page-typed rows"
+    );
+    for row in &resp.pages.items {
+        assert_eq!(row.block_type, "page");
+    }
+}
+
+#[tokio::test]
+async fn partitioned_blocks_partition_is_unrestricted() {
+    let (pool, _dir) = test_pool().await;
+    // 3 pages + 2 content blocks → 5 total. `blocks` cap = 10 → all 5
+    // survive; the partition must include page-typed entries
+    // alongside the content blocks (this is the documented
+    // "unrestricted" semantics).
+    seed_partitioned_fixture(&pool, 3, 2).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.blocks.items.len(),
+        5,
+        "blocks partition is unrestricted — must include both pages and content"
+    );
+    let pages_in_blocks = resp
+        .blocks
+        .items
+        .iter()
+        .filter(|r| r.block_type == "page")
+        .count();
+    let content_in_blocks = resp
+        .blocks
+        .items
+        .iter()
+        .filter(|r| r.block_type == "content")
+        .count();
+    assert_eq!(pages_in_blocks, 3, "blocks partition must contain pages");
+    assert_eq!(
+        content_in_blocks, 2,
+        "blocks partition must contain content blocks"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_caps_honour_each_partition_limit() {
+    let (pool, _dir) = test_pool().await;
+    // 5 pages, 5 content → caps at 1/1 must return exactly 1+1.
+    seed_partitioned_fixture(&pool, 5, 5).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        1,
+        1,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp.pages.items.len(), 1, "page_limit=1 must clip to 1");
+    assert_eq!(resp.blocks.items.len(), 1, "block_limit=1 must clip to 1");
+}
+
+#[tokio::test]
+async fn partitioned_has_more_flags_reflect_partition_overflow() {
+    let (pool, _dir) = test_pool().await;
+    // 5 pages, 5 content → 10 matching rows in the scan.
+    seed_partitioned_fixture(&pool, 5, 5).await;
+
+    // Case A — both caps under the available count. Both partitions
+    // must report `has_more = true`.
+    let tight = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        2,
+        3,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        tight.pages.has_more,
+        "pages.has_more must be true when more page-typed rows existed beyond the cap"
+    );
+    assert!(
+        tight.blocks.has_more,
+        "blocks.has_more must be true when more rows existed beyond the cap"
+    );
+
+    // Case B — caps exceed the available row count. Both partitions
+    // must report `has_more = false`.
+    let loose = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        20,
+        20,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !loose.pages.has_more,
+        "pages.has_more must be false when fewer pages existed than the cap"
+    );
+    assert!(
+        !loose.blocks.has_more,
+        "blocks.has_more must be false when fewer rows existed than the cap"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_empty_query_returns_empty_partitions() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 2, 2).await;
+
+    for q in ["", "   ", "\t\n"] {
+        let resp = crate::commands::queries::search_blocks_partitioned_inner(
+            &pool,
+            q.to_string(),
+            10,
+            10,
+            crate::commands::queries::SearchFilter::default(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            resp.pages.items.is_empty(),
+            "empty/whitespace query must yield empty pages partition (q={q:?})"
+        );
+        assert!(
+            resp.blocks.items.is_empty(),
+            "empty/whitespace query must yield empty blocks partition (q={q:?})"
+        );
+        assert!(!resp.pages.has_more);
+        assert!(!resp.blocks.has_more);
+    }
+}
+
+#[tokio::test]
+async fn partitioned_ignores_block_type_filter_in_filter_struct() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    let baseline = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    let with_filter = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            // PEND-61 Phase 1: this field MUST be ignored — partitioning
+            // by block_type is what the IPC does.
+            block_type_filter: Some("page".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        baseline.pages.items.len(),
+        with_filter.pages.items.len(),
+        "block_type_filter must not affect the pages partition cardinality"
+    );
+    assert_eq!(
+        baseline.blocks.items.len(),
+        with_filter.blocks.items.len(),
+        "block_type_filter must not affect the blocks partition cardinality"
+    );
+    // The blocks partition must still contain content-typed rows
+    // even when the caller passed `block_type_filter=Some("page")`.
+    let content_count = with_filter
+        .blocks
+        .items
+        .iter()
+        .filter(|r| r.block_type == "content")
+        .count();
+    assert!(
+        content_count > 0,
+        "block_type_filter must not narrow the unrestricted blocks partition"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_space_filter_excludes_other_spaces_from_both_partitions() {
+    let (pool, _dir) = test_pool().await;
+    // Two spaces, both with a matching page in each. The FTS5 space
+    // filter is applied against `b.page_id IN (… key='space' …)` —
+    // the partitioned scan must inherit it from the same dynamic-SQL
+    // builder used by `search_fts`.
+    insert_space_block_for_fts(&pool, FTS_SPACE_A_ID, "Personal").await;
+    insert_space_block_for_fts(&pool, FTS_SPACE_B_ID, "Work").await;
+
+    let page_in_a = PT_PAGE_IDS[0];
+    let page_in_b = PT_PAGE_IDS[1];
+    insert_block(
+        &pool,
+        page_in_a,
+        "page",
+        "partitioned page in space a",
+        None,
+        Some(1),
+    )
+    .await;
+    assign_to_space_for_fts(&pool, page_in_a, FTS_SPACE_A_ID).await;
+    insert_block(
+        &pool,
+        page_in_b,
+        "page",
+        "partitioned page in space b",
+        None,
+        Some(2),
+    )
+    .await;
+    assign_to_space_for_fts(&pool, page_in_b, FTS_SPACE_B_ID).await;
+
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            space_id: Some(FTS_SPACE_A_ID.to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let ids_pages: Vec<&str> = resp.pages.items.iter().map(|r| r.id.as_str()).collect();
+    let ids_blocks: Vec<&str> = resp.blocks.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids_pages.contains(&page_in_a),
+        "pages partition must include the SPACE_A row (FEAT-3 invariant): {ids_pages:?}"
+    );
+    assert!(
+        !ids_pages.contains(&page_in_b),
+        "pages partition must exclude rows from other spaces: {ids_pages:?}"
+    );
+    assert!(
+        ids_blocks.contains(&page_in_a),
+        "blocks partition must include the SPACE_A row: {ids_blocks:?}"
+    );
+    assert!(
+        !ids_blocks.contains(&page_in_b),
+        "blocks partition must exclude rows from other spaces: {ids_blocks:?}"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_regex_mode_routes_through_partitioned_dispatch() {
+    // `search_with_toggles_partitioned` dispatches `is_regex=true` through
+    // a separate path (`regex_mode_query`) rather than the FTS scan.
+    // This test verifies that branch partitions rows correctly — pages
+    // stay page-typed-only and the blocks partition is unrestricted.
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partition".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // Seeded content carries the substring "partitioned" → regex /partition/
+    // matches all 6 rows (3 pages + 3 content blocks).
+    assert_eq!(
+        resp.pages.items.len(),
+        3,
+        "regex-mode pages partition must surface all matching page-typed rows"
+    );
+    for row in &resp.pages.items {
+        assert_eq!(
+            row.block_type, "page",
+            "regex-mode pages partition must be page-typed-only"
+        );
+    }
+    assert_eq!(
+        resp.blocks.items.len(),
+        6,
+        "regex-mode blocks partition is unrestricted (includes pages)"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_zero_limits_yield_empty_partitions_and_no_has_more() {
+    // Degenerate `page_limit=0` / `block_limit=0` must yield empty
+    // partitions without `has_more=true` (the `page_limit_usize > 0`
+    // guard on `pages_filled` is what prevents the degenerate true).
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        0,
+        0,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        resp.pages.items.is_empty(),
+        "page_limit=0 must yield no items"
+    );
+    assert!(
+        resp.blocks.items.is_empty(),
+        "block_limit=0 must yield no items"
+    );
+    assert!(
+        !resp.pages.has_more,
+        "page_limit=0 must not report has_more (filled-guard)"
+    );
+    assert!(
+        !resp.blocks.has_more,
+        "block_limit=0 must not report has_more (filled-guard)"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_max_search_results_ceiling_propagates_to_has_more() {
+    // The bounded FTS scan clips at `MAX_SEARCH_RESULTS` (100). When a
+    // caller's combined cap exceeds that ceiling AND the matching row
+    // set is larger than the ceiling, the scan flags `ceiling_hit=true`
+    // and `has_more` must propagate even if the partition cap itself
+    // would not have overflowed within the (clipped) scan.
+    let (pool, _dir) = test_pool().await;
+
+    // Seed > MAX_SEARCH_RESULTS (100) matching content rows under a
+    // single root page. Generated IDs follow the project's 26-char ULID
+    // shape; uniqueness is the only requirement here.
+    let root = pt_block_id(0);
+    insert_block(
+        &pool,
+        &root,
+        "page",
+        "partitioned ceiling root",
+        None,
+        Some(0),
+    )
+    .await;
+    for i in 1..=120 {
+        let id = pt_block_id(i);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            &format!("partitioned ceiling row {i}"),
+            Some(&root),
+            Some(i64::from(i)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        50,
+        50,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.pages.items.len(),
+        1,
+        "exactly one page-typed row matched the seed"
+    );
+    assert_eq!(
+        resp.blocks.items.len(),
+        50,
+        "blocks partition fills to the cap (50) under a 100-row scan ceiling"
+    );
+    assert!(
+        resp.blocks.has_more,
+        "blocks.has_more must be true when caller's cap fills AND there are more rows in the scan"
+    );
+}
