@@ -44,8 +44,18 @@ export interface SortableBlockWrapperProps {
   isCollapsed: boolean
   /** True when this row is a descendant of a just-expanded parent. */
   isAnimating: boolean
-  /** Precomputed aria-setsize / aria-posinset for the sibling group. */
-  siblingAria: { setsize: number; posinset: number } | undefined
+  /**
+   * Precomputed aria-setsize / aria-posinset for the sibling group.
+   *
+   * Split into two primitive props (rather than one `{setsize, posinset}`
+   * object) so `React.memo`'s shallow prop comparison short-circuits when
+   * the sibling layout is unchanged — even though `BlockListRenderer`
+   * rebuilds its `siblingAriaProps` map on every `visibleItems` identity
+   * change (i.e. every drag-drop / indent). Without this split, every
+   * row would memo-invalidate on every move.
+   */
+  siblingSetsize: number | undefined
+  siblingPosinset: number | undefined
   /** Custom block properties to render as inline chips. */
   properties: Array<{ key: string; value: string }> | undefined
 }
@@ -63,7 +73,8 @@ function SortableBlockWrapperInner({
   anyBlockHasChildren,
   isCollapsed,
   isAnimating,
-  siblingAria,
+  siblingSetsize,
+  siblingPosinset,
   properties,
 }: SortableBlockWrapperProps): React.ReactElement {
   const isFocused = focusedBlockId === block.id
@@ -84,8 +95,8 @@ function SortableBlockWrapperInner({
         ref={observeRef}
         data-block-id={block.id}
         aria-level={block.depth + 1}
-        aria-setsize={siblingAria?.setsize}
-        aria-posinset={siblingAria?.posinset}
+        aria-setsize={siblingSetsize}
+        aria-posinset={siblingPosinset}
         aria-expanded={hasChildren ? !isCollapsed : undefined}
         className="block-placeholder list-none m-0 p-0"
         style={{ minHeight: viewport.getHeight(block.id) }}
@@ -99,8 +110,8 @@ function SortableBlockWrapperInner({
       ref={observeRef}
       data-block-id={block.id}
       aria-level={block.depth + 1}
-      aria-setsize={siblingAria?.setsize}
-      aria-posinset={siblingAria?.posinset}
+      aria-setsize={siblingSetsize}
+      aria-posinset={siblingPosinset}
       aria-expanded={hasChildren ? !isCollapsed : undefined}
       className={cn('list-none m-0 p-0', isAnimating && 'block-children-enter')}
     >

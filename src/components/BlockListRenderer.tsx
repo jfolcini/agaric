@@ -169,25 +169,29 @@ export function BlockListRenderer({
           aria-label={t('blockTree.treeLabel')}
           onPointerDown={onContainerPointerDown}
         >
-          {visibleItems.map((block) => (
-            <SortableBlockWrapper
-              key={block.id}
-              block={block}
-              focusedBlockId={focusedBlockId}
-              isSelected={selectedBlockIds.includes(block.id)}
-              projected={projected}
-              activeId={activeId}
-              overId={overId}
-              viewport={viewport}
-              rovingEditor={rovingEditor}
-              hasChildren={hasChildrenSet.has(block.id)}
-              anyBlockHasChildren={anyBlockHasChildren}
-              isCollapsed={collapsedIds.has(block.id)}
-              isAnimating={animatingBlockIds.has(block.id)}
-              siblingAria={siblingAriaProps.get(block.id)}
-              properties={blockProperties[block.id]}
-            />
-          ))}
+          {visibleItems.map((block) => {
+            const aria = siblingAriaProps.get(block.id)
+            return (
+              <SortableBlockWrapper
+                key={block.id}
+                block={block}
+                focusedBlockId={focusedBlockId}
+                isSelected={selectedBlockIds.includes(block.id)}
+                projected={projected}
+                activeId={activeId}
+                overId={overId}
+                viewport={viewport}
+                rovingEditor={rovingEditor}
+                hasChildren={hasChildrenSet.has(block.id)}
+                anyBlockHasChildren={anyBlockHasChildren}
+                isCollapsed={collapsedIds.has(block.id)}
+                isAnimating={animatingBlockIds.has(block.id)}
+                siblingSetsize={aria?.setsize}
+                siblingPosinset={aria?.posinset}
+                properties={blockProperties[block.id]}
+              />
+            )
+          })}
           {/* Sentinel droppable zone for dropping after last block */}
           {!loading && visibleItems.length > 0 && (
             <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />

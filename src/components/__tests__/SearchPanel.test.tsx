@@ -1034,7 +1034,7 @@ describe('SearchPanel', () => {
 
   it('shows recent pages when query is empty and localStorage has entries', () => {
     localStorage.setItem(
-      'recent_pages',
+      'recent_pages:SPACE_TEST',
       JSON.stringify([
         { id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' },
         { id: 'P2', title: 'Page Two', visitedAt: '2024-01-01T00:00:00.000Z' },
@@ -1056,7 +1056,7 @@ describe('SearchPanel', () => {
 
   it('hides recent section when user types a query', () => {
     localStorage.setItem(
-      'recent_pages',
+      'recent_pages:SPACE_TEST',
       JSON.stringify([{ id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }]),
     )
 
@@ -1073,7 +1073,7 @@ describe('SearchPanel', () => {
     const user = userEvent.setup()
 
     localStorage.setItem(
-      'recent_pages',
+      'recent_pages:SPACE_TEST',
       JSON.stringify([{ id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }]),
     )
 
@@ -1114,7 +1114,7 @@ describe('SearchPanel', () => {
     const option = await screen.findByRole('option')
     await user.click(option)
 
-    const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
     expect(stored).toHaveLength(1)
     expect(stored[0].id).toBe('PAGE1')
     expect(stored[0].title).toBe('My Page')
@@ -1173,7 +1173,7 @@ describe('SearchPanel', () => {
     await user.click(screen.getByText(textContent('child content')))
 
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+      const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
       expect(stored).toHaveLength(1)
       expect(stored[0].id).toBe('PARENT1')
       expect(stored[0].title).toBe('Parent Page Title')
@@ -1184,7 +1184,7 @@ describe('SearchPanel', () => {
     const user = userEvent.setup()
 
     localStorage.setItem(
-      'recent_pages',
+      'recent_pages:SPACE_TEST',
       JSON.stringify([
         { id: 'P1', title: 'First', visitedAt: '2024-01-01T00:00:00.000Z' },
         { id: 'P2', title: 'Second', visitedAt: '2024-01-01T00:00:00.000Z' },
@@ -1194,7 +1194,7 @@ describe('SearchPanel', () => {
     render(<SearchPanel />)
     await user.click(screen.getByText('Second'))
 
-    const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
     expect(stored[0].id).toBe('P2')
     expect(stored[1].id).toBe('P1')
   })
@@ -1205,11 +1205,11 @@ describe('SearchPanel', () => {
       title: `Page ${i}`,
       visitedAt: '2024-01-01T00:00:00.000Z',
     }))
-    localStorage.setItem('recent_pages', JSON.stringify(pages))
+    localStorage.setItem('recent_pages:SPACE_TEST', JSON.stringify(pages))
 
     addRecentPage('NEW1', 'New Page')
 
-    const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
     expect(stored).toHaveLength(10)
     expect(stored[0].id).toBe('NEW1')
   })

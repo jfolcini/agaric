@@ -1780,6 +1780,12 @@ describe('App', () => {
           { pageId: 'A', title: 'Alpha' },
           { pageId: 'B', title: 'Bravo' },
         ],
+        recentPagesBySpace: {
+          SPACE_PERSONAL: [
+            { pageId: 'A', title: 'Alpha' },
+            { pageId: 'B', title: 'Bravo' },
+          ],
+        },
       })
 
       render(<App />)
@@ -1815,6 +1821,12 @@ describe('App', () => {
           { pageId: 'C', title: 'Charlie' },
           { pageId: 'D', title: 'Delta' },
         ],
+        recentPagesBySpace: {
+          SPACE_PERSONAL: [
+            { pageId: 'C', title: 'Charlie' },
+            { pageId: 'D', title: 'Delta' },
+          ],
+        },
       })
 
       render(<App />)
@@ -1841,6 +1853,12 @@ describe('App', () => {
           { pageId: 'A', title: 'Alpha' },
           { pageId: 'B', title: 'Bravo' },
         ],
+        recentPagesBySpace: {
+          SPACE_PERSONAL: [
+            { pageId: 'A', title: 'Alpha' },
+            { pageId: 'B', title: 'Bravo' },
+          ],
+        },
       })
 
       render(<App />)
