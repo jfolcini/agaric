@@ -649,6 +649,67 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().query).toBe('set')
   })
 
+  it('numeric prefix 1-9 jumps to the Nth visible item (PEND-67 Phase 7)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
+    })
+    // The first visible cmdk-item with no recents is go-pages.
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: '1' })
+    expect(useNavigationStore.getState().currentView).toBe('pages')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('numeric prefix is ignored when the input has content (PEND-67 Phase 7)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    const input = screen.getByTestId('command-palette-input') as HTMLInputElement
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
+    })
+    // Type something first → the digit guard no longer triggers, so
+    // pressing "2" must NOT close the palette or call setView.
+    fireEvent.change(input, { target: { value: 'tag' } })
+    const navBefore = useNavigationStore.getState().currentView
+    fireEvent.keyDown(input, { key: '2' })
+    // No view change, palette still open.
+    expect(useNavigationStore.getState().currentView).toBe(navBefore)
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+  })
+
+  it('numeric prefix 0 does nothing (PEND-67 Phase 7)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
+    })
+    const navBefore = useNavigationStore.getState().currentView
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: '0' })
+    expect(useNavigationStore.getState().currentView).toBe(navBefore)
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+  })
+
+  it('numeric prefix is ignored with modifier keys (PEND-67 Phase 7)', async () => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
+    })
+    const navBefore = useNavigationStore.getState().currentView
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), {
+      key: '1',
+      ctrlKey: true,
+    })
+    // Modifier-decorated digits stay free for OS / browser handlers.
+    expect(useNavigationStore.getState().currentView).toBe(navBefore)
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+  })
+
   it('does not loop when the `>` prefix routes to commands mode (PEND-67 Phase 6)', async () => {
     render(<CommandPalette />)
     openPalette()

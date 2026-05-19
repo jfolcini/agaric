@@ -430,7 +430,9 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
   function handleListKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Enter') {
       newTabRef.current = e.metaKey || e.ctrlKey
-    } else if (e.key === 'Backspace') {
+      return
+    }
+    if (e.key === 'Backspace') {
       // PEND-61 CR-2 — Backspace on an empty input in commands mode
       // returns to search mode (mirrors VSCode's Cmd+P ↔ Cmd+Shift+P
       // toggle). The chip stays the visible toggle for everyone else.
@@ -438,6 +440,31 @@ function PaletteBody({ onClose }: { onClose: () => void }): React.ReactElement {
         e.preventDefault()
         setMode('search')
       }
+      return
+    }
+    // PEND-67 Phase 7 — `1`-`9` jumps to the Nth visible cmdk item
+    // when the input is empty. Modifier keys are ignored (Ctrl+1 must
+    // stay free for other handlers). With a non-empty input the digit
+    // is typed normally (`2023-budget` searches as expected) — the
+    // `query.length === 0` guard handles this.
+    if (
+      query.length === 0 &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      e.key >= '1' &&
+      e.key <= '9'
+    ) {
+      const dialog = (e.currentTarget as HTMLElement).closest<HTMLElement>(
+        '[data-testid="command-palette"]',
+      )
+      if (dialog == null) return
+      const items = dialog.querySelectorAll<HTMLElement>('[cmdk-item]')
+      const idx = Number(e.key) - 1
+      const target = items[idx]
+      if (target == null) return
+      e.preventDefault()
+      target.click()
     }
   }
   function consumeNewTab(): boolean {
