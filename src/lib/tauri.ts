@@ -22,6 +22,7 @@ export type {
   MoveResponse,
   PageHeading,
   PageResponse,
+  PartitionedSearchResponse,
   PropertyDefinition,
   PurgeResponse,
   RestoreResponse,
@@ -63,6 +64,7 @@ import type {
   MoveResponse,
   PageHeading,
   PageResponse,
+  PartitionedSearchResponse,
   PropertyDefinition,
   PurgeResponse,
   RestoreResponse,
@@ -642,6 +644,61 @@ export async function searchBlocks(params: {
       wholeWord: params.wholeWord ?? false,
       isRegex: params.isRegex ?? false,
       blockTypeFilter: params.blockTypeFilter ?? null,
+      stateFilter: params.stateFilter ?? [],
+      priorityFilter: params.priorityFilter ?? [],
+      dueFilter: marshalDateFilter(params.dueFilter ?? null),
+      scheduledFilter: marshalDateFilter(params.scheduledFilter ?? null),
+      propertyFilters: params.propertyFilters ?? [],
+      excludedPropertyFilters: params.excludedPropertyFilters ?? [],
+      excludedStateFilter: params.excludedStateFilter ?? [],
+      excludedPriorityFilter: params.excludedPriorityFilter ?? [],
+    }),
+  )
+}
+
+/**
+ * PEND-61 Phase 1 — partitioned full-text search.
+ *
+ * Returns `pages` (rows where `block_type='page'`) and `blocks`
+ * (unrestricted rank-ordered set; may include pages alongside content)
+ * in **one** FTS5 scan. Replaces the PEND-51 palette pattern of firing
+ * two parallel `searchBlocks` calls.
+ *
+ * `filter.blockTypeFilter` is ignored — the partitioning IS the
+ * block-type split. The field stays on the wire for `SearchFilter` compat.
+ */
+export async function searchBlocksPartitioned(params: {
+  query: string
+  pageLimit: number
+  blockLimit: number
+  parentId?: string | undefined
+  tagIds?: string[] | undefined
+  spaceId: string
+  includePageGlobs?: string[] | undefined
+  excludePageGlobs?: string[] | undefined
+  caseSensitive?: boolean | undefined
+  wholeWord?: boolean | undefined
+  isRegex?: boolean | undefined
+  stateFilter?: string[] | undefined
+  priorityFilter?: string[] | undefined
+  dueFilter?: DateFilterValueInput | null | undefined
+  scheduledFilter?: DateFilterValueInput | null | undefined
+  propertyFilters?: { key: string; value: string }[] | undefined
+  excludedPropertyFilters?: { key: string; value: string }[] | undefined
+  excludedStateFilter?: string[] | undefined
+  excludedPriorityFilter?: string[] | undefined
+}): Promise<PartitionedSearchResponse> {
+  return unwrap(
+    await commands.searchBlocksPartitioned(params.query, params.pageLimit, params.blockLimit, {
+      parentId: params.parentId ?? null,
+      tagIds: params.tagIds ?? [],
+      spaceId: params.spaceId,
+      includePageGlobs: params.includePageGlobs ?? [],
+      excludePageGlobs: params.excludePageGlobs ?? [],
+      caseSensitive: params.caseSensitive ?? false,
+      wholeWord: params.wholeWord ?? false,
+      isRegex: params.isRegex ?? false,
+      blockTypeFilter: null,
       stateFilter: params.stateFilter ?? [],
       priorityFilter: params.priorityFilter ?? [],
       dueFilter: marshalDateFilter(params.dueFilter ?? null),

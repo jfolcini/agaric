@@ -357,6 +357,9 @@ test.describe('Global shortcuts', () => {
   test('Ctrl+K opens search palette when focus is outside the editor', async ({ page }) => {
     // PEND-51 — Cmd/Ctrl+K opens the quick-nav palette. Context-aware:
     // only fires when focus is OUTSIDE any TipTap/ProseMirror surface.
+    // PEND-61 — palette refactored to cmdk; the input testid moved
+    // from `search-palette-input` to `command-palette-input` along
+    // with the SearchPalette → CommandPalette rename.
     // Click on the sidebar to take focus out of the editor.
     await page.getByRole('button', { name: 'Pages', exact: true }).click()
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
@@ -365,7 +368,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.press('k')
     await page.keyboard.up('Control')
 
-    await expect(page.getByTestId('search-palette-input')).toBeVisible()
+    await expect(page.getByTestId('command-palette-input')).toBeVisible()
   })
 
   test('Ctrl+N creates new page', async ({ page }) => {

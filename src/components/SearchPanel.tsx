@@ -72,7 +72,7 @@ import {
 import { selectHistoryForSpace, useSearchHistoryStore } from '../stores/search-history'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
-import { useSearchPaletteStore } from '../stores/useSearchPaletteStore'
+import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { EmptyState } from './EmptyState'
 import { ResultCard } from './ResultCard'
 import { SearchHeader } from './SearchPanel/SearchHeader'
@@ -304,12 +304,18 @@ export function SearchPanel(): React.ReactElement {
   // subscription is created and the effect's empty-dep array stays
   // honest.
   useEffect(() => {
-    const pending = useSearchPaletteStore.getState().pendingViewQuery
-    if (pending != null && pending.length > 0) {
-      setQueryAndCaret(pending)
-      setDebouncedQuery(pending)
-      setSearched(true)
-      useSearchPaletteStore.getState().setPendingViewQuery(null)
+    const pending = useCommandPaletteStore.getState().pendingViewQuery
+    if (pending != null) {
+      // PEND-61 CR — accept empty-string escalation seeds (the
+      // commands-mode "Search everywhere" entry writes `''` to land
+      // the user on this panel with a clean input). The previous
+      // `length > 0` gate left the slot dirty across the session.
+      if (pending.length > 0) {
+        setQueryAndCaret(pending)
+        setDebouncedQuery(pending)
+        setSearched(true)
+      }
+      useCommandPaletteStore.getState().setPendingViewQuery(null)
     }
   }, [setQueryAndCaret])
 

@@ -96,6 +96,10 @@ macro_rules! agaric_commands {
             $crate::commands::get_block_history,
             $crate::commands::queries::get_status,
             $crate::commands::queries::search_blocks,
+            // PEND-61 Phase 1 — partitioned palette search. One FTS scan
+            // returns `{ pages, blocks }` instead of the palette firing
+            // two parallel `search_blocks` calls per keystroke.
+            $crate::commands::queries::search_blocks_partitioned,
             $crate::commands::tags::query_by_tags,
             $crate::commands::queries::query_by_property,
             // PEND-35 Tier 2.10b — AND-intersected property + tag query

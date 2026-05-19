@@ -199,6 +199,110 @@ pub async fn search_with_toggles(
     Ok(response)
 }
 
+/// PEND-61 Phase 1 — partitioned sibling of [`search_with_toggles`].
+///
+/// Returns the unrestricted rank-ordered candidate set in a single FTS
+/// scan (no `block_type` filter at the SQL layer — the caller partitions
+/// in Rust). The `ceiling_hit` flag participates in the per-partition
+/// `has_more` semantics; see [`super::search::FtsPartitionedScan`] for
+/// the contract.
+///
+/// Toggle dispatch mirrors [`search_with_toggles`]:
+///
+/// - `is_regex` → falls through to [`regex_mode_query`] which already
+///   doesn't apply `block_type_filter` at SQL; the partitioning happens
+///   on the returned `Vec`.
+/// - `case_sensitive` / `whole_word` → FTS5 candidate set narrowed by
+///   the post-filter regex pass.
+/// - All toggles off → straight FTS5 scan.
+///
+/// Returns a [`FtsPartitionedScan`] so the caller can detect the SQL
+/// ceiling independent of the per-partition cap.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn search_with_toggles_partitioned(
+    pool: &SqlitePool,
+    query: &str,
+    page_limit: u32,
+    block_limit: u32,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    toggles: SearchToggles,
+    metadata: &MetadataPredicates,
+) -> Result<super::search::FtsPartitionedScan, AppError> {
+    if toggles.is_regex {
+        // Regex-mode bypasses FTS entirely — empty query short-circuits
+        // here to avoid compiling an empty pattern (which would match
+        // every row).
+        if query.trim().is_empty() {
+            return Ok(super::search::FtsPartitionedScan {
+                rows: Vec::new(),
+                ceiling_hit: false,
+            });
+        }
+        // The regex path uses its own `PageRequest`-based pre-filter
+        // cap (`REGEX_PRE_FILTER_CAP`); for the partitioned caller we
+        // request the combined page+block window via the same
+        // page-limit field. The regex SQL scan reads `page.limit`
+        // only as a post-loop trim — `REGEX_PRE_FILTER_CAP` is the
+        // real bound. We trim manually to the combined window after.
+        let combined: u64 = u64::from(page_limit) + u64::from(block_limit) + 1;
+        let combined_i64 = i64::try_from(combined).unwrap_or(i64::MAX);
+        let page = PageRequest::new(None, Some(combined_i64))?;
+        let response = regex_mode_query(
+            pool,
+            query,
+            &page,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            toggles,
+            metadata,
+        )
+        .await?;
+        // Regex-mode doesn't honour `MAX_SEARCH_RESULTS` (uses its
+        // own `REGEX_PRE_FILTER_CAP`); `ceiling_hit` stays false on
+        // this path. The palette's `has_more` semantics rely on the
+        // per-partition fill instead.
+        return Ok(super::search::FtsPartitionedScan {
+            rows: response.items,
+            ceiling_hit: false,
+        });
+    }
+
+    // FTS5 candidate set (today's path) — one scan, no block_type
+    // filter at SQL level.
+    let mut scan = super::search::search_fts_partitioned(
+        pool,
+        query,
+        page_limit,
+        block_limit,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        metadata,
+    )
+    .await?;
+
+    if !toggles.any() {
+        // All toggles off → return the FTS path verbatim (zero overhead).
+        return Ok(scan);
+    }
+
+    // `case_sensitive` and/or `whole_word` on → compile a post-filter
+    // regex from the literal query and narrow the FTS candidate set.
+    let pattern = compose_literal_pattern(query, toggles);
+    let re = build_regex(&pattern)?;
+    apply_post_filter(&mut scan.rows, &re);
+    Ok(scan)
+}
+
 /// Compose the post-FTS regex pattern for the **non-regex** toggle
 /// combinations (i.e. one or both of `case_sensitive` / `whole_word`).
 ///

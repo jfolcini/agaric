@@ -40,14 +40,16 @@ import { announce } from '../lib/announcer'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
+import { getPaletteCommand } from '../lib/palette-commands'
+import { addRecentCommand, getRecentCommands } from '../lib/recent-commands'
 import { createPageInSpace } from '../lib/tauri'
 import { type JournalMode, useJournalStore } from '../stores/journal'
 import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '../stores/tabs'
+import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { useInPageFindStore } from '../stores/useInPageFindStore'
-import { useSearchPaletteStore } from '../stores/useSearchPaletteStore'
 
 // ---------------------------------------------------------------------------
 // Helpers and dispatch tables (moved verbatim from App.tsx so the hook owns
@@ -263,6 +265,42 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
         announce(t('announce.searchOpened'))
         return
       }
+      // PEND-67 Phase 8 — `runLastCommand` (Cmd+. by default) re-runs
+      // the most recent palette command without mounting the dialog.
+      // Falls back to opening the palette in commands mode when no
+      // recent command exists yet (cold start), or when the recent
+      // id no longer maps to a registered command (registry change
+      // after an upgrade). Skipped when typing in a field so the
+      // editor's TipTap `collapseExpand` chord on the same keys stays
+      // unaffected.
+      if (matchesShortcutBinding(e, 'runLastCommand')) {
+        if (isTypingInField(e.target as HTMLElement | null)) return
+        e.preventDefault()
+        const lastId = getRecentCommands()[0]?.id
+        const cmd = lastId != null ? getPaletteCommand(lastId) : undefined
+        if (cmd != null && lastId != null) {
+          addRecentCommand(lastId)
+          cmd.run({
+            // The palette isn't open — `onClose` is a no-op so the
+            // run() doesn't try to flip a closed dialog.
+            onClose: () => {},
+            // Escalation seeds the find-in-files view via the same
+            // store path the palette uses; SearchPanel mounts and
+            // consumes `pendingViewQuery`.
+            onEscalate: (q) => {
+              useCommandPaletteStore.getState().setPendingViewQuery(q)
+              useNavigationStore.getState().setView('search')
+            },
+          })
+          announce(t('announce.ranLastCommand'))
+          return
+        }
+        // Fallback: open palette in commands mode so the user can
+        // pick a command (which becomes the new "last" for next time).
+        useCommandPaletteStore.getState().open$()
+        useCommandPaletteStore.getState().setMode('commands')
+        return
+      }
       // PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Distinct
       // from `focusSearch` (the find-in-files view): the palette is a
       // dialog overlay, the view is a full-screen surface.
@@ -279,7 +317,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
           return
         }
         e.preventDefault()
-        useSearchPaletteStore.getState().open$()
+        useCommandPaletteStore.getState().open$()
         return
       }
       if (matchesShortcutBinding(e, 'createNewPage')) {

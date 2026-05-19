@@ -80,11 +80,12 @@ const NoPeersDialog = lazy(() =>
 const InPageFind = lazy(() =>
   import('./components/InPageFind').then((m) => ({ default: m.InPageFind })),
 )
-// PEND-51 — Cmd/Ctrl+K quick-navigation palette. Same lazy-render-gate
-// pattern as `InPageFind`: the component self-renders nothing when its
-// `useSearchPaletteStore.open` flag is `false`.
-const SearchPalette = lazy(() =>
-  import('./components/SearchPalette').then((m) => ({ default: m.SearchPalette })),
+// PEND-61 — Cmd/Ctrl+K command palette (successor to PEND-51's
+// SearchPalette). Same lazy-render-gate pattern: the component
+// self-renders nothing when its `useCommandPaletteStore.open` flag
+// is `false`.
+const CommandPalette = lazy(() =>
+  import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
 
 function App() {
@@ -521,12 +522,13 @@ function App() {
       <Suspense fallback={null}>
         <InPageFind />
       </Suspense>
-      {/* PEND-51 — Cmd/Ctrl+K palette. Mounted at App level so it floats
-          above every view; self-renders nothing when the store is
-          closed. The `useSearchPaletteStore.open$()` action is fired by
-          the keyboard handler in `useAppKeyboardShortcuts`. */}
+      {/* PEND-61 — Cmd/Ctrl+K command palette. Mounted at App level so
+          it floats above every view; self-renders nothing when the
+          store is closed. The `useCommandPaletteStore.open$()` action
+          is fired by the keyboard handler in
+          `useAppKeyboardShortcuts`. */}
       <Suspense fallback={null}>
-        <SearchPalette />
+        <CommandPalette />
       </Suspense>
       <Suspense fallback={null}>
         <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

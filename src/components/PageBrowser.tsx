@@ -34,6 +34,7 @@ import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useStarredPages } from '../hooks/useStarredPages'
 import type { BlockRow } from '../lib/tauri'
 import { createPageInSpace, listBlocks, resolvePageByAlias } from '../lib/tauri'
+import { useNavigationStore } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
@@ -97,7 +98,18 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
-  const [filterText, setFilterText] = useState('')
+  // PEND-67 Phase 5 follow-up — consume the palette's "Reveal in Pages
+  // view" handoff slot on mount. The slot is single-shot: we read it,
+  // seed the filter, then clear it so a subsequent natural navigation
+  // to Pages does not re-apply the old filter.
+  const pendingFilter = useNavigationStore((s) => s.pendingPageBrowserFilter)
+  const setPendingPageBrowserFilter = useNavigationStore((s) => s.setPendingPageBrowserFilter)
+  const [filterText, setFilterText] = useState(() => pendingFilter ?? '')
+  useEffect(() => {
+    if (pendingFilter == null) return
+    setFilterText(pendingFilter)
+    setPendingPageBrowserFilter(null)
+  }, [pendingFilter, setPendingPageBrowserFilter])
   const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
   const { starredIds, isStarred, toggle: toggleStar } = useStarredPages()
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')

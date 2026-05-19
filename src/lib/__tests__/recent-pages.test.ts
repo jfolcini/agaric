@@ -13,7 +13,13 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { __resetMigrationFlagForTests, addRecentPage, getRecentPages } from '../recent-pages'
+import {
+  __resetMigrationFlagForTests,
+  addRecentPage,
+  getRecentPages,
+  removeRecentPage,
+  togglePinRecentPage,
+} from '../recent-pages'
 
 // Per FEAT-3 Phase 3 the key is namespaced by the active space. Tests run
 // with `useSpaceStore.currentSpaceId == null`, so the active-space slot is
@@ -273,6 +279,95 @@ describe('recent-pages', () => {
       } finally {
         Storage.prototype.getItem = orig
       }
+    })
+  })
+
+  describe('pinning (PEND-67 Phase 4)', () => {
+    it('togglePinRecentPage flips an existing entry to pinned', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      expect(togglePinRecentPage('PAGE_A')).toBe(true)
+      const first = getRecentPages()[0]
+      expect(first?.id).toBe('PAGE_A')
+      expect(first?.pinned).toBe(true)
+    })
+
+    it('togglePinRecentPage returns null for an unknown id', () => {
+      expect(togglePinRecentPage('PAGE_GHOST')).toBeNull()
+    })
+
+    it('pinned entries sort before unpinned entries', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      addRecentPage('PAGE_B', 'Bravo')
+      addRecentPage('PAGE_C', 'Charlie')
+      // Pin the OLDEST entry; it should jump to position 0.
+      togglePinRecentPage('PAGE_A')
+      expect(getRecentPages().map((p) => p.id)).toEqual(['PAGE_A', 'PAGE_C', 'PAGE_B'])
+    })
+
+    it('unpinning re-stamps visitedAt to now (so the entry lands at top of the unpinned partition)', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      togglePinRecentPage('PAGE_A')
+      // Add another entry so unpinning has somewhere to slot in.
+      addRecentPage('PAGE_B', 'Bravo')
+      expect(getRecentPages().map((p) => p.id)).toEqual(['PAGE_A', 'PAGE_B'])
+
+      togglePinRecentPage('PAGE_A')
+      // PAGE_A is unpinned now; its re-stamped visitedAt puts it at
+      // the top of the unpinned partition (before PAGE_B which was
+      // added earlier in real wall time).
+      const result = getRecentPages()
+      expect(result[0]?.pinned).toBeUndefined()
+      expect(result.map((p) => p.id)).toEqual(['PAGE_A', 'PAGE_B'])
+    })
+
+    it('pinned entries are not counted against the MAX_RECENT cap', () => {
+      // Add 3 pinned + (MAX_RECENT + 5) unpinned entries.
+      for (let i = 0; i < 3; i++) {
+        addRecentPage(`PINNED_${i}`, `Pinned ${i}`)
+        togglePinRecentPage(`PINNED_${i}`)
+      }
+      for (let i = 0; i < MAX_RECENT + 5; i++) {
+        addRecentPage(`UNPINNED_${i}`, `Unpinned ${i}`)
+      }
+      const result = getRecentPages()
+      // All 3 pinned entries are retained.
+      const pinned = result.filter((p) => p.pinned === true)
+      expect(pinned.length).toBe(3)
+      // Unpinned is capped at MAX_RECENT.
+      const unpinned = result.filter((p) => p.pinned !== true)
+      expect(unpinned.length).toBe(MAX_RECENT)
+    })
+
+    it('re-adding a pinned page preserves the pinned flag', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      togglePinRecentPage('PAGE_A')
+      addRecentPage('PAGE_A', 'Alpha (updated title)')
+      const result = getRecentPages()
+      expect(result[0]?.id).toBe('PAGE_A')
+      expect(result[0]?.pinned).toBe(true)
+      expect(result[0]?.title).toBe('Alpha (updated title)')
+    })
+  })
+
+  describe('removeRecentPage (PEND-67 Phase 5 follow-up)', () => {
+    it('removes a matching entry and returns true', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      addRecentPage('PAGE_B', 'Bravo')
+      expect(removeRecentPage('PAGE_A')).toBe(true)
+      expect(getRecentPages().map((p) => p.id)).toEqual(['PAGE_B'])
+    })
+
+    it('returns false when the id is not present', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      expect(removeRecentPage('PAGE_GHOST')).toBe(false)
+      expect(getRecentPages().map((p) => p.id)).toEqual(['PAGE_A'])
+    })
+
+    it('removes a pinned entry too (pin status does not block removal)', () => {
+      addRecentPage('PAGE_A', 'Alpha')
+      togglePinRecentPage('PAGE_A')
+      expect(removeRecentPage('PAGE_A')).toBe(true)
+      expect(getRecentPages()).toEqual([])
     })
   })
 })

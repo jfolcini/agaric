@@ -920,6 +920,45 @@ export const HANDLERS: Record<string, Handler> = {
     return { items, next_cursor: null, has_more: false }
   },
 
+  search_blocks_partitioned: (args) => {
+    // PEND-61 Phase 1 — partitions a single content-fold over `blocks`
+    // into `pages` (block_type='page') and `blocks` (unrestricted). The
+    // real backend caps each partition independently from one FTS scan;
+    // the mock mirrors that wire shape on a folded-substring filter.
+    const a = args as Record<string, unknown>
+    const query = (a['query'] as string) ?? ''
+    const pageLimit = (a['pageLimit'] as number) ?? 0
+    const blockLimit = (a['blockLimit'] as number) ?? 0
+    const empty = { items: [], next_cursor: null, has_more: false }
+    if (!query) return { pages: empty, blocks: empty }
+
+    const matching = [...blocks.values()].filter(
+      (b) =>
+        !(b['deleted_at'] as string | null) &&
+        matchesSearchFolded((b['content'] as string) ?? '', query),
+    )
+
+    const pagesAll = matching.filter((b) => (b['block_type'] as string) === 'page')
+    const pagesItems = pagesAll.slice(0, pageLimit)
+    const blocksItems = matching.slice(0, blockLimit)
+
+    return {
+      pages: {
+        items: pagesItems,
+        next_cursor: null,
+        has_more: pageLimit > 0 && pagesItems.length === pageLimit && pagesAll.length > pageLimit,
+        total_count: null,
+      },
+      blocks: {
+        items: blocksItems,
+        next_cursor: null,
+        has_more:
+          blockLimit > 0 && blocksItems.length === blockLimit && matching.length > blockLimit,
+        total_count: null,
+      },
+    }
+  },
+
   get_status: () => {
     return {
       foreground_queue_depth: 0,

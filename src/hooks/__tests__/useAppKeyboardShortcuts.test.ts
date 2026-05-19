@@ -95,6 +95,55 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     expect(useNavigationStore.getState().currentView).toBe('search')
   })
 
+  it('Ctrl+. (runLastCommand) runs the most recent palette command directly (PEND-67 Phase 8)', async () => {
+    // Seed a previously-run command under the active space.
+    localStorage.setItem(
+      'recent_commands:SPACE_PERSONAL',
+      JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
+    )
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    fireEvent.keyDown(window, { key: '.', ctrlKey: true })
+
+    // The command ran without opening the palette dialog.
+    expect(useNavigationStore.getState().currentView).toBe('settings')
+    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+    // The id stays at position 0 (consecutive Cmd+. keeps running it).
+    const recents = JSON.parse(localStorage.getItem('recent_commands:SPACE_PERSONAL') ?? '[]')
+    expect(recents[0]?.id).toBe('go-settings')
+  })
+
+  it('Ctrl+. with no recent commands opens the palette in commands mode (PEND-67 Phase 8)', async () => {
+    localStorage.removeItem('recent_commands:SPACE_PERSONAL')
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    fireEvent.keyDown(window, { key: '.', ctrlKey: true })
+
+    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    expect(useCommandPaletteStore.getState().open).toBe(true)
+    expect(useCommandPaletteStore.getState().mode).toBe('commands')
+  })
+
+  it('Ctrl+. skips when typing in an input (PEND-67 Phase 8)', async () => {
+    localStorage.setItem(
+      'recent_commands:SPACE_PERSONAL',
+      JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
+    )
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    try {
+      const navBefore = useNavigationStore.getState().currentView
+      fireEvent.keyDown(input, { key: '.', ctrlKey: true })
+      // Field-typing gate fires — view does not change.
+      expect(useNavigationStore.getState().currentView).toBe(navBefore)
+    } finally {
+      input.remove()
+    }
+  })
+
   it('Ctrl+N (createNewPage) routes through createPageInSpace and navigates', async () => {
     const { createPageInSpace } = await import('../../lib/tauri')
     const mockedCreate = vi.mocked(createPageInSpace)

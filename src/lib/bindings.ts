@@ -117,6 +117,20 @@ export const commands = {
 	 *  [`ExtraQueryFilters`] precedent on [`query_by_property`].
 	 */
 	searchBlocks: (query: string, cursor: string | null, limit: number | null, filter: SearchFilter) => typedError<PageResponse<SearchBlockRow>, AppError>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, filter })),
+	/**
+	 *  Tauri command: PEND-61 partitioned full-text search. Returns two
+	 *  partitions of the same FTS scan (pages-only + unrestricted) in a
+	 *  single round-trip, replacing the palette's two parallel
+	 *  [`search_blocks`] calls.
+	 *
+	 *  `filter.block_type_filter` is **ignored** by this command — the
+	 *  partitioning IS the block-type split. The field stays on the wire
+	 *  for [`SearchFilter`] compat.
+	 *
+	 *  See [`search_blocks_partitioned_inner`] for the partition + `has_more`
+	 *  contract.
+	 */
+	searchBlocksPartitioned: (query: string, pageLimit: number, blockLimit: number, filter: SearchFilter) => typedError<PartitionedSearchResponse, AppError>(__TAURI_INVOKE("search_blocks_partitioned", { query, pageLimit, blockLimit, filter })),
 	/**  Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`]. */
 	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope, blockType })),
 	/**
@@ -1369,6 +1383,35 @@ export type PageResponse<T> = {
 export type PairingInfo = {
 	passphrase: string,
 	qr_svg: string,
+};
+
+/**
+ *  Response envelope for [`search_blocks_partitioned`].
+ *
+ *  Carries two partitions of the same FTS scan in one IPC round-trip:
+ *
+ *  - `pages` — rows where `block_type == "page"`, capped at the
+ *    caller's `page_limit`.
+ *  - `blocks` — the **unrestricted** rank-ordered set (may include
+ *    page-typed rows alongside content), capped at the caller's
+ *    `block_limit`. The palette intentionally shows both together in
+ *    this partition; the dedicated `pages` partition is for the
+ *    page-group rendering.
+ *
+ *  Neither partition emits a cursor (the palette doesn't paginate) and
+ *  `total_count` is always `None`. The `has_more` flag is set per
+ *  partition — see [`search_blocks_partitioned`] for the exact
+ *  semantics.
+ */
+export type PartitionedSearchResponse = {
+	/**  Rows with `block_type = 'page'`, capped at `page_limit`. */
+	pages: PageResponse<SearchBlockRow>,
+	/**
+	 *  Unrestricted rank-ordered rows (any `block_type`), capped at
+	 *  `block_limit`. May overlap with [`Self::pages`] — the palette
+	 *  merges them client-side.
+	 */
+	blocks: PageResponse<SearchBlockRow>,
 };
 
 /**  A row from the `peer_refs` table representing a remote sync peer. */

@@ -266,4 +266,71 @@ export const references: Record<string, string> = {
   'palette.groupMatchesLabel': 'Matches in {{pageTitle}}',
   'palette.moreInThisPage_one': '+{{count}} more in this page',
   'palette.moreInThisPage_other': '+{{count}} more in this page',
+  // PEND-61 — multi-mode palette (search + commands).
+  //
+  // PEND-61 CR — `palette.empty` was the catch-all for both the cold-
+  // open welcome state and "no results for typed query". Split into
+  // `palette.welcomeEmpty` (no query, no recents) + `palette.noResults`
+  // (non-empty query, zero matches) so each surface carries the right
+  // copy.
+  'palette.welcomeEmpty': 'Type to search pages, blocks, or [[ to link. Press > for commands.',
+  'palette.noResults': 'No matches for “{{query}}”. Try the escalation below.',
+  // PEND-61 CR-2 — footer hint split into per-chord strings so each
+  // chord renders as a `<kbd>` chip in the visible UI. Concatenating
+  // the chord + label inside one string would put the kbd icon in
+  // user-facing translation, which is fragile.
+  'palette.footerHintOpen': 'open',
+  'palette.footerHintNewTab': 'new tab',
+  'palette.footerHintClose': 'close',
+  'palette.searching': 'Searching…',
+  'palette.commandsPlaceholder': 'Run a command…',
+  'palette.modeSearch': 'Search',
+  'palette.modeCommands': 'Commands',
+  'palette.modeChipLabel': 'Switch palette mode (current: {{mode}})',
+  'palette.cmdGroupNavigate': 'Navigate',
+  'palette.cmdGroupAction': 'Actions',
+  'palette.cmdGoPages': 'Open Pages view',
+  'palette.cmdGoTags': 'Open Tags view',
+  'palette.cmdGoTrash': 'Open Trash',
+  'palette.cmdGoHistory': 'Open History',
+  'palette.cmdGoSettings': 'Open Settings',
+  'palette.cmdSearchEverywhere': 'Search across all pages…',
+  'palette.commandsEmpty': 'No commands match — clear the input to see all.',
+  // PEND-67 Phase 2 — recent commands strip rendered above Navigate/Actions
+  // when the commands-mode filter is empty.
+  'palette.recentCommandsTitle': 'Recent',
+  // PEND-67 Phase 3 — `#` (tags) and `?` (help) prefix modes.
+  'palette.modeTags': 'Tags',
+  'palette.modeHelp': 'Help',
+  // Compact hint showing the prefix vocabulary on the search-mode chip
+  // row. With three prefixes the long form ("Type > for commands")
+  // doesn't fit; we abbreviate to the glyphs.
+  'palette.modeHint': '> commands · # tags · ? help',
+  // Hint shown when the user is INSIDE a non-search mode — the chip
+  // is the way back.
+  'palette.modeBackHint': 'Click chip to return to search',
+  // Tags mode placeholder + status messages.
+  'palette.tagsTitle': 'Tags',
+  'palette.tagsWelcomeEmpty': 'Type to filter tags. Enter opens the tag in Search.',
+  'palette.tagsNoResults': 'No tags match.',
+  'palette.tagsUnnamed': '(unnamed)',
+  // Help mode placeholder.
+  'palette.helpEmpty': 'No shortcuts match the filter.',
+  // PEND-67 Phase 4 — pin / unpin affordance on the recents rows.
+  'palette.pinRecent': 'Pin {{title}} to recents',
+  'palette.unpinRecent': 'Unpin {{title}} from recents',
+  // PEND-67 Phase 5 — per-row action menu labels.
+  'palette.actionOpen': 'Open',
+  'palette.actionOpenPage': 'Open page',
+  'palette.actionOpenNewTab': 'Open in new tab',
+  'palette.actionPin': 'Pin to recents',
+  'palette.actionUnpin': 'Unpin from recents',
+  // PEND-67 Phase 5 follow-up — expanded action sets.
+  'palette.actionReveal': 'Reveal in Pages view',
+  'palette.actionCopyId': 'Copy page ULID',
+  'palette.actionCopyBlockLink': 'Copy block link',
+  'palette.actionRemoveFromRecents': 'Remove from recents',
+  'palette.copyIdSuccess': 'ULID copied to clipboard',
+  'palette.copyLinkSuccess': 'Block link copied to clipboard',
+  'palette.copyFailed': 'Could not access clipboard',
 }

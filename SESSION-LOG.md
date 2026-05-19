@@ -2,10 +2,126 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 785 (latest entry 2026-05-18).
+- **This file:** sessions 401 – 787 (latest entry 2026-05-19).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1214+ REVIEW-LATER items across 785 sessions.
+- **Previously-resolved counter:** 1214+ REVIEW-LATER items across 787 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 787 — PEND-67 phases 3, 4, 5, 8 (final batch) (2026-05-19)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-19 |
+| **Subagents** | orchestrator-only (same file-overlap reasoning as session 786) |
+| **Items closed** | PEND-67 (all 8 phases shipped; plan file deleted from `pending/`) |
+| **Items modified** | `pending/README.md` (PEND-67 row removed; suggested-order copy updated to drop PEND-67) |
+| **Tests added** | +28 frontend (5 Phase 3 prefix routing + 8 Phase 4 pinning + 3 Phase 8 hook + 6 Phase 5 action menu, net of overlapping fixtures) |
+| **Files touched** | 11 |
+
+**Summary:** Closed PEND-67 by shipping the four remaining phases (3 / 4 / 5 / 8) in commit order 3 → 8 → 4 → 5. Each one passed prek and lives on its own commit (per the plan's acceptance criteria of "phases land as separate commits").
+
+- **Phase 3** — `#` (tags) and `?` (help) prefix modes joining `>` (commands) and `[[` (page link). `#<query>` fires `searchBlocks({ blockTypeFilter: 'tag' })` and selecting a tag escalates to find-in-files seeded by `tag:#<name>` (PEND-54 filter syntax). `?<query>` renders `getCurrentShortcuts()` grouped by category using the shared `renderKeys` helper (so the chord layout matches the standalone KeyboardShortcuts dialog and handles `/`-alternatives the glyph-only `ShortcutChips` does not). `PaletteMode` enum gained `'tags'` + `'help'`; `queryByMode` extends to all 8 values so Phase 6 memory works for the new modes. Mode-chip semantics changed from a 2-mode toggle to single-step exit (deviates from the plan's literal "cycle" text per its open question 1 — a 4-mode cycle would force 3 clicks to escape help).
+- **Phase 8** — `runLastCommand` global shortcut (`Ctrl+.` / `Cmd+.`) re-runs the most recent palette command without mounting the dialog (Raycast parity). Refactor preceded the wire-up: commands registry extracted from `CommandPalette.tsx`'s in-component `useMemo` into `src/lib/palette-commands.ts`. `getPaletteCommand(id)` is the hook's lookup; stale ids fall through to opening the palette in commands mode. Chord shares `Ctrl + .` with the editor's `collapseExpand` documentation entry but global handler skips when typing in a field.
+- **Phase 4** — pinned recents. `RecentPage` gained an optional `pinned?: boolean`; `getRecentPages()` returns pinned-first (in pin order) then unpinned (MRU); cap applies only to the unpinned partition. `togglePinRecentPage(id)` is the new toggle. Unpinning re-stamps `visitedAt` to "now" so the entry lands at the top of the unpinned partition. UI: pinned rows swap the leading `Clock` glyph for a filled `Pin`; a `Pin` button at row-right toggles state (always-visible for pinned rows, hover/focus for unpinned). The button stops propagation on click + pointerdown so the row's onSelect does not also navigate.
+- **Phase 5** — Tab-opens action menu. New `PaletteActionMenu` component (hand-rolled rather than Radix DropdownMenu — controlled-anchor glue would have been longer than the menu itself). Action sets: recent → Open / Open in new tab / Pin or Unpin; page → Open / Open in new tab; block → Open page / Open in new tab. Other row types skip the Tab affordance for v1. Key implementation detail: Radix `useEscapeKeydown` listens at `document` with `capture: true`, so it fires BEFORE the menu's React bubble-phase handler — we intercept via the dialog's `onEscapeKeyDown` prop and `preventDefault` when the menu owns Escape. PaletteBody mirrors its open state into an `actionMenuOpenRef` so the outer wrapper can read it. Tab branch and Phase 7's numeric branch were extracted into `tryOpenActionMenuOnTab` / `tryNumericPrefixJump` helpers to keep `handleListKeyDown` under Biome's cognitive-complexity budget (≤ 25).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count:** unchanged.
+- **Previously resolved:** 1214+ across 786 → 787 sessions.
+
+**Files touched (this session):**
+
+- `src/components/CommandPalette.tsx` (Tab/numeric branches extracted, 4 mode bodies wired, registry consumes `PALETTE_COMMANDS`, pin button + filled-pin indicator on recent rows, action-menu state + Escape interception ref)
+- `src/components/__tests__/CommandPalette.test.tsx` (+22 tests across the four phases)
+- `src/components/palette/PaletteActionMenu.tsx` (new component, ~145 LOC)
+- `src/stores/useCommandPaletteStore.ts` (PaletteMode enum + queryByMode extended to 8 values)
+- `src/stores/__tests__/useCommandPaletteStore.test.ts` (queryByMode init for new modes)
+- `src/lib/recent-pages.ts` (+pinned field, +togglePinRecentPage, partition-aware cap)
+- `src/lib/__tests__/recent-pages.test.ts` (+6 pinning tests)
+- `src/lib/palette-commands.ts` (new, extracted registry)
+- `src/lib/keyboard-config/catalog.ts` (+runLastCommand binding)
+- `src/lib/i18n/references.ts` (+10 palette.* strings for the new modes / actions)
+- `src/lib/i18n/shortcuts.ts` (+keyboard.runLastCommand)
+- `src/lib/i18n/common.ts` (+announce.ranLastCommand)
+- `src/hooks/useAppKeyboardShortcuts.ts` (runLastCommand branch in global handler)
+- `src/hooks/__tests__/useAppKeyboardShortcuts.test.ts` (+3 Phase 8 tests)
+- `pending/PEND-67-palette-power-user-polish.md` (deleted — convention is to remove plans on completion)
+- `pending/README.md` (PEND-67 row removed; suggested-order copy updated)
+
+**Verification:**
+
+- `npx vitest run src/components/__tests__/CommandPalette.test.tsx src/stores/__tests__/useCommandPaletteStore.test.ts src/lib/__tests__/recent-pages.test.ts src/lib/__tests__/recent-commands.test.ts src/hooks/__tests__/useAppKeyboardShortcuts.test.ts` — 127 tests passing.
+- `prek run --all-files` — clean on every commit in this session.
+
+**Process notes:**
+
+- Two prek auto-fix retries this session: Phase 3 (import ordering + long-line formatting), Phase 5 (useIndexOf preference, length-comparison style). Auto-fixes were always safe; just had to re-stage and retry the commit. No behavioral changes required.
+- Phase 5's Radix Escape interception was the trickiest part: stopImmediatePropagation in React's bubble phase didn't work because Radix attaches at `document` with `{ capture: true }`. The right fix turned out to be Radix's own `onEscapeKeyDown` prop — preventDefault when the menu owns Escape.
+- Extracting `PALETTE_COMMANDS` (Phase 8 preparatory refactor) opened the door for Phase 5 too (action menu's "Open" action on a page row can reuse the same registry indirectly via the existing nav helpers).
+
+**Lessons learned (for future sessions):**
+
+- When attaching a keyboard handler in a portal/popover that lives inside a Radix dialog, check whether Radix's dismissal handlers (Escape, Outside-click) attach at the document level with capture. If so, plain React `stopPropagation` won't help — use Radix's `onEscapeKeyDown` / `onPointerDownOutside` props on the Content to intercept before Radix takes the default action.
+- When a `handleListKeyDown` accumulates 3+ branches with their own internal conditions, extract each branch into a `tryX(e)` helper that returns boolean (consumed/not). Keeps the dispatcher flat and under Biome's complexity budget.
+
+**Commit plan:** 4 commits on `pend-67-palette-polish` (phases 3 / 8 / 4 / 5) + 1 wrap-up commit (this entry); not pushed.
+
+---
+
+## Session 786 — PEND-61 squash forward + PEND-67 cheap-wins batch (2026-05-19)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-19 |
+| **Subagents** | orchestrator-only (all 4 PEND-67 phases overlap on `CommandPalette.tsx`; subagents would have hard-conflicted on the same file) |
+| **Items closed** | — (PEND-67 is partial; phases 1, 2, 6, 7 done; 3, 4, 5, 8 remain) |
+| **Items modified** | PEND-61 (squash-forwarded onto a fresh branch off main); PEND-67 (4/8 phases shipped); `pending/README.md` (PEND-61 row removed, PEND-67 status updated) |
+| **Tests added** | +21 frontend (10 lib `recent-commands` + 5 component recents integration + 4 store `queryByMode` + 3 component shortcut chips + 4 component numeric prefix; net of overlapping fixtures) / +0 backend |
+| **Files touched** | 10 (CommandPalette.tsx, CommandPalette.test.tsx, useCommandPaletteStore.ts, useCommandPaletteStore.test.ts, recent-commands.ts, recent-commands.test.ts, references.ts, pending/README.md, pending/PEND-67-…md, SESSION-LOG.md) |
+
+**Summary:** Branched fresh from origin/main as `pend-67-palette-polish`, squash-forwarded the unmerged PEND-61 work (5 commits on the abandoned `fix/playwright-binary-autoinstall` branch) into one combined commit, then layered the four cheap-wins phases of PEND-67 in commit order 2 → 6 → 1 → 7:
+
+- **Phase 2** — `Recent` commands strip rendered above Navigate/Actions in commands mode when the filter is empty. New `src/lib/recent-commands.ts` mirrors `recent-pages.ts` but is brand-new and space-scoped from day one (no legacy global key to migrate). MRU dedup, cap 5, silent quota tolerance, malformed-JSON tolerance. Each `c.run()` is wrapped to record the id before the handler closes the palette.
+- **Phase 6** — `queryByMode: Record<PaletteMode, string>` on `useCommandPaletteStore`; `setQuery` mirrors into the active slot; `setMode` restores the new mode's slot; `close()` resets the map. New action `enterModeWithQuery(next, q)` clears the outgoing slot atomically so the `>` prefix router doesn't infinite-loop on a chip-toggle back.
+- **Phase 1** — `ShortcutChips` reads `getShortcutKeys(shortcutId)` live so a rebind takes effect on the next render; `formatChordTokens` maps the catalog "Ctrl + Shift + F" string to glyph chips (⌃ ⇧ F). Wired `search-everywhere` → `focusSearch`.
+- **Phase 7** — `1`-`9` on an empty input fires the Nth `[cmdk-item]` via `.click()`. Trap-door guards: non-empty input → digit types through; modifier-decorated digits skipped; `0` no-op; query lookup scoped via `closest('[data-testid=command-palette]')`.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count:** unchanged (PEND-67 lives in `pending/`, not REVIEW-LATER).
+- **Previously resolved:** 1214+ across 785 → 786 sessions.
+
+**Files touched (this session):**
+
+- `src/components/CommandPalette.tsx` (+~170 LOC: ShortcutChips, Recent group, runWithTracking, numeric-prefix branch in handleListKeyDown; mode-router uses enterModeWithQuery; ModeChipRow drops the setQuery clear)
+- `src/components/__tests__/CommandPalette.test.tsx` (+12 tests covering all four phases)
+- `src/stores/useCommandPaletteStore.ts` (+ queryByMode, + enterModeWithQuery; setMode restores from slot; setQuery mirrors)
+- `src/stores/__tests__/useCommandPaletteStore.test.ts` (+4 tests for per-mode slot semantics)
+- `src/lib/recent-commands.ts` (new, ~60 LOC)
+- `src/lib/__tests__/recent-commands.test.ts` (new, 10 tests)
+- `src/lib/i18n/references.ts` (+ `palette.recentCommandsTitle`)
+- `pending/README.md` (PEND-61 removed, PEND-67 partial-shipped row, suggested-order copy updated)
+- `pending/PEND-67-palette-power-user-polish.md` (4 phase headers struck with commit hashes; new Status block at top)
+
+**Verification:**
+
+- `npx vitest run src/components/__tests__/CommandPalette.test.tsx src/stores/__tests__/useCommandPaletteStore.test.ts src/lib/__tests__/recent-commands.test.ts` — all green.
+- `prek run --all-files` — clean on every commit in this session.
+
+**Process notes:**
+
+- All 4 phases overlap on `CommandPalette.tsx`, so this was orchestrator-direct rather than parallel-subagent. Per PROMPT.md's "kitchen-sink refactors" guidance, file-boundary conflicts make subagent splits worse than serial execution here.
+- The PEND-61 squash hit one forward-port issue: PR #31's recent-pages refactor made the storage key space-scoped (`recent_pages:<spaceId>`). The CommandPalette test was seeding the old global key, so updated it to seed `recent_pages:SPACE_TEST`.
+- Phase 6's mode router needed a new store action because `setMode` + `setQuery` in sequence is not atomic — the intermediate state would re-fire the router on the `>` prefix and loop. `enterModeWithQuery` is the single-shot transition that clears the outgoing slot.
+
+**Lessons learned (for future sessions):**
+
+- When extending an action that mutates state shared with a `useEffect` watcher, check the watcher's deps for a possible re-trigger loop. A single combined action sidesteps the React batching question entirely.
+
+**Commit plan:** 6 commits on `pend-67-palette-polish` (PEND-61 squash + PEND-67 plan + 4 phase commits); not pushed.
+
+---
 
 ## Session 785 — PEND-60 Phase 3 e2e + docs + UX polish (2026-05-18)
 

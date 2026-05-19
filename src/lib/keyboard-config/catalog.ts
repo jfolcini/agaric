@@ -360,6 +360,21 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.closeOverlays',
   },
+  // PEND-67 Phase 8 — re-run the most recently invoked palette command
+  // without opening the dialog. Mirrors Raycast's `⌘.` shortcut. When
+  // there is no recent command yet the binding falls through to
+  // opening the palette in commands mode (see `useAppKeyboardShortcuts`).
+  //
+  // Same chord as the editor's `collapseExpand` documentation entry,
+  // but that one is TipTap-handled inside the editor and gated on focus;
+  // this one is gated on NOT typing in a field, so the two never fire
+  // together.
+  {
+    id: 'runLastCommand',
+    keys: 'Ctrl + .',
+    category: 'keyboard.category.global',
+    description: 'keyboard.runLastCommand',
+  },
 
   // Graph View (BUG-18): zoom controls previously hardcoded in GraphView.tsx
   {
