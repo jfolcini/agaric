@@ -459,15 +459,38 @@ describe('SearchSheet', () => {
     }
   })
 
-  // Note: the segment-switch seed → IPC-fire path is documented as a
-  // known minor UX gap in pending/PEND-72-search-seed-ipc-sync.md. The
-  // `useState` initializer in PaletteBody only covers the case where
-  // the palette mounts AFTER the bridge has set the seed (e.g., Cmd+K
-  // opens with a pre-existing store query). Segment-switch races the
-  // bridge's setQuery vs PaletteBody's mount and the seed lands too
-  // late for the useState init. Fix needs a user-vs-external query-
-  // change distinction in PaletteBody; tracked separately to keep
-  // PEND-62 frontend-clean.
+  it('fires the partitioned IPC on segment-switch seed (no extra keystroke needed)', async () => {
+    const user = userEvent.setup()
+    const host = makeHost()
+    useSearchSheetStore.getState().open$('in-page')
+    try {
+      render(<SearchSheet />)
+      await waitFor(() => {
+        expect(useInPageFindStore.getState().open).toBe(true)
+      })
+      // Seed the bridge by writing to the find store; the bridge
+      // mirrors into useSearchSheetStore.query.
+      useInPageFindStore.getState().setQuery('beta')
+      await waitFor(() => {
+        expect(useSearchSheetStore.getState().query).toBe('beta')
+      })
+      // Reset the mock so the previous (empty-query) calls don't
+      // pollute the assertion below.
+      mockedSearchBlocksPartitioned.mockClear()
+      // Switch to all-pages — PaletteBody mounts; the bridge seeds
+      // the palette store; PaletteBody's external-query sync effect
+      // (PEND-72) drives `debouncedQuery` immediately so the IPC
+      // fires for the seeded value.
+      await user.click(screen.getByTestId('search-sheet-segment-all-pages'))
+      await waitFor(() => {
+        expect(mockedSearchBlocksPartitioned).toHaveBeenCalled()
+        const firstCall = mockedSearchBlocksPartitioned.mock.calls[0]?.[0]
+        expect(firstCall?.query).toBe('beta')
+      })
+    } finally {
+      host.remove()
+    }
+  })
 
   // ─────────────────────────────────────────────────────────────────
   // Accessibility

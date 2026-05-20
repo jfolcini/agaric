@@ -20,7 +20,6 @@
 | PEND-69 | **Search partition correctness + post-fetch filter pushdown.** Two-scan partitioned search so the `pages` partition never gets starved by content-heavy hits; push `block_type` into SQL in regex mode; skip server-side `snippet()` when downstream code discards it. | M (~6-10 h) | scoped; 3 P0/P1 findings + 4 new tests |
 | PEND-70 | **Server-side cancellation + slow-query logging for search.** Wire `tokio::sync::watch` cancellation through `fts_fetch_rows`; instrument the read-pool acquire and the FTS query timing. | M (~5-7 h) | scoped; 4 new tests |
 | PEND-71 | **Search backend test coverage matrix.** Adds 10 missing tests across concurrent IPC, pathological queries, empty / giant space, and boolean+toggle combinatorial paths. Unblocks confidence in PEND-69 / PEND-70 refactors. | S-M (~4-6 h) | scoped; 10 test cases listed |
-| PEND-72 | **Segment-switch seed → palette IPC sync.** Closes the visible UX gap where switching from in-page → all-pages with a query pre-fills the palette input but doesn't fire the IPC until the user types another character. ~10 LOC + 2 tests. | XS (~1-2 h) | scoped; 2 open Qs answered |
 | design-system-perf-review-2026-05-09 | Tier 1.3 (lazy-load the TipTap stack from JournalPage's static path) + Tier 2.6 follow-up (windowing for BlockListRenderer + BlockTree). | M-L | two open items |
 
 Single-task plans live in `REVIEW-LATER.md` instead of as standalone files.

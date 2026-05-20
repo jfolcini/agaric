@@ -379,7 +379,18 @@ export function PaletteBody({
     setDebouncedQuery(value)
   }, PALETTE_DEBOUNCE_MS)
 
+  // PEND-72 — distinguish user-initiated query changes (which should
+  // respect the 80 ms debounce above) from external writes to the
+  // store (e.g. the mobile search sheet's bridge seeding the palette
+  // on segment switch). The ref is updated synchronously inside
+  // `handleInputChange`, so the sync effect below sees `query ===
+  // lastUserQueryRef.current` and short-circuits for the typing
+  // path. External writes leave the ref stale → the effect fires
+  // `setDebouncedQuery` immediately so the IPC fires for the seed.
+  const lastUserQueryRef = useRef(query)
+
   function handleInputChange(value: string) {
+    lastUserQueryRef.current = value
     setQueryStore(value)
     debounced.cancel()
     const trimmed = value.trim()
@@ -389,6 +400,20 @@ export function PaletteBody({
     }
     debounced.schedule(trimmed)
   }
+
+  // PEND-72 — sync `debouncedQuery` whenever `query` changes from
+  // outside the input handler. The equality check vs
+  // `lastUserQueryRef.current` skips the user-typing path (which
+  // routes through `handleInputChange` and manages its own
+  // debounced schedule).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `lastUserQueryRef`, `debounced` are stable refs/callbacks; including them would re-fire the effect spuriously.
+  useEffect(() => {
+    if (query === lastUserQueryRef.current) return
+    lastUserQueryRef.current = query
+    debounced.cancel()
+    const trimmed = query.trim()
+    setDebouncedQuery(trimmed.length === 0 || isCommandsModeInput(trimmed) ? '' : trimmed)
+  }, [query])
 
   // Stale-response generation counter — mirrors `usePaginatedQuery` /
   // PEND-51's same guard. Re-bumped on every keystroke; an in-flight
