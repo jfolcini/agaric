@@ -141,7 +141,18 @@ export function AutocompletePopover({
     lastEmittedKeyRef.current = key
     onAriaIdsChange({ listboxId: listbox.id, activeDescendantId: activeId })
   }, [onAriaIdsChange])
-  // Run after every commit so the ids reflect the freshly-rendered DOM.
+  // PEND-73 Phase 4.M7 — investigated removing this no-deps post-commit
+  // effect as "redundant with the SelectedItemBridge below". It is NOT
+  // redundant: the bridge fires from INSIDE `<Command>` (a child of
+  // PopoverContent), whose first effect runs before the listbox's DOM
+  // id is queryable from the contentRef root in some commit orderings.
+  // The parent-component no-deps effect runs after the full commit
+  // tree has mounted, capturing the initial listbox id reliably. The
+  // `lastEmittedKeyRef` gate inside `syncAriaIds` keeps this cheap on
+  // subsequent commits (re-emits only when the key actually changes).
+  // Verified by the SearchPanel.autocomplete.test.tsx "wires ARIA
+  // combobox attrs and updates aria-activedescendant" test — removing
+  // this effect makes that assertion fail.
   useEffect(() => {
     syncAriaIds()
   })

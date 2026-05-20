@@ -22,8 +22,9 @@
  * `./SearchPanel/`:
  *  - `SearchHeader.tsx` owns the input form + activity indicators.
  *  - `SearchFilters.tsx` owns the filter chip bar + popovers.
- *  - `SearchResultList.tsx` owns the listbox of result rows.
  *  - `SearchStatusRegion.tsx` owns the aria-live status announcer.
+ *  - The result listbox now lives in `./search/SearchResultGroups.tsx`
+ *    (PEND-73 Phase 4.M4 removed the stub `SearchResultList.tsx`).
  */
 
 import { Search } from 'lucide-react'
@@ -43,7 +44,6 @@ import {
   parse,
   removeFilterAt,
   serialize,
-  tokenKey,
 } from '@/lib/search-query'
 import {
   type AutocompleteAnchor,
@@ -448,6 +448,22 @@ export function SearchPanel(): React.ReactElement {
       .then((resolved) => {
         if (Array.isArray(resolved)) {
           setPageTitles((prev) => {
+            // PEND-73 Phase 4.P2 — stabilise Map identity so the
+            // `groupResultsByPage` memo doesn't invalidate on every
+            // batchResolve fetch. Walk the resolved array; only
+            // allocate a new Map if at least one (id → title) pair
+            // changed vs. what we already had. Common case (results
+            // refetch with the same parent ids) returns `prev` and
+            // the downstream useMemo skips its expensive group/rank.
+            let changed = false
+            for (const r of resolved) {
+              const nextTitle = r.title ?? 'Untitled'
+              if (prev.get(r.id) !== nextTitle) {
+                changed = true
+                break
+              }
+            }
+            if (!changed) return prev
             const next = new Map(prev)
             for (const r of resolved) {
               next.set(r.id, r.title ?? 'Untitled')
@@ -850,8 +866,6 @@ export function SearchPanel(): React.ReactElement {
     const token: FilterToken = { kind: 'pathExclude', value: glob, span: [0, 0] }
     patchQuery((a) => addFilter(a, token))
   }
-  // Stable key — used by callers that want the same chip-key strategy.
-  void tokenKey
 
   // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so
   // we never fire a `searchBlocks` call with an unresolved `spaceId`.

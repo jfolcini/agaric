@@ -2,10 +2,59 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 791 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 792 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1226+ REVIEW-LATER items across 791 sessions.
+- **Previously-resolved counter:** 1232+ REVIEW-LATER items across 792 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 792 — PEND-73 Phase 4: maintenance + perf (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 M4, M5, R1, P1, P2 (5 of 9) |
+| **Items modified** | PEND-73 — M7 investigated & kept (NOT redundant; documented why); M3 / M6 / R2 DEFERRED with rationale |
+| **Tests added** | 0 (delta from existing) |
+| **Files touched** | 6 |
+
+**Summary:** Closed five of Phase 4's nine items as the "actually saves CPU / actually deletes dead code" subset. Three deferred with rationale; one investigated and discovered to be load-bearing (the M7 effect kept and documented).
+
+- **M4** — `git rm src/components/SearchPanel/SearchResultList.tsx` (88 LOC, zero importers since SearchResultGroups took over). SearchPanel module docstring updated to point at `./search/SearchResultGroups.tsx` as the listbox owner.
+- **M5** — `void tokenKey` statement deleted from SearchPanel.tsx + the unused `tokenKey` import deleted from the `@/lib/search-query` named-import group.
+- **R1** — `src/stores/search-history.ts` persist config gains `migrate: (persisted, _version) => persisted as Pick<SearchHistoryState, 'bySpace'>`. No-op placeholder that locks the contract: a future `version: 2` bump MUST replace this with a real migration. Without it, zustand's persist middleware silently wipes the persisted state on a version mismatch and the user loses their MRU history.
+- **P1** — `SearchResultBlockRow` wrapped with `memo(Impl, comparator)`. Custom comparator intentionally ignores the parent's fresh-closure `onClick` (the closure's effect is invariant given the same `row` — the captured block is the row, and `onResultClick` is the parent's stable handler). Comparator picks up `row.id` + `row.content` + `row.snippet` + `row.match_offsets` + `isFocused` + `loading` + `id`. Parent `SearchResultGroups` re-renders on every focus move; with memo, only the two rows whose `isFocused` flipped re-run `useMemo` + re-emit `<mark>` highlights.
+- **P2** — `setPageTitles((prev) => …)` now walks the resolved array and returns `prev` unchanged if every (id → title) pair is already in the Map. Common case (results refetch with the same parents) returns the same identity, so the downstream `groupResultsByPage` memo skips its expensive group/rank/cap pipeline.
+
+**M7 investigation outcome.** The PEND-73 plan called the no-deps `useEffect(() => syncAriaIds())` in AutocompletePopover.tsx "redundant with SelectedItemBridge". Removing it broke the `SearchPanel.autocomplete.test.tsx "wires ARIA combobox attrs and updates aria-activedescendant"` assertion. The bridge fires from INSIDE `<Command>` (a child of PopoverContent), whose first effect can run before the listbox DOM id is queryable from the contentRef root. The parent's post-commit effect runs after the full commit tree has mounted, capturing the initial listbox id reliably. Kept the effect; replaced its comment with the investigation rationale + the test reference.
+
+**Why M3 / M6 / R2 are deferred:**
+
+- **M3 (useGenerationGuard hook)** — Plan acknowledged the IPC sites become vestigial once Phase 2's AbortController lands. Phase 2 deferred R4. Net wash now; revisit alongside orchestrator decomposition.
+- **M6 (useShallow palette selectors)** — Touches the 1763-LOC CommandPalette orchestrator; defer with the decomposition PEND.
+- **R2 (bridge epoch counter)** — Defensive only against a future writer that doesn't exist. YAGNI.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Phase 4's 9 rows now: 5 SHIPPED, 1 KEPT-with-rationale, 3 DEFERRED.
+- **Previously resolved:** 1226+ → 1232+ across 791 → 792 sessions.
+
+**Files touched (this session):**
+- `src/components/SearchPanel/SearchResultList.tsx` (deleted, −88)
+- `src/components/SearchPanel.tsx` (−7; tokenKey import + void statement + docstring update)
+- `src/stores/search-history.ts` (+7; migrate placeholder)
+- `src/components/search/SearchResultBlockRow.tsx` (+21 / −1; memo + comparator)
+- `src/components/search/AutocompletePopover.tsx` (+12 / −1; M7 explanatory comment)
+- `pending/PEND-73-search-audit-followups.md` (Phase 4 TL;DR + 5 SHIPPED rows + 1 KEPT + 3 DEFERRED)
+
+**Verification:**
+- `npx vitest run` — 10293 / 10293 pass.
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** M7 was the only item that the plan got wrong. The "redundant" claim was a planning-time hypothesis that didn't survive contact with the test contract. Documenting that explicitly in the source comment keeps a future contributor from removing it again.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 791 — PEND-73 Phase 3: UX punch list (cheap-wins batch) (2026-05-20)
 
