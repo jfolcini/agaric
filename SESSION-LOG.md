@@ -2,10 +2,46 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 797 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 798 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1243+ REVIEW-LATER items across 797 sessions.
+- **Previously-resolved counter:** 1244+ REVIEW-LATER items across 798 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 798 — PEND-73 deferred cycle 5: R4 AbortController plumbing (library shape) (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 R4 (AbortController plumbing — library shape) |
+| **Tests added** | +7 frontend (`cancelledError` + `withAbort` resolve/reject/already-aborted/mid-flight/undefined-signal/predicate matrix) |
+| **Files touched** | 3 |
+
+**Summary:** Shipped R4 as a library shape rather than a forced consumer migration. The rejected value from `withAbort` flows through `isCancellation()` cleanly because both use the same `{ kind: 'cancelled', message }` wire shape the backend emits.
+
+- **`cancelledError(reason)`** — Returns the same `AppError` shape `AppError::Cancelled` serialises to. Lets the new client-side abort path discriminate via the same predicate that the server-side path uses.
+- **`withAbort(promise, signal?)`** — Promise.race-style wrapper that rejects with a cancelled-kind error when the signal fires. Handles three input shapes: undefined signal (passthrough), already-aborted signal (short-circuit reject), and mid-flight abort (listener fires onAbort, drops underlying promise's eventual resolution on the floor). Cleans up its own listener on settle to avoid leaking subscribers.
+
+**Why existing consumers weren't migrated.** Tauri 2's `invoke()` doesn't honour `AbortSignal` server-side — the IPC stays open until the Rust future resolves regardless of what the JS side does. So `withAbort` is a client-side stop-waiting primitive, not an end-to-end cancellation primitive. The user-visible win (no toast on cancellation) was already paid by Phase 2's `isCancellation` swallow. The structural win (drop generation guards) is a wash because `useGenerationGuard` already gives consumers the discard semantics. Migrating the orchestrators is not justified by either alone — wait until orchestrator decomposition lands.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 4 → 3 (R4 shipped-as-library).
+- **Previously resolved:** 1243+ → 1244+ across 797 → 798 sessions.
+
+**Files touched (this session):**
+- `src/lib/tauri.ts` (+62; AbortController section + `cancelledError` + `withAbort` exports)
+- `src/lib/__tests__/tauri-abort.test.ts` (new, +69; 7 abort tests)
+- `pending/PEND-73-search-audit-followups.md` (R4 row updated)
+
+**Verification:**
+- `npx vitest run` — 10312 / 10312 pass (+8 vs prior 10304: 7 new tests + 1 spillover from suite-level changes).
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** New IPC consumers should reach for `withAbort` from day 1 instead of hand-rolling `useGenerationGuard`. The two coexist intentionally — the hook handles the autocomplete tag-debounce path (the race is the debounce, not the IPC), and `withAbort` handles the per-effect cleanup pattern. Document if confusion comes up.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 797 — PEND-73 deferred cycle 4: U2 history listbox a11y (2026-05-20)
 

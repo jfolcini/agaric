@@ -114,6 +114,70 @@ function unwrap<T>(result: { status: 'ok'; data: T } | { status: 'error'; error:
   throw result.error
 }
 
+// ---------------------------------------------------------------------------
+// PEND-73 Phase 2.R4 — AbortSignal plumbing for the typed IPC wrappers.
+//
+// The pattern below races the wrapped IPC promise against the caller's
+// AbortSignal. Tauri 2's `invoke()` itself does NOT honour the signal —
+// the IPC channel stays open server-side until the Rust future resolves —
+// but rejecting the JS promise on abort lets consumers stop waiting,
+// drop their generation guards earlier, and surface `kind: 'cancelled'`
+// through the same `isCancellation()` predicate that the server-side
+// `AppError::Cancelled` path uses.
+//
+// New consumers should reach for `withAbort(promise, signal)` instead
+// of hand-rolling a generation counter. Existing consumers are NOT
+// migrated in this commit — `useGenerationGuard` already gives them
+// the discard semantics, and the rewrite has no user-visible win
+// without an orchestrator decomposition (PEND-74-equivalent).
+// ---------------------------------------------------------------------------
+
+import type { AppError } from './bindings'
+
+/**
+ * Build the same `{ kind: 'cancelled', message }` shape the backend
+ * emits for `AppError::Cancelled`, so `isCancellation(err)` (from
+ * `lib/app-error.ts`) discriminates client-side aborts the same way
+ * it discriminates server-side cancellations.
+ */
+export function cancelledError(reason = 'aborted client-side'): AppError {
+  return { kind: 'cancelled', message: reason }
+}
+
+/**
+ * Wrap a typed IPC promise so it rejects with a `cancelled`-kind
+ * `AppError` if the supplied `AbortSignal` fires. The underlying IPC
+ * is NOT cancelled server-side (Tauri 2 limitation); the wrapper is
+ * a client-side stop-waiting primitive. Use alongside
+ * `useGenerationGuard` if the consumer also needs to discard the
+ * value when it eventually arrives.
+ *
+ * If `signal` is undefined or already aborted, the behaviour is
+ * unchanged from the bare promise (already-aborted short-circuits
+ * before the IPC even starts; undefined passes through verbatim).
+ */
+export function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal == null) return promise
+  if (signal.aborted) return Promise.reject(cancelledError(signal.reason?.toString()))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort)
+      reject(cancelledError(signal.reason?.toString()))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(err)
+      },
+    )
+  })
+}
+
 /** Create a new block. Returns the created block with its generated ID.
  *
  * BUG-1 / H-3a — when `blockType === 'page'`, `spaceId` is REQUIRED.
