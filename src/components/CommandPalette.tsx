@@ -174,8 +174,22 @@ function routePrefixToMode(query: string): { next: PaletteMode; q: string } | nu
  * it falls back to `document.execCommand('insertText')` — the same
  * approach used by SlashCommand insertion in `slash-commands.ts` and
  * preserved here so undo/redo stacks stay intact.
+ *
+ * PEND-73 Phase 3.U8 — when the palette opened, the store snapshotted
+ * the live selection range BEFORE focus moved into the palette input.
+ * For contenteditable surfaces, restoring that range before
+ * `execCommand('insertText')` plants the `[[Page Title]]` at the
+ * user's original caret position even if the surrounding focus
+ * transition collapsed the selection. For native `<input>` /
+ * `<textarea>`, the snapshot is not the right primitive (those
+ * elements expose `selectionStart` / `selectionEnd` directly), so
+ * the snapshot is intentionally ignored on that branch.
  */
-function insertPageLinkInto(target: HTMLElement | null, pageTitle: string): boolean {
+function insertPageLinkInto(
+  target: HTMLElement | null,
+  pageTitle: string,
+  snapshotRange: Range | null,
+): boolean {
   if (target == null || !document.body.contains(target)) return false
   const text = `[[${pageTitle}]]`
   target.focus()
@@ -193,6 +207,31 @@ function insertPageLinkInto(target: HTMLElement | null, pageTitle: string): bool
   }
 
   if (target.isContentEditable) {
+    // PEND-73 Phase 3.U8 — restore the snapshotted caret position
+    // before delegating to execCommand. The snapshot is only valid
+    // if its container is still in the live DOM (the user may have
+    // edited the document while the palette was open).
+    if (snapshotRange != null) {
+      try {
+        const container = snapshotRange.startContainer
+        if (
+          container.nodeType === Node.TEXT_NODE
+            ? container.parentElement != null && document.body.contains(container.parentElement)
+            : container instanceof Element && document.body.contains(container)
+        ) {
+          const sel = document.getSelection()
+          sel?.removeAllRanges()
+          sel?.addRange(snapshotRange)
+        }
+      } catch (err) {
+        // Restoring the range can throw if the DOM has shifted under
+        // us (e.g. a block was deleted while the palette was open).
+        // Fall through to the unguarded execCommand path; worst case
+        // is the insertion lands at the editor's current caret,
+        // matching pre-U8 behaviour.
+        logger.warn('CommandPalette', 'snapshot range restoration failed', { pageTitle }, err)
+      }
+    }
     try {
       document.execCommand('insertText', false, text)
       return true
@@ -333,6 +372,10 @@ export function PaletteBody({
   const enterModeWithQuery = useCommandPaletteStore((s) => s.enterModeWithQuery)
   const setPendingViewQuery = useCommandPaletteStore((s) => s.setPendingViewQuery)
   const previousFocusedElement = useCommandPaletteStore((s) => s.previousFocusedElement)
+  // PEND-73 Phase 3.U8 — snapshotted selection at palette open time;
+  // restored before `execCommand('insertText')` on contenteditable
+  // targets so `[[page]]` insertion lands at the user's original caret.
+  const previousSelectionRange = useCommandPaletteStore((s) => s.previousSelectionRange)
 
   // ── Mode router (one-way, prefix-as-entry-shortcut) ─────────────
   // PEND-61 CR — typing `>` at the start of an empty/whitespace
@@ -529,7 +572,7 @@ export function PaletteBody({
 
   function handleNavigateToPage(pageId: string, pageTitle: string, newTab: boolean): void {
     if (linkMode) {
-      const ok = insertPageLinkInto(previousFocusedElement, pageTitle)
+      const ok = insertPageLinkInto(previousFocusedElement, pageTitle, previousSelectionRange)
       if (ok) {
         onClose()
         return

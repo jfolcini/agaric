@@ -2,10 +2,44 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 795 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 796 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1241+ REVIEW-LATER items across 795 sessions.
+- **Previously-resolved counter:** 1242+ REVIEW-LATER items across 796 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 796 — PEND-73 deferred cycle 3: U8 selection-range snapshot (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 U8 (selection-range snapshot) |
+| **Tests added** | 0 (existing palette/inner-link e2e covers the [[page]] insertion path) |
+| **Files touched** | 2 |
+
+**Summary:** `[[page]]` insertion now plants at the user's original caret position even after the palette focus transition collapses the live selection. The palette store snapshots the document selection range at `open$()` time (cloned, so subsequent DOM updates can't mutate it) and `insertPageLinkInto` restores it before `execCommand('insertText')` on contenteditable surfaces.
+
+- **Store** — `previousSelectionRange: Range \| null` field added alongside `previousFocusedElement`. `open$()` calls `document.getSelection()?.getRangeAt(0).cloneRange()` inside try/catch (jsdom + sandboxed iframes can throw on selection access). `close()` clears it.
+- **Insert path** — `insertPageLinkInto` gains a third parameter `snapshotRange: Range | null`. On contenteditable targets, the snapshot is validated (start container still in the live DOM — guards against the user editing the document while the palette was open) and re-applied via `selection.removeAllRanges() + addRange(snapshotRange)` BEFORE `execCommand('insertText')`. Failure modes fall through to the pre-U8 behaviour (insertion at the editor's current caret). Native `<input>` / `<textarea>` path intentionally ignores the snapshot — those elements have direct `selectionStart`/`selectionEnd` semantics that are simpler than DOM ranges.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 6 → 5 (U8 shipped).
+- **Previously resolved:** 1241+ → 1242+ across 795 → 796 sessions.
+
+**Files touched (this session):**
+- `src/stores/useCommandPaletteStore.ts` (+25 / −0; new field + open$ capture + close clear)
+- `src/components/CommandPalette.tsx` (+30 / −3; signature + selector + restore-before-insert)
+- `pending/PEND-73-search-audit-followups.md` (U8 row updated)
+
+**Verification:**
+- `npx vitest run` — 10300 / 10300 pass.
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** The store snapshots the LIVE selection at the moment `open$()` runs, BEFORE focus moves into the palette input. Sequencing matters — the keyboard shortcut handler calls `open$()` first, and Radix's autofocus moves focus afterwards. If the order ever flips (e.g. via a Suspense boundary delaying the store update), the snapshot would already be the palette input's empty selection. Document if that comes up.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 795 — PEND-73 deferred cycle 2: B3 + T1a NFC normalisation (2026-05-20)
 
