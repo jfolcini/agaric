@@ -1665,10 +1665,8 @@ pub async fn list_pages_with_metadata_inner(
                    AS last_modified_at,
                (SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl
                    JOIN blocks descendant ON bl.target_id = descendant.id
-                   JOIN blocks src ON bl.source_id = src.id
                    WHERE descendant.page_id = b.id
-                     AND descendant.deleted_at IS NULL
-                     AND src.deleted_at IS NULL)
+                     AND descendant.deleted_at IS NULL)
                    AS inbound_link_count,
                (SELECT COUNT(*) FROM blocks descendant
                    WHERE descendant.page_id = b.id
@@ -1801,15 +1799,19 @@ pub async fn list_pages_with_metadata_inner(
             // SELECT column differs.
             let count_expr = match filter.sort {
                 PageSort::MostLinked => {
-                    // Same DISTINCT-source + soft-deleted-source filter
-                    // as the SELECT-list version above so the keyset
-                    // matches the displayed count.
+                    // Same DISTINCT-source shape as the SELECT-list
+                    // version above so the keyset matches the displayed
+                    // count. Round 2 perf review measured the source-
+                    // deleted JOIN filter as ~30 ms overhead at 10k
+                    // pages — dropped here per the recommendation;
+                    // links from soft-deleted sources still contribute
+                    // to the count (their tombstones get hard-deleted
+                    // eventually by retention, so the contamination
+                    // window is bounded).
                     "(SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                        JOIN blocks descendant ON bl.target_id = descendant.id \
-                       JOIN blocks src ON bl.source_id = src.id \
                        WHERE descendant.page_id = b.id \
-                         AND descendant.deleted_at IS NULL \
-                         AND src.deleted_at IS NULL)"
+                         AND descendant.deleted_at IS NULL)"
                 }
                 PageSort::MostContent => {
                     "(SELECT COUNT(*) FROM blocks descendant \
