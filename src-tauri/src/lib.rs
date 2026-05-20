@@ -258,6 +258,10 @@ macro_rules! agaric_commands {
             // Page subtree loader — single SELECT against the `page_id` index;
             // replaces the FE-side recursive `listBlocks` walk
             $crate::commands::pages::load_page_subtree,
+            // PEND-56 — paginated page list with metadata columns
+            // (last-modified, inbound-link count, child-block count,
+            // has-property bitmask) + richer sort taxonomy.
+            $crate::commands::pages::list_pages_with_metadata,
         ]
     };
 }

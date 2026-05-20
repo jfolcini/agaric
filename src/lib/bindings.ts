@@ -719,6 +719,15 @@ export const commands = {
 	 *  in `space_id`.  Delegates to [`load_page_subtree_inner`].
 	 */
 	loadPageSubtree: (rootBlockId: string, spaceId: string) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
+	/**
+	 *  Tauri command: paginated page list with per-page metadata columns
+	 *  (last-modified timestamp, inbound link count, descendant count,
+	 *  has-property bitmask) and a richer sort taxonomy than `list_pages`.
+	 *
+	 *  Frontend wires this from `PageBrowser` when the `densityV1` flag is
+	 *  on; the flag-off path continues to use `list_blocks(blockType='page')`.
+	 */
+	listPagesWithMetadata: (filter: ListPagesWithMetadataFilter, cursor: string | null, limit: number | null) => typedError<PageResponse<PageWithMetadataRow>, AppError>(__TAURI_INVOKE("list_pages_with_metadata", { filter, cursor, limit })),
 };
 
 /* Types */
@@ -1229,6 +1238,12 @@ export type LinkMetadata = {
 	not_found?: boolean,
 };
 
+/**  Filter / sort bundle for [`list_pages_with_metadata`]. */
+export type ListPagesWithMetadataFilter = {
+	sort?: PageSort,
+	spaceId: string,
+};
+
 /**  One log file's name + contents returned by [`read_logs_for_report`]. */
 export type LogFileEntry = {
 	name: string,
@@ -1371,6 +1386,57 @@ export type PageResponse<T> = {
 	 *  `total_count` directly without having to check for an absent key.
 	 */
 	total_count: number | null,
+};
+
+/**
+ *  Sort mode for [`list_pages_with_metadata_inner`].
+ *
+ *  These are the SQL-server-derived sort modes. The frontend's
+ *  `recent` (per-device visit history) and `created` (ULID DESC) modes
+ *  reuse the `Ulid` SQL ordering and re-sort the loaded page client-
+ *  side; neither comes over the wire.
+ */
+export type PageSort = "alphabetical" | "recently-modified" | "most-linked" | "biggest" | "ulid";
+
+/**
+ *  Row returned by [`list_pages_with_metadata_inner`].
+ *
+ *  Carries every `BlockRow` column verbatim so the frontend can read
+ *  `id`, `content`, etc. via the same accessors. Four extra metadata
+ *  columns drive the new sort modes + density badges.
+ */
+export type PageWithMetadataRow = {
+	id: string,
+	block_type: string,
+	content: string | null,
+	parent_id: string | null,
+	position: number | null,
+	deleted_at: string | null,
+	todo_state: string | null,
+	priority: string | null,
+	due_date: string | null,
+	scheduled_date: string | null,
+	page_id: string | null,
+	/**
+	 *  max(`op_log.created_at`) over the page itself. None if the
+	 *  page has no op-log entries (which should never happen — every
+	 *  active page has at least its own creation row — but the column
+	 *  is `Option` to absorb edge cases like manually-imported rows
+	 *  without a synthesised op-log entry).
+	 */
+	last_modified_at: string | null,
+	/**
+	 *  COUNT of `block_links` targeting this page or any of its
+	 *  descendants. Always emitted (zero for un-linked pages).
+	 */
+	inbound_link_count: number,
+	/**
+	 *  COUNT of non-deleted descendants (blocks where `page_id = id`,
+	 *  excluding the page itself). Always emitted.
+	 */
+	child_block_count: number,
+	/**  Bitmask. See the module-level comment for the bit allocation. */
+	has_property_flags: number,
 };
 
 /**

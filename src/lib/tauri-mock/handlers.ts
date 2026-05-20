@@ -219,6 +219,151 @@ export const HANDLERS: Record<string, Handler> = {
     return items
   },
 
+  // PEND-56 — paginated page list with per-page metadata columns.
+  // Mock parity with `list_pages_with_metadata_inner`: returns the same
+  // shape as the backend (BlockRow columns + last_modified_at +
+  // inbound_link_count + child_block_count + has_property_flags), sorts
+  // by the requested mode, and cursor-paginates using the same keyset
+  // shape (cursor.deleted_at = last sort-key string, cursor.seq = last
+  // sort-key i64, cursor.id = tiebreaker).
+  list_pages_with_metadata: (args) => {
+    const a = args as Record<string, unknown>
+    const filter = (a['filter'] as Record<string, unknown> | undefined) ?? {}
+    const spaceId = filter['spaceId'] as string
+    const sort = (filter['sort'] as string | undefined) ?? 'alphabetical'
+    const cursor = a['cursor'] as string | null
+    const limit = Math.min(Number((a['limit'] as number | null) ?? 50), 100)
+
+    // Build the metadata-rich row for every page in the space.
+    interface MetaRow {
+      id: string
+      block_type: string
+      content: string | null
+      parent_id: string | null
+      position: number | null
+      deleted_at: string | null
+      todo_state: string | null
+      priority: string | null
+      due_date: string | null
+      scheduled_date: string | null
+      page_id: string | null
+      last_modified_at: string | null
+      inbound_link_count: number
+      child_block_count: number
+      has_property_flags: number
+    }
+    const rows: MetaRow[] = []
+    for (const b of blocks.values()) {
+      if (b['block_type'] !== 'page' || b['deleted_at']) continue
+      const blockProps = properties.get(b['id'] as string)
+      const spaceProp = blockProps?.get('space')
+      if (spaceProp?.['value_ref'] !== spaceId) continue
+
+      // Descendants (page_id matches the page, id != page).
+      const descendants = Array.from(blocks.values()).filter(
+        (d) => d['page_id'] === b['id'] && !d['deleted_at'] && d['id'] !== b['id'],
+      )
+      const childCount = descendants.length
+      // The mock doesn't model the `block_links` table (backend derives it
+      // from `[[ULID]]` tokens in content via the materializer). Keep the
+      // mock honest: report 0 inbound links — tests that depend on
+      // realistic link counts should mock at the IPC boundary directly.
+      const inboundLinks = 0
+
+      const hasTags = (blockTags.get(b['id'] as string)?.size ?? 0) > 0
+      const hasTodo = descendants.some((d) => d['todo_state'] != null)
+      const hasScheduled = descendants.some((d) => d['scheduled_date'] != null)
+      const hasDue = descendants.some((d) => d['due_date'] != null)
+      const flags =
+        (hasTags ? 1 : 0) | (hasTodo ? 2 : 0) | (hasScheduled ? 4 : 0) | (hasDue ? 8 : 0)
+
+      // Mock doesn't model op_log; treat creation time as id-derived.
+      const lastModifiedAt = (b['id'] as string).slice(0, 10) // mocked
+
+      rows.push({
+        id: b['id'] as string,
+        block_type: 'page',
+        content: (b['content'] as string | null) ?? null,
+        parent_id: (b['parent_id'] as string | null) ?? null,
+        position: (b['position'] as number | null) ?? null,
+        deleted_at: null,
+        todo_state: (b['todo_state'] as string | null) ?? null,
+        priority: (b['priority'] as string | null) ?? null,
+        due_date: (b['due_date'] as string | null) ?? null,
+        scheduled_date: (b['scheduled_date'] as string | null) ?? null,
+        page_id: (b['page_id'] as string | null) ?? null,
+        last_modified_at: lastModifiedAt,
+        inbound_link_count: inboundLinks,
+        child_block_count: childCount,
+        has_property_flags: flags,
+      })
+    }
+
+    // Sort.
+    rows.sort((x, y) => {
+      let primary = 0
+      switch (sort) {
+        case 'alphabetical':
+          primary = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
+          break
+        case 'recently-modified':
+          primary = (y.last_modified_at ?? '').localeCompare(x.last_modified_at ?? '')
+          break
+        case 'most-linked':
+          primary = y.inbound_link_count - x.inbound_link_count
+          break
+        case 'biggest':
+          primary = y.child_block_count - x.child_block_count
+          break
+        case 'ulid':
+        default:
+          primary = x.id.localeCompare(y.id)
+          break
+      }
+      return primary !== 0 ? primary : x.id.localeCompare(y.id)
+    })
+
+    // Cursor: skip rows up to AND INCLUDING the cursor's anchor.
+    let startIdx = 0
+    if (cursor) {
+      // Cursors are opaque base64-encoded JSON; decode + locate.
+      try {
+        const decoded = JSON.parse(atob(cursor)) as Record<string, unknown>
+        const anchorId = decoded['id'] as string
+        const idx = rows.findIndex((r) => r.id === anchorId)
+        if (idx >= 0) startIdx = idx + 1
+      } catch {
+        // Malformed cursor: start from the top.
+      }
+    }
+    const slice = rows.slice(startIdx, startIdx + limit + 1)
+    const hasMore = slice.length > limit
+    const items = hasMore ? slice.slice(0, limit) : slice
+    let nextCursor: string | null = null
+    const last = items.at(-1)
+    if (hasMore && last) {
+      // Build a cursor whose shape matches the backend's per-sort
+      // encoding so a round-trip survives the mock.
+      const cursorObj: Record<string, unknown> = { id: last.id, version: 1 }
+      switch (sort) {
+        case 'alphabetical':
+          cursorObj['deleted_at'] = last.content
+          break
+        case 'recently-modified':
+          cursorObj['deleted_at'] = last.last_modified_at
+          break
+        case 'most-linked':
+          cursorObj['seq'] = last.inbound_link_count
+          break
+        case 'biggest':
+          cursorObj['seq'] = last.child_block_count
+          break
+      }
+      nextCursor = btoa(JSON.stringify(cursorObj))
+    }
+    return { items, next_cursor: nextCursor, has_more: hasMore, total_count: null }
+  },
+
   // Every page in the space whose `template` property is set to 'true'.
   // No pagination, no clamp; the graph view uses this to flag templates.
   list_template_page_ids_in_space: (args) => {
