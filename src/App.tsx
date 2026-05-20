@@ -23,6 +23,7 @@ import { useIsMobile } from './hooks/useIsMobile'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
 import { useScrollRestore } from './hooks/useScrollRestore'
+import { useShouldShowMobileChrome } from './hooks/useShouldShowMobileChrome'
 import { useSyncEvents } from './hooks/useSyncEvents'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useTheme } from './hooks/useTheme'
@@ -134,6 +135,7 @@ function App() {
   const hidePaletteOverlay = useSearchSheetStore((s) => s.open && s.mode === 'all-pages')
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
+  const shouldShowMobileChrome = useShouldShowMobileChrome()
   // MAINT-124 step 3: shell-level dialog state (4 dialogs + their
   // event listeners) lives in `useAppDialogs`. The dialog JSX stays in
   // this file — the hook only owns the open/closed booleans, the
@@ -482,8 +484,13 @@ function App() {
                   open the underlying surfaces via Ctrl+F / Cmd+K /
                   Ctrl+Shift+F. Gating at this JSX level keeps the
                   component from re-rendering / re-subscribing on every
-                  navigation change for desktop sessions. */}
-              {isMobile && <SearchSheetTrigger />}
+                  navigation change for desktop sessions.
+                  PEND-68 — `useShouldShowMobileChrome()` widens the
+                  gate from `< 768 px` to "phone OR (tablet AND no
+                  hardware keyboard)" so iPad-portrait touch users get
+                  the trigger while iPad-with-keyboard sessions still
+                  get the desktop UI + Cmd+K. */}
+              {shouldShowMobileChrome && <SearchSheetTrigger />}
             </header>
             {/*
              * FEAT-7: TabBar is hoisted out of the page-editor view router
