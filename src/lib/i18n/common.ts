@@ -316,4 +316,22 @@ export const common: Record<string, string> = {
   'findInPage.skippedLongPassages_one': '{{count}} long passage skipped',
   'findInPage.skippedLongPassages_other': '{{count}} long passages skipped',
   'announce.findInPageOpened': 'Find in page opened',
+  // PEND-62 — mobile unified search sheet. The single touch entry point
+  // collapses Ctrl+F (in-page find) + Cmd+K (palette) + Ctrl+Shift+F
+  // (find-in-files) into one sheet with two segments. The in-page
+  // segment embeds the PEND-52 toolbar; the all-pages segment embeds
+  // the PEND-61 palette with its existing escalation footer routing
+  // to the find-in-files view.
+  'searchSheet.openButton': 'Search',
+  'searchSheet.title': 'Search',
+  'searchSheet.dialogDescription':
+    'Search within the current page or across all pages. Use the segment toggle to switch scope.',
+  'searchSheet.segmentInPage': 'This page',
+  'searchSheet.segmentAllPages': 'All pages',
+  'searchSheet.emptyInPage': 'No page open yet — try All pages instead.',
+  'searchSheet.emptyInPageSwitchCta': 'Switch to All pages',
+  // Same shape as `palette.escalateLabel` but without the
+  // Ctrl+Shift+F suffix — touch users on the mobile sheet have no
+  // keyboard. Ellipsis hints that the link leads somewhere.
+  'searchSheet.escalateLabel': 'Find in all pages…',
 }

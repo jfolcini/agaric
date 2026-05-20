@@ -2,12 +2,24 @@
  * InPageFind — browser-style find-in-page toolbar (PEND-52).
  *
  * Renders nothing when the store's `open` flag is false. When open,
- * mounts a thin overlay anchored to the top of the page-content
- * scroll area, runs the matcher against the registered host
- * container, and drives the highlight registry via the highlighter
+ * mounts a thin toolbar that runs the matcher against the registered
+ * host container and drives the highlight registry via the highlighter
  * module.
  *
- * Inputs:
+ * Two render variants:
+ *  - `variant="overlay"` (default) — free-floating overlay anchored at
+ *    the top-right of the viewport. Tracks `window.visualViewport` so
+ *    the toolbar floats above the iOS soft keyboard. This is the
+ *    desktop Ctrl+F path.
+ *  - `variant="embedded"` — same toolbar, no fixed positioning, no
+ *    visualViewport offset. The parent container (the unified mobile
+ *    search sheet's "In this page" segment) provides positioning and
+ *    keyboard-aware sizing via `dvh`. Mutually exclusive with the
+ *    overlay variant: when the search sheet is open in `'in-page'`
+ *    mode the overlay returns `null` so the matcher / highlighter
+ *    effects only run once.
+ *
+ * Inputs (both variants):
  *  - Toolbar input is autofocused on mount; whatever was selected in
  *    the page becomes the initial query (browser convention). When no
  *    selection exists the store restores the previous query (Q3).
@@ -24,12 +36,6 @@
  *  - Each toggle has `aria-pressed={isActive}`.
  *  - Match counter has `role="status"` + `aria-live="polite"` so SRs
  *    announce "3 of 12 matches" updates without stealing focus.
- *
- * Mobile keyboard handling — even though the touch entry-point is
- * deferred (open question Q1 — see report), if the toolbar is opened
- * via a hardware keyboard on a touchscreen laptop the input must stay
- * visible above any soft keyboard. We subscribe to `window.visualViewport`
- * and translate the toolbar by the negative viewport delta.
  */
 
 import { CaseSensitive, ChevronDown, ChevronUp, Regex, WholeWord, X } from 'lucide-react'
@@ -73,7 +79,34 @@ function computeViewportOffset(): number {
   return vv.height - window.innerHeight
 }
 
-export function InPageFind(): React.ReactElement | null {
+export type InPageFindVariant = 'overlay' | 'embedded'
+
+interface InPageFindProps {
+  /**
+   * Render style. `'overlay'` (default) is the free-floating toolbar
+   * used by the desktop Ctrl+F path. `'embedded'` drops the fixed
+   * positioning + visualViewport offset so a parent container (the
+   * mobile search sheet's "In this page" body) can mount the same
+   * toolbar inline.
+   */
+  variant?: InPageFindVariant
+  /**
+   * Embedded-variant only: override what happens when the user taps
+   * the close button or presses Escape. The overlay variant calls
+   * `useInPageFindStore.close()` directly — but doing the same in
+   * the embedded path leaves the parent Sheet rendering a now-empty
+   * toolbar (because the find store flips `open=false` while the
+   * sheet body still wants to mount the toolbar). The parent
+   * SearchSheet passes a closure that closes the SHEET instead,
+   * matching the user's "tap X to dismiss" intent.
+   */
+  onCloseRequest?: () => void
+}
+
+export function InPageFind({
+  variant = 'overlay',
+  onCloseRequest,
+}: InPageFindProps = {}): React.ReactElement | null {
   const { t } = useTranslation()
   const {
     open,
@@ -130,8 +163,11 @@ export function InPageFind(): React.ReactElement | null {
   }, [open])
 
   // ── visualViewport — keep the toolbar above the soft keyboard.
+  // Embedded variant skips this: the parent Sheet sizes itself via
+  // `dvh` (dynamic viewport height) and re-renders on keyboard show,
+  // so the embedded toolbar already floats above the keyboard for free.
   useEffect(() => {
-    if (!open) return
+    if (!open || variant === 'embedded') return
     const apply = () => {
       const el = toolbarRef.current
       if (!el) return
@@ -147,7 +183,7 @@ export function InPageFind(): React.ReactElement | null {
       vv.removeEventListener('resize', apply)
       vv.removeEventListener('scroll', apply)
     }
-  }, [open])
+  }, [open, variant])
 
   // ── Matcher driver. Re-runs every time the query, toggles, or container
   // change. Aborts the in-flight walker first so a fast-typing user never
@@ -252,15 +288,24 @@ export function InPageFind(): React.ReactElement | null {
   }, [open, nextMatch, prevMatch])
 
   const handleClose = useCallback(() => {
+    // Embedded variant: route the dismissal to the parent (the
+    // mobile search sheet closes itself). The parent's lifecycle
+    // bridge will then close the find store as part of its cleanup
+    // — calling `close()` here would race that and leave the sheet
+    // body stuck rendering a now-blank toolbar.
+    if (onCloseRequest) {
+      onCloseRequest()
+      return
+    }
     close()
     // Restore focus to whatever the user was editing/reading before.
-    // `?? null` because `requestAnimationFrame` is preferred so the
-    // close transition completes before focus snaps back.
+    // `requestAnimationFrame` so the close transition completes
+    // before focus snaps back.
     const target = returnFocusRef.current
     if (target && document.contains(target)) {
       requestAnimationFrame(() => target.focus())
     }
-  }, [close])
+  }, [close, onCloseRequest])
 
   const handleInputKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -297,11 +342,22 @@ export function InPageFind(): React.ReactElement | null {
       data-testid="in-page-find-toolbar"
       data-find-skip
       className={cn(
-        // Anchored at the top of the viewport, centred horizontally.
-        // `fixed` so it floats above whichever view is rendered (Journal,
-        // PageEditor, …) without each view having to participate.
-        'fixed top-2 right-2 md:right-4 z-50 flex items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-lg',
-        'transition-transform duration-100',
+        // Shared chrome: rounded card holding the input + toggles +
+        // counter + arrows. Tight gap so it reads as one unit.
+        'rounded-md border border-border px-2 py-1.5',
+        variant === 'overlay' &&
+          // Single-row free-floating overlay anchored top-right.
+          // `fixed` so it floats above whichever view is rendered
+          // without each view having to participate.
+          'fixed top-2 right-2 md:right-4 z-50 flex items-center gap-1.5 bg-popover shadow-lg transition-transform duration-100',
+        variant === 'embedded' &&
+          // Two intentional rows inside the search sheet — row 1 is
+          // the input across the full width; row 2 is the controls.
+          // At 390 px (iPhone 13) the 8-control single row simply
+          // doesn't fit; this layout keeps each touch target ≥ 44 px
+          // (the coarse-pointer override on Button) without
+          // requiring wrap-into-chaos.
+          'flex flex-col gap-2 bg-background',
       )}
     >
       <Input
@@ -315,102 +371,129 @@ export function InPageFind(): React.ReactElement | null {
         aria-invalid={regexError != null ? true : undefined}
         aria-errormessage={regexError ? 'in-page-find-error' : undefined}
         data-testid="in-page-find-input"
-        className="h-7 w-48 md:w-64 text-sm"
-      />
-
-      {/* Toggle row — `Aa` / `Ab|` / `.*` */}
-      <Button
-        type="button"
-        variant={toggles.caseSensitive ? 'secondary' : 'ghost'}
-        size="icon-xs"
-        aria-pressed={toggles.caseSensitive}
-        aria-label={t('findInPage.toggleCaseSensitive')}
-        title={t('findInPage.toggleCaseSensitive')}
-        data-testid="in-page-find-toggle-case"
-        onClick={() => setToggles({ caseSensitive: !toggles.caseSensitive })}
-      >
-        <CaseSensitive aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        variant={toggles.wholeWord ? 'secondary' : 'ghost'}
-        size="icon-xs"
-        aria-pressed={toggles.wholeWord}
-        aria-label={t('findInPage.toggleWholeWord')}
-        title={t('findInPage.toggleWholeWord')}
-        data-testid="in-page-find-toggle-word"
-        onClick={() => setToggles({ wholeWord: !toggles.wholeWord })}
-      >
-        <WholeWord aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        variant={toggles.isRegex ? 'secondary' : 'ghost'}
-        size="icon-xs"
-        aria-pressed={toggles.isRegex}
-        aria-label={t('findInPage.toggleRegex')}
-        title={t('findInPage.toggleRegex')}
-        data-testid="in-page-find-toggle-regex"
-        onClick={() => setToggles({ isRegex: !toggles.isRegex })}
-      >
-        <Regex aria-hidden="true" />
-      </Button>
-
-      {/* Match counter — `role="status"` + `aria-live="polite"`. */}
-      <span
-        role="status"
-        aria-live="polite"
-        data-testid="in-page-find-counter"
         className={cn(
-          'min-w-[4.5rem] text-center text-xs',
-          totalMatches === 0 || regexError ? 'text-muted-foreground' : 'text-foreground',
+          'text-sm',
+          // Overlay: compact 7-row inline strip. Embedded: full row 1
+          // inside the sheet — default Input height matches the
+          // 44-px touch targets on row 2.
+          variant === 'overlay' ? 'h-7 w-48 md:w-64' : 'w-full',
         )}
-      >
-        {counterText}
-      </span>
+      />
+      {/* Controls split into two logical groups: toggles (case /
+          whole-word / regex) and navigation (counter + prev/next/
+          close). On the overlay both groups inline into a single
+          flat row (outer `flex items-center`); on embedded the outer
+          is `flex flex-col` so the groups stack — overlapping the
+          input at row 1 — into a stable 3-row layout that fits 390 px
+          phones without flex-wrap chaos.
 
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('findInPage.previousMatch')}
-        title={t('findInPage.previousMatch')}
-        disabled={totalMatches === 0}
-        data-testid="in-page-find-previous"
-        onClick={() => prevMatch()}
+          Single-row math at 390 px (sheet padding ~32 + card padding
+          16 → 342 px usable): row 2 toggles 3 × 44 + 2 × 6 = 144 ✓;
+          row 3 counter (4.5rem) + 3 × 44 + 4 × 6 = 228 ✓. */}
+      <div className="flex items-center gap-1.5" data-testid="in-page-find-toggles">
+        <Button
+          type="button"
+          variant={toggles.caseSensitive ? 'secondary' : 'ghost'}
+          size="icon-xs"
+          aria-pressed={toggles.caseSensitive}
+          aria-label={t('findInPage.toggleCaseSensitive')}
+          title={t('findInPage.toggleCaseSensitive')}
+          data-testid="in-page-find-toggle-case"
+          onClick={() => setToggles({ caseSensitive: !toggles.caseSensitive })}
+        >
+          <CaseSensitive aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant={toggles.wholeWord ? 'secondary' : 'ghost'}
+          size="icon-xs"
+          aria-pressed={toggles.wholeWord}
+          aria-label={t('findInPage.toggleWholeWord')}
+          title={t('findInPage.toggleWholeWord')}
+          data-testid="in-page-find-toggle-word"
+          onClick={() => setToggles({ wholeWord: !toggles.wholeWord })}
+        >
+          <WholeWord aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant={toggles.isRegex ? 'secondary' : 'ghost'}
+          size="icon-xs"
+          aria-pressed={toggles.isRegex}
+          aria-label={t('findInPage.toggleRegex')}
+          title={t('findInPage.toggleRegex')}
+          data-testid="in-page-find-toggle-regex"
+          onClick={() => setToggles({ isRegex: !toggles.isRegex })}
+        >
+          <Regex aria-hidden="true" />
+        </Button>
+      </div>
+
+      <div
+        className={cn(
+          'flex items-center gap-1.5',
+          // On embedded, push the close button to the right by
+          // stretching this row to full width; on overlay the row
+          // sits inline with the toggle group above.
+          variant === 'embedded' && 'w-full',
+        )}
+        data-testid="in-page-find-nav"
       >
-        <ChevronUp aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('findInPage.nextMatch')}
-        title={t('findInPage.nextMatch')}
-        disabled={totalMatches === 0}
-        data-testid="in-page-find-next"
-        onClick={() => nextMatch()}
-      >
-        <ChevronDown aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('findInPage.close')}
-        title={t('findInPage.close')}
-        data-testid="in-page-find-close"
-        onClick={handleClose}
-      >
-        <X aria-hidden="true" />
-      </Button>
+        <span
+          role="status"
+          aria-live="polite"
+          data-testid="in-page-find-counter"
+          className={cn(
+            'min-w-[4.5rem] text-center text-xs',
+            totalMatches === 0 || regexError ? 'text-muted-foreground' : 'text-foreground',
+          )}
+        >
+          {counterText}
+        </span>
+        {variant === 'embedded' && <span className="flex-1" />}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('findInPage.previousMatch')}
+          title={t('findInPage.previousMatch')}
+          disabled={totalMatches === 0}
+          data-testid="in-page-find-previous"
+          onClick={() => prevMatch()}
+        >
+          <ChevronUp aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('findInPage.nextMatch')}
+          title={t('findInPage.nextMatch')}
+          disabled={totalMatches === 0}
+          data-testid="in-page-find-next"
+          onClick={() => nextMatch()}
+        >
+          <ChevronDown aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('findInPage.close')}
+          title={t('findInPage.close')}
+          data-testid="in-page-find-close"
+          onClick={handleClose}
+        >
+          <X aria-hidden="true" />
+        </Button>
+      </div>
 
       {regexError && (
         <span
           id="in-page-find-error"
           role="alert"
           data-testid="in-page-find-error"
-          className="ml-2 text-xs text-destructive"
+          className="text-xs text-destructive"
         >
           {regexError === 'findInPage.regexTooLong'
             ? t('findInPage.regexTooLong')
@@ -422,7 +505,7 @@ export function InPageFind(): React.ReactElement | null {
           role="status"
           aria-live="polite"
           data-testid="in-page-find-skipped"
-          className="ml-2 text-xs text-muted-foreground"
+          className="text-xs text-muted-foreground"
         >
           {t('findInPage.skippedLongPassages', { count: skippedLongNodes })}
         </span>

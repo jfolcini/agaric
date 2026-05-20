@@ -1154,6 +1154,61 @@ describe('CommandPalette — a11y', () => {
 })
 
 // ───────────────────────────────────────────────────────────────────
+// PEND-72 — external-query sync (search-sheet bridge seed)
+// ───────────────────────────────────────────────────────────────────
+
+describe('CommandPalette — PEND-72 external query sync', () => {
+  it('fires the IPC immediately when the store query is set externally', async () => {
+    // Simulates the mobile search sheet seeding the palette on
+    // segment switch: write to the store AFTER PaletteBody mounts,
+    // and expect the partitioned IPC to fire without a user keystroke.
+    render(<CommandPalette />)
+    openPalette()
+    expect(screen.getByTestId('command-palette-input')).toBeInTheDocument()
+    mockedSearchBlocksPartitioned.mockClear()
+    act(() => {
+      useCommandPaletteStore.getState().setQuery('seedme')
+    })
+    await waitFor(() => {
+      expect(mockedSearchBlocksPartitioned).toHaveBeenCalled()
+      const firstCall = mockedSearchBlocksPartitioned.mock.calls[0]?.[0]
+      expect(firstCall?.query).toBe('seedme')
+    })
+  })
+
+  it('respects the 80 ms debounce for user typing (no immediate fire per keystroke)', async () => {
+    // PEND-72 sync effect must NOT short-circuit the debounce when
+    // changes come from the input. Type three characters synchronously
+    // via fireEvent; without the lastUserQueryRef guard the sync
+    // effect would fire setDebouncedQuery on every render and bypass
+    // the debounce entirely. With the guard, only the final
+    // debounced value fires the IPC after the timer elapses.
+    vi.useFakeTimers()
+    try {
+      render(<CommandPalette />)
+      openPalette()
+      const input = screen.getByTestId('command-palette-input')
+      mockedSearchBlocksPartitioned.mockClear()
+      fireEvent.change(input, { target: { value: 'a' } })
+      fireEvent.change(input, { target: { value: 'ab' } })
+      fireEvent.change(input, { target: { value: 'abc' } })
+      // Before the debounce timer fires, no IPC should have run.
+      expect(mockedSearchBlocksPartitioned).not.toHaveBeenCalled()
+      // Advance past the 80 ms debounce.
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+      // Exactly one IPC fires, with the final value.
+      expect(mockedSearchBlocksPartitioned).toHaveBeenCalledTimes(1)
+      const firstCall = mockedSearchBlocksPartitioned.mock.calls[0]?.[0]
+      expect(firstCall?.query).toBe('abc')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────
 // PEND-61 CR regression tests
 // ───────────────────────────────────────────────────────────────────
 

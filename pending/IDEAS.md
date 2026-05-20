@@ -66,3 +66,16 @@ Sub-scope to think about before committing to a plan:
 Cost (if pursued): S-M (~6-10 h frontend) for the inline-picker Suggestion extension with a bundled shortcode map. M (~3 h on top) if the Cmd+E palette is added.
 
 Revisit when typing emoji becomes a recurring friction point (mostly on desktop without OS-native shortcuts).
+
+---
+
+## Mobile search polish
+
+UX wishlist surfaced in reviews of PEND-62 (unified mobile search sheet). Frontend-only polish items; backend-shaped follow-ups go in a separate pass.
+
+- **Recent searches in empty state.** When the search sheet opens with an empty query, surface the last 5 recent queries as tap-to-replay chips. Reuses `useInPageFindStore.lastQuery` (per-segment) — needs a per-space MRU list for the palette segment to mirror what the desktop palette already shows.
+- **Voice input button** in the InPageFind embedded variant's input row. Routes `webkitSpeechRecognition` → `setQuery`. Cleanly slots into row 1's trailing edge alongside the clear button.
+- **Pull-to-dismiss on the bottom Sheet.** Radix Sheet doesn't ship this; `vaul.dev` is the established drop-in. Iconic mobile-UX touch that matches iOS native behavior.
+- **Long-press scope-pin** on a palette result row to "always search this page" — turns the in-page segment into a sticky filter scoped to the long-pressed page.
+- **Scope chip in the input** ("This page ✕" pill) replacing the segment toggle once the user has typed. Frees vertical space on row 1 and matches Linear's contextual scope pattern.
+- **Haptic feedback on segment switch and match-found** via `navigator.vibrate(8)` on coarse-pointer devices. Polish-only but separates "shipped" from "polished."

@@ -6,6 +6,7 @@ import { BootGate } from './components/BootGate'
 import { GcalReauthBanner } from './components/GcalReauthBanner'
 import { GlobalDateControls, JournalControls } from './components/JournalPage'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
+import { SearchSheetTrigger } from './components/SearchSheetTrigger'
 import { SpaceTopStripe } from './components/SpaceTopStripe'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
@@ -45,6 +46,7 @@ import { useNavigationStore } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSpaceStore } from './stores/space'
 import { selectPageStack, useTabsStore } from './stores/tabs'
+import { useSearchSheetStore } from './stores/useSearchSheetStore'
 
 // `KeyboardShortcuts` and `WelcomeModal` are top-level overlays mounted
 // outside the view dispatcher; the rest of the lazy-loaded view chunks
@@ -87,6 +89,14 @@ const InPageFind = lazy(() =>
 const CommandPalette = lazy(() =>
   import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
+// Mobile unified search sheet. Same lazy-render-gate pattern as the
+// overlays above: renders nothing when its store flag is closed.
+// Mounted at App level so its sheet floats above every view. The
+// header trigger (`<SearchSheetTrigger />`) is the touch-only entry
+// point; keyboard users still go through Ctrl+F / Cmd+K / Ctrl+Shift+F.
+const SearchSheet = lazy(() =>
+  import('./components/SearchSheet').then((m) => ({ default: m.SearchSheet })),
+)
 
 function App() {
   const { t } = useTranslation()
@@ -113,6 +123,15 @@ function App() {
   const headerLabel = useHeaderLabel()
   const { theme: currentTheme, isDark, toggleTheme } = useTheme()
   const { syncing, syncAll } = useSyncTrigger()
+  // Mutual-exclusion gates for the App-level search overlays. When
+  // the mobile search sheet is showing a given segment it mounts the
+  // same body inside its sheet, so the App-level overlay must hide
+  // to avoid running the matcher / debounced IPC twice. Reading
+  // sheet state here keeps the leaves (`InPageFind`, `CommandPalette`)
+  // decoupled from the sheet. Boolean-name-as-action so the use site
+  // reads `{!hideFindOverlay && <InPageFind />}` (positive guard).
+  const hideFindOverlay = useSearchSheetStore((s) => s.open && s.mode === 'in-page')
+  const hidePaletteOverlay = useSearchSheetStore((s) => s.open && s.mode === 'all-pages')
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
   // MAINT-124 step 3: shell-level dialog state (4 dialogs + their
@@ -458,6 +477,13 @@ function App() {
                   <GlobalDateControls />
                 </>
               )}
+              {/* Sole touch entry point for the unified search sheet.
+                  Desktop hides the trigger entirely — keyboard users
+                  open the underlying surfaces via Ctrl+F / Cmd+K /
+                  Ctrl+Shift+F. Gating at this JSX level keeps the
+                  component from re-rendering / re-subscribing on every
+                  navigation change for desktop sessions. */}
+              {isMobile && <SearchSheetTrigger />}
             </header>
             {/*
              * FEAT-7: TabBar is hoisted out of the page-editor view router
@@ -514,21 +540,30 @@ function App() {
           </ViewHeaderOutletProvider>
         </SidebarInset>
       </SidebarProvider>
-      {/* PEND-52 — in-page find toolbar. Mounted at App level so the
-          overlay floats above every view (journal, page-editor, …)
-          without each view having to participate. The component
-          self-renders nothing when its store flag is closed; the
-          keyboard handler in `useAppKeyboardShortcuts` flips it. */}
+      {/* In-page find toolbar — mounted at App level so the overlay
+          floats above every view without each view having to
+          participate. Self-renders nothing when its store flag is
+          closed; the keyboard handler in `useAppKeyboardShortcuts`
+          flips it. Yields to the mobile sheet when the sheet is
+          showing its in-page segment — the sheet mounts the same
+          toolbar inside its body. */}
+      {!hideFindOverlay && (
+        <Suspense fallback={null}>
+          <InPageFind />
+        </Suspense>
+      )}
+      {/* Cmd/Ctrl+K command palette — same overlay shape, same yield
+          rule for the sheet's all-pages segment. */}
+      {!hidePaletteOverlay && (
+        <Suspense fallback={null}>
+          <CommandPalette />
+        </Suspense>
+      )}
+      {/* Mobile unified search sheet — opened via the header trigger
+          on mobile viewports. Mounts the InPageFind toolbar or
+          PaletteBody inside its body depending on the active segment. */}
       <Suspense fallback={null}>
-        <InPageFind />
-      </Suspense>
-      {/* PEND-61 — Cmd/Ctrl+K command palette. Mounted at App level so
-          it floats above every view; self-renders nothing when the
-          store is closed. The `useCommandPaletteStore.open$()` action
-          is fired by the keyboard handler in
-          `useAppKeyboardShortcuts`. */}
-      <Suspense fallback={null}>
-        <CommandPalette />
+        <SearchSheet />
       </Suspense>
       <Suspense fallback={null}>
         <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

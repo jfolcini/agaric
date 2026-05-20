@@ -22,11 +22,22 @@
  *    detected via the same listener (cmdk fires the click event
  *    through, preserving `metaKey`/`ctrlKey`).
  *
- * Mobile UX (segment-control mode switch, search-scope toggle) is
- * deferred to PEND-62; this file ships the desktop-first surface.
+ * Mobile UX uses the same body via `<SearchSheet>`, which mounts
+ * `<PaletteBody>` (exported below) inside its all-pages segment. The
+ * outer Dialog/Sheet wrapper in `CommandPalette` is the desktop Cmd+K
+ * surface only; the search-sheet sibling provides its own chrome.
  */
 
-import { ArrowLeftRight, Clock, FileText, Hash, HelpCircle, Pin, RotateCcw } from 'lucide-react'
+import {
+  ArrowLeftRight,
+  ChevronRight,
+  Clock,
+  FileText,
+  Hash,
+  HelpCircle,
+  Pin,
+  RotateCcw,
+} from 'lucide-react'
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -43,6 +54,7 @@ import {
 } from '@/components/ui/command'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
@@ -240,12 +252,12 @@ export function CommandPalette(): React.ReactElement | null {
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Title } = parts
 
-  // PEND-67 Phase 5 — Radix attaches its Escape handler at `document`
-  // with `capture: true`, so it fires BEFORE the action menu's React
-  // bubble-phase keydown handler. When the action menu is open we
-  // intercept Escape via Radix's `onEscapeKeyDown` prop and let the
-  // menu handle Escape itself. The ref is the bridge — PaletteBody
-  // sets it whenever its `actionMenu` state changes.
+  // Radix attaches its Escape handler at `document` with `capture: true`,
+  // so it fires BEFORE the action menu's React bubble-phase keydown
+  // handler. When the action menu is open we intercept Escape via
+  // Radix's `onEscapeKeyDown` prop and let the menu handle Escape
+  // itself. The ref is the bridge — PaletteBody sets it whenever its
+  // `actionMenu` state changes.
   const actionMenuOpenRef = useRef(false)
 
   if (!open) return null
@@ -262,9 +274,9 @@ export function CommandPalette(): React.ReactElement | null {
         // Stop the dialog from auto-focusing its close button on open;
         // we want focus on the input.
         onOpenAutoFocus={(e: Event) => e.preventDefault()}
-        // PEND-67 Phase 5 — preventDefault when the action menu owns
-        // Escape; the menu's own keydown handler will close itself,
-        // leaving the palette open.
+        // preventDefault when the action menu owns Escape; the menu's
+        // own keydown handler will close itself, leaving the palette
+        // open.
         onEscapeKeyDown={(e: KeyboardEvent) => {
           if (actionMenuOpenRef.current) e.preventDefault()
         }}
@@ -280,13 +292,19 @@ export function CommandPalette(): React.ReactElement | null {
 }
 
 /**
- * Inner body — split out so the dialog shell stays slim and the body
- * can short-circuit when `open=false` without mounting any of the data
- * hooks. cmdk's `<Command>` lives at this level so its lifecycle is
- * fully scoped to the open palette.
+ * PaletteBody — inner cmdk surface (input + results + escalation
+ * footer + action menu). Split out of `CommandPalette` so two
+ * surfaces can mount it: the desktop Cmd+K dialog above, and the
+ * mobile search sheet's all-pages segment (`SearchSheet.tsx`).
+ *
+ * `onClose` is the only meaningful contract knob: the dialog wrapper
+ * passes `closeStore`; the sheet passes a closure that also tears
+ * down the sheet itself (so `escalate()`'s `setPendingViewQuery →
+ * onClose → setView('search')` flow disposes the sheet cleanly
+ * before the find-in-files view appears).
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complexity 26 vs max 25. PaletteBody is the orchestrator across 6 row types (search / commands / tags / help / link / recent), the debounced partitioned-IPC pipeline, and the Phase 5 action-menu state machine. Top-level helpers (routePrefixToMode, buildActionMenuActions, parseRowValue, tryOpenActionMenuOnTab, tryNumericPrefixJump, revealInPagesView) are already extracted; splitting further would mean threading 10+ closures through a custom hook signature for one point over budget. Same trade-off as DaySection.tsx and ConfirmDialog.tsx in this repo.
-function PaletteBody({
+export function PaletteBody({
   onClose,
   actionMenuOpenRef,
 }: {
@@ -294,6 +312,11 @@ function PaletteBody({
   actionMenuOpenRef: React.RefObject<boolean>
 }): React.ReactElement {
   const { t } = useTranslation()
+  // Strip the "Ctrl+Shift+F" suffix from the escalation footer when
+  // we're rendering on a touch viewport — the keybinding is
+  // meaningless there. Same mobile-only signal everything else uses
+  // (`useIsMobile`).
+  const isMobile = useIsMobile()
   const inputRef = useRef<HTMLInputElement>(null)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
@@ -340,13 +363,34 @@ function PaletteBody({
     inputRef.current?.focus()
   }, [])
 
-  // Debounced query mirror — the IPC fires off this. 80ms per the plan.
-  const [debouncedQuery, setDebouncedQuery] = useState('')
+  // Debounced query mirror — the IPC fires off this. 80 ms per the
+  // plan. Initialised from the store so a seeded query (e.g. the
+  // mobile search sheet switching from in-page → all-pages with a
+  // populated query) drives the IPC immediately on mount instead of
+  // waiting for a keystroke. Trimmed for parity with
+  // `handleInputChange` below; `isCommandsModeInput` would skip the
+  // IPC altogether.
+  const [debouncedQuery, setDebouncedQuery] = useState(() => {
+    const initial = useCommandPaletteStore.getState().query.trim()
+    if (initial.length === 0 || isCommandsModeInput(initial)) return ''
+    return initial
+  })
   const debounced = useDebouncedCallback((value: string) => {
     setDebouncedQuery(value)
   }, PALETTE_DEBOUNCE_MS)
 
+  // PEND-72 — distinguish user-initiated query changes (which should
+  // respect the 80 ms debounce above) from external writes to the
+  // store (e.g. the mobile search sheet's bridge seeding the palette
+  // on segment switch). The ref is updated synchronously inside
+  // `handleInputChange`, so the sync effect below sees `query ===
+  // lastUserQueryRef.current` and short-circuits for the typing
+  // path. External writes leave the ref stale → the effect fires
+  // `setDebouncedQuery` immediately so the IPC fires for the seed.
+  const lastUserQueryRef = useRef(query)
+
   function handleInputChange(value: string) {
+    lastUserQueryRef.current = value
     setQueryStore(value)
     debounced.cancel()
     const trimmed = value.trim()
@@ -356,6 +400,20 @@ function PaletteBody({
     }
     debounced.schedule(trimmed)
   }
+
+  // PEND-72 — sync `debouncedQuery` whenever `query` changes from
+  // outside the input handler. The equality check vs
+  // `lastUserQueryRef.current` skips the user-typing path (which
+  // routes through `handleInputChange` and manages its own
+  // debounced schedule).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `lastUserQueryRef`, `debounced` are stable refs/callbacks; including them would re-fire the effect spuriously.
+  useEffect(() => {
+    if (query === lastUserQueryRef.current) return
+    lastUserQueryRef.current = query
+    debounced.cancel()
+    const trimmed = query.trim()
+    setDebouncedQuery(trimmed.length === 0 || isCommandsModeInput(trimmed) ? '' : trimmed)
+  }, [query])
 
   // Stale-response generation counter — mirrors `usePaginatedQuery` /
   // PEND-51's same guard. Re-bumped on every keystroke; an in-flight
@@ -946,7 +1004,7 @@ function PaletteBody({
                 t={t}
               />
             )}
-            {showEscalationFooter && (
+            {showEscalationFooter && !isMobile && (
               <>
                 <CommandSeparator />
                 <CommandGroup>
@@ -964,6 +1022,25 @@ function PaletteBody({
           </>
         )}
       </CommandList>
+      {showEscalationFooter && isMobile && (
+        /* Mobile escalation pinned beneath the CommandList so it
+           stays visible when 8 page-groups push the inline cmdk row
+           below the iOS soft keyboard. Chrome matches the cmdk row
+           pattern (px/py + hover bg + chevron + min-h-11 touch
+           target) so it doesn't read as an orphan footer. Sibling-
+           after-list placement loses cmdk's Enter-to-select binding,
+           but touch users tap. */
+        <button
+          type="button"
+          onClick={() => escalate(trimmedQuery)}
+          data-testid="palette-escalation-footer"
+          aria-label={t('searchSheet.escalateLabel')}
+          className="flex min-h-11 w-full items-center gap-2 border-t border-border bg-background px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-ring-visible"
+        >
+          <span className="flex-1 truncate">{t('searchSheet.escalateLabel')}</span>
+          <ChevronRight aria-hidden className="size-4 shrink-0" />
+        </button>
+      )}
       {mode === 'search' && !linkMode && <PaletteFooterHint t={t} />}
       {actionMenu != null && (
         <PaletteActionMenu

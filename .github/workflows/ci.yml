@@ -209,6 +209,13 @@ jobs:
           # cache. The Android job below uses a separate `rust-android`
           # shared-key (different cross-compile targets).
           shared-key: rust-deps
+          # `cache-bin: 'true'` matches the validate-side siblings — so this
+          # job's main-only `save-if` writes `~/.cargo/bin/` (incl. the
+          # cargo-installed `tauri-cli` below) consistently with `lint` /
+          # `cargo-tests` / `mcp-tests`. Without this, the build job's save
+          # would strip those bins from the shared cache and the next
+          # validate-job warm start would lose `prek` / `sqlx-cli`.
+          cache-bin: 'true'
           # Only `main` writes to the cache (other branches read it
           # without saving) to stop feature-branch churn from evicting
           # the canonical baseline.
@@ -224,7 +231,12 @@ jobs:
         run: npm ci
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --locked
+        # Skip the ~5-6 min source compile when the Swatinem cache restored
+        # a previously-built `cargo-tauri` into `~/.cargo/bin`. The cache
+        # is only populated by main-branch runs (`save-if` above); feature
+        # branches restore from main and reuse it.
+        run: |
+          if ! command -v cargo-tauri >/dev/null; then cargo install tauri-cli --locked; fi
 
       - name: Build Tauri app
         # `-v` raises tauri-bundler's log level so the real stdout/stderr
@@ -305,6 +317,11 @@ jobs:
           # (used by validate + Linux desktop build for the host triple)
           # would defeat both caches.
           shared-key: rust-android
+          # Persist `~/.cargo/bin/` so the cargo-installed `tauri-cli`
+          # below survives across runs (main writes, feature branches
+          # read). Same pattern as the Linux `build` job; saves the
+          # ~5-6 min source compile of tauri-cli on every warm run.
+          cache-bin: 'true'
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up JDK 17
@@ -339,7 +356,11 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --locked
+        # Skip the ~5-6 min source compile when the Swatinem cache restored
+        # a previously-built `cargo-tauri` into `~/.cargo/bin` (see the
+        # `cache-bin: 'true'` config on the Rust cache step above).
+        run: |
+          if ! command -v cargo-tauri >/dev/null; then cargo install tauri-cli --locked; fi
 
       - name: Initialize Tauri Android project
         # `src-tauri/gen/android/` is gitignored EXCEPT for a handful of
