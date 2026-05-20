@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import type { AutocompleteItem } from '@/components/search/AutocompletePopover'
+import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { getPathHistory } from '@/lib/path-history'
 import {
@@ -120,6 +121,8 @@ export function useAutocompleteSources(
         })
         .catch((err: unknown) => {
           if (tagRequestIdRef.current !== requestId) return
+          // PEND-73 Phase 2 — see CommandPalette.tsx for the cancellation rationale.
+          if (isCancellation(err)) return
           logger.warn('useAutocompleteSources', 'listTagsByPrefix failed', { prefix: query }, err)
           setTagLoading(false)
         })

@@ -55,6 +55,7 @@ import {
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { isCancellation } from '@/lib/app-error'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
@@ -479,6 +480,13 @@ export function PaletteBody({
       })
       .catch((err) => {
         if (gen !== generationRef.current) return
+        // PEND-73 Phase 2 — swallow PEND-70 backend cancellations
+        // silently. They fire on every superseded keystroke when a fast
+        // typist races the read pool, and the stale-generation guard
+        // above already discards the (non-existent) result. Toasting on
+        // every cancelled IPC would spam the user with what is the
+        // expected case, not an error.
+        if (isCancellation(err)) return
         logger.warn(
           'CommandPalette',
           'search query failed',
@@ -1537,6 +1545,8 @@ function TagsModeBody({
       })
       .catch((err) => {
         if (gen !== generationRef.current) return
+        // PEND-73 Phase 2 — see sibling catch site rationale.
+        if (isCancellation(err)) return
         logger.warn('CommandPalette', 'tags search failed', { query: debouncedQuery }, err)
         setTags([])
         setLoading(false)

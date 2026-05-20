@@ -2,10 +2,55 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 789 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 790 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1219+ REVIEW-LATER items across 789 sessions.
+- **Previously-resolved counter:** 1220+ REVIEW-LATER items across 790 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 790 — PEND-73 Phase 2: frontend cancellation swallowing (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (single helper + four catch-site edits) |
+| **Items closed** | PEND-73 R3 (typed AppError narrowing via TS-side helper) |
+| **Items modified** | PEND-73 U1 partial — cancellation half shipped; R4 deferred with rationale |
+| **Tests added** | +7 frontend (`isAppError` 4 cases, `isCancellation` 3 cases) |
+| **Files touched** | 6 |
+
+**Summary:** Closed the cancellation-UX gap left open by PEND-70's backend-only landing. Added `src/lib/app-error.ts` exporting `isAppError` (predicate over the `{kind, message}` IPC shape), `isCancellation` (discriminates `kind === 'cancelled'`), and a `TypedAppError` shape with `AppErrorKind` mirroring `src-tauri/src/error.rs:162-176`'s manual `Serialize` match arms. Then wired the predicate into the four catch sites that previously emitted `logger.warn` on every cancelled IPC:
+
+- `CommandPalette.tsx:484` (main search effect): swallows backend `AppError::Cancelled` silently, leaving the stale-generation discard guard untouched.
+- `CommandPalette.tsx:1550` (tags-mode search effect): same shape.
+- `useAutocompleteSources.ts:124` (debounced tag-prefix lookup): same shape.
+- `usePaginatedQuery.ts:117` (the panel's `searchBlocks` consumer + every other paginated IPC): swallows cancellation BEFORE the `onError` toast / error-state setter, so no UI flash on superseded keystrokes.
+
+**Why TS-side narrowing over a `bindings.ts` regen.** Two reasons. (1) `bindings.ts` is the auto-generated tauri-specta artifact; the `tauri-bindings ↔ wrapper parity` prek hook keeps it in sync with the Rust side, and hand-edits there have to be re-applied on every `cargo test -- specta_tests --ignored` regeneration. (2) A TS-side narrowing union doesn't need specta enum-representation support (patchy across `#[serde(tag = "kind")]` shapes); the wire shape stays whatever the manual `Serialize` impl emits. Coupling: adding a Rust `AppError` variant requires updating `AppErrorKind` in `src/lib/app-error.ts` — documented in the module header so the next maintainer sees it.
+
+**Why R4 (AbortController plumbing) is deferred.** Touches every `invoke` consumer; the existing `generationRef`/`requestIdRef` discard guards already drop the stale response correctly, and the only user-visible win (no toast on cancellation) is already achieved by the `isCancellation` swallow. The full plumbing only matters once the orchestrator decomposition lands and consumers stop hand-rolling their own discard guards. Tracked as DEFERRED on the PEND-73 R4 row with the rationale inline.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 R3 closed (4 → 3 frontend-still-open). R4 marked DEFERRED. U1 marked PARTIAL (cancellation half shipped).
+- **Previously resolved:** 1219+ → 1220+ across 789 → 790 sessions.
+
+**Files touched (this session):**
+- `src/lib/app-error.ts` (new, +85)
+- `src/lib/__tests__/app-error.test.ts` (new, +50)
+- `src/components/CommandPalette.tsx` (+9 / -0 — one import, two swallow lines, two comment blocks)
+- `src/hooks/usePaginatedQuery.ts` (+6 / -0)
+- `src/hooks/useAutocompleteSources.ts` (+3 / -0)
+- `pending/PEND-73-search-audit-followups.md` (Phase 2 TL;DR + R3/R4/U1 rows updated)
+
+**Verification:**
+- `npx vitest run src/lib/__tests__/app-error.test.ts src/hooks/__tests__/usePaginatedQuery.test.ts src/components/__tests__/BacklinkFilterBuilder.test.tsx` — 107 / 107 pass (7 new + 100 existing in the touched-adjacent tests).
+- `npx vitest run` (full suite) — 10295 / 10295 pass.
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** Resisted the temptation to do the AbortController plumbing too. The plan flagged it as "P2.R4" but the actual user-visible cost (toast spam on cancellation) is already paid by the swallow; the structural cost (every consumer needs `AbortController` setup) is not justified by an additional win.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake` branch (continues the per-phase commit chain). Not pushed yet.
+
+---
 
 ## Session 789 — PEND-73 Phase 1: backend search hygiene (2026-05-20)
 
