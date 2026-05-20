@@ -364,4 +364,126 @@ mod tests {
         assert!(token_a.is_cancelled(), "clone A must see cancel");
         assert!(token_b.is_cancelled(), "clone B must see cancel");
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // Registry + CancelOnDrop tests
+    // ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn registry_cancel_fires_token() {
+        let registry = CancellationRegistry::new();
+        let guard = Arc::new(CancellationGuard::new());
+        let token = guard.token();
+        registry.insert("req-1".into(), Arc::clone(&guard));
+        assert!(
+            !token.is_cancelled(),
+            "fresh registry entry must not be cancelled"
+        );
+        let fired = registry.cancel("req-1");
+        assert!(fired, "cancel must report the entry was present");
+        assert!(
+            token.is_cancelled(),
+            "registry.cancel must signal the stored guard"
+        );
+        assert_eq!(registry.len(), 0, "cancel must evict the entry");
+    }
+
+    #[tokio::test]
+    async fn registry_cancel_missing_id_returns_false() {
+        let registry = CancellationRegistry::new();
+        assert!(
+            !registry.cancel("nope"),
+            "cancel on unknown id must report no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_on_drop_signals_token_and_evicts_entry() {
+        let registry = CancellationRegistry::new();
+        let guard = Arc::new(CancellationGuard::new());
+        let token = guard.token();
+        registry.insert("req-2".into(), Arc::clone(&guard));
+        {
+            let _defer = CancelOnDrop::new(registry.clone(), "req-2".into());
+            assert!(
+                !token.is_cancelled(),
+                "token must remain live while CancelOnDrop is in scope"
+            );
+        } // _defer dropped here
+        assert!(
+            token.is_cancelled(),
+            "CancelOnDrop's drop must signal the stored guard"
+        );
+        assert_eq!(
+            registry.len(),
+            0,
+            "CancelOnDrop's drop must evict the registry entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_on_drop_is_idempotent_after_external_cancel() {
+        let registry = CancellationRegistry::new();
+        let guard = Arc::new(CancellationGuard::new());
+        let token = guard.token();
+        registry.insert("req-3".into(), Arc::clone(&guard));
+        let _defer = CancelOnDrop::new(registry.clone(), "req-3".into());
+        // External cancel happens first.
+        assert!(registry.cancel("req-3"));
+        assert!(token.is_cancelled());
+        // CancelOnDrop fires on scope exit but the registry is already
+        // empty — must not panic and not double-cancel observably.
+        drop(_defer);
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn registry_is_clone_share() {
+        let registry = CancellationRegistry::new();
+        let cloned = registry.clone();
+        let guard = Arc::new(CancellationGuard::new());
+        registry.insert("req-4".into(), Arc::clone(&guard));
+        assert_eq!(cloned.len(), 1, "registry clones must share the same map");
+        cloned.cancel("req-4");
+        assert_eq!(
+            registry.len(),
+            0,
+            "cancel via clone must remove from the shared map"
+        );
+    }
+
+    /// Proves the wrapper pattern in miniature: dropping a
+    /// `CancelOnDrop` held in one task wakes a `cancelled().await`
+    /// loop in a separate spawned task. This is exactly what makes
+    /// `search_blocks_partitioned`'s wrapper-future drop actually
+    /// cancel the in-flight search work.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_on_drop_signals_spawned_task() {
+        let registry = CancellationRegistry::new();
+        let guard = Arc::new(CancellationGuard::new());
+        let mut token = guard.token();
+        registry.insert("req-spawn".into(), Arc::clone(&guard));
+
+        let handle = tokio::spawn(async move {
+            token.cancelled().await;
+            "cancelled"
+        });
+
+        {
+            let _defer = CancelOnDrop::new(registry.clone(), "req-spawn".into());
+            // Yield so the spawned task is parked on `cancelled()`.
+            tokio::task::yield_now().await;
+        } // _defer drops here, fires cancel via registry.
+
+        let result = tokio::time::timeout(std::time::Duration::from_millis(200), handle)
+            .await
+            .expect("cancel-on-drop must propagate to spawned task within 200ms")
+            .expect("spawned task must complete cleanly");
+        assert_eq!(result, "cancelled");
+        assert_eq!(
+            registry.len(),
+            0,
+            "CancelOnDrop must evict the registry entry"
+        );
+    }
 }
