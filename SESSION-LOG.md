@@ -2,10 +2,42 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 798 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 799 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1244+ REVIEW-LATER items across 798 sessions.
+- **Previously-resolved counter:** 1245+ REVIEW-LATER items across 799 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 799 — PEND-73 deferred cycle 6: M6 useShallow palette selectors (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 M6 (useShallow palette selectors) |
+| **Tests added** | 0 (refactor; behaviour unchanged) |
+| **Files touched** | 2 |
+
+**Summary:** Collapsed the 8 individual `useCommandPaletteStore((s) => s.*)` calls in `PaletteBody` (query / setQuery / mode / setMode / enterModeWithQuery / setPendingViewQuery / previousFocusedElement / previousSelectionRange) into a single `useCommandPaletteStore(useShallow((s) => ({ … })))` selector. Matches the `SearchSheet.tsx:44` pattern that already used `useShallow` from `zustand/react/shallow`.
+
+Render-cost story. Each individual selector subscribed PaletteBody to ANY store change and ran an equality check 8 times per commit. The shallow-compared object lets zustand bail at the top of the selector when none of the watched fields changed — same render, one comparison instead of eight. Not a hot-path bottleneck (the palette commits are user-keystroke-driven, not animation-frame-driven), but a maintenance win: adding a 9th field is one diff line instead of two.
+
+The 2 selectors in the outer wrapper component (`open`, `closeStore`) are intentionally left as separate calls — too few to benefit from bundling, and grouping them with the inner-component selectors would cross the wrapper/body seam.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 3 → 2 (M6 shipped).
+- **Previously resolved:** 1244+ → 1245+ across 798 → 799 sessions.
+
+**Files touched (this session):**
+- `src/components/CommandPalette.tsx` (+24 / −9; useShallow import + collapsed selector)
+- `pending/PEND-73-search-audit-followups.md` (M6 row updated)
+
+**Verification:**
+- `npx vitest run` — 10312 / 10312 pass (unchanged; refactor).
+- `npx tsc -b --noEmit` — clean.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 798 — PEND-73 deferred cycle 5: R4 AbortController plumbing (library shape) (2026-05-20)
 

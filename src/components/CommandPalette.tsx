@@ -41,6 +41,7 @@ import {
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import { type PaletteAction, PaletteActionMenu } from '@/components/palette/PaletteActionMenu'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import {
@@ -365,17 +366,38 @@ export function PaletteBody({
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const openInNewTab = useTabsStore((s) => s.openInNewTab)
 
-  const query = useCommandPaletteStore((s) => s.query)
-  const setQueryStore = useCommandPaletteStore((s) => s.setQuery)
-  const mode = useCommandPaletteStore((s) => s.mode)
-  const setMode = useCommandPaletteStore((s) => s.setMode)
-  const enterModeWithQuery = useCommandPaletteStore((s) => s.enterModeWithQuery)
-  const setPendingViewQuery = useCommandPaletteStore((s) => s.setPendingViewQuery)
-  const previousFocusedElement = useCommandPaletteStore((s) => s.previousFocusedElement)
-  // PEND-73 Phase 3.U8 — snapshotted selection at palette open time;
-  // restored before `execCommand('insertText')` on contenteditable
-  // targets so `[[page]]` insertion lands at the user's original caret.
-  const previousSelectionRange = useCommandPaletteStore((s) => s.previousSelectionRange)
+  // PEND-73 Phase 4.M6 — collapse the 8 individual store selectors into
+  // one `useShallow` selector. Matches the SearchSheet.tsx:44 pattern.
+  // Each individual selector subscribed the component to ANY store
+  // change and re-ran the equality check 8 times per commit; the
+  // shallow-compared object lets zustand bail out at the top of the
+  // selector when none of the watched fields changed.
+  //
+  // PEND-73 Phase 3.U8 — `previousSelectionRange` snapshotted at palette
+  // open time; restored before `execCommand('insertText')` on
+  // contenteditable targets so `[[page]]` insertion lands at the user's
+  // original caret.
+  const {
+    query,
+    setQuery: setQueryStore,
+    mode,
+    setMode,
+    enterModeWithQuery,
+    setPendingViewQuery,
+    previousFocusedElement,
+    previousSelectionRange,
+  } = useCommandPaletteStore(
+    useShallow((s) => ({
+      query: s.query,
+      setQuery: s.setQuery,
+      mode: s.mode,
+      setMode: s.setMode,
+      enterModeWithQuery: s.enterModeWithQuery,
+      setPendingViewQuery: s.setPendingViewQuery,
+      previousFocusedElement: s.previousFocusedElement,
+      previousSelectionRange: s.previousSelectionRange,
+    })),
+  )
 
   // ── Mode router (one-way, prefix-as-entry-shortcut) ─────────────
   // PEND-61 CR — typing `>` at the start of an empty/whitespace
